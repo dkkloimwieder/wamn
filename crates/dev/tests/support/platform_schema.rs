@@ -277,7 +277,7 @@ pub(super) async fn exercise(
         environment
             .apply(
                 "install-schema-application",
-                &mut environment.deploy("alpha", release),
+                &mut environment.deploy(&"alpha".parse().unwrap(), release),
             )
             .await?;
     }
@@ -287,7 +287,7 @@ pub(super) async fn exercise(
         rows.push(
             environment
                 .route(
-                    "alpha",
+                    &"alpha".parse().unwrap(),
                     "counter/create",
                     &json!([{
                         "request_id":uuid::Uuid::new_v4().to_string(),
@@ -364,7 +364,11 @@ pub(super) async fn exercise(
     for ((environment, row), before) in [journey, &other].into_iter().zip(rows).zip(before) {
         ensure!(
             environment
-                .route("alpha", "counter/get", &json!([{"id":row["id"]}]))
+                .route(
+                    &"alpha".parse().unwrap(),
+                    "counter/get",
+                    &json!([{"id":row["id"]}])
+                )
                 .await?
                 == row,
             "{} lost its application row",

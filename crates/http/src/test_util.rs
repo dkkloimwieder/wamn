@@ -42,7 +42,7 @@ pub fn digest(byte: char) -> wamn_digest::Digest {
 pub fn invocation() -> ConnectionInvocation {
     ConnectionInvocation {
         origin: ConnectionOrigin {
-            package_id: "package_a".to_string(),
+            package_id: "package_a".parse().unwrap(),
             component_digest: digest('a'),
             component: "notifier".to_string(),
             interface_version: "0.1".to_string(),
@@ -50,7 +50,7 @@ pub fn invocation() -> ConnectionInvocation {
         },
         entry: wamn_authority::connection::InvocationEntry::Wiring(
             wamn_authority::connection::WiringPosition {
-                package_id: "package_a".to_string(),
+                application: "package_a".parse().unwrap(),
                 wiring_hash: fixture_wiring_hash(),
                 wiring_id: "orders".to_string(),
                 wiring_version: 3,
@@ -59,7 +59,7 @@ pub fn invocation() -> ConnectionInvocation {
                 configuration: Arc::default(),
             },
         ),
-        package_id: "package_a".to_string(),
+        package_id: "package_a".parse().unwrap(),
         component_digest: digest('a'),
         component: "notifier".to_string(),
         operation: "orders:notify/dispatch@1.0.0".to_string(),
@@ -115,7 +115,11 @@ pub fn manifest() -> ServingManifest {
         composed_entry: None,
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
-            packages: BTreeSet::from([PackageCoordinate::new("package_a", "1.0.0").unwrap()]),
+            packages: BTreeSet::from([PackageCoordinate::new(
+                "package_a".parse().unwrap(),
+                "1.0.0",
+            )
+            .unwrap()]),
         },
         components: BTreeSet::from([ServingComponent {
             runtime_schema: None,

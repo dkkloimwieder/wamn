@@ -549,7 +549,7 @@ pub struct ModelPlan<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientPlan<'a> {
     /// Package that declared the contract.
-    pub package: &'a str,
+    pub package: &'a wamn_catalog::PackageName,
     /// Every model in the contract, sorted by name.
     ///
     /// A model whose operations are all private keeps an empty screen list, so

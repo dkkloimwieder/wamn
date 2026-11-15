@@ -21,8 +21,18 @@ mod event_batch {
         event(&mut fixture, "first", 0, Some("reader")).await;
         sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) \
              SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application = $1").bind(&APP).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
-        let upgraded = release_variant(&mut fixture, APP, b"1251").await;
-        let billing = release_variant(&mut fixture, "billing", b"1252").await;
+        let upgraded = release_variant(
+            &mut fixture,
+            &APP.parse().expect("valid fixture name"),
+            b"1251",
+        )
+        .await;
+        let billing = release_variant(
+            &mut fixture,
+            &"billing".parse().expect("valid name"),
+            b"1252",
+        )
+        .await;
         let mut retired = serde_json::to_value(upgraded.manifest()).unwrap();
         retired["components"] = json!([]);
         let retired: ServingManifest = serde_json::from_value(retired).unwrap();
@@ -47,8 +57,8 @@ mod event_batch {
         let consumers = [APP, "billing"].map(|application| {
             wamn_broker::events::application_consumer(
                 &coordinate,
-                application,
-                APPLICATION,
+                &application.parse().unwrap(),
+                &APPLICATION.parse().expect("valid fixture name"),
                 "order",
             )
             .unwrap()
@@ -104,8 +114,8 @@ mod event_batch {
                 .unwrap()
                 .sequence;
             let admission = EventBatchAdmission {
-                application: APP,
-                source_package: APPLICATION,
+                application: &APP.parse().expect("valid fixture name"),
+                source_package: &APPLICATION.parse().expect("valid fixture name"),
                 entity: "order",
                 envelope: &body,
                 sequence,
@@ -115,7 +125,7 @@ mod event_batch {
                 &events,
                 &fixture.postgres,
                 PROJECT,
-                "billing",
+                &"billing".parse().expect("valid name"),
                 &billing,
             )
             .await
@@ -179,7 +189,7 @@ mod event_batch {
                     &events,
                     &fixture.postgres,
                     PROJECT,
-                    APP,
+                    &APP.parse().expect("valid fixture name"),
                     &retired,
                 )
                 .await
@@ -210,7 +220,7 @@ mod event_batch {
                     &events,
                     &fixture.postgres,
                     PROJECT,
-                    APP,
+                    &APP.parse().expect("valid fixture name"),
                     &upgraded,
                 )
                 .await
@@ -220,7 +230,7 @@ mod event_batch {
                     &events,
                     &fixture.postgres,
                     PROJECT,
-                    APP,
+                    &APP.parse().expect("valid fixture name"),
                     loaded,
                 )
                 .await
@@ -229,7 +239,7 @@ mod event_batch {
             // A later stream sequence still names the original admitted event.
             // A host with another release must retain its run.
             let replay = EventBatchAdmission {
-                application: APP,
+                application: &APP.parse().expect("valid fixture name"),
                 sequence: sequence + 1000,
                 ..admission
             };

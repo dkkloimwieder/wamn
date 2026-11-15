@@ -92,10 +92,7 @@ pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
     let module = syn::Ident::new(&format!("{model}_{action}"), function.sig.ident.span());
     let model_id = syn::Ident::new(model, function.sig.ident.span());
     let action_id = syn::Ident::new(action, function.sig.ident.span());
-    let namespace = syn::Ident::new(
-        &manifest.package.id.replace('-', "_"),
-        function.sig.ident.span(),
-    );
+    let namespace = syn::Ident::new(manifest.package.id.as_str(), function.sig.ident.span());
     let owned = quote! {
         #[allow(unused_imports)]
         use {

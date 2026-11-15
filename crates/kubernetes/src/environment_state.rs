@@ -189,7 +189,7 @@ pub fn workload_conditions(
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseResidency {
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     pub manifest_digest: wamn_digest::Digest,
     pub loaded: bool,
     pub runs: Vec<String>,
@@ -252,7 +252,10 @@ pub fn project_residency(
     reports: Vec<Residency>,
     project: &str,
 ) -> anyhow::Result<Vec<ReleaseResidency>> {
-    let mut releases: BTreeMap<(String, wamn_digest::Digest), ReleaseResidency> = BTreeMap::new();
+    let mut releases: BTreeMap<
+        (wamn_catalog::ApplicationName, wamn_digest::Digest),
+        ReleaseResidency,
+    > = BTreeMap::new();
     for mut report in reports {
         let state = report
             .remove(project)
@@ -286,17 +289,21 @@ mod tests {
     use super::*;
     #[test]
     fn residency_keeps_projects_applications_and_pinned_releases_independent() {
-        let row = |application: &str, loaded, run: &str| ReleaseResidency {
-            application: application.into(),
-            manifest_digest: wamn_digest_for_test(),
-            loaded,
-            runs: vec![run.into()],
-        };
+        let row =
+            |application: &wamn_catalog::ApplicationName, loaded, run: &str| ReleaseResidency {
+                application: application.clone(),
+                manifest_digest: wamn_digest_for_test(),
+                loaded,
+                runs: vec![run.into()],
+            };
         let report = BTreeMap::from([
             (
                 "orders".into(),
                 ProjectResidency {
-                    releases: vec![row("first", true, "run-a"), row("second", false, "run-b")],
+                    releases: vec![
+                        row(&"first".parse().unwrap(), true, "run-a"),
+                        row(&"second".parse().unwrap(), false, "run-b"),
+                    ],
                     error: None,
                 },
             ),

@@ -127,9 +127,9 @@ pub const MAX_PAT_TTL: Duration = Duration::from_hours(365 * 24);
 /// The service subject of one scheduled application in one environment project.
 pub fn application_subject(
     project_env_key: &wamn_registry::ProjectEnvKey,
-    package: &str,
+    package: &wamn_catalog::PackageName,
 ) -> Result<String, IdentityError> {
-    canonical_subject(&wamn_registry::name::application_subject(
+    canonical_subject(&wamn_catalog::resource_names::application_subject(
         project_env_key,
         package,
     ))
@@ -1132,12 +1132,28 @@ mod tests {
     #[test]
     fn application_subject_is_targeted_to_project_env_key_and_package() {
         assert_ne!(
-            application_subject(&"acme--prod--erp".parse().unwrap(), "integration").unwrap(),
-            application_subject(&"acme--dev--erp".parse().unwrap(), "integration").unwrap()
+            application_subject(
+                &"acme--prod--erp".parse().unwrap(),
+                &"integration".parse().unwrap()
+            )
+            .unwrap(),
+            application_subject(
+                &"acme--dev--erp".parse().unwrap(),
+                &"integration".parse().unwrap()
+            )
+            .unwrap()
         );
         assert_ne!(
-            application_subject(&"acme--prod--erp".parse().unwrap(), "integration").unwrap(),
-            application_subject(&"acme--prod--erp".parse().unwrap(), "consumer").unwrap()
+            application_subject(
+                &"acme--prod--erp".parse().unwrap(),
+                &"integration".parse().unwrap()
+            )
+            .unwrap(),
+            application_subject(
+                &"acme--prod--erp".parse().unwrap(),
+                &"consumer".parse().unwrap()
+            )
+            .unwrap()
         );
     }
 

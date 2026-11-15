@@ -322,7 +322,7 @@ impl Application {
 
 fn loaded_release(
     document: &EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<wamn_engine::release_manifest::LoadedRelease> {
     use std::collections::{BTreeMap, BTreeSet};
     use wamn_catalog::{
@@ -344,14 +344,16 @@ fn loaded_release(
         ServingRelease {
             packages: members
                 .iter()
-                .map(|(package, _)| PackageCoordinate::new(*package, &version).unwrap())
+                .map(|(package, _)| {
+                    PackageCoordinate::new(package.parse().unwrap(), &version).unwrap()
+                })
                 .collect(),
         },
         members
             .into_iter()
             .map(|(package, byte)| ServingComponent {
                 runtime_schema: None,
-                package_id: package.into(),
+                package_id: package.parse().unwrap(),
                 descriptor: {
                     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
                         "reader",
@@ -595,7 +597,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
             .get_mut(name)
             .unwrap()
             .packages
-            .insert(package.to_owned());
+            .insert(package.parse().unwrap());
     }
     let selections = document
         .applications
@@ -617,7 +619,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         &json!({"package":{"id":"modbus_reader","version":"0.1.0"},"required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},"models":{},"components":{},"connections":{"registers":{"interface":"wamn:modbus/read@1.0.0","mode":"read"}}}),
     )?)?;
     let mut observer_package = package.clone();
-    observer_package.package.id = "observer_fixture".into();
+    observer_package.package.id = "observer_fixture".parse().expect("valid name");
     let packages = [package, observer_package];
     apply(
         &mut admin,
@@ -688,8 +690,8 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         &"dev".parse().unwrap(),
     ));
     let imports = async |document: &EnvironmentDocument,
-                         application: &str,
-                         package: &str,
+                         application: &wamn_catalog::ApplicationName,
+                         package: &wamn_catalog::PackageName,
                          byte: &str|
            -> anyhow::Result<Arc<IntegrationImports>> {
         let release = loaded_release(document, application)?;
@@ -709,8 +711,20 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
             package,
         )
     };
-    let reader = imports(&document, "reader", "modbus_reader", "a").await?;
-    let observer = imports(&document, "observer", "observer_fixture", "b").await?;
+    let reader = imports(
+        &document,
+        &"reader".parse().expect("valid name"),
+        &"modbus_reader".parse().expect("valid name"),
+        "a",
+    )
+    .await?;
+    let observer = imports(
+        &document,
+        &"observer".parse().expect("valid name"),
+        &"observer_fixture".parse().expect("valid name"),
+        "b",
+    )
+    .await?;
     let sibling = observer.store_id("registers").await?.unwrap();
     let mut application = Application::load(Arc::clone(&reader)).await?;
     let app_store = Arc::clone(&application.store.data().active_ctx.store_id);
@@ -764,7 +778,13 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         &packages,
     )
     .await?;
-    let failed_reader = imports(&document, "reader", "modbus_reader", "a").await?;
+    let failed_reader = imports(
+        &document,
+        &"reader".parse().expect("valid name"),
+        &"modbus_reader".parse().expect("valid name"),
+        "a",
+    )
+    .await?;
     assert!(Application::load(failed_reader).await.is_err());
     assert_eq!(application.read().await?.unwrap().payload, "4660");
     document.integrations.get_mut("meter").unwrap().version = 2;
@@ -835,7 +855,13 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         &packages,
     )
     .await?;
-    let upgraded_reader = imports(&document, "reader", "modbus_reader", "a").await?;
+    let upgraded_reader = imports(
+        &document,
+        &"reader".parse().expect("valid name"),
+        &"modbus_reader".parse().expect("valid name"),
+        "a",
+    )
+    .await?;
     let mut upgraded = Application::load(upgraded_reader).await?;
     assert_eq!(upgraded.read().await?.unwrap().payload, "4661");
     assert_eq!(application.read().await?.unwrap().payload, "4660");
@@ -850,7 +876,13 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         &packages,
     )
     .await?;
-    let rollback_reader = imports(&document, "reader", "modbus_reader", "a").await?;
+    let rollback_reader = imports(
+        &document,
+        &"reader".parse().expect("valid name"),
+        &"modbus_reader".parse().expect("valid name"),
+        "a",
+    )
+    .await?;
     let mut rollback = Application::load(rollback_reader).await?;
     assert_eq!(rollback.read().await?.unwrap().payload, "4660");
     assert_eq!(

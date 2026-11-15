@@ -62,11 +62,11 @@ impl std::error::Error for WorkflowConditionError {
 /// release does not carry refuses.
 pub fn resolve_workflow_components(
     project_env_key: &wamn_registry::ProjectEnvKey,
-    application_packages: &BTreeSet<String>,
+    application_packages: &BTreeSet<crate::PackageName>,
     manifest: &ServingManifest,
     document: &WiringDocument,
 ) -> Result<BTreeMap<String, AdmittedComponent>, WorkflowConditionError> {
-    let versions: BTreeMap<&str, &str> = manifest
+    let versions: BTreeMap<&crate::PackageName, &str> = manifest
         .release
         .packages
         .iter()
@@ -74,7 +74,7 @@ pub fn resolve_workflow_components(
         .collect();
     if let Some(package) = application_packages
         .iter()
-        .find(|package| !versions.contains_key(package.as_str()))
+        .find(|package| !versions.contains_key(*package))
     {
         return Err(WorkflowConditionError::new(format!(
             "the serving release does not carry package {package:?} of the application"
@@ -120,10 +120,10 @@ pub fn resolve_workflow_components(
         let target = ComponentPackageCoordinate {
             project_env_key: project_env_key.to_owned(),
             package_id: chosen.package_id.clone(),
-            package_version: if chosen.package_id == crate::PALETTE_PACKAGE_ID {
+            package_version: if chosen.package_id.as_str() == crate::PALETTE_PACKAGE_ID {
                 crate::PALETTE_PACKAGE_VERSION
             } else {
-                versions[chosen.package_id.as_str()]
+                versions[&chosen.package_id]
             }
             .to_owned(),
         };
@@ -145,7 +145,7 @@ fn ambiguous(node_id: &str) -> WorkflowConditionError {
 /// hash. The hash is produced only on the far side of the condition.
 pub fn condition_workflow_document(
     project_env_key: &wamn_registry::ProjectEnvKey,
-    application_packages: &BTreeSet<String>,
+    application_packages: &BTreeSet<crate::PackageName>,
     manifest: &ServingManifest,
     document: &WiringDocument,
 ) -> Result<wamn_digest::Digest, WorkflowConditionError> {
@@ -174,8 +174,8 @@ mod tests {
     const APPLICATION: &str = "orders";
 
     /// The packages of the workflow's application.
-    fn packages() -> BTreeSet<String> {
-        BTreeSet::from([APPLICATION.to_owned()])
+    fn packages() -> BTreeSet<crate::PackageName> {
+        BTreeSet::from([APPLICATION.parse().unwrap()])
     }
     const ORDERS_GET: &str = "orders:order/get@1.0.0";
     const PALETTE_GET: &str = "palette:data/get@2.0.0";
@@ -191,12 +191,17 @@ mod tests {
         }
     }
 
-    fn component(package: &str, name: &str, op: &str, registered: bool) -> ServingComponent {
+    fn component(
+        package: &crate::PackageName,
+        name: &str,
+        op: &str,
+        registered: bool,
+    ) -> ServingComponent {
         component_with_digest(package, name, op, registered, '1')
     }
 
     fn component_with_digest(
-        package: &str,
+        package: &crate::PackageName,
         name: &str,
         op: &str,
         registered: bool,
@@ -227,8 +232,8 @@ mod tests {
         ServingManifest::new(
             ServingRelease {
                 packages: BTreeSet::from([
-                    PackageCoordinate::new(APPLICATION, "1.0.0").unwrap(),
-                    PackageCoordinate::new("palette", "2.0.0").unwrap(),
+                    PackageCoordinate::new(APPLICATION.parse().unwrap(), "1.0.0").unwrap(),
+                    PackageCoordinate::new("palette".parse().unwrap(), "2.0.0").unwrap(),
                 ]),
             },
             components.into_iter().collect(),
@@ -261,7 +266,12 @@ mod tests {
 
     #[test]
     fn an_application_operation_conditions_with_its_target() {
-        let manifest = manifest(vec![component(APPLICATION, "data", ORDERS_GET, true)]);
+        let manifest = manifest(vec![component(
+            &APPLICATION.parse().unwrap(),
+            "data",
+            ORDERS_GET,
+            true,
+        )]);
         let document = document("data", ORDERS_GET);
         let resolved = resolve_workflow_components(
             &"t1--dev--project".parse().unwrap(),
@@ -285,7 +295,12 @@ mod tests {
 
     #[test]
     fn a_platform_node_resolves_in_another_package() {
-        let manifest = manifest(vec![component("palette", "jsonata", "map", false)]);
+        let manifest = manifest(vec![component(
+            &"palette".parse().unwrap(),
+            "jsonata",
+            "map",
+            false,
+        )]);
         let resolved = resolve_workflow_components(
             &"t1--dev--project".parse().unwrap(),
             &packages(),
@@ -293,12 +308,20 @@ mod tests {
             &document("jsonata", "map"),
         )
         .unwrap();
-        assert_eq!(resolved["node"].target.package_id, "palette");
+        assert_eq!(
+            resolved["node"].target.package_id,
+            "palette".parse().unwrap()
+        );
     }
 
     #[test]
     fn an_operation_of_another_package_resolves_in_that_package() {
-        let manifest = manifest(vec![component("palette", "data", PALETTE_GET, true)]);
+        let manifest = manifest(vec![component(
+            &"palette".parse().unwrap(),
+            "data",
+            PALETTE_GET,
+            true,
+        )]);
         let resolved = resolve_workflow_components(
             &"t1--dev--project".parse().unwrap(),
             &packages(),
@@ -306,12 +329,20 @@ mod tests {
             &document("data", PALETTE_GET),
         )
         .unwrap();
-        assert_eq!(resolved["node"].target.package_id, "palette");
+        assert_eq!(
+            resolved["node"].target.package_id,
+            "palette".parse().unwrap()
+        );
     }
 
     #[test]
     fn a_node_the_release_does_not_carry_refuses() {
-        let manifest = manifest(vec![component(APPLICATION, "data", ORDERS_GET, true)]);
+        let manifest = manifest(vec![component(
+            &APPLICATION.parse().unwrap(),
+            "data",
+            ORDERS_GET,
+            true,
+        )]);
         for document in [document("data", "put"), document("other", ORDERS_GET)] {
             condition_workflow_document(
                 &"t1--dev--project".parse().unwrap(),
@@ -323,7 +354,7 @@ mod tests {
         }
         condition_workflow_document(
             &"t1--dev--project".parse().unwrap(),
-            &BTreeSet::from(["absent".to_owned()]),
+            &BTreeSet::from(["absent".parse().unwrap()]),
             &manifest,
             &document("data", ORDERS_GET),
         )
@@ -334,8 +365,12 @@ mod tests {
     /// same node with another digest.
     #[test]
     fn a_node_resolves_within_the_application_packages_first() {
-        let other = component_with_digest("palette", "jsonata", "map", false, '2');
-        let manifest = manifest(vec![component(APPLICATION, "jsonata", "map", false), other]);
+        let other =
+            component_with_digest(&"palette".parse().unwrap(), "jsonata", "map", false, '2');
+        let manifest = manifest(vec![
+            component(&APPLICATION.parse().unwrap(), "jsonata", "map", false),
+            other,
+        ]);
         let document = document("jsonata", "map");
         let resolved = resolve_workflow_components(
             &"t1--dev--project".parse().unwrap(),
@@ -344,7 +379,10 @@ mod tests {
             &document,
         )
         .unwrap();
-        assert_eq!(resolved["node"].target.package_id, APPLICATION);
+        assert_eq!(
+            resolved["node"].target.package_id,
+            APPLICATION.parse().unwrap()
+        );
         resolve_workflow_components(
             &"t1--dev--project".parse().unwrap(),
             &BTreeSet::new(),

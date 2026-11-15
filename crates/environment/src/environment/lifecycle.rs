@@ -2,12 +2,12 @@
 use super::{Platform, document::EnvironmentDocument, ensure as resources};
 use crate::provision_project_env::{self, ProvisionProjectEnvRequest};
 use anyhow::{Context as _, ensure};
-use wamn_registry::lifecycle_lock::LifecycleLock;
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 
 pub async fn configure(
     platform: &Platform,
     document: &EnvironmentDocument,
-    application: Option<&str>,
+    application: Option<&wamn_catalog::ApplicationName>,
     disposable: Option<bool>,
     system_owner: &str,
     actor: &wamn_identity_protocol::PrincipalId,
@@ -23,7 +23,7 @@ pub async fn configure(
     let triple = document.triple();
     let client = wamn_postgres::connect(system_owner).await?;
     LifecycleLock::hold(client, &triple, async |lock| {
-        wamn_registry::configuration::require_placement(
+        wamn_catalog::configuration::require_placement(
             &mut *lock.client().await,
             &document.org,
             &document.env,

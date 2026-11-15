@@ -19,11 +19,11 @@ pub use wamn_kubernetes::environment_state::DeploymentStatus;
 /// The status of one environment.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Status {
-    pub applications: BTreeMap<String, ApplicationStatus>,
+    pub applications: BTreeMap<wamn_catalog::ApplicationName, ApplicationStatus>,
     pub residency: Option<Vec<super::drain::ReleaseResidency>>,
     /// Unfinished runs with no live host anywhere in this environment.
     pub stranded: Option<Vec<Stranded>>,
-    pub installed: Option<BTreeMap<String, super::analyse::Installed>>,
+    pub installed: Option<BTreeMap<wamn_catalog::PackageName, super::analyse::Installed>>,
     pub warnings: Vec<String>,
     pub schema: Option<super::sql::schema::Status>,
     pub system_schema: Option<crate::migrations::SchemaReport>,
@@ -232,7 +232,7 @@ pub async fn status(
 async fn stranded_runs(
     platform: &Platform,
     triple: &Triple,
-    live: &BTreeMap<(String, wamn_digest::Digest), usize>,
+    live: &BTreeMap<(wamn_catalog::ApplicationName, wamn_digest::Digest), usize>,
     admin_url: &str,
 ) -> anyhow::Result<Vec<Stranded>> {
     // A lifecycle verb: the provisioning credential, as the install Jobs use.

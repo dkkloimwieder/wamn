@@ -291,7 +291,7 @@ pub(crate) mod test_util {
         let fact = AdmittedComponent {
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a--dev--project".parse().unwrap(),
-                package_id: "scale".into(),
+                package_id: "scale".parse().unwrap(),
                 package_version: "1.0.0".into(),
             },
             component: "device".into(),
@@ -314,11 +314,15 @@ pub(crate) mod test_util {
         };
         let manifest = ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("scale", "1.0.0").unwrap()]),
+                packages: BTreeSet::from([PackageCoordinate::new(
+                    "scale".parse().unwrap(),
+                    "1.0.0",
+                )
+                .unwrap()]),
             },
             BTreeSet::from([ServingComponent {
                 runtime_schema: None,
-                package_id: "scale".into(),
+                package_id: "scale".parse().unwrap(),
                 descriptor: {
                     let mut descriptor =
                         ComponentDescriptor::named("device", "0.1", fact.component_digest);
@@ -361,9 +365,9 @@ pub(crate) mod test_util {
             "edge".parse().unwrap(),
         )
         .with_applications(BTreeMap::from([(
-            "scale".into(),
+            "scale".parse().unwrap(),
             wamn_catalog::ApplicationDefinition {
-                packages: BTreeSet::from(["scale".into()]),
+                packages: BTreeSet::from(["scale".parse().unwrap()]),
                 connections: BTreeMap::new(),
             },
         )]));

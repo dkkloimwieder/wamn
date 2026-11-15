@@ -325,14 +325,20 @@ pub(crate) fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<Path
 /// workspace, each client is then copied to the packages that name it,
 /// `wamn_control` or `wamn_control_org`, in `"wamn": { "clients": [...] }`.
 pub fn materialize_host_route_client(output_root: &Path) -> Result<()> {
-    let output = output_root.join(wamn_catalog::host_route_package());
+    let output = output_root.join(wamn_catalog::host_route_package().as_str());
     materialize_host_route_set(&output, wamn_catalog::HostRouteSet::Application)?;
     materialize_host_route_set(&output.join("control"), wamn_catalog::HostRouteSet::Control)?;
     // `wamn build` does not make these clients, so they have no build record.
-    copy_to_consumers(output_root, "wamn_control", &output.join("client-ts"))?;
     copy_to_consumers(
         output_root,
-        "wamn_control_org",
+        wamn_catalog::host_route_package(),
+        &output.join("client-ts"),
+    )?;
+    copy_to_consumers(
+        output_root,
+        &"wamn_control_org"
+            .parse()
+            .expect("control client package name is valid"),
         &output.join("control/client-ts"),
     )
 }
@@ -423,13 +429,17 @@ fn materialize_host_route_set(output: &Path, set: wamn_catalog::HostRouteSet) ->
 /// # Errors
 ///
 /// Names the consumer and application when the requested client is unavailable.
-pub fn materialize_client_consumers(package_root: &Path, app: &str, source: &Path) -> Result<()> {
+pub fn materialize_client_consumers(
+    package_root: &Path,
+    app: &wamn_catalog::PackageName,
+    source: &Path,
+) -> Result<()> {
     copy_to_consumers(package_root, app, source)
 }
 
 /// Copy the client at `source` into the packages of the workspace that holds
 /// `within` and name `app` in their `"wamn": { "clients": [...] }`.
-fn copy_to_consumers(within: &Path, app: &str, source: &Path) -> Result<()> {
+fn copy_to_consumers(within: &Path, app: &wamn_catalog::PackageName, source: &Path) -> Result<()> {
     #[derive(serde::Deserialize)]
     struct Workspace {
         packages: Vec<PathBuf>,
@@ -437,7 +447,7 @@ fn copy_to_consumers(within: &Path, app: &str, source: &Path) -> Result<()> {
     #[derive(Default, serde::Deserialize)]
     struct Clients {
         #[serde(default)]
-        clients: Vec<String>,
+        clients: Vec<wamn_catalog::PackageName>,
     }
     #[derive(serde::Deserialize)]
     struct Consumer {
@@ -480,7 +490,10 @@ fn copy_to_consumers(within: &Path, app: &str, source: &Path) -> Result<()> {
                 .iter()
                 .map(|(path, bytes)| (path.clone(), bytes.as_slice()))
                 .collect();
-            write_build_output(&directory.join("src/generated").join(app), &expected)
+            write_build_output(
+                &directory.join("src/generated").join(app.as_str()),
+                &expected,
+            )
         };
         copy().with_context(|| {
             format!(

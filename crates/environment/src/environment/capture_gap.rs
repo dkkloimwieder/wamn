@@ -1,9 +1,9 @@
 //! Stop capture for recovery and retry reader restart after resynchronization.
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 pub use wamn_events::capture_gap::{
     CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
 use wamn_kubernetes::Target;
-use wamn_registry::lifecycle_lock::LifecycleLock;
 
 /// Recover a lost slot while stopping its Deployment under the environment lock.
 pub async fn recover(

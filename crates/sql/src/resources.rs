@@ -255,7 +255,7 @@ pub(super) async fn prepare_statement_transaction(
         role.as_deref(),
         user_id.as_ref(),
         operation.as_deref(),
-        application.as_deref(),
+        application.as_ref(),
         None,
         policy.statement_timeout_ms,
     )?;

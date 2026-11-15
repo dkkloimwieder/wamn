@@ -45,10 +45,10 @@ fn release() -> Arc<LoadedRelease> {
             .unwrap()
     };
     let mut manifest = ServingManifest::new(
-ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base", "1.0.0").unwrap()]) },
+ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base".parse().unwrap(), "1.0.0").unwrap()]) },
 BTreeSet::from([ServingComponent {
             runtime_schema: None,
-            package_id: "base".into(),
+            package_id: "base".parse().unwrap(),
             descriptor: { let mut descriptor = ComponentDescriptor::named("entry", "0.1", digest('a')); descriptor.operations = BTreeMap::from([(READ_OPERATION.into(), AdmittedComponentOperation {
 host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: None,
@@ -62,13 +62,13 @@ host_transaction: true, input_ports: Vec::new(), output_ports: Vec::new(), param
 
         }]),
 BTreeSet::from([ServingRoute {
-            package_id: "base".into(), component: "entry".into(),
+            package_id: "base".parse().unwrap(), component: "entry".into(),
             operation: READ_OPERATION.into(), type_: OperationType::Get,
             reads: BTreeSet::new(), revision: None,
             idempotency: None,
         }]),
 BTreeMap::from([("entry".into(), ServingAttachment {
-            type_: AttachmentType::Http, package_id: "base".into(),
+            type_: AttachmentType::Http, package_id: "base".parse().unwrap(),
             target: AttachmentTarget::Route { component: "entry".into(), operation: READ_OPERATION.into() },
             definition_hash: digest('c'),
             definition: json!({"route": {"host": "entry.localhost", "path": "/entry", "method": "POST"}}),
@@ -80,12 +80,12 @@ BTreeMap::from([("entry".into(), ServingAttachment {
         reference: format!("entries@{}", digest('e')),
         route_digest: digest('f'),
         application: wamn_catalog::ServingEntryMember {
-            package_id: "base".into(),
+            package_id: "base".parse().unwrap(),
             component: "entry".into(),
             digest: digest('a'),
         },
         members: BTreeSet::from([wamn_catalog::ServingEntryMember {
-            package_id: "base".into(),
+            package_id: "base".parse().unwrap(),
             component: "entry".into(),
             digest: digest('a'),
         }]),
@@ -158,7 +158,8 @@ impl GuestCall for Run {
                         assert_eq!(
                             ctx.get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
                                 .application_for(&ctx.component_id)
-                                .as_deref(),
+                                .as_ref()
+                                .map(wamn_catalog::ApplicationName::as_str),
                             Some("receiving"),
                         );
                         ctx.get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
@@ -709,7 +710,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
             .unwrap()
             .operations[OPERATION]
             .application,
-        "receiving"
+        "receiving".parse().unwrap()
     );
     assert!(
         postgres

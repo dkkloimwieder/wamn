@@ -283,10 +283,10 @@ mod tests {
             artifact_base: "registry.example/releases".into(),
             route_host: "wms.acme.example".into(),
             applications: [(
-                "wms".to_owned(),
+                "wms".parse().unwrap(),
                 wamn_catalog::ApplicationDefinition {
                     connections: std::collections::BTreeMap::new(),
-                    packages: ["wamn_wms".to_owned()].into(),
+                    packages: ["wamn_wms".parse().unwrap()].into(),
                 },
             )]
             .into(),
@@ -306,7 +306,9 @@ mod tests {
         let (name, application) = input.applications.pop_first().unwrap();
         assert!(values(&input).is_err());
         input.applications.insert(name, application.clone());
-        input.applications.insert("another".into(), application);
+        input
+            .applications
+            .insert("another".parse().unwrap(), application);
         assert!(values(&input).is_err());
     }
 

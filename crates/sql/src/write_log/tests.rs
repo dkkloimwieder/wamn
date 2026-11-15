@@ -363,7 +363,7 @@ async fn cancellation_retains_external_claims_and_rolls_back_transactional_claim
         project_env_key_database(&pool, &"test--dev--writelogtx".parse().unwrap()).await;
     let mut observer = wamn_postgres::connect(database.as_str()).await.unwrap();
     let route = wamn_catalog::ServingRoute {
-        package_id: "base".into(),
+        package_id: "base".parse().unwrap(),
         component: "widget".into(),
         operation: OPERATION.into(),
         type_: wamn_catalog::OperationType::Command,

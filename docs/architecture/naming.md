@@ -11,6 +11,20 @@ They do not create separate package versions or authority.
 WAMN-owned source identifiers use `snake_case` where their language or wire contract requires it.
 Generated language types use the language's naming convention.
 Third-party protocol fields retain their required spelling.
+Package names use `[a-z][a-z0-9]*(_[a-z0-9]+)*`. The name `wamn` is reserved.
+`wamn_catalog::PackageName` owns this rule. Storage keeps underscores.
+WIT operation exports replace them with hyphens.
+
+Application names are nonempty SQL text. They have no character-class rule.
+`wamn_catalog::ApplicationName` refuses empty text and NUL bytes. It preserves all other text.
+
+Derived events name their application. Captured database events name their package.
+The derived event record keeps its published `package_id` JSON key for the application name.
+Run records and trace fields also keep their published wire spelling.
+
+Both types parse at input boundaries and serialize as strings. SQL reads use
+the same constructors, so invalid stored names are refused.
+
 Persisted identifiers and generated artifact names retain their declared contracts.
 Native Rust prose and private names do not redefine those contracts.
 
@@ -60,7 +74,7 @@ apply-package refuses a migration that creates such a table.
 [Data access](data-access.md#history-tables-and-the-log-trigger) owns the history table rules.
 
 The platform reserves the package id `wamn`, because its operation tokens start with `wamn:`.
-The catalog and the generator refuse it.
+The package-name constructor refuses it.
 
 The platform reserves the principal namespace `wamn:`.
 A platform component writes under the `platform."user"` row named `wamn:<component>`.

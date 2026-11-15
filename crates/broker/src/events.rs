@@ -52,23 +52,23 @@ pub fn advisory_stream_config(target: &Triple, replicas: usize) -> stream::Confi
 /// Declare one application source consumer, shared by its serving hosts.
 pub fn application_consumer(
     target: &Triple,
-    application: &str,
-    package: &str,
+    application: &wamn_catalog::ApplicationName,
+    package: &wamn_catalog::PackageName,
     entity: &str,
 ) -> anyhow::Result<pull::Config> {
-    anyhow::ensure!(!application.is_empty(), "application name must be nonempty");
     anyhow::ensure!(
         [
             target.org.as_str(),
             target.project.as_str(),
-            package,
+            target.env.as_str(),
             entity
         ]
         .into_iter()
         .all(wamn_event_wire::valid_subject_token),
         "event coordinates and source must be nonempty broker tokens"
     );
-    let durable = wamn_registry::name::application_event_consumer(application, package, entity);
+    let durable =
+        wamn_catalog::resource_names::application_event_consumer(application, package, entity);
     let filter = wamn_event_wire::entity_filter(&target.org, &target.project, &target.env, entity);
     Ok(application_consumer_config(&durable, &filter))
 }
@@ -252,7 +252,13 @@ mod tests {
     #[test]
     fn application_consumers_accept_application_names_and_refuse_invalid_source_tokens() {
         let target = Triple::new("acme", "dev".parse().unwrap(), "widgets");
-        let config = application_consumer(&target, "sales.eu", "orders", "order").unwrap();
+        let config = application_consumer(
+            &target,
+            &"sales.eu".parse().unwrap(),
+            &"orders".parse().unwrap(),
+            "order",
+        )
+        .unwrap();
         let durable = config.durable_name.as_deref().unwrap();
         assert!(wamn_event_wire::valid_subject_token(durable));
         crate::streams::validate_inputs(
@@ -264,24 +270,35 @@ mod tests {
         .unwrap();
         assert_ne!(
             config.durable_name,
-            application_consumer(&target, "sales_eu", "orders", "order")
-                .unwrap()
-                .durable_name
+            application_consumer(
+                &target,
+                &"sales_eu".parse().unwrap(),
+                &"orders".parse().unwrap(),
+                "order"
+            )
+            .unwrap()
+            .durable_name
         );
         for invalid in ["", "orders.eu", "*", "bad name"] {
-            assert!(application_consumer(&target, "sales.eu", invalid, "order").is_err());
-            assert!(application_consumer(&target, "sales.eu", "orders", invalid).is_err());
+            assert!(
+                application_consumer(
+                    &target,
+                    &"sales.eu".parse().unwrap(),
+                    &"orders".parse().unwrap(),
+                    invalid
+                )
+                .is_err()
+            );
             assert!(
                 application_consumer(
                     &Triple::new(invalid, "dev".parse().unwrap(), "widgets"),
-                    "sales.eu",
-                    "orders",
+                    &"sales.eu".parse().unwrap(),
+                    &"orders".parse().unwrap(),
                     "order"
                 )
                 .is_err()
             );
         }
-        assert!(application_consumer(&target, "", "orders", "order").is_err());
         for changed in [
             pull::Config {
                 ack_wait: Duration::ZERO,

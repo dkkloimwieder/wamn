@@ -12,7 +12,7 @@ use super::{
     bootstrap, control, identity, installation, installed::InstalledPlatform, provider, resources,
 };
 use serde_json::Value;
-use wamn_registry::lifecycle_lock::LifecycleLock;
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_release_control::release_chart;
 
 /// Apply platform resources and initialize an installation without a control release.

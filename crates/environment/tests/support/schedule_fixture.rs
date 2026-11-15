@@ -364,10 +364,10 @@ pub async fn targeted_postgres(admin: &mut Client, url: &str) -> (Arc<WamnPostgr
 /// package of its release.
 pub fn declared() -> wamn_catalog::EnvironmentApplications {
     [(
-        APP.to_owned(),
+        APP.parse().unwrap(),
         wamn_catalog::ApplicationDefinition {
             connections: std::collections::BTreeMap::new(),
-            packages: [APPLICATION.to_owned()].into(),
+            packages: [APPLICATION.parse().unwrap()].into(),
         },
     )]
     .into()
@@ -401,7 +401,7 @@ impl Fixture {
                 org: "schedule-live",
                 project: "default",
                 environment: &ENVIRONMENT.parse().unwrap(),
-                application: APP,
+                application: &APP.parse().unwrap(),
                 declared,
                 document: &document,
                 trigger,
@@ -425,7 +425,7 @@ impl Fixture {
                 org: "schedule-live",
                 project: "default",
                 environment: &ENVIRONMENT.parse().unwrap(),
-                application: APP,
+                application: &APP.parse().unwrap(),
                 workflow_id: id,
                 version: 1,
             },
@@ -448,7 +448,7 @@ impl Fixture {
                 org: "schedule-live",
                 project: "default",
                 environment: &ENVIRONMENT.parse().unwrap(),
-                application: APP,
+                application: &APP.parse().unwrap(),
                 workflow_id: id,
                 version: 1,
             },
@@ -489,7 +489,7 @@ impl Fixture {
             &self.postgres,
             PROJECT,
             &self.release,
-            APP,
+            &APP.parse().expect("valid fixture name"),
             id,
             due(at),
         )
@@ -626,8 +626,8 @@ pub async fn admit(
         PROJECT,
         &fixture.release,
         &EventBatchAdmission {
-            application: APP,
-            source_package: APPLICATION,
+            application: &APP.parse().expect("valid fixture name"),
+            source_package: &APPLICATION.parse().expect("valid fixture name"),
             entity: "order",
             envelope,
             sequence,
@@ -707,7 +707,7 @@ pub async fn changed_order(fixture: &mut Fixture) -> i64 {
 
 pub async fn release_variant(
     fixture: &mut Fixture,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     amount: &[u8; 4],
 ) -> LoadedRelease {
     let mut manifest = serde_json::to_value(fixture.release.manifest()).unwrap();

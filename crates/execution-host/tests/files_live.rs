@@ -28,8 +28,6 @@ use wamn_authority::connection::{
 use wamn_blobstore::plugin::WamnBlobstore;
 use wasmtime_wasi_http::WasiBody;
 
-#[path = "support/session_authority.rs"]
-mod session_authority;
 #[path = "support/application_fixture.rs"]
 #[expect(
     dead_code,
@@ -44,6 +42,8 @@ mod file_delete_proxy;
     reason = "The shared file fixture also supports schema and registry tests."
 )]
 mod files;
+#[path = "support/session_authority.rs"]
+mod session_authority;
 #[path = "../../authentication/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
@@ -292,7 +292,7 @@ impl FileHost {
 
     async fn read(
         &self,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         id: Uuid,
         token: Option<&str>,
     ) -> anyhow::Result<(u16, hyper::HeaderMap, Vec<u8>)> {
@@ -347,14 +347,14 @@ impl FileHost {
             "file-operation",
             ConnectionInvocation {
                 origin: ConnectionOrigin {
-                    package_id: "session_test".into(),
+                    package_id: "session_test".parse().unwrap(),
                     component_digest: digest.clone(),
                     component: "purchase".into(),
                     interface_version: "0.1.0".into(),
                     operation: READ.into(),
                 },
                 entry: InvocationEntry::Route,
-                package_id: "session_test".into(),
+                package_id: "session_test".parse().unwrap(),
                 component_digest: digest,
                 component: "purchase".into(),
                 operation: READ.into(),
@@ -688,7 +688,11 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         b"pending row"
     );
     let read = fixture
-        .read("files", kept, Some(&fixture.token(false)))
+        .read(
+            &"files".parse().expect("valid name"),
+            kept,
+            Some(&fixture.token(false)),
+        )
         .await?;
     assert_eq!(read.0, 200);
     assert_eq!(read.2, b"kept bytes");
@@ -773,11 +777,19 @@ async fn application_file_route_requires_its_grant_and_enforces_exposure_and_own
     let mut fixture = FileHost::start("file_route_access").await?;
     let id = fixture.upload("files", b"route bytes").await?;
     let token = fixture.token(false);
-    let read = fixture.read("files", id, Some(&token)).await?;
+    let read = fixture
+        .read(&"files".parse().expect("valid name"), id, Some(&token))
+        .await?;
     assert_eq!(read.0, 200);
     assert_eq!(read.1["content-type"], "text/plain");
     assert_eq!(read.2, b"route bytes");
-    assert_eq!(fixture.read("files", id, None).await?.0, 401);
+    assert_eq!(
+        fixture
+            .read(&"files".parse().expect("valid name"), id, None)
+            .await?
+            .0,
+        401
+    );
     let mut transaction = wamn_test_postgres::transaction(
         &mut fixture.writer,
         &fixture.host.first,
@@ -786,7 +798,13 @@ async fn application_file_route_requires_its_grant_and_enforces_exposure_and_own
     .await?;
     sqlx::query("DELETE FROM platform.permission WHERE role_name='purchase-reader' AND permission='wamn-control:file/get'").execute(&mut *transaction).await.map(|result| result.rows_affected())?;
     transaction.commit().await?;
-    assert_eq!(fixture.read("files", id, Some(&token)).await?.0, 403);
+    assert_eq!(
+        fixture
+            .read(&"files".parse().expect("valid name"), id, Some(&token))
+            .await?
+            .0,
+        403
+    );
     let mut transaction = wamn_test_postgres::transaction(
         &mut fixture.writer,
         &fixture.host.first,
@@ -795,7 +813,13 @@ async fn application_file_route_requires_its_grant_and_enforces_exposure_and_own
     .await?;
     sqlx::query("INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader','wamn-control:file/get')").execute(&mut *transaction).await.map(|result| result.rows_affected())?;
     transaction.commit().await?;
-    assert_eq!(fixture.read("other", id, Some(&token)).await?.0, 404);
+    assert_eq!(
+        fixture
+            .read(&"other".parse().expect("valid name"), id, Some(&token))
+            .await?
+            .0,
+        404
+    );
     assert!(
         fixture
             .mutate("expose", id, "files", Some("private"))
@@ -803,10 +827,20 @@ async fn application_file_route_requires_its_grant_and_enforces_exposure_and_own
             .get("value")
             .is_some()
     );
-    assert_eq!(fixture.read("files", id, Some(&token)).await?.0, 403);
     assert_eq!(
         fixture
-            .read("files", id, Some(&fixture.token(true)))
+            .read(&"files".parse().expect("valid name"), id, Some(&token))
+            .await?
+            .0,
+        403
+    );
+    assert_eq!(
+        fixture
+            .read(
+                &"files".parse().expect("valid name"),
+                id,
+                Some(&fixture.token(true))
+            )
             .await?
             .0,
         403
@@ -820,7 +854,9 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
     let mut fixture = FileHost::start("file_binding_removal").await?;
     let id = fixture.upload("files", b"retained bytes").await?;
     let token = fixture.token(false);
-    let read = fixture.read("files", id, Some(&token)).await?;
+    let read = fixture
+        .read(&"files".parse().expect("valid name"), id, Some(&token))
+        .await?;
     assert_eq!(read.0, 200);
     assert_eq!(read.2, b"retained bytes");
 
@@ -831,7 +867,9 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
     .execute(&mut fixture.host.admin)
     .await
     .map(drop)?;
-    let read = fixture.read("files", id, Some(&token)).await?;
+    let read = fixture
+        .read(&"files".parse().expect("valid name"), id, Some(&token))
+        .await?;
     assert_eq!(read.0, 200);
     assert_eq!(read.2, b"retained bytes");
     let upload = fixture
@@ -859,7 +897,9 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
     )
     .await?;
     tx.commit().await?;
-    let read = fixture.read("files", id, Some(&token)).await?;
+    let read = fixture
+        .read(&"files".parse().expect("valid name"), id, Some(&token))
+        .await?;
     assert_eq!(read.0, 403);
     assert_eq!(
         serde_json::from_slice::<Value>(&read.2)?["error"]["code"],
@@ -924,7 +964,11 @@ async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() ->
         )
         .await?;
     let response = fixture
-        .read("files", id, Some(&fixture.token(false)))
+        .read(
+            &"files".parse().expect("valid name"),
+            id,
+            Some(&fixture.token(false)),
+        )
         .await?;
     assert_eq!(response.0, 200);
     assert_eq!(response.2, b"committed staging");
@@ -1079,7 +1123,11 @@ async fn public_origin_returns_bytes_then_404_after_idempotent_unexpose() -> any
     assert!(row.get::<Option<String>, _>(1).is_none());
     assert_eq!(
         fixture
-            .read("files", id, Some(&fixture.token(false)))
+            .read(
+                &"files".parse().expect("valid name"),
+                id,
+                Some(&fixture.token(false))
+            )
             .await?
             .2,
         b"public bytes"
@@ -1122,7 +1170,11 @@ async fn public_exposure_without_cdn_and_every_read_binding_mutation_refuse() ->
     );
     assert_eq!(
         fixture
-            .read("files", id, Some(&fixture.token(false)))
+            .read(
+                &"files".parse().expect("valid name"),
+                id,
+                Some(&fixture.token(false))
+            )
             .await?
             .2,
         b"retained"
@@ -1171,7 +1223,11 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
     assert_eq!(refusal["error"]["code"], "file_referenced");
     assert_eq!(
         fixture
-            .read("files", id, Some(&fixture.token(false)))
+            .read(
+                &"files".parse().expect("valid name"),
+                id,
+                Some(&fixture.token(false))
+            )
             .await?
             .2,
         b"referenced bytes"
@@ -1197,7 +1253,11 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
     assert_eq!(row.get::<String, _>(1), "disabled");
     assert_eq!(
         fixture
-            .read("files", id, Some(&fixture.token(false)))
+            .read(
+                &"files".parse().expect("valid name"),
+                id,
+                Some(&fixture.token(false))
+            )
             .await?
             .0,
         403
@@ -1350,14 +1410,22 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     assert_eq!(response.bytes().await?.as_ref(), bytes);
     assert_eq!(
         fixture
-            .read("files", id, Some(&fixture.token(false)))
+            .read(
+                &"files".parse().expect("valid name"),
+                id,
+                Some(&fixture.token(false))
+            )
             .await?
             .0,
         403
     );
     assert_eq!(
         fixture
-            .read("files", id, Some(&fixture.token(true)))
+            .read(
+                &"files".parse().expect("valid name"),
+                id,
+                Some(&fixture.token(true))
+            )
             .await?
             .0,
         403,

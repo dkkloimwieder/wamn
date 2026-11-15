@@ -13,13 +13,12 @@ const PROJECT_ROLES_SQL: &str = "DO $roles$ DECLARE role_name text; BEGIN \
      END $roles$;";
 
 /// Install the project catalog on a supplied test database.
-pub async fn project(database: &str) {
-    let mut connection = wamn_postgres::connect(database).await.unwrap();
+pub async fn project(connection: &mut sqlx::PgConnection) {
     {
         let batches: &[&str] = &[PROJECT_ROLES_SQL, crate::CATALOG_SCHEMA_SQL];
         for batch in batches {
             sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
-                .execute(&mut connection)
+                .execute(&mut *connection)
                 .await
                 .expect("install the project catalog minimum");
         }

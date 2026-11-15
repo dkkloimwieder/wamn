@@ -44,24 +44,23 @@ pub fn overlay_root() -> PathBuf {
     repository_root().join("apps").join(OVERLAY_PACKAGE_ID)
 }
 
-/// The build output directory of `package`: the layout that the generator's
-/// `output_root` resolves for an application. This crate depends on no
-/// platform crate, so it spells the layout here.
-fn output_directory(package: &str) -> PathBuf {
-    repository_root().join("apps/target/wamn").join(package)
-}
-
 /// The compiled manifest of the fixture application. The fixture authors its
 /// manifest in `wamn.k`, and `wamn build` writes this file from it.
 #[must_use]
 pub fn manifest_path() -> PathBuf {
-    output_directory(PACKAGE_ID).join("wamn.json")
+    repository_root()
+        .join("apps/target/wamn")
+        .join(PACKAGE_ID)
+        .join("wamn.json")
 }
 
 /// The compiled manifest of the overlay application.
 #[must_use]
 pub fn overlay_manifest_path() -> PathBuf {
-    output_directory(OVERLAY_PACKAGE_ID).join("wamn.json")
+    repository_root()
+        .join("apps/target/wamn")
+        .join(OVERLAY_PACKAGE_ID)
+        .join("wamn.json")
 }
 
 /// The compiled manifest bytes of the fixture application.

@@ -132,14 +132,18 @@ pub fn url_with_application_name(url: &str, name: &str) -> anyhow::Result<String
 }
 
 /// Seed an admitted, queued run.
-pub async fn seed_run(client: &mut Client, run_id: &str, package_id: &str) -> anyhow::Result<()> {
+pub async fn seed_run(
+    client: &mut Client,
+    run_id: &str,
+    application: &wamn_catalog::ApplicationName,
+) -> anyhow::Result<()> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (project_env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,input_json,trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) \
                  VALUES ($1,$2,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
                          '{{\"input\":true}}','manual','00000000-0000-0000-0000-000000000001','admin','manual','00000000-0000-0000-0000-000000000001','{{}}')"
-            ))).bind(&PROJECT_ENV_KEY).bind(&run_id).bind(&package_id).bind(&WIRING_ID).bind(&WIRING_VERSION).execute(&mut *client).await.map(|result| result.rows_affected())?;
+            ))).bind(&PROJECT_ENV_KEY).bind(&run_id).bind(&application).bind(&WIRING_ID).bind(&WIRING_VERSION).execute(&mut *client).await.map(|result| result.rows_affected())?;
     sqlx::query(sqlx::AssertSqlSafe(
         (&format!(
             "INSERT INTO {SCHEMA}.run_queue \
@@ -173,7 +177,7 @@ pub async fn expire_effect_run(client: &mut Client, run_id: &str) -> anyhow::Res
 }
 
 pub async fn seed_exhausted_run(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
-    seed_run(client, run_id, PACKAGE_ID).await?;
+    seed_run(client, run_id, &PACKAGE_ID.parse().unwrap()).await?;
     sqlx::query(sqlx::AssertSqlSafe(
         (&format!(
             "UPDATE {SCHEMA}.run_queue \

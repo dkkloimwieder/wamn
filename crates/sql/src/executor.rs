@@ -11,7 +11,7 @@ struct ExecutorIdentity<'a> {
     runner: Option<&'a str>,
     user: Option<&'a wamn_identity_protocol::PrincipalId>,
     operation: Option<&'a str>,
-    application: Option<&'a str>,
+    application: Option<&'a wamn_catalog::ApplicationName>,
 }
 
 impl WamnPostgres {
@@ -198,7 +198,7 @@ impl wamn_connections::production_lease::ExecutorDatabase for WamnPostgres {
                 runner: runner.as_deref(),
                 user: user.as_ref(),
                 operation: operation.as_deref(),
-                application: application.as_deref(),
+                application: application.as_ref(),
             },
             false,
         )

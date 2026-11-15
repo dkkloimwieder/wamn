@@ -115,11 +115,15 @@ impl Journey<'_> {
         Ok(())
     }
 
-    fn deploy(&self, application: &str, digest: &wamn_digest::Digest) -> Command {
+    fn deploy(
+        &self,
+        application: &wamn_catalog::ApplicationName,
+        digest: &wamn_digest::Digest,
+    ) -> Command {
         let mut command = self.command(&[
             "deploy",
             "--application",
-            application,
+            application.as_str(),
             "--release",
             &digest.to_string(),
             "--env",
@@ -133,7 +137,7 @@ impl Journey<'_> {
         let release = status["applications"]["alpha"]["current"]
             .as_str()
             .context("canonical alpha selection")?;
-        Ok(self.deploy("alpha", &release.parse()?))
+        Ok(self.deploy(&"alpha".parse().unwrap(), &release.parse()?))
     }
 
     async fn status(&self) -> anyhow::Result<Value> {
@@ -150,9 +154,14 @@ impl Journey<'_> {
         Ok(status)
     }
 
-    async fn route(&self, app: &str, route: &str, body: &Value) -> anyhow::Result<Value> {
+    async fn route(
+        &self,
+        app: &wamn_catalog::ApplicationName,
+        route: &str,
+        body: &Value,
+    ) -> anyhow::Result<Value> {
         let status = self.status().await?;
-        let hostname = status["applications"][app]["hostname"]
+        let hostname = status["applications"][app.as_str()]["hostname"]
             .as_str()
             .context("canonical application hostname")?;
         let mut base = url::Url::parse(self.edge)?;
@@ -180,7 +189,7 @@ impl Journey<'_> {
 
     async fn publish(
         &self,
-        app: &str,
+        app: &wamn_catalog::ApplicationName,
         version: &str,
         root: &Path,
     ) -> anyhow::Result<wamn_digest::Digest> {
@@ -525,7 +534,9 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
 fn case_document(document: &EnvironmentDocument, case: Case) -> EnvironmentDocument {
     let mut document = document.clone();
     if case == Case::PlatformSchema {
-        document.applications.retain(|name, _| name == "alpha");
+        document
+            .applications
+            .retain(|name, _| name.as_str() == "alpha");
     }
     if case == Case::ControlOperations {
         document.schema.mode = Some(SchemaMode::Migrate);
@@ -544,26 +555,34 @@ async fn prepare_artifacts(
     let mut artifacts = BTreeMap::new();
     artifacts.insert(
         "a0",
-        journey.publish("alpha", "1.0.0", &sources["alpha"]).await?,
+        journey
+            .publish(&"alpha".parse().unwrap(), "1.0.0", &sources["alpha"])
+            .await?,
     );
     if cases.iter().any(|case| *case != Case::PlatformSchema) {
         artifacts.insert(
             "b0",
-            journey.publish("beta", "1.0.0", &sources["beta"]).await?,
+            journey
+                .publish(&"beta".parse().unwrap(), "1.0.0", &sources["beta"])
+                .await?,
         );
     }
     if cases.contains(&Case::Recovery) {
         version(&sources["alpha"], "1.0.0", "1.0.1")?;
         artifacts.insert(
             "a1",
-            journey.publish("alpha", "1.0.1", &sources["alpha"]).await?,
+            journey
+                .publish(&"alpha".parse().unwrap(), "1.0.1", &sources["alpha"])
+                .await?,
         );
     }
     if cases.contains(&Case::ControlOperations) {
         version(&sources["beta"], "1.0.0", "1.0.1")?;
         artifacts.insert(
             "b1",
-            journey.publish("beta", "1.0.1", &sources["beta"]).await?,
+            journey
+                .publish(&"beta".parse().unwrap(), "1.0.1", &sources["beta"])
+                .await?,
         );
         version(&sources["alpha"], "1.0.0", "1.1.0")?;
         std::fs::write(
@@ -572,7 +591,9 @@ async fn prepare_artifacts(
         )?;
         artifacts.insert(
             "schema",
-            journey.publish("alpha", "1.1.0", &sources["alpha"]).await?,
+            journey
+                .publish(&"alpha".parse().unwrap(), "1.1.0", &sources["alpha"])
+                .await?,
         );
     }
     if cases.contains(&Case::Reset) {
@@ -594,17 +615,24 @@ async fn prepare_artifacts(
             &initial,
             format!("{sql}\nCREATE INDEX widget_note_idx ON alpha_data.widget (note);\n"),
         )?;
-        artifacts.insert("reset", journey.publish("alpha", "1.1.0", root).await?);
+        artifacts.insert(
+            "reset",
+            journey
+                .publish(&"alpha".parse().unwrap(), "1.1.0", root)
+                .await?,
+        );
         std::fs::write(manifest, code)?;
         std::fs::write(initial, sql)?;
         let mut isolated = document.clone();
         isolated.env = format!("isolated-{}", journey.environment).parse()?;
-        isolated.applications.retain(|name, _| name == "beta");
+        isolated
+            .applications
+            .retain(|name, _| name.as_str() == "beta");
         std::fs::write(&journey.file, isolated.to_kcl())?;
         artifacts.insert(
             "isolation",
             journey
-                .publish("beta", "isolation", &sources["beta"])
+                .publish(&"beta".parse().unwrap(), "isolation", &sources["beta"])
                 .await?,
         );
         let root = &sources["beta"];
@@ -638,17 +666,21 @@ async fn prepare_artifacts(
         )?;
         artifacts.insert(
             "isolation_capture",
-            journey.publish("beta", "isolation-capture", root).await?,
+            journey
+                .publish(&"beta".parse().unwrap(), "isolation-capture", root)
+                .await?,
         );
     }
     std::fs::write(&journey.file, document.to_kcl())?;
     Ok(artifacts)
 }
 
-async fn data(journey: &Journey<'_>) -> anyhow::Result<BTreeMap<String, (Value, Value)>> {
+async fn data(
+    journey: &Journey<'_>,
+) -> anyhow::Result<BTreeMap<wamn_catalog::ApplicationName, (Value, Value)>> {
     let mut rows = BTreeMap::new();
     let mut status = journey.status().await?;
-    let applications: BTreeMap<String, Value> =
+    let applications: BTreeMap<wamn_catalog::ApplicationName, Value> =
         serde_json::from_value(status["applications"].take())?;
     for app in applications.into_keys() {
         let counter = journey
@@ -712,7 +744,7 @@ async fn reset(
         journey
             .apply(
                 &format!("install-{application}"),
-                &mut journey.deploy(application, &artifacts[key]),
+                &mut journey.deploy(&application.parse().unwrap(), &artifacts[key]),
             )
             .await?;
     }
@@ -722,7 +754,7 @@ async fn reset(
     let mut writers = Vec::new();
     for app in rows.keys() {
         let running = runtime(journey, app).await?;
-        let name = selections["applications"][app]["observed"]["release_name"]
+        let name = selections["applications"][app.as_str()]["observed"]["release_name"]
             .as_str()
             .context("application release")?;
         writers.push(wamn_registry::name::resource_suffix("hostgroup", name));
@@ -776,7 +808,8 @@ async fn reset(
     ensure!(indexed, "reset omitted the selected package's index");
     for (app, (_, widget)) in &rows {
         ensure!(
-            status["applications"][app]["current"] == selections["applications"][app]["current"],
+            status["applications"][app.as_str()]["current"]
+                == selections["applications"][app.as_str()]["current"],
             "reset changed {app}'s code selections"
         );
         let removed: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
@@ -827,7 +860,7 @@ async fn application_recovery(
     journey
         .apply(
             "install-alpha",
-            &mut journey.deploy("alpha", &artifacts["a0"]),
+            &mut journey.deploy(&"alpha".parse().unwrap(), &artifacts["a0"]),
         )
         .await?;
     let rows = data(journey).await?;
@@ -895,7 +928,7 @@ async fn first_install(
         org,
         journey.project,
         journey.environment,
-        "beta",
+        &"beta".parse().unwrap(),
     )?;
     let mut environment = Value::Null;
     for after_sql in [false, true] {
@@ -932,7 +965,7 @@ async fn first_install(
                 .await?;
         }
         let mut command = if after_sql {
-            journey.deploy("beta", digest)
+            journey.deploy(&"beta".parse().unwrap(), digest)
         } else {
             let mut command = journey.cli(&journey.run.binary, &["env", "apply"]);
             command.arg(&journey.file).args(["--application", "beta"]);
@@ -1042,7 +1075,10 @@ async fn first_install(
     let mut database = observer(journey).await?;
     let baseline = stored(journey, &mut database).await?;
     let output = journey
-        .run("install-beta", &mut journey.deploy("beta", digest))
+        .run(
+            "install-beta",
+            &mut journey.deploy(&"beta".parse().unwrap(), digest),
+        )
         .await?;
     ensure!(
         output.status.success(),
@@ -1077,7 +1113,7 @@ async fn first_install(
     );
     journey
         .route(
-            "beta",
+            &"beta".parse().unwrap(),
             "widget/list",
             &json!([{"selector":{},"maker_id":null}]),
         )
@@ -1133,7 +1169,7 @@ async fn sources(
         roots.insert("beta", apps.join("beta"));
     }
     for (&app, root) in &roots {
-        copy_source(&apps.join("platform_fixture"), root, app)?;
+        copy_source(&apps.join("platform_fixture"), root, &app.parse().unwrap())?;
         let manifest = root.join("wamn.k");
         let text = std::fs::read_to_string(&manifest)?.replace(
             "version = \"2.1.1\"",
@@ -1181,7 +1217,11 @@ async fn sources(
     Ok(roots)
 }
 
-fn copy_source(source: &Path, target: &Path, app: &str) -> anyhow::Result<()> {
+fn copy_source(
+    source: &Path,
+    target: &Path,
+    app: &wamn_catalog::PackageName,
+) -> anyhow::Result<()> {
     std::fs::create_dir_all(target)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
@@ -1189,9 +1229,9 @@ fn copy_source(source: &Path, target: &Path, app: &str) -> anyhow::Result<()> {
         let name = name
             .to_str()
             .context("fixture source path is not UTF-8")?
-            .replace("platform_fixture", app)
-            .replace("platform-fixture", app)
-            .replace("fixture", app);
+            .replace("platform_fixture", app.as_str())
+            .replace("platform-fixture", app.as_str())
+            .replace("fixture", app.as_str());
         let destination = target.join(name);
         if entry.file_type()?.is_dir() {
             copy_source(&entry.path(), &destination, app)?;
@@ -1199,8 +1239,8 @@ fn copy_source(source: &Path, target: &Path, app: &str) -> anyhow::Result<()> {
             let text = std::fs::read_to_string(entry.path())?;
             std::fs::write(
                 destination,
-                text.replace("platform_fixture", app)
-                    .replace("platform-fixture", app)
+                text.replace("platform_fixture", app.as_str())
+                    .replace("platform-fixture", app.as_str())
                     .replace("inventory", &format!("{app}_data"))
                     .replace("\"fixture\"", &format!("\"{app}\""))
                     .replace(
@@ -1287,9 +1327,12 @@ async fn stored(journey: &Journey<'_>, client: &mut sqlx::PgConnection) -> anyho
     Ok(identity)
 }
 
-async fn runtime(journey: &Journey<'_>, app: &str) -> anyhow::Result<Value> {
+async fn runtime(
+    journey: &Journey<'_>,
+    app: &wamn_catalog::ApplicationName,
+) -> anyhow::Result<Value> {
     let status = journey.status().await?;
-    let selected = &status["applications"][app];
+    let selected = &status["applications"][app.as_str()];
     let observed = &selected["observed"];
     let name = observed["release_name"]
         .as_str()
@@ -1369,10 +1412,13 @@ async fn recovery(
     ]))
     .await?;
     let result = async {
-        let before = runtime(journey, "beta").await?;
-        let alpha_before = runtime(journey, "alpha").await?;
+        let before = runtime(journey, &"beta".parse().unwrap()).await?;
+        let alpha_before = runtime(journey, &"alpha".parse().unwrap()).await?;
         let output = journey
-            .run("failed-alpha", &mut journey.deploy("alpha", candidate))
+            .run(
+                "failed-alpha",
+                &mut journey.deploy(&"alpha".parse().unwrap(), candidate),
+            )
             .await?;
         ensure!(
             !output.status.success(),
@@ -1392,13 +1438,13 @@ async fn recovery(
         );
         journey
             .route(
-                "alpha",
+                &"alpha".parse().unwrap(),
                 "widget/list",
                 &json!([{"selector":{},"maker_id":null}]),
             )
             .await?;
         ensure!(
-            runtime(journey, "beta").await? == before,
+            runtime(journey, &"beta".parse().unwrap()).await? == before,
             "failed replacement changed beta"
         );
         let name = alpha["observed"]["release_name"]
@@ -1415,7 +1461,7 @@ async fn recovery(
         );
         journey
             .route(
-                "beta",
+                &"beta".parse().unwrap(),
                 "widget/list",
                 &json!([{"selector":{},"maker_id":null}]),
             )
@@ -1464,12 +1510,12 @@ async fn recovery(
             "interrupted replacement changed database or schema identity"
         );
         ensure!(
-            runtime(journey, "beta").await? == before,
+            runtime(journey, &"beta".parse().unwrap()).await? == before,
             "interrupted replacement changed beta"
         );
         journey
             .route(
-                "alpha",
+                &"alpha".parse().unwrap(),
                 "widget/list",
                 &json!([{"selector":{},"maker_id":null}]),
             )
@@ -1483,7 +1529,10 @@ async fn recovery(
     result?;
     cleanup?;
     journey
-        .apply("recover-alpha", &mut journey.deploy("alpha", candidate))
+        .apply(
+            "recover-alpha",
+            &mut journey.deploy(&"alpha".parse().unwrap(), candidate),
+        )
         .await?;
     let status = journey.status().await?;
     let selected = &status["applications"]["alpha"];
@@ -1507,7 +1556,7 @@ async fn recovery(
     );
     let served = journey
         .route(
-            "alpha",
+            &"alpha".parse().unwrap(),
             "widget/list",
             &json!([{"selector":{},"maker_id":null}]),
         )

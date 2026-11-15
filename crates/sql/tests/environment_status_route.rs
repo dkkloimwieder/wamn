@@ -71,10 +71,10 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
         )
         .with_applications(
             [(
-                "purchasing".to_owned(),
+                "purchasing".parse().unwrap(),
                 wamn_catalog::ApplicationDefinition {
                     connections: std::collections::BTreeMap::new(),
-                    packages: ["status_test".to_owned()].into(),
+                    packages: ["status_test".parse().unwrap()].into(),
                 },
             )]
             .into(),

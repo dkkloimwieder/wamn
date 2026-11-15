@@ -165,7 +165,6 @@ fn validate_session_identity(
     runner: Option<&str>,
     role: Option<&str>,
     operation: Option<&str>,
-    application: Option<&str>,
 ) -> Result<(), PgError> {
     if let Some(schema) = schema
         && !valid_schema(schema)
@@ -201,14 +200,6 @@ fn validate_session_identity(
             "invalid executing operation".to_string(),
         )));
     }
-    if let Some(application) = application
-        && !valid_application(application)
-    {
-        return Err(PgError::QueryError((
-            "WAMN0".to_string(),
-            "invalid executing application".to_string(),
-        )));
-    }
     Ok(())
 }
 
@@ -217,13 +208,6 @@ fn validate_session_identity(
 /// unbound value, so it is not an identity.
 fn valid_operation(operation: &str) -> bool {
     !operation.is_empty()
-}
-
-/// A non-empty application name. The value binds as a
-/// parameter, so no charset rule applies. `''` is the unbound value, so it is
-/// not an identity.
-fn valid_application(application: &str) -> bool {
-    !application.is_empty()
 }
 
 impl WamnPostgres {
@@ -256,7 +240,7 @@ impl WamnPostgres {
     pub async fn configure_revocation(
         &mut self,
         project: &str,
-        applications: &[&str],
+        applications: &[&wamn_catalog::ApplicationName],
     ) -> anyhow::Result<()> {
         let (mut connection, _) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
@@ -266,7 +250,7 @@ impl WamnPostgres {
         for (target_type, target_id) in std::iter::once(("project", project)).chain(
             applications
                 .iter()
-                .map(|application| ("application", *application)),
+                .map(|application| ("application", application.as_str())),
         ) {
             let row = sqlx::query(sqlx::AssertSqlSafe(("SELECT value::text FROM platform.setting WHERE target_type=$1 AND target_id=$2 AND key='revocation-seconds'").to_string())).bind(target_type).bind(target_id).fetch_optional(&mut *connection).await.context("read revocation configuration")?
                 .with_context(|| format!("{target_type} {target_id} must state revocation-seconds"))?;
@@ -552,18 +536,16 @@ impl WamnPostgres {
 
     /// Register the application that runs the component's operation.
     /// Each transaction records it in the protected caller identity.
-    pub fn set_application(&self, component_id: &str, application: &str) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            valid_application(application),
-            "invalid executing application {application:?}: a non-empty application name is required"
-        );
+    pub fn set_application(&self, component_id: &str, application: wamn_catalog::ApplicationName) {
         self.scopes.update::<Authority, _>(component_id, |record| {
-            record.identity.application = Some(application.to_string());
+            record.identity.application = Some(application);
         });
-        Ok(())
     }
 
-    pub(super) fn application_for(&self, component_id: &str) -> Option<String> {
+    pub(super) fn application_for(
+        &self,
+        component_id: &str,
+    ) -> Option<wamn_catalog::ApplicationName> {
         self.scopes
             .read::<Authority, _>(component_id, |record| record.identity.application.clone())
             .flatten()
@@ -852,7 +834,7 @@ impl WamnPostgres {
             .components
             .iter()
             .find(|component| {
-                component.package_id == lookup.package_id
+                &component.package_id == lookup.package_id
                     && component.descriptor.component_digest == *lookup.component_digest
                     && component.descriptor.component == invocation.component
             })
@@ -862,12 +844,19 @@ impl WamnPostgres {
             .operations
             .get(lookup.operation)
             .context("release does not carry the executing operation")?;
-        let entry_matches = match (&invocation.entry, lookup.entry.wiring) {
-            (wamn_authority::connection::InvocationEntry::Route, None) => {
-                lookup.entry.package_id == invocation.origin.package_id
-            }
-            (wamn_authority::connection::InvocationEntry::Wiring(position), Some(wiring)) => {
-                lookup.entry.package_id == position.package_id
+        let entry_matches = match (&invocation.entry, lookup.entry) {
+            (
+                wamn_authority::connection::InvocationEntry::Route,
+                wamn_authority::identity::ConnectionEntryLookup::Route { package_id },
+            ) => package_id == &invocation.origin.package_id,
+            (
+                wamn_authority::connection::InvocationEntry::Wiring(position),
+                wamn_authority::identity::ConnectionEntryLookup::Wiring {
+                    application,
+                    wiring,
+                },
+            ) => {
+                application == &position.application
                     && wiring.wiring_id == position.wiring_id
                     && u32::try_from(wiring.wiring_version).ok() == Some(position.wiring_version)
                     && wiring.node_id == position.node_id
@@ -875,10 +864,10 @@ impl WamnPostgres {
             _ => false,
         };
         if !entry_matches
-            || lookup.package_id != invocation.package_id
+            || lookup.package_id != &invocation.package_id
             || *lookup.component_digest != invocation.component_digest
             || lookup.operation != invocation.operation
-            || lookup.origin_package_id != invocation.origin.package_id
+            || lookup.origin_package_id != &invocation.origin.package_id
             || *lookup.origin_component_digest != invocation.origin.component_digest
             || lookup.origin_component != invocation.origin.component
             || lookup.origin_interface_version != invocation.origin.interface_version
@@ -898,8 +887,8 @@ impl WamnPostgres {
             binding.component_digest == *lookup.component_digest
                 && binding.name == lookup.store_alias
                 && packages.contains(&binding.package_id)
-                && (lookup.package_id == wamn_catalog::PALETTE_PACKAGE_ID
-                    || binding.package_id == lookup.package_id)
+                && (lookup.package_id.as_str() == wamn_catalog::PALETTE_PACKAGE_ID
+                    || &binding.package_id == lookup.package_id)
         });
         let binding = bindings.next();
         let read_only = match binding {
@@ -1349,13 +1338,6 @@ pub(crate) fn validate_identity(identity: &SessionIdentity) -> anyhow::Result<()
     anyhow::ensure!(
         identity.operation.as_deref().is_none_or(valid_operation),
         "invalid operation"
-    );
-    anyhow::ensure!(
-        identity
-            .application
-            .as_deref()
-            .is_none_or(valid_application),
-        "invalid application"
     );
     Ok(())
 }

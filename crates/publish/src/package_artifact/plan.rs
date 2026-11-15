@@ -45,16 +45,11 @@ pub(super) fn image_manifest(
 }
 
 /// The package id and version of a package manifest.
-pub(super) fn package_coordinate(manifest: &[u8]) -> anyhow::Result<(String, String)> {
-    let document: serde_json::Value = serde_json::from_slice(manifest)?;
-    let field = |pointer: &str| {
-        document
-            .pointer(pointer)
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-            .with_context(|| format!("the manifest has no {pointer}"))
-    };
-    Ok((field("/package/id")?, field("/package/version")?))
+pub(super) fn package_coordinate(
+    manifest: &[u8],
+) -> anyhow::Result<(wamn_catalog::PackageName, String)> {
+    let document: wamn_compiler::manifest::OperationOwners = serde_json::from_slice(manifest)?;
+    Ok((document.package.id, document.package.version))
 }
 
 /// One deterministic tar of `entries`, keyed by package-relative path.

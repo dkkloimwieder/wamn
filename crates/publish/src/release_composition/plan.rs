@@ -43,7 +43,7 @@ pub(super) fn built_component(
         ));
     }
     Ok(SelectedComponentArtifact {
-        package_id: package.manifest.package.id.clone().into_boxed_str(),
+        package_id: package.manifest.package.id.clone(),
         package_version: package.manifest.package.version.clone().into_boxed_str(),
         component: component.into(),
         path,

@@ -161,7 +161,7 @@ fn component(
         .clone()
         .into_admitted(wamn_catalog::ComponentPackageCoordinate::new(
             &PROJECT_ENV_KEY.parse().unwrap(),
-            name,
+            name.parse()?,
             "1.0.0",
         )?);
     let config =
@@ -185,7 +185,7 @@ fn component(
         [bytes, config],
     );
     Ok(ServingComponent {
-        package_id: name.into(),
+        package_id: name.parse()?,
         descriptor,
         runtime_schema: None,
     })
@@ -274,8 +274,8 @@ fn release(
         format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         release: wamn_catalog::ServingRelease {
             packages: BTreeSet::from([
-                PackageCoordinate::new(&component.package_id, version)?,
-                PackageCoordinate::new("wamn_integration", "1.0.0")?,
+                PackageCoordinate::new(component.package_id.clone(), version)?,
+                PackageCoordinate::new("wamn_integration".parse().expect("valid name"), "1.0.0")?,
             ]),
         },
         composed_entry: None,
@@ -506,7 +506,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         system.url(),
         &platform_migration_input,
         &migration_input,
-        Some("a"),
+        Some(&"a".parse().expect("valid name")),
     )
     .await
     .context("initialize a")?;
@@ -532,7 +532,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         expand::prepare(
             &platform,
             &document,
-            "b",
+            &"b".parse().expect("valid name"),
             &b.digest(),
             &b,
             &[b_package.clone(), base_package.clone()],
@@ -546,11 +546,22 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &mut document.applications.get_mut("b").unwrap().current,
         wamn_environment::environment::document::DeclaredRelease::None,
     );
-    let (candidate_release, candidates) =
-        sql::schema::release_candidates(&platform, &document, "b", Some(&b.digest())).await?;
+    let (candidate_release, candidates) = sql::schema::release_candidates(
+        &platform,
+        &document,
+        &"b".parse().expect("valid name"),
+        Some(&b.digest()),
+    )
+    .await?;
     let state = sql::schema::state(&platform, &document).await?;
-    let diff =
-        sql::schema::plan(&document, "b", Some(candidate_release), &candidates, &state).await?;
+    let diff = sql::schema::plan(
+        &document,
+        &"b".parse().expect("valid name"),
+        Some(candidate_release),
+        &candidates,
+        &state,
+    )
+    .await?;
     assert!(diff.packages["b"].installed.is_none());
     assert_eq!(
         sql::schema::state(&platform, &document).await?.packages,
@@ -558,7 +569,14 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     );
     // Published SQL remains executable after its source directory disappears.
     std::fs::remove_dir_all(scratch.path().join("b"))?;
-    sql::schema::apply(&platform, &document, "b", &b.digest(), &migration_input).await?;
+    sql::schema::apply(
+        &platform,
+        &document,
+        &"b".parse().expect("valid name"),
+        &b.digest(),
+        &migration_input,
+    )
+    .await?;
     let installed = sql::schema::state(&platform, &document).await?;
     for (id, package) in &diff.packages {
         assert_eq!(
@@ -578,7 +596,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         system.url(),
         &platform_migration_input,
         &migration_input,
-        Some("b"),
+        Some(&"b".parse().unwrap()),
     )
     .await
     .context("initialize b")?;
@@ -637,8 +655,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .map(drop)?;
     // Initialization extends capture from all installed baselines, even when the
     // caller supplies only B's selected document.
-    let selected_b =
-        wamn_environment::environment::analyse::select_application(&document, Some("b"))?;
+    let selected_b = wamn_environment::environment::analyse::select_application(
+        &document,
+        Some(&"b".parse().expect("valid name")),
+    )?;
     let captured = ensure::installed_manifests(&platform, &selected_b).await?;
     let schemas = captured
         .iter()
@@ -664,7 +684,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     expand::prepare(
         &platform,
         &document,
-        "a",
+        &"a".parse().expect("valid name"),
         &old_a.digest(),
         &old_a,
         &old_packages,
@@ -674,7 +694,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     expand::prepare(
         &platform,
         &document,
-        "b",
+        &"b".parse().expect("valid name"),
         &b.digest(),
         &b,
         &[b_package, base_package.clone()],
@@ -718,14 +738,17 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         system.url(),
         &platform_migration_input,
         &migration_input,
-        Some("a"),
+        Some(&"a".parse().expect("valid name")),
     )
     .await
     .context("retry initialization")?;
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
     let principal = |name: &str| {
-        wamn_platform_identity::application_subject(&PROJECT_ENV_KEY.parse().unwrap(), name)
+        wamn_platform_identity::application_subject(
+            &PROJECT_ENV_KEY.parse().unwrap(),
+            &name.parse().unwrap(),
+        )
     };
     let a_user = wamn_platform_identity::resolve_subject(
         &mut admin,
@@ -749,8 +772,11 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             "dev".parse().unwrap(),
         )
         .with_applications(
-            wamn_environment::environment::analyse::select_application(&document, Some("a"))?
-                .membership(),
+            wamn_environment::environment::analyse::select_application(
+                &document,
+                Some(&"a".parse().unwrap()),
+            )?
+            .membership(),
         ),
     )?;
     let b_permissions = permissions(&mut observer, b_user.id()).await?;
@@ -763,7 +789,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .connections
         .insert(
             "extra".into(),
-            wamn_registry::configuration::ConnectionReference {
+            wamn_catalog::configuration::ConnectionReference {
                 name: "erp".into(),
                 version: None,
             },
@@ -783,7 +809,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     expand::prepare(
         &platform,
         &document,
-        "a",
+        &"a".parse().expect("valid name"),
         &new_a.digest(),
         &new_a,
         &candidate_packages,
@@ -793,7 +819,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     expand::prepare(
         &platform,
         &document,
-        "a",
+        &"a".parse().expect("valid name"),
         &new_a.digest(),
         &new_a,
         &candidate_packages,
@@ -833,7 +859,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .connections
         .insert(
             "failed".into(),
-            wamn_registry::configuration::ConnectionReference {
+            wamn_catalog::configuration::ConnectionReference {
                 name: "erp".into(),
                 version: None,
             },
@@ -882,7 +908,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         expand::prepare(
             &platform,
             &document,
-            "a",
+            &"a".parse().expect("valid name"),
             &failed_release.digest(),
             &failed_release,
             &failed_packages,
@@ -1047,11 +1073,11 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             observer_url.as_str(),
             &PROJECT_ENV_KEY.parse().unwrap(),
             &"dev".parse().unwrap(),
-            Some(&["a".to_owned()]),
+            Some(&["a".parse().unwrap()]),
             &BTreeMap::from([
-                (("a".into(), new_a.digest()), 1),
+                (("a".parse().expect("valid name"), new_a.digest()), 1),
                 // Another application loading the old digest cannot serve a's pinned run.
-                (("b".into(), old_a.digest()), 1),
+                (("b".parse().expect("valid name"), old_a.digest()), 1),
             ]),
         )
         .await?;
@@ -1101,7 +1127,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     expand::prepare(
         &platform,
         &document,
-        "a",
+        &"a".parse().expect("valid name"),
         &old_a.digest(),
         &old_a,
         &old_packages,

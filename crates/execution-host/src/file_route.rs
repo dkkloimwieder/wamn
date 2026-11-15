@@ -195,7 +195,7 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
     /// Resolve an application's binding, or an existing file's active generation.
     async fn lookup(
         &self,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         binding: Option<&str>,
         pinned: Option<&str>,
     ) -> Result<FileConnection, FileError>;
@@ -249,7 +249,7 @@ impl FileConnections for RegistryFileConnections {
 
     async fn lookup(
         &self,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         binding: Option<&str>,
         pinned: Option<&str>,
     ) -> Result<FileConnection, FileError> {
@@ -288,7 +288,8 @@ impl FileConnections for RegistryFileConnections {
                         .find_map(|component| {
                             (component.descriptor.component_digest == binding.component_digest
                                 && (component.package_id == binding.package_id
-                                    || component.package_id == wamn_catalog::PALETTE_PACKAGE_ID))
+                                    || component.package_id.as_str()
+                                        == wamn_catalog::PALETTE_PACKAGE_ID))
                                 .then(|| {
                                     component
                                         .descriptor
@@ -351,20 +352,20 @@ impl FileConnections for RegistryFileConnections {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileRequest {
-    application: String,
+    application: wamn_catalog::ApplicationName,
     file_id: Uuid,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DeleteRequest {
-    application: String,
+    application: wamn_catalog::ApplicationName,
     file_id: Uuid,
     binding: String,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExposeRequest {
-    application: String,
+    application: wamn_catalog::ApplicationName,
     file_id: Uuid,
     binding: String,
     exposure: Exposure,
@@ -439,7 +440,7 @@ impl FileRoutes {
 
     async fn store(
         &self,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         binding: Option<&str>,
         pinned: Option<&str>,
         write: bool,
@@ -481,7 +482,7 @@ impl FileRoutes {
     async fn record(
         &self,
         principal: &PrincipalId,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         id: Uuid,
         action: &str,
     ) -> Result<FileRecord, FileError> {
@@ -517,7 +518,7 @@ impl FileRoutes {
     pub async fn put(
         &self,
         caller: &AuthenticatedCaller,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         binding: &str,
         name: &str,
         media_type: &str,
@@ -550,7 +551,7 @@ impl FileRoutes {
     async fn get(
         &self,
         caller: &AuthenticatedCaller,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         id: Uuid,
     ) -> Result<hyper::Response<WasiBody>, FileError> {
         let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
@@ -949,7 +950,7 @@ fn declares_store(
 
 fn require_binding(
     release: &LoadedRelease,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     binding: Option<&str>,
     pinned: Option<&str>,
     connection: &FileConnection,
@@ -1022,24 +1023,31 @@ fn signed_lifetime(requested: Duration) -> Result<Duration, FileError> {
 #[derive(Debug, PartialEq, Eq)]
 enum NativeRoute {
     Invalid,
-    Upload { application: String },
-    Get { application: String, id: Uuid },
+    Upload {
+        application: wamn_catalog::ApplicationName,
+    },
+    Get {
+        application: wamn_catalog::ApplicationName,
+        id: Uuid,
+    },
 }
 fn native_route(path: &str) -> Option<NativeRoute> {
     let parts: Vec<_> = path.split('/').collect();
     match parts.as_slice() {
-        ["", "api", application, "files"] if !application.is_empty() => Some(NativeRoute::Upload {
-            application: (*application).to_owned(),
+        ["", "api", application, "files"] => Some(match application.parse() {
+            Ok(application) => NativeRoute::Upload { application },
+            Err(_) => NativeRoute::Invalid,
         }),
-        ["", "api", application, "files", id] if !application.is_empty() => {
-            Some(NativeRoute::Get {
-                application: (*application).to_owned(),
-                id: match id.parse() {
-                    Ok(id) => id,
-                    Err(_) => return Some(NativeRoute::Invalid),
-                },
-            })
-        }
+        ["", "api", application, "files", id] => Some(NativeRoute::Get {
+            application: match application.parse() {
+                Ok(application) => application,
+                Err(_) => return Some(NativeRoute::Invalid),
+            },
+            id: match id.parse() {
+                Ok(id) => id,
+                Err(_) => return Some(NativeRoute::Invalid),
+            },
+        }),
         ["", "api", _, "files", ..] => Some(NativeRoute::Invalid),
         _ => None,
     }
@@ -1204,10 +1212,14 @@ mod tests {
         }];
         let mut manifest = ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("app", "1.0.0").unwrap()]),
+                packages: BTreeSet::from([PackageCoordinate::new(
+                    "app".parse().expect("valid name"),
+                    "1.0.0",
+                )
+                .unwrap()]),
             },
             BTreeSet::from([ServingComponent {
-                package_id: "app".into(),
+                package_id: "app".parse().unwrap(),
                 runtime_schema: None,
                 descriptor: {
                     let mut descriptor = descriptor;
@@ -1239,9 +1251,9 @@ mod tests {
                     "dev".parse().unwrap(),
                 )
                 .with_applications(BTreeMap::from([(
-                    "orders".into(),
+                    "orders".parse().unwrap(),
                     ApplicationDefinition {
-                        packages: BTreeSet::from(["app".into()]),
+                        packages: BTreeSet::from(["app".parse().expect("valid name")]),
                         connections: BTreeMap::new(),
                     },
                 )])),
@@ -1281,7 +1293,7 @@ mod tests {
     impl FileConnections for NoConnections {
         async fn lookup(
             &self,
-            _: &str,
+            _: &wamn_catalog::ApplicationName,
             _: Option<&str>,
             _: Option<&str>,
         ) -> Result<FileConnection, FileError> {
@@ -1384,7 +1396,7 @@ mod tests {
         assert!(
             require_binding(
                 &release,
-                "orders",
+                &"orders".parse().unwrap(),
                 Some("documents"),
                 None,
                 &connection,
@@ -1402,16 +1414,34 @@ mod tests {
             ),
         ] {
             assert!(
-                require_binding(&release, application, binding, pinned, &connection, true).is_err()
+                require_binding(
+                    &release,
+                    &application.parse().unwrap(),
+                    binding,
+                    pinned,
+                    &connection,
+                    true
+                )
+                .is_err()
             );
         }
         let mut read = connection.clone();
         read.read_only = true;
-        assert!(require_binding(&release, "orders", Some("documents"), None, &read, true).is_err());
         assert!(
             require_binding(
                 &release,
-                "orders",
+                &"orders".parse().unwrap(),
+                Some("documents"),
+                None,
+                &read,
+                true
+            )
+            .is_err()
+        );
+        assert!(
+            require_binding(
+                &release,
+                &"orders".parse().unwrap(),
                 None,
                 Some(read.id.as_str()),
                 &read,
@@ -1422,11 +1452,27 @@ mod tests {
         let mut wrong = connection;
         wrong.name = "another-store".into();
         assert!(
-            require_binding(&release, "orders", Some("documents"), None, &wrong, false).is_ok()
+            require_binding(
+                &release,
+                &"orders".parse().unwrap(),
+                Some("documents"),
+                None,
+                &wrong,
+                false
+            )
+            .is_ok()
         );
         wrong.id = "invalid".into();
         assert!(
-            require_binding(&release, "orders", Some("documents"), None, &wrong, false).is_err()
+            require_binding(
+                &release,
+                &"orders".parse().unwrap(),
+                Some("documents"),
+                None,
+                &wrong,
+                false
+            )
+            .is_err()
         );
     }
 
@@ -1482,10 +1528,10 @@ mod tests {
         impl ResidencyReader for Reader {
             async fn residency(&self) -> wamn_kubernetes::environment_state::Residency {
                 [(
-                    "orders".into(),
+                    "orders".parse().unwrap(),
                     wamn_kubernetes::environment_state::ProjectResidency {
                         releases: vec![wamn_kubernetes::environment_state::ReleaseResidency {
-                            application: "orders".into(),
+                            application: "orders".parse().unwrap(),
                             manifest_digest: (format!("sha256:{}", "a".repeat(64)))
                                 .parse::<wamn_digest::Digest>()
                                 .unwrap(),
@@ -1766,7 +1812,7 @@ mod tests {
         for (application, binding) in [("orders", "missing"), ("other", "documents")] {
             let error = files
                 .store(
-                    application,
+                    &application.parse().unwrap(),
                     Some(binding),
                     None,
                     true,
@@ -1792,14 +1838,14 @@ mod tests {
                 "palette",
                 ConnectionInvocation {
                     origin: ConnectionOrigin {
-                        package_id: "app".into(),
+                        package_id: "app".parse().unwrap(),
                         component_digest: digest.clone(),
                         component: "files".into(),
                         interface_version: "0.1".into(),
                         operation: "request".into(),
                     },
                     entry: InvocationEntry::Route,
-                    package_id: "app".into(),
+                    package_id: "app".parse().unwrap(),
                     component_digest: digest,
                     component: "files".into(),
                     operation: "request".into(),

@@ -43,7 +43,7 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
         .expect("Postgres host service"),
     );
     postgres.set_project_env_key("application", &"test--dev--dynamic".parse().unwrap());
-    postgres.set_application("application", "dynamic").unwrap();
+    postgres.set_application("application", "dynamic".parse().unwrap());
     let user = "00000000-0000-4000-8000-000000000031";
     postgres
         .set_user_id("application", &user.parse().unwrap())
@@ -353,7 +353,7 @@ async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
         .unwrap(),
     );
     postgres.set_project_env_key(SCOPE, &PROJECT.parse().unwrap());
-    postgres.set_application(SCOPE, "numbering").unwrap();
+    postgres.set_application(SCOPE, "numbering".parse().unwrap());
     postgres
         .set_user_id(SCOPE, &LIVE_PRINCIPAL.parse().unwrap())
         .unwrap();

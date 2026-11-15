@@ -39,7 +39,7 @@ pub(crate) fn parse_graph(json: &str) -> anyhow::Result<WiringDocument> {
 /// Condition the graph and freeze every resolved node digest once at admission.
 pub(crate) fn node_digests(
     release: &LoadedRelease,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     graph: &WiringDocument,
     hash: &wamn_digest::Digest,
 ) -> anyhow::Result<serde_json::Value> {
@@ -80,7 +80,7 @@ pub async fn admit_schedule_run(
     postgres: &WamnPostgres,
     project: &str,
     release: &LoadedRelease,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     workflow_id: &str,
     tick: DateTime<Utc>,
 ) -> Result<ScheduleRunAdmitted, ProductionLeaseError> {

@@ -38,7 +38,10 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
         .bind(component.principal_id())
         .execute(&mut admin)
         .await?;
-    let table = migration::history_table(&"fixture--dev--one".parse().unwrap(), "orders");
+    let table = migration::history_table(
+        &"fixture--dev--one".parse().unwrap(),
+        &"orders".parse().unwrap(),
+    );
     migration::prepare_history(&mut admin, &table, &"postgres".parse().unwrap()).await?;
     let first = source(
         10,

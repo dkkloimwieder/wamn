@@ -55,7 +55,7 @@ pub fn release(
             .clone()
             .into_admitted(wamn_catalog::ComponentPackageCoordinate {
                 project_env_key: "platform--palette--platform".parse()?,
-                package_id: PACKAGE.to_owned(),
+                package_id: PACKAGE.parse().unwrap(),
                 package_version: version.to_owned(),
             })
             .component;
@@ -75,7 +75,7 @@ pub fn fixture_device() -> anyhow::Result<wamn_catalog::ComponentDescriptor> {
         serde_json::to_value(&fixture.components.first().expect("a component").descriptor)
             .expect("a descriptor");
     device["component"] = json!("device");
-    device["operations"] = json!({"edge-device:sample/read@2.1.0": {"registered-operation": wamn_catalog::operation_token("edge_device", "2.1.0", "sample", "read"),"input-ports": [], "output-ports": [], "parameters": []}});
+    device["operations"] = json!({"edge-device:sample/read@2.1.0": {"registered-operation": wamn_catalog::operation_token(&"edge_device".parse().expect("valid name"), "2.1.0", "sample", "read"),"input-ports": [], "output-ports": [], "parameters": []}});
     let device: wamn_catalog::ComponentDescriptor =
         serde_json::from_value(device).expect("a device descriptor");
     Ok(device)
@@ -144,7 +144,7 @@ pub fn fixture_document(
         policy: POLICY.parse().unwrap(),
         revocation_seconds: 60,
         applications: std::collections::BTreeMap::from([(
-            PACKAGE.to_owned(),
+            PACKAGE.parse().unwrap(),
             environment::document::ApplicationSelection {
                 current: DeclaredRelease::Digest(digest.to_owned()),
                 hostname: route_host.to_owned(),
@@ -152,15 +152,15 @@ pub fn fixture_document(
                 client: None,
                 connections: [(
                     "labels".to_owned(),
-                    wamn_registry::configuration::ConnectionReference {
+                    wamn_catalog::configuration::ConnectionReference {
                         name: format!("labels-{env}"),
                         version: None,
                     },
                 )]
                 .into(),
                 packages: std::collections::BTreeSet::from([
-                    PACKAGE.to_owned(),
-                    "label_fixture".to_owned(),
+                    PACKAGE.parse().unwrap(),
+                    "label_fixture".parse().unwrap(),
                 ]),
             },
         )]),
@@ -290,7 +290,7 @@ pub mod http {
     pub fn admit_guest(
         repository: &Path,
         version: &str,
-        package: &str,
+        package: &wamn_catalog::PackageName,
         name: &str,
         bytes: &[u8],
     ) -> anyhow::Result<wamn_catalog::AdmittedComponentFacts> {
@@ -302,7 +302,7 @@ pub mod http {
                     "__PROJECT_ENV_KEY__",
                     wamn_registry::project_env_key(ORG, PROJECT, &"http".parse().unwrap()).as_str(),
                 )
-                .replace("__PACKAGE_ID__", package)
+                .replace("__PACKAGE_ID__", package.as_str())
                 .replace("__PACKAGE_VERSION__", version),
         )?)?;
         let engine = wamn_engine::build_engine(&[])?;
@@ -401,7 +401,7 @@ pub mod http {
     ) -> anyhow::Result<Vec<u8>> {
         let target = ComponentPackageCoordinate {
             project_env_key: wamn_registry::project_env_key(ORG, PROJECT, &"http".parse().unwrap()),
-            package_id: "http_fixture".to_owned(),
+            package_id: "http_fixture".parse().unwrap(),
             package_version: "1.0.0".to_owned(),
         };
         let facts: Vec<_> = components
@@ -410,18 +410,18 @@ pub mod http {
             .map(|descriptor| descriptor.into_admitted(target.clone()).component)
             .collect();
         let (mut manifest, _) = ServingManifest::from_canonical_bytes(h)?;
-        manifest
-            .components
-            .retain(|component| component.package_id != "label_fixture");
+        manifest.components.retain(|component| {
+            component.package_id != "label_fixture".parse().expect("valid name")
+        });
         manifest
             .release
             .packages
-            .retain(|package| package.package_id() != "label_fixture");
+            .retain(|package| package.package_id() != &"label_fixture".parse().unwrap());
         manifest
             .release
             .packages
             .insert(wamn_catalog::PackageCoordinate::new(
-                "http_fixture",
+                "http_fixture".parse().expect("valid name"),
                 "1.0.0",
             )?);
         for (descriptor, fact) in components.into_iter().zip(&facts) {
@@ -531,7 +531,7 @@ pub mod workflow {
     impl WorkflowEnvironment<'_> {
         fn version<'a>(
             &'a self,
-            application: &'a str,
+            application: &'a wamn_catalog::ApplicationName,
             workflow_id: &'a str,
         ) -> WorkflowVersion<'a> {
             WorkflowVersion {
@@ -555,7 +555,7 @@ pub mod workflow {
     pub async fn start_workflow(
         work: &Path,
         environment: &WorkflowEnvironment<'_>,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         workflow_id: &str,
         input: &Value,
         key: &str,
@@ -582,7 +582,7 @@ pub mod workflow {
     async fn start_workflow_inner(
         project: &mut sqlx::PgConnection,
         environment: &WorkflowEnvironment<'_>,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         workflow_id: &str,
         input: &Value,
         key: &str,
@@ -682,7 +682,7 @@ pub mod workflow {
     pub async fn admit_workflow(
         work: &Path,
         environment: &WorkflowEnvironment<'_>,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         workflow_id: &str,
         input: &Value,
         key: &str,
@@ -709,7 +709,7 @@ pub mod workflow {
     async fn admit_workflow_inner(
         project: &mut sqlx::PgConnection,
         environment: &WorkflowEnvironment<'_>,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         workflow_id: &str,
         input: &Value,
         key: &str,
@@ -769,7 +769,7 @@ pub mod workflow {
                     connection,
                     environment.project_env_key,
                     &ManualRunAdmission {
-                        package_id: application,
+                        application: application,
                         manifest_digest: environment.digest,
                         environment: &environment.target.env,
                         workflow_id,
@@ -810,7 +810,7 @@ pub mod workflow {
     /// test.
     pub async fn enable_schedule(
         environment: &WorkflowEnvironment<'_>,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         document: &WiringDocument,
         role: &str,
         operations: &[&str],
@@ -829,7 +829,7 @@ pub mod workflow {
 
     pub async fn enable_trigger(
         environment: &WorkflowEnvironment<'_>,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         document: &WiringDocument,
         role: &str,
         operations: &[&str],
@@ -932,7 +932,7 @@ pub mod workflow {
     /// environment admin does with `wamn-ctl workflow disable`.
     pub async fn disable_schedule(
         environment: &WorkflowEnvironment<'_>,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
         workflow_id: &str,
     ) -> anyhow::Result<()> {
         let mut project = connect_owned(environment.project_url).await?;
@@ -946,7 +946,10 @@ pub mod workflow {
         Ok(())
     }
 
-    pub fn fixture_document(connector: &str) -> EnvironmentDocument {
+    pub fn fixture_document(
+        connector: &wamn_catalog::PackageName,
+        application: &wamn_catalog::ApplicationName,
+    ) -> EnvironmentDocument {
         EnvironmentDocument {
             schema: environment::document::Schema::default(),
             integrations: std::collections::BTreeMap::new(),
@@ -959,16 +962,19 @@ pub mod workflow {
             // The existing consumer and integration packages put this application's
             // models in two schemas. The connector supplies the workflow components.
             applications: BTreeMap::from([(
-                connector.to_owned(),
+                application.clone(),
                 wamn_environment::environment::document::ApplicationSelection {
                     current: DeclaredRelease::None,
                     hostname: "integration.orders.example".into(),
                     revocation_seconds: 5,
                     client: None,
                     connections: std::collections::BTreeMap::new(),
-                    packages: [connector, "wamn_integration", CONSUMER]
-                        .map(str::to_owned)
-                        .into(),
+                    packages: [
+                        connector.clone(),
+                        "wamn_integration".parse().unwrap(),
+                        CONSUMER.parse().unwrap(),
+                    ]
+                    .into(),
                 },
             )]),
         }

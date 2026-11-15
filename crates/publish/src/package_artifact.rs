@@ -117,7 +117,7 @@ const OWNED_PLATFORM_PACKAGES: [&str; 2] = ["wamn:node", "wamn:postgres"];
 #[derive(Debug)]
 pub struct PackedPackage {
     /// Package id from the package manifest.
-    pub package_id: String,
+    pub package_id: wamn_catalog::PackageName,
     /// Package version from the package manifest.
     pub version: String,
     /// The layers in order.
@@ -210,7 +210,7 @@ pub(crate) async fn connection_components(
         use wamn_engine::artifact_source::ArtifactSource as _;
         let target = ComponentPackageCoordinate::new(
             &admission_project_env_key(),
-            &manifest.package.id,
+            manifest.package.id.clone(),
             &manifest.package.version,
         )?;
         let mut result = Vec::new();
@@ -340,7 +340,7 @@ fn pack_layers(root: &Path, mut descriptors: Vec<DescriptorFile>) -> anyhow::Res
     }
     descriptors.sort_by(|left, right| left.name.cmp(&right.name));
     let mut annotations = BTreeMap::from([
-        (PACKAGE_ID_ANNOTATION.to_owned(), package_id.clone()),
+        (PACKAGE_ID_ANNOTATION.to_owned(), package_id.to_string()),
         (PACKAGE_VERSION_ANNOTATION.to_owned(), version.clone()),
     ]);
     for descriptor in descriptors {
@@ -858,7 +858,7 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
 /// digest.
 pub async fn open_package(
     registry: &PackageRegistry,
-    package_id: &str,
+    package_id: &wamn_catalog::PackageName,
     version: &str,
 ) -> anyhow::Result<OpenedPackage> {
     let tag = format!("{package_id}-{version}");
@@ -1046,7 +1046,7 @@ mod tests {
             insecure_registry: true,
             oci_ca_paths: Vec::new(),
         };
-        let opened = open_package(&registry, "orders", version).await?;
+        let opened = open_package(&registry, &"orders".parse().unwrap(), version).await?;
         assert_eq!(
             (pack_package(opened.root())?.digest.to_string())
                 .parse::<wamn_digest::Digest>()
@@ -1099,7 +1099,7 @@ mod tests {
         let build_record = build_record::BuildRecord {
             schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
             package: build_record::BuildPackage {
-                id: "wamn_receiving".to_owned(),
+                id: "wamn_receiving".parse().unwrap(),
                 version: "2.1.0".to_owned(),
             },
 

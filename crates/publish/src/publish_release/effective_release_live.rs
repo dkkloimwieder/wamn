@@ -148,7 +148,7 @@ fn base_and_overlay_project_admitted_routes() {
         .expect("consume exact package manifests and package contracts");
     let packages = inputs
         .iter()
-        .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())
+        .map(|input| PackageCoordinate::new(input.id.parse().unwrap(), input.version).unwrap())
         .collect::<BTreeSet<_>>();
     // Both packages name widget-get-http. The overlay's replaces the base's, so
     // the release carries a route to each package's component.

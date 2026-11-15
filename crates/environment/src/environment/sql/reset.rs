@@ -106,14 +106,14 @@ pub(in crate::environment) async fn recorded_cluster(
 pub async fn reset_deployed(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-    candidate: Option<(&str, &wamn_digest::Digest)>,
+    candidate: Option<(&wamn_catalog::ApplicationName, &wamn_digest::Digest)>,
     credentials: &Credentials,
 ) -> anyhow::Result<Value> {
     let document = EnvironmentDocument::read_serving(platform, triple).await?;
     let private = ensure::PrivateDirectory::create()?;
     let mut platform = platform.clone();
     super::super::runtime::resolve_target(&mut platform, &document, &private.path(".")).await?;
-    let lock = wamn_registry::lifecycle_lock::LifecycleLock::acquire_wait(
+    let lock = wamn_catalog::lifecycle_lock::LifecycleLock::acquire_wait(
         wamn_postgres::connect(&platform.system_database_url).await?,
         &document.triple(),
     )

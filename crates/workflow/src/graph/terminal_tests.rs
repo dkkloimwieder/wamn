@@ -9,7 +9,7 @@ use super::{
     Delivery, ErrorDetail, FailureType, NodeError, NodeOutcome, Step, Verdict, WalkStatus,
 };
 use serde_json::json;
-use wamn_event_wire::Op;
+use wamn_catalog::WiringEventOperation as Op;
 
 use super::terminal::DEDUP_ID_FIELD;
 use super::walk::Walk;

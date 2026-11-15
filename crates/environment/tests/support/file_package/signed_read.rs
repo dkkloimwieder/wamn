@@ -86,7 +86,7 @@ pub(super) fn signed_read_fixture(
         ),
         &wamn_catalog::ComponentPackageCoordinate {
             project_env_key: project_env_key.clone(),
-            package_id: "file_fixture".into(),
+            package_id: "file_fixture".parse().unwrap(),
             package_version: "0.1.0".into(),
         },
         None,
@@ -113,8 +113,11 @@ pub(super) fn signed_read_fixture(
         bytes,
     )?;
     let route = wamn_publish::publish_release::package_route(
-        &BTreeMap::from([("file_fixture".into(), package.as_path())]),
-        "file_fixture",
+        &BTreeMap::from([(
+            "file_fixture".parse().expect("valid name"),
+            package.as_path(),
+        )]),
+        &"file_fixture".parse().expect("valid name"),
         "signed_read",
         OPERATION,
     )?;

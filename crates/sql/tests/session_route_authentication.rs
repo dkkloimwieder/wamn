@@ -240,10 +240,10 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
         )
         .with_applications(
             [(
-                "purchasing".to_owned(),
+                "purchasing".parse().unwrap(),
                 wamn_catalog::ApplicationDefinition {
                     connections: std::collections::BTreeMap::new(),
-                    packages: ["session_test".to_owned()].into(),
+                    packages: ["session_test".parse().unwrap()].into(),
                 },
             )]
             .into(),

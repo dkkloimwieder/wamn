@@ -16,6 +16,7 @@ use super::input::{derived_event_input, event_input};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipReason {
     SourcePackageMismatch,
+    ApplicationMismatch,
     EntityMismatch,
     OpMismatch,
     ForeignProject,
@@ -25,8 +26,12 @@ pub enum SkipReason {
 /// Deterministic registration refusals that must remain operator-visible.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RefuseReason {
-    SourcePackageIdentityUnknown { source_package: String },
-    DepthExceeded { parent: Causation },
+    SourcePackageIdentityUnknown {
+        source_package: wamn_catalog::PackageName,
+    },
+    DepthExceeded {
+        parent: Causation,
+    },
     ProjectUnscopable,
     OldImageAbsent,
     ConditionError(String),
@@ -66,18 +71,18 @@ pub fn decide(
     registration: &EventTrigger,
     condition: Option<&CompiledCondition>,
     envelope: &Envelope,
-    known_packages: &BTreeSet<String>,
+    known_packages: &BTreeSet<wamn_catalog::PackageName>,
     project_env_key: &wamn_registry::ProjectEnvKey,
     resident_project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     max_depth: u32,
 ) -> Verdict {
-    match envelope.package_id.as_str() {
+    match &envelope.package_id {
         package_id if !known_packages.contains(package_id) => {
             return Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
                 source_package: package_id.to_owned(),
             });
         }
-        package_id if package_id != registration.source_package => {
+        package_id if package_id != &registration.source_package => {
             return Verdict::Skip(SkipReason::SourcePackageMismatch);
         }
         _ => {}
@@ -128,20 +133,11 @@ pub fn decide_derived(
     registration: &EventTrigger,
     condition: Option<&CompiledCondition>,
     event: &DerivedEvent,
-    known_packages: &BTreeSet<String>,
     project_env_key: &wamn_registry::ProjectEnvKey,
     max_depth: u32,
 ) -> Verdict {
-    match event.package_id.as_str() {
-        package_id if !known_packages.contains(package_id) => {
-            return Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
-                source_package: package_id.to_owned(),
-            });
-        }
-        package_id if package_id != registration.source_package => {
-            return Verdict::Skip(SkipReason::SourcePackageMismatch);
-        }
-        _ => {}
+    if event.application != registration.application {
+        return Verdict::Skip(SkipReason::ApplicationMismatch);
     }
     if event.entity != registration.entity.as_str() {
         return Verdict::Skip(SkipReason::EntityMismatch);
@@ -179,13 +175,13 @@ pub fn decide_derived(
 mod tests {
     use super::*;
     use serde_json::json;
-    use wamn_event_wire::Op;
+    use wamn_catalog::WiringEventOperation as Op;
 
     fn registration(condition: Option<&str>) -> EventTrigger {
         EventTrigger {
             workflow_id: "r1".into(),
-            application: "cat".into(),
-            source_package: "cat".into(),
+            application: "sales.eu".parse().unwrap(),
+            source_package: "cat".parse().unwrap(),
             entity: "receipts".into(),
             ops: vec![Op::Insert, Op::Update],
             enable_sequence: 0,
@@ -207,8 +203,8 @@ mod tests {
         .unwrap()
     }
 
-    fn known_packages() -> BTreeSet<String> {
-        BTreeSet::from(["cat".to_owned(), "other".to_owned()])
+    fn known_packages() -> BTreeSet<wamn_catalog::PackageName> {
+        BTreeSet::from(["cat".parse().unwrap(), "other".parse().unwrap()])
     }
 
     #[test]
@@ -387,7 +383,7 @@ mod tests {
             "t1--dev--project".parse().unwrap(),
             "app",
             "dev".parse().unwrap(),
-            "cat",
+            "sales.eu".parse().unwrap(),
             "receipts",
             Op::Insert,
             json!(["arbitrary", {"status": "ready"}]),
@@ -407,7 +403,6 @@ mod tests {
                 &registration(None),
                 None,
                 &derived(3),
-                &known_packages(),
                 &"t1--dev--project".parse().unwrap(),
                 16,
             ) else {
@@ -428,7 +423,6 @@ mod tests {
                 &registration,
                 Some(&condition),
                 &derived(3),
-                &known_packages(),
                 &"t1--dev--project".parse().unwrap(),
                 16,
             ),
@@ -439,7 +433,6 @@ mod tests {
                 &registration,
                 Some(&condition),
                 &derived(16),
-                &known_packages(),
                 &"t1--dev--project".parse().unwrap(),
                 16,
             ),
@@ -454,7 +447,7 @@ mod tests {
             &"t1--dev--project".parse().unwrap(),
             "app",
             &"dev".parse().unwrap(),
-            &event.package_id,
+            &event.application,
             &event.entity,
             event.op,
             &event.dedup_id,
@@ -502,7 +495,7 @@ mod tests {
             &"t1--dev--project".parse().unwrap(),
             "app",
             &"dev".parse().unwrap(),
-            &event.package_id,
+            &event.application,
             &event.entity,
             event.op,
             &event.dedup_id,
@@ -521,7 +514,6 @@ mod tests {
                 &registration(None),
                 None,
                 &event,
-                &known_packages(),
                 &"t1--dev--project".parse().unwrap(),
                 16,
             ) else {
@@ -536,11 +528,11 @@ mod tests {
     #[test]
     fn source_packageentity_has_match_known_skip_and_unknown_refusal_paths() {
         let mut registration = registration(None);
-        registration.application = "overlay".into();
+        registration.application = "overlay".parse().unwrap();
         let known = known_packages();
 
         let mut other = envelope();
-        other.package_id = "other".into();
+        other.package_id = "other".parse().unwrap();
         assert_eq!(
             decide(
                 &registration,
@@ -555,7 +547,7 @@ mod tests {
         );
 
         let mut unknown = envelope();
-        unknown.package_id = "unknown".into();
+        unknown.package_id = "unknown".parse().unwrap();
         assert_eq!(
             decide(
                 &registration,
@@ -567,7 +559,7 @@ mod tests {
                 16,
             ),
             Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
-                source_package: "unknown".into(),
+                source_package: "unknown".parse().unwrap(),
             })
         );
 

@@ -16,7 +16,7 @@ pub struct PackageManifest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageIdentity {
-    pub id: String,
+    pub id: crate::PackageName,
     pub version: String,
 }
 
@@ -24,7 +24,7 @@ pub struct PackageIdentity {
 pub struct ModelDeclaration {
     pub schema: String,
     pub table: String,
-    pub owner: String,
+    pub owner: crate::PackageName,
     #[serde(default)]
     pub audit_log: Option<AuditLogDeclaration>,
 }

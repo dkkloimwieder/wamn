@@ -413,14 +413,16 @@ Use the server owner for tests that need several independent databases or change
 Call `server.create_database(name).await` to create each database.
 Dropping the server stops it and removes its directory.
 
-Schema setup functions install SQL on a supplied database URL.
+Schema setup functions install SQL on a supplied database.
+The catalog installer takes a connection opened with `wamn_postgres::connect`.
+The other installers take a database URL.
 Each lives beside the crate that owns its SQL, behind that crate's `test-util` feature.
 Enable the feature on a dev-dependency. These functions do not take the process lock or allocate databases.
 
 | Setup | Function | Installs |
 | --- | --- | --- |
 | system | `wamn_control_provision::test_database::system(url).await` | the control store, applied as its database owner `wamn_system` |
-| project | `wamn_catalog::test_database::project(url).await` | `CATALOG_SCHEMA_SQL` and the `wamn_app` role |
+| project | `wamn_catalog::test_database::project(&mut connection).await` | `CATALOG_SCHEMA_SQL` and the `wamn_app` role |
 | project+platform | `wamn_platform_identity::test_database::project_platform(url).await` | the project base grants and `deploy/sql/app-schema.sql` |
 
 A test of provisioning, migrations, or grants executes that operation and starts without a setup function that already performed it.

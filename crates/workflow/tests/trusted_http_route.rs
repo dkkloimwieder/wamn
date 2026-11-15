@@ -125,7 +125,7 @@ impl TrustedHttpRoute {
         self.driver
             .execute_workflow(wamn_workflow::WorkflowRunRequest {
                 project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
-                package_id: PACKAGE.to_owned(),
+                application: PACKAGE.parse().unwrap(),
                 environment: ENVIRONMENT.parse().unwrap(),
                 wiring_id: WIRING_ID.to_owned(),
                 wiring_version: WIRING_VERSION,
@@ -300,10 +300,10 @@ async fn build_with_credentials(
             )
             .with_applications(
                 [(
-                    "orders".to_owned(),
+                    "orders".parse().unwrap(),
                     wamn_catalog::ApplicationDefinition {
                         connections: std::collections::BTreeMap::new(),
-                        packages: [PACKAGE.to_owned()].into(),
+                        packages: [PACKAGE.parse().unwrap()].into(),
                     },
                 )]
                 .into(),
@@ -387,7 +387,7 @@ fn declaration() -> anyhow::Result<ComponentDeclaration> {
     let template = PathBuf::from(format!("{root}/guests/http-request/declaration.json.in"));
     let target = wamn_catalog::ComponentPackageCoordinate::new(
         &PROJECT_ENV_KEY.parse().unwrap(),
-        PACKAGE,
+        PACKAGE.parse().unwrap(),
         PACKAGE_VERSION,
     )?;
     let document = wamn_publish::component_declaration::render_palette_declaration(
@@ -746,7 +746,7 @@ async fn seed_additional_wirings(
 ) -> anyhow::Result<()> {
     let package = &component.target.package_id;
     let package_version = &component.target.package_version;
-    if package != PACKAGE {
+    if package != &PACKAGE.parse().unwrap() {
         let manifest = serde_json::json!({"package": {"id": package, "version": package_version},
             "models": {}, "custom_operations": {}, "queries": {}, "connections": {}, "components": {}});
         sqlx::query("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest) \

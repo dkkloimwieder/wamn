@@ -9,11 +9,17 @@ use super::{
 
 pub(super) fn resolve_component_dependency_closure(
     roots: &BTreeMap<String, AdmittedComponent>,
-    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
-    package_manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
+    component_facts: &BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>>,
+    package_manifests: &BTreeMap<
+        wamn_catalog::PackageName,
+        wamn_compiler::manifest::PackageManifest,
+    >,
     rule: DependencyDigestRule,
 ) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
-    let mut closure = BTreeMap::<(String, String, wamn_digest::Digest), AdmittedComponent>::new();
+    let mut closure = BTreeMap::<
+        (wamn_catalog::PackageName, String, wamn_digest::Digest),
+        AdmittedComponent,
+    >::new();
     let mut visited = BTreeSet::new();
     for component in roots.values() {
         insert_closure_component(&mut closure, component)?;
@@ -34,7 +40,10 @@ pub(super) fn resolve_component_dependency_closure(
 }
 
 fn insert_closure_component(
-    closure: &mut BTreeMap<(String, String, wamn_digest::Digest), AdmittedComponent>,
+    closure: &mut BTreeMap<
+        (wamn_catalog::PackageName, String, wamn_digest::Digest),
+        AdmittedComponent,
+    >,
     component: &AdmittedComponent,
 ) -> Result<(), PublishManifestError> {
     let key = (
@@ -57,13 +66,19 @@ fn insert_closure_component(
 
 /// Resolve each base the package `(package, version)` pins, then its bases.
 fn visit_base_dependencies(
-    (package, version): (&str, &str),
-    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
-    package_manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
+    (package, version): (&wamn_catalog::PackageName, &str),
+    component_facts: &BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>>,
+    package_manifests: &BTreeMap<
+        wamn_catalog::PackageName,
+        wamn_compiler::manifest::PackageManifest,
+    >,
     rule: DependencyDigestRule,
-    path: &mut Vec<(String, String)>,
-    visited: &mut BTreeSet<(String, String)>,
-    closure: &mut BTreeMap<(String, String, wamn_digest::Digest), AdmittedComponent>,
+    path: &mut Vec<(wamn_catalog::PackageName, String)>,
+    visited: &mut BTreeSet<(wamn_catalog::PackageName, String)>,
+    closure: &mut BTreeMap<
+        (wamn_catalog::PackageName, String, wamn_digest::Digest),
+        AdmittedComponent,
+    >,
 ) -> Result<(), PublishManifestError> {
     let coordinate = (package.to_owned(), version.to_owned());
     if path.contains(&coordinate) {
@@ -104,7 +119,7 @@ fn visit_base_dependencies(
 /// digest, or under the development rule every component of the coordinate.
 fn resolve_base_dependency<'a>(
     requirement: &wamn_compiler::manifest::BaseDependencyRequirement,
-    component_facts: &'a BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    component_facts: &'a BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>>,
     rule: DependencyDigestRule,
 ) -> Result<Vec<&'a AdmittedComponent>, PublishManifestError> {
     let Some(facts) =
@@ -214,13 +229,15 @@ fn refuse_anonymous_reach(
 /// Seal each palette alias mode while preserving its configuration declaration.
 pub(super) fn palette_connections(
     connections: &[wamn_catalog::ComponentConnection],
-    manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
+    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_compiler::manifest::PackageManifest>,
 ) -> Vec<wamn_catalog::ComponentConnection> {
     connections
         .iter()
         .map(|connection| {
-            let mut modes: BTreeMap<String, BTreeMap<String, wamn_catalog::ConnectionMode>> =
-                BTreeMap::new();
+            let mut modes: BTreeMap<
+                wamn_catalog::PackageName,
+                BTreeMap<String, wamn_catalog::ConnectionMode>,
+            > = BTreeMap::new();
             for ((package, alias), declaration) in
                 crate::connection_requirement::palette_connections(connection, manifests.values())
             {
@@ -233,7 +250,7 @@ pub(super) fn palette_connections(
                     }
                 };
                 modes
-                    .entry(package.into())
+                    .entry(package.clone())
                     .or_default()
                     .insert(alias.into(), mode);
             }

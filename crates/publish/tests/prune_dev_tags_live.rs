@@ -94,8 +94,8 @@ async fn prune_preserves_pins_and_shared_digests_and_removes_expired_dev_tags() 
         format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
             packages: [
-                PackageCoordinate::new("orders", pinned_version)?,
-                PackageCoordinate::new("billing", shared_pin_version)?,
+                PackageCoordinate::new("orders".parse().unwrap(), pinned_version)?,
+                PackageCoordinate::new("billing".parse().unwrap(), shared_pin_version)?,
             ]
             .into(),
         },

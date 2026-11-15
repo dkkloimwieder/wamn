@@ -9,7 +9,7 @@ pub fn sequence_defaults<'a>(
 ) -> anyhow::Result<Vec<wamn_platform_identity::configuration::SequenceDefault>> {
     let mut defaults = BTreeMap::new();
     for package in packages {
-        let id = package.package.id.as_str();
+        let id = &package.package.id;
         let application =
             wamn_catalog::application_for_package(applications, id).with_context(|| {
                 format!("package {id} must belong to exactly one declared application")
@@ -45,7 +45,9 @@ pub fn sequence_defaults<'a>(
 /// # Errors
 ///
 /// When the packages extend one another in a cycle.
-pub fn apply_order(packages: &[(&str, Vec<&str>)]) -> anyhow::Result<Vec<usize>> {
+pub fn apply_order(
+    packages: &[(&wamn_catalog::PackageName, Vec<&wamn_catalog::PackageName>)],
+) -> anyhow::Result<Vec<usize>> {
     let mut order = Vec::with_capacity(packages.len());
     while order.len() < packages.len() {
         let ready = (0..packages.len())

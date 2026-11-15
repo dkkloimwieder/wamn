@@ -6,7 +6,7 @@ pub struct WorkflowVersion<'a> {
     pub org: &'a str,
     pub project: &'a str,
     pub environment: &'a wamn_registry::EnvName,
-    pub application: &'a str,
+    pub application: &'a wamn_catalog::ApplicationName,
     pub workflow_id: &'a str,
     pub version: u32,
 }

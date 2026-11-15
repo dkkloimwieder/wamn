@@ -9,7 +9,7 @@ pub async fn unfinished_releases(
     project: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
-) -> anyhow::Result<Vec<(String, wamn_digest::Digest, String)>> {
+) -> anyhow::Result<Vec<(wamn_catalog::ApplicationName, wamn_digest::Digest, String)>> {
     postgres
         .executor_read(project, async |connection| {
             Ok(persistence::unfinished_releases(connection, project_env_key, environment).await?)

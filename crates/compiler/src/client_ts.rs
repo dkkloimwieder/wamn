@@ -379,7 +379,10 @@ fn shape_digest(model: &ModelIr) -> wamn_digest::Digest {
     wamn_digest::bytes_sha256(&serde_json::to_vec(&shapes).expect("row shapes serialize"))
 }
 
-fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
+fn emit_model(
+    package: &wamn_catalog::PackageName,
+    model: &ModelIr,
+) -> Result<String, ClientTsError> {
     let mut operations: Vec<_> = model
         .operations
         .iter()

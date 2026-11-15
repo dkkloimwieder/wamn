@@ -138,7 +138,7 @@ pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<V
             coordinate[0],
             coordinate[2],
             &coordinate[1].parse().unwrap(),
-            application,
+            &application.parse().unwrap(),
         )?
     } else {
         values["runtime-operator"]["runtime"]["hostGroups"][0]["name"]

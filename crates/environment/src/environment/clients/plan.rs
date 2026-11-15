@@ -4,15 +4,13 @@ use anyhow::Context as _;
 pub(super) fn verify<'a>(
     selection: &ApplicationSelection,
     web: &WebManifest,
-    packages: impl Iterator<Item = (&'a str, &'a str)>,
+    packages: impl Iterator<Item = (&'a wamn_catalog::PackageName, &'a str)>,
 ) -> anyhow::Result<()> {
     let client = selection.client.as_ref().expect("a pinned client");
-    let (package, version) = web
-        .package
-        .split_once('@')
-        .context("web.json package must be <id>@<version>")?;
+    let package = web.package.package_id();
+    let version = web.package.package_version();
     ensure!(
-        package == client.package,
+        package == &client.package,
         "web artifact package {package}@{version} differs from client.package {} for release {}",
         client.package,
         selection.current
@@ -35,13 +33,13 @@ pub(super) fn verify<'a>(
 
 pub(in super::super) fn verify_client_package<'a>(
     selection: &ApplicationSelection,
-    packages: impl Iterator<Item = &'a str>,
+    packages: impl Iterator<Item = &'a wamn_catalog::PackageName>,
 ) -> anyhow::Result<()> {
     if let Some(client) = &selection.client {
         ensure!(
             packages
                 .into_iter()
-                .any(|package| package == client.package),
+                .any(|package| package == &client.package),
             "host {} names client package {}, which the release does not provide",
             selection.hostname,
             client.package

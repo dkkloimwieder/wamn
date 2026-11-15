@@ -59,7 +59,7 @@ pub struct ConnectionFact {
 #[serde(deny_unknown_fields)]
 pub struct ReleaseBinding {
     pub component_digest: wamn_digest::Digest,
-    pub package_id: String,
+    pub package_id: wamn_catalog::PackageName,
     pub name: String,
     pub connection_id: uuid::Uuid,
     pub version: i32,
@@ -83,12 +83,12 @@ impl ReleaseFact {
     pub fn binding(
         &self,
         component_digest: &wamn_digest::Digest,
-        package_id: &str,
+        package_id: &wamn_catalog::PackageName,
         name: &str,
     ) -> Option<&ReleaseBinding> {
         self.bindings.iter().find(|binding| {
             binding.component_digest == *component_digest
-                && binding.package_id == package_id
+                && &binding.package_id == package_id
                 && binding.name == name
         })
     }
@@ -464,7 +464,7 @@ mod tests {
                 component_digest: (format!("sha256:{}", "cd".repeat(32)))
                     .parse::<wamn_digest::Digest>()
                     .unwrap(),
-                package_id: "shop".into(),
+                package_id: "shop".parse().unwrap(),
                 name: "erp".into(),
                 connection_id: id,
                 version: 1,
@@ -516,7 +516,11 @@ mod tests {
         assert_eq!(
             b.release(&"t--dev--project".parse().unwrap(), &digest)
                 .unwrap()
-                .binding(&release.bindings[0].component_digest, "shop", "erp"),
+                .binding(
+                    &release.bindings[0].component_digest,
+                    &"shop".parse().unwrap(),
+                    "erp"
+                ),
             Some(&release.bindings[0])
         );
 

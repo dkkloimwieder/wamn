@@ -16,7 +16,7 @@ pub(crate) enum ProductionRouterAction {
         event: serde_json::Value,
         dedup_id: String,
         entity: String,
-        operation: wamn_event_wire::Op,
+        operation: wamn_catalog::WiringEventOperation,
         node_id: String,
     },
     /// Cancellation is not a failure verdict; leave the lease to redelivery.
@@ -203,7 +203,7 @@ mod tests {
                     event: serde_json::json!({"order": 42}),
                     dedup_id: "wiring-1:7:first:d1".into(),
                     entity: "orders".into(),
-                    operation: wamn_event_wire::Op::Insert,
+                    operation: wamn_catalog::WiringEventOperation::Insert,
                     node_id: "first".into(),
                 }),
             };
@@ -222,7 +222,7 @@ mod tests {
                 assert_eq!(event["order"], serde_json::json!(42));
                 assert_eq!(dedup_id, "wiring-1:7:first:d1");
                 assert_eq!(entity, "orders");
-                assert_eq!(*operation, wamn_event_wire::Op::Insert);
+                assert_eq!(*operation, wamn_catalog::WiringEventOperation::Insert);
                 assert_eq!(node_id, "first");
             };
         }

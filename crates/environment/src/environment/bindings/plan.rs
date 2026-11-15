@@ -49,6 +49,6 @@ pub(crate) fn interface_compatible(import: &str, export: &str) -> bool {
 }
 
 /// The project catalog identity keeps equal names in separate applications apart.
-pub fn key(application: &str, alias: &str) -> String {
+pub fn key(application: &wamn_catalog::ApplicationName, alias: &str) -> String {
     format!("{application}/{alias}")
 }

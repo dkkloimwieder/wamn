@@ -86,7 +86,7 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
                         role.as_deref(),
                         user.as_ref(),
                         operation.as_deref(),
-                        application.as_deref(),
+                        application.as_ref(),
                         None,
                         policy.statement_timeout_ms,
                     )

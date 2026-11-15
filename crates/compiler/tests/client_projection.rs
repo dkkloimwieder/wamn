@@ -95,7 +95,7 @@ fn records() -> (Contracts, BTreeMap<String, RouteIr>) {
 }
 
 fn project(contracts: &Contracts, routes: &BTreeMap<String, RouteIr>) -> ClientContractIr {
-    ClientContractIr::from_operations("example", contracts, routes)
+    ClientContractIr::from_operations(&"example".parse().unwrap(), contracts, routes)
         .expect("declared contract projection")
 }
 
@@ -487,8 +487,9 @@ fn direct_state_replay_and_composed_routes_remain_distinct() {
             replay: None,
         },
     )]);
-    let projected = ClientContractIr::from_operations("platform_fixture", contracts, &routes)
-        .expect("composed route projects");
+    let projected =
+        ClientContractIr::from_operations(&"platform_fixture".parse().unwrap(), contracts, &routes)
+            .expect("composed route projects");
     let route = operation(&projected, "archive").route.as_ref().unwrap();
     assert!(!route.direct);
     assert_eq!(
@@ -852,8 +853,9 @@ fn a_published_response_takes_its_text_from_the_terminal() {
             replay: None,
         },
     )]);
-    let ir = ClientContractIr::from_operations("platform_fixture", contracts, &routes)
-        .expect("the fixture projects with a published response");
+    let ir =
+        ClientContractIr::from_operations(&"platform_fixture".parse().unwrap(), contracts, &routes)
+            .expect("the fixture projects with a published response");
     let get = ir.models[fixture::widget_index(&ir)]
         .operations
         .iter()

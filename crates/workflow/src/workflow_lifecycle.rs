@@ -32,7 +32,7 @@ use wamn_registry::Triple;
 use crate::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, condition_against_release,
 };
-use wamn_registry::lifecycle_lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
+use wamn_catalog::lifecycle_lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
 
 /// Params `$1` to `$5`: the version's key.
 const SELECT_VERSION_SQL: &str = "\
@@ -311,7 +311,7 @@ async fn enable_in(
     workflow: &WorkflowVersion<'_>,
     enabler: &wamn_identity_protocol::PrincipalId,
     manifest_digest: &wamn_digest::Digest,
-    packages: &std::collections::BTreeSet<String>,
+    packages: &std::collections::BTreeSet<wamn_catalog::PackageName>,
     declared: &wamn_catalog::EnvironmentApplications,
     triple: &Triple,
     events: Option<&wamn_broker::EventBroker>,
@@ -380,11 +380,14 @@ async fn enable_in(
     }
 
     let enable_sequence = if trigger == "event" {
-        let source_package: String = row.get(4);
+        let source_package: wamn_catalog::PackageName =
+            row.try_get(4).map_err(WorkflowLifecycleError::stored)?;
         let entity: String = row.get(5);
         let stored_ops: Vec<String> = row.get(6);
-        let ops = serde_json::from_value::<Vec<wamn_event_wire::Op>>(serde_json::json!(stored_ops))
-            .map_err(WorkflowLifecycleError::stored)?;
+        let ops = serde_json::from_value::<Vec<wamn_catalog::WiringEventOperation>>(
+            serde_json::json!(stored_ops),
+        )
+        .map_err(WorkflowLifecycleError::stored)?;
         let condition: Option<String> = row.get(7);
         crate::author_workflow::validate_event_trigger(
             transaction,

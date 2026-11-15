@@ -70,8 +70,12 @@ fn components(
             (
                 id.clone(),
                 AdmittedComponent {
-                    target: ComponentPackageCoordinate::new(&project_env_key, "test", "1.0.0")
-                        .unwrap(),
+                    target: ComponentPackageCoordinate::new(
+                        &project_env_key,
+                        "test".parse().unwrap(),
+                        "1.0.0",
+                    )
+                    .unwrap(),
                     component: node.component.clone(),
                     interface_version: node.interface_version.clone(),
                     operations: BTreeMap::from([(node.operation.clone(), operation)]),

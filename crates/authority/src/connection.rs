@@ -1,6 +1,6 @@
 //! Shared invocation identity and connection authorization rules.
 
-use crate::effect_span::{EffectEvidence, EffectWiring};
+use crate::effect_span::{EffectEvidence, EffectSource, EffectWiring};
 use crate::identity::{
     CandidateBindingWorld, ConnectionEffectSnapshot, ConnectionEntryLookup, WiringLookup,
 };
@@ -32,7 +32,7 @@ pub struct ConnectionInvocation {
     pub origin: ConnectionOrigin,
     /// Where the invocation entered the release, unchanged by nested calls.
     pub entry: InvocationEntry,
-    pub package_id: String,
+    pub package_id: wamn_catalog::PackageName,
     pub component_digest: wamn_digest::Digest,
     pub component: String,
     pub operation: String,
@@ -79,7 +79,7 @@ impl ConnectionInvocation {
             ),
         };
         EffectWiring {
-            package_id: &self.package_id,
+            source: EffectSource::Package(&self.package_id),
             wiring_id,
             wiring_version,
             node_id,
@@ -115,8 +115,8 @@ impl InvocationEntry {
 pub struct WiringPosition {
     /// The immutable graph hash frozen on the run.
     pub wiring_hash: wamn_digest::Digest,
-    /// The wiring can belong to a package that imports the root component.
-    pub package_id: String,
+    /// The application that owns the wiring.
+    pub application: wamn_catalog::ApplicationName,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub node_id: String,
@@ -127,7 +127,7 @@ pub struct WiringPosition {
 /// Host-attested root identity for an effect's exact dependency path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionOrigin {
-    pub package_id: String,
+    pub package_id: wamn_catalog::PackageName,
     pub component_digest: wamn_digest::Digest,
     pub component: String,
     pub interface_version: String,
@@ -156,10 +156,11 @@ pub enum ConnectionExecutionClosure {
 pub fn test_release(project_env_key: &wamn_registry::ProjectEnvKey) -> Arc<LoadedRelease> {
     let manifest = ServingManifest::new(
         wamn_catalog::ServingRelease {
-            packages: [
-                wamn_catalog::PackageCoordinate::new("host_service_fixture", "1.0.0")
-                    .expect("fixture package coordinate"),
-            ]
+            packages: [wamn_catalog::PackageCoordinate::new(
+                "host_service_fixture".parse().unwrap(),
+                "1.0.0",
+            )
+            .expect("fixture package coordinate")]
             .into(),
         },
         Default::default(),
@@ -185,7 +186,7 @@ pub fn released_invocation_application<'a>(
     manifest: &ServingManifest,
     target: &'a wamn_engine::release_manifest::ReleaseTarget,
     invocation: &ConnectionInvocation,
-) -> Option<&'a str> {
+) -> Option<&'a wamn_catalog::ApplicationName> {
     if !manifest.components.iter().any(|component| {
         component.package_id == invocation.package_id
             && component.descriptor.component == invocation.component
@@ -197,20 +198,20 @@ pub fn released_invocation_application<'a>(
     }) {
         return None;
     }
-    if invocation.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
+    if invocation.package_id.as_str() == wamn_catalog::PALETTE_PACKAGE_ID {
         let InvocationEntry::Wiring(position) = &invocation.entry else {
             return None;
         };
         target
             .applications
-            .get_key_value(&position.package_id)
-            .map(|(name, _)| name.as_str())
+            .get_key_value(&position.application)
+            .map(|(name, _)| name)
     } else {
         if !manifest
             .release
             .packages
             .iter()
-            .any(|package| package.package_id() == invocation.package_id)
+            .any(|package| package.package_id() == &invocation.package_id)
         {
             return None;
         }
@@ -219,7 +220,7 @@ pub fn released_invocation_application<'a>(
         if invocation
             .entry
             .wiring()
-            .is_some_and(|position| position.package_id != application)
+            .is_some_and(|position| &position.application != application)
         {
             return None;
         }
@@ -240,18 +241,17 @@ pub fn entry_lookup(
     invocation: &ConnectionInvocation,
 ) -> Result<ConnectionEntryLookup<'_>, ConnectionError> {
     Ok(match &invocation.entry {
-        InvocationEntry::Route => ConnectionEntryLookup {
+        InvocationEntry::Route => ConnectionEntryLookup::Route {
             package_id: &invocation.origin.package_id,
-            wiring: None,
         },
-        InvocationEntry::Wiring(position) => ConnectionEntryLookup {
-            package_id: &position.package_id,
-            wiring: Some(WiringLookup {
+        InvocationEntry::Wiring(position) => ConnectionEntryLookup::Wiring {
+            application: &position.application,
+            wiring: WiringLookup {
                 wiring_id: &position.wiring_id,
                 wiring_version: i32::try_from(position.wiring_version)
                     .map_err(|_| ConnectionError::AttestationInvalid)?,
                 node_id: &position.node_id,
-            }),
+            },
         },
     })
 }

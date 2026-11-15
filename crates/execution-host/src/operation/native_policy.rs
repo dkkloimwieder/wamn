@@ -63,7 +63,7 @@ struct ComponentPolicy {
     runtime_schema: Option<String>,
     /// The environment map name of the application that holds this component, which
     /// every call binds as `app.application`.
-    application: Option<String>,
+    application: Option<wamn_catalog::ApplicationName>,
 }
 
 /// The facts of one native call that only this policy reads.
@@ -169,7 +169,7 @@ pub(super) fn new_native_policy(
                 .map(|route| route.operation.clone())
                 .collect(),
             runtime_schema: served.runtime_schema.clone(),
-            application: if served.package_id == wamn_catalog::PALETTE_PACKAGE_ID {
+            application: if served.package_id.as_str() == wamn_catalog::PALETTE_PACKAGE_ID {
                 None
             } else {
                 Some(
@@ -268,7 +268,7 @@ impl InvocationPolicy for NativePolicy {
             );
             return Ok(facts.clone());
         }
-        let application = match component.application.as_deref() {
+        let application = match component.application.as_ref() {
             Some(application) => application,
             None => wamn_authority::connection::released_invocation_application(
                 self.resources.release.manifest(),
@@ -577,7 +577,7 @@ impl NativePolicy {
                 .map(|member| {
                     (
                         &member.fact.component_digest,
-                        member.fact.target.package_id.as_str(),
+                        &member.fact.target.package_id,
                     )
                 })
                 .collect::<Vec<_>>();

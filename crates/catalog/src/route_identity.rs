@@ -4,10 +4,15 @@
 
 /// The sealed operation token `<package>:<model>/<action>@<version>`. The
 /// package, model and action are written in kebab case.
-pub fn operation_token(package: &str, version: &str, model: &str, action: &str) -> String {
+pub fn operation_token(
+    package: &crate::PackageName,
+    version: &str,
+    model: &str,
+    action: &str,
+) -> String {
     format!(
         "{}:{}/{}@{version}",
-        package.replace('_', "-"),
+        package.as_str().replace('_', "-"),
         model.replace('_', "-"),
         action.replace('_', "-"),
     )

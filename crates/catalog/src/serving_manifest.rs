@@ -153,7 +153,7 @@ pub struct ServingRelease {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComponent {
-    pub package_id: String,
+    pub package_id: crate::PackageName,
     /// The application schema selected at publication. Absent releases use the host fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_schema: Option<String>,
@@ -258,7 +258,7 @@ impl OperationType {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingRoute {
-    pub package_id: String,
+    pub package_id: crate::PackageName,
     pub component: String,
     pub operation: String,
     #[serde(rename = "type")]
@@ -308,7 +308,7 @@ pub enum AttachmentTarget {
 #[serde(try_from = "AttachmentWire", into = "AttachmentWire")]
 pub struct ServingAttachment {
     pub type_: AttachmentType,
-    pub package_id: String,
+    pub package_id: crate::PackageName,
     pub target: AttachmentTarget,
     pub definition_hash: wamn_digest::Digest,
     pub definition: Value,
@@ -324,7 +324,7 @@ pub struct ServingAttachment {
 struct AttachmentWire {
     #[serde(rename = "type")]
     type_: AttachmentType,
-    package_id: String,
+    package_id: crate::PackageName,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     component: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -434,7 +434,7 @@ impl From<AttachmentRef<'_>> for ServingAttachment {
 pub struct RouteAttachment {
     #[serde(rename = "type")]
     pub type_: AttachmentType,
-    pub package_id: String,
+    pub package_id: crate::PackageName,
     pub component: String,
     pub operation: String,
     pub definition_hash: wamn_digest::Digest,
@@ -458,7 +458,7 @@ impl<'a> AttachmentRef<'a> {
         }
     }
 
-    pub fn package_id(self) -> &'a str {
+    pub fn package_id(self) -> &'a crate::PackageName {
         match self {
             Self::Route(attachment) => &attachment.package_id,
         }
@@ -553,7 +553,7 @@ pub fn parse_workflow_schedule(text: &str) -> Result<croner::Cron, CatalogIdenti
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingEntryMember {
-    pub package_id: String,
+    pub package_id: crate::PackageName,
     pub component: String,
     pub digest: wamn_digest::Digest,
 }
@@ -600,13 +600,13 @@ impl ServingManifest {
         self.components
             .iter()
             .map(|component| {
-                let version = if component.package_id == crate::PALETTE_PACKAGE_ID {
+                let version = if component.package_id.as_str() == crate::PALETTE_PACKAGE_ID {
                     crate::PALETTE_PACKAGE_VERSION
                 } else {
                     self.release
                         .packages
                         .iter()
-                        .find(|package| package.package_id() == component.package_id)
+                        .find(|package| package.package_id() == &component.package_id)
                         .ok_or_else(|| CatalogIdentityError::InvalidDefinition {
                             message: "component package absent from release".to_owned(),
                         })?
@@ -614,7 +614,7 @@ impl ServingManifest {
                 };
                 let target = crate::ComponentPackageCoordinate::new(
                     project_env_key,
-                    &component.package_id,
+                    component.package_id.clone(),
                     version,
                 )?;
                 Ok(component.descriptor.clone().into_admitted(target).component)
@@ -623,10 +623,17 @@ impl ServingManifest {
     }
 
     /// Whether this operation returns short-lived signed file reads.
-    pub fn signs_file_results(&self, package: &str, component: &str, operation: &str) -> bool {
+    pub fn signs_file_results(
+        &self,
+        package: &crate::PackageName,
+        component: &str,
+        operation: &str,
+    ) -> bool {
         self.components
             .iter()
-            .find(|served| served.package_id == package && served.descriptor.component == component)
+            .find(|served| {
+                &served.package_id == package && served.descriptor.component == component
+            })
             .and_then(|served| served.descriptor.operations.get(operation))
             .is_some_and(|operation| {
                 operation
@@ -703,7 +710,10 @@ impl ServingManifest {
     /// entry, and `component`'s own package otherwise. One application is one
     /// composed workload, so a base operation reached through the entry runs
     /// as the composing application.
-    pub fn composing_application<'a>(&'a self, component: &'a ServingComponent) -> &'a str {
+    pub fn composing_application<'a>(
+        &'a self,
+        component: &'a ServingComponent,
+    ) -> &'a crate::PackageName {
         if self.entry_members().contains(&component)
             && let Some(composing) = self.composing_member()
         {
@@ -715,12 +725,12 @@ impl ServingManifest {
     /// The route that calls `operation` of `component` in package `package_id`.
     pub fn route(
         &self,
-        package_id: &str,
+        package_id: &crate::PackageName,
         component: &str,
         operation: &str,
     ) -> Option<&ServingRoute> {
         self.routes.iter().find(|route| {
-            route.package_id == package_id
+            &route.package_id == package_id
                 && route.component == component
                 && route.operation == operation
         })
@@ -821,7 +831,7 @@ impl ServingManifest {
         }
         let mut package_versions = BTreeMap::new();
         for package in &self.release.packages {
-            if package.package_id() == crate::PALETTE_PACKAGE_ID {
+            if package.package_id().as_str() == crate::PALETTE_PACKAGE_ID {
                 return invalid("the platform palette is not an application package");
             }
 
@@ -831,7 +841,7 @@ impl ServingManifest {
             {
                 return Err(CatalogIdentityError::DuplicateMember {
                     field: "release-packages",
-                    id: package.package_id().to_owned(),
+                    id: package.package_id().to_string(),
                 });
             }
         }
@@ -895,7 +905,7 @@ impl ServingManifest {
             {
                 return invalid("components of one application must carry the same runtime schema");
             }
-            if component.package_id == crate::PALETTE_PACKAGE_ID {
+            if component.package_id.as_str() == crate::PALETTE_PACKAGE_ID {
                 if component.runtime_schema.is_some()
                     || component.descriptor.operations.values().any(|operation| {
                         operation.registered_operation.is_some() || operation.host_transaction
@@ -1052,9 +1062,9 @@ fn validate_route_target(
 
 /// The tests that every attachment passes, whatever it targets.
 fn validate_attachment(
-    package_versions: &BTreeMap<&str, &str>,
+    package_versions: &BTreeMap<&crate::PackageName, &str>,
     attachment_id: &str,
-    package_id: &str,
+    package_id: &crate::PackageName,
     definition: &Value,
     auth_policy: &Value,
     registered_operation: Option<&str>,
@@ -1079,10 +1089,9 @@ fn validate_attachment(
 }
 
 fn validate_package_member(
-    package_versions: &BTreeMap<&str, &str>,
-    package_id: &str,
+    package_versions: &BTreeMap<&crate::PackageName, &str>,
+    package_id: &crate::PackageName,
 ) -> Result<(), CatalogIdentityError> {
-    validate_text(package_id, "package-id")?;
     if !package_versions.contains_key(package_id) {
         return Err(CatalogIdentityError::InvalidDefinition {
             message: format!("package {package_id:?} is absent from the effective release"),
@@ -1092,8 +1101,8 @@ fn validate_package_member(
 }
 
 fn validate_registered_operation(
-    package_versions: &BTreeMap<&str, &str>,
-    package_id: &str,
+    package_versions: &BTreeMap<&crate::PackageName, &str>,
+    package_id: &crate::PackageName,
     operation: Option<&str>,
 ) -> Result<(), CatalogIdentityError> {
     let Some(operation) = operation else {
@@ -1155,8 +1164,8 @@ mod tests {
     fn release() -> ServingRelease {
         ServingRelease {
             packages: BTreeSet::from([
-                PackageCoordinate::new("base", "1.0.0").unwrap(),
-                PackageCoordinate::new("overlay", "3.0.0").unwrap(),
+                PackageCoordinate::new("base".parse().unwrap(), "1.0.0").unwrap(),
+                PackageCoordinate::new("overlay".parse().unwrap(), "3.0.0").unwrap(),
             ]),
         }
     }
@@ -1175,7 +1184,7 @@ mod tests {
         .map(|(package, component, digest, operation)| ServingComponent {
             runtime_schema: None,
 
-            package_id: package.into(),
+            package_id: package.parse().unwrap(),
             descriptor: ComponentDescriptor {
                 operations: BTreeMap::from([(
                     operation.into(),
@@ -1196,7 +1205,7 @@ mod tests {
 
     fn routes() -> BTreeSet<ServingRoute> {
         BTreeSet::from([ServingRoute {
-            package_id: "base".into(),
+            package_id: "base".parse().unwrap(),
             component: "http-request".into(),
             operation: "base:widget/get@1.0.0".into(),
             type_: OperationType::Get,
@@ -1219,7 +1228,7 @@ mod tests {
     fn attachment() -> ServingAttachment {
         ServingAttachment {
             type_: AttachmentType::Http,
-            package_id: "base".into(),
+            package_id: "base".parse().unwrap(),
             target: AttachmentTarget::Route {
                 component: "http-request".into(),
                 operation: "base:widget/get@1.0.0".into(),
@@ -1257,7 +1266,7 @@ mod tests {
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
             application: ServingEntryMember {
-                package_id: "overlay".into(),
+                package_id: "overlay".parse().unwrap(),
                 component: "transform".into(),
                 digest: COMPONENT_B.parse().unwrap(),
             },
@@ -1293,11 +1302,14 @@ mod tests {
         assert_ne!(manifest.digest(), reference_digest);
     }
 
-    fn component_of(manifest: &ServingManifest, package_id: &str) -> ServingComponent {
+    fn component_of(
+        manifest: &ServingManifest,
+        package_id: &crate::PackageName,
+    ) -> ServingComponent {
         manifest
             .components
             .iter()
-            .find(|component| component.package_id == package_id)
+            .find(|component| &component.package_id == package_id)
             .expect("the fixture names the package")
             .clone()
     }
@@ -1307,8 +1319,8 @@ mod tests {
         let mut manifest = manifest();
         // Without an entry, each component is its own application.
         assert_eq!(
-            manifest.composing_application(&component_of(&manifest, "base")),
-            "base"
+            manifest.composing_application(&component_of(&manifest, &"base".parse().unwrap())),
+            &"base".parse().unwrap()
         );
         manifest.composed_entry = Some(entry_for(&manifest));
         assert_eq!(
@@ -1319,8 +1331,9 @@ mod tests {
         );
         for package_id in ["base", "overlay"] {
             assert_eq!(
-                manifest.composing_application(&component_of(&manifest, package_id)),
-                "overlay",
+                manifest
+                    .composing_application(&component_of(&manifest, &package_id.parse().unwrap())),
+                &"overlay".parse().unwrap(),
                 "{package_id} runs as the composing application"
             );
         }
@@ -1329,24 +1342,27 @@ mod tests {
         entry.application = entry
             .members
             .iter()
-            .find(|member| member.package_id == "base")
+            .find(|member| member.package_id == "base".parse().unwrap())
             .unwrap()
             .clone();
-        assert_eq!(manifest.composing_member().unwrap().package_id, "base");
+        assert_eq!(
+            manifest.composing_member().unwrap().package_id,
+            "base".parse().unwrap()
+        );
         // A component outside the entry stays its own application.
         manifest
             .composed_entry
             .as_mut()
             .unwrap()
             .members
-            .retain(|member| member.package_id == "base");
+            .retain(|member| member.package_id == "base".parse().unwrap());
         assert_eq!(
-            manifest.composing_application(&component_of(&manifest, "overlay")),
-            "overlay"
+            manifest.composing_application(&component_of(&manifest, &"overlay".parse().unwrap())),
+            &"overlay".parse().unwrap()
         );
         assert_eq!(
-            manifest.composing_application(&component_of(&manifest, "base")),
-            "base"
+            manifest.composing_application(&component_of(&manifest, &"base".parse().unwrap())),
+            &"base".parse().unwrap()
         );
     }
 
@@ -1697,7 +1713,7 @@ mod tests {
         let mut duplicate = release();
         duplicate
             .packages
-            .insert(PackageCoordinate::new("base", "2.0.0").unwrap());
+            .insert(PackageCoordinate::new("base".parse().unwrap(), "2.0.0").unwrap());
         let error = ServingManifest::new(duplicate, components(), routes(), BTreeMap::new())
             .expect_err("two versions of one package must refuse");
         assert_eq!(
@@ -1762,14 +1778,14 @@ mod tests {
                 BTreeMap::from([("widget-get".to_string(), absent)]),
             ),
             Err(CatalogIdentityError::UnresolvableManifestRoute {
-                package_id: "base".into(),
+                package_id: "base".parse().unwrap(),
                 component: "http-request".into(),
                 operation: "base:widget/list@1.0.0".into(),
             })
         );
 
         let mut other_package = route_attachment();
-        other_package.package_id = "overlay".into();
+        other_package.package_id = "overlay".parse().unwrap();
         other_package.registered_operation = None;
         assert!(matches!(
             ServingManifest::new(

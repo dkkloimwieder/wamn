@@ -116,14 +116,14 @@ impl Fixture {
                 .get_mut(name)
                 .unwrap()
                 .packages
-                .insert(package.to_owned());
+                .insert(package.parse().unwrap());
         }
-        let release = loaded_release(&document, "reader")?;
+        let release = loaded_release(&document, &"reader".parse().expect("valid name"))?;
         document.applications.get_mut("reader").unwrap().current =
             wamn_environment::environment::document::DeclaredRelease::Digest(
                 release.release().manifest_digest,
             );
-        let writer = loaded_release(&document, "writer")?;
+        let writer = loaded_release(&document, &"writer".parse().expect("valid name"))?;
         document.applications.get_mut("writer").unwrap().current =
             wamn_environment::environment::document::DeclaredRelease::Digest(
                 writer.release().manifest_digest,
@@ -136,7 +136,7 @@ impl Fixture {
             }),
         )?)?;
         let mut writer = package.clone();
-        writer.package.id = "observer_fixture".into();
+        writer.package.id = "observer_fixture".parse().expect("valid name");
         writer.connections.insert(
             "registers".into(),
             wamn_compiler::manifest::ConnectionDeclaration {
@@ -239,13 +239,13 @@ impl Fixture {
         for application in self.document.applications.values_mut() {
             application.connections.insert(
                 "registers".into(),
-                wamn_registry::configuration::ConnectionReference {
+                wamn_catalog::configuration::ConnectionReference {
                     name: name.into(),
                     version: None,
                 },
             );
         }
-        self.release = loaded_release(&self.document, "reader")?;
+        self.release = loaded_release(&self.document, &"reader".parse().expect("valid name"))?;
         self.document
             .applications
             .get_mut("reader")
@@ -301,7 +301,8 @@ impl Fixture {
             self.registry_credentials.clone(),
         )
         .await?;
-        let writer_release = loaded_release(&self.document, "writer")?;
+        let writer_release =
+            loaded_release(&self.document, &"writer".parse().expect("valid name"))?;
         let writer = Integrations::new(
             facts,
             &writer_release,
@@ -318,13 +319,13 @@ impl Fixture {
                 &(format!("sha256:{}", "a".repeat(64)))
                     .parse::<wamn_digest::Digest>()
                     .unwrap(),
-                "modbus_reader",
+                &"modbus_reader".parse().expect("valid name"),
             )?,
             writer: writer.imports(
                 &(format!("sha256:{}", "b".repeat(64)))
                     .parse::<wamn_digest::Digest>()
                     .unwrap(),
-                "observer_fixture",
+                &"observer_fixture".parse().expect("valid name"),
             )?,
         })
     }

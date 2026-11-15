@@ -499,7 +499,7 @@ mod tests {
     fn target() -> ComponentPackageCoordinate {
         ComponentPackageCoordinate {
             project_env_key: "t1--dev--project".parse().unwrap(),
-            package_id: "app".to_string(),
+            package_id: "app".parse().unwrap(),
             package_version: "1.0.0".to_string(),
         }
     }
@@ -602,7 +602,7 @@ mod tests {
     #[test]
     fn resolved_cross_package_facts_keep_their_exact_target_targets() {
         let mut facts = components();
-        facts[1].target.package_id = "base".to_owned();
+        facts[1].target.package_id = "base".parse().unwrap();
         facts[1].target.package_version = "3.1.0".to_owned();
         let resolved = BTreeMap::from([
             ("source".to_owned(), facts[0].clone()),
@@ -613,7 +613,10 @@ mod tests {
             .expect("exact per-node target facts admit");
 
         assert_eq!(resolved["source"].target, target());
-        assert_eq!(resolved["target"].target.package_id, "base");
+        assert_eq!(
+            resolved["target"].target.package_id,
+            "base".parse().unwrap()
+        );
         assert_eq!(resolved["target"].target.package_version, "3.1.0");
     }
 

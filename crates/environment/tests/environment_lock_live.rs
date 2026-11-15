@@ -11,8 +11,8 @@ use tokio::{
     task::JoinSet,
     time::timeout,
 };
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_registry::Triple;
-use wamn_registry::lifecycle_lock::LifecycleLock;
 
 #[sqlx::test(migrations = false)]
 async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
@@ -36,7 +36,7 @@ async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
                 LifecycleLock::acquire_application(
                     wamn_postgres::connect(url).await.unwrap(),
                     &prod,
-                    "orders"
+                    &"orders".parse().expect("valid name")
                 )
                 .await
                 .is_err()
@@ -55,7 +55,7 @@ async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
     let orders = LifecycleLock::acquire_application(
         wamn_postgres::connect(url).await.unwrap(),
         &prod,
-        "orders",
+        &"orders".parse().expect("valid name"),
     )
     .await
     .unwrap();
@@ -65,7 +65,7 @@ async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
             LifecycleLock::acquire_application(
                 wamn_postgres::connect(url).await.unwrap(),
                 &prod,
-                "orders"
+                &"orders".parse().expect("valid name")
             ),
         )
         .await
@@ -75,7 +75,7 @@ async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
     let receiving = LifecycleLock::acquire_application(
         wamn_postgres::connect(url).await.unwrap(),
         &prod,
-        "receiving",
+        &"receiving".parse().expect("valid name"),
     )
     .await
     .unwrap();
@@ -88,7 +88,7 @@ async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
     let retry = LifecycleLock::acquire_application(
         wamn_postgres::connect(url).await.unwrap(),
         &prod,
-        "orders",
+        &"orders".parse().expect("valid name"),
     )
     .await
     .unwrap();
@@ -132,7 +132,8 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open(pool:
     let mut observer = wamn_postgres::connect(database.as_str()).await.unwrap();
     tasks.spawn(async move {});
 
-    for application in [None, Some("orders")] {
+    let orders = "orders".parse().unwrap();
+    for application in [None, Some(&orders)] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut proxy_url = url::Url::parse(database.as_str()).unwrap();
         let server_port = proxy_url.port().unwrap();
@@ -188,7 +189,11 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open(pool:
     }
 }
 
-async fn acquire(url: &str, triple: &Triple, application: Option<&str>) -> LifecycleLock {
+async fn acquire(
+    url: &str,
+    triple: &Triple,
+    application: Option<&wamn_catalog::ApplicationName>,
+) -> LifecycleLock {
     match application {
         Some(application) => {
             LifecycleLock::acquire_application(

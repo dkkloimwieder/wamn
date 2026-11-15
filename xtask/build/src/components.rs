@@ -36,7 +36,7 @@ struct Built {
 /// Compile only package-owned guests. Palette guests belong to the platform build.
 pub(crate) async fn compile_components(
     request: &BuildRequest,
-    package: &str,
+    package: &wamn_catalog::PackageName,
 ) -> Result<Vec<BuildComponent>> {
     let output = package_output(&request.output_root, package);
     let manifest = PackageManifest::from_slice(&fs::read(output.join(COMPILED_MANIFEST_NAME))?)?;
@@ -376,7 +376,7 @@ mod tests {
         let scratch = scratch(name);
         let base = scratch.0.join("base");
         let output_root = scratch.0.join("target/wamn");
-        let output = package_output(&output_root, "base");
+        let output = package_output(&output_root, &"base".parse().unwrap());
         fs::create_dir_all(&base).unwrap();
         fs::create_dir_all(output.join(COMPONENTS)).unwrap();
         let mut manifest = serde_json::json!({
@@ -399,7 +399,7 @@ mod tests {
         let built = BuildRecord {
             schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
             package: build_record::BuildPackage {
-                id: "base".into(),
+                id: "base".parse().unwrap(),
                 version: "1.0.0".into(),
             },
             dependencies: Vec::new(),

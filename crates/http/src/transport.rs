@@ -64,7 +64,7 @@ pub(crate) struct ConnectionIdentity {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ClientIdentity {
     pub(crate) connection: ConnectionIdentity,
-    pub(crate) package: Box<str>,
+    pub(crate) package: wamn_catalog::PackageName,
     pub(crate) component_digest: wamn_digest::Digest,
     pub(crate) requirement: Box<str>,
     pub(crate) binding_hash: wamn_digest::Digest,

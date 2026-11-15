@@ -18,12 +18,12 @@ pub struct EnvironmentDocument {
     pub schema: Schema,
     /// Application name to its selection and membership.
     #[serde(deserialize_with = "read_applications")]
-    pub applications: BTreeMap<String, ApplicationSelection>,
+    pub applications: BTreeMap<wamn_catalog::ApplicationName, ApplicationSelection>,
     #[serde(default)]
     pub integrations: BTreeMap<String, Integration>,
 }
 
-pub use wamn_registry::configuration::{
+pub use wamn_catalog::configuration::{
     Client, ConnectionReference, Integration, Schema, SchemaMode,
 };
 
@@ -41,7 +41,7 @@ pub struct ApplicationSelection {
     pub client: Option<Client>,
     /// Transient membership from the verified release manifest.
     #[serde(skip)]
-    pub packages: std::collections::BTreeSet<String>,
+    pub packages: std::collections::BTreeSet<wamn_catalog::PackageName>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub connections: BTreeMap<String, ConnectionReference>,
 }
@@ -61,8 +61,9 @@ impl From<ApplicationSelection> for wamn_catalog::ApplicationDefinition {
 
 fn read_applications<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<BTreeMap<String, ApplicationSelection>, D::Error> {
-    let values = BTreeMap::<String, serde_json::Value>::deserialize(deserializer)?;
+) -> Result<BTreeMap<wamn_catalog::ApplicationName, ApplicationSelection>, D::Error> {
+    let values =
+        BTreeMap::<wamn_catalog::ApplicationName, serde_json::Value>::deserialize(deserializer)?;
     values
         .into_iter()
         .map(|(name, value)| {
@@ -132,7 +133,7 @@ impl EnvironmentDocument {
     ///
     /// When a field is unknown or missing, or a value is refused.
     pub fn from_json(bytes: &[u8]) -> anyhow::Result<Self> {
-        let configuration: wamn_registry::configuration::EnvironmentConfiguration =
+        let configuration: wamn_catalog::configuration::EnvironmentConfiguration =
             serde_json::from_slice(bytes).context("decode the environment JSON")?;
         let document = Self::from_configuration(configuration);
         document.require_valid()?;
@@ -163,7 +164,6 @@ impl EnvironmentDocument {
                     && !hostname.ends_with(['.', '-']),
                 "application {name}: hostname {hostname:?} is not a lowercase DNS name"
             );
-            ensure!(!name.is_empty(), "an application has an empty name");
         }
         ensure!(!self.target.trim().is_empty(), "target is empty");
         for (application, definition) in &self.applications {
@@ -184,12 +184,15 @@ impl EnvironmentDocument {
     }
 
     /// Find the sole application that owns a package.
-    pub fn application_for_package(&self, package: &str) -> Option<&str> {
+    pub fn application_for_package(
+        &self,
+        package: &wamn_catalog::PackageName,
+    ) -> Option<&wamn_catalog::ApplicationName> {
         let mut owners = self
             .applications
             .iter()
             .filter(|(_, application)| application.packages.contains(package))
-            .map(|(name, _)| name.as_str());
+            .map(|(name, _)| name);
         let owner = owners.next()?;
         owners.next().is_none().then_some(owner)
     }
@@ -280,14 +283,14 @@ impl EnvironmentDocument {
                 .join(", ");
             lines.push(format!(
                 "        {} = {{\n            hostname = {}\n            revocation_seconds = {}\n            connections = {{{bindings}}}",
-                quote(name),
+                quote(name.as_str()),
                 quote(&application.hostname),
                 application.revocation_seconds
             ));
             if let Some(client) = &application.client {
                 lines.push(format!(
                     "            client = {{package = {}, web = {}}}",
-                    quote(&client.package),
+                    quote(client.package.as_str()),
                     quote(&client.web.to_string())
                 ));
             }

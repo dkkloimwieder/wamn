@@ -27,7 +27,7 @@ pub(super) async fn publish(
     components: &ReleaseComponents,
     registry: &PackageRegistry,
     applications: &wamn_catalog::EnvironmentApplications,
-    application: Option<&str>,
+    application: Option<&wamn_catalog::ApplicationName>,
     inputs: Option<&EntryPublicationInputs<'_>>,
 ) -> anyhow::Result<()> {
     if !published

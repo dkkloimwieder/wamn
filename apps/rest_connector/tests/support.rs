@@ -27,7 +27,11 @@ pub fn admit(
 ) -> ComponentAdmission {
     let target = ComponentPackageCoordinate {
         project_env_key: "rest--test--publication".parse().unwrap(),
-        package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
+        package_id: manifest(package)["package"]["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
         package_version: "0.1.1".into(),
     };
     let declaration = render_package_declaration(package, name, &target.project_env_key).unwrap();

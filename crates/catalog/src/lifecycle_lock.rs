@@ -7,12 +7,12 @@ use sqlx::{Connection as _, Row as _};
 use std::{sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
-use crate::Triple;
+use wamn_registry::Triple;
 
 /// The refusal when another verb holds the lock.
 pub const DEPLOYMENT_IN_PROGRESS: &str = "deployment in progress";
 
-use crate::sql::{
+use wamn_registry::sql::{
     ENVIRONMENT_LOCK_SQL as TRY_LOCK_SQL, ENVIRONMENT_SHARED_LOCK_SQL as TRY_SHARED_LOCK_SQL,
 };
 
@@ -46,7 +46,7 @@ impl LifecycleLock {
     pub async fn acquire_environment(
         client: Client,
         org: &str,
-        env: &crate::EnvName,
+        env: &wamn_registry::EnvName,
     ) -> anyhow::Result<Self> {
         let lock = Self::start(client).await?;
         if !lock.try_acquire(TRY_LOCK_SQL, &[org, env.as_str()]).await? {
@@ -69,7 +69,7 @@ impl LifecycleLock {
     pub async fn acquire_application(
         client: Client,
         triple: &Triple,
-        application: &str,
+        application: &crate::ApplicationName,
     ) -> anyhow::Result<Self> {
         // Fixed order: environment exclusion, then the application key.
         let lock = Self::acquire_shared(client, triple).await?;

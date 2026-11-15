@@ -233,7 +233,7 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
         )
     })
     .collect();
-    ClientContractIr::from_operations("platform_fixture", descriptions, &routes)
+    ClientContractIr::from_operations(&"platform_fixture".parse().unwrap(), descriptions, &routes)
         .expect("platform fixture projects as a release")
 }
 

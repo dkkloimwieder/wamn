@@ -26,7 +26,7 @@ pub struct BuildRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuildPackage {
-    pub id: String,
+    pub id: wamn_catalog::PackageName,
     pub version: String,
 }
 
@@ -34,7 +34,7 @@ pub struct BuildPackage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuildDependency {
-    pub id: String,
+    pub id: wamn_catalog::PackageName,
     pub version: String,
     /// The digest of the base's canonical `wamn.json`, until a package
     /// artifact digest replaces it.
@@ -148,9 +148,10 @@ pub fn source_root(output: &Path) -> Result<PathBuf> {
     let package = output
         .file_name()
         .and_then(|name| name.to_str())
-        .with_context(|| format!("{} has no UTF-8 package name", output.display()))?;
+        .with_context(|| format!("{} has no UTF-8 package name", output.display()))?
+        .parse::<wamn_catalog::PackageName>()?;
     Ok(crate::output::dependency_root(
-        &workspace.join(package),
-        package,
+        &workspace.join(package.as_str()),
+        &package,
     ))
 }

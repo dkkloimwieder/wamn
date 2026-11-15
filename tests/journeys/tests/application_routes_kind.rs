@@ -16,7 +16,7 @@ mod write_log;
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()> {
-    let application = fixture("platform_fixture").await?;
+    let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let routes = &application.routes;
     let mut database = application.observer().await?;
 
@@ -121,7 +121,7 @@ async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn health_head_needs_no_credential() -> anyhow::Result<()> {
-    let application = fixture("platform_fixture").await?;
+    let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let paths = &application.routes;
     let response = paths
         .client
@@ -142,7 +142,7 @@ async fn health_head_needs_no_credential() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_read_of_100000_rows_refuses_at_the_ceiling() -> anyhow::Result<()> {
-    let application = fixture("platform_fixture").await?;
+    let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let paths = &application.routes;
     let load = json!([{"limit": 100_000}]);
 
@@ -193,11 +193,11 @@ async fn get(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<(u16, V
     Ok((response.status().as_u16(), response.json().await?))
 }
 
-async fn fixture(package: &str) -> anyhow::Result<Application> {
+async fn fixture(package: &wamn_catalog::PackageName) -> anyhow::Result<Application> {
     Application::prepare(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../apps")
-            .join(package),
+            .join(package.as_str()),
     )
     .await
 }
@@ -206,7 +206,7 @@ async fn fixture(package: &str) -> anyhow::Result<Application> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Result<()> {
-    let application = fixture("platform_fixture").await?;
+    let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let paths = &application.routes;
     let result = async {
         for (index, batch, keyed) in [
@@ -246,7 +246,7 @@ async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Resu
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Result<()> {
-    let application = fixture("platform_fixture_overlay").await?;
+    let application = fixture(&"platform_fixture_overlay".parse().unwrap()).await?;
     let caller = &application.caller;
     let paths = &application.routes;
     let result = async {
@@ -286,7 +286,7 @@ async fn post(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<Value>
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Result<()> {
-    let application = fixture("platform_fixture").await?;
+    let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let paths = &application.routes;
     let result = async {
         application
@@ -326,7 +326,7 @@ async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Res
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_role_without_the_permission_is_refused_an_authored_feed() -> anyhow::Result<()> {
-    let application = fixture("platform_fixture").await?;
+    let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let paths = &application.routes;
     let result = async {
         application.call("role.create", json!({"role":"reader"})).await?;

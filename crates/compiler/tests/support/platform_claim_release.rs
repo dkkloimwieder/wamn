@@ -62,7 +62,7 @@ pub(super) fn release(composed: bool) -> ClientContractIr {
         replay: (!composed).then_some(ReplayIr::Claim),
     };
     ClientContractIr::from_operations(
-        "platform_fixture",
+        &"platform_fixture".parse().unwrap(),
         package.operations(),
         &BTreeMap::from([(identity, route)]),
     )

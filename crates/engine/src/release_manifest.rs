@@ -268,10 +268,10 @@ pub fn validate_component_in_release(
         .release
         .packages
         .iter()
-        .find(|package| package.package_id() == component.target.package_id)
+        .find(|package| package.package_id() == &component.target.package_id)
         .map(wamn_catalog::PackageCoordinate::package_version)
         .or_else(|| {
-            (component.target.package_id == wamn_catalog::PALETTE_PACKAGE_ID)
+            (component.target.package_id.as_str() == wamn_catalog::PALETTE_PACKAGE_ID)
                 .then_some(wamn_catalog::PALETTE_PACKAGE_VERSION)
         });
     anyhow::ensure!(
@@ -324,12 +324,14 @@ mod tests {
     fn fixture() -> ServingManifest {
         ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
+                packages: BTreeSet::from([
+                    PackageCoordinate::new("cat".parse().unwrap(), "1.0.0").unwrap()
+                ]),
             },
             BTreeSet::from([ServingComponent {
                 runtime_schema: None,
 
-                package_id: "cat".into(),
+                package_id: "cat".parse().unwrap(),
                 descriptor: {
                     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
                         "transform",
@@ -360,9 +362,10 @@ mod tests {
     fn a_loaded_release_refuses_multiple_applications_and_foreign_packages() {
         let bytes = fixture().canonical_bytes();
         let mut targeted = target();
-        targeted
-            .applications
-            .insert("other".into(), targeted.applications["catalog"].clone());
+        targeted.applications.insert(
+            "other".parse().unwrap(),
+            targeted.applications["catalog"].clone(),
+        );
         assert_eq!(
             LoadedRelease::load_canonical_bytes(&bytes, "fixture", targeted)
                 .unwrap_err()
@@ -417,10 +420,10 @@ mod tests {
         ReleaseTarget::new("t1--dev--project".parse().unwrap(), "prod".parse().unwrap())
             .with_applications(
                 [(
-                    "catalog".to_owned(),
+                    "catalog".parse().unwrap(),
                     wamn_catalog::ApplicationDefinition {
                         connections: std::collections::BTreeMap::new(),
-                        packages: ["cat".to_owned()].into(),
+                        packages: ["cat".parse().unwrap()].into(),
                     },
                 )]
                 .into(),
@@ -575,7 +578,7 @@ mod tests {
         AdmittedComponent {
             target: wamn_catalog::ComponentPackageCoordinate {
                 project_env_key: "t1--dev--project".parse().unwrap(),
-                package_id: "cat".into(),
+                package_id: "cat".parse().unwrap(),
                 package_version: "1.0.0".into(),
             },
             component: "transform".into(),

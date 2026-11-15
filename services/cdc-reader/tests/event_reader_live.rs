@@ -33,9 +33,10 @@ use async_nats::jetstream::consumer::pull::Config as PullConfig;
 use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
 use futures_util::StreamExt as _;
 
+use wamn_catalog::WiringEventOperation as Op;
 use wamn_cdc_reader::{ReaderShutdown, run_with_shutdown};
 use wamn_control_provision::{cdc_object_name, sql};
-use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
+use wamn_event_wire::{Causation, Envelope, msg_id, subject};
 use wamn_events::reader::ReaderConfig;
 use wamn_registry::sql::{upsert_org_sql, upsert_project_env_with_policy_sql, upsert_project_sql};
 
@@ -675,7 +676,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
             )
         );
         assert_eq!(id, &msg_id(PROJECT, &ENV.parse().unwrap(), &e.identity));
-        assert_eq!(e.package_id, "platform_fixture");
+        assert_eq!(e.package_id, "platform_fixture".parse().unwrap());
         assert_eq!(e.entity, "widget");
         assert_eq!(e.table, "widgets");
     }

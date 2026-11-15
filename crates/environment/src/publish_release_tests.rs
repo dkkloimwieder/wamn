@@ -18,6 +18,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         ("consumer", "consumer", 'a'),
         ("integration", "integration", 'b'),
     ] {
+        let package: wamn_catalog::PackageName = package.parse().unwrap();
         let mut manifest = source_manifest();
         manifest.package.id = package.to_owned();
         for model in manifest.models.values_mut() {
@@ -44,7 +45,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         }
         component.operations.insert(operation.clone(), export);
         components.insert(component, Vec::new()).unwrap();
-        packages.insert(PackageCoordinate::new(package, "1.0.0").unwrap());
+        packages.insert(PackageCoordinate::new(package.clone(), "1.0.0").unwrap());
         manifests.insert(package.to_owned(), manifest);
     }
     let published = publish_release_with_package_manifests(
@@ -90,14 +91,25 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         live: BTreeMap::new(),
     };
     let mut unrelated = document.applications["erp"].clone();
-    unrelated.packages = BTreeSet::from(["unrelated".into()]);
-    document.applications.insert("other".into(), unrelated);
+    unrelated.packages = BTreeSet::from(["unrelated".parse().expect("valid name")]);
+    document
+        .applications
+        .insert("other".parse().expect("valid name"), unrelated);
     assert!(select_application(&document, None).is_err());
-    assert!(select_application(&document, Some("absent")).is_err());
-    let selected = select_application(&document, Some("erp")).unwrap();
+    assert!(select_application(&document, Some(&"absent".parse().expect("valid name"))).is_err());
+    let selected =
+        select_application(&document, Some(&"erp".parse().expect("valid name"))).unwrap();
     assert!(refusals(&selected, &authorities).is_empty());
     assert_ne!(
-        crate::environment::analyse::application_release_name(&document, "erp").unwrap(),
-        crate::environment::analyse::application_release_name(&document, "other").unwrap()
+        crate::environment::analyse::application_release_name(
+            &document,
+            &"erp".parse().expect("valid name")
+        )
+        .unwrap(),
+        crate::environment::analyse::application_release_name(
+            &document,
+            &"other".parse().expect("valid name")
+        )
+        .unwrap()
     );
 }

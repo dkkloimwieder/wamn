@@ -20,7 +20,7 @@ use wamn_publish::package_artifact::{OpenedPackage, PackageSource, open_package_
 pub async fn initialize(
     platform: &Platform,
     document: &EnvironmentDocument,
-    analysed: &BTreeMap<String, Installed>,
+    analysed: &BTreeMap<wamn_catalog::PackageName, Installed>,
     manifest: &wamn_catalog::ServingManifest,
     project_url: &str,
     migration_database_url: &str,
@@ -44,11 +44,11 @@ pub async fn initialize(
             .iter()
             .map(|(id, _, _, package_manifest)| {
                 (
-                    id.as_str(),
+                    id,
                     package_manifest
                         .base_dependencies
                         .values()
-                        .map(|dependency| dependency.package.as_str())
+                        .map(|dependency| &dependency.package)
                         .collect(),
                 )
             })
@@ -179,7 +179,10 @@ pub async fn materialize_application_principals(
         if written != 0 {
             drops.principal(project_env_key, principal.id());
         }
-        let role = format!("application-{}", package.package.id.replace('_', "-"));
+        let role = format!(
+            "application-{}",
+            package.package.id.as_str().replace('_', "-")
+        );
         wamn_platform_identity::application::create_role(
             &mut transaction,
             project_env_key,
@@ -215,7 +218,7 @@ pub async fn write_runtime_grants(
     let mut system = crate::provision_project_env::provisioning_transaction(system).await?;
     let dependency_manifests = packages
         .iter()
-        .map(|package| (package.package.id.as_str(), package))
+        .map(|package| (&package.package.id, package))
         .collect();
     for package in packages.iter().filter(|package| {
         wamn_publish::publish_release::composes_integration(package, &manifest.components)
@@ -240,7 +243,10 @@ pub async fn write_runtime_grants(
             active,
             "application principal {subject} is absent or inactive in the project; run env initialize"
         );
-        let role = format!("application-{}", package.package.id.replace('_', "-"));
+        let role = format!(
+            "application-{}",
+            package.package.id.as_str().replace('_', "-")
+        );
         let owned: bool = sqlx::query(
             "SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$3) \
              AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2)",
@@ -328,7 +334,7 @@ pub async fn create_number_sequences(
 pub(super) async fn installed(
     platform: &Platform,
     document: &EnvironmentDocument,
-) -> anyhow::Result<BTreeMap<String, Installed>> {
+) -> anyhow::Result<BTreeMap<wamn_catalog::PackageName, Installed>> {
     let mut system = connect(&platform.system_database_url).await?;
     let mut system = crate::provision_project_env::provisioning_transaction(&mut system).await?;
     let row = analyse::read_row(&mut system, document)
@@ -347,7 +353,7 @@ pub(super) async fn installed(
 /// The package artifact `<id>-<version>`, pulled from the registry.
 pub(super) async fn open(
     platform: &Platform,
-    id: &str,
+    id: &wamn_catalog::PackageName,
     version: &str,
 ) -> anyhow::Result<OpenedPackage> {
     let Some(base) = &platform.package_artifact_base else {
@@ -447,7 +453,11 @@ mod tests {
             composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
+                packages: BTreeSet::from([PackageCoordinate::new(
+                    "orders".parse().expect("valid name"),
+                    "1.0.0",
+                )
+                .unwrap()]),
             },
             components: BTreeSet::from([component(
                 "blob-put",
@@ -515,13 +525,13 @@ mod tests {
     #[test]
     fn sequence_defaults_use_map_names_and_refuse_conflicting_declarations() {
         let mut base = wamn_publish::test_support::source_manifest();
-        base.package.id = "base".into();
+        base.package.id = "base".parse().expect("valid name");
         base.sequences = serde_json::from_value(serde_json::json!({
             "order": {"pattern": "PO-{seq:po}"}
         }))
         .unwrap();
         let mut overlay = base.clone();
-        overlay.package.id = "overlay".into();
+        overlay.package.id = "overlay".parse().expect("valid name");
         let applications = serde_json::from_value(serde_json::json!({
             "receiving": {"packages": ["base", "overlay"]}
         }))
@@ -530,7 +540,7 @@ mod tests {
         assert_eq!(
             defaults,
             [wamn_platform_identity::configuration::SequenceDefault {
-                application: "receiving".into(),
+                application: "receiving".parse().unwrap(),
                 name: "order".into(),
                 pattern: "PO-{seq:po}".into(),
             }]
@@ -554,10 +564,17 @@ mod tests {
     /// order (wamn-k8127.5).
     #[test]
     fn an_overlay_applies_after_its_base() {
+        let [overlay, base, other, outside] = [
+            "client_acme_receiving",
+            "wamn_receiving",
+            "other",
+            "outside_the_release",
+        ]
+        .map(|name| name.parse().unwrap());
         let packages = [
-            ("client_acme_receiving", vec!["wamn_receiving"]),
-            ("wamn_receiving", Vec::new()),
-            ("other", vec!["outside_the_release"]),
+            (&overlay, vec![&base]),
+            (&base, Vec::new()),
+            (&other, vec![&outside]),
         ];
         let order = apply_order(&packages).unwrap();
         assert_eq!(
@@ -574,7 +591,13 @@ mod tests {
                 }
             }
         }
-        assert!(apply_order(&[("a", vec!["b"]), ("b", vec!["a"])]).is_err());
+        assert!(
+            apply_order(&[
+                (&"a".parse().unwrap(), vec![&"b".parse().unwrap()]),
+                (&"b".parse().unwrap(), vec![&"a".parse().unwrap()])
+            ])
+            .is_err()
+        );
     }
 
     fn component(name: &str, digest: &wamn_digest::Digest, aliases: &[&str]) -> ServingComponent {
@@ -589,7 +612,7 @@ mod tests {
             .collect();
         ServingComponent {
             runtime_schema: None,
-            package_id: "orders".to_owned(),
+            package_id: "orders".parse().unwrap(),
             descriptor,
         }
     }

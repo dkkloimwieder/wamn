@@ -275,7 +275,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
             .await?,
         ProductionLeaseRenewal::FenceLost
     );
-    let packages = [PACKAGE_ID.to_string()];
+    let packages = [PACKAGE_ID.parse().unwrap()];
     let completion = ProductionCompletion::completed(serde_json::json!({"done": true}));
     assert_eq!(
         wamn_connections::production_lease::ProductionLeases::new(&plugin)

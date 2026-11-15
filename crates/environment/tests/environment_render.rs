@@ -44,7 +44,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
                 "auth-policy":{"modes":["none"]}}}
         }))?;
         let member = wamn_catalog::ServingEntryMember {
-            package_id: application.into(),
+            package_id: application.parse().unwrap(),
             component: application.into(),
             digest: wamn_digest::bytes_sha256(application.as_bytes()),
         };
@@ -65,7 +65,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         "applications":applications
     }))?)?;
     let render = |document: &EnvironmentDocument,
-                  application: &str,
+                  application: &wamn_catalog::ApplicationName,
                   release: &wamn_catalog::ServingManifest|
      -> anyhow::Result<_> {
         let selection = &document.applications[application];
@@ -84,7 +84,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
                 .unwrap()
                 .keys()
                 .collect::<Vec<_>>(),
-            [&serde_yaml::Value::from(application)]
+            [&serde_yaml::Value::from(application.as_str())]
         );
         assert_eq!(
             values["routeHost"].as_str(),
@@ -173,7 +173,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
     };
     let before = releases
         .iter()
-        .map(|(name, release)| Ok((*name, render(&document, name, release)?)))
+        .map(|(name, release)| Ok((*name, render(&document, &name.parse().unwrap(), release)?)))
         .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
     let release = releases.get_mut("orders").unwrap();
     release.composed_entry.as_mut().unwrap().reference =
@@ -181,7 +181,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
     document.applications.get_mut("orders").unwrap().current =
         DeclaredRelease::Digest(release.digest());
     for (application, release) in &releases {
-        let after = render(&document, application, release)?;
+        let after = render(&document, &application.parse().unwrap(), release)?;
         let (before_digest, before_host, before_release) = &before[application];
         let (after_digest, after_host, after_release) = after;
         assert_eq!(after_host, *before_host);
@@ -255,7 +255,8 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
     }
     // Both connectors share integration.k and its session/event host overlay.
     for connector in ["rest_connector", "netsuite"] {
-        let document = integration::fixture_document(connector);
+        let document =
+            integration::fixture_document(&connector.parse().unwrap(), &connector.parse().unwrap());
         let group = fixture_host_group(&document, "registry.invalid");
         let path = work.path().join("integration-host-group.yaml");
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
@@ -310,7 +311,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         artifact_base: "registry.invalid/wamn/releases".into(),
         route_host: format!("{project}.example"),
         applications: [(
-            project.into(),
+            project.parse().unwrap(),
             wamn_catalog::ApplicationDefinition {
                 connections: std::collections::BTreeMap::new(),
                 packages: manifest

@@ -75,7 +75,7 @@ pub(super) async fn reconcile_entity_maps(
                 model.table
             );
         };
-        let mapped_package = mapping.get::<Option<String>, _>(0);
+        let mapped_package = mapping.try_get::<Option<wamn_catalog::PackageName>, _>(0)?;
         let mapped_entity = mapping.get::<Option<String>, _>(1);
         let mapped_table = mapping.get::<Option<String>, _>(2);
         ensure!(
@@ -86,7 +86,7 @@ pub(super) async fn reconcile_entity_maps(
             model.model_id
         );
         if let (Some(mapped_package), Some(mapped_entity)) =
-            (mapped_package.as_deref(), mapped_entity.as_deref())
+            (mapped_package.as_ref(), mapped_entity.as_deref())
         {
             if mapped_package != relation_owner || mapped_entity != model.model_id.as_str() {
                 bail!(
@@ -159,13 +159,13 @@ pub(super) async fn reconcile_entity_maps(
             excluded.schema,
             excluded.table
         );
-        let mapped_package = mapping.get::<Option<String>, _>(0);
+        let mapped_package = mapping.try_get::<Option<wamn_catalog::PackageName>, _>(0)?;
         let mapped_relation = mapping.get::<Option<String>, _>(1);
         let mapped_table = mapping.get::<Option<String>, _>(2);
         if let (Some(mapped_package), Some(mapped_relation)) =
-            (mapped_package.as_deref(), mapped_relation.as_deref())
+            (mapped_package.as_ref(), mapped_relation.as_deref())
         {
-            if mapped_package != manifest.package.id
+            if mapped_package != &manifest.package.id
                 || mapped_relation != excluded.relation_id.as_str()
             {
                 bail!(

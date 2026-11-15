@@ -63,7 +63,10 @@ pub fn write_package(
     })?;
     let request = PublishReleaseRequest {
         applications: [(
-            admission.package_id().to_owned(),
+            admission
+                .package_id()
+                .as_str()
+                .parse::<wamn_catalog::ApplicationName>()?,
             wamn_catalog::ApplicationDefinition {
                 connections: std::collections::BTreeMap::new(),
                 packages: [admission.package_id().to_owned()].into(),
@@ -75,7 +78,7 @@ pub fn write_package(
         project: target.project.to_owned(),
         environment: target.environment.to_owned(),
         packages: vec![PackageCoordinate::new(
-            admission.package_id(),
+            admission.package_id().clone(),
             admission.package_version(),
         )?],
     };

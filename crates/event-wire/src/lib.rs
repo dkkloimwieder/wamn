@@ -3,26 +3,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-/// Row operation — the `<op>` subject segment. v3 publishes exactly these
-/// three; TRUNCATE is not part of the event plane (a reader logs and skips it).
-///
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Op {
-    Insert,
-    Update,
-    Delete,
-}
-
-impl Op {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Op::Insert => "insert",
-            Op::Update => "update",
-            Op::Delete => "delete",
-        }
-    }
-}
+pub use wamn_catalog::WiringEventOperation as Op;
 
 /// The v3 §4 causation stamp `{run, root, depth}` — stitched onto a
 /// transaction's envelopes by the reader when the `wamn:postgres` plugin
@@ -43,7 +24,7 @@ pub struct Causation {
 /// author's logical deduplication operand, and the causation the host derives
 /// from the delivery it is completing. The environment key, project, and
 /// environment are copied from bound host identity so no guest or wiring field can redirect the
-/// event; package identity comes from the bound release/run/wiring source the
+/// event; application identity comes from the bound release/run/wiring source the
 /// native host emitter resolved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,8 +32,8 @@ pub struct DerivedEvent {
     pub project_env_key: wamn_registry::ProjectEnvKey,
     pub project: String,
     pub environment: wamn_registry::EnvName,
-    #[serde(deserialize_with = "source_name")]
-    pub package_id: String,
+    #[serde(rename = "package_id")]
+    pub application: wamn_catalog::ApplicationName,
     #[serde(deserialize_with = "source_name")]
     pub entity: String,
     pub op: Op,
@@ -71,7 +52,7 @@ impl DerivedEvent {
         project_env_key: wamn_registry::ProjectEnvKey,
         project: impl Into<String>,
         environment: wamn_registry::EnvName,
-        package_id: impl Into<String>,
+        application: wamn_catalog::ApplicationName,
         entity: impl Into<String>,
         op: Op,
         payload: serde_json::Value,
@@ -82,7 +63,7 @@ impl DerivedEvent {
             project_env_key,
             project: project.into(),
             environment,
-            package_id: package_id.into(),
+            application,
             entity: entity.into(),
             op,
             payload,
@@ -122,8 +103,7 @@ pub struct Envelope {
     pub old: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new: Option<serde_json::Map<String, serde_json::Value>>,
-    #[serde(deserialize_with = "source_name")]
-    pub package_id: String,
+    pub package_id: wamn_catalog::PackageName,
     #[serde(deserialize_with = "source_name")]
     pub entity: String,
     pub table: String,
@@ -162,7 +142,7 @@ pub fn derived_msg_id(
     project_env_key: &wamn_registry::ProjectEnvKey,
     project: &str,
     env: &wamn_registry::EnvName,
-    package_id: &str,
+    application: &wamn_catalog::ApplicationName,
     entity: &str,
     op: Op,
     dedup_id: &str,
@@ -175,7 +155,7 @@ pub fn derived_msg_id(
         project_env_key.as_str(),
         project,
         env.as_str(),
-        package_id,
+        application.as_str(),
         entity,
         op.as_str(),
         dedup_id,
@@ -310,7 +290,7 @@ mod tests {
             &"acme--dev--project".parse().unwrap(),
             "app",
             &"dev".parse().unwrap(),
-            "orders",
+            &"orders".parse().unwrap(),
             "orders",
             Op::Insert,
             "orders:7:created",
@@ -321,7 +301,7 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Insert,
                 "42"
@@ -343,7 +323,7 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Insert,
                 "same"
@@ -352,7 +332,7 @@ mod tests {
                 &"other--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Insert,
                 "same"
@@ -363,7 +343,7 @@ mod tests {
                 &"a--dev--project".parse().unwrap(),
                 "bc",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Insert,
                 "same"
@@ -372,7 +352,7 @@ mod tests {
                 &"ab--dev--project".parse().unwrap(),
                 "c",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Insert,
                 "same"
@@ -384,7 +364,7 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Insert,
                 "same"
@@ -393,7 +373,7 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "receipts",
                 Op::Insert,
                 "same"
@@ -405,7 +385,7 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Insert,
                 "same"
@@ -414,7 +394,7 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Update,
                 "same"
@@ -426,7 +406,7 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "receipt",
                 Op::Insert,
                 "same"
@@ -435,7 +415,7 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "overlay",
+                &"overlay".parse().unwrap(),
                 "receipt",
                 Op::Insert,
                 "same"
@@ -447,7 +427,7 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Insert,
                 "same"
@@ -456,7 +436,7 @@ mod tests {
                 &"acme--dev--project".parse().unwrap(),
                 "app",
                 &"dev".parse().unwrap(),
-                "orders",
+                &"orders".parse().unwrap(),
                 "orders",
                 Op::Insert,
                 "same"
@@ -492,7 +472,7 @@ mod tests {
             op: Op::Update,
             old: None,
             new: Some(new),
-            package_id: "orders".into(),
+            package_id: "orders".parse().unwrap(),
             entity: "sales_orders".into(),
             table: "orders2".into(),
             identity: CdcIdentity {
@@ -542,7 +522,7 @@ mod tests {
             "acme--dev--app".parse().unwrap(),
             "app",
             "dev".parse().unwrap(),
-            "orders",
+            "orders".parse().unwrap(),
             "order",
             Op::Insert,
             serde_json::json!({"id": "7"}),
@@ -623,7 +603,7 @@ pub fn verified_derived_source_event_id(
         project_env_key,
         project,
         environment,
-        &event.package_id,
+        &event.application,
         &event.entity,
         event.op,
         &event.dedup_id,
@@ -650,7 +630,6 @@ impl SourceEvent {
                 ("project_env_key", event.project_env_key.as_str()),
                 ("project", event.project.as_str()),
                 ("environment", event.environment.as_str()),
-                ("package-id", event.package_id.as_str()),
                 ("entity", event.entity.as_str()),
                 ("causation.run", event.causation.run.as_str()),
                 ("causation.root", event.causation.root.as_str()),
@@ -693,8 +672,8 @@ impl SourceEvent {
 
     pub fn source(&self) -> (&str, &str) {
         match self {
-            Self::Cdc(envelope) => (&envelope.package_id, &envelope.entity),
-            Self::Derived(event) => (&event.package_id, &event.entity),
+            Self::Cdc(envelope) => (envelope.package_id.as_str(), &envelope.entity),
+            Self::Derived(event) => (event.application.as_str(), &event.entity),
         }
     }
 }

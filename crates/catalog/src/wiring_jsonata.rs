@@ -12,7 +12,7 @@ pub(super) fn specialize<'a>(
     component: &AdmittedComponent,
     operation: &'a AdmittedComponentOperation,
 ) -> Result<Cow<'a, [AdmittedComponentPort]>, WiringCompatibilityError> {
-    if component.target.package_id != crate::PALETTE_PACKAGE_ID
+    if component.target.package_id.as_str() != crate::PALETTE_PACKAGE_ID
         || node.component != "jsonata"
         || node.operation != "wamn:node/handler@0.1.0"
     {
@@ -59,7 +59,7 @@ pub(super) fn validate_samples(
     component: &AdmittedComponent,
     operation: &AdmittedComponentOperation,
 ) -> Result<(), WiringCompatibilityError> {
-    if component.target.package_id != crate::PALETTE_PACKAGE_ID
+    if component.target.package_id.as_str() != crate::PALETTE_PACKAGE_ID
         || node.component != "jsonata"
         || node.operation != "wamn:node/handler@0.1.0"
     {

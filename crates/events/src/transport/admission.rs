@@ -14,7 +14,11 @@ impl WamnJetstream {
         postgres: &wamn_sql::WamnPostgres,
         project: &str,
         release: &wamn_engine::release_manifest::LoadedRelease,
-        sources: &[(&str, &str, &str)],
+        sources: &[(
+            &wamn_catalog::ApplicationName,
+            &wamn_catalog::PackageName,
+            &str,
+        )],
         admit: impl AsyncFn(
             &wamn_sql::WamnPostgres,
             &str,

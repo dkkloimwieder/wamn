@@ -216,20 +216,17 @@ fn validate_identity_rejects_malformed_identities() {
             Some("public"),
             Some("owner-1"),
             Some("inspector"),
-            Some("platform-fixture:widget/update@1.0.0"),
-            Some("platform_fixture")
+            Some("platform-fixture:widget/update@1.0.0")
         )
         .is_ok()
     );
-    assert!(validate_session_identity(None, None, None, None, None).is_ok());
-    assert!(validate_session_identity(Some("has-hyphen"), None, None, None, None).is_err());
-    assert!(validate_session_identity(None, Some("bad;runner"), None, None, None).is_err());
+    assert!(validate_session_identity(None, None, None, None).is_ok());
+    assert!(validate_session_identity(Some("has-hyphen"), None, None, None).is_err());
+    assert!(validate_session_identity(None, Some("bad;runner"), None, None).is_err());
     // `''` is the base denial policy, never an identity.
-    assert!(validate_session_identity(None, None, Some(""), None, None).is_err());
+    assert!(validate_session_identity(None, None, Some(""), None).is_err());
     // `''` is the unbound operation, never an identity.
-    assert!(validate_session_identity(None, None, None, Some(""), None).is_err());
-    // `''` is the unbound application, never an identity.
-    assert!(validate_session_identity(None, None, None, None, Some("")).is_err());
+    assert!(validate_session_identity(None, None, None, Some("")).is_err());
 }
 
 #[test]
@@ -256,7 +253,7 @@ fn set_and_clear_current_run_is_per_component() {
 fn invocation(node_id: &str) -> ConnectionInvocation {
     ConnectionInvocation {
         origin: ConnectionOrigin {
-            package_id: "package_a".to_string(),
+            package_id: "package_a".parse().unwrap(),
             component_digest: format!("sha256:{}", "a".repeat(64))
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
@@ -267,7 +264,7 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
         entry: wamn_authority::connection::InvocationEntry::Wiring(
             wamn_authority::connection::WiringPosition {
                 configuration: Default::default(),
-                package_id: "package_a".to_string(),
+                application: "package_a".parse().unwrap(),
                 wiring_hash: format!("sha256:{}", "a".repeat(64))
                     .parse::<wamn_digest::Digest>()
                     .unwrap(),
@@ -277,7 +274,7 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
                 occurrence: 1,
             },
         ),
-        package_id: "package_a".to_string(),
+        package_id: "package_a".parse().unwrap(),
         component_digest: format!("sha256:{}", "a".repeat(64))
             .parse::<wamn_digest::Digest>()
             .unwrap(),
@@ -383,7 +380,7 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
             .unwrap();
         pg.set_operation(c, "platform-fixture:widget/update@1.0.0")
             .unwrap();
-        pg.set_application(c, "platform_fixture").unwrap();
+        pg.set_application(c, "platform_fixture".parse().unwrap());
         pg.set_current_run(
             c,
             Some(Causation {
@@ -442,7 +439,9 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
         Some("platform-fixture:widget/update@1.0.0")
     );
     assert_eq!(
-        pg.application_for("wl-b-component-0").as_deref(),
+        pg.application_for("wl-b-component-0")
+            .as_ref()
+            .map(wamn_catalog::ApplicationName::as_str),
         Some("platform_fixture")
     );
     assert_eq!(pg.current_run_for("wl-b-component-0").unwrap().run, "r1");
@@ -933,20 +932,20 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
     );
 
     let lookup = ConnectionEffectLookup {
-        entry: wamn_authority::identity::ConnectionEntryLookup {
-            package_id: "catalog",
-            wiring: Some(wamn_authority::identity::WiringLookup {
+        entry: wamn_authority::identity::ConnectionEntryLookup::Wiring {
+            application: &"catalog".parse().unwrap(),
+            wiring: wamn_authority::identity::WiringLookup {
                 wiring_id: "wiring",
                 wiring_version: 1,
                 node_id: "node",
-            }),
+            },
         },
-        origin_package_id: "catalog",
+        origin_package_id: &"catalog".parse().unwrap(),
         origin_component_digest: &wamn_digest::bytes_sha256(b"component"),
         origin_component: "component",
         origin_interface_version: "0.1.0",
         origin_operation: "operation",
-        package_id: "catalog",
+        package_id: &"catalog".parse().unwrap(),
         operation: "operation",
         manifest_digest: &wamn_digest::bytes_sha256(b"release"),
         environment: &"dev".parse().unwrap(),
@@ -1022,20 +1021,20 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
     );
 
     let lookup = ConnectionEffectLookup {
-        entry: wamn_authority::identity::ConnectionEntryLookup {
-            package_id: "catalog",
-            wiring: Some(wamn_authority::identity::WiringLookup {
+        entry: wamn_authority::identity::ConnectionEntryLookup::Wiring {
+            application: &"catalog".parse().unwrap(),
+            wiring: wamn_authority::identity::WiringLookup {
                 wiring_id: "wiring",
                 wiring_version: 1,
                 node_id: "node",
-            }),
+            },
         },
-        origin_package_id: "catalog",
+        origin_package_id: &"catalog".parse().unwrap(),
         origin_component_digest: &wamn_digest::bytes_sha256(b"component"),
         origin_component: "component",
         origin_interface_version: "0.1.0",
         origin_operation: "operation",
-        package_id: "catalog",
+        package_id: &"catalog".parse().unwrap(),
         operation: "operation",
         manifest_digest: &wamn_digest::bytes_sha256(b"release"),
         environment: &"dev".parse().unwrap(),
@@ -1976,7 +1975,7 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
     let scope = "application-instance-0";
     let identity = SessionIdentity {
         project_env_key: Some(LIVE_PROJECT_ENV_KEY.parse().unwrap()),
-        application: Some("platform_fixture".to_string()),
+        application: Some("platform_fixture".parse().unwrap()),
         ..SessionIdentity::default()
     };
     pg.bind_session_identity(scope, &identity)
@@ -2000,17 +1999,6 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
         .expect("the application binds again");
     pg.revoke_session_identity(scope);
     assert_eq!(pg.application_for(scope), None);
-
-    let refused = pg
-        .bind_session_identity(
-            scope,
-            &SessionIdentity {
-                application: Some(String::new()),
-                ..identity
-            },
-        )
-        .await;
-    assert!(refused.is_err(), "the unbound value is not an application");
 }
 
 /// The identity half of the cross-application refusal
@@ -2045,17 +2033,17 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
         statement_timeout_ms: 5_000,
     })
     .expect("the plugin builds from the guest generation's url");
-    let identity = |application: &str| SessionIdentity {
+    let identity = |application: &wamn_catalog::ApplicationName| SessionIdentity {
         project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
         user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
-        application: Some(application.to_string()),
+        application: Some(application.clone()),
         ..SessionIdentity::default()
     };
     let (scope_a, scope_b) = ("application-instance-a", "application-instance-b");
-    pg.bind_session_identity(scope_a, &identity(APPLICATION_A))
+    pg.bind_session_identity(scope_a, &identity(&APPLICATION_A.parse().unwrap()))
         .await
         .expect("application A binds");
-    pg.bind_session_identity(scope_b, &identity(APPLICATION_B))
+    pg.bind_session_identity(scope_b, &identity(&APPLICATION_B.parse().unwrap()))
         .await
         .expect("application B binds");
     let carried = async |scope: &str| {
@@ -2080,7 +2068,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
         scope_a,
         &SessionIdentity {
             application: None,
-            ..identity(APPLICATION_A)
+            ..identity(&APPLICATION_A.parse().unwrap())
         },
     )
     .await
@@ -2403,7 +2391,7 @@ async fn live_operation_reads_keep_identity_and_refuse_writes(pool: sqlx::PgPool
             project_env_key: Some(PROJECT.parse().unwrap()),
             user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
             operation: Some("admin:read-probe".into()),
-            application: Some("fixture".into()),
+            application: Some("fixture".parse().unwrap()),
             ..SessionIdentity::default()
         },
     )

@@ -80,10 +80,10 @@ fn input(env: &wamn_registry::EnvName) -> ValuesInput {
         artifact_base: "registry.example/releases".into(),
         route_host: "wms.acme.example".into(),
         applications: [(
-            "wms".to_owned(),
+            "wms".parse().unwrap(),
             wamn_catalog::ApplicationDefinition {
                 connections: std::collections::BTreeMap::new(),
-                packages: ["wamn_wms".to_owned()].into(),
+                packages: ["wamn_wms".parse().unwrap()].into(),
             },
         )]
         .into(),
@@ -124,7 +124,7 @@ fn render_yaml(
         .and_then(|applications| applications.keys().next())
         .and_then(Value::as_str)
         .unwrap_or("wms");
-    let name = release_name("acme", "wms", env, application).unwrap();
+    let name = release_name("acme", "wms", env, &application.parse().unwrap()).unwrap();
     let path = scratch.0.join(format!("values-{env}.yaml"));
     std::fs::write(&path, serde_yaml::to_string(values).expect("yaml")).expect("write values");
     let output = helm(&[
@@ -163,9 +163,9 @@ fn applications_in_one_environment_have_independent_release_resources() {
     for application in ["orders", "receiving"] {
         let mut input = input(&"prod".parse().unwrap());
         input.applications = BTreeMap::from([(
-            application.to_owned(),
+            application.parse().unwrap(),
             wamn_catalog::ApplicationDefinition {
-                packages: [application.to_owned()].into(),
+                packages: [application.parse().unwrap()].into(),
                 connections: BTreeMap::new(),
             },
         )]);
@@ -176,7 +176,13 @@ fn applications_in_one_environment_have_independent_release_resources() {
         );
         input.roles[0].entry = Some(entry.clone());
         let values = values(&input).unwrap();
-        let name = release_name(&input.org, &input.project, &input.env, application).unwrap();
+        let name = release_name(
+            &input.org,
+            &input.project,
+            &input.env,
+            &application.parse().unwrap(),
+        )
+        .unwrap();
         let yaml = render_yaml(&chart, &scratch, &input.env, &values);
         let documents = serde_yaml::Deserializer::from_str(&yaml)
             .map(Value::deserialize)

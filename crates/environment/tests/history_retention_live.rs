@@ -643,7 +643,11 @@ async fn prune_removes_only_the_expired_prefix_of_each_row(pool: sqlx::PgPool) {
     std::fs::remove_dir_all(package).expect("remove the fixture package");
 }
 
-async fn wait_for_blocker(observer: &mut Client, application: &str, blocker: i32) {
+async fn wait_for_blocker(
+    observer: &mut Client,
+    application: &wamn_catalog::ApplicationName,
+    blocker: i32,
+) {
     tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
             let waiting: bool = sqlx::query(
@@ -715,7 +719,12 @@ async fn history_table_creation_waits_for_a_running_prune(pool: sqlx::PgPool) {
         tokio::spawn(
             async move { wamn_environment::prune_record_history::prune(&mut pruning).await },
         );
-    wait_for_blocker(&mut admin, "history_lock_prune", holder_pid).await;
+    wait_for_blocker(
+        &mut admin,
+        &"history_lock_prune".parse().expect("valid name"),
+        holder_pid,
+    )
+    .await;
 
     let mut applying_url = url::Url::parse(&url).expect("parse the database URL");
     applying_url

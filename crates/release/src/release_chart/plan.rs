@@ -10,7 +10,7 @@ pub fn release_name(
     org: &str,
     project: &str,
     env: &wamn_registry::EnvName,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<String> {
     wamn_control_provision::environment_names::application_release_name(
         org,

@@ -70,7 +70,7 @@ pub async fn write_revocation_configuration(
             .iter()
             .map(|(name, selection)| Setting {
                 target_type: "application".into(),
-                target_id: name.clone(),
+                target_id: name.to_string(),
                 key: "revocation-seconds".into(),
                 value: selection.revocation_seconds.into(),
                 locked: true,
@@ -100,11 +100,11 @@ pub(super) enum ReleaseChange<'a> {
 pub(super) async fn read_configuration(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
-) -> Result<Option<wamn_registry::configuration::EnvironmentConfiguration>, sqlx::Error> {
+) -> Result<Option<wamn_catalog::configuration::EnvironmentConfiguration>, sqlx::Error> {
     let principal = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
     let mut transaction =
         wamn_platform_identity::transaction::read_connection(connection, &principal).await?;
-    let configuration = wamn_registry::configuration::read(&mut transaction, triple).await?;
+    let configuration = wamn_catalog::configuration::read(&mut transaction, triple).await?;
     transaction.commit().await?;
     Ok(configuration)
 }
@@ -148,15 +148,15 @@ impl EnvironmentDocument {
 
     pub(super) async fn save(&self, connection: &mut sqlx::PgConnection) -> anyhow::Result<()> {
         ensure!(
-            wamn_registry::configuration::write(connection, &self.configuration()).await?,
+            wamn_catalog::configuration::write(connection, &self.configuration()).await?,
             "provision the environment before applying configuration"
         );
         Ok(())
     }
 
     /// Applied settings exclude package membership, which comes from the selected release.
-    pub fn configuration(&self) -> wamn_registry::configuration::EnvironmentConfiguration {
-        use wamn_registry::configuration::{ApplicationConfiguration, EnvironmentConfiguration};
+    pub fn configuration(&self) -> wamn_catalog::configuration::EnvironmentConfiguration {
+        use wamn_catalog::configuration::{ApplicationConfiguration, EnvironmentConfiguration};
         EnvironmentConfiguration {
             org: self.org.clone(),
             project: self.project.clone(),
@@ -189,7 +189,7 @@ impl EnvironmentDocument {
     }
 
     fn from_configuration(
-        configuration: wamn_registry::configuration::EnvironmentConfiguration,
+        configuration: wamn_catalog::configuration::EnvironmentConfiguration,
     ) -> Self {
         Self {
             org: configuration.org,
@@ -330,7 +330,7 @@ mod tests {
 
     #[sqlx::test(migrations = false)]
     async fn registry_configuration_round_trip(pool: sqlx::PgPool) -> anyhow::Result<()> {
-        use wamn_registry::configuration;
+        use wamn_catalog::configuration;
         let _lock = wamn_test_postgres::lock();
         let database = wamn_test_postgres::url(&pool);
         wamn_control_provision::test_database::system(database.as_str()).await;
@@ -362,7 +362,9 @@ mod tests {
         second.hostname = "second.example".into();
         second.revocation_seconds = 3600;
         second.connections.get_mut("erp").unwrap().version = Some(1);
-        expected.applications.insert("second".into(), second);
+        expected
+            .applications
+            .insert("second".parse().expect("valid name"), second);
         {
             let batches: &[&str] = &[
                 "CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
@@ -394,7 +396,7 @@ mod tests {
             .await?;
         let release = wamn_digest::bytes_sha256(b"selected release");
         let restored = Client {
-            package: "wamn_wms".into(),
+            package: "wamn_wms".parse().unwrap(),
             web: wamn_digest::bytes_sha256(b"restored web"),
         };
         let mut transaction =
@@ -403,7 +405,7 @@ mod tests {
             configuration::write_selection(
                 &mut transaction,
                 &triple,
-                "wms",
+                &"wms".parse().expect("valid name"),
                 Some(&release),
                 Some(&restored)
             )
@@ -438,11 +440,24 @@ mod tests {
         let mut transaction =
             crate::provision_project_env::provisioning_transaction(&mut connection).await?;
         assert!(
-            configuration::write_selection(&mut transaction, &triple, "wms", None, None).await?
+            configuration::write_selection(
+                &mut transaction,
+                &triple,
+                &"wms".parse().expect("valid name"),
+                None,
+                None
+            )
+            .await?
         );
         assert!(
-            !configuration::write_selection(&mut transaction, &triple, "missing", None, None)
-                .await?
+            !configuration::write_selection(
+                &mut transaction,
+                &triple,
+                &"missing".parse().expect("valid name"),
+                None,
+                None
+            )
+            .await?
         );
         transaction.commit().await?;
         let application = expected.applications.get_mut("wms").unwrap();
@@ -466,7 +481,7 @@ mod tests {
 
     #[sqlx::test(migrations = false)]
     async fn registry_configuration_constraints(pool: sqlx::PgPool) -> anyhow::Result<()> {
-        use wamn_registry::configuration;
+        use wamn_catalog::configuration;
         let _lock = wamn_test_postgres::lock();
         let database = wamn_test_postgres::url(&pool);
         wamn_control_provision::test_database::system(database.as_str()).await;
@@ -505,16 +520,6 @@ mod tests {
             },
             |c: &mut configuration::EnvironmentConfiguration| {
                 c.applications.get_mut("wms").unwrap().hostname = "Invalid Host".into()
-            },
-            |c: &mut configuration::EnvironmentConfiguration| {
-                c.applications
-                    .get_mut("wms")
-                    .unwrap()
-                    .client
-                    .as_mut()
-                    .unwrap()
-                    .package
-                    .clear()
             },
             |c: &mut configuration::EnvironmentConfiguration| {
                 c.applications.get_mut("wms").unwrap().connections.insert(

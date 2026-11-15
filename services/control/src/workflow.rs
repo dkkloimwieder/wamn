@@ -16,7 +16,7 @@ use crate::execution::Execution;
 struct Request {
     project: String,
     env: wamn_registry::EnvName,
-    application: Option<String>,
+    application: Option<wamn_catalog::ApplicationName>,
     workflow_id: Option<String>,
     version: Option<u32>,
     run_id: Option<String>,
@@ -25,10 +25,10 @@ struct Request {
     execution_type: Option<String>,
     execution_role: Option<String>,
     schedule: Option<String>,
-    source_package: Option<String>,
+    source_package: Option<wamn_catalog::PackageName>,
     entity: Option<String>,
     #[serde(default)]
-    ops: Vec<wamn_event_wire::Op>,
+    ops: Vec<wamn_catalog::WiringEventOperation>,
     condition: Option<String>,
 }
 
@@ -88,7 +88,7 @@ impl Execution {
         }
         let name = request
             .application
-            .as_deref()
+            .as_ref()
             .context("application is absent")?;
         if operation == "workflow.author" {
             anyhow::ensure!(
@@ -113,10 +113,7 @@ impl Execution {
                 (Some("role"), Some(role)) => WorkflowExecution::Role(role),
                 _ => return Err(anyhow::anyhow!("invalid workflow execution authority")),
             };
-            let trigger = match (
-                request.schedule.as_deref(),
-                request.source_package.as_deref(),
-            ) {
+            let trigger = match (request.schedule.as_deref(), request.source_package.as_ref()) {
                 (None, None) => WorkflowTrigger::Manual,
                 (Some(schedule), None) => WorkflowTrigger::Schedule(schedule),
                 (None, Some(source_package)) => WorkflowTrigger::Event {

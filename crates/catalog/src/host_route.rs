@@ -45,7 +45,7 @@ struct ControlClientPackage {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ControlPackage {
-    id: String,
+    id: crate::PackageName,
     version: String,
 }
 
@@ -62,7 +62,7 @@ static CONTRACT: LazyLock<ControlContract> = LazyLock::new(|| {
 });
 
 /// The package of every host route. No application package has this id.
-pub fn host_route_package() -> &'static str {
+pub fn host_route_package() -> &'static crate::PackageName {
     &CONTRACT.package.id
 }
 
@@ -78,7 +78,7 @@ pub fn host_route_version() -> &'static str {
 /// [`is_granted_host_route_operation`].
 pub fn is_host_route_operation(operation: &str) -> bool {
     static TOKEN_PACKAGE: LazyLock<String> =
-        LazyLock::new(|| CONTRACT.package.id.replace('_', "-"));
+        LazyLock::new(|| CONTRACT.package.id.as_str().replace('_', "-"));
     operation
         .split_once(':')
         .is_some_and(|(package, _)| package == TOKEN_PACKAGE.as_str())
@@ -965,7 +965,7 @@ mod tests {
                 .is_none(),
             "an application release never serves a control route"
         );
-        assert_eq!(host_route_package(), "wamn_control");
+        assert_eq!(host_route_package(), &"wamn_control".parse().unwrap());
         assert!(is_host_route_operation("wamn-control:role/create"));
         assert!(is_host_route_operation("wamn-control:role/create@0.9.0"));
         assert!(!is_host_route_operation("wamn-receiving:receipt/get"));

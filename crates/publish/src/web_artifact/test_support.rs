@@ -25,7 +25,7 @@ pub fn build_fixture(client: Option<&str>) -> (BuildRecord, Vec<u8>) {
     let record = BuildRecord {
         schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
         package: BuildPackage {
-            id: "web_fixture".into(),
+            id: "web_fixture".parse().unwrap(),
             version: "1.0.0".into(),
         },
 

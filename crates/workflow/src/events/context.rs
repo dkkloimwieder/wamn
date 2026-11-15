@@ -1,7 +1,8 @@
 //! Build event condition inputs and read the row project.
 
 use serde_json::{Map, Value, json};
-use wamn_event_wire::{DerivedEvent, Envelope, Op};
+use wamn_catalog::WiringEventOperation as Op;
+use wamn_event_wire::{DerivedEvent, Envelope};
 
 /// Project deployment identity carried by one CDC image.
 #[derive(Debug, Clone, PartialEq, Eq)]

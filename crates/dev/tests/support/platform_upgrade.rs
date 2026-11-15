@@ -267,7 +267,7 @@ pub(super) async fn exercise(
         journey
             .apply(
                 &format!("install-{app}"),
-                &mut journey.deploy(app, &artifacts[key]),
+                &mut journey.deploy(&app.parse().unwrap(), &artifacts[key]),
             )
             .await?;
     }

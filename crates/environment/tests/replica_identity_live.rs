@@ -56,7 +56,12 @@ async fn install(client: &mut Client) {
 async fn captured_models_stay_full_without_registration_storage(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let url = wamn_test_postgres::url(&pool).to_string();
-    wamn_catalog::test_database::project(&url).await;
+    wamn_catalog::test_database::project(
+        &mut wamn_postgres::connect(&url)
+            .await
+            .expect("connect the test database"),
+    )
+    .await;
     let mut client = connect(&url).await;
     install(&mut client).await;
     sqlx::raw_sql("DROP TABLE IF EXISTS catalog.event_registrations")

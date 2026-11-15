@@ -510,7 +510,9 @@ fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
                 .split_once(':')
                 .expect("qualified operation")
                 .0
-                .into(),
+                .replace('-', "_")
+                .parse()
+                .unwrap(),
             package_version: "1.0.0".into(),
         },
         component: "node".into(),
@@ -640,7 +642,7 @@ impl Fixture {
                     .iter()
                     .chain(&callees)
                     .map(|fact| {
-                        PackageCoordinate::new(&fact.target.package_id, "1.0.0")
+                        PackageCoordinate::new(fact.target.package_id.clone(), "1.0.0")
                             .expect("package coordinate")
                     })
                     .collect(),
@@ -815,7 +817,7 @@ impl Fixture {
                     },
                     invocation: ConnectionInvocation {
                         origin: ConnectionOrigin {
-                            package_id: "root".into(),
+                            package_id: "root".parse().unwrap(),
                             component_digest: self.root.component_digest,
                             component: "node".into(),
                             interface_version: self.root.interface_version.clone(),
@@ -824,7 +826,7 @@ impl Fixture {
                         entry: wamn_authority::connection::InvocationEntry::Wiring(
                             wamn_authority::connection::WiringPosition {
                                 configuration: Default::default(),
-                                package_id: "workflow".into(),
+                                application: "workflow".parse().unwrap(),
                                 wiring_hash: (format!("sha256:{}", "a".repeat(64)))
                                     .parse::<wamn_digest::Digest>()
                                     .unwrap(),
@@ -834,7 +836,7 @@ impl Fixture {
                                 occurrence: 0,
                             },
                         ),
-                        package_id: "root".into(),
+                        package_id: "root".parse().unwrap(),
                         component_digest: self.root.component_digest,
                         component: "node".into(),
                         operation: ROOT.into(),
@@ -1368,7 +1370,11 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         composed_entry: None,
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
-            packages: BTreeSet::from([PackageCoordinate::new("root", "1.0.0").unwrap()]),
+            packages: BTreeSet::from([PackageCoordinate::new(
+                "root".parse().expect("valid name"),
+                "1.0.0",
+            )
+            .unwrap()]),
         },
         components: BTreeSet::from([served]),
         routes: BTreeSet::new(),

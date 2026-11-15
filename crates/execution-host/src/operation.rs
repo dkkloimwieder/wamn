@@ -565,7 +565,7 @@ impl NodeAcquisition {
     fn executing_identity(
         &self,
         caller: Option<&AuthenticatedCaller>,
-        application: &str,
+        application: &wamn_catalog::ApplicationName,
     ) -> SessionIdentity {
         SessionIdentity {
             user_id: self.executing_principal(caller),

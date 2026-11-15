@@ -196,10 +196,10 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
         )
         .with_applications(
             [(
-                "automation".to_owned(),
+                "automation".parse().unwrap(),
                 wamn_catalog::ApplicationDefinition {
                     connections: std::collections::BTreeMap::new(),
-                    packages: ["automation".to_owned()].into(),
+                    packages: ["automation".parse().unwrap()].into(),
                 },
             )]
             .into(),
@@ -332,7 +332,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
         invocation: "automation-live-queue".to_owned(),
         project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
         project: "default".to_owned(),
-        package_ids: vec!["automation".to_owned()],
+        applications: vec!["automation".parse().unwrap()],
         environment: "test".parse().expect("valid fixture coordinate"),
     };
     let jetstream =
@@ -358,7 +358,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
         ),
     };
     let request = StartInput {
-        package_id: "automation".to_owned(),
+        application: "automation".parse().unwrap(),
         wiring_id: "echo-manual".to_owned(),
         idempotency_key: "shutdown".to_owned(),
         input: json!({"queued":true}),
@@ -389,7 +389,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
 }
 
 struct StartInput {
-    package_id: String,
+    application: wamn_catalog::ApplicationName,
     wiring_id: String,
     idempotency_key: String,
     input: serde_json::Value,
@@ -440,7 +440,7 @@ impl WorkflowsFixture {
                     source: Source::Attachment(attachment),
                     delivery_id: request.idempotency_key.clone(),
                     payload: json!([{"request_id": request.idempotency_key, "value": {
-                        "application": request.package_id, "workflow_id": request.wiring_id,
+                        "application": request.application, "workflow_id": request.wiring_id,
                         "input_json": request.input, "idempotency_key": request.idempotency_key,
                     }}])
                     .to_string(),
@@ -488,8 +488,8 @@ async fn event_run(
         },
     );
     let mut admission = EventBatchAdmission {
-        application: "automation",
-        source_package: "automation",
+        application: &"automation".parse().unwrap(),
+        source_package: &"automation".parse().unwrap(),
         entity: "movement",
         envelope: &envelope,
         sequence: 7,

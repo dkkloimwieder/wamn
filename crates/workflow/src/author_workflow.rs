@@ -195,7 +195,7 @@ pub struct AuthorWorkflowRequest<'a> {
     pub project: &'a str,
     pub environment: &'a wamn_registry::EnvName,
     /// The application of the workflow, by the name the environment declares.
-    pub application: &'a str,
+    pub application: &'a wamn_catalog::ApplicationName,
     /// The applications the environment declares, as the serving Helm
     /// revision keeps them
     /// from the deployed environment.
@@ -220,7 +220,7 @@ impl AuthorWorkflowRequest<'_> {
 pub(crate) async fn condition_against_release(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &wamn_registry::ProjectEnvKey,
-    application_packages: &std::collections::BTreeSet<String>,
+    application_packages: &std::collections::BTreeSet<wamn_catalog::PackageName>,
     manifest_digest: &wamn_digest::Digest,
     document: &WiringDocument,
 ) -> Result<wamn_digest::Digest, AuthorWorkflowError> {

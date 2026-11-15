@@ -165,7 +165,7 @@ impl ComponentAdmission {
     }
 
     /// Exact package identity carried by the admitted component facts.
-    pub fn package_id(&self) -> &str {
+    pub fn package_id(&self) -> &wamn_catalog::PackageName {
         &self.component.target.package_id
     }
 
@@ -669,7 +669,7 @@ mod tests {
                     connections: Vec::new(),
                     target: ComponentPackageCoordinate {
                         project_env_key: "org-a--dev--project".parse().unwrap(),
-                        package_id: "orders".to_owned(),
+                        package_id: "orders".parse().unwrap(),
                         package_version: "1.0.0".to_owned(),
                     },
                     component: "round-trip".to_owned(),

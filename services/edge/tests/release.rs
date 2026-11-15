@@ -30,11 +30,13 @@ const INGRESS: &[u8] = b"the route guest bytes";
 fn manifest() -> ServingManifest {
     ServingManifest::new(
         ServingRelease {
-            packages: BTreeSet::from([PackageCoordinate::new(PACKAGE, VERSION).expect("package")]),
+            packages: BTreeSet::from([
+                PackageCoordinate::new(PACKAGE.parse().unwrap(), VERSION).expect("package")
+            ]),
         },
         BTreeSet::from([ServingComponent {
             runtime_schema: None,
-            package_id: PACKAGE.into(),
+            package_id: PACKAGE.parse().unwrap(),
             descriptor: {
                 let mut descriptor =
                     ComponentDescriptor::named(COMPONENT, "0.1", bytes_sha256(BODY));
@@ -62,7 +64,7 @@ fn fact() -> AdmittedComponent {
     AdmittedComponent {
         target: ComponentPackageCoordinate {
             project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
-            package_id: PACKAGE.into(),
+            package_id: PACKAGE.parse().unwrap(),
             package_version: VERSION.into(),
         },
         component: COMPONENT.into(),
@@ -142,10 +144,10 @@ fn write(directory: &Path, name: &str, bytes: &[u8]) {
 fn target() -> ReleaseTarget {
     ReleaseTarget::new(PROJECT_ENV_KEY.parse().unwrap(), "edge".parse().unwrap()).with_applications(
         [(
-            "weighing".to_owned(),
+            "weighing".parse().unwrap(),
             wamn_catalog::ApplicationDefinition {
                 connections: std::collections::BTreeMap::new(),
-                packages: [PACKAGE.to_owned()].into(),
+                packages: [PACKAGE.parse().unwrap()].into(),
             },
         )]
         .into(),

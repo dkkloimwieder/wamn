@@ -164,13 +164,13 @@ pub(super) async fn exercise(
         journey
             .apply(
                 &format!("bootstrap-{application}-code"),
-                &mut journey.deploy(application, &artifacts[key]),
+                &mut journey.deploy(&application.parse().unwrap(), &artifacts[key]),
             )
             .await?;
     }
     let row = journey
         .route(
-            "alpha",
+            &"alpha".parse().unwrap(),
             "counter/create",
             &json!([{
                 "request_id":uuid::Uuid::new_v4().to_string(),
@@ -252,7 +252,11 @@ pub(super) async fn exercise(
         .await?;
     job_credentials(journey, &coordinate, &deployed, &applied).await?;
     let found = journey
-        .route("alpha", "counter/get", &json!([{"id":row["id"]}]))
+        .route(
+            &"alpha".parse().unwrap(),
+            "counter/get",
+            &json!([{"id":row["id"]}]),
+        )
         .await?;
     ensure!(
         found["label"] == "before-migrated",

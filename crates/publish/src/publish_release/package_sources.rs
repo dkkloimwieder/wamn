@@ -18,7 +18,7 @@ use super::{
 /// Every package's parsed manifest and the contract type of every operation
 /// the packages generate.
 pub(super) type PackageManifestSources = (
-    BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
+    BTreeMap<wamn_catalog::PackageName, wamn_compiler::manifest::PackageManifest>,
     RouteContracts,
 );
 
@@ -66,13 +66,13 @@ pub(super) async fn open_application(
             })?;
         let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&artifact.manifest()?)?;
         ensure!(
-            manifest.package.id == package.package_id()
+            &manifest.package.id == package.package_id()
                 && manifest.package.version == package.package_version(),
             "package artifact identity differs from its coordinate"
         );
         for dependency in manifest.base_dependencies.values() {
             pending.push(PackageCoordinate::new(
-                &dependency.package,
+                dependency.package.clone(),
                 &dependency.version,
             )?);
         }
@@ -219,12 +219,12 @@ fn operation_contracts(
 /// Returns [`PublishManifestError`] when no generated contract declares the
 /// operation, or a contract cannot be read.
 pub fn package_route(
-    roots: &BTreeMap<String, &Path>,
-    package_id: &str,
+    roots: &BTreeMap<wamn_catalog::PackageName, &Path>,
+    package_id: &wamn_catalog::PackageName,
     component: &str,
     operation: &str,
 ) -> Result<ServingRoute, PublishManifestError> {
-    let unassembled = |package: &str| {
+    let unassembled = |package: &wamn_catalog::PackageName| {
         PublishManifestError::new(
             PublishManifestErrorType::PackageManifest,
             format!("package {package:?} is not assembled"),
@@ -322,7 +322,7 @@ mod tests {
     /// The route of one package, assembled alone.
     fn package_route(
         root: &Path,
-        package_id: &str,
+        package_id: &wamn_catalog::PackageName,
         component: &str,
         operation: &str,
     ) -> Result<wamn_catalog::ServingRoute, super::PublishManifestError> {
@@ -346,20 +346,30 @@ mod tests {
     #[ignore = "requires: input:wms, input:receiving"]
     fn a_read_route_carries_its_relations_and_a_get_its_revision() {
         let wms = app("wamn_wms");
-        let get = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:packaging/get"))
-            .expect("the packaging get has a contract");
+        let get = package_route(
+            &wms,
+            &"wamn_wms".parse().unwrap(),
+            "wms",
+            &sealed("wamn-wms:packaging/get"),
+        )
+        .expect("the packaging get has a contract");
         assert_eq!(get.type_, OperationType::Get);
 
         assert_eq!(get.reads, relations(&[("wms", "packaging")]));
 
-        let query = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:packaging/query"))
-            .expect("the packaging query has a contract");
+        let query = package_route(
+            &wms,
+            &"wamn_wms".parse().unwrap(),
+            "wms",
+            &sealed("wamn-wms:packaging/query"),
+        )
+        .expect("the packaging query has a contract");
         assert_eq!((query.type_, query.revision), (OperationType::Query, None));
         assert_eq!(query.reads, relations(&[("wms", "packaging")]));
 
         let aggregate = package_route(
             &wms,
-            "wamn_wms",
+            &"wamn_wms".parse().unwrap(),
             "wms",
             &sealed("wamn-wms:inventory/aggregate"),
         )
@@ -371,7 +381,7 @@ mod tests {
 
         let history = package_route(
             &app("wamn_receiving"),
-            "wamn_receiving",
+            &"wamn_receiving".parse().unwrap(),
             "receiving",
             &sealed("wamn-receiving:receiving/load-purchase-order-history"),
         )
@@ -382,8 +392,13 @@ mod tests {
             "a history table stands for its model relation"
         );
 
-        let write = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:inventory/move"))
-            .expect("the move command has a contract");
+        let write = package_route(
+            &wms,
+            &"wamn_wms".parse().unwrap(),
+            "wms",
+            &sealed("wamn-wms:inventory/move"),
+        )
+        .expect("the move command has a contract");
         assert_eq!((write.reads, write.revision), (BTreeSet::new(), None));
     }
 
@@ -394,7 +409,7 @@ mod tests {
     fn a_write_route_names_its_idempotency_field() {
         let wms = app("wamn_wms");
         let route = |operation: &str| {
-            package_route(&wms, "wamn_wms", "wms", operation)
+            package_route(&wms, &"wamn_wms".parse().unwrap(), "wms", operation)
                 .expect("the operation has a contract")
                 .idempotency
         };
@@ -402,7 +417,7 @@ mod tests {
         assert_eq!(route(&sealed("wamn-wms:packaging/get")), None);
         let archive = package_route(
             &app("platform_fixture"),
-            "platform_fixture",
+            &"platform_fixture".parse().unwrap(),
             "widget",
             "platform-fixture:widget/archive@2.1.1",
         );

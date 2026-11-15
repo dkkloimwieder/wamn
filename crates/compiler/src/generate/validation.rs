@@ -75,7 +75,6 @@ fn validate_model(
     validate_identifier(model_name, "model")?;
     validate_identifier(&model.schema, "schema")?;
     validate_identifier(&model.table, "table")?;
-    validate_identifier(&model.owner, "owner")?;
     let table = relation(catalog, model).ok_or_else(|| {
         GenerateError::for_object(
             GenerateErrorType::UnknownRelation,
@@ -97,12 +96,12 @@ fn validate_model(
             format!("{}.{}.{}", model.schema, model.table, column.name()),
         ));
     }
-    let admitted_owners = std::iter::once(manifest.package.id.as_str())
+    let admitted_owners = std::iter::once(&manifest.package.id)
         .chain(
             manifest
                 .base_dependencies
                 .values()
-                .map(|dependency| dependency.package.as_str()),
+                .map(|dependency| &dependency.package),
         )
         .collect::<BTreeSet<_>>();
     validate_definition_owner(model_name, "relation", &model.owner, &admitted_owners)?;
@@ -217,10 +216,9 @@ fn validate_model(
 fn validate_definition_owner(
     model: &str,
     definition: &str,
-    owner: &str,
-    admitted: &BTreeSet<&str>,
+    owner: &wamn_catalog::PackageName,
+    admitted: &BTreeSet<&wamn_catalog::PackageName>,
 ) -> Result<(), GenerateError> {
-    validate_identifier(owner, "definition owner")?;
     if admitted.contains(owner) {
         Ok(())
     } else {
@@ -498,7 +496,7 @@ fn validate_audit_log_columns(
     for reserved in RecordHistoryColumn::ALL {
         let name = reserved.as_str();
         let base_column_under_overlay =
-            model.owner != manifest.package.id && model.field_owner(name) != manifest.package.id;
+            model.owner != manifest.package.id && model.field_owner(name) != &manifest.package.id;
         if column(table, name).is_some()
             && !selected.contains(&reserved)
             && !base_column_under_overlay
@@ -564,7 +562,7 @@ fn validate_tombstone_columns(
     for reserved in TombstoneColumn::ALL {
         let name = reserved.as_str();
         let base_column_under_overlay =
-            model.owner != manifest.package.id && model.field_owner(name) != manifest.package.id;
+            model.owner != manifest.package.id && model.field_owner(name) != &manifest.package.id;
         if column(table, name).is_some() && !base_column_under_overlay {
             return Err(GenerateError::for_object(
                 GenerateErrorType::InvalidModel,

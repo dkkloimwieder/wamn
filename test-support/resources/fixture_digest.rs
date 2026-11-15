@@ -68,7 +68,8 @@ pub fn write_build_record(root: &Path) {
             id: manifest["package"]["id"]
                 .as_str()
                 .expect("fixture package id")
-                .to_owned(),
+                .parse()
+                .expect("valid fixture package name"),
             version: manifest["package"]["version"]
                 .as_str()
                 .expect("fixture package version")

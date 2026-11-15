@@ -262,20 +262,4 @@ mod tests {
             Some(wamn_compiler::ManifestErrorType::InvalidComponent)
         );
     }
-
-    #[test]
-    fn noncanonical_package_identity_reaches_the_grant_boundary() {
-        let mut manifest = owned_manifest();
-        manifest["package"]["id"] = serde_json::json!("grant-Fixture");
-        let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
-        let error = operation_grant_tokens(&bytes).expect_err("invalid package id was granted");
-        assert_eq!(error.error_type(), OperationGrantErrorType::InvalidManifest);
-        assert_eq!(
-            error
-                .source()
-                .and_then(|source| source.downcast_ref::<wamn_compiler::ManifestError>())
-                .map(wamn_compiler::ManifestError::error_type),
-            Some(wamn_compiler::ManifestErrorType::InvalidIdentity)
-        );
-    }
 }

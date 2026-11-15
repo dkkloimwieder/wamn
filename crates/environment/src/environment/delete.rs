@@ -41,8 +41,8 @@ use wamn_registry::Triple;
 use super::Platform;
 use super::analyse::application_releases;
 use super::ensure::{kubectl, management_author_pat_name, project_url};
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_postgres::connect;
-use wamn_registry::lifecycle_lock::LifecycleLock;
 use wamn_release_control::release_chart;
 
 /// Delete the environment. With `data`, the database and its roles are

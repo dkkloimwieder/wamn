@@ -280,14 +280,16 @@ impl ConnectionFacts {
                         .collect(),
                     bindings: rows
                         .into_iter()
-                        .map(|row| crate::connection_memory::ReleaseBinding {
-                            component_digest: row.get(0),
-                            package_id: row.get(1),
-                            name: row.get(2),
-                            connection_id: row.get(3),
-                            version: row.get(4),
+                        .map(|row| {
+                            Ok::<_, sqlx::Error>(crate::connection_memory::ReleaseBinding {
+                                component_digest: row.get(0),
+                                package_id: row.try_get(1)?,
+                                name: row.get(2),
+                                connection_id: row.get(3),
+                                version: row.get(4),
+                            })
                         })
-                        .collect(),
+                        .collect::<Result<_, _>>()?,
                 };
                 connection.commit().await?;
                 self.memory

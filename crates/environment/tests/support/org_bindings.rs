@@ -7,7 +7,7 @@ use sqlx::{Connection as _, Row as _, Statement as _};
 pub async fn bind(
     platform: &Platform,
     document: &mut EnvironmentDocument,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     alias: &str,
     name: &str,
     integration: &str,
@@ -103,7 +103,7 @@ pub async fn bind(
         .connections
         .insert(
             alias.into(),
-            wamn_registry::configuration::ConnectionReference {
+            wamn_catalog::configuration::ConnectionReference {
                 name: name.into(),
                 version: None,
             },

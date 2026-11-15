@@ -99,7 +99,7 @@ pub async fn upload(
         let (root, written) =
             upload_to_store(registry, digest, sink.prefix, store.as_ref()).await?;
         Ok(UploadedClient {
-            package: "platform-ui".into(),
+            package: "platform-ui".parse().unwrap(),
             location: format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket),
             written,
         })

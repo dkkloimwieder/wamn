@@ -14,13 +14,13 @@ use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate, PackageCoordinate,
     ServingComponent, ServingManifest, ServingRelease, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_registry::Triple;
-use wamn_registry::lifecycle_lock::LifecycleLock;
 use wamn_workflow::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
     WorkflowTrigger, author_workflow,
@@ -36,10 +36,10 @@ const APPLICATION: &str = "orders";
 /// The applications the fixture environment declares.
 fn declared() -> wamn_catalog::EnvironmentApplications {
     [(
-        APPLICATION.to_owned(),
+        APPLICATION.parse().unwrap(),
         wamn_catalog::ApplicationDefinition {
             connections: std::collections::BTreeMap::new(),
-            packages: [APPLICATION.to_owned()].into(),
+            packages: [APPLICATION.parse().unwrap()].into(),
         },
     )]
     .into()
@@ -69,7 +69,7 @@ fn release() -> ServingManifest {
     let fact = AdmittedComponent {
         target: ComponentPackageCoordinate {
             project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
-            package_id: APPLICATION.to_owned(),
+            package_id: APPLICATION.parse().unwrap(),
             package_version: "1.0.0".to_owned(),
         },
         component: "orders_data".to_owned(),
@@ -96,7 +96,11 @@ fn release() -> ServingManifest {
     };
     ServingManifest::new(
         ServingRelease {
-            packages: BTreeSet::from([PackageCoordinate::new(APPLICATION, "1.0.0").unwrap()]),
+            packages: BTreeSet::from([PackageCoordinate::new(
+                APPLICATION.parse().expect("valid fixture name"),
+                "1.0.0",
+            )
+            .unwrap()]),
         },
         BTreeSet::from([ServingComponent::project(&fact, Vec::new())]),
         BTreeSet::new(),
@@ -216,7 +220,7 @@ impl Fixture {
                 org: "workflow-project",
                 project: "fixture",
                 environment: &ENVIRONMENT.parse().unwrap(),
-                application: APPLICATION,
+                application: &APPLICATION.parse().unwrap(),
                 declared: &declared(),
                 document,
                 trigger,
@@ -295,11 +299,13 @@ fn key<'a>(
     id: &'a str,
     version: u32,
 ) -> WorkflowVersion<'a> {
+    static APPLICATION_NAME: std::sync::LazyLock<wamn_catalog::ApplicationName> =
+        std::sync::LazyLock::new(|| APPLICATION.parse().unwrap());
     WorkflowVersion {
         org: "workflow-project",
         project: "fixture",
         environment,
-        application: APPLICATION,
+        application: &APPLICATION_NAME,
         workflow_id: id,
         version,
     }
@@ -540,7 +546,7 @@ async fn capture_orders(fixture: &mut Fixture) {
 
 #[sqlx::test(migrations = false)]
 async fn event_authorship_requires_a_captured_application_model(pool: sqlx::PgPool) {
-    use wamn_event_wire::Op;
+    use wamn_catalog::WiringEventOperation as Op;
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture(&pool).await;
     capture_orders(&mut fixture).await;
@@ -559,7 +565,7 @@ async fn event_authorship_requires_a_captured_application_model(pool: sqlx::PgPo
                 &graph,
                 WorkflowExecution::Invoker,
                 WorkflowTrigger::Event {
-                    source_package,
+                    source_package: &source_package.parse().unwrap(),
                     entity,
                     ops: &ops,
                     condition,
@@ -570,7 +576,7 @@ async fn event_authorship_requires_a_captured_application_model(pool: sqlx::PgPo
         assert_eq!(error.error_type(), AuthorWorkflowErrorType::Event);
     }
     let trigger = WorkflowTrigger::Event {
-        source_package: APPLICATION,
+        source_package: &APPLICATION.parse().expect("valid fixture name"),
         entity: "order",
         ops: &[Op::Update, Op::Delete],
         condition: Some("new.status != old.status"),
@@ -633,9 +639,9 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
             &graph,
             WorkflowExecution::Invoker,
             WorkflowTrigger::Event {
-                source_package: APPLICATION,
+                source_package: &APPLICATION.parse().expect("valid fixture name"),
                 entity: "order",
-                ops: &[wamn_event_wire::Op::Update],
+                ops: &[wamn_catalog::WiringEventOperation::Update],
                 condition: None,
             },
         )

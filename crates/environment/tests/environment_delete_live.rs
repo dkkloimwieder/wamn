@@ -6,12 +6,12 @@ use std::time::Duration;
 use serde_json::json;
 use sqlx::PgConnection as Client;
 use wamn_broker::{Publisher, auth_changes::AuthDrops, connection_changes::ConnectionDrops};
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_environment::{
     environment::delete::delete_registry_rows, provision_project_env::provisioning_transaction,
 };
 use wamn_platform_identity::connections::administration;
 use wamn_registry::Triple;
-use wamn_registry::lifecycle_lock::LifecycleLock;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 #[sqlx::test(migrations = false)]
@@ -167,7 +167,7 @@ esac
         &triple.org,
         &triple.project,
         &triple.env,
-        "app",
+        &"app".parse().expect("valid name"),
     )?;
     std::fs::write(
         "releases.json",

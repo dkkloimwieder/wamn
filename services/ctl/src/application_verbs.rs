@@ -18,7 +18,7 @@ pub struct DeployArgs {
     pub release: Option<wamn_digest::Digest>,
     /// The application to deploy.
     #[arg(long)]
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     /// The target environment file. Apply application SQL before deploying code.
     #[arg(long)]
     pub env: PathBuf,
@@ -26,7 +26,7 @@ pub struct DeployArgs {
 
 #[derive(Debug, Args)]
 pub struct RollbackArgs {
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     /// The published target release, to select an explicit release.
     #[arg(long)]
     pub release: Option<wamn_digest::Digest>,

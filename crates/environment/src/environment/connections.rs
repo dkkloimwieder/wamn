@@ -25,7 +25,7 @@ pub async fn write(
     document: &EnvironmentDocument,
     documents: &Path,
 ) -> anyhow::Result<Vec<String>> {
-    let lock = wamn_registry::lifecycle_lock::LifecycleLock::acquire(
+    let lock = wamn_catalog::lifecycle_lock::LifecycleLock::acquire(
         wamn_postgres::connect(&platform.system_database_url).await?,
         &document.triple(),
     )

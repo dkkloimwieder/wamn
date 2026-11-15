@@ -29,15 +29,15 @@ impl ExpectedDatabase {
         platform: &Platform,
         document: &EnvironmentDocument,
         exclusive: bool,
-    ) -> anyhow::Result<wamn_registry::lifecycle_lock::LifecycleLock> {
+    ) -> anyhow::Result<wamn_catalog::lifecycle_lock::LifecycleLock> {
         let lock = if exclusive {
-            wamn_registry::lifecycle_lock::LifecycleLock::acquire_wait(
+            wamn_catalog::lifecycle_lock::LifecycleLock::acquire_wait(
                 wamn_postgres::connect(&platform.system_database_url).await?,
                 &document.triple(),
             )
             .await?
         } else {
-            wamn_registry::lifecycle_lock::LifecycleLock::acquire_shared(
+            wamn_catalog::lifecycle_lock::LifecycleLock::acquire_shared(
                 wamn_postgres::connect(&platform.system_database_url).await?,
                 &document.triple(),
             )
@@ -68,7 +68,7 @@ pub async fn initialize(
     admin_url: &str,
     platform_migration_database_url: &str,
     migration_database_url: &str,
-    application: Option<&str>,
+    application: Option<&wamn_catalog::ApplicationName>,
 ) -> anyhow::Result<()> {
     let document = analyse::select_application(document, application)?;
     let DeclaredRelease::Digest(digest) = document.legacy_release() else {

@@ -97,7 +97,12 @@ impl Live {
         .expect("the administration generation writes the platform rows");
     }
 
-    async fn sequence(&mut self, application: &str, name: &str, pattern: &str) {
+    async fn sequence(
+        &mut self,
+        application: &wamn_catalog::ApplicationName,
+        name: &str,
+        pattern: &str,
+    ) {
         self.administer(&format!(
             "INSERT INTO platform.number_sequence (application, name, pattern) \
              VALUES ('{application}', '{name}', '{pattern}');"
@@ -124,7 +129,7 @@ impl Live {
             SET_OPERATION,
             request_id,
             &CounterSet {
-                application: APPLICATION.to_owned(),
+                application: APPLICATION.parse().unwrap(),
                 sequence: sequence.to_owned(),
                 counter: counter.to_owned(),
                 key: key.to_owned(),
@@ -152,8 +157,12 @@ impl Live {
 #[sqlx::test(migrations = false)]
 async fn counter_set_refuses_invalid_input(pool: sqlx::PgPool) {
     let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
-    live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
-        .await;
+    live.sequence(
+        &APPLICATION.parse().expect("valid fixture name"),
+        "purchase_order",
+        "P-{seq:po}",
+    )
+    .await;
     assert_eq!(
         live.refused("purchase_order", "po", "", 0).await,
         CounterSetRefusal::InvalidInput { field: "value" }
@@ -170,13 +179,22 @@ async fn counter_set_refuses_invalid_input(pool: sqlx::PgPool) {
         live.refused("shipment", "po", "", 9).await,
         CounterSetRefusal::SequenceNotFound
     );
-    live.sequence(APPLICATION, "broken", "{seq:").await;
+    live.sequence(
+        &APPLICATION.parse().expect("valid fixture name"),
+        "broken",
+        "{seq:",
+    )
+    .await;
     assert_eq!(
         live.refused("broken", "n", "", 23).await,
         CounterSetRefusal::CounterNotFound
     );
-    live.sequence(APPLICATION, "pick_label", "{seq:batch,per=batch_id}")
-        .await;
+    live.sequence(
+        &APPLICATION.parse().expect("valid fixture name"),
+        "pick_label",
+        "{seq:batch,per=batch_id}",
+    )
+    .await;
     assert_eq!(
         live.refused("pick_label", "batch", "abc", 7).await,
         CounterSetRefusal::AssignedPerKey
@@ -213,8 +231,12 @@ async fn live_guest_url(admin_url: &str, project_env_key: &wamn_registry::Projec
 #[sqlx::test(migrations = false)]
 async fn live_set_counter_is_logged_by_its_request_id(pool: sqlx::PgPool) {
     let mut live = Live::new(wamn_test_postgres::url(&pool)).await;
-    live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
-        .await;
+    live.sequence(
+        &APPLICATION.parse().expect("valid fixture name"),
+        "purchase_order",
+        "P-{seq:po}",
+    )
+    .await;
     assert_eq!(
         live.set("logged", "purchase_order", "po", "", 10)
             .await

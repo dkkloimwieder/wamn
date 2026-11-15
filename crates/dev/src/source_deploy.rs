@@ -31,7 +31,7 @@ pub async fn publish_from_env(
     document: &EnvironmentDocument,
     root: &Path,
     database_url: &str,
-) -> anyhow::Result<(String, wamn_digest::Digest)> {
+) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
     publish_source_from_env(document, build(document, root, database_url, false).await?).await
 }
 
@@ -40,7 +40,7 @@ pub async fn publish_development_from_env(
     document: &EnvironmentDocument,
     root: &Path,
     database_url: &str,
-) -> anyhow::Result<(String, wamn_digest::Digest)> {
+) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
     publish_source_from_env(document, build(document, root, database_url, true).await?).await
 }
 
@@ -49,7 +49,7 @@ pub async fn publish_development_from_env(
 pub async fn publish_built_from_env(
     document: &EnvironmentDocument,
     root: &Path,
-) -> anyhow::Result<(String, wamn_digest::Digest)> {
+) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
     let (application, roots) = sources(document, root)?;
     let packages = roots
         .iter()
@@ -75,7 +75,7 @@ pub async fn publish_built_from_env(
 async fn publish_source_from_env(
     document: &EnvironmentDocument,
     source: SourceBuild,
-) -> anyhow::Result<(String, wamn_digest::Digest)> {
+) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
     let variable = |name: &str| {
         std::env::var(name).with_context(|| format!("set {name} for source publication"))
     };
@@ -106,7 +106,7 @@ async fn publish_source_from_env(
 }
 
 struct SourceBuild {
-    application: String,
+    application: wamn_catalog::ApplicationName,
     roots: Vec<PathBuf>,
     packages: Vec<PackageCoordinate>,
 }
@@ -252,7 +252,7 @@ async fn publish_built(
     registry: PackageRegistry,
     component_artifact_base: &str,
     release_artifact_base: &str,
-) -> anyhow::Result<(String, wamn_digest::Digest)> {
+) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
     let SourceBuild {
         application,
         roots,
@@ -313,7 +313,7 @@ async fn publish_built(
 pub fn sources(
     document: &EnvironmentDocument,
     root: &Path,
-) -> anyhow::Result<(String, Vec<PathBuf>)> {
+) -> anyhow::Result<(wamn_catalog::ApplicationName, Vec<PathBuf>)> {
     let root = root
         .canonicalize()
         .context("resolve selected package root")?;
@@ -357,10 +357,10 @@ pub fn sources(
 }
 
 fn visit<'a>(
-    id: &'a str,
-    manifests: &'a BTreeMap<String, (PathBuf, PackageManifest)>,
-    visiting: &mut BTreeSet<&'a str>,
-    visited: &mut BTreeSet<&'a str>,
+    id: &'a wamn_catalog::PackageName,
+    manifests: &'a BTreeMap<wamn_catalog::PackageName, (PathBuf, PackageManifest)>,
+    visiting: &mut BTreeSet<&'a wamn_catalog::PackageName>,
+    visited: &mut BTreeSet<&'a wamn_catalog::PackageName>,
     roots: &mut Vec<PathBuf>,
 ) -> anyhow::Result<()> {
     if visited.contains(id) {
@@ -412,7 +412,7 @@ mod tests {
         assert!(document.applications.contains_key(&application));
         assert_eq!(roots, [scratch.path().canonicalize()?]);
         document.applications.insert(
-            "other".to_owned(),
+            "other".parse().unwrap(),
             document.applications["selected"].clone(),
         );
         assert!(sources(&document, scratch.path()).is_err());

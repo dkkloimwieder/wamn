@@ -22,7 +22,7 @@ pub(super) fn emit_model_wit(
     files: &mut BTreeMap<String, Vec<u8>>,
     compiled: &super::operations::ModelDescription<'_>,
 ) -> Result<(), GenerateError> {
-    let package = compiled.package.id.replace('_', "-");
+    let package = compiled.package.id.as_str().replace('_', "-");
     let model_name = compiled.name;
     let directory = format!("generated/wit/deps/{package}-{}", wit_name(model_name));
     insert_bytes(
@@ -44,7 +44,7 @@ pub(super) fn emit_model_wit(
 }
 
 fn emit_model_package_wit(compiled: &super::operations::ModelDescription<'_>) -> String {
-    let package = compiled.package.id.replace('_', "-");
+    let package = compiled.package.id.as_str().replace('_', "-");
     let mut source = format!(
         "package {package}:{}@{};\n\n",
         wit_name(compiled.name),
@@ -797,7 +797,7 @@ pub(super) fn emit_custom_operation_wit(
             "custom operation needs a group and local name",
         )
     })?;
-    let package = manifest.package.id.replace('_', "-");
+    let package = manifest.package.id.as_str().replace('_', "-");
     let version = &manifest.package.version;
     let directory = format!("generated/wit/deps/{package}-{}", wit_name(group));
     let package_path = format!("{directory}/package.wit");
@@ -814,7 +814,7 @@ pub(super) fn emit_custom_operation_wit(
         .get(&package_path)
         .is_some_and(|existing| String::from_utf8_lossy(existing).contains(&group_marker));
     if !group_is_emitted {
-        let source = emit_custom_group(&package, version, group, manifest, compiled);
+        let source = emit_custom_group(&manifest.package.id, version, group, manifest, compiled);
         if let Some(existing) = files.get_mut(&package_path) {
             while existing.last().is_some_and(u8::is_ascii_whitespace) {
                 existing.pop();
@@ -843,13 +843,17 @@ pub(super) fn emit_custom_operation_wit(
 }
 
 fn emit_custom_group(
-    package: &str,
+    package: &wamn_catalog::PackageName,
     version: &str,
     group: &str,
     manifest: &PackageManifest,
     compiled: &BTreeMap<String, super::operations::CustomDescription<'_>>,
 ) -> String {
-    let mut source = format!("package {package}:{}@{version};\n\n", wit_name(group));
+    let mut source = format!(
+        "package {}:{}@{version};\n\n",
+        package.as_str().replace('_', "-"),
+        wit_name(group)
+    );
     for (operation_name, facts) in compiled {
         let Some(local_name) = operation_name.strip_prefix(&format!("{group}.")) else {
             continue;
@@ -877,17 +881,18 @@ fn emit_custom_group(
 }
 
 fn emit_forwarding_interface(
-    package: &str,
+    package: &wamn_catalog::PackageName,
     version: &str,
     group: &str,
     local_name: &str,
     dependency: &crate::manifest::BaseDependencyRequirement,
     _operation: &CustomOperationDeclaration,
 ) -> String {
-    let dependency_package = dependency.package.replace('_', "-");
+    let dependency_package = dependency.package.as_str().replace('_', "-");
     let interface = wit_name(local_name);
     format!(
-        "package {package}:{}@{version};\n\ninterface {interface} {{\n  use wamn:node/types@0.1.0.{{node-context, node-error, json-value}};\n  use {dependency_package}:{}/{interface}@{}.{{{interface}-item, {interface}-outcome}};\n\n  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n}}\n",
+        "package {}:{}@{version};\n\ninterface {interface} {{\n  use wamn:node/types@0.1.0.{{node-context, node-error, json-value}};\n  use {dependency_package}:{}/{interface}@{}.{{{interface}-item, {interface}-outcome}};\n\n  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n}}\n",
+        package.as_str().replace('_', "-"),
         wit_name(group),
         wit_name(group),
         dependency.version
@@ -895,7 +900,7 @@ fn emit_forwarding_interface(
 }
 
 fn emit_owned_interface(
-    package: &str,
+    package: &wamn_catalog::PackageName,
     version: &str,
     group: &str,
     local_name: &str,
@@ -906,7 +911,11 @@ fn emit_owned_interface(
     let result = compiled.result.as_ref();
     let request_fields = &compiled.request;
     let interface = wit_name(local_name);
-    let mut source = format!("package {package}:{}@{version};\n\n", wit_name(group));
+    let mut source = format!(
+        "package {}:{}@{version};\n\n",
+        package.as_str().replace('_', "-"),
+        wit_name(group)
+    );
     for operation_name in manifest.custom_operations.keys() {
         let Some(other_name) = operation_name.strip_prefix(&format!("{group}.")) else {
             continue;

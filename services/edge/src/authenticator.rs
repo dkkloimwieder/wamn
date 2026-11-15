@@ -145,7 +145,7 @@ mod tests {
                 pair,
                 attachment: RouteAttachment {
                     type_: AttachmentType::Http,
-                    package_id: "scale".into(),
+                    package_id: "scale".parse().unwrap(),
                     component: "device".into(),
                     operation: crate::release::test_util::OPERATION.into(),
                     definition_hash: wamn_digest::bytes_sha256(b"route"),

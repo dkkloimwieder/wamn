@@ -7,8 +7,8 @@ use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::CatalogIdentityError;
 use crate::package::validate_canonical_operation_for_package;
-use crate::{CatalogIdentityError, PackageCoordinate};
 
 const JSON_SCHEMA_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
 const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
@@ -17,22 +17,23 @@ const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentPackageCoordinate {
     pub project_env_key: wamn_registry::ProjectEnvKey,
-    pub package_id: String,
+    pub package_id: crate::PackageName,
     pub package_version: String,
 }
 
 impl ComponentPackageCoordinate {
     pub fn new(
         project_env_key: &wamn_registry::ProjectEnvKey,
-        package_id: impl Into<String>,
+        package_id: crate::PackageName,
         package_version: impl Into<String>,
     ) -> Result<Self, CatalogIdentityError> {
         let project_env_key = project_env_key.clone();
-        let coordinate = PackageCoordinate::new(package_id, package_version)?;
+        let package_version = package_version.into();
+        crate::package::validate_package_version(&package_version)?;
         Ok(Self {
             project_env_key,
-            package_id: coordinate.package_id().to_owned(),
-            package_version: coordinate.package_version().to_owned(),
+            package_id,
+            package_version,
         })
     }
 }
@@ -102,7 +103,12 @@ impl<'de> Deserialize<'de> for ComponentPackageCoordinate {
                 &["project_env_key", "package-id", "package-version"],
             ));
         }
-        Self::new(&project_env_key, package_id, package_version).map_err(serde::de::Error::custom)
+        Self::new(
+            &project_env_key,
+            package_id.parse().map_err(serde::de::Error::custom)?,
+            package_version,
+        )
+        .map_err(serde::de::Error::custom)
     }
 }
 
@@ -213,11 +219,11 @@ pub enum ConnectionMode {
     Read,
     Write,
     /// Modes of configured palette aliases, indexed by package and alias.
-    ByBinding(BTreeMap<String, BTreeMap<String, ConnectionMode>>),
+    ByBinding(BTreeMap<crate::PackageName, BTreeMap<String, ConnectionMode>>),
 }
 impl ConnectionMode {
     /// Read the sealed mode of one concrete binding. Nested maps are refused.
-    pub fn read_only(&self, package: &str, alias: &str) -> Option<bool> {
+    pub fn read_only(&self, package: &crate::PackageName, alias: &str) -> Option<bool> {
         let mode = match self {
             Self::ByBinding(packages) => packages.get(package)?.get(alias)?,
             mode => mode,
@@ -525,17 +531,14 @@ pub fn normalize_component_fact(
     imports: impl IntoIterator<Item = String>,
     effects: Vec<AdmittedComponentEffect>,
 ) -> Result<AdmittedComponentFacts, ComponentFactError> {
-    ComponentPackageCoordinate::new(
-        &declaration.target.project_env_key,
-        &declaration.target.package_id,
-        &declaration.target.package_version,
-    )
-    .map_err(|error| {
-        ComponentFactError::new(
-            ComponentFactErrorType::NonCanonicalIdentity,
-            error.to_string(),
-        )
-    })?;
+    crate::package::validate_package_version(&declaration.target.package_version).map_err(
+        |error| {
+            ComponentFactError::new(
+                ComponentFactErrorType::NonCanonicalIdentity,
+                error.to_string(),
+            )
+        },
+    )?;
     validate_identity(&declaration.component, "component")?;
     validate_identity(&declaration.interface_version, "interface-version")?;
     if declaration.operations.is_empty() {
@@ -620,17 +623,14 @@ pub fn normalize_component_fact(
 pub fn verify_stored_effect_projection(
     component: &AdmittedComponent,
 ) -> Result<(), ComponentFactError> {
-    ComponentPackageCoordinate::new(
-        &component.target.project_env_key,
-        &component.target.package_id,
-        &component.target.package_version,
-    )
-    .map_err(|error| {
-        ComponentFactError::new(
-            ComponentFactErrorType::NonCanonicalIdentity,
-            error.to_string(),
-        )
-    })?;
+    crate::package::validate_package_version(&component.target.package_version).map_err(
+        |error| {
+            ComponentFactError::new(
+                ComponentFactErrorType::NonCanonicalIdentity,
+                error.to_string(),
+            )
+        },
+    )?;
     if component.operations.is_empty() {
         return Err(ComponentFactError::new(
             ComponentFactErrorType::EmptyOperationSet,
@@ -974,7 +974,7 @@ mod tests {
             connections: Vec::new(),
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a--dev--project".parse().unwrap(),
-                package_id: "orders".to_string(),
+                package_id: "orders".parse().unwrap(),
                 package_version: "1.2.0".to_string(),
             },
             component: "transform".to_string(),
@@ -1083,7 +1083,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_component_target_uses_the_package_coordinate_guard() {
+    fn persisted_component_target_refuses_duplicate_fields() {
         assert!(serde_json::from_str::<ComponentPackageCoordinate>(
             r#"{"project_env_key":"first--dev--project","project_env_key":"second--dev--project","package-id":"orders","package-version":"1.0.0"}"#
         ).is_err());
@@ -1303,7 +1303,7 @@ mod tests {
         AdmittedComponent {
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a--dev--project".parse().unwrap(),
-                package_id: "orders".to_string(),
+                package_id: "orders".parse().unwrap(),
                 package_version: "1.2.0".to_string(),
             },
             component: "transform".to_string(),
@@ -1605,7 +1605,7 @@ mod connection_alias_tests {
             let second =
                 BTreeMap::from([(parameter.to_owned(), Value::String("archive".to_owned()))]);
             let modes = ConnectionMode::ByBinding(BTreeMap::from([(
-                "package".into(),
+                "package".parse().unwrap(),
                 BTreeMap::from([
                     (
                         declaration.resolve(&first).unwrap().into(),
@@ -1618,16 +1618,25 @@ mod connection_alias_tests {
                 ]),
             )]));
             assert_eq!(
-                modes.read_only("package", declaration.resolve(&first).unwrap()),
+                modes.read_only(
+                    &"package".parse().unwrap(),
+                    declaration.resolve(&first).unwrap()
+                ),
                 Some(true)
             );
             assert_eq!(
-                modes.read_only("package", declaration.resolve(&second).unwrap()),
+                modes.read_only(
+                    &"package".parse().unwrap(),
+                    declaration.resolve(&second).unwrap()
+                ),
                 Some(false)
             );
             assert!(
                 modes
-                    .read_only("absent", declaration.resolve(&first).unwrap())
+                    .read_only(
+                        &"absent".parse().unwrap(),
+                        declaration.resolve(&first).unwrap()
+                    )
                     .is_none()
             );
             assert_ne!(declaration.resolve(&first), declaration.resolve(&second));

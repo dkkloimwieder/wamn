@@ -20,8 +20,8 @@ const DEFINITION: &str = "sha256:55555555555555555555555555555555555555555555555
 fn release() -> ServingRelease {
     ServingRelease {
         packages: BTreeSet::from([
-            PackageCoordinate::new("platform_fixture", "1.0.0").unwrap(),
-            PackageCoordinate::new("platform_fixture_overlay", "3.0.0").unwrap(),
+            PackageCoordinate::new("platform_fixture".parse().unwrap(), "1.0.0").unwrap(),
+            PackageCoordinate::new("platform_fixture_overlay".parse().unwrap(), "3.0.0").unwrap(),
         ]),
     }
 }
@@ -31,7 +31,7 @@ fn components() -> BTreeSet<ServingComponent> {
         ServingComponent {
             runtime_schema: None,
 
-            package_id: "platform_fixture".into(),
+            package_id: "platform_fixture".parse().unwrap(),
             descriptor: {
                 let mut descriptor =
                     ComponentDescriptor::named("transform", "0.1", COMPONENT_B.parse().unwrap());
@@ -52,7 +52,7 @@ fn components() -> BTreeSet<ServingComponent> {
         ServingComponent {
             runtime_schema: None,
 
-            package_id: "platform_fixture_overlay".into(),
+            package_id: "platform_fixture_overlay".parse().unwrap(),
             descriptor: {
                 let mut descriptor =
                     ComponentDescriptor::named("http-request", "0.1", COMPONENT_A.parse().unwrap());
@@ -77,7 +77,7 @@ fn components() -> BTreeSet<ServingComponent> {
 
 fn routes() -> BTreeSet<ServingRoute> {
     BTreeSet::from([ServingRoute {
-        package_id: "platform_fixture_overlay".into(),
+        package_id: "platform_fixture_overlay".parse().unwrap(),
         component: "http-request".into(),
         operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
         type_: OperationType::Get,
@@ -96,7 +96,7 @@ fn manifest() -> ServingManifest {
             "widget-get-http".into(),
             ServingAttachment {
                 type_: AttachmentType::Http,
-                package_id: "platform_fixture_overlay".into(),
+                package_id: "platform_fixture_overlay".parse().unwrap(),
                 target: AttachmentTarget::Route {
                     component: "http-request".into(),
                     operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
@@ -238,7 +238,11 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
 /// with `http-request` under `"package-id":"orders"`. Deriving the id from the
 /// namespace produced the reserved id `wamn`, which is not a manifest any
 /// publisher can publish.
-fn operation_provider_manifest(package: &str, export: &str, version: &str) -> ServingManifest {
+fn operation_provider_manifest(
+    package: &wamn_catalog::PackageName,
+    export: &str,
+    version: &str,
+) -> ServingManifest {
     let operation = AdmittedComponentOperation {
         host_transaction: false,
         input_ports: Vec::new(),
@@ -250,15 +254,15 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
     ServingManifest::new(
         ServingRelease {
             packages: BTreeSet::from([
-                PackageCoordinate::new(package, version).unwrap(),
-                PackageCoordinate::new("consumer", "1.0.0").unwrap(),
+                PackageCoordinate::new(package.clone(), version).unwrap(),
+                PackageCoordinate::new("consumer".parse().unwrap(), "1.0.0").unwrap(),
             ]),
         },
         BTreeSet::from([
             ServingComponent {
                 runtime_schema: None,
 
-                package_id: package.into(),
+                package_id: package.clone(),
                 descriptor: {
                     let mut descriptor = ComponentDescriptor::named(
                         "provider",
@@ -291,7 +295,7 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
             ServingComponent {
                 runtime_schema: None,
 
-                package_id: "consumer".into(),
+                package_id: "consumer".parse().unwrap(),
                 descriptor: {
                     let mut descriptor = ComponentDescriptor::named(
                         "consumer",
@@ -318,7 +322,7 @@ fn duplicate_export_only_interfaces_are_admitted() {
         ("orders", "wamn:node/handler@0.1.0", "0.1.0"),
         ("provider", "provider:entry/run@1.0.0", "1.0.0"),
     ] {
-        let mut candidate = operation_provider_manifest(package, export, version);
+        let mut candidate = operation_provider_manifest(&package.parse().unwrap(), export, version);
         let mut other = candidate
             .components
             .iter()

@@ -13,10 +13,10 @@ use wamn_compiler::manifest::{OperationOwners, resolve_operation_reference};
 use wamn_compiler::package_manifest_path;
 
 /// The manifest of one repository package, by its package id.
-fn owners(package_id: &str) -> OperationOwners {
+fn owners(package_id: &wamn_catalog::PackageName) -> OperationOwners {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../apps")
-        .join(package_id);
+        .join(package_id.as_str());
     let path = package_manifest_path(&root);
     let bytes =
         std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
@@ -33,8 +33,16 @@ pub fn sealed(reference: &str) -> String {
     let (prefix, _) = reference
         .split_once(':')
         .unwrap_or_else(|| panic!("{reference:?} is not an operation reference"));
-    resolve_operation_reference(&owners(&prefix.replace('-', "_")), reference)
-        .unwrap_or_else(|error| panic!("resolve {reference:?}: {error}"))
+    resolve_operation_reference(
+        &owners(
+            &prefix
+                .replace('-', "_")
+                .parse()
+                .expect("valid operation package name"),
+        ),
+        reference,
+    )
+    .unwrap_or_else(|error| panic!("resolve {reference:?}: {error}"))
 }
 
 /// The sealed id of one operation reference of the package whose `wamn.json`
@@ -55,6 +63,6 @@ pub fn sealed_in(manifest: &[u8], reference: &str) -> anyhow::Result<String> {
 /// # Panics
 ///
 /// When no repository package has the id.
-pub fn package_version(package_id: &str) -> String {
+pub fn package_version(package_id: &wamn_catalog::PackageName) -> String {
     owners(package_id).package.version
 }

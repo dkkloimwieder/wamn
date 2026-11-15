@@ -295,7 +295,7 @@ pub fn kubernetes_target(namespace: String) -> anyhow::Result<release_chart::Tar
 pub async fn dry_run(
     platform: &Platform,
     file: &Path,
-    application: Option<&str>,
+    application: Option<&wamn_catalog::ApplicationName>,
 ) -> anyhow::Result<Analysis> {
     let mut document = EnvironmentDocument::compile(file)?;
     let private = ensure::PrivateDirectory::create()?;
@@ -327,16 +327,16 @@ pub async fn dry_run(
 pub async fn apply(
     platform: &Platform,
     file: &Path,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<Analysis> {
     let document = EnvironmentDocument::compile(file)?;
     let mut platform = platform.clone();
     let control = runtime::resolve_platform(&mut platform, &document.org).await?;
-    wamn_registry::lifecycle_lock::LifecycleLock::hold(
+    wamn_catalog::lifecycle_lock::LifecycleLock::hold(
         wamn_postgres::connect(&platform.system_database_url).await?,
         &document.triple(),
         async |lock| {
-            wamn_registry::configuration::require_placement(
+            wamn_catalog::configuration::require_placement(
                 &mut *lock.client().await,
                 &document.org,
                 &document.env,
@@ -400,7 +400,7 @@ pub async fn apply(
 pub async fn deploy(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     digest: &wamn_digest::Digest,
 ) -> anyhow::Result<Analysis> {
     apply_selection(
@@ -417,7 +417,7 @@ pub async fn deploy(
 pub async fn stop(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<Analysis> {
     apply_selection(
         platform,
@@ -433,14 +433,14 @@ pub async fn stop(
 async fn apply_selection(
     platform: &Platform,
     triple: &wamn_registry::Triple,
-    application: &str,
+    application: &wamn_catalog::ApplicationName,
     change: document::ReleaseChange<'_>,
     actor: Option<&wamn_identity_protocol::PrincipalId>,
 ) -> anyhow::Result<Analysis> {
     let private = ensure::PrivateDirectory::create()?;
     let mut platform = platform.clone();
     let control = runtime::resolve_platform(&mut platform, &triple.org).await?;
-    let lock = wamn_registry::lifecycle_lock::LifecycleLock::acquire_application(
+    let lock = wamn_catalog::lifecycle_lock::LifecycleLock::acquire_application(
         wamn_postgres::connect(&platform.system_database_url).await?,
         triple,
         application,
@@ -526,7 +526,7 @@ async fn apply_selection(
             let mut transaction =
                 crate::provision_project_env::provisioning_transaction(&mut connection).await?;
             anyhow::ensure!(
-                wamn_registry::configuration::write_selection(
+                wamn_catalog::configuration::write_selection(
                     &mut transaction,
                     triple,
                     application,

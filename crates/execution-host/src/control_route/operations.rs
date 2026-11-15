@@ -18,7 +18,7 @@ struct Request {
     project: String,
     env: wamn_registry::EnvName,
     #[serde(default)]
-    application: Option<String>,
+    application: Option<wamn_catalog::ApplicationName>,
     #[serde(default)]
     release: Option<wamn_digest::Digest>,
     #[serde(default)]
@@ -178,7 +178,7 @@ impl ControlRoutes<'_> {
         validate(operation, &request)?;
         let environment = {
             let mut connection = self.control.acquire().await?;
-            wamn_registry::configuration::read(&mut connection, &triple)
+            wamn_catalog::configuration::read(&mut connection, &triple)
                 .await?
                 .context("environment has no applied configuration")?
         };
@@ -245,13 +245,6 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
     if request.job.is_some() {
         return Err(invalid("job"));
     }
-    if let Some(application) = &request.application
-        && (application.is_empty()
-            || application.len() > 253
-            || application.contains(['\0', '\n', '\r']))
-    {
-        return Err(invalid("application"));
-    }
     match operation {
         Operation::Deploy if request.release.is_none() => {
             return Err(invalid("release"));
@@ -306,7 +299,13 @@ fn manifest(
     ];
     let release = request.release.map(|digest| digest.to_string());
     for (flag, value) in [
-        ("--application", request.application.as_deref()),
+        (
+            "--application",
+            request
+                .application
+                .as_ref()
+                .map(wamn_catalog::ApplicationName::as_str),
+        ),
         ("--release", release.as_deref()),
     ] {
         if let Some(value) = value {
@@ -378,7 +377,7 @@ mod tests {
             Operation::Diff,
         ] {
             assert!(validate(operation, &request).is_err());
-            request.application = Some("billing".into());
+            request.application = Some("billing".parse().expect("valid name"));
             assert!(validate(operation, &request).is_ok());
             request.application = None;
         }

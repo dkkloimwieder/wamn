@@ -37,7 +37,7 @@ pub struct EnvironmentArgs {
 #[derive(Debug, Args)]
 pub struct SchemaArgs {
     /// The declared application or source directory. Source diff needs current build output.
-    pub application: String,
+    pub application: wamn_catalog::ApplicationName,
     /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
@@ -71,16 +71,18 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     };
     let input = EnvironmentDocument::compile(&args.env)?;
     let source = !input.applications.contains_key(&args.application)
-        && std::path::Path::new(&args.application).is_dir();
+        && std::path::Path::new(args.application.as_str()).is_dir();
     let host = ControlHost::from_env()?;
     let (application, release) = if source {
         ensure!(
             args.release.is_none(),
             "a source schema operation does not select --release"
         );
-        let (application, digest) =
-            crate::operation_verbs::publish(&input, std::path::Path::new(&args.application))
-                .await?;
+        let (application, digest) = crate::operation_verbs::publish(
+            &input,
+            std::path::Path::new(args.application.as_str()),
+        )
+        .await?;
         (application, Some(digest))
     } else {
         (args.application, args.release)

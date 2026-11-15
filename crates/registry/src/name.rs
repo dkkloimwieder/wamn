@@ -206,10 +206,6 @@ pub fn nats_certificate(key: &crate::ProjectEnvKey) -> String {
 pub fn control_nats_certificate(org: &str) -> String {
     format!("wamn-nats-control-{org}")
 }
-/// A scheduled application's service principal.
-pub fn application_subject(key: &crate::ProjectEnvKey, package: &str) -> String {
-    format!("wamn-app-{key}--{package}")
-}
 /// The operator presenter Secret.
 pub fn operator_secret(org: &str, project: &str, env: &crate::EnvName) -> String {
     format!("wamn-pat-operator-{}", project_env_key(org, project, env))
@@ -272,22 +268,6 @@ pub fn environment_service_account(org: &str, env: &crate::EnvName) -> String {
     format!("wamn-host-{}", environment_key(org, env))
 }
 
-/// The Helm release of one application.
-pub fn application_release_name(
-    org: &str,
-    project: &str,
-    env: &crate::EnvName,
-    application: &str,
-) -> Result<String, NameError> {
-    validate_coordinate("org", org)?;
-    validate_coordinate("project", project)?;
-    let hash = hex::encode(sha256(
-        format!("{org}/{env}/{project}/{application}").as_bytes(),
-    ));
-    let slug: String = env.as_str().chars().take(SLUG_LEN).collect();
-    Ok(format!("r-{slug}-{}", &hash[..HASH_LEN]))
-}
-
 /// A project deployment's complete event subscription.
 pub fn stream_subjects(org: &str, project: &str, env: &crate::EnvName) -> String {
     event_subject(org, project, env, ">")
@@ -301,18 +281,6 @@ pub fn stream_name(org: &str, project: &str, env: &crate::EnvName) -> String {
         project.len()
     )
 }
-/// The durable consumer shared by an application's hosts for one source.
-/// Hash the framed identity so application punctuation cannot enter a broker name.
-pub fn application_event_consumer(application: &str, package: &str, entity: &str) -> String {
-    let identity = format!(
-        "{}:{application}{}:{package}{}:{entity}",
-        application.len(),
-        package.len(),
-        entity.len(),
-    );
-    format!("application_{}", hex::encode(sha256(identity.as_bytes())))
-}
-
 /// The coordinate label in a host status response.
 pub fn host_status(org: &str, project: &str, env: &crate::EnvName) -> String {
     format!("{org}/{env}/{project}")
@@ -335,7 +303,8 @@ impl std::fmt::Display for NameError {
     }
 }
 impl std::error::Error for NameError {}
-fn validate_coordinate(coordinate: &'static str, value: &str) -> Result<(), NameError> {
+/// Refuse a resource coordinate that does not follow the registry slug rule.
+pub fn validate_coordinate(coordinate: &'static str, value: &str) -> Result<(), NameError> {
     if crate::identifiers::valid_project(value) {
         return Ok(());
     }

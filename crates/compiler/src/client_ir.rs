@@ -87,7 +87,7 @@ impl ClientIrErrorType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientContractIr {
     /// The package this IR was projected from.
-    pub package: String,
+    pub package: wamn_catalog::PackageName,
     /// Models, ordered by name.
     pub models: Vec<ModelIr>,
 }
@@ -538,7 +538,7 @@ pub struct ErrorCaseIr {
 impl ClientContractIr {
     /// Project compiled descriptions with the routes that serve them.
     pub fn from_operations(
-        package: &str,
+        package: &wamn_catalog::PackageName,
         operations: &BTreeMap<String, crate::OperationDescription>,
         routes: &BTreeMap<String, RouteIr>,
     ) -> Result<Self, ClientIrError> {
@@ -554,7 +554,7 @@ impl ClientContractIr {
     }
 
     fn assemble(
-        package: &str,
+        package: &wamn_catalog::PackageName,
         modules: BTreeMap<String, BTreeMap<String, &crate::OperationDescription>>,
         routes: &BTreeMap<String, RouteIr>,
     ) -> Result<Self, ClientIrError> {

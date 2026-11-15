@@ -23,11 +23,13 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
     };
     let manifest = ServingManifest::new(
         ServingRelease {
-            packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
+            packages: BTreeSet::from([
+                PackageCoordinate::new("cat".parse().unwrap(), "1.0.0").unwrap()
+            ]),
         },
         BTreeSet::from([ServingComponent {
             runtime_schema: None,
-            package_id: "cat".into(),
+            package_id: "cat".parse().unwrap(),
             descriptor: {
                 let mut descriptor =
                     wamn_catalog::ComponentDescriptor::named("http-request", "0.1", digest('a'));
@@ -46,7 +48,7 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
             },
         }]),
         BTreeSet::from([wamn_catalog::ServingRoute {
-            package_id: "cat".into(),
+            package_id: "cat".parse().unwrap(),
             component: "http-request".into(),
             operation: "request".into(),
             type_: wamn_catalog::OperationType::Command,
@@ -58,7 +60,7 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
             "orders".to_string(),
             ServingAttachment {
                 type_: AttachmentType::Http,
-                package_id: "cat".into(),
+                package_id: "cat".parse().unwrap(),
                 target: AttachmentTarget::Route {
                     component: "http-request".into(),
                     operation: "request".into(),
@@ -82,10 +84,10 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
         )
         .with_applications(
             [(
-                "catalog".to_owned(),
+                "catalog".parse().unwrap(),
                 wamn_catalog::ApplicationDefinition {
                     connections: std::collections::BTreeMap::new(),
-                    packages: ["cat".to_owned()].into(),
+                    packages: ["cat".parse().unwrap()].into(),
                 },
             )]
             .into(),

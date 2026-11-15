@@ -532,7 +532,12 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
                 .url(),
         )
         .unwrap();
-        wamn_catalog::test_database::project(database.as_str()).await;
+        wamn_catalog::test_database::project(
+            &mut wamn_postgres::connect(database.as_str())
+                .await
+                .expect("connect the test database"),
+        )
+        .await;
         sqlx::raw_sql("CREATE SCHEMA inventory; CREATE TABLE inventory.gadget (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(), part_code text UNIQUE NOT NULL,
             stock_id uuid NOT NULL, status text NOT NULL DEFAULT 'open',
@@ -602,7 +607,12 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
 async fn live_a_numbered_integer_field_inserts_the_rendered_number(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_catalog::test_database::project(database.as_str()).await;
+    wamn_catalog::test_database::project(
+        &mut wamn_postgres::connect(database.as_str())
+            .await
+            .expect("connect the test database"),
+    )
+    .await;
     let mut manifest = numbered();
     manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
     manifest["models"]["gadget"]["fields"] = json!({"line_no": {"number": "gadget_number"}});

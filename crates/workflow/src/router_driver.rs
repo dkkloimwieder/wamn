@@ -29,7 +29,7 @@ use wamn_authority::connection::{ConnectionExecutionClosure, InvocationEntry, Wi
 #[derive(Debug)]
 pub struct WorkflowRunRequest {
     pub project_env_key: wamn_registry::ProjectEnvKey,
-    pub package_id: String,
+    pub application: wamn_catalog::ApplicationName,
     pub environment: wamn_registry::EnvName,
     pub wiring_id: String,
     pub wiring_version: u32,
@@ -79,14 +79,14 @@ impl RouterDriver {
             let target = self.operations.release.target();
             anyhow::ensure!(request.wiring_version > 0, "wiring-version-zero");
             anyhow::ensure!(target.project_env_key == request.project_env_key && target.environment == request.environment, "router-request-release-target-mismatch");
-            let application_packages = &target.applications.get(&request.package_id)
-                .with_context(|| format!("the environment declares no application {:?}", request.package_id))?.packages;
+            let application_packages = &target.applications.get(&request.application)
+                .with_context(|| format!("the environment declares no application {:?}", request.application))?.packages;
             let ResolvedActiveWiring { version, graph_hash, document, node_components, components, .. } = crate::resolution::resolve_workflow(&self.operations.postgres,
                 &self.operations.project,
                 &self.operations.release,
                 &WorkflowRunKey {
                     project_env_key: &request.project_env_key, environment: &request.environment,
-                    application: &request.package_id, application_packages,
+                    application: &request.application, application_packages,
                     workflow_id: &request.wiring_id, version: request.wiring_version,
                     manifest_digest: &self.operations.release.release().manifest_digest,
                     wiring_hash: &request.wiring_hash, node_digests: &request.node_digests,
@@ -130,7 +130,7 @@ impl RouterDriver {
                                     config: serde_json::to_string(&call.definition.params).context("encode node config")?,
                                 };
                                 let entry = InvocationEntry::Wiring(WiringPosition {
-                                    package_id: request.package_id.clone(), wiring_hash: graph_hash,
+                                    application: request.application.clone(), wiring_hash: graph_hash,
                                     wiring_id: request.wiring_id.clone(), wiring_version: version, node_id: call.node.clone(), occurrence: call.occurrence,
                                     configuration: Arc::new(call.definition.params.clone()),
                                 });
