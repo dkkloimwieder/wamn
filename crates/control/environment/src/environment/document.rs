@@ -558,22 +558,7 @@ mod tests {
         );
         transaction.rollback().await?;
         // SQL exercises constraints that the Rust input types cannot express.
-        for statement in [
-            "UPDATE registry.environment_projects SET revocation_seconds=-1 WHERE org='acme'",
-            "UPDATE registry.environment_projects SET revocation_seconds=3601 WHERE org='acme'",
-            "UPDATE registry.environment_projects SET schema_mode='unknown' WHERE org='acme'",
-            "UPDATE registry.environment_applications SET revocation_seconds=NULL WHERE org='acme'",
-            "UPDATE registry.environment_applications SET revocation_seconds=-1 WHERE org='acme'",
-            "UPDATE registry.environment_applications SET revocation_seconds=3601 WHERE org='acme'",
-            "UPDATE registry.environment_application_connections SET connection_name='shared-erp@1' WHERE org='acme'",
-            "UPDATE registry.environment_applications SET client_web=NULL WHERE org='acme'",
-            "UPDATE registry.environment_applications SET project='missing' WHERE org='acme'",
-            "UPDATE registry.environment_application_connections SET application='missing' WHERE org='acme'",
-            "UPDATE registry.environment_integrations SET project='missing' WHERE org='acme'",
-            "INSERT INTO registry.environment_applications SELECT * FROM registry.environment_applications WHERE org='acme'",
-            "INSERT INTO registry.environment_application_connections SELECT * FROM registry.environment_application_connections WHERE org='acme'",
-            "INSERT INTO registry.environment_integrations SELECT * FROM registry.environment_integrations WHERE org='acme'",
-        ] {
+        for &statement in wamn_registry::test_util::invalid_configuration_sql() {
             let mut transaction =
                 crate::provision_project_env::provisioning_transaction(&mut connection).await?;
             assert!(

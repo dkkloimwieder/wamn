@@ -460,9 +460,23 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .map(drop)?;
     wamn_test_infrastructure::credentials::define(&mut tx, "acme", &json!({"project":"apps","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}), &store).await?;
     tx.commit().await?;
-    sql::initialize(&platform, &document, system.url(), Some("a"))
-        .await
-        .context("initialize a")?;
+    let project_admin = wamn_postgres::database_configuration(system.url(), &database_name)?;
+    let migration_input = wamn_control_provision::test_database::package_migration_input(
+        &project_admin,
+        &document.org,
+        &document.project,
+        &document.env,
+    )
+    .await?;
+    sql::initialize(
+        &platform,
+        &document,
+        system.url(),
+        &migration_input,
+        Some("a"),
+    )
+    .await
+    .context("initialize a")?;
     assert!(
         expand::prepare(
             &platform,
@@ -606,9 +620,15 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning),
     ))).execute(&mut observer).await.map(drop)?;
     let before_sql = continuity(&mut observer).await?;
-    sql::initialize(&platform, &document, system.url(), Some("a"))
-        .await
-        .context("retry initialization")?;
+    sql::initialize(
+        &platform,
+        &document,
+        system.url(),
+        &migration_input,
+        Some("a"),
+    )
+    .await
+    .context("retry initialization")?;
 
     assert_eq!(before_sql, continuity(&mut observer).await?);
     let principal = |name: &str| wamn_platform_identity::application_subject(PROJECT_ENV_KEY, name);

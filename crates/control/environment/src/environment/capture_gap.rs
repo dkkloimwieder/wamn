@@ -1,9 +1,9 @@
 //! Stop capture for recovery and retry reader restart after resynchronization.
-use super::lock::LifecycleLock;
 pub use wamn_events::capture_gap::{
     CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
 use wamn_kubernetes::Target;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 
 /// Recover a lost slot while stopping its Deployment under the environment lock.
 pub async fn recover(
@@ -15,14 +15,18 @@ pub async fn recover(
         "reader must run in the org namespace"
     );
     let triple = wamn_registry::Triple::new(&args.org, args.env.as_str(), &args.project);
-    LifecycleLock::hold(&args.system_database_url, &triple, async |_| {
-        let instance = crate::provision_project_env::read_project_env_instance(
-            &args.system_database_url,
-            &triple,
-        )
-        .await?;
-        wamn_events::capture_gap::recover_capture_gap(args, &instance, target).await
-    })
+    LifecycleLock::hold(
+        wamn_postgres::connect(&args.system_database_url).await?,
+        &triple,
+        async |_| {
+            let instance = crate::provision_project_env::read_project_env_instance(
+                &args.system_database_url,
+                &triple,
+            )
+            .await?;
+            wamn_events::capture_gap::recover_capture_gap(args, &instance, target).await
+        },
+    )
     .await
 }
 
@@ -36,16 +40,20 @@ pub async fn close(
         "reader must run in the org namespace"
     );
     let triple = wamn_registry::Triple::new(&args.org, args.env.as_str(), &args.project);
-    LifecycleLock::hold(&args.system_database_url, &triple, async |_| {
-        let closed = wamn_events::capture_gap::close_capture_gap(args).await?;
-        wamn_events::lifecycle::start_reader(
-            &target.kubeconfig,
-            &target.context,
-            &target.namespace,
-            &triple,
-        )
-        .await?;
-        Ok(closed)
-    })
+    LifecycleLock::hold(
+        wamn_postgres::connect(&args.system_database_url).await?,
+        &triple,
+        async |_| {
+            let closed = wamn_events::capture_gap::close_capture_gap(args).await?;
+            wamn_events::lifecycle::start_reader(
+                &target.kubeconfig,
+                &target.context,
+                &target.namespace,
+                &triple,
+            )
+            .await?;
+            Ok(closed)
+        },
+    )
     .await
 }

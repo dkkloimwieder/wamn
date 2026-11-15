@@ -11,8 +11,8 @@ use tokio::{
     task::JoinSet,
     time::timeout,
 };
-use wamn_environment::environment::lock::LifecycleLock;
 use wamn_registry::Triple;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 
 #[sqlx::test(migrations = false)]
 async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
@@ -20,52 +20,95 @@ async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
     let url = database.as_str();
     let prod = Triple::new("acme", "prod", "wms");
 
-    LifecycleLock::hold(url, &prod, async |_| {
-        assert!(
-            timeout(Duration::from_secs(7), LifecycleLock::acquire(url, &prod))
+    LifecycleLock::hold(
+        wamn_postgres::connect(url).await.unwrap(),
+        &prod,
+        async |_| {
+            assert!(
+                timeout(
+                    Duration::from_secs(7),
+                    LifecycleLock::acquire(wamn_postgres::connect(url).await.unwrap(), &prod)
+                )
                 .await?
                 .is_err()
-        );
-        assert!(
-            LifecycleLock::acquire_application(url, &prod, "orders")
+            );
+            assert!(
+                LifecycleLock::acquire_application(
+                    wamn_postgres::connect(url).await.unwrap(),
+                    &prod,
+                    "orders"
+                )
                 .await
                 .is_err()
-        );
-        let other = LifecycleLock::acquire(url, &Triple::new("acme", "dev", "wms")).await?;
-        other.release().await;
-        Ok(())
-    })
+            );
+            let other = LifecycleLock::acquire(
+                wamn_postgres::connect(url).await.unwrap(),
+                &Triple::new("acme", "dev", "wms"),
+            )
+            .await?;
+            other.release().await;
+            Ok(())
+        },
+    )
     .await
     .unwrap();
-    let orders = LifecycleLock::acquire_application(url, &prod, "orders")
-        .await
-        .unwrap();
+    let orders = LifecycleLock::acquire_application(
+        wamn_postgres::connect(url).await.unwrap(),
+        &prod,
+        "orders",
+    )
+    .await
+    .unwrap();
     assert!(
         timeout(
             Duration::from_secs(7),
-            LifecycleLock::acquire_application(url, &prod, "orders"),
+            LifecycleLock::acquire_application(
+                wamn_postgres::connect(url).await.unwrap(),
+                &prod,
+                "orders"
+            ),
         )
         .await
         .unwrap()
         .is_err()
     );
-    let receiving = LifecycleLock::acquire_application(url, &prod, "receiving")
-        .await
-        .unwrap();
-    assert!(LifecycleLock::acquire(url, &prod).await.is_err());
+    let receiving = LifecycleLock::acquire_application(
+        wamn_postgres::connect(url).await.unwrap(),
+        &prod,
+        "receiving",
+    )
+    .await
+    .unwrap();
+    assert!(
+        LifecycleLock::acquire(wamn_postgres::connect(url).await.unwrap(), &prod)
+            .await
+            .is_err()
+    );
     orders.release().await;
-    let retry = LifecycleLock::acquire_application(url, &prod, "orders")
-        .await
-        .unwrap();
+    let retry = LifecycleLock::acquire_application(
+        wamn_postgres::connect(url).await.unwrap(),
+        &prod,
+        "orders",
+    )
+    .await
+    .unwrap();
     retry.release().await;
     receiving.release().await;
 
     // A SQL Job keeps its own shared session after the CLI session disappears.
-    let cli = LifecycleLock::acquire_shared(url, &prod).await.unwrap();
-    let job = LifecycleLock::acquire_shared(url, &prod).await.unwrap();
+    let cli = LifecycleLock::acquire_shared(wamn_postgres::connect(url).await.unwrap(), &prod)
+        .await
+        .unwrap();
+    let job = LifecycleLock::acquire_shared(wamn_postgres::connect(url).await.unwrap(), &prod)
+        .await
+        .unwrap();
     drop(cli);
-    assert!(LifecycleLock::acquire(url, &prod).await.is_err());
-    let waiting = LifecycleLock::acquire_wait(url, &prod);
+    assert!(
+        LifecycleLock::acquire(wamn_postgres::connect(url).await.unwrap(), &prod)
+            .await
+            .is_err()
+    );
+    let waiting = LifecycleLock::acquire_wait(wamn_postgres::connect(url).await.unwrap(), &prod);
     tokio::pin!(waiting);
     assert!(
         timeout(Duration::from_millis(200), &mut waiting)
@@ -147,8 +190,15 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open(pool:
 
 async fn acquire(url: &str, triple: &Triple, application: Option<&str>) -> LifecycleLock {
     match application {
-        Some(application) => LifecycleLock::acquire_application(url, triple, application).await,
-        None => LifecycleLock::acquire(url, triple).await,
+        Some(application) => {
+            LifecycleLock::acquire_application(
+                wamn_postgres::connect(url).await.unwrap(),
+                triple,
+                application,
+            )
+            .await
+        }
+        None => LifecycleLock::acquire(wamn_postgres::connect(url).await.unwrap(), triple).await,
     }
     .unwrap()
 }
@@ -158,7 +208,8 @@ async fn lock_loss_cancels_the_protected_operation(pool: sqlx::PgPool) -> anyhow
     let database = wamn_test_postgres::url(&pool);
     let triple = Triple::new("acme", "prod", "wms");
     let mut observer = wamn_postgres::connect(database.as_str()).await?;
-    let lock = LifecycleLock::acquire(database.as_str(), &triple).await?;
+    let lock =
+        LifecycleLock::acquire(wamn_postgres::connect(database.as_str()).await?, &triple).await?;
     let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *lock.client().await)
         .await?;
@@ -173,7 +224,7 @@ async fn lock_loss_cancels_the_protected_operation(pool: sqlx::PgPool) -> anyhow
     .await?;
     assert!(result.is_err());
     lock.release().await;
-    LifecycleLock::acquire(database.as_str(), &triple)
+    LifecycleLock::acquire(wamn_postgres::connect(database.as_str()).await?, &triple)
         .await?
         .release()
         .await;

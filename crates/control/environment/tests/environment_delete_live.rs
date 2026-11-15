@@ -7,11 +7,11 @@ use serde_json::json;
 use sqlx::PgConnection as Client;
 use wamn_broker::{Publisher, auth_changes::AuthDrops, connection_changes::ConnectionDrops};
 use wamn_environment::{
-    environment::{delete::delete_registry_rows, lock::LifecycleLock},
-    provision_project_env::provisioning_transaction,
+    environment::delete::delete_registry_rows, provision_project_env::provisioning_transaction,
 };
 use wamn_platform_identity::connections::administration;
 use wamn_registry::Triple;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 #[sqlx::test(migrations = false)]
@@ -338,9 +338,11 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
     let url = database.as_str().to_owned();
     let deleting_triple = triple.clone();
     let task = tokio::spawn(async move {
-        LifecycleLock::hold(&url, &deleting_triple, async |_| {
-            delete_registry_rows(&mut deleting, &deleting_triple, "aaaaaaa1").await
-        })
+        LifecycleLock::hold(
+            wamn_postgres::connect(&url).await?,
+            &deleting_triple,
+            async |_| delete_registry_rows(&mut deleting, &deleting_triple, "aaaaaaa1").await,
+        )
         .await
     });
     // PostgreSQL stops the real delete after connection removal, before commit.
@@ -385,9 +387,11 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
     assert_eq!(retained.get::<String, _>(0), reference);
     assert_eq!(retained.get::<String, _>(1), version);
     for _ in 0..2 {
-        LifecycleLock::hold(database.as_str(), &triple, async |_| {
-            delete_registry_rows(&mut system, &triple, "aaaaaaa1").await
-        })
+        LifecycleLock::hold(
+            wamn_postgres::connect(database.as_str()).await?,
+            &triple,
+            async |_| delete_registry_rows(&mut system, &triple, "aaaaaaa1").await,
+        )
         .await?;
     }
     assert!(sqlx::query("SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'").fetch_optional(&mut system).await?.is_none());

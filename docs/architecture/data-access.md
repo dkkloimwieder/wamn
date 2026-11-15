@@ -34,6 +34,10 @@ It covers `GRANT`, `REVOKE`, and `ALTER DEFAULT PRIVILEGES`, including commands 
 The connection logs in directly as the migration role, so `RESET ROLE` keeps the same restricted identity.
 Trusted catalog writes and grants use a separate connection.
 
+Application baseline initialization takes a separate migration database connection.
+An explicit SQL connection must use the restricted migration login and its own credentials.
+The administrator connection prepares database privileges. It does not run package SQL.
+
 The catalog reader reads tables and views. It no longer scans schemas to refuse routines, triggers, rules, policies, ACLs, unused types or standalone sequences.
 Selected column types and generated properties must still fit the generated action.
 A migration can opt out of a transaction with `-- no-transaction`.
@@ -1065,7 +1069,7 @@ Provisioning publishes each drop after its transaction commits, including the ro
 Package apply and local configuration reconciliation record a drop when they create the built-in `admin` role.
 Their transaction owners publish the drops after commit through `wamn_broker::Publisher`.
 Publication keeps the existing behavior when NATS is absent or a deletion fails.
-`wamn-ctl invite` and `provision-org --admin` write org memberships and org roles in the same way.
+Platform installation writes org memberships and org roles in the same way.
 A control route of the control serving root binds the calling org admin, as the [execution page](execution.md#host-run-routes) states.
 Test fixtures bind `wamn:provisioning` for platform setup, or a principal row that they insert.
 The trigger keeps `created_at`, so an expired-token fixture moves `expires_at` to just after `created_at`.

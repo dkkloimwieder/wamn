@@ -11,8 +11,8 @@ use super::document::{ClusterDocument, UpgradeTarget};
 use super::{
     bootstrap, control, identity, installation, installed::InstalledPlatform, provider, resources,
 };
-use crate::lifecycle_lock::LifecycleLock;
 use serde_json::Value;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 use wamn_release_control::release_chart;
 
 /// Apply platform resources and initialize an installation without a control release.
@@ -196,7 +196,12 @@ pub async fn update(
             .context("host update requires existing release platform/wamn")?;
         let owner_chart = artifact_plan::platform_chart(Some(&operator), None)?;
         anyhow::ensure!(coordinate.0 == document.org, "host belongs to another org");
-        let lock = LifecycleLock::acquire_environment(registry, coordinate.0, coordinate.1).await?;
+        let lock = LifecycleLock::acquire_environment(
+            wamn_postgres::connect(registry).await?,
+            coordinate.0,
+            coordinate.1,
+        )
+        .await?;
         let result = lock.protect(async {
             release_chart::recover_pending(&owner, &name).await?;
             let installed = installed_values(&owner, &name).await?;

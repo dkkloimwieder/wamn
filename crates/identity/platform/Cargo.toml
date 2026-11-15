@@ -33,6 +33,7 @@ wamn-identity-protocol = { workspace = true }
 wamn-catalog = { workspace = true }
 
 [dev-dependencies]
+wamn-registry = { workspace = true, features = ["test-util"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 url = { workspace = true }
 sha2 = { workspace = true }

@@ -11,7 +11,7 @@ pub use wamn_platform_install::platform_migrations::{
 #[derive(Debug, Clone, Copy)]
 pub enum MigrationTarget<'a> {
     System,
-    Project(&'a crate::environment::lock::LifecycleLock),
+    Project(&'a wamn_registry::lifecycle_lock::LifecycleLock),
 }
 impl MigrationTarget<'_> {
     fn database(self) -> MigrationDatabase {

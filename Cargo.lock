@@ -6707,10 +6707,12 @@ dependencies = [
 name = "wamn-registry"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "hex",
  "serde",
  "serde_json",
  "sqlx",
+ "tokio",
  "uuid",
  "wamn-digest",
 ]
@@ -6949,7 +6951,6 @@ dependencies = [
  "wamn-http-capability",
  "wamn-identity-protocol",
  "wamn-platform-identity",
- "wamn-platform-install",
  "wamn-postgres",
  "wamn-postgres-capability",
  "wamn-registry",

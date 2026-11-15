@@ -23,6 +23,7 @@ pub async fn initialize(
     analysed: &BTreeMap<String, Installed>,
     manifest: &wamn_catalog::ServingManifest,
     project_url: &str,
+    migration_database_url: &str,
 ) -> anyhow::Result<Vec<PackageManifest>> {
     let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
@@ -61,12 +62,7 @@ pub async fn initialize(
         let applies = !analysed.contains_key(&id);
         if applies {
             crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
-                migration_database_url: wamn_control_provision::migration::configuration(
-                    project_url,
-                    &document.org,
-                    &document.project,
-                    &document.env,
-                )?,
+                migration_database_url: migration_database_url.to_owned(),
                 component_source: platform.component_source()?,
                 changes: platform.auth_changes().await?,
                 package: opened.package_root(),

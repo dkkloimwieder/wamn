@@ -2,13 +2,10 @@
 
 pub mod api_service;
 pub mod apply_package;
-#[cfg(feature = "ops")]
-pub mod create_user;
 pub mod env_policies;
 pub mod environment;
 pub mod ident;
 pub mod identity_issuer;
-pub mod invite;
 pub mod migrations;
 pub mod org_connection;
 pub use wamn_platform_install::platform;

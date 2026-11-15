@@ -192,7 +192,7 @@ pub async fn initialize(
             .any(|key| key["kid"] == active["kid"] && key["x"] == active["x"])),
         "identity does not serve its active session key"
     );
-    invite_owner(target, document, chart, directory, &ca).await?;
+    invite_owner(target, document, directory, &ca).await?;
     if document.provider == Provider::Kind {
         println!(
             "Local access: run kind export kubeconfig --name {} first.\nLocal invitation file (no email delivery): kubectl --context '{}' -n {} exec deployment/identity -c identity -- cat {LOCAL_MAIL}",
@@ -207,7 +207,6 @@ pub async fn initialize(
 async fn invite_owner(
     target: &Target,
     document: &ClusterDocument,
-    chart: &SelectedChart,
     directory: &Path,
     ca: &SecretData,
 ) -> anyhow::Result<()> {
@@ -223,8 +222,6 @@ async fn invite_owner(
     if enrolled {
         return Ok(());
     }
-    drop(connection);
-    drop(forward);
     let operator: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -234,39 +231,74 @@ async fn invite_owner(
     )
     .await?
     .context("missing identity operator Secret")?;
-    let (mut invitation, files) = invitation_job(document, chart.image("ctl")?, &operator, ca)?;
-    super::bootstrap::administrator(&mut invitation, &document.org)?;
-    job::run(&platform, directory, &mut invitation, &mut [files]).await?;
+    let (mut user, files) = operator_job(
+        document,
+        "users",
+        &json!({"email":document.owner_email,"display_name":document.owner_email}),
+        &operator,
+        ca,
+    )?;
+    let response = job::run(&platform, directory, &mut user, &mut [files]).await?;
+    let user: wamn_identity_protocol::wire::UserResponse =
+        serde_json::from_str(&response).context("decode the initial owner's identity")?;
+    {
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut connection)
+            .await?;
+        let mut transaction = crate::transaction::provisioning_transaction(&mut connection).await?;
+        wamn_platform_identity::org::invite_member(
+            &mut transaction,
+            &user.principal_id,
+            &document.org,
+            &wamn_platform_identity::org::MemberGrants {
+                org_admin: true,
+                ..Default::default()
+            },
+        )
+        .await?;
+        transaction.commit().await?;
+    }
+    drop(connection);
+    drop(forward);
+    if !user.enrolled {
+        let (mut invitation, files) = operator_job(
+            document,
+            "invitations",
+            &json!({"principal_id":user.principal_id}),
+            &operator,
+            ca,
+        )?;
+        job::run(&platform, directory, &mut invitation, &mut [files]).await?;
+    }
     Ok(())
 }
 
-fn invitation_job(
+fn operator_job(
     document: &ClusterDocument,
-    image: &str,
+    route: &str,
+    body: &Value,
     operator: &SecretData,
     ca: &SecretData,
 ) -> anyhow::Result<(Value, Secret)> {
     let mut job = job::manifest(
-        &format!("platform-invite-{}", document.org),
-        image,
-        &["/usr/local/bin/wamn-ctl"],
+        &format!("platform-owner-{route}-{}", document.org),
+        CURL_IMAGE,
+        &["curl"],
         &[
-            "invite",
-            "--org",
-            &document.org,
-            "--email",
-            &document.owner_email,
-            "--display-name",
-            &document.owner_email,
-            "--org-admin",
-            "--pat-issuer",
-            &issuer(&document.org),
-            "--pat-client-cert",
-            "/inputs/tls.crt",
-            "--pat-client-key",
-            "/inputs/tls.key",
-            "--pat-server-ca",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--cacert",
             "/inputs/ca.crt",
+            "--cert",
+            "/inputs/tls.crt",
+            "--key",
+            "/inputs/tls.key",
+            "--header",
+            "Content-Type: application/json",
+            "--data",
+            &body.to_string(),
+            &format!("{}/{route}", issuer(&document.org)),
         ],
     );
     let files = job::files(
@@ -278,22 +310,7 @@ fn invitation_job(
         ]
         .into(),
     );
-    job::environment(
-        &mut job,
-        &[
-            ("WAMN_NATS_URL", NATS_URL),
-            ("WAMN_NATS_TLS_CA", "/etc/wamn/nats/ca.crt"),
-            ("WAMN_NATS_TLS_CERT", "/etc/wamn/nats/tls.crt"),
-            ("WAMN_NATS_TLS_KEY", "/etc/wamn/nats/tls.key"),
-        ],
-    );
-    job::mount(
-        &mut job,
-        "nats",
-        "wamn-ctl-nats",
-        "/etc/wamn/nats",
-        &["ca.crt", "tls.crt", "tls.key"],
-    );
+    job["spec"]["template"]["spec"]["securityContext"] = json!({"runAsUser":0});
     Ok((job, files))
 }
 

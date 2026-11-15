@@ -366,10 +366,6 @@ pub fn control_provision_src_sql_grant_connection_reader_surface_sql(role: &str)
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN: &str =
     "UPDATE registry.meta SET platform_domain = $1 WHERE platform_domain IS DISTINCT FROM $1";
 
-/// crates/control/environment/src/invite.rs::invite registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_INVITE_INVITE: &str =
-    "SELECT id FROM registry.orgs WHERE id = $1 FOR UPDATE";
-
 /// crates/control/environment/src/provision_project_env/registry.rs::do_record_project_env registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV: &str =
     "SELECT id::text FROM registry.target WHERE name = $1";

@@ -43,7 +43,11 @@ impl Fixture {
             .map(drop)
             .unwrap();
         }
-        sqlx::raw_sql("INSERT INTO registry.integration_type_auth VALUES ('http','custom'); INSERT INTO registry.target(name,type,status) VALUES ('fixture','local','active'); UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='fixture'); RESET ROLE").execute(&mut admin).await.map(drop).unwrap();
+        sqlx::raw_sql(wamn_registry::test_util::seed_credential_target_sql())
+            .execute(&mut admin)
+            .await
+            .map(drop)
+            .unwrap();
         let store = Arc::new(MemoryStore::default());
         Self {
             database,
