@@ -65,6 +65,7 @@ Other declared needs select contract when they need no database, broker, or clus
 An `input:ID` need selects the named preparation recipe when it has no environment output.
 An `env:NAME` need selects its output recipe and requires a nonempty variable after preparation.
 A `bin:PROGRAM` need requires an executable on `PATH` or at the given absolute path.
+For `bin:kcl`, the selector checks `WAMN_KCL`, the pinned installation under `.tools/kcl/`, then `PATH`.
 The selector runs ignored cases only when it can supply their declared inputs.
 An explicit suite fails when a selected case lacks an input.
 Selected suites own their named cases or filters, so dependency selection runs each case once.
@@ -85,6 +86,11 @@ Each native test target has a ten-minute deadline, including discovery and waiti
 The whole selection has a thirty-minute deadline, including preparation and compilation.
 Preparation commands, workspace builds, and targets print their elapsed time.
 Build diagnostics remain visible, while Cargo artifact JSON stays out of the run log.
+The runner buffers each target's output and prints it together under its target label.
+Failure reports include that output, including output captured before a timeout.
+A separate supervisor owns each command and adopts its orphaned descendants.
+On timeout or interruption, it ends and reaps all descendants, including separate process groups.
+Guest compiler flag lookups use the selection deadline and the same process cleanup.
 
 The tool builds the guests that selected suites need.
 `cargo xtask repo-lint` also compiles guest targets that disable Cargo tests.
@@ -189,7 +195,7 @@ Each required command must report at least one executed passing case and exit su
 Missing packages and targets fail selection.
 Exact test names must appear in the compiled binary before that binary runs.
 The same rule applies to the component contract and upstream release commands.
-`cargo xtask require-test-result` streams child output and checks the libtest summary after completion.
+`cargo xtask require-test-result` prints the captured child output and checks the libtest summary after completion.
 It preserves command failures and refuses absent or entirely ignored test results.
 An explicit dry run or a change set with no selected tests remains a planning result.
 It records no permanent result.

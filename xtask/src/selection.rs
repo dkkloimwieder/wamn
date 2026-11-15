@@ -890,10 +890,15 @@ impl Runner<'_> {
             .replace("{root}", &self.root.display().to_string())
             .replace("{target}", &self.env["CARGO_TARGET_DIR"]);
         if value.contains("{guest-rustflags}") {
-            value = value.replace(
-                "{guest-rustflags}",
-                &crate::guest_rustflags(self.root).await?,
-            );
+            let executable = std::env::current_exe()?;
+            let flags = process::output_before(
+                self.root,
+                executable.to_str().context("xtask executable path")?,
+                &["guest-rustflags"],
+                self.deadline,
+            )
+            .await?;
+            value = value.replace("{guest-rustflags}", flags.trim());
         }
         Ok(value)
     }
@@ -1099,6 +1104,7 @@ impl Runner<'_> {
                 &metadata[job.target.workspace],
                 &job.selection(selection),
                 deadline,
+                &label,
             )
             .await
         }
@@ -1119,6 +1125,7 @@ impl Runner<'_> {
         md: &cargo_metadata::Metadata,
         selection: &CaseSelection<'_>,
         deadline: Instant,
+        label: &str,
     ) -> anyhow::Result<bool> {
         if selection.only.is_none_or(|suite| suite.tests.is_empty())
             && !target.cases.is_empty()
@@ -1196,14 +1203,16 @@ impl Runner<'_> {
                 .env("WASH_ABANDONED_CALL_GRACE_SECS", "0");
             command
         };
-        let listed = process::execute_before(
+        let listed = process::output_command_before(
             binary(false).args(["--list", "--format", "terse"]),
             deadline,
+            Some(label),
         )
         .await?;
-        let ignored = process::execute_before(
+        let ignored = process::output_command_before(
             binary(false).args(["--list", "--ignored", "--format", "terse"]),
             deadline,
+            Some(label),
         )
         .await?;
         let ignored: BTreeSet<_> = ignored
@@ -1254,7 +1263,7 @@ impl Runner<'_> {
         if selection.tiers.contains(&"kind") {
             for name in run {
                 let database = target.cases.get(name).is_some_and(|case| case.database);
-                let output = process::execute_before(
+                let output = process::execute_labeled_before(
                     binary(database).args([
                         name,
                         "--include-ignored",
@@ -1262,9 +1271,11 @@ impl Runner<'_> {
                         "--test-threads=1",
                     ]),
                     deadline,
+                    label,
                 )
                 .await?;
-                process::validate(&output, Some(name), false)?;
+                process::validate(&output, Some(name), false)
+                    .with_context(|| format!("{label}\n{output}"))?;
             }
             return Ok(true);
         }
@@ -1273,8 +1284,8 @@ impl Runner<'_> {
         for name in skip {
             command.args(["--skip", name]);
         }
-        let output = process::execute_before(&mut command, deadline).await?;
-        process::validate(&output, None, false)?;
+        let output = process::execute_labeled_before(&mut command, deadline, label).await?;
+        process::validate(&output, None, false).with_context(|| format!("{label}\n{output}"))?;
         Ok(true)
     }
 
@@ -1341,6 +1352,9 @@ fn supplied(runner: &Runner<'_>, type_: &str, name: &str) -> bool {
     }
     if type_ == "env" {
         return runner.value(name).is_some();
+    }
+    if type_ == "bin" && name == "kcl" {
+        return crate::kcl::binary(runner.root, |name| runner.value(name)).is_some();
     }
     if type_ == "bin" {
         return runner.value("PATH").is_some_and(|path| {

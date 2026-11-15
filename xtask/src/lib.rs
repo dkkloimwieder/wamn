@@ -3,6 +3,7 @@
 mod bench;
 mod bench_cloud;
 mod bench_data;
+mod kcl;
 mod netsuite;
 mod platform;
 mod process;
@@ -24,6 +25,12 @@ pub struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Task {
+    /// Own and reap the descendants of one task command.
+    #[command(hide = true)]
+    Supervise {
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<std::ffi::OsString>,
+    },
     /// Refuse undeclared or backward submodule pins.
     SubmodulePins {
         #[arg(default_value = "main")]
@@ -120,6 +127,7 @@ enum Task {
 pub async fn run(args: Args) -> anyhow::Result<()> {
     let root = root();
     match args.command {
+        Task::Supervise { command } => std::process::exit(process::supervise(&command).await?),
         Task::SubmodulePins { main_ref } => submodule_pins::run(&root, &main_ref),
         Task::NetsuiteLive(args) => netsuite::run(&args).await,
         Task::InstallKcl => {

@@ -49,7 +49,7 @@ wash-runtime = { workspace = true, features = ["oci"] }
 oci-client.workspace = true
 docker_credential = "=1.4.0"
 hyper.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "fs", "process", "io-util", "signal"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "fs", "process", "io-util", "signal", "net"] }
 uuid = { workspace = true, features = ["v7"] }
 rustix = { workspace = true, features = ["process"] }
 
