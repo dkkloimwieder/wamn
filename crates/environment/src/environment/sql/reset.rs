@@ -71,18 +71,17 @@ pub async fn reset_database(
     sqlx::raw_sql("TRUNCATE platform.write_log")
         .execute(&mut *tx)
         .await?;
-    let role = postgres_protocol::escape::escape_identifier(&login);
-    let database = postgres_protocol::escape::escape_identifier(&database);
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "GRANT CONNECT ON DATABASE {database} TO {role}; {}",
+        "{} {}",
+        wamn_control_provision::sql::grant_workload_login_sql(
+            wamn_control_provision::WorkloadRoleFamily::Migration,
+            &database,
+            &login,
+        ),
         wamn_control_provision::migration::grants_sql(&login)
     )))
     .execute(&mut *tx)
     .await?;
-    // Application schemas belong to the platform, so schema publications survive.
-    for (schema,) in sqlx::query_as::<_, (String,)>("SELECT quote_ident(nspname) FROM pg_namespace WHERE nspowner=(SELECT oid FROM pg_roles WHERE rolname='wamn_db_owner') AND nspname NOT IN ('catalog','platform','wamn_run','wamn_history','public')").fetch_all(&mut *tx).await? {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("GRANT USAGE, CREATE ON SCHEMA {schema} TO {role}"))).execute(&mut *tx).await?;
-    }
     tx.commit().await?;
     Ok(())
 }

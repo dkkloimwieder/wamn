@@ -507,6 +507,24 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     )
     .await
     .context("initialize a")?;
+    let app_input = wamn_test_infrastructure::credentials::database_login(
+        system.url(),
+        Some(&project_admin),
+        &document.org,
+        &document.project,
+        &document.env,
+        wamn_control_provision::WorkloadRoleFamily::App,
+    )
+    .await?;
+    let query_input = wamn_test_infrastructure::credentials::database_login(
+        system.url(),
+        Some(&project_admin),
+        &document.org,
+        &document.project,
+        &document.env,
+        wamn_control_provision::WorkloadRoleFamily::Query,
+    )
+    .await?;
     assert!(
         expand::prepare(
             &platform,
@@ -574,6 +592,33 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let mut observer_url = admin_url;
     observer_url.set_path(&database_name);
     let mut observer = connect(observer_url.as_str()).await?;
+    // Both logins predate B's schema and receive access through provisioning defaults.
+    let mut app = connect(&app_input).await?;
+    let probe_id: i32 =
+        sqlx::query_scalar("INSERT INTO b.data(value) VALUES ('runtime-access') RETURNING id")
+            .fetch_one(&mut app)
+            .await?;
+    let mut query = connect(&query_input).await?;
+    let read_id: i32 = sqlx::query_scalar("SELECT id FROM b.data WHERE id=$1")
+        .bind(probe_id)
+        .fetch_one(&mut query)
+        .await?;
+    assert_eq!(read_id, probe_id);
+    let refusal = sqlx::query("INSERT INTO b.data(value) VALUES ('refused')")
+        .execute(&mut query)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refusal
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("42501")
+    );
+    sqlx::query("DELETE FROM b.data WHERE id=$1")
+        .bind(probe_id)
+        .execute(&mut app)
+        .await?;
     // Provisioning defaults cover the new package and retain the existing one.
     for package in [&old_package, &b_package] {
         for model in package.models.values() {

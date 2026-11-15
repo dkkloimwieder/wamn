@@ -77,6 +77,7 @@ pub(crate) fn default_privileges_sql(login: &str) -> String {
     let role = postgres_protocol::escape::escape_identifier(login);
     format!(
         "ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO wamn_app; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT USAGE ON SCHEMAS TO wamn_app, wamn_query; \
          ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO wamn_app; \
          ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT SELECT ON TABLES TO wamn_query; \
          ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
