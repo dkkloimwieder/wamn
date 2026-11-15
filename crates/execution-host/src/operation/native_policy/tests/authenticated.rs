@@ -27,7 +27,9 @@ use super::invoke_native;
 use super::trace::TraceCapture;
 use super::{CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, ROOT};
 
-#[path = "../../../../../sql/tests/support/session_fixture.rs"]
+#[path = "../../../../tests/support/session_authority.rs"]
+mod session_authority;
+#[path = "../../../../../authentication/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared issuer fixture also serves cache-expiry tests."
@@ -232,7 +234,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     let mut admin = connect(admin_url).await?;
     let first = claims()["sub"].as_str().unwrap().to_owned();
     let second = "00000000-0000-4000-8000-0000000000b2";
-    session_fixture::install_authority(
+    session_authority::install_authority(
         &mut admin,
         PROJECT,
         &ENVIRONMENT.parse().unwrap(),

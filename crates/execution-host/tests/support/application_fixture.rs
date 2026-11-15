@@ -317,7 +317,7 @@ pub(super) async fn application_host_with_release(
         .bind(&first).execute(&mut admin).await?;
     let server = Server::start().await;
     let (verifier, token_clock, key_clock) = server.verifier();
-    session_fixture::install_authority(
+    super::session_authority::install_authority(
         &mut admin,
         PROJECT,
         &"dev".parse().unwrap(),

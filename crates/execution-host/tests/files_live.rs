@@ -28,6 +28,8 @@ use wamn_authority::connection::{
 use wamn_blobstore::plugin::WamnBlobstore;
 use wasmtime_wasi_http::WasiBody;
 
+#[path = "support/session_authority.rs"]
+mod session_authority;
 #[path = "support/application_fixture.rs"]
 #[expect(
     dead_code,
@@ -42,7 +44,7 @@ mod file_delete_proxy;
     reason = "The shared file fixture also supports schema and registry tests."
 )]
 mod files;
-#[path = "../../sql/tests/support/session_fixture.rs"]
+#[path = "../../authentication/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared session fixture also supports verifier barriers."

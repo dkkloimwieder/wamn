@@ -21,7 +21,7 @@ use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_package_artifact::http_client::HttpClient;
 
-#[path = "../../sql/tests/support/session_fixture.rs"]
+#[path = "../../authentication/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also provides verifier-only fetch barriers."
@@ -29,6 +29,8 @@ use wamn_package_artifact::http_client::HttpClient;
 mod session_fixture;
 use session_fixture::{AUDIENCE, ORG, Server, claims, header, signed};
 
+#[path = "support/session_authority.rs"]
+mod session_authority;
 #[path = "support/application_fixture.rs"]
 mod application_fixture;
 use application_fixture::{
@@ -148,7 +150,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
 
     let mut server = Server::start().await;
     let (verifier, _token_clock, _key_clock) = server.verifier();
-    session_fixture::install_authority(
+    session_authority::install_authority(
         &mut admin,
         PROJECT,
         &"dev".parse().unwrap(),

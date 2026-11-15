@@ -22,7 +22,7 @@ use wamn_platform_identity::org::{MemberGrants, invite_member};
 
 use http_body_util::BodyExt as _;
 
-#[path = "../../sql/tests/support/session_fixture.rs"]
+#[path = "../../authentication/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also serves verifier lifecycle tests."
@@ -30,6 +30,8 @@ use http_body_util::BodyExt as _;
 mod session_fixture;
 use session_fixture::{ISSUER, ORG, Server, claims, header, signed};
 
+#[path = "support/session_authority.rs"]
+mod session_authority;
 #[path = "support/application_fixture.rs"]
 mod application_fixture;
 use application_fixture::{ApplicationHost, MEMBER, PROJECT, application_host};
