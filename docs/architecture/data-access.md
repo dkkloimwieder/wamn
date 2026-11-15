@@ -981,7 +981,11 @@ No file byte transfer changes WIT.
 Uploads stream to `<environment>/_wamn_files/staging/<uuid>` under the binding prefix.
 The host commits metadata, copies staging to `<environment>/_wamn_files/live/<uuid>`, and deletes staging.
 Reads repair a missing live object from staging.
-The store age rule covers staging only. Unlinked metadata and live objects never expire by age.
+The collector storage API promotes staged bytes when their metadata row exists.
+It removes staged bytes without a row after the 30-second invocation limit plus a 60-second margin.
+The caller supplies an exact catalog lookup before reconciliation.
+The bucket lifecycle rule aborts incomplete multipart uploads after one day.
+Unlinked metadata and live objects never expire by age alone.
 Raw blobstore writes, deletes, and clears refuse file-managed keys and their public copies.
 
 Release hosts serve file transfers on a separate HTTP/1.1 listener.

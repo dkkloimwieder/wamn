@@ -19,6 +19,8 @@ use super::intake::IntakeError;
 /// [`StoreError::Backend`] and [`StoreError::ResponseLost`] describe the remote.
 #[derive(Debug)]
 pub enum StoreError {
+    /// The invocation deadline elapsed.
+    Deadline,
     /// The guest-supplied key broke a containment rule.
     Confinement(KeyRefusal),
     /// The body exceeded the ceiling, or the drain did not establish that it was complete.
@@ -45,6 +47,7 @@ pub enum StoreError {
 impl core::fmt::Display for StoreError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Deadline => formatter.write_str("invocation deadline elapsed"),
             Self::Confinement(refusal) => {
                 write!(formatter, "object key refused: {}", refusal.code())
             }

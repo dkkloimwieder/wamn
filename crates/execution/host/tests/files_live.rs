@@ -578,7 +578,12 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     let fresh = Uuid::new_v4();
     let store = fixture
         .blobstore
-        .file_store(&fixture.context, files::STORE_NAME, false)
+        .file_store(
+            &fixture.context,
+            files::STORE_NAME,
+            false,
+            tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+        )
         .await?;
     let staged = store.stage(fresh, &b"pending row"[..]).await?;
     sqlx::raw_sql("BEGIN")
@@ -710,7 +715,12 @@ async fn native_upload_streams_the_limit_and_hashes_the_stored_bytes() -> anyhow
     );
     let store = fixture
         .blobstore
-        .file_store(&fixture.context, files::STORE_NAME, false)
+        .file_store(
+            &fixture.context,
+            files::STORE_NAME,
+            false,
+            tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+        )
         .await?;
     let stored = store.get(&row.get::<String, _>(2)).await?.bytes().await?;
     assert_eq!(stored.len(), size);
@@ -815,7 +825,12 @@ async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() ->
     let mut fixture = FileHost::start("file_crash_repair").await?;
     let store = fixture
         .blobstore
-        .file_store(&fixture.context, files::STORE_NAME, false)
+        .file_store(
+            &fixture.context,
+            files::STORE_NAME,
+            false,
+            tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+        )
         .await?;
     let id = Uuid::new_v4();
     let staged = store.stage(id, &b"committed staging"[..]).await?;
