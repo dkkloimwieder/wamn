@@ -14,6 +14,7 @@ use operations::{emit_custom_operation, emit_model, required_schema_contract};
 use validation::{authored_sql_map, validate};
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -108,12 +109,19 @@ pub struct GenerationInput<'a> {
     manifest_json: &'a [u8],
     authored_sql: &'a [AuthoredSql<'a>],
     transactional: &'a StatementTransactionality,
+    paths: OutputPaths<'a>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct OutputPaths<'a> {
+    generated: &'a Path,
+    authored: &'a Path,
 }
 
 impl<'a> GenerationInput<'a> {
     /// Construct a generation input from exact in-memory artifacts.
     /// Complete inherited declarations with [`derive_manifest`] before generation.
-    pub const fn new(
+    pub fn new(
         catalog: &'a CatalogIr,
         manifest_json: &'a [u8],
         authored_sql: &'a [AuthoredSql<'a>],
@@ -124,7 +132,20 @@ impl<'a> GenerationInput<'a> {
             manifest_json,
             authored_sql,
             transactional,
+            paths: OutputPaths {
+                generated: Path::new("generated"),
+                authored: Path::new(""),
+            },
         }
+    }
+
+    /// Locate generated files and authored SQL in the output package.
+    pub const fn with_output_paths(mut self, generated: &'a Path, authored: &'a Path) -> Self {
+        self.paths = OutputPaths {
+            generated,
+            authored,
+        };
+        self
     }
 }
 
@@ -390,6 +411,7 @@ pub(crate) fn generate_described(
         let table = relation(input.catalog, model).expect("validation resolved every relation");
         emit_model(
             &mut files,
+            input.paths,
             &mut operations,
             corpus,
             input.transactional,
@@ -417,6 +439,7 @@ pub(crate) fn generate_described(
     for operation_name in custom.keys() {
         emit_custom_operation(
             &mut files,
+            input.paths,
             &mut operations,
             corpus,
             input.transactional,
@@ -1245,3 +1268,6 @@ mod tests {
         assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
     }
 }
+
+#[cfg(test)]
+mod sql_layout_tests;

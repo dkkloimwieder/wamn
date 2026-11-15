@@ -1,7 +1,7 @@
 //! PostgreSQL identity validation and injection from the shared invocation record.
 
 use sqlx::{Row as _, Statement as _};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
@@ -26,118 +26,10 @@ use super::pool::{
 };
 use super::{DEFAULT_PROJECT, PgError};
 use crate::invocation::Authority;
+use wamn_authentication::authorization::{HeldOperationGrants, held_grants, session_grants};
 
 mod pools;
 pub(super) mod transactions;
-
-/// The status row of the environment, which `wamn_app` reads under its
-/// database boundary.
-const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform.environment";
-
-/// The user row of one principal, each role it holds and each permission
-/// of that role, in one read. No row means no user row. A role without
-/// permissions, such as `admin`, yields one row with a null permission, and a
-/// principal without roles yields one row with a null role.
-const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission, u.type = 'user' \
-    FROM platform.\"user\" u LEFT JOIN platform.user_role r \
-    ON r.user_id = u.id \
-    LEFT JOIN platform.permission p \
-    ON p.role_name = r.role_name \
-    WHERE u.id = $1::text::uuid";
-
-const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permission.permission \
-    FROM platform.\"user\" AS \"user\" \
-    JOIN platform.user_role AS user_role \
-      ON user_role.user_id = \"user\".id \
-    LEFT JOIN platform.permission AS permission \
-      ON permission.role_name = user_role.role_name \
-    WHERE \"user\".id = $1::text::uuid AND \"user\".status = 'active'";
-
-/// The application authority a caller holds now: whether it holds `admin`, and
-/// the stable operation references its other roles grant under the loaded
-/// release (docs/architecture/execution.md#routing-and-availability).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct HeldOperationGrants {
-    pub admin: bool,
-    /// A service holds permissions but never selects a user's active role.
-    pub user: bool,
-    pub references: BTreeSet<String>,
-    /// The names of the held roles.
-    pub roles: BTreeSet<String>,
-}
-
-impl HeldOperationGrants {
-    /// Fold rows of `(role_name, permission)`, where a null permission is a
-    /// role without permissions. The held references are the rows.
-    pub fn from_rows(rows: &[sqlx::postgres::PgRow]) -> Result<Self, sqlx::Error> {
-        let mut held = Self::default();
-        for row in rows {
-            let role: String = row.try_get(0)?;
-            held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
-            if let Some(reference) = row.try_get::<Option<String>, _>(1)? {
-                held.references.insert(reference);
-            }
-            held.roles.insert(role);
-        }
-        Ok(held)
-    }
-
-    /// The one role a caller with these grants acts with
-    /// (docs/architecture/execution.md#environment-workflows): `admin` for a
-    /// holder of `admin`, the single role of a caller that holds exactly one,
-    /// and none for a caller that holds no role or more than one.
-    pub fn active_role(&self) -> Option<Box<str>> {
-        if !self.user {
-            return None;
-        }
-        self.pat_role()
-    }
-
-    /// A PAT caller selects only a role held by its own active principal.
-    /// Service callers never inherit the role of a user session.
-    pub fn pat_role(&self) -> Option<Box<str>> {
-        if self.admin {
-            return Some(wamn_identity_protocol::ADMIN_ROLE.into());
-        }
-        let mut roles = self.roles.iter();
-        match (roles.next(), roles.next()) {
-            (Some(role), None) => Some(role.as_str().into()),
-            _ => None,
-        }
-    }
-}
-
-fn principal_grants_from_rows(
-    rows: &[sqlx::postgres::PgRow],
-) -> Result<wamn_capability_authority::auth_cache::PrincipalGrants, sqlx::Error> {
-    let mut grants = wamn_capability_authority::auth_cache::PrincipalGrants {
-        present: !rows.is_empty(),
-        ..Default::default()
-    };
-    for row in rows {
-        grants.active = row.try_get(0)?;
-        grants.user = row.try_get(3)?;
-        if let Some(role) = row.try_get::<Option<String>, _>(1)? {
-            let permissions = grants.roles.entry(role).or_default();
-            permissions.extend(row.try_get::<Option<String>, _>(2)?);
-        }
-    }
-    Ok(grants)
-}
-
-/// A session presents authority that its principal does not currently hold.
-#[derive(Debug)]
-pub struct SessionGrantRefusal {
-    type_: &'static str,
-}
-
-impl std::fmt::Display for SessionGrantRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.type_)
-    }
-}
-
-impl std::error::Error for SessionGrantRefusal {}
 
 #[derive(Debug)]
 pub(super) struct SessionIdentityError {
@@ -179,52 +71,6 @@ fn principal_read_error(context: &'static str, source: sqlx::Error) -> SessionId
         context,
         source: source.into(),
     }
-}
-
-/// The grants an active principal holds, from all its roles or only from the
-/// `signed` roles it still holds.
-fn session_grants(
-    grants: &wamn_capability_authority::auth_cache::PrincipalGrants,
-    roles: &[wamn_identity_protocol::RoleName],
-) -> anyhow::Result<HeldOperationGrants> {
-    if !grants.active || !grants.user {
-        return Err(SessionGrantRefusal {
-            type_: "session principal is not an active user",
-        }
-        .into());
-    }
-    if !roles
-        .iter()
-        .all(|role| grants.roles.contains_key(role.as_str()))
-    {
-        return Err(SessionGrantRefusal {
-            type_: "session principal does not hold a signed role",
-        }
-        .into());
-    }
-    Ok(held_grants(grants, Some(roles)))
-}
-
-fn held_grants(
-    grants: &wamn_capability_authority::auth_cache::PrincipalGrants,
-    signed: Option<&[wamn_identity_protocol::RoleName]>,
-) -> HeldOperationGrants {
-    let mut held = HeldOperationGrants {
-        user: grants.user,
-        ..HeldOperationGrants::default()
-    };
-    if !grants.active || !grants.present {
-        return held;
-    }
-    for (role, permissions) in &grants.roles {
-        if signed.is_some_and(|signed| !signed.iter().any(|signed| signed.as_str() == role)) {
-            continue;
-        }
-        held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
-        held.references.extend(permissions.iter().cloned());
-        held.roles.insert(role.clone());
-    }
-    held
 }
 
 /// Names the shape only: the credential provider and the live pools carry
@@ -1313,25 +1159,19 @@ impl WamnPostgres {
             AuthorityClass::GuestSql => self.checkout_guest(project, project_env_key).await?,
             _ => self.checkout_platform(project, class).await?,
         };
-        let statement = match sqlx::Executor::prepare(
-            &mut *connection,
-            sqlx::SqlSafeStr::into_sql_str(PRINCIPAL_GRANTS_SQL),
+        let result = wamn_authentication::authorization::principal_grants(
+            &mut connection,
+            principal.to_string().as_str(),
         )
-        .await
-        {
-            Ok(statement) => statement,
+        .instrument(tracing::info_span!("wamn.auth.perm.query"))
+        .await;
+        let grants = match result {
+            Ok(grants) => grants,
             Err(error) => {
                 self.destroy(connection);
-                return Err(principal_read_error("prepare the principal grants", error).into());
+                return Err(principal_read_error("read the principal grants", error).into());
             }
         };
-        let rows = sqlx::query(statement.sql().clone())
-            .bind(principal.to_string().as_str())
-            .fetch_all(&mut *connection)
-            .instrument(tracing::info_span!("wamn.auth.perm.query"))
-            .await
-            .map_err(|error| principal_read_error("read the principal grants", error))?;
-        let grants = principal_grants_from_rows(&rows).context("decode the principal grants")?;
         self.auth
             .keep_grants(
                 project_env_key,
@@ -1353,23 +1193,22 @@ impl WamnPostgres {
         principal_id: &wamn_identity_protocol::PrincipalId,
         operation: &str,
     ) -> anyhow::Result<HeldOperationGrants> {
-        let rows = self
+        let mut held = self
             .administration_transaction(
                 project,
                 project_env_key,
                 principal_id,
                 operation,
                 async |client| {
-                    sqlx::query(USER_OPERATION_PERMISSIONS_SQL)
-                        .bind(principal_id.to_string().as_str())
-                        .fetch_all(&mut *client)
-                        .await
-                        .context("read held operation grants")
+                    wamn_authentication::authorization::user_operation_permissions(
+                        client,
+                        principal_id.to_string().as_str(),
+                    )
+                    .await
+                    .context("read held operation grants")
                 },
             )
             .await??;
-        let mut held =
-            HeldOperationGrants::from_rows(&rows).context("decode held operation grant")?;
         if self
             .inherits_administration(project_env_key, principal_id)
             .await?
@@ -1405,23 +1244,14 @@ impl WamnPostgres {
             .checkout_guest(project, project_env_key)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let statement = sqlx::Executor::prepare(
-            &mut *connection,
-            sqlx::SqlSafeStr::into_sql_str(ENVIRONMENT_INACTIVE_SQL),
-        )
-        .await
-        .context("prepare the environment status")?;
-        let row = match sqlx::query(statement.sql().clone())
-            .fetch_optional(&mut *connection)
-            .await
-        {
-            Ok(row) => row,
-            Err(error) => {
-                self.destroy(connection);
-                return Err(error).context("read the environment status");
-            }
-        };
-        let inactive = row.is_some_and(|row| row.get(0));
+        let inactive =
+            match wamn_authentication::authorization::environment_inactive(&mut connection).await {
+                Ok(inactive) => inactive,
+                Err(error) => {
+                    self.destroy(connection);
+                    return Err(error).context("read the environment status");
+                }
+            };
         self.auth
             .keep_environment_inactive(project_env_key, ticket, inactive)
             .await;
@@ -1609,5 +1439,50 @@ impl WamnPostgres {
     ) -> Self {
         self.auth = auth;
         self
+    }
+}
+
+#[async_trait::async_trait]
+impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
+    fn set_hierarchy_reader(&self, key: &str, reader: sqlx::PgPool) {
+        self.set_hierarchy_reader(key, reader);
+    }
+
+    fn auth_cache(&self) -> &Arc<wamn_capability_authority::auth_cache::AuthCache> {
+        self.auth_cache()
+    }
+
+    async fn environment_inactive(&self, project: &str, key: &str) -> anyhow::Result<bool> {
+        self.environment_inactive(project, key).await
+    }
+
+    async fn session_operation_permissions(
+        &self,
+        project: &str,
+        key: &str,
+        roles: &[wamn_identity_protocol::RoleName],
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<HeldOperationGrants> {
+        self.session_operation_permissions(project, key, roles, principal)
+            .await
+    }
+
+    async fn user_operation_permissions(
+        &self,
+        project: &str,
+        key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<HeldOperationGrants> {
+        self.user_operation_permissions(project, key, principal)
+            .await
+    }
+
+    async fn principal_grants(
+        &self,
+        project: &str,
+        key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
+        self.principal_grants(project, key, principal).await
     }
 }

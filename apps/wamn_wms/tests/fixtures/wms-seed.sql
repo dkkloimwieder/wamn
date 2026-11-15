@@ -66,9 +66,9 @@ SELECT md5('wamn-wms-seed:packaging:' || n)::uuid,
        md5('wamn-wms-seed:location:' || n)::uuid,
        CASE WHEN n % 10 = 0 THEN 'held' ELSE 'available' END,
        transaction_timestamp(),
-       current_setting('app.user_id')::uuid,
+       wamn_authority.current_principal_id(),
        transaction_timestamp(),
-       current_setting('app.user_id')::uuid
+       wamn_authority.current_principal_id()
 FROM generate_series(1, :scale) AS n;
 
 -- Packaging n carries 1 to 3 rows, in the status of the packaging. Its products
@@ -93,7 +93,7 @@ SELECT md5('wamn-wms-seed:transaction:' || quantity.id)::uuid,
        quantity.status,
        transaction_timestamp(),
        transaction_timestamp(),
-       current_setting('app.user_id')::uuid
+       wamn_authority.current_principal_id()
 FROM wms.packaging_quantity AS quantity;
 
 COMMIT;

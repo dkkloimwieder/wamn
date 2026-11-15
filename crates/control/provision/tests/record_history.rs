@@ -101,12 +101,14 @@ async fn principal_rows_and_transaction_bindings_execute(pool: sqlx::PgPool) -> 
     sqlx::raw_sql(sqlx::AssertSqlSafe(rows.as_str()))
         .execute(&mut *transaction)
         .await?;
+    transaction.commit().await?;
     for component in PlatformComponent::ALL {
+        let mut transaction = connection.begin().await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(component)))
             .execute(&mut *transaction)
             .await?;
         let (actor, operation): (uuid::Uuid, String) = sqlx::query_as(
-            "SELECT current_setting('app.user_id')::uuid, current_setting('app.operation')",
+            "SELECT wamn_authority.current_principal_id(), (wamn_authority.current_identity()).operation",
         )
         .fetch_one(&mut *transaction)
         .await?;
@@ -119,7 +121,14 @@ async fn principal_rows_and_transaction_bindings_execute(pool: sqlx::PgPool) -> 
                 .await?;
         assert_eq!(type_, "platform");
         assert_eq!(email, format!("{}@example.invalid", component.as_str()));
+        transaction.commit().await?;
     }
+    let mut transaction = connection.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
+        PlatformComponent::Provisioning,
+    )))
+    .execute(&mut *transaction)
+    .await?;
     let workflow = workflow_user_id();
     let (type_, email, name): (String, String, String) =
         sqlx::query_as("SELECT type, email, display_name FROM platform.\"user\" WHERE id=$1")
@@ -134,6 +143,8 @@ async fn principal_rows_and_transaction_bindings_execute(pool: sqlx::PgPool) -> 
         .bind(workflow)
         .execute(&mut *transaction)
         .await?;
+    transaction.commit().await?;
+    let mut transaction = connection.begin().await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(rows.as_str()))
         .execute(&mut *transaction)
         .await?;
@@ -143,5 +154,6 @@ async fn principal_rows_and_transaction_bindings_execute(pool: sqlx::PgPool) -> 
             .fetch_one(&mut *transaction)
             .await?;
     assert_eq!(retained, "custom name");
+    transaction.commit().await?;
     Ok(())
 }

@@ -1,6 +1,7 @@
 use super::super::SqlValue;
 use super::super::pool::ResolvedCredential;
 use super::*;
+use std::collections::BTreeSet;
 use wamn_catalog::ManifestDigest;
 
 use wamn_capability_authority::connection::{ConnectionExecutionClosure, ConnectionOrigin};
@@ -2317,21 +2318,17 @@ async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_u
           ('00000000-0000-4000-8000-000000000081','human-reader'),
           ('00000000-0000-4000-8000-000000000082','service-reader');"
     ))).execute(&mut admin).await.map(drop).unwrap();
-    let user = principal_grants_from_rows(
-        &sqlx::query(PRINCIPAL_GRANTS_SQL)
-            .bind(&"00000000-0000-4000-8000-000000000081")
-            .fetch_all(&mut admin)
-            .await
-            .unwrap(),
+    let user = wamn_authentication::authorization::principal_grants(
+        &mut admin,
+        "00000000-0000-4000-8000-000000000081",
     )
+    .await
     .unwrap();
-    let service = principal_grants_from_rows(
-        &sqlx::query(PRINCIPAL_GRANTS_SQL)
-            .bind(&"00000000-0000-4000-8000-000000000082")
-            .fetch_all(&mut admin)
-            .await
-            .unwrap(),
+    let service = wamn_authentication::authorization::principal_grants(
+        &mut admin,
+        "00000000-0000-4000-8000-000000000082",
     )
+    .await
     .unwrap();
     assert_eq!(
         session_grants(&user, &["human-reader".parse().unwrap()])

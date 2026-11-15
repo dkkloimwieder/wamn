@@ -406,5 +406,3 @@ pub mod invocation;
 use wamn_capability_authority::identity::{
     ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, SessionIdentity,
 };
-
-pub use session_identity::SessionGrantRefusal;

@@ -35,6 +35,11 @@ pub(super) type QueryResult = WasmResult<
 
 const STREAM_BATCH_ROWS: usize = 500;
 
+enum QueryTransaction {
+    Operation(SharedTxnState),
+    Dynamic(String),
+}
+
 struct OpenedStream {
     columns: Vec<String>,
     batches: mpsc::Receiver<Vec<Vec<SqlValue>>>,
@@ -71,7 +76,7 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
                 let user = plugin.user_id_for(&component);
                 let operation = plugin.operation_for(&component);
                 let application = plugin.application_for(&component);
-                plugin
+                let xid = plugin
                     .begin_with_identity(
                         connection.connection(),
                         wamn_identity_protocol::AuthorityClass::DynamicSql,
@@ -87,7 +92,7 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
                         policy.statement_timeout_ms,
                     )
                     .await?;
-                open_stream(connection, None, sql, params).await
+                open_stream(connection, QueryTransaction::Dynamic(xid), sql, params).await
             }
             .instrument(span)
             .await;
@@ -121,7 +126,7 @@ pub(super) async fn transaction_query<T: 'static + Send>(
             let started = std::time::Instant::now();
             let result = async {
                 let connection = StatementConnectionGuard::new(take_conn(&state)?, destroyed);
-                open_stream(connection, Some(state), sql, params).await
+                open_stream(connection, QueryTransaction::Operation(state), sql, params).await
             }
             .instrument(span)
             .await;
@@ -193,7 +198,7 @@ fn into_guest_stream<T: 'static + Send>(
 
 async fn open_stream(
     mut connection: StatementConnectionGuard,
-    state: Option<SharedTxnState>,
+    transaction: QueryTransaction,
     sql: String,
     params: Vec<SqlValue>,
 ) -> Result<OpenedStream, PgError> {
@@ -233,11 +238,12 @@ async fn open_stream(
         // WAL read or host commit can use it as soon as completion succeeds.
         let result = match result {
             Ok(()) => {
-                if let Some(state) = &state {
+                if let QueryTransaction::Operation(state) = &transaction {
                     restore_connection(connection, state);
                     Ok(())
                 } else {
-                    match sqlx::raw_sql(super::write_log::COMMIT_SQL).execute(connection.connection()).await {
+                    let QueryTransaction::Dynamic(xid) = &transaction else { unreachable!() };
+                    match sqlx::raw_sql(sqlx::AssertSqlSafe(super::write_log::commit_sql(xid))).execute(connection.connection()).await {
                         Ok(_) => { connection.repool(); Ok(()) }
                         Err(error) => {
                             let _ = outcome.send(Err(wash_runtime::wasmtime::format_err!(
@@ -249,7 +255,7 @@ async fn open_stream(
                 }
             }
             Err(error) => {
-                if let Some(state) = &state {
+                if let QueryTransaction::Operation(state) = &transaction {
                     if let Ok(mut state) = state.lock() { state.finished = true; }
                 }
                 Err(error)

@@ -1,6 +1,8 @@
 //! Authorization reads owned by authentication, over a host-authorized connection.
 
 use sqlx::Row as _;
+use std::collections::BTreeSet;
+use std::sync::Arc;
 use wamn_capability_authority::auth_cache::PrincipalGrants;
 
 /// The status row of the environment, which `wamn_app` reads under its
@@ -60,11 +62,12 @@ pub async fn principal_grants(
 pub async fn user_operation_permissions(
     connection: &mut sqlx::PgConnection,
     user_id: &str,
-) -> Result<Vec<sqlx::postgres::PgRow>, sqlx::Error> {
-    sqlx::query(USER_OPERATION_PERMISSIONS_SQL)
+) -> Result<HeldOperationGrants, sqlx::Error> {
+    let rows = sqlx::query(USER_OPERATION_PERMISSIONS_SQL)
         .bind(user_id)
         .fetch_all(connection)
-        .await
+        .await?;
+    HeldOperationGrants::from_rows(&rows)
 }
 
 /// An absent environment row remains active.
@@ -75,4 +78,145 @@ pub async fn environment_inactive(
         .fetch_optional(connection)
         .await?
         .unwrap_or(false))
+}
+
+/// The application authority a caller holds now: whether it holds `admin`, and
+/// the stable operation references its other roles grant under the loaded
+/// release (docs/architecture/execution.md#routing-and-availability).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeldOperationGrants {
+    pub admin: bool,
+    /// A service holds permissions but never selects a user's active role.
+    pub user: bool,
+    pub references: BTreeSet<String>,
+    /// The names of the held roles.
+    pub roles: BTreeSet<String>,
+}
+
+impl HeldOperationGrants {
+    /// Fold rows of `(role_name, permission)`, where a null permission is a
+    /// role without permissions. The held references are the rows.
+    pub fn from_rows(rows: &[sqlx::postgres::PgRow]) -> Result<Self, sqlx::Error> {
+        let mut held = Self::default();
+        for row in rows {
+            let role: String = row.try_get(0)?;
+            held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
+            if let Some(reference) = row.try_get::<Option<String>, _>(1)? {
+                held.references.insert(reference);
+            }
+            held.roles.insert(role);
+        }
+        Ok(held)
+    }
+
+    /// The one role a caller with these grants acts with
+    /// (docs/architecture/execution.md#environment-workflows): `admin` for a
+    /// holder of `admin`, the single role of a caller that holds exactly one,
+    /// and none for a caller that holds no role or more than one.
+    pub fn active_role(&self) -> Option<Box<str>> {
+        if !self.user {
+            return None;
+        }
+        self.pat_role()
+    }
+
+    /// A PAT caller selects only a role held by its own active principal.
+    /// Service callers never inherit the role of a user session.
+    pub fn pat_role(&self) -> Option<Box<str>> {
+        if self.admin {
+            return Some(wamn_identity_protocol::ADMIN_ROLE.into());
+        }
+        let mut roles = self.roles.iter();
+        match (roles.next(), roles.next()) {
+            (Some(role), None) => Some(role.as_str().into()),
+            _ => None,
+        }
+    }
+}
+
+/// A session presents authority that its principal does not currently hold.
+#[derive(Debug)]
+pub struct SessionGrantRefusal {
+    type_: &'static str,
+}
+
+impl std::fmt::Display for SessionGrantRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.type_)
+    }
+}
+
+impl std::error::Error for SessionGrantRefusal {}
+
+/// The grants an active principal holds, from all its roles or only from the
+/// `signed` roles it still holds.
+pub fn session_grants(
+    grants: &wamn_capability_authority::auth_cache::PrincipalGrants,
+    roles: &[wamn_identity_protocol::RoleName],
+) -> anyhow::Result<HeldOperationGrants> {
+    if !grants.active || !grants.user {
+        return Err(SessionGrantRefusal {
+            type_: "session principal is not an active user",
+        }
+        .into());
+    }
+    if !roles
+        .iter()
+        .all(|role| grants.roles.contains_key(role.as_str()))
+    {
+        return Err(SessionGrantRefusal {
+            type_: "session principal does not hold a signed role",
+        }
+        .into());
+    }
+    Ok(held_grants(grants, Some(roles)))
+}
+
+pub fn held_grants(
+    grants: &wamn_capability_authority::auth_cache::PrincipalGrants,
+    signed: Option<&[wamn_identity_protocol::RoleName]>,
+) -> HeldOperationGrants {
+    let mut held = HeldOperationGrants {
+        user: grants.user,
+        ..HeldOperationGrants::default()
+    };
+    if !grants.active || !grants.present {
+        return held;
+    }
+    for (role, permissions) in &grants.roles {
+        if signed.is_some_and(|signed| !signed.iter().any(|signed| signed.as_str() == role)) {
+            continue;
+        }
+        held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
+        held.references.extend(permissions.iter().cloned());
+        held.roles.insert(role.clone());
+    }
+    held
+}
+
+/// Host transport and authorization memory used by route authentication.
+#[async_trait::async_trait]
+pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
+    fn set_hierarchy_reader(&self, key: &str, reader: sqlx::PgPool);
+    fn auth_cache(&self) -> &Arc<wamn_capability_authority::auth_cache::AuthCache>;
+    async fn environment_inactive(&self, project: &str, key: &str) -> anyhow::Result<bool>;
+    async fn session_operation_permissions(
+        &self,
+        project: &str,
+        key: &str,
+        roles: &[wamn_identity_protocol::RoleName],
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<HeldOperationGrants>;
+    async fn user_operation_permissions(
+        &self,
+        project: &str,
+        key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<HeldOperationGrants>;
+    async fn principal_grants(
+        &self,
+        project: &str,
+        key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<PrincipalGrants>;
 }

@@ -123,12 +123,13 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
 async fn guest(
     postgres: Arc<WamnPostgres>,
     scope: &str,
-    wat: &str,
+    bytes: impl AsRef<[u8]>,
 ) -> (Store<SharedCtx>, Instance) {
     let engine = wamn_engine::build_engine(&[]).expect("application engine");
-    let component =
-        Component::new(engine.inner(), wat::parse_str(wat).unwrap()).expect("query guest");
+    let component = Component::new(engine.inner(), wat::parse_bytes(bytes.as_ref()).unwrap())
+        .expect("query guest");
     let mut linker = Linker::<SharedCtx>::new(engine.inner());
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker).expect("guest WASI imports");
     crate::add_to_linker(&mut linker).expect("Postgres imports");
     let plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::from([(
         WAMN_POSTGRES_ID,
@@ -184,8 +185,9 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
     let batch = instance
         .get_typed_func::<(ResourceAny, String), (Result<(), PgError>,)>(&mut store, "batch")
         .unwrap();
-    for known in [false, true] {
-        let key = if known { "known" } else { "ordinary" };
+    for (known, replacement) in [(false, false), (true, false), (false, true), (true, true)] {
+        let key = format!("known-{known}-replacement-{replacement}");
+        let key = key.as_str();
         let transaction = postgres.begin_operation_transaction(SCOPE).await.unwrap();
         let transaction = if known {
             transaction.with_known_result("null".into())
@@ -217,7 +219,18 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
             .unwrap()
             .unwrap();
         let handle = handle.unwrap();
-        for sql in ["INSERT INTO public.transaction_owner VALUES(1)", "COMMIT"] {
+        let commit = if replacement {
+            format!(
+                "COMMIT; BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{}','','replacement')",
+                crate::session_identity::tests::LIVE_PRINCIPAL
+            )
+        } else {
+            "COMMIT".to_owned()
+        };
+        for sql in [
+            "INSERT INTO public.transaction_owner VALUES(1)",
+            commit.as_str(),
+        ] {
             let (result,) = store
                 .run_concurrent(async |accessor| {
                     batch.call_concurrent(accessor, (handle, sql.into())).await
@@ -242,7 +255,11 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
             .await
             .unwrap()
             .unwrap();
-        assert!(matches!(result, Err(PgError::PermissionDenied)));
+        if replacement {
+            result.expect("the guest's replacement identity can write in its new transaction");
+        } else {
+            assert!(matches!(result, Err(PgError::PermissionDenied)));
+        }
         transaction.finish_opaque(OPERATION, key, "null".into());
         assert!(matches!(
             transaction.commit().await,
@@ -278,6 +295,93 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
         .unwrap();
     assert!(values.iter().all(|value| *value == 1));
     assert!(!values.is_empty());
+}
+
+#[sqlx::test(migrations = false)]
+#[ignore = "requires: built wasm numbering_refusal example; see running-tests.md"]
+async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::url(&pool);
+    const PROJECT: &str = "test--dev--numbering-refusal";
+    const SCOPE: &str = "numbering-refusal";
+    use crate::session_identity::tests::{LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url};
+    ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
+    let app_url = live_guest_url(database.as_str(), PROJECT).await;
+    let mut admin = pool.acquire().await.unwrap();
+    let mut seed =
+        wamn_test_postgres::transaction(&mut admin, LIVE_PRINCIPAL, "admin:numbering-refusal")
+            .await
+            .unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO platform.number_sequence(application,name,pattern) VALUES \
+        ('numbering','dated','D-{date:YYYY}-{seq:n}'), ('numbering','bare','N-{seq:n}'); \
+        INSERT INTO platform.setting(target_type,target_id,key,value) VALUES \
+        ('application','numbering','timezone','\"not/a/timezone\"'::jsonb)",
+    )
+    .execute(&mut *seed)
+    .await
+    .unwrap();
+    seed.commit().await.unwrap();
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(ClassCredentials::every_class(app_url)),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 2000,
+            statement_timeout_ms: 5000,
+        })
+        .unwrap(),
+    );
+    postgres.set_project_env_key(SCOPE, PROJECT).unwrap();
+    postgres.set_application(SCOPE, "numbering").unwrap();
+    postgres.set_user_id(SCOPE, LIVE_PRINCIPAL).unwrap();
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .ancestors()
+                .nth(3)
+                .unwrap()
+                .join("target")
+        });
+    let bytes =
+        std::fs::read(target.join("wasm32-wasip2/debug/examples/numbering_refusal.wasm")).unwrap();
+    let (mut store, instance) = guest(Arc::clone(&postgres), SCOPE, &bytes).await;
+    let run = instance
+        .get_typed_func::<(), ((bool, bool),)>(&mut store, "run")
+        .unwrap();
+    let zones = [
+        ("not/a/timezone", true),
+        ("BC", true),
+        ("BC UTC", true),
+        ("UTC+5", false),
+        ("<foo bar>+5", false),
+    ];
+    for (zone, invalid) in zones {
+        let mut setup =
+            wamn_test_postgres::transaction(&mut admin, LIVE_PRINCIPAL, "admin:numbering-timezone")
+                .await
+                .unwrap();
+        sqlx::query("UPDATE platform.setting SET value=$1 WHERE target_type='application' AND target_id='numbering' AND key='timezone'")
+            .bind(serde_json::json!(zone)).execute(&mut *setup).await.unwrap();
+        setup.commit().await.unwrap();
+        let transaction = postgres.begin_operation_transaction(SCOPE).await.unwrap();
+        postgres
+            .bind_operation_transaction(SCOPE, &transaction)
+            .unwrap();
+        let ((refused, continued),) = store
+            .run_concurrent(async |accessor| run.call_concurrent(accessor, ()).await)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(refused, invalid);
+        assert!(continued);
+        transaction.commit().await.unwrap();
+        postgres.revoke_operation_transaction(SCOPE);
+    }
+    let next_value: i64 = sqlx::query_scalar("SELECT c.value FROM platform.number_counter c JOIN platform.number_sequence s ON s.id=c.sequence_id WHERE s.application='numbering' AND s.name='bare'")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(next_value, i64::try_from(zones.len()).unwrap() + 1);
 }
 
 const TRANSACTION_GUEST: &str = r#"(component

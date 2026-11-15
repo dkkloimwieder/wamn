@@ -30,6 +30,7 @@ use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_identity_protocol::verifier::SessionVerifier;
 use wamn_platform_identity::PrincipalType;
 
+use crate::authorization::{AuthorizationStore, SessionGrantRefusal};
 use crate::session_keys::IssuerKeys;
 #[cfg(test)]
 use wamn_capability_authority::auth_cache::role_caller;
@@ -69,7 +70,7 @@ async fn admit_session<T>(
 /// `platform.environment`, as `wamn_app`, kept in the host's [auth
 /// memory](wamn_capability_authority::auth_cache).
 pub struct EnvironmentStatusReader {
-    postgres: Arc<wamn_postgres_capability::WamnPostgres>,
+    postgres: Arc<dyn AuthorizationStore>,
 }
 
 impl std::fmt::Debug for EnvironmentStatusReader {
@@ -81,7 +82,7 @@ impl std::fmt::Debug for EnvironmentStatusReader {
 }
 
 impl EnvironmentStatusReader {
-    pub fn new(postgres: Arc<wamn_postgres_capability::WamnPostgres>) -> Self {
+    pub fn new<S: AuthorizationStore + 'static>(postgres: Arc<S>) -> Self {
         Self { postgres }
     }
 }
@@ -100,7 +101,7 @@ impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusRead
 /// The host's authentication authority for PAT, session and signed requests.
 #[derive(Debug)]
 pub struct PlatformRouteAuthenticator {
-    postgres: Arc<wamn_postgres_capability::WamnPostgres>,
+    postgres: Arc<dyn AuthorizationStore>,
     projects: std::collections::HashMap<String, Arc<ConnectionFacts>>,
     identity_reader: Option<sqlx::PgPool>,
     verifiers: std::collections::HashMap<String, SessionVerifier<IssuerKeys>>,
@@ -108,8 +109,8 @@ pub struct PlatformRouteAuthenticator {
 
 impl PlatformRouteAuthenticator {
     /// Bind the host's project and optional identity reader and session verifier.
-    pub fn new(
-        postgres: Arc<wamn_postgres_capability::WamnPostgres>,
+    pub fn new<S: AuthorizationStore + 'static>(
+        postgres: Arc<S>,
         facts: impl IntoIterator<Item = Arc<ConnectionFacts>>,
         identity: Option<(
             sqlx::PgPool,
@@ -139,8 +140,8 @@ impl PlatformRouteAuthenticator {
 
     /// Construct route authority without connection credentials for interface tests.
     #[cfg(any(test, feature = "test-util"))]
-    pub fn for_test(
-        postgres: Arc<wamn_postgres_capability::WamnPostgres>,
+    pub fn for_test<S: AuthorizationStore + 'static>(
+        postgres: Arc<S>,
         project_env_key: &str,
         identity_reader: Option<sqlx::PgPool>,
         verifier: Option<SessionVerifier<IssuerKeys>>,
@@ -258,10 +259,7 @@ impl PlatformRouteAuthenticator {
                     .instrument(tracing::info_span!("wamn.auth.permissions"))
                     .await
                     .map_err(|error| {
-                        if error
-                            .downcast_ref::<wamn_postgres_capability::SessionGrantRefusal>()
-                            .is_some()
-                        {
+                        if error.downcast_ref::<SessionGrantRefusal>().is_some() {
                             unauthorized()
                         } else {
                             tracing::warn!(error = %error, "route operation grants unavailable");
@@ -696,5 +694,5 @@ pub(crate) mod tests {
     }
 }
 
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_util;
+#[cfg(test)]
+mod test_util;

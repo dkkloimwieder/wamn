@@ -10,6 +10,7 @@ test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-p
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements", "wamn-engine/wasm_component_model_implements"]
 
 [dependencies]
+wamn-authentication = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
@@ -49,6 +50,7 @@ wash-runtime = { workspace = true }
 wasmtime = { workspace = true }
 
 [dev-dependencies]
+wasmtime-wasi = { workspace = true }
 wamn-events.workspace = true
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-http-capability = { workspace = true }

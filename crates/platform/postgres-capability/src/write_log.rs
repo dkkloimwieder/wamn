@@ -47,15 +47,19 @@ pub const FINISH_SQL: &str = "UPDATE platform.write_log SET result = $3::text \
 /// Refuse a missing claim or caller row before recording success and committing.
 pub(super) const COMMIT_FINISH_SQL: &str = "WITH finished AS (UPDATE platform.write_log SET result = $3::text \
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
-       AND (SELECT (wamn_authority.current_identity()).xid) = pg_current_xact_id() \
+       AND (SELECT (wamn_authority.current_identity()).xid) = $4::text::xid8 \
      RETURNING idempotency_key) SELECT CASE \
-     WHEN (SELECT (wamn_authority.current_identity()).xid) = pg_current_xact_id() \
+     WHEN (SELECT (wamn_authority.current_identity()).xid) = $4::text::xid8 \
      THEN 1 / count(*)::integer = 1 ELSE false END FROM finished";
 
 /// Finish a host transaction without a claim update in one existing commit call.
 /// A missing caller row fails before COMMIT, so this connection is discarded.
-pub(super) const COMMIT_SQL: &str = "SELECT 1 / COALESCE(\
-     ((SELECT (wamn_authority.current_identity()).xid) = pg_current_xact_id())::integer, 0); COMMIT";
+pub(super) fn commit_sql(xid: &str) -> String {
+    format!(
+        "SELECT 1 / COALESCE(\
+        ((SELECT (wamn_authority.current_identity()).xid) = '{xid}'::xid8)::integer, 0); COMMIT"
+    )
+}
 
 /// Free the key of a two-step claim whose request element was refused.
 const RELEASE_SQL: &str = "DELETE FROM platform.write_log \
@@ -198,20 +202,13 @@ impl OperationTransaction {
         sql: &'static str,
         params: Vec<SqlValue>,
     ) -> Result<Vec<Row>, PgError> {
+        self.start().await?;
         let state = &self.transaction().state;
         let mut connection = StatementConnectionGuard::new(
             take_conn(state)?,
             Arc::clone(&self.transaction().destroyed),
         );
         let result = async {
-            let identity = self
-                .identity
-                .lock()
-                .expect("request element identity lock poisoned")
-                .take();
-            if let Some(identity) = identity {
-                identity.bind(connection.connection()).await?;
-            }
             let mut query = sqlx::query(sql);
             for value in &params {
                 query = query.bind(PgParam(value, None));

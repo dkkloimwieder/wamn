@@ -189,6 +189,13 @@ It runs ignored cases one at a time.
 When an exact kind suite selects the aggregate journey, that suite owns the target and the root command omits it.
 A name filter that selects focused cases instead omits the aggregate suite.
 The selection runs the aggregate journey or its focused cases once.
+The guest numbering refusal test needs its Wasm example. Build it in the lane's existing target directory before running the named test through the private PostgreSQL runner:
+
+```sh
+cargo build --manifest-path apps/Cargo.toml -p wamn-postgres-statements --example numbering_refusal --target wasm32-wasip2
+"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database tests --url-env DATABASE_URL -- cargo test -p wamn-postgres-capability --lib query_tests::live_an_invalid_timezone_setting_is_refused -- --ignored --exact
+```
+
 The generated exclusion tests in `apps/Cargo.toml` need PostgreSQL diagnostics, so each runs through its own example.
 The `exclusion_diagnostics` example of `wamn-test-infrastructure` runs the platform fixture test, and the `exclusion_diagnostics` example of `wamn-receiving-tests` runs the Receiving test.
 [Ignored tests](#ignored-tests) gives the commands.

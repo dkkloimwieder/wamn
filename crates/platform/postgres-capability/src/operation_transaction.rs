@@ -64,7 +64,7 @@ impl OperationTransaction {
         Ok(self.transaction.lent())
     }
 
-    async fn start(&self) -> Result<(), PgError> {
+    pub(super) async fn start(&self) -> Result<(), PgError> {
         let identity = self
             .identity
             .lock()
@@ -75,7 +75,12 @@ impl OperationTransaction {
                 take_conn(&self.transaction.state)?,
                 Arc::clone(&self.transaction.destroyed),
             );
-            identity.bind(connection.connection()).await?;
+            let xid = identity.bind(connection.connection()).await?;
+            self.transaction
+                .state
+                .lock()
+                .expect("transaction lock poisoned")
+                .xid = Some(xid);
             super::resources::restore_connection(connection, &self.transaction.state);
         }
         Ok(())
@@ -116,6 +121,13 @@ impl OperationTransaction {
     pub async fn commit(&self) -> Result<(), PgCommitFailure> {
         self.start().await.map_err(PgCommitFailure::RolledBack)?;
         let state = &self.transaction.state;
+        let xid = state
+            .lock()
+            .expect("transaction lock poisoned")
+            .xid
+            .as_ref()
+            .expect("host identity was inserted")
+            .clone();
         let connection = take_conn(state).map_err(PgCommitFailure::RolledBack)?;
         let mut connection =
             StatementConnectionGuard::new(connection, Arc::clone(&self.transaction.destroyed));
@@ -134,6 +146,7 @@ impl OperationTransaction {
                 .bind(&key)
                 .bind(&status)
                 .bind(&output)
+                .bind(&xid)
                 .fetch_one(connection.connection())
                 .await;
             match result {
@@ -149,9 +162,9 @@ impl OperationTransaction {
                     )));
                 }
             }
-            "COMMIT"
+            "COMMIT".to_owned()
         } else {
-            super::write_log::COMMIT_SQL
+            super::write_log::commit_sql(&xid)
         };
         if let Some(run) = &self.causation {
             let json = serde_json::to_string(run).expect("Causation serializes to JSON");
@@ -167,7 +180,7 @@ impl OperationTransaction {
                 )));
             }
         }
-        let result = sqlx::raw_sql(commit_sql)
+        let result = sqlx::raw_sql(sqlx::AssertSqlSafe(commit_sql))
             .execute(connection.connection())
             .await
             .map(drop);
@@ -179,7 +192,7 @@ impl OperationTransaction {
             }
             Err(error) => {
                 mark_finished();
-                // The identity check in COMMIT_SQL raises division by zero.
+                // The identity check in commit_sql raises division by zero.
                 let ended_early = error
                     .as_database_error()
                     .is_some_and(|error| error.code().is_some_and(|code| code == "22012"));

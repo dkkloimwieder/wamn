@@ -39,9 +39,10 @@ pub(in super::super) async fn finish_transaction(
 }
 
 /// The first statement after BEGIN records the caller for this transaction.
+/// Return the xid expression without reading a column: the login has INSERT only.
 pub(super) const IDENTITY_SQL: &str = "INSERT INTO platform.tx_identity \
     (xid, principal_id, role, application, operation, runner) \
-    VALUES (pg_current_xact_id(), $1::text::uuid, $2, $3, $4, $5)";
+    VALUES (pg_current_xact_id(), $1::text::uuid, $2, $3, $4, $5) RETURNING pg_current_xact_id()::text";
 
 /// Open a host write transaction before inserting its caller.
 const BEGIN_READ_COMMITTED: &str = "BEGIN ISOLATION LEVEL READ COMMITTED";
@@ -65,17 +66,17 @@ impl BoundIdentity {
     pub(in super::super) async fn bind(
         &self,
         conn: &mut sqlx::PgConnection,
-    ) -> Result<(), PgError> {
+    ) -> Result<String, PgError> {
         async {
             sqlx::query(sqlx::AssertSqlSafe((self.begin).to_string()))
                 .execute(&mut *conn)
                 .await
                 .map_err(|e| map_pg_error(&e))?;
-            let mut query = sqlx::query(IDENTITY_SQL);
+            let mut query = sqlx::query_scalar::<_, String>(IDENTITY_SQL);
             for value in &self.params {
                 query = query.bind(value);
             }
-            query.execute(&mut *conn).await.map_err(|e| map_pg_error(&e))?;
+            let xid = query.fetch_one(&mut *conn).await.map_err(|e| map_pg_error(&e))?;
             if self.read {
                 sqlx::query("SET TRANSACTION READ ONLY")
                     .execute(&mut *conn).await.map_err(|e| map_pg_error(&e))?;
@@ -88,7 +89,7 @@ impl BoundIdentity {
                 sqlx::query(sqlx::AssertSqlSafe(statement.clone()))
                     .bind(json).execute(&mut *conn).await.map_err(|e| map_pg_error(&e))?;
             }
-            Ok(())
+            Ok(xid)
         }
         .instrument(tracing::info_span!(
             "wamn.postgres.bind_identity",
@@ -118,7 +119,7 @@ impl WamnPostgres {
         application: Option<&str>,
         run: Option<&Causation>,
         statement_timeout_ms: u32,
-    ) -> Result<(), PgError> {
+    ) -> Result<String, PgError> {
         Self::prepare_identity(
             class,
             read,

@@ -5631,6 +5631,7 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-number-pattern",
  "wamn-postgres",
+ "wamn-postgres-statements",
  "wamn-record-history",
  "wamn-scalar",
  "wamn-schema-introspection",
@@ -6571,6 +6572,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "wamn-authentication",
  "wamn-broker",
  "wamn-capability-authority",
  "wamn-catalog",
@@ -6593,7 +6595,16 @@ dependencies = [
  "wamn-test-postgres",
  "wash-runtime",
  "wasmtime",
+ "wasmtime-wasi",
  "wat",
+]
+
+[[package]]
+name = "wamn-postgres-statements"
+version = "0.1.0"
+dependencies = [
+ "wamn-number-pattern",
+ "wit-bindgen 0.62.0",
 ]
 
 [[package]]

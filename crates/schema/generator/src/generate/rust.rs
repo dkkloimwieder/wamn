@@ -22,11 +22,28 @@ use crate::manifest::{
 /// must make this constant agree with it.
 const CLIPPY_ARGUMENT_THRESHOLD: usize = 7;
 
-fn sql_include_path(path: &str) -> String {
-    match path.strip_prefix("generated/") {
-        Some(path) => format!("../{path}"),
-        None => format!("../../{path}"),
+fn sql_include_path(paths: super::OutputPaths<'_>, module: &str, sql: &str) -> String {
+    let module = paths.generated.join("wamn").join(format!("{module}.rs"));
+    let sql = match sql.strip_prefix("generated/") {
+        Some(sql) => paths.generated.join(sql),
+        None => paths.authored.join(sql),
+    };
+    let mut from = module
+        .parent()
+        .expect("module directory")
+        .components()
+        .peekable();
+    let mut to = sql.components().peekable();
+    while from.peek().is_some() && from.peek() == to.peek() {
+        from.next();
+        to.next();
     }
+    let mut relative = std::path::PathBuf::new();
+    for _ in from {
+        relative.push("..");
+    }
+    relative.extend(to);
+    relative.to_string_lossy().into_owned()
 }
 
 /// An accessor's parameters are the connection or transaction it runs under, plus one
@@ -81,6 +98,7 @@ pub(super) fn static_sql_accessors(
 
 pub(super) fn emit_static_sql_projection(
     files: &mut BTreeMap<String, Vec<u8>>,
+    paths: super::OutputPaths<'_>,
     module_name: &str,
     compiled: &super::operations::CustomDescription<'_>,
 ) -> Result<(), GenerateError> {
@@ -100,7 +118,7 @@ pub(super) fn emit_static_sql_projection(
             source,
             "pub(crate) const {}_STATEMENT: &str = include_str!({:?});",
             name.to_ascii_uppercase(),
-            sql_include_path(&statement.path)
+            sql_include_path(paths, module_name, &statement.path)
         )
         .expect("writing to a String cannot fail");
     }
@@ -615,6 +633,7 @@ fn accessor_bind(parameter: &str, ty: SqlValueType, nullable: bool) -> AccessorB
 
 pub(super) fn emit_projection(
     files: &mut BTreeMap<String, Vec<u8>>,
+    paths: super::OutputPaths<'_>,
     compiled: &super::operations::ModelDescription<'_>,
 ) -> Result<(), GenerateError> {
     let model_name = compiled.name;
@@ -647,14 +666,14 @@ pub(super) fn emit_projection(
     for row in &api.operation_rows {
         emit_rust_row(&mut source, row);
     }
-    for (action, paths) in operation_sql {
-        for (index, path) in paths.iter().enumerate() {
+    for (action, sql_paths) in operation_sql {
+        for (index, path) in sql_paths.iter().enumerate() {
             writeln!(
                 source,
                 "{} const {}: &str = include_str!({:?});",
                 api.statement_visibility.source(),
-                statement_constant_name(action, index, paths.len()),
-                sql_include_path(path)
+                statement_constant_name(action, index, sql_paths.len()),
+                sql_include_path(paths, model_name, path)
             )
             .expect("writing to a String cannot fail");
         }

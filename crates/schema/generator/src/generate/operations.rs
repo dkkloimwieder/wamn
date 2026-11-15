@@ -84,6 +84,7 @@ pub(super) struct CustomDescription<'a> {
 )]
 pub(super) fn emit_model(
     files: &mut BTreeMap<String, Vec<u8>>,
+    paths: super::OutputPaths<'_>,
     operations: &mut BTreeMap<String, super::OperationDescription>,
     sql_corpus: &super::SqlCorpus,
     transactional: &StatementTransactionality,
@@ -142,7 +143,7 @@ pub(super) fn emit_model(
     emit_model_wit(files, &compiled)?;
     super::data::emit_model_data(files, &compiled)?;
     super::component::emit_model_component(files, &compiled)?;
-    emit_projection(files, &compiled)
+    emit_projection(files, paths, &compiled)
 }
 
 pub(super) fn compile_custom<'a>(
@@ -246,6 +247,7 @@ pub(super) fn compile_custom<'a>(
 )]
 pub(super) fn emit_custom_operation(
     files: &mut BTreeMap<String, Vec<u8>>,
+    paths: super::OutputPaths<'_>,
     operations: &mut BTreeMap<String, super::OperationDescription>,
     sql_corpus: &super::SqlCorpus,
     transactional: &StatementTransactionality,
@@ -271,7 +273,12 @@ pub(super) fn emit_custom_operation(
     if operation.statements.is_empty() {
         return Ok(());
     }
-    emit_static_sql_projection(files, &custom_artifact_stem(operation_name), operation)
+    emit_static_sql_projection(
+        files,
+        paths,
+        &custom_artifact_stem(operation_name),
+        operation,
+    )
 }
 
 fn describe_custom_operation(

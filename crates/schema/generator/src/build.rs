@@ -309,7 +309,9 @@ async fn pass_one_and_two(
     let mut verdicts = classify_statements(database_url, &corpus.statements, &schemas).await?;
     verdicts.described = described;
     verdicts.described.extend(remaining);
-    let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &verdicts);
+    let package_output = package_output(output_root, &manifest.package.id);
+    let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &verdicts)
+        .with_output_paths(&package_output, &package_output);
     let mut package = crate::generate::generate_described(&input, &manifest, &corpus)?;
     let client = client_bindings(&manifest, &package)?;
     manifest.compiled_operations = package.take_operations();

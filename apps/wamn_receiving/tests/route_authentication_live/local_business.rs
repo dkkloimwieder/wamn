@@ -9,8 +9,6 @@ use serde_json::{Value, json};
 use wamn_package_artifact::http_client::HttpClient;
 use wamn_test_application::Application;
 
-const INSPECTION: &str = "command/record_receipt/record_inspection.sql";
-const LOCK: &str = "command/record_receipt/lock_purchase_order.sql";
 const ACME_OPERATION: &str = "client-acme-receiving:acme/record-receipt";
 const RECEIVING_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
 
@@ -276,10 +274,9 @@ async fn acme_inspection(application: &Application, database_url: &str) -> anyho
 
     super::bind_fixture_principal(&mut project).await?;
     seed_acme_orders(&mut project).await?;
-    member_instances(&mut project).await?;
 
-    // Not required: Receiving runs on its own named instance, the receipt
-    // commits, and no row is written.
+    // Receiving commits the receipt without an inspection when the order
+    // does not require one.
     let none = record(
         application,
         "/acme/acme/record_receipt",
@@ -537,75 +534,7 @@ async fn seed_acme_orders(project: &mut sqlx::PgConnection) -> anyhow::Result<()
     Ok(())
 }
 
-/// The served release binds Acme's composed component through one named
-/// `statements` instance per member: Receiving's holds Receiving's statements
-/// and not Acme's, and Acme's holds Acme's and no Receiving statement, so a
-/// Receiving statement named through Acme's instance is unknown to it
-/// (docs/architecture/components.md#grouping-and-publication).
-async fn member_instances(project: &mut sqlx::PgConnection) -> anyhow::Result<()> {
-    let bytes: Vec<u8> = sqlx::query("SELECT canonical_bytes FROM catalog.releases")
-        .fetch_one(&mut *project)
-        .await?
-        .get(0);
-    let manifest: Value = serde_json::from_slice(&bytes)?;
-    let receiving_digest = manifest["components"]
-        .as_array()
-        .context("release components")?
-        .iter()
-        .find(|component| component["package-id"] == "wamn_receiving")
-        .and_then(|component| component["descriptor"]["component-digest"].as_str())
-        .context("Receiving component digest")?;
-    let acme = manifest["components"]
-        .as_array()
-        .and_then(|components| {
-            components
-                .iter()
-                .find(|component| component["package-id"] == "client_acme_receiving")
-        })
-        .context("the release serves no Acme component")?;
-    let instances = acme["descriptor"]["statement-instances"]
-        .as_object()
-        .context("Acme's component has no named statements instances")?;
-    let sets = acme["statement-instances"]
-        .as_object()
-        .context("the release binds no statement set to Acme's instances")?;
-    let paths = |instance: &str| -> anyhow::Result<Vec<String>> {
-        Ok(sets
-            .get(instance)
-            .and_then(Value::as_object)
-            .with_context(|| format!("no statement set for {instance}"))?
-            .keys()
-            .cloned()
-            .collect())
-    };
-    let mut receiving = None;
-    let mut overlay = None;
-    for (instance, digest) in instances {
-        if digest.as_str() == Some(receiving_digest) {
-            receiving = Some(paths(instance)?);
-        } else {
-            overlay = Some(paths(instance)?);
-        }
-    }
-    let (Some(receiving), Some(overlay)) = (receiving, overlay) else {
-        anyhow::bail!("Acme's component does not name one instance per member: {instances:?}");
-    };
-    ensure!(
-        overlay.iter().any(|path| path == INSPECTION) && !overlay.iter().any(|path| path == LOCK),
-        "Acme's instance does not hold exactly its own statements: {overlay:?}"
-    );
-    ensure!(
-        receiving.iter().any(|path| path == LOCK)
-            && !receiving.iter().any(|path| path == INSPECTION),
-        "Receiving's instance does not hold exactly its own statements: {receiving:?}"
-    );
-    Ok(())
-}
-
-/// The reads open their own guest transaction with begin and commit, and run
-/// outside any host transaction, so the refusals of run, run-stream and begin
-/// inside one leave them unchanged
-/// (docs/architecture/data-access.md#inputs-queries-and-transactions).
+/// Screen reads return their current data through the host read transaction.
 async fn reads(application: &Application) -> anyhow::Result<()> {
     let http = HttpClient::builder().build().expect("HTTP client");
     let order = "00000000-0000-0000-0000-000000000720";

@@ -225,10 +225,11 @@ Every composed member borrows the same operation transaction.
 
 Developer rule: guest SQL never ends the host transaction. Do not issue `COMMIT`, `END` or `ROLLBACK` from guest SQL.
 The host does not inspect SQL text. SQLx 0.9 keeps the protocol transaction status private.
-At host commit, the finish statement requires the identity row for `pg_current_xact_id()` through `wamn_authority.current_identity()`.
-If that row is missing, the invocation fails and the host discards the connection.
+The host keeps the xid returned by its identity insert.
+At host commit, the finish statement requires that original xid through `wamn_authority.current_identity()`.
+A missing identity or a replacement transaction fails the invocation, and the host discards the connection.
 An early guest commit has already committed its partial work. Its claim stays open and becomes `outcome-unknown` under R3.
-Later statements on that connection have no identity row. History triggers and row policies refuse them.
+The old identity does not apply to later transactions. History triggers and row policies refuse statements with no identity.
 
 Both query interfaces return column names, a stream of rows, and a closing result.
 The caller consumes the rows, then awaits the closing result to learn whether the query succeeded.
@@ -546,7 +547,10 @@ The functions read the stored pattern, so an edited pattern still applies.
 
 The keys hold each value that the pattern names as text, or `None` for null.
 The guest checks every required key before it advances a counter.
-It reads transaction dates in the application's time zone, or UTC when the setting is absent.
+It checks the application's time zone through `platform.valid_timezone` before it formats a transaction date.
+That predicate uses PostgreSQL's timezone operation and catches invalid input, so named zones, abbreviations and POSIX expressions keep their native meaning.
+An invalid zone returns a recoverable refusal and leaves the transaction usable.
+An absent setting uses UTC.
 It takes counters in name order, after any counter that supplies their key.
 An unkeyed or `reset=` counter calls `platform.bump_counter`.
 A `per=` counter reads its key first and calls `platform.assign_counter` when the key is absent.

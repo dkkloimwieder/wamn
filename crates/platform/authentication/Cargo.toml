@@ -36,10 +36,10 @@ wamn-identity-protocol = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-postgres = { workspace = true }
-wamn-postgres-capability = { workspace = true }
 wamn-registry = { workspace = true }
 
 [dev-dependencies]
+wamn-postgres-capability = { workspace = true }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 base64 = { workspace = true }
 ring = { workspace = true }

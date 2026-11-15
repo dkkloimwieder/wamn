@@ -561,13 +561,30 @@ BEGIN
   END LOOP;
 END $platform_configuration_history$;
 
+-- PostgreSQL owns timezone syntax, including abbreviations and POSIX expressions.
+-- Report an invalid zone without aborting the caller's operation transaction.
+CREATE OR REPLACE FUNCTION platform.valid_timezone(zone text)
+RETURNS boolean
+LANGUAGE plpgsql STABLE STRICT
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    PERFORM transaction_timestamp() AT TIME ZONE zone;
+    RETURN true;
+EXCEPTION WHEN invalid_parameter_value THEN
+    RETURN false;
+END;
+$$;
+REVOKE ALL ON FUNCTION platform.valid_timezone(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform.valid_timezone(text) TO wamn_app;
+
 -- ---------------------------------------------------------------------------
 -- NUMBER COUNTERS (docs/plan/platform-config.md, Numbering and
 -- Administration; owner rulings of wamn-83eth.2, wamn-83eth.3 and
 -- wamn-83eth.6). The three platform functions that write number_counter.
 -- Each runs as its owner, the applier, so that wamn_app needs no write on
--- number_counter. None knows a pattern or parses anything; the renderer of
--- the wamn:postgres plugin owns both.
+-- number_counter. None knows a pattern or parses one; the guest renderer
+-- owns pattern parsing.
 --
 -- bump_counter advances one counter and returns the value to render: it
 -- locks the counter row, inserts it at 1 when it is absent, returns its value
@@ -591,10 +608,9 @@ END $platform_configuration_history$;
 -- The database is the org boundary, so no function tests a project. No
 -- function reads the application from the transaction caller.
 -- Each takes a sequence id and refuses an id that is not a sequence with
--- undefined_object. The renderer of the wamn:postgres plugin resolves the
--- sequence id from the application in host state and the sequence name, and
--- the plugin's statement admission refuses guest SQL that names these
--- functions or writes a platform relation, so only the plugin calls them.
+-- undefined_object. The guest renderer resolves the sequence id from
+-- wamn_authority.current_application() and the sequence name. It calls these
+-- functions through SQL in the host operation transaction.
 --
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION platform.bump_counter(target_sequence uuid, target_counter text,

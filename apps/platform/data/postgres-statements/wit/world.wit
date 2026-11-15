@@ -4,3 +4,8 @@ world postgres-statements {
   import wamn:postgres/types@0.4.0;
   import wamn:postgres/statements@0.4.0;
 }
+
+world numbering-refusal-test {
+  include postgres-statements;
+  export run: async func() -> tuple<bool, bool>;
+}

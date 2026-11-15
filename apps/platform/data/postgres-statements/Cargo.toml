@@ -11,3 +11,7 @@ wit-bindgen = { workspace = true }
 
 [lints]
 workspace = true
+
+[[example]]
+name = "numbering_refusal"
+crate-type = ["cdylib"]

@@ -6,7 +6,8 @@ use wamn_number_pattern::{
     Counter, DateFormat, Key, Part, Policy, counter_order, date_formats, render_counter,
 };
 
-const SEQUENCE_SQL: &str = "SELECT s.id::text, s.pattern, t.value #>> '{}', jsonb_typeof(t.value) \
+const SEQUENCE_SQL: &str = "SELECT s.id::text, s.pattern, t.value #>> '{}', jsonb_typeof(t.value), \
+    platform.valid_timezone(COALESCE(t.value #>> '{}', 'UTC')) \
     FROM platform.number_sequence AS s LEFT JOIN platform.setting AS t \
     ON t.target_type = 'application' AND t.target_id = s.application AND t.key = 'timezone' \
     WHERE s.application = (SELECT wamn_authority.current_application()) AND s.name = $1";
@@ -69,6 +70,7 @@ async fn render(
     let pattern: String = column(&mut row)?;
     let timezone: Option<String> = column(&mut row)?;
     let timezone_type: Option<String> = column(&mut row)?;
+    let timezone_valid: bool = column(&mut row)?;
     let pattern = wamn_number_pattern::parse(&pattern)
         .map_err(|error| refusal("22023", error.to_string()))?;
     for field in pattern.fields() {
@@ -81,6 +83,9 @@ async fn render(
     let formats = date_formats(&pattern).collect::<Vec<_>>();
     let mut dates = BTreeMap::new();
     if !formats.is_empty() {
+        if !timezone_valid {
+            return Err(refusal("22023", "invalid time zone"));
+        }
         let timezone = match timezone_type.as_deref() {
             None => "UTC",
             Some("string") => timezone

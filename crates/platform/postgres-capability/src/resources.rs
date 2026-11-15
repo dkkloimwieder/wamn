@@ -13,6 +13,8 @@ use wash_runtime::wasmtime::component::{Accessor, Resource};
 
 #[derive(Debug)]
 pub(super) struct TxnState {
+    /// The xid returned by the host's identity insert, never a guest transaction.
+    pub(super) xid: Option<String>,
     /// Present while the transaction owns a connection. Taken out for the
     /// duration of each call (a std mutex guard cannot be held across await).
     pub(super) conn: Option<Object>,
@@ -263,6 +265,7 @@ pub(super) async fn prepare_statement_transaction(
         PgTransaction {
             state: Arc::new(std::sync::Mutex::new(TxnState {
                 conn: Some(connection.into_connection()),
+                xid: None,
                 finished: false,
             })),
             destroyed: Arc::clone(&plugin.destroyed),
