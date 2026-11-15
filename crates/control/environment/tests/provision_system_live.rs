@@ -210,12 +210,19 @@ async fn provision_system_repeats_without_changing_the_platform_domain(pool: sql
     .unwrap();
     let mut project_apply = url::Url::parse(&platform.system_database_url).unwrap();
     project_apply.set_path(&recorded.database);
+    let platform_migration_input = wamn_control_provision::test_database::platform_migration_input(
+        wamn_postgres::database_configuration(&url, &recorded.database).unwrap(),
+        wamn_control_provision::migrations::MigrationDatabase::Project,
+    )
+    .await
+    .unwrap();
     wamn_environment::environment::ensure::ensure_project_database(
         &platform,
         &document,
         &[],
         &mut client,
         &url,
+        &platform_migration_input,
     )
     .await
     .expect("project initialization uses separate admin and apply connections");

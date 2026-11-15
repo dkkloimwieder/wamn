@@ -66,9 +66,11 @@ pub struct State {
 
 pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<State> {
     let mut system = wamn_postgres::connect(&platform.system_database_url).await?;
+    let mut system = crate::provision_project_env::provisioning_transaction(&mut system).await?;
     let Some(row) = analyse::read_row(&mut system, document).await? else {
         return Ok(State::default());
     };
+    system.commit().await?;
     let url = analyse::project_url(platform, document, &row).await?;
     let mut state = database_state(
         &url,
@@ -352,6 +354,7 @@ pub async fn apply(
     document: &EnvironmentDocument,
     application: &str,
     release: &str,
+    migration_database_url: &str,
 ) -> anyhow::Result<()> {
     let (_, candidates) =
         release_candidates(platform, document, application, Some(release)).await?;
@@ -360,12 +363,10 @@ pub async fn apply(
         document.schema_mode(state.disposable) == SchemaMode::Migrate,
         "reset mode requires the environment reset operation"
     );
-    let mut system = wamn_postgres::connect(&platform.system_database_url).await?;
-    let row = analyse::read_row(&mut system, document)
-        .await?
+    let url = state
+        .database_url
         .context("environment database is absent")?;
-    let url = analyse::project_url(platform, document, &row).await?;
-    apply_candidates(platform, document, candidates, &url).await
+    apply_candidates(platform, document, candidates, &url, migration_database_url).await
 }
 
 pub(super) async fn apply_candidates(
@@ -373,6 +374,7 @@ pub(super) async fn apply_candidates(
     document: &EnvironmentDocument,
     candidates: Vec<Candidate>,
     url: &str,
+    migration_database_url: &str,
 ) -> anyhow::Result<()> {
     let manifests = candidates
         .iter()
@@ -397,12 +399,7 @@ pub(super) async fn apply_candidates(
     for index in order {
         let candidate = candidates[index].take().expect("each package applies once");
         apply_package::apply_package_schema(apply_package::ApplyPackageRequest {
-            migration_database_url: wamn_control_provision::migration::configuration(
-                url,
-                &document.org,
-                &document.project,
-                &document.env,
-            )?,
+            migration_database_url: migration_database_url.to_owned(),
             component_source: platform.component_source()?,
             package: candidate.root,
             changes: publisher.clone(),

@@ -320,9 +320,11 @@ pub(super) async fn installed(
     document: &EnvironmentDocument,
 ) -> anyhow::Result<BTreeMap<String, Installed>> {
     let mut system = connect(&platform.system_database_url).await?;
+    let mut system = crate::provision_project_env::provisioning_transaction(&mut system).await?;
     let row = analyse::read_row(&mut system, document)
         .await?
         .context("the environment row is missing after step 4")?;
+    system.commit().await?;
     Ok(analyse::read_project(
         &analyse::project_url(platform, document, &row).await?,
         &wamn_control_provision::project_env_key(&document.org, &document.project, &document.env),

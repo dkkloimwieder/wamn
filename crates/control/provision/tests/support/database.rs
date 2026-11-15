@@ -246,7 +246,8 @@ pub async fn platform_migration_input(
                 .await?;
         }
     }
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {name} LOGIN PASSWORD 'platform-migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT {} TO {name} WITH INHERIT TRUE, SET FALSE; GRANT CONNECT ON DATABASE {} TO {name}",
+    // CNPG grants this membership with SET permission, which ownership transfers require.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {name} LOGIN PASSWORD 'platform-migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT {} TO {name} WITH INHERIT TRUE, SET TRUE; GRANT CONNECT ON DATABASE {} TO {name}",
         postgres_protocol::escape::escape_literal(&role.name), scope.owner_role(), postgres_protocol::escape::escape_identifier(database))))
         .execute(&mut admin).await?;
     let identity_exists: bool =

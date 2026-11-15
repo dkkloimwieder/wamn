@@ -46,7 +46,14 @@ pub async fn schema(
             let lock = expected.lock(platform, &document, false).await?;
             let result = lock
                 .protect(async {
-                    sql::schema::apply(platform, &document, application, release).await?;
+                    sql::schema::apply(
+                        platform,
+                        &document,
+                        application,
+                        release,
+                        &credentials.migration,
+                    )
+                    .await?;
                     super::ensure::ensure_cdc_inputs(platform, &document, Some(&credentials.owner))
                         .await
                 })

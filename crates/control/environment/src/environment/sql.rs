@@ -60,12 +60,13 @@ impl ExpectedDatabase {
 }
 
 /// Initialize project state and absent package baselines after CNPG creates the database.
-/// Package SQL uses the separately authenticated migration connection.
+/// Platform and package SQL each use their separately authenticated migration connection.
 /// Committed package records survive a later failure and prevent SQL replay.
 pub async fn initialize(
     platform: &Platform,
     document: &EnvironmentDocument,
     admin_url: &str,
+    platform_migration_database_url: &str,
     migration_database_url: &str,
     application: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -85,7 +86,15 @@ pub async fn initialize(
     .await
     .map(drop)
     .context("set the database base privileges after CNPG")?;
-    ensure::ensure_project_database(platform, &document, &packages, &mut admin, admin_url).await?;
+    ensure::ensure_project_database(
+        platform,
+        &document,
+        &packages,
+        &mut admin,
+        admin_url,
+        platform_migration_database_url,
+    )
+    .await?;
     let drops =
         super::bindings::project_authority(&platform.system_database_url, &project_url, &document)
             .await?;

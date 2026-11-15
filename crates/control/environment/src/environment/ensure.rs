@@ -93,8 +93,22 @@ pub async fn provision_resources(
     }
 
     // The run plane: the run schema the credentials are granted on.
-    let project_admin =
-        ensure_project_database(platform, document, packages, &mut admin, admin_url).await?;
+    let project_admin = wamn_postgres::database_configuration(admin_url, &outcome.database)?;
+    let migration_input = crate::provision_project_env::workload::provision_platform_migration(
+        &platform.system_database_url,
+        &project_admin,
+        wamn_control_provision::migrations::MigrationDatabase::Project,
+    )
+    .await?;
+    let project_admin = ensure_project_database(
+        platform,
+        document,
+        packages,
+        &mut admin,
+        admin_url,
+        &migration_input,
+    )
+    .await?;
     restore_project_database_access(platform, document, &project_admin).await?;
 
     crate::provision_project_env::workload::provision(
@@ -539,6 +553,7 @@ pub async fn provision(
 ///
 /// The system URL uses `wamn_apply`. The administrator installs extensions,
 /// grants owner memberships, and reconciles with statements as the database owner.
+/// Platform migrations use the caller's separately authenticated migration connection.
 /// Returns the project administrator URL for credential preparation.
 ///
 /// # Errors
@@ -550,6 +565,7 @@ pub async fn ensure_project_database(
     packages: &[wamn_compiler::manifest::PackageManifest],
     admin: &mut sqlx::PgConnection,
     admin_url: &str,
+    platform_migration_database_url: &str,
 ) -> anyhow::Result<String> {
     ensure_project_database_with_migrations(
         platform,
@@ -557,6 +573,7 @@ pub async fn ensure_project_database(
         packages,
         admin,
         admin_url,
+        platform_migration_database_url,
         &crate::platform_migrations::embedded_sources(
             wamn_control_provision::migrations::MigrationDatabase::Project,
         ),
@@ -570,6 +587,7 @@ pub(crate) async fn ensure_project_database_with_migrations(
     _packages: &[wamn_compiler::manifest::PackageManifest],
     admin: &mut sqlx::PgConnection,
     admin_url: &str,
+    platform_migration_database_url: &str,
     sources: &[sqlx::migrate::Migration],
 ) -> anyhow::Result<String> {
     let project_url = project_url(platform, &document.triple()).await?;
@@ -597,13 +615,8 @@ pub(crate) async fn ensure_project_database_with_migrations(
     ))).execute(&mut *admin).await.map(drop)?;
     let mut project = connect(&project_admin).await?;
     if crate::platform_migrations::install_project(&mut project).await? {
-        let migration_input = crate::provision_project_env::workload::provision_platform_migration(
-            &platform.system_database_url,
-            &project_admin,
-            wamn_control_provision::migrations::MigrationDatabase::Project,
-        )
-        .await?;
-        crate::platform_migrations::restore_project(&migration_input, sources).await?;
+        crate::platform_migrations::restore_project(platform_migration_database_url, sources)
+            .await?;
     }
     let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
     wamn_platform_identity::environment::fill(

@@ -453,6 +453,11 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     wamn_test_infrastructure::credentials::define(&mut tx, "acme", &json!({"project":"apps","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}), &store).await?;
     tx.commit().await?;
     let project_admin = wamn_postgres::database_configuration(system.url(), &database_name)?;
+    let platform_migration_input = wamn_control_provision::test_database::platform_migration_input(
+        &project_admin,
+        wamn_control_provision::migrations::MigrationDatabase::Project,
+    )
+    .await?;
     let migration_input = wamn_control_provision::test_database::package_migration_input(
         &project_admin,
         &document.org,
@@ -464,6 +469,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &platform,
         &document,
         system.url(),
+        &platform_migration_input,
         &migration_input,
         Some("a"),
     )
@@ -502,7 +508,14 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     );
     // Published SQL remains executable after its source directory disappears.
     std::fs::remove_dir_all(scratch.path().join("b"))?;
-    sql::schema::apply(&platform, &document, "b", b.digest().as_str()).await?;
+    sql::schema::apply(
+        &platform,
+        &document,
+        "b",
+        b.digest().as_str(),
+        &migration_input,
+    )
+    .await?;
     let installed = sql::schema::state(&platform, &document).await?;
     for (id, package) in &diff.packages {
         assert_eq!(
@@ -616,6 +629,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &platform,
         &document,
         system.url(),
+        &platform_migration_input,
         &migration_input,
         Some("a"),
     )

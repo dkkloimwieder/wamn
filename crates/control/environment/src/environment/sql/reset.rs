@@ -245,7 +245,14 @@ pub async fn reset_deployed(
             )
             .await?;
             wamn_broker::streams::discard(&broker, &document.triple()).await?;
-            schema::apply_candidates(&platform, &document, candidates, &url).await?;
+            schema::apply_candidates(
+                &platform,
+                &document,
+                candidates,
+                &url,
+                &credentials.migration,
+            )
+            .await?;
             resume_users(&platform, &document, &credentials.owner).await?;
             Ok(serde_json::json!({"database": wamn_postgres::identity(&url)?.1, "result":"reset"}))
         })

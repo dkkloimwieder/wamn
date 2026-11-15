@@ -52,6 +52,9 @@ Provisioning gives each project database one restricted package migration login.
 That login owns application schemas, relations, and generated history functions.
 The `NOLOGIN` database owner, `wamn_db_owner`, retains platform objects.
 A separate managed platform migration login inherits its privileges.
+Initialization takes resolved platform and package migration connections.
+CNPG provisioning resolves its managed credential before initialization.
+Explicit Postgres callers supply each migration login's own credential.
 
 Each entity map records its relation OID, package, and entity.
 Package apply refuses rebinding an existing relation OID to another package or entity.
