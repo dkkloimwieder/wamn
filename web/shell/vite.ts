@@ -28,13 +28,19 @@ function devConfiguration(): string {
   const route = process.env["WAMN_ROUTE_URL"];
   if (route === undefined) throw new Error("set WAMN_ROUTE_URL to the installed application URL");
   const url = new URL(route);
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("the application URL must use HTTP or HTTPS");
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    throw new Error("the application URL must use HTTP or HTTPS");
   return url.origin;
 }
 
 /** Preserve product routing and obtain browser settings from the deployed web service. */
 function proxy(target: string): Record<string, ProxyOptions> {
-  return Object.fromEntries(["/password", "/api", "/config.json", "/wamn_control", "/oauth/callback"].map((path) => [path, { target, changeOrigin: true }]));
+  return Object.fromEntries(
+    ["/password", "/api", "/config.json", "/wamn_control", "/oauth/callback"].map((path) => [
+      path,
+      { target, changeOrigin: true },
+    ]),
+  );
 }
 
 /**

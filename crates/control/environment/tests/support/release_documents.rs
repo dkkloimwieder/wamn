@@ -229,7 +229,9 @@ pub fn environment_releases() -> anyhow::Result<[Vec<u8>; 4]> {
             "operations",
             "connections",
         ] {
-            descriptor[field] = declaration[field].clone();
+            if let Some(value) = declaration.get(field) {
+                descriptor[field] = value.clone();
+            }
         }
         for operation in descriptor["operations"]
             .as_object_mut()

@@ -667,8 +667,8 @@ mod tests {
                     let (route, release) = (&route, &release);
                     async move {
                         let (status, value) = match request.uri().path() {
-                            "/api/v1/namespaces/hosts/configmaps" => (StatusCode::OK,
-                                json!({"items":[{"metadata":{"name":"app"},"data":{"route.json":route.to_string()}}]})),
+                            "/api/v1/configmaps" => (StatusCode::OK,
+                                json!({"items":[{"metadata":{"name":"app","namespace":"hosts"},"data":{"route.json":route.to_string()}}]})),
                             "/api/v1/namespaces/hosts/configmaps/app" => (StatusCode::OK,
                                 json!({"data":{"release.json":release.to_string()}})),
                             _ => (StatusCode::ACCEPTED, json!(null)),

@@ -78,21 +78,13 @@ pub fn host_values(input: &HostValuesInput, schema: &str) -> anyhow::Result<Rend
             variables.push(serde_yaml::to_value(json!({"name": name, "value": value}))?);
         }
     }
-    group["volumes"]
-        .as_sequence_mut()
-        .context("apply host volumes")?
-        .push(serde_yaml::to_value(
-            json!({"name": "registry-pull", "secret": {
-                "secretName": "wamn-registry-pull", "optional": false,
-                "items": [{"key": ".dockerconfigjson", "path": "config.json"}],
-            }}),
-        )?);
-    group["volumeMounts"]
-        .as_sequence_mut()
-        .context("apply host mounts")?
-        .push(serde_yaml::to_value(json!(
-            {"name": "registry-pull", "mountPath": "/etc/wamn/registry", "readOnly": true}
-        ))?);
+    group["volumes"] = serde_yaml::to_value(json!([{"name": "registry-pull", "secret": {
+        "secretName": "wamn-registry-pull", "optional": false,
+        "items": [{"key": ".dockerconfigjson", "path": "config.json"}],
+    }}]))?;
+    group["volumeMounts"] = serde_yaml::to_value(json!([
+        {"name": "registry-pull", "mountPath": "/etc/wamn/registry", "readOnly": true}
+    ]))?;
     group["ociCaPaths"] = serde_yaml::to_value(["/runtime-cert/ca.crt"])?;
     group["extraArgs"]
         .as_sequence_mut()

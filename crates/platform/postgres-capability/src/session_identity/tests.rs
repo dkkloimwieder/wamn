@@ -1800,12 +1800,17 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
     );
 
     let mut admin = connect_raw(admin_url).await;
+    let mut removal =
+        wamn_test_postgres::transaction(&mut admin, LIVE_PRINCIPAL, "admin:remove-user")
+            .await
+            .expect("bind the fixture principal");
     sqlx::query("DELETE FROM platform.\"user\" WHERE id = $1::text::uuid")
         .bind(&LIVE_PRINCIPAL)
-        .execute(&mut admin)
+        .execute(&mut *removal)
         .await
         .map(|result| result.rows_affected())
         .expect("remove the user row after issuance");
+    removal.commit().await.expect("commit the removed user");
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     drops.principal(PROJECT_ENV_KEY, LIVE_PRINCIPAL);
     writer.publish(drops).await;

@@ -81,10 +81,10 @@ pub(super) fn emit_package_publication(
         });
         if description.operation.visibility.as_deref() != Some("private") {
             published["registered-operation"] = json!(identity);
-        }
-        if !description.operation.type_.is_read() && !description.result.is_null() {
-            published["committed-result-schema"] =
-                json!({"type": "array", "items": result["items"]["oneOf"][0]});
+            if !description.operation.type_.is_read() && !description.result.is_null() {
+                published["committed-result-schema"] =
+                    json!({"type": "array", "items": result["items"]["oneOf"][0]});
+            }
         }
         declaration["operations"][identity] = published;
         let exposure = manifest.routes.operations.get(local);

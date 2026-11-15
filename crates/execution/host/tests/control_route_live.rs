@@ -2231,10 +2231,10 @@ mod oauth_authorization;
 async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
     use wamn_execution_host::ProjectionPause;
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let mut database = postgres.create_database("grant_projection_order").await?;
+    let database = postgres.create_database("grant_projection_order").await?;
     let mut admin = connect(database.url()).await?;
     let control_url = install(&mut admin, database.url()).await?;
-    let (logins, billing, _shop) =
+    let (logins, mut billing, _shop) =
         environments(&mut admin, database.url(), "grant_projection_order").await?;
     let boss = create_or_reuse_user(&mut admin, "boss-order@example.test", "Boss")
         .await?
@@ -2271,11 +2271,13 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         ))
     };
     let second = delivery().await?;
+    let boss_text = boss.to_string();
+    let user_text = user.to_string();
     for after_lock in [false, true] {
         let pause = Arc::new(ProjectionPause::new(user.clone(), after_lock));
         let first = delivery().await?.with_projection_pause(Arc::clone(&pause));
-        let caller = boss.as_str().to_owned();
-        let principal = user.as_str().to_owned();
+        let caller = boss.to_string();
+        let principal = user.to_string();
         let grant = tokio::spawn(async move {
             call(
                 &first,
@@ -2289,12 +2291,12 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         let project_env_key = wamn_registry::project_env_key(ORG, "billing", "dev");
         bucket
             .put(
-                wamn_broker::auth_changes::principal_key(&project_env_key, user.as_str()),
+                wamn_broker::auth_changes::principal_key(&project_env_key, &user_text),
                 "stale".into(),
             )
             .await?;
-        let payload = json!({"project":"billing","principal_id":user.as_str()});
-        let revoke = call(&second, "project-admin/revoke", boss.as_str(), payload);
+        let payload = json!({"project":"billing","principal_id":user_text});
+        let revoke = call(&second, "project-admin/revoke", &boss_text, payload);
         tokio::pin!(revoke);
         if after_lock {
             let blocked = async {
@@ -2314,7 +2316,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
             revoke.await.map_err(anyhow::Error::msg)?;
         } else {
             revoke.await.map_err(anyhow::Error::msg)?;
-            let count: i64 = sqlx::query("SELECT count(*) FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin'").bind(&user.as_str()).fetch_one(&mut billing).await?.get(0);
+            let count: i64 = sqlx::query("SELECT count(*) FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin'").bind(&user_text).fetch_one(&mut billing).await?.get(0);
             assert_eq!(
                 count, 0,
                 "the second host completes revocation while the grant waits"
@@ -2322,19 +2324,19 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
             pause.resume();
         }
         grant.await?.map_err(anyhow::Error::msg)?;
-        let rows = application_rows(&billing, user.as_str()).await;
+        let rows = application_rows(&mut billing, &user_text).await;
         assert!(
             rows.iter().all(|row| row.1.as_deref() != Some("admin")),
             "{rows:?}"
         );
-        let count: i64 = sqlx::query("SELECT count(*) FROM identity.project_roles WHERE principal_id=$1::text::uuid AND role='project-admin'").bind(&user.as_str()).fetch_one(&mut admin).await?.get(0);
+        let count: i64 = sqlx::query("SELECT count(*) FROM identity.project_roles WHERE principal_id=$1::text::uuid AND role='project-admin'").bind(&user_text).fetch_one(&mut admin).await?.get(0);
         assert_eq!(count, 0);
         let project_env_key = wamn_registry::project_env_key(ORG, "billing", "dev");
         assert!(
             bucket
                 .get(wamn_broker::auth_changes::principal_key(
                     &project_env_key,
-                    user.as_str()
+                    &user_text
                 ))
                 .await?
                 .is_none()

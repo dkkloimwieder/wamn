@@ -70,6 +70,7 @@ An explicit suite fails when a selected case lacks an input.
 Selected suites own their named cases or filters, so dependency selection runs each case once.
 The selector preserves the features of the Cargo build when it runs its test executable.
 The tool builds the guests that selected suites need.
+The `edge-samples` suite builds `apps/edge_samples` through `wamn build` before it compiles the `samples` target.
 `cargo xtask repo-lint` also compiles guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
 The platform producer builds both role components through the package component builder.

@@ -1112,12 +1112,20 @@ async fn pat_caller(
     let coordinate = system_server.create_database("control").await?;
     let system_database = url::Url::parse(coordinate.url())?;
     wamn_control_provision::test_database::system(system_database.as_str()).await;
-    let mut system = connect(system_database.as_str()).await?;
-    sqlx::query("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ($1, 'pooled', 'warm-test')").bind(&ORG).execute(&mut system).await.map(|result| result.rows_affected())?;
+    let mut system_connection = connect(system_database.as_str()).await?;
+    let mut system = wamn_test_postgres::transaction(
+        &mut system_connection,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "admin:warm-pat",
+    )
+    .await?;
+    sqlx::query("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ($1, 'pooled', 'warm-test')").bind(&ORG).execute(&mut *system).await.map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO registry.projects (org, id) VALUES ($1, $2)")
         .bind(&ORG)
         .bind(&PROJECT)
-        .execute(&mut system)
+        .execute(&mut *system)
         .await
         .map(|result| result.rows_affected())?;
     let principal = create_service(
@@ -1127,8 +1135,8 @@ async fn pat_caller(
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
-    sqlx::query("INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) VALUES ($1, $2, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18')").bind(&ORG).bind(&ENVIRONMENT).execute(&mut system).await.map(|result| result.rows_affected())?;
-    sqlx::query("WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$3,$3) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ($1,$2,$3,'warm-test','a1b2c3d4')").bind(&ORG).bind(&PROJECT).bind(&ENVIRONMENT).execute(&mut system).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) VALUES ($1, $2, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18')").bind(&ORG).bind(&ENVIRONMENT).execute(&mut *system).await.map(|result| result.rows_affected())?;
+    sqlx::query("WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$3,$3) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ($1,$2,$3,'warm-test','a1b2c3d4')").bind(&ORG).bind(&PROJECT).bind(&ENVIRONMENT).execute(&mut *system).await.map(|result| result.rows_affected())?;
     assign_project_role(
         &mut system,
         principal.id(),
@@ -1145,6 +1153,8 @@ async fn pat_caller(
         Duration::from_secs(600),
     )
     .await?;
+    system.commit().await?;
+    let mut system = system_connection;
     let mut admin = connect(admin_url).await?;
     let mut transaction =
         wamn_test_postgres::transaction(&mut admin, FIXTURE_PRINCIPAL, "admin:warm-pat-test")

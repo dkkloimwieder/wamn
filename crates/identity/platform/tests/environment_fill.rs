@@ -32,13 +32,14 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
                 .await?;
         }
     }
-    let mut authority = wamn_postgres::connect(system.as_str()).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ),
-    ))
-    .execute(&mut authority)
+    let mut authority_connection = wamn_postgres::connect(system.as_str()).await?;
+    let mut authority = wamn_test_postgres::transaction(
+        &mut authority_connection,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "admin:environment-fill",
+    )
     .await?;
     let member = *wamn_platform_identity::create_user(
         &mut authority,
@@ -68,6 +69,8 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
+
+    authority.commit().await?;
 
     let project = url::Url::parse(
         case_server
@@ -124,6 +127,14 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     .await?;
     assert_eq!(preserved, service_row);
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
+    let mut authority = wamn_test_postgres::transaction(
+        &mut authority_connection,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "admin:revoke-environment-member",
+    )
+    .await?;
     wamn_platform_identity::org::revoke_member(
         &mut authority,
         &member,
@@ -133,6 +144,7 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         &mut drops,
     )
     .await?;
+    authority.commit().await?;
     fill(
         system.as_str(),
         project.as_str(),

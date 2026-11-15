@@ -156,7 +156,10 @@ function App() {
         </nav>
         <label>
           Status{" "}
-          <select value={statusFilter()} onChange={(event) => setStatusFilter(event.currentTarget.value as StatusFilter)}>
+          <select
+            value={statusFilter()}
+            onChange={(event) => setStatusFilter(event.currentTarget.value as StatusFilter)}
+          >
             <option value="all">all</option>
             <option value="available">available</option>
             <option value="consumed">consumed</option>

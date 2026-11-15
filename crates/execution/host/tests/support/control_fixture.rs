@@ -37,7 +37,7 @@ pub(super) async fn install(admin: &mut Client, admin_url: &str) -> anyhow::Resu
     wamn_environment::provision_system::install_control_store(admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
-            "SET ROLE wamn_system; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{}'::text::uuid,'','fixture','admin:fixture');",
+            "BEGIN; SET LOCAL ROLE wamn_system; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{}'::text::uuid,'','fixture','admin:fixture');",
             wamn_control_provision::PlatformComponent::Provisioning.principal_id()
         ))
             .to_string(),
@@ -52,7 +52,7 @@ pub(super) async fn install(admin: &mut Client, admin_url: &str) -> anyhow::Resu
                VALUES ('org-a', 'dev', '\"own\"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
              INSERT INTO registry.projects (org, id) VALUES ('org-a', 'billing'), ('org-a', 'shop'); \
              WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('org-a','dev','dev'),('org-a','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('org-a','billing','dev','s1','aaaaaaa1'),('org-a','shop','dev','s2','aaaaaaa2'); \
-             RESET ROLE").execute(&mut *admin).await.map(drop)?;
+             COMMIT").execute(&mut *admin).await.map(drop)?;
     let role = workload_login(
         WorkloadRoleFamily::Control,
         WorkloadRoleIdentity::Org {

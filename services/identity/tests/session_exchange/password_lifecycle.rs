@@ -10,6 +10,18 @@ use wamn_platform_identity::password::{
 
 const EMAIL: &str = "renewal-alice@example.invalid";
 
+async fn fixture_transaction(
+    connection: &mut sqlx::PgConnection,
+) -> sqlx::Transaction<'_, sqlx::Postgres> {
+    wamn_test_postgres::transaction(
+        connection,
+        &PlatformComponent::Provisioning.principal_id().to_string(),
+        "admin:password-lifecycle",
+    )
+    .await
+    .expect_redacted("bind fixture principal")
+}
+
 async fn enroll(fixture: &mut Fixture, email: &str, password: &str) -> Principal {
     let user = create_user(&mut fixture.system.client, email, email, "Renewal user")
         .await
@@ -240,12 +252,17 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         401
     );
     grant(&mut fixture.system.client, &user, "demo", "dev").await;
+    let mut mutation = fixture_transaction(&mut fixture.environments[0].client).await;
     sqlx::query("UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid")
         .bind(&user.id().to_string().as_str())
-        .execute(&mut fixture.environments[0].client)
+        .execute(&mut *mutation)
         .await
         .map(|result| result.rows_affected())
         .unwrap();
+    mutation
+        .commit()
+        .await
+        .expect_redacted("commit fixture mutation");
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
             .send()
@@ -254,18 +271,28 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
+    let mut mutation = fixture_transaction(&mut fixture.environments[0].client).await;
     sqlx::query("UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid")
         .bind(&user.id().to_string().as_str())
-        .execute(&mut fixture.environments[0].client)
+        .execute(&mut *mutation)
         .await
         .map(|result| result.rows_affected())
         .unwrap();
+    mutation
+        .commit()
+        .await
+        .expect_redacted("commit fixture mutation");
+    let mut mutation = fixture_transaction(&mut fixture.environments[0].client).await;
     sqlx::query("DELETE FROM platform.user_role WHERE user_id=$1::text::uuid")
         .bind(&user.id().to_string().as_str())
-        .execute(&mut fixture.environments[0].client)
+        .execute(&mut *mutation)
         .await
         .map(|result| result.rows_affected())
         .unwrap();
+    mutation
+        .commit()
+        .await
+        .expect_redacted("commit fixture mutation");
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
             .send()
@@ -274,15 +301,25 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
+    let mut mutation = fixture_transaction(&mut fixture.environments[0].client).await;
     sqlx::query(
         "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'receiver')",
     )
     .bind(&user.id().to_string().as_str())
-    .execute(&mut fixture.environments[0].client)
+    .execute(&mut *mutation)
     .await
     .map(|result| result.rows_affected())
     .unwrap();
-    sqlx::raw_sql("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").execute(&mut fixture.system.client).await.map(drop).unwrap();
+    mutation
+        .commit()
+        .await
+        .expect_redacted("commit fixture mutation");
+    let mut mutation = fixture_transaction(&mut fixture.system.client).await;
+    sqlx::raw_sql("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").execute(&mut *mutation).await.map(drop).unwrap();
+    mutation
+        .commit()
+        .await
+        .expect_redacted("commit fixture mutation");
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
             .send()
@@ -291,7 +328,12 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    sqlx::raw_sql("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").execute(&mut fixture.system.client).await.map(drop).unwrap();
+    let mut mutation = fixture_transaction(&mut fixture.system.client).await;
+    sqlx::raw_sql("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").execute(&mut *mutation).await.map(drop).unwrap();
+    mutation
+        .commit()
+        .await
+        .expect_redacted("commit fixture mutation");
     let active = body(
         request(&https, &fixture, "/password/renew", &active)
             .send()
@@ -346,7 +388,12 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         401
     );
     let near_expiry = login(&https, &fixture).await;
-    sqlx::query("WITH deadline AS (SELECT date_trunc('second',clock_timestamp())+interval '60 seconds' AS at) UPDATE identity.password_logins SET authenticated_at=deadline.at-interval '8 hours',expires_at=deadline.at,renewal_expires_at=deadline.at FROM deadline WHERE principal_id=$1::text::uuid AND revoked_at IS NULL").bind(&user.id().to_string().as_str()).execute(&mut fixture.system.client).await.map(|result| result.rows_affected()).unwrap();
+    let mut mutation = fixture_transaction(&mut fixture.system.client).await;
+    sqlx::query("WITH deadline AS (SELECT date_trunc('second',clock_timestamp())+interval '60 seconds' AS at) UPDATE identity.password_logins SET authenticated_at=deadline.at-interval '8 hours',expires_at=deadline.at,renewal_expires_at=deadline.at FROM deadline WHERE principal_id=$1::text::uuid AND revoked_at IS NULL").bind(&user.id().to_string().as_str()).execute(&mut *mutation).await.map(|result| result.rows_affected()).unwrap();
+    mutation
+        .commit()
+        .await
+        .expect_redacted("commit fixture mutation");
     let bounded = body(
         request(&https, &fixture, "/password/renew", &near_expiry)
             .send()
@@ -356,7 +403,12 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     .await;
     assert_eq!(bounded["expires_at"], bounded["login_expires_at"]);
     assert!(claims(&fixture, &bounded).await.exp <= unix_seconds() + 60);
-    sqlx::query("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours' WHERE principal_id=$1::text::uuid").bind(&user.id().to_string().as_str()).execute(&mut fixture.system.client).await.map(|result| result.rows_affected()).unwrap();
+    let mut mutation = fixture_transaction(&mut fixture.system.client).await;
+    sqlx::query("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours' WHERE principal_id=$1::text::uuid").bind(&user.id().to_string().as_str()).execute(&mut *mutation).await.map(|result| result.rows_affected()).unwrap();
+    mutation
+        .commit()
+        .await
+        .expect_redacted("commit fixture mutation");
     assert_eq!(
         request(&https, &fixture, "/password/renew", &bounded)
             .send()

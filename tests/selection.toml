@@ -56,6 +56,10 @@ id = "edge-application"
 applications = ["apps/edge_device"]
 
 [[preparation]]
+id = "edge-samples"
+applications = ["apps/edge_samples"]
+
+[[preparation]]
 id = "jsonata"
 outputs = {WAMN_JSONATA_COMPONENT = "{target}/wasm32-wasip2/debug/jsonata_expression.wasm"}
 commands = [
@@ -147,6 +151,21 @@ applications = ["apps/netsuite"]
 id = "rest-connector"
 outputs = {}
 applications = ["apps/rest_connector"]
+
+[[suites]]
+id = "edge-samples"
+tier = "contract"
+workspace = "apps"
+package = "samples"
+select_packages = ["samples"]
+target = ["cdylib:samples"]
+tests = []
+features = []
+prerequisites = ["edge-samples"]
+inputs = ['^apps/edge_samples/']
+execution = "libtest"
+mode = "local"
+resource_lock = ""
 
 [[suites]]
 id = "quality"

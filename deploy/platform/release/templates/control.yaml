@@ -74,7 +74,7 @@ spec:
           {{- end }}
         {{- if .Values.control.oauthSecret }}
         - name: oauth
-          secret: {secretName: {{ .Values.control.oauthSecret }}}
+          secret: {secretName: {{ .Values.control.oauthSecret }}, defaultMode: 384} # 0600
         {{- end }}
 ---
 apiVersion: v1
