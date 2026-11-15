@@ -9,6 +9,9 @@ license.workspace = true
 test-util = []
 
 [dependencies]
+wamn-number-pattern.workspace = true
+sha2.workspace = true
+wamn-events.workspace = true
 wamn-integrations.workspace = true
 moka = { workspace = true, features = ["sync"] }
 oci-client.workspace = true
@@ -54,6 +57,7 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 chrono = { workspace = true, features = ["std", "clock"] }
 wamn-test-application = { workspace = true }
@@ -83,7 +87,6 @@ wamn-fixture-package = { workspace = true }
 wamn-component-composer = { workspace = true }
 wasmparser = { workspace = true }
 hex = { workspace = true }
-sha2 = { workspace = true }
 base64 = { workspace = true }
 ring = { workspace = true }
 rcgen = { workspace = true }

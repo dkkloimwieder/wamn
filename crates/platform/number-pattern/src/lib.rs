@@ -11,7 +11,7 @@
 //!
 //! A `<key>` is `date:FMT`, the name of another counter in the same pattern,
 //! or else a field of the record. The generator validates a package's
-//! patterns with [`parse`] at build, and the `wamn:postgres` renderer renders
+//! patterns with [`parse`] at build, and the guest SQL renderer renders
 //! the same [`Pattern`]. No other parser exists.
 
 use std::error::Error;
@@ -476,6 +476,56 @@ fn refuse_counter_cycles(pattern: &Pattern, text: &str) -> Result<(), PatternErr
 
 fn syntax(detail: String) -> PatternError {
     PatternError::new(PatternErrorType::Syntax, detail)
+}
+
+/// The date formats the pattern reads: every `{date:}` token and every
+/// `date:` key.
+pub fn date_formats(pattern: &Pattern) -> impl Iterator<Item = DateFormat> + '_ {
+    pattern.parts().iter().filter_map(|part| match part {
+        Part::Date(format) => Some(*format),
+        Part::Counter(counter) => match counter.policy().key() {
+            Some(Key::Date(format)) => Some(*format),
+            _ => None,
+        },
+        Part::Literal(_) | Part::Field(_) => None,
+    })
+}
+
+/// The counters of `pattern` in name order, each after the counter its key
+/// names. The parser refuses a cycle, so the order is total.
+pub fn counter_order(pattern: &Pattern) -> Vec<&Counter> {
+    let mut pending = pattern.counters().collect::<Vec<_>>();
+    pending.sort_by(|left, right| left.name().cmp(right.name()));
+    let mut ordered = Vec::<&Counter>::with_capacity(pending.len());
+    while !pending.is_empty() {
+        let ready = pending
+            .iter()
+            .position(|counter| match counter.policy().key() {
+                Some(Key::Counter(other)) => ordered.iter().any(|done| done.name() == &**other),
+                _ => true,
+            })
+            .expect("the parser refuses a counter cycle");
+        ordered.push(pending.remove(ready));
+    }
+    ordered
+}
+
+/// One counter value as its token states: decimal or upper-case hex, padded
+/// to the width, never truncated.
+pub fn render_counter(counter: &Counter, value: i64) -> String {
+    let digits = if counter.hex() {
+        format!("{value:X}")
+    } else {
+        value.to_string()
+    };
+    let width = usize::from(counter.width().unwrap_or(0));
+    let mut text = String::with_capacity(width.max(digits.len()));
+    text.extend(std::iter::repeat_n(
+        counter.pad(),
+        width.saturating_sub(digits.len()),
+    ));
+    text.push_str(&digits);
+    text
 }
 
 #[cfg(test)]

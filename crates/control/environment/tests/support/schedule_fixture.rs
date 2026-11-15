@@ -617,7 +617,7 @@ pub async fn admit(
     envelope: &str,
     sequence: u64,
     lsn: u64,
-) -> Result<(), wamn_postgres_capability::ProductionLeaseError> {
+) -> Result<(), wamn_run_state::run_store::ProductionLeaseError> {
     wamn_workflow::event_admission::admit_event_batch(
         &fixture.postgres,
         PROJECT,

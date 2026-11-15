@@ -23,6 +23,7 @@ use sqlx::Row as _;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
+use wamn_events::admission::{ManualRunAdmission, ManualRunAdmitted};
 
 use serde_json::{Value, json};
 
@@ -47,8 +48,7 @@ use wamn_http_capability::transport::HttpTransport;
 use wamn_identity_protocol::PlatformComponent;
 use wamn_identity_protocol::PrincipalId;
 use wamn_postgres_capability::{
-    AuthorityClass, ClassCredentials, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
-    WamnPostgresConfig,
+    AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
 };
 use wamn_registry::Triple;
 use wamn_workflow::author_workflow::{
@@ -872,24 +872,27 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution(pool: sql
     let input = json!({"day": 1});
     let ManualRunAdmitted::Queued { run_id: run } = fixture
         .postgres
-        .admit_manual_run(
-            PROJECT,
-            PROJECT_ENV_KEY,
-            &ManualRunAdmission {
-                package_id: APP,
-                manifest_digest: &fixture.digest,
-                environment: ENVIRONMENT,
-                workflow_id: WORKFLOW,
-                workflow_version: 2,
-                wiring_hash: &wrong,
-                execution_principal_id: READER,
-                execution_role: "reader",
-                invoked_by_user_id: READER,
-                node_digests: &node_digests,
-                idempotency_key: "manual:wrong-run",
-                input: &input,
-            },
-        )
+        .executor_write(PROJECT, PROJECT_ENV_KEY, async |connection| {
+            wamn_events::admission::admit_manual_run(
+                connection,
+                PROJECT_ENV_KEY,
+                &ManualRunAdmission {
+                    package_id: APP,
+                    manifest_digest: &fixture.digest,
+                    environment: ENVIRONMENT,
+                    workflow_id: WORKFLOW,
+                    workflow_version: 2,
+                    wiring_hash: &wrong,
+                    execution_principal_id: READER,
+                    execution_role: "reader",
+                    invoked_by_user_id: READER,
+                    node_digests: &node_digests,
+                    idempotency_key: "manual:wrong-run",
+                    input: &input,
+                },
+            )
+            .await
+        })
         .await
         .expect("admit the run")
     else {

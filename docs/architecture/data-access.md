@@ -213,7 +213,7 @@ A query that names an undeclared sort refuses with `invalid_input` on the field 
 
 Guests send statement identities and arguments through `wamn:postgres`.
 The `statements` interface uses native async calls for execution, transaction creation, commit, and rollback.
-Version 0.4.0 includes `run-stream`, `operation-transaction`, `next-number`, `peek-number`, and the separate `operation` interface. It is the one version, and the host serves only it.
+Version 0.4.0 includes `run-stream`, `operation-transaction`, and the separate `operation` interface. It is the one version, and the host serves only it.
 The host begins the transaction of one logged operation item, and `operation-transaction` gives it to the guest. Inside that operation, `begin` refuses with SQLSTATE `25001`, and `commit` or `rollback` of the host transaction refuses with `2D000`.
 An unnamed `statements` import runs the statement set of the active operation.
 In a composed component each member has its own named import, and the host links one instance per name.
@@ -483,7 +483,7 @@ The [write log](#the-write-log) section defines unfinished claim responses, late
 ## Numbering
 
 A document number is a rendered text, such as `P-00000017`.
-The `wamn:postgres` plugin renders each number in the operation transaction of the application.
+The guest renders each number with SQL in the operation transaction of the application.
 A rolled-back number is not consumed, so a failure leaves no gap.
 
 ### Declaration
@@ -532,32 +532,30 @@ For example, `B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}` 
 
 ### Rendering
 
-The guest calls `next-number(name, keys)` or `peek-number(name, keys)` of `wamn:postgres` 0.4.0.
-`keys` maps each value that the pattern names (`per=`, `reset=` and `{field:}`) to its text, or to none for a null.
-The keys are not a record, so any command can call the function with values of its choice.
-The application is the name that the `applications` map of `environment.k` gives the package of the operation.
-The host binds that name to `app.application` for each operation, and it refuses a package that belongs to no application or to two.
-The plugin reads the application from host state and resolves the sequence by that application and the name.
-It never reads the `app.application` identity, because guest SQL can rewrite that identity.
-Both calls run only in an open operation transaction, and they return `permission-denied` outside one.
+The generated guest accessors call `wamn_postgres_statements::next_number` or `peek_number` with the existing operation transaction.
+These library functions run SQL through that transaction. They have no host numbering import.
+The SQL resolves the sequence through `wamn_authority.current_application()` and the sequence name.
+The identity function reads the application that the host bound to the transaction.
+The functions read the stored pattern, so an edited pattern still applies.
 
-`next-number` advances each counter of the pattern and renders the new values.
-The plugin takes the counters in name order, and a counter keyed by another counter comes after it.
-A `reset=` or unkeyed counter calls `platform.bump_counter`.
-A `per=` counter first reads its key row with no lock.
-If the row is absent, the plugin calls `platform.assign_counter`.
-`peek-number` renders the last values issued, with no lock and no write. It never serves an assignment.
+The keys hold each value that the pattern names as text, or `None` for null.
+The guest checks every required key before it advances a counter.
+It reads transaction dates in the application's time zone, or UTC when the setting is absent.
+It takes counters in name order, after any counter that supplies their key.
+An unkeyed or `reset=` counter calls `platform.bump_counter`.
+A `per=` counter reads its key first and calls `platform.assign_counter` when the key is absent.
+A peek reads the last issued values without a lock or a write.
 
-The calls refuse with a `query-error` and these SQLSTATE values:
+The library returns these SQLSTATE values for refused inputs:
 
-- `42704` for a sequence that the application does not own.
-- `22023` for an empty key, a missing key, a key given twice, a stored pattern that does not parse, and a `timezone` setting that is not a JSON string or names no time zone that Postgres knows.
+- `42704` for an unknown sequence of the application.
+- `22023` for missing, empty or repeated keys, an invalid pattern, or an invalid time zone.
 - `22004` for a null key.
-- `P0002` for a `peek-number` of a counter that issued no number.
+- `P0002` when a counter issued no number.
 
-The plugin makes sure of every key and, for a pattern that reads the date, the `timezone` setting before the first counter call, so a refused call advances no counter.
-The time zone test runs in a savepoint, so its refusal leaves the operation transaction usable.
-The generated `sequences::<name>::next` and `peek` take a key struct that holds exactly the fields the pattern names.
+A failed SQL statement aborts the operation transaction.
+The generated callable accessors get the same host transaction through `operation-transaction`.
+They take a key struct with the fields that the default pattern names.
 
 ### Counters
 
@@ -567,8 +565,7 @@ Its `value` is the next value to render, and the key value `''` is the allocator
 The application role has no write on `number_counter`.
 Only the three counter functions of the platform schema write it.
 They are `SECURITY DEFINER`, and each takes a sequence id.
-The plugin resolves that id from host state.
-Its statement admission refuses guest SQL that names a counter function or writes a `platform.*` relation.
+The guest resolves that id with SQL using the host-bound application identity.
 
 Env apply creates the `platform.number_sequence` row of each sequence that a package declares.
 The row belongs to the application that the `applications` map of `environment.k` names for the package.
@@ -905,7 +902,9 @@ The management variable is `WAMN_MANAGEMENT_PROJECT_ENV_KEY`, and `flow-http.jso
 The event subject keeps its separate organization, project, and short environment tokens.
 Auth invalidation keys still include the environment key, so equal principal IDs in separate environments keep separate cached grants and status.
 `wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key` or on a history table.
-`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It tests no project and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. Component admission parses each statement a package declares with PostgreSQL's grammar (`pg_query`). It refuses a statement that names a counter function, writes a `platform.*` relation, or holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` escape (`crates/schema/generator/src/sql_analysis/admission.rs`). Publish makes sure of the pushed descriptors again. Application guests write through declared statements. Dynamic queries use the SELECT-only login, so only the plugin calls these functions. The host applies the same parsed policy to declared statements and the raw `wamn:postgres/client` interface.
+`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It tests no project and reads no claim. It refuses an id that is not a sequence with `undefined_object`. Guest numbering SQL resolves the sequence by `wamn_authority.current_application()` and the sequence name.
+The guest calls the counter functions in the host operation transaction.
+Dynamic queries use the SELECT-only login and cannot call these write functions.
 `platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and makes sure of the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`.
 `platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and makes sure of the sequence id in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `user`, `role`, `user_role`, `permission`, and `environment`.

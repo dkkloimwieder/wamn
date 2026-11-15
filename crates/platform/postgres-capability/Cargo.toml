@@ -40,7 +40,6 @@ wamn-digest = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-number-pattern = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-postgres = { workspace = true }
@@ -51,6 +50,7 @@ wash-runtime = { workspace = true }
 wasmtime = { workspace = true }
 
 [dev-dependencies]
+wamn-events.workspace = true
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-http-capability = { workspace = true }
 

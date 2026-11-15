@@ -599,10 +599,12 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     // A second host must skip a pass while the first host holds the lease.
     let lease = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if let Some(lease) = fixture
-                .postgres
-                .file_collection(PROJECT, PROJECT_ENV_KEY)
-                .await?
+            if let Some(lease) = wamn_execution_host::file_collection::FileCollection::acquire(
+                &fixture.postgres,
+                PROJECT,
+                PROJECT_ENV_KEY,
+            )
+            .await?
             {
                 return anyhow::Ok(lease);
             }

@@ -1,11 +1,12 @@
 [package]
 name = "wamn-events"
-description = "CDC configuration, capture recovery and lifecycle."
+description = "Run admission, CDC configuration, capture recovery and lifecycle."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-run-state.workspace = true
 wamn-kubernetes.workspace = true
 tokio = { workspace = true, features = ["time"] }
 anyhow.workspace = true

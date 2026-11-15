@@ -52,10 +52,12 @@ impl FileRoutes {
     /// Listing stays within this environment's segment, including shared stores.
     /// Failed reads refuse deletion. Each store failure is logged and other stores continue.
     pub async fn collect_orphan_files(&self) -> anyhow::Result<u64> {
-        let Some(mut reader) = self
-            .postgres
-            .file_collection(&self.project, &self.release.target().project_env_key)
-            .await?
+        let Some(mut reader) = crate::file_collection::FileCollection::acquire(
+            &self.postgres,
+            &self.project,
+            &self.release.target().project_env_key,
+        )
+        .await?
         else {
             return Ok(0);
         };

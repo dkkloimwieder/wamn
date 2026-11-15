@@ -8,9 +8,11 @@
 mod application_route;
 mod control_route;
 pub mod environment_status;
+pub mod file_collection;
 pub mod file_collector;
 pub mod file_route;
 mod host_route;
+mod number_counter;
 pub mod oauth_callback;
 mod operation;
 pub mod platform_http;

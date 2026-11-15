@@ -491,7 +491,7 @@ The `number_counter.set` route binds the requested application after it finds th
 Other host routes, host queue transactions, and platform reads bind no application.
 
 An absent application binds an empty value, so a pooled connection keeps no earlier application.
-The identity is for logs only. [Numbering](data-access.md#numbering) takes the application from host state, not from this identity.
+[Numbering](data-access.md#numbering) reads the host-bound application through `wamn_authority.current_application()` in the operation transaction.
 
 A platform identity transaction that only reads binds no principal and no operation.
 A bound principal alone does not move a read out of the autocommit path.

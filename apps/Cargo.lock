@@ -1983,9 +1983,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-number-pattern"
+version = "0.1.0"
+
+[[package]]
 name = "wamn-postgres-statements"
 version = "0.1.0"
 dependencies = [
+ "wamn-number-pattern",
  "wit-bindgen 0.62.0",
 ]
 

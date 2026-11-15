@@ -45,7 +45,7 @@ pub(crate) fn get(table: &Table, tombstoned: bool) -> String {
 
 /// Insert the row and return it, including any database-generated key.
 ///
-/// A numbered field binds last, as the text `next-number` returned, and the
+/// A numbered field binds last, as the text guest numbering SQL returned, and the
 /// SQL casts it to the column. An actor field reads the `app.user_id` identity,
 /// never a parameter.
 pub(crate) fn create(

@@ -33,7 +33,7 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-control-provision` | Provisioning SQL and credential roles |
 | `wamn-broker` | NATS connections, streams, shared memory buckets, and authorization |
 | `wamn-event-wire` | Tagged event records and stable source identity |
-| `wamn-events` | CDC configuration, reader lifecycle and capture recovery |
+| `wamn-events` | Run admission, CDC configuration, reader lifecycle and capture recovery |
 | `wamn-kubernetes` | Kubernetes HTTP client, Secrets, Job execution, and command runners |
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
@@ -47,6 +47,11 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 The CLI and test support call each control crate directly.
 Publication and release charts have separate owners. Environment deployment reads both, and development drives the shared deployment path.
 The control crates never depend on `wamn-ctl`.
+
+Authentication owns the user, permission, and environment-status reads.
+The Postgres capability owns pools and host transactions.
+Workflow owns queue restart reads. Connections owns lease operations over the authorized database transport.
+The execution host owns file collection and counter-set routes. Guests render document numbers with SQL in the host transaction.
 `wamn-publish` owns standalone web artifacts in `web_artifact`.
 Package artifacts contain three tar layers and no browser files.
 `wamn build` compiles package components without Vite or a web output digest.

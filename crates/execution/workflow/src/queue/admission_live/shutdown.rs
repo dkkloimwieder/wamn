@@ -68,14 +68,15 @@ pub(super) async fn run(
             .await
         },
         async || {
-            Ok(execution
-                .postgres
-                .pinned_backlog(
-                    &execution.target.invocation,
-                    &execution.target.package_ids,
-                    &execution.target.environment,
-                )
-                .await?)
+            Ok(
+                wamn_connections::production_lease::ProductionLeases::new(execution.postgres)
+                    .pinned_backlog(
+                        &execution.target.invocation,
+                        &execution.target.package_ids,
+                        &execution.target.environment,
+                    )
+                    .await?,
+            )
         },
     );
     let mut queue = Box::pin(queue);
@@ -166,8 +167,7 @@ pub(super) async fn run(
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }).await.expect("aborted lease expires without further renewal")?;
-    let recovered = execution
-        .postgres
+    let recovered = wamn_connections::production_lease::ProductionLeases::new(execution.postgres)
         .lease_next(
             &execution.target.invocation,
             &execution.target.package_ids,
@@ -188,13 +188,12 @@ pub(super) async fn run(
             panic!("aborted run must be recoverable: Empty")
         }
     }
-    let stale = execution
-        .postgres
+    let stale = wamn_connections::production_lease::ProductionLeases::new(execution.postgres)
         .complete(
             &execution.target.invocation,
             &run,
             generation,
-            &wamn_postgres_capability::ProductionCompletion::completed(
+            &wamn_connections::production_lease::ProductionCompletion::completed(
                 serde_json::json!({"stale":true}),
             ),
         )

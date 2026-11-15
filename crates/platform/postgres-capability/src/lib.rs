@@ -15,16 +15,10 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Component, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-mod credential_exactness;
-/// Host admission of an event-started workflow run.
-mod event_admission;
 mod executor;
-mod file_collection;
-mod numbering;
 mod operation;
 mod operation_transaction;
 mod pool;
-mod production_lease;
 #[cfg(test)]
 mod query_tests;
 mod resources;
@@ -33,26 +27,12 @@ mod session_identity;
 pub(crate) mod statements;
 mod types;
 pub mod write_log;
-pub use file_collection::FileCollection;
 
-pub use credential_exactness::{
-    AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionType,
-    CredentialExactnessProbe, CredentialProbeError, CredentialProbeErrorType,
-    CredentialProbePredicate, ExpectedCredentialIdentity, ExplicitCredentialSource,
-    MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
-};
-pub use event_admission::{EnabledWorkflow, ManualRunAdmission, ManualRunAdmitted};
-pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
 pub use operation::OperationInvoker;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
 pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
     StaticCredentialProvider, WamnPostgresConfig,
-};
-pub use production_lease::{
-    ProductionCompletion, ProductionCompletionResult, ProductionLeaseError,
-    ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult,
-    ProductionWorkflow,
 };
 #[cfg(any(test, feature = "test-util"))]
 pub use resources::begin_statement_transaction;

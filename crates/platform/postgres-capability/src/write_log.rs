@@ -173,7 +173,7 @@ where
 
 impl OperationTransaction {
     /// Claim application-owned bytes without interpreting the hash or result.
-    pub(super) async fn begin_opaque(
+    pub async fn begin_opaque(
         &self,
         operation: &str,
         key: &str,

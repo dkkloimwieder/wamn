@@ -7,6 +7,7 @@ mod queue;
 pub mod resolution;
 mod router_action;
 mod router_driver;
+pub mod run_queue;
 pub mod schedule;
 
 pub use graph::{Failure, FailureType, Outcome, Verdict, WalkStatus};

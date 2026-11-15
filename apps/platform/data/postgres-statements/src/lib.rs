@@ -1,4 +1,4 @@
-//! Thin typed access to host-admitted, content-addressed PostgreSQL statements.
+//! Typed PostgreSQL access and document numbering in the guest.
 
 #[expect(
     clippy::same_length_and_capacity,
@@ -392,38 +392,8 @@ pub async fn operation_transaction() -> Result<Transaction, StatementError> {
         .map_err(StatementError::from_wire)
 }
 
-/// The next number of sequence `name`, rendered by the host from `keys`:
-/// the values its pattern names (`per=`, `reset=` and `{field:}`), each as
-/// its text or `None` for a null. A bare `{seq}` or `{date:}` pattern takes
-/// no keys. The counter advances in the operation transaction, so a rollback
-/// leaves the number unconsumed.
-pub async fn next_number(
-    name: &str,
-    keys: &[(&str, Option<String>)],
-) -> Result<String, StatementError> {
-    host::next_number(name.to_string(), key_list(keys))
-        .await
-        .map_err(StatementError::from_wire)
-}
-
-/// The current number of sequence `name` for `keys`: the last number
-/// issued, rendered by the host with no lock and no advance. Never for
-/// assignment. `keys` is as for [`next_number`]. The host answers SQLSTATE
-/// `P0002` when no number was issued yet.
-pub async fn peek_number(
-    name: &str,
-    keys: &[(&str, Option<String>)],
-) -> Result<String, StatementError> {
-    host::peek_number(name.to_string(), key_list(keys))
-        .await
-        .map_err(StatementError::from_wire)
-}
-
-fn key_list(keys: &[(&str, Option<String>)]) -> Vec<(String, Option<String>)> {
-    keys.iter()
-        .map(|(name, value)| ((*name).to_owned(), value.clone()))
-        .collect()
-}
+mod numbering;
+pub use numbering::{next_number, peek_number};
 
 /// Run one callback in exactly one transaction, with no automatic retry.
 pub async fn run_transaction<T, E, F>(connection: &mut Connection, callback: F) -> Result<T, E>
