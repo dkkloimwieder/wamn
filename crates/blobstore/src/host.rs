@@ -35,7 +35,7 @@
 //! because the environment owns the container, which is the ordinary operation
 //! of the ownership split rather than a deviation from the contract.
 
-use wamn_capability_authority::EffectOutcome;
+use wamn_authority::EffectOutcome;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 
@@ -52,7 +52,7 @@ use super::plugin::{WAMN_BLOBSTORE_ID, WamnBlobstore};
 use super::store::{BoundContainer, StoreError};
 use super::wit_error::to_wit;
 
-use wamn_capability_authority::effect_span::EffectOutcomeGuard;
+use wamn_authority::effect_span::EffectOutcomeGuard;
 
 /// The refusal a store-owned verb returns.
 fn refused(verb: &'static str, reason: &'static str) -> WitError {
@@ -458,9 +458,9 @@ where
                 }
             };
             let record_duration = |project: &str| {
-                wamn_capability_authority::effect_span::record_effect_ms(
-                    &wamn_capability_authority::effect_span::BLOBSTORE_DURATION_MS,
-                    wamn_capability_authority::effect_span::EFFECT_OPERATION,
+                wamn_authority::effect_span::record_effect_ms(
+                    &wamn_authority::effect_span::BLOBSTORE_DURATION_MS,
+                    wamn_authority::effect_span::EFFECT_OPERATION,
                     operation,
                     project,
                     started.elapsed(),
@@ -469,12 +469,9 @@ where
             if plugin
                 .postgres
                 .scopes
-                .read::<wamn_postgres_capability::invocation::Authority, _>(
-                    &component_id,
-                    |record| {
-                        record_duration(record.identity.project.as_deref().unwrap_or(""));
-                    },
-                )
+                .read::<wamn_sql::invocation::Authority, _>(&component_id, |record| {
+                    record_duration(record.identity.project.as_deref().unwrap_or(""));
+                })
                 .is_none()
             {
                 record_duration("");
@@ -529,7 +526,7 @@ mod tests {
 
     #[test]
     fn a_blobstore_error_that_responded_supplies_failure_evidence_but_success_does_not() {
-        let evidence = wamn_capability_authority::effect_span::EffectEvidence::new();
+        let evidence = wamn_authority::effect_span::EffectEvidence::new();
         for result in [Ok(()), Err(StoreError::NoSuchObject)] {
             let failed = result.is_err();
             let mut guard = EffectOutcomeGuard::new(&tracing::Span::none(), Some(evidence.clone()));

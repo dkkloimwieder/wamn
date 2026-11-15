@@ -1941,7 +1941,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         },
     )
     .await?;
-    let (_nats_server, nats) = wamn_capability_authority::auth_cache::test_util::nats().await;
+    let (_nats_server, nats) = wamn_authority::auth_cache::test_util::nats().await;
     let bucket = wamn_broker::auth_changes::auth_bucket(&nats).await?;
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),

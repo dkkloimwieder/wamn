@@ -64,7 +64,7 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants(pool: sqlx::Pg
 async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: sqlx::PgPool) {
     use std::sync::Arc;
     use std::time::Duration;
-    use wamn_capability_authority::auth_cache::{
+    use wamn_authority::auth_cache::{
         AuthCache, PrincipalGrants,
         test_util::{nats, until, watched},
     };

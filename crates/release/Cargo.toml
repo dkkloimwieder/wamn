@@ -10,22 +10,21 @@ default = []
 
 [dependencies]
 oci-client = { workspace = true }
-wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
-wamn-broker = { workspace = true }
 wamn-kubernetes = { workspace = true }
-wamn-digest.workspace = true
 anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
 wamn-catalog = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-registry = { workspace = true }
 
 [dev-dependencies]
+wamn-digest.workspace = true
+wamn-broker = { workspace = true }
+wamn-postgres.workspace = true
 wamn-test-postgres.workspace = true
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }

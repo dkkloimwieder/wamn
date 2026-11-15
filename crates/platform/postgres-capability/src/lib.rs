@@ -403,6 +403,6 @@ pub(crate) use session_identity::validate_identity;
 pub mod connection_binding;
 pub mod invocation;
 
-use wamn_capability_authority::identity::{
+use wamn_authority::identity::{
     ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, SessionIdentity,
 };

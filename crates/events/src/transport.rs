@@ -14,17 +14,17 @@ use anyhow::Context as _;
 #[cfg(test)]
 use futures_util::StreamExt as _;
 use tracing::Instrument as _;
+use wamn_authority::EffectOutcome;
 use wamn_broker::events::{
     advisory_stream_config, consumer_config_matches, source_stream_config, stream_config_matches,
 };
-use wamn_capability_authority::EffectOutcome;
 use wamn_event_wire::{Causation, DerivedEvent, Op, derived_msg_id, stream_name, subject};
 use wamn_registry::Triple;
 
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
-use wamn_capability_authority::effect_span::{
+use wamn_authority::effect_span::{
     EFFECT_OPERATION, EffectIdentity, EffectOutcomeGuard, EffectWiring, JETSTREAM_DURATION_MS,
     effect_span, record_effect_ms, record_wiring,
 };

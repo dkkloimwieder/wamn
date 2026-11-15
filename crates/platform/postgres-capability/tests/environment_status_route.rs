@@ -21,9 +21,7 @@ use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_postgres_capability::{
-    AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
-};
+use wamn_sql::{AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
 
 const PROJECT: &str = "project";
 const PROJECT_ENV_KEY: &str = "org-a--dev--project";
@@ -121,7 +119,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         .execute(&mut admin)
         .await
         .map(drop)?;
-    sqlx::raw_sql(include_str!("../../../deploy/sql/app-schema.sql"))
+    sqlx::raw_sql(include_str!("../../../../deploy/sql/app-schema.sql"))
         .execute(&mut admin)
         .await
         .map(drop)?;
@@ -137,8 +135,6 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     .execute(&mut admin)
     .await
     .map(drop)?;
-    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-        .bind("770df186-ac15-579e-b46b-c297cae2011b").execute(&mut admin).await?;
     let mut url = url::Url::parse(admin_url)?;
     url.set_username(&generation)
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;

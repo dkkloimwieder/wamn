@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+test-util = []
+
 [dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream", "kv", "server_2_10", "server_2_11", "server_2_12"] }
@@ -20,10 +23,6 @@ wamn-event-wire = { workspace = true }
 wamn-kubernetes = { workspace = true }
 
 [dev-dependencies]
-wamn-test-infrastructure = { workspace = true }
-wamn-capability-authority = { workspace = true, features = ["test-util"] }
-wamn-events-capability = { workspace = true, features = ["test-util"] }
-wamn-test-postgres = { workspace = true }
 tokio = { workspace = true, features = ["macros", "process"] }
 
 [lints]

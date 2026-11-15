@@ -15,7 +15,7 @@ use tokio::{
 use tokio_rustls::TlsAcceptor;
 
 use super::*;
-use wamn_capability_authority::connection_authority::{
+use wamn_authority::connection_authority::{
     PinnedEndpoint, TlsPolicy, parse_http_connection_authority,
 };
 
@@ -60,7 +60,7 @@ impl Server {
             }
             None => (None, None),
         };
-        let listener = TcpListener::bind((crate::tests::interface_address(), 0))
+        let listener = TcpListener::bind((crate::test_util::interface_address(), 0))
             .await
             .expect("test listener");
         let peer = listener.local_addr().expect("test address");

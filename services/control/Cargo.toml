@@ -38,8 +38,7 @@ wamn-platform-identity.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true
 wamn-connections = { workspace = true }
-wamn-http-capability = { workspace = true }
-wamn-blobstore = { workspace = true }
+wamn-http = { workspace = true }
 wamn-authentication = { workspace = true }
 
 [lints]

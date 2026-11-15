@@ -11,13 +11,11 @@ use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
-use wamn_http_capability::transport::HttpTransport;
+use wamn_http::transport::HttpTransport;
 use wamn_publish::component_admission::ComponentAdmission;
 
-use wamn_capability_authority::connection::{
-    ConnectionExecutionClosure, InvocationEntry, WiringPosition,
-};
-use wamn_postgres_capability::{
+use wamn_authority::connection::{ConnectionExecutionClosure, InvocationEntry, WiringPosition};
+use wamn_sql::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 use wash_runtime::plugin::wasi_logging::TracingLogger;

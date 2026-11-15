@@ -90,12 +90,9 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
     .expect("fixture manifest loads");
     FlowHttpRouting::for_test(Some(Arc::new(release))).with_authenticator(Arc::new(
         PlatformRouteAuthenticator::for_test(
-            Arc::new(wamn_postgres_capability::WamnPostgres::with_provider(
-                Arc::new(wamn_postgres_capability::StaticCredentialProvider::new(
-                    std::collections::HashMap::new(),
-                    None,
-                )),
-            )),
+            Arc::new(wamn_sql::WamnPostgres::with_provider(Arc::new(
+                wamn_sql::StaticCredentialProvider::new(std::collections::HashMap::new(), None),
+            ))),
             "host-project",
             None,
             None,

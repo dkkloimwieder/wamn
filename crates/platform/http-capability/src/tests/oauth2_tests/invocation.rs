@@ -4,7 +4,14 @@ use std::task::{Context, Poll};
 
 use hyper::body::{Body, Frame, SizeHint};
 
-use super::*;
+use crate::transport::HttpTransport;
+use http_body_util::BodyExt as _;
+use hyper::service::service_fn;
+use hyper_util::rt::TokioIo;
+use std::convert::Infallible;
+use std::sync::{Arc, Mutex};
+use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 
 struct HeldBody;
 
@@ -24,10 +31,11 @@ impl Body for HeldBody {
     }
 }
 
-pub(super) struct Endpoint {
+#[derive(Debug)]
+pub struct Endpoint {
     pub base: String,
     pub transport: Arc<HttpTransport>,
-    pub native_transport: Arc<wamn_http_capability::transport::HttpTransport>,
+    pub native_transport: Arc<crate::transport::HttpTransport>,
     pub arrived: tokio::sync::oneshot::Receiver<()>,
     pub closed: tokio::sync::oneshot::Receiver<()>,
     task: JoinHandle<()>,
@@ -35,7 +43,7 @@ pub(super) struct Endpoint {
 
 impl Endpoint {
     pub async fn start() -> Self {
-        let address = super::super::interface_address();
+        let address = crate::test_util::interface_address();
         let certificate = rcgen::generate_simple_self_signed(vec![address.to_string()]).unwrap();
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
         let mut server = rustls::ServerConfig::builder_with_provider(Arc::clone(&provider))
@@ -87,9 +95,9 @@ impl Endpoint {
         });
         Self {
             base,
-            native_transport: Arc::new(
-                wamn_http_capability::transport::HttpTransport::with_tls_config(client.clone()),
-            ),
+            native_transport: Arc::new(crate::transport::HttpTransport::with_tls_config(
+                client.clone(),
+            )),
             transport: Arc::new(HttpTransport::with_tls_config(client)),
             arrived,
             closed,
@@ -104,7 +112,7 @@ impl Drop for Endpoint {
     }
 }
 
-pub(super) fn guest(operation: &str) -> Vec<u8> {
+pub fn guest(operation: &str) -> Vec<u8> {
     wat::parse_str(format!(r#"(component
         (type $context (record
             (field "wiring-id" string) (field "wiring-version" u32)

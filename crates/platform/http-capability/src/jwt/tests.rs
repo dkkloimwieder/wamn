@@ -136,7 +136,7 @@ async fn endpoint(algorithm: &'static str, scope: &'static str) -> Endpoint {
     use hyper_util::rt::TokioIo;
     use std::sync::{Arc, Mutex};
 
-    let address = super::super::tests::interface_address();
+    let address = crate::test_util::interface_address();
     let certificate = rcgen::generate_simple_self_signed(vec![address.to_string()]).unwrap();
     let tls = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::aws_lc_rs::default_provider(),

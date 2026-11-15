@@ -8,7 +8,7 @@ use wamn_platform_identity::connections::administration;
 use super::*;
 use crate::connection_credentials::test_util::Fixture;
 use crate::connection_memory::replicate;
-use wamn_capability_authority::auth_cache::test_util::{nats, until};
+use wamn_authority::auth_cache::test_util::{nats, until};
 struct NoProjectDatabase;
 #[async_trait::async_trait]
 impl crate::database::ProjectDatabase for NoProjectDatabase {

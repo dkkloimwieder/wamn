@@ -17,8 +17,6 @@ wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
 wamn-kubernetes = { workspace = true }
-wamn-scalar.workspace = true
-wamn-digest.workspace = true
 wamn-catalog = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-control-provision = { workspace = true }
@@ -26,17 +24,16 @@ wamn-event-wire = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-capability-authority = { workspace = true }
+wamn-authority = { workspace = true }
 wamn-connections = { workspace = true }
-wamn-postgres-capability = { workspace = true, features = ["wasm_component_model_implements"] }
-wamn-http-capability = { workspace = true }
+wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-http = { workspace = true }
 wamn-blobstore = { workspace = true }
 wamn-authentication = { workspace = true }
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-logging"] }
 futures-util = { workspace = true }
 anyhow = { workspace = true }
-async-nats = { workspace = true }
 async-trait = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 tracing-opentelemetry = { workspace = true }
@@ -54,13 +51,13 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
+wamn-digest.workspace = true
 wamn-platform-identity = { workspace = true, features = ["test-util"] }
 wamn-identity = { path = "../../services/identity" }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 chrono = { workspace = true, features = ["std", "clock"] }
 wamn-test-application = { workspace = true }
 wamn-component-artifact = { workspace = true, features = ["test-util"] }
-wamn-workflow = { workspace = true }
 opentelemetry-appender-tracing.workspace = true
 hyper-rustls = { workspace = true, features = ["http1"] }
 wamn-compiler = { workspace = true }
@@ -73,10 +70,10 @@ wamn-publish = { workspace = true, features = ["test-util"] }
 wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true, features = ["ops", "test-util"] }
 wamn-test-infrastructure = { workspace = true }
-wamn-capability-authority = { workspace = true, features = ["test-util"] }
+wamn-authority = { workspace = true, features = ["test-util"] }
 wamn-connections = { workspace = true, features = ["test-util"] }
-wamn-postgres-capability = { workspace = true, features = ["test-util"] }
-wamn-http-capability = { workspace = true, features = ["test-util"] }
+wamn-sql = { workspace = true, features = ["test-util"] }
+wamn-http = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { workspace = true, features = ["test-util"] }
 wamn-authentication = { workspace = true, features = ["test-util"] }
 wamn-identity-protocol = { workspace = true }

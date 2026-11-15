@@ -1,27 +1,51 @@
 [package]
 name = "wamn-events"
-description = "Run admission, CDC configuration, capture recovery and lifecycle."
+description = "Event publication, run admission, CDC configuration and capture recovery."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+test-util = ["wamn-engine/test-util", "wamn-authority/test-util", "wamn-sql/test-util"]
+
 [dependencies]
-wamn-run-state.workspace = true
-wamn-kubernetes.workspace = true
 tokio = { workspace = true, features = ["time"] }
-anyhow.workspace = true
-async-nats = { workspace = true, features = ["jetstream"] }
-chrono.workspace = true
+wamn-run-state = { workspace = true }
+wamn-kubernetes = { workspace = true }
+anyhow = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream", "kv"] }
+chrono = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
+serde_json = { workspace = true }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono"] }
-wamn-postgres.workspace = true
-wamn-registry.workspace = true
-wamn-control-provision.workspace = true
-wamn-event-wire.workspace = true
-wamn-broker.workspace = true
-wamn-catalog.workspace = true
-postgres-protocol.workspace = true
+wamn-postgres = { workspace = true }
+wamn-registry = { workspace = true }
+wamn-control-provision = { workspace = true }
+wamn-event-wire = { workspace = true }
+wamn-broker = { workspace = true }
+wamn-catalog = { workspace = true }
+postgres-protocol = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+tracing = { workspace = true }
+wamn-authority = { workspace = true }
+wamn-engine = { workspace = true }
+wamn-sql = { workspace = true }
+wash-runtime = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+sqlx = { workspace = true, features = ["macros", "migrate"] }
+wamn-connections = { workspace = true, features = ["test-util"] }
+wamn-identity-protocol = { workspace = true, features = ["test-util"] }
+wamn-events = { path = ".", features = ["test-util"] }
+wamn-sql = { workspace = true, features = ["test-util"] }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-catalog = { workspace = true, features = ["test-util"] }
+url.workspace = true
+wamn-test-infrastructure = { workspace = true }
+wamn-test-postgres = { workspace = true }
+tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync", "test-util"] }
+wamn-engine = { workspace = true, features = ["test-util"] }

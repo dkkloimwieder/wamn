@@ -55,13 +55,12 @@ Each library has one concern. Package names remain independent of directory name
 | `crates/execution-host` | `wamn-execution-host`: invocation authority, platform routes, and release readiness |
 | `crates/run-state` | `wamn-run-state`: persisted run admission, leases, and settlement |
 | `crates/workflow` | `wamn-workflow`: workflow lifecycle, graph traversal, and durable queue delivery |
-| `crates/platform/capability-authority` | `wamn-capability-authority`: shared invocation identity and effect evidence |
+| `crates/platform/capability-authority` | `wamn-authority`: shared invocation identity and effect evidence |
 | `crates/platform/postgres` | `wamn-postgres`: PostgreSQL connection configuration and transport |
-| `crates/platform/postgres-capability` | `wamn-postgres-capability`: host operation transactions and database authority |
-| `crates/platform/http-capability` | `wamn-http-capability`: authorized outbound HTTP and OAuth |
+| `crates/platform/postgres-capability` | `wamn-sql`: host operation transactions and database authority |
+| `crates/platform/http-capability` | `wamn-http`: authorized outbound HTTP and OAuth |
 | `crates/platform/connections` | `wamn-connections`: connection facts, credentials, and resource leases |
 | `crates/platform/integrations` | `wamn-integrations`: bound Wasm import dispatch |
-| `crates/platform/events-capability` | `wamn-events-capability`: guest event publication |
 | `crates/blobstore` | `wamn-blobstore`: authorized object storage |
 | `crates/authentication` | `wamn-authentication`: route authentication and session verification |
 | `crates/identity` | `wamn-platform-identity`: identity authority and its SQL |

@@ -83,24 +83,22 @@ impl Fixture {
             .execute(&mut client)
             .await
             .expect("commit fixture transaction");
-        let base = wamn_postgres_capability::WamnPostgresConfig {
+        let base = wamn_sql::WamnPostgresConfig {
             credentials: None,
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
             wait_timeout_ms: 2000,
             statement_timeout_ms: 5000,
         };
-        let projects = wamn_postgres_capability::StaticCredentialProvider::projects_from_json(
+        let projects = wamn_sql::StaticCredentialProvider::projects_from_json(
             &json!({(project):{"credentials":{"callable-http":self.database.as_str()}}})
                 .to_string(),
             &base,
         )
         .unwrap();
-        let postgres = Arc::new(wamn_postgres_capability::WamnPostgres::with_provider(
-            Arc::new(wamn_postgres_capability::StaticCredentialProvider::new(
-                projects, None,
-            )),
-        ));
+        let postgres = Arc::new(wamn_sql::WamnPostgres::with_provider(Arc::new(
+            wamn_sql::StaticCredentialProvider::new(projects, None),
+        )));
         let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
             Arc::clone(&self.memory),
             self.changes.clone(),
@@ -368,9 +366,9 @@ async fn missing_credentials_wrong_project_and_bad_secret_shapes_refuse() {
 #[tokio::test]
 #[ignore = "requires: nats, postgres, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete() {
+    use wamn_authority::auth_cache::test_util::{nats, until};
     use wamn_broker::auth_changes::AuthDrops;
     use wamn_broker::connection_changes::ConnectionDrops;
-    use wamn_capability_authority::auth_cache::test_util::{nats, until};
     use wamn_connections::connection_memory::replicate;
     use wamn_platform_identity::connections::administration;
 

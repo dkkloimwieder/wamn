@@ -1,9 +1,13 @@
-//! The key reader accepts the permissions rendered for the control service.
+//! The host key reader accepts the permissions rendered by the chart.
 
+#[path = "support/render_fixture.rs"]
+pub mod render_fixture;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde::Deserialize as _;
 use serde_json::Value;
 
 static RENDER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -13,8 +17,14 @@ fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("platform-install lives two levels below the repository")
+        .expect("environment lives two levels below the repository")
         .to_path_buf()
+}
+
+fn read_repository_file(root: &Path, relative: &str) -> String {
+    let path = root.join(relative);
+    fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
 }
 
 struct RenderDirectory(PathBuf);
@@ -41,6 +51,38 @@ impl Drop for RenderDirectory {
     }
 }
 
+fn render_chart(root: &Path, release: &str, values: &[&str]) -> Vec<Value> {
+    let metadata: Value = serde_yaml::from_str(&read_repository_file(
+        root,
+        "deploy/charts/environment/Chart.yaml",
+    ))
+    .expect("release chart metadata");
+    let version = metadata["dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|dependency| dependency["name"] == "runtime-operator")
+        .and_then(|dependency| dependency["version"].as_str())
+        .expect("the release chart selects the operator version");
+    let chart = format!("deploy/charts/environment/charts/runtime-operator-{version}.tgz");
+    let mut helm = Command::new("helm");
+    helm.current_dir(root)
+        .args(["template", release, &chart, "--namespace", "platform"]);
+    for value in values {
+        helm.args(["--values", value]);
+    }
+    let rendered = helm.output().expect("run the pinned Helm renderer");
+    assert!(
+        rendered.status.success(),
+        "Helm render failed: {}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    serde_yaml::Deserializer::from_slice(&rendered.stdout)
+        .map(|document| Value::deserialize(document).expect("decode rendered Kubernetes object"))
+        .filter(|object| !object.is_null())
+        .collect()
+}
+
 fn rendered_object<'a>(
     objects: &'a [Value],
     pair: (&str, &str),
@@ -58,32 +100,54 @@ fn rendered_object<'a>(
         .unwrap_or_else(|| panic!("rendered chart has no {} {} {name}", pair.0, pair.1))
 }
 
-fn render_control_objects(root: &Path) -> (Vec<Value>, String) {
-    let chart = root.join("deploy/platform/release");
-    let metadata: Value =
-        serde_yaml::from_slice(&fs::read(chart.join("Chart.yaml")).unwrap()).unwrap();
-    let name = "wamn-control";
-    let objects = wamn_kubernetes::helm::template(&serde_json::json!({
-        "chart": chart, "version": metadata["version"], "name": name, "namespace": "platform",
-        "values": {"controlService": true, "org": "acme", "control": {
-            "image": "wamn-control:dev", "configuration": {}, "account": "control",
-            "administration": "control-administration", "natsSecret": "control-nats",
-            "operatorSecret": "control-operator", "registrySecret": "registry-pull",
-            "oauthSecret": "wamn-oauth"
-        }}
-    }))
-    .expect("render the control service");
-    (objects, name.to_owned())
+fn render_host_objects(root: &Path) -> (Vec<Value>, String) {
+    use render_fixture::{EventIdentity, HostValuesInput};
+    let values = render_fixture::host_values(
+        &HostValuesInput {
+            namespace: "platform".into(),
+            host_tag: "dev".into(),
+            replicas: 3,
+            component_artifact_base: "registry.example/components".into(),
+            stream_replicas: 1,
+            dup_window_secs: 120,
+            event: EventIdentity {
+                org: "acme".into(),
+                project: "wms".into(),
+                environment: "dev".into(),
+            },
+            object_store_secret_name: None,
+        },
+        "wms",
+    )
+    .expect("render apply host values");
+    let overlay_values: Value = serde_yaml::from_str(&values.overlay).expect("decode host values");
+    let name = format!(
+        "hostgroup-{}",
+        overlay_values["runtime"]["hostGroups"][0]["name"]
+            .as_str()
+            .unwrap()
+    );
+    let work = RenderDirectory::create();
+    let base = work.path().join("base.yaml");
+    let overlay = work.path().join("overlay.yaml");
+    fs::write(&base, values.base).expect("write release host defaults");
+    fs::write(&overlay, values.overlay).expect("write apply host values");
+    let output = render_chart(
+        root,
+        "wamn-host",
+        &[base.to_str().unwrap(), overlay.to_str().unwrap()],
+    );
+    (output, name)
 }
 
-fn control_container(deployment: &Value) -> &Value {
+fn host_container(deployment: &Value) -> &Value {
     let containers = deployment["spec"]["template"]["spec"]["containers"]
         .as_array()
-        .expect("rendered control Deployment carries containers");
+        .expect("rendered host Deployment carries containers");
     containers
         .iter()
-        .find(|container| container["name"] == "control")
-        .expect("rendered control container")
+        .find(|container| container["name"] == "host")
+        .expect("rendered host container")
 }
 
 #[test]
@@ -91,16 +155,16 @@ fn control_container(deployment: &Value) -> &Value {
 fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let (objects, name) = render_control_objects(&repository_root());
+    let (objects, name) = render_host_objects(&repository_root());
     let deployment = rendered_object(&objects, DEPLOYMENT, &name, "platform");
     let pod = &deployment["spec"]["template"]["spec"];
-    let container = control_container(deployment);
+    let container = host_container(deployment);
     let key = container["env"]
         .as_array()
         .unwrap()
         .iter()
         .find(|entry| entry["name"] == "WAMN_OAUTH_KEY_FILE")
-        .expect("the control service declares its OAuth key file")["value"]
+        .expect("the local host declares its OAuth key file")["value"]
         .as_str()
         .unwrap();
     let (mount, relative) = container["volumeMounts"]

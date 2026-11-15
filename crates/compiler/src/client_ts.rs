@@ -1354,7 +1354,7 @@ mod tests {
         let package = contract
             .push_str(
                 "package.wit",
-                include_str!("../../../../wit/wamn-postgres-0.4/package.wit"),
+                include_str!("../../../wit/wamn-postgres-0.4/package.wit"),
             )
             .unwrap();
         let interface = contract.packages[package].interfaces["types"];

@@ -225,9 +225,8 @@ impl Authorization {
         )
         .map_err(|error| failed("invalid authorization parameters", error))?;
         let parameters = &context["parameters"];
-        let authority =
-            wamn_capability_authority::connection_authority::parse_http_definition(parameters)
-                .map_err(|error| failed("invalid connection authority", error))?;
+        let authority = wamn_authority::connection_authority::parse_http_definition(parameters)
+            .map_err(|error| failed("invalid connection authority", error))?;
         let decision = crate::token_endpoint(
             &authority,
             request.token_authority.as_deref(),

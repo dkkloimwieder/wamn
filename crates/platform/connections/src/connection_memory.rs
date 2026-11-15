@@ -3,7 +3,7 @@
 //!
 //! Postgres stays the owner of every fact here. The memory is the local
 //! replica of the NATS KV bucket [`BUCKET`] on the NATS of the auth memory,
-//! under the rules of [`wamn_capability_authority::kv_memory`]. The key
+//! under the rules of [`wamn_authority::kv_memory`]. The key
 //! `<project_env_key>.connection.<connection id>` holds the active generation, the
 //! effective status, credential id, service principal id and lease coordinates of a connection. The key
 //! `<project_env_key>.release.<manifest digest hex>` holds the connection map of a
@@ -26,8 +26,8 @@ use async_nats::jetstream::kv::Store;
 use wamn_broker::connection_changes::{BUCKET, connection_key, connections_key, release_key};
 use wamn_broker::kv_memory::CONNECTION_MEMORY_TTL;
 
-pub use wamn_capability_authority::kv_memory::Ticket;
-use wamn_capability_authority::kv_memory::{KvMemory, Watched};
+pub use wamn_authority::kv_memory::Ticket;
+use wamn_authority::kv_memory::{KvMemory, Watched};
 
 /// The effective status of a connection: active only when the integration
 /// and the connection are both active.
@@ -301,15 +301,15 @@ pub fn replicate(
         Some(project_env_key) => vec![wamn_registry::name::nats_subject(&[project_env_key, ">"])],
         None => vec![">".to_owned()],
     };
-    wamn_capability_authority::kv_memory::spawn_watch(client, BUCKET, filters, holder);
+    wamn_authority::kv_memory::spawn_watch(client, BUCKET, filters, holder);
     Publisher::new(client.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_authority::auth_cache::test_util::{nats, until};
     use wamn_broker::connection_changes::ConnectionDrops;
-    use wamn_capability_authority::auth_cache::test_util::{nats, until};
 
     fn fact(generation: i64) -> ConnectionFact {
         ConnectionFact {

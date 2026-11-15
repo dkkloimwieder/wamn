@@ -3,7 +3,7 @@
 use sqlx::Row as _;
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use wamn_capability_authority::auth_cache::PrincipalGrants;
+use wamn_authority::auth_cache::PrincipalGrants;
 
 /// The status row of the environment, which `wamn_app` reads under its
 /// database boundary.
@@ -30,8 +30,8 @@ const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permis
 
 fn principal_grants_from_rows(
     rows: &[sqlx::postgres::PgRow],
-) -> Result<wamn_capability_authority::auth_cache::PrincipalGrants, sqlx::Error> {
-    let mut grants = wamn_capability_authority::auth_cache::PrincipalGrants {
+) -> Result<wamn_authority::auth_cache::PrincipalGrants, sqlx::Error> {
+    let mut grants = wamn_authority::auth_cache::PrincipalGrants {
         present: !rows.is_empty(),
         ..Default::default()
     };
@@ -151,7 +151,7 @@ impl std::error::Error for SessionGrantRefusal {}
 /// The grants an active principal holds, from all its roles or only from the
 /// `signed` roles it still holds.
 pub fn session_grants(
-    grants: &wamn_capability_authority::auth_cache::PrincipalGrants,
+    grants: &wamn_authority::auth_cache::PrincipalGrants,
     roles: &[wamn_identity_protocol::RoleName],
 ) -> anyhow::Result<HeldOperationGrants> {
     if !grants.active || !grants.user {
@@ -173,7 +173,7 @@ pub fn session_grants(
 }
 
 pub fn held_grants(
-    grants: &wamn_capability_authority::auth_cache::PrincipalGrants,
+    grants: &wamn_authority::auth_cache::PrincipalGrants,
     signed: Option<&[wamn_identity_protocol::RoleName]>,
 ) -> HeldOperationGrants {
     let mut held = HeldOperationGrants {
@@ -198,7 +198,7 @@ pub fn held_grants(
 #[async_trait::async_trait]
 pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
     fn set_hierarchy_reader(&self, key: &str, reader: sqlx::PgPool);
-    fn auth_cache(&self) -> &Arc<wamn_capability_authority::auth_cache::AuthCache>;
+    fn auth_cache(&self) -> &Arc<wamn_authority::auth_cache::AuthCache>;
     async fn environment_inactive(&self, project: &str, key: &str) -> anyhow::Result<bool>;
     async fn session_operation_permissions(
         &self,

@@ -21,9 +21,9 @@ wamn-environment.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-publish.workspace = true
 wamn-registry.workspace = true
-wamn-release-control.workspace = true
 
 [dev-dependencies]
+wamn-release-control.workspace = true
 postgres-protocol.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_yaml.workspace = true

@@ -13,10 +13,10 @@ use wamn_event_wire::Causation;
 use wamn_identity_protocol::AuthorityClass;
 use wamn_registry::identifiers::{valid_project, valid_project_env_key};
 
-use wamn_capability_authority::connection::ConnectionInvocation;
+use wamn_authority::connection::ConnectionInvocation;
 #[cfg(test)]
-use wamn_capability_authority::identity::CandidateBindingWorld;
-use wamn_capability_authority::identity::{
+use wamn_authority::identity::CandidateBindingWorld;
+use wamn_authority::identity::{
     ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, SessionIdentity,
 };
 
@@ -99,7 +99,7 @@ pub struct WamnPostgres {
     pub(super) bind_counters: super::BindCounters,
     /// The auth facts this host keeps
     /// (docs/architecture/execution.md#auth-memory).
-    auth: Arc<wamn_capability_authority::auth_cache::AuthCache>,
+    auth: Arc<wamn_authority::auth_cache::AuthCache>,
     hierarchy_reader: std::sync::RwLock<HashMap<String, sqlx::PgPool>>,
 }
 
@@ -308,9 +308,7 @@ impl WamnPostgres {
             bound = bound.min(std::time::Duration::from_secs(seconds));
         }
         drop(connection);
-        self.auth = Arc::new(wamn_capability_authority::auth_cache::AuthCache::with_ttl(
-            bound,
-        ));
+        self.auth = Arc::new(wamn_authority::auth_cache::AuthCache::with_ttl(bound));
         Ok(())
     }
 
@@ -326,8 +324,8 @@ impl WamnPostgres {
         &self,
         key: &str,
         principal: &wamn_identity_protocol::PrincipalId,
-        mut grants: wamn_capability_authority::auth_cache::PrincipalGrants,
-    ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
+        mut grants: wamn_authority::auth_cache::PrincipalGrants,
+    ) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
         if self.inherits_administration(key, principal).await? {
             grants.present = true;
             grants.active = true;
@@ -367,9 +365,9 @@ impl WamnPostgres {
     }
 
     /// The auth facts this host keeps. A message on
-    /// [`replicate`](wamn_capability_authority::auth_cache::replicate) keeps them in step with
+    /// [`replicate`](wamn_authority::auth_cache::replicate) keeps them in step with
     /// the other hosts.
-    pub fn auth_cache(&self) -> &Arc<wamn_capability_authority::auth_cache::AuthCache> {
+    pub fn auth_cache(&self) -> &Arc<wamn_authority::auth_cache::AuthCache> {
         &self.auth
     }
 
@@ -865,7 +863,7 @@ impl WamnPostgres {
             .invocation(component_id)
             .context("no admitted connection invocation")?;
         let manifest = loaded.manifest();
-        let application = wamn_capability_authority::connection::released_invocation_application(
+        let application = wamn_authority::connection::released_invocation_application(
             manifest,
             loaded.target(),
             &invocation,
@@ -887,13 +885,10 @@ impl WamnPostgres {
             .get(lookup.operation)
             .context("release does not carry the executing operation")?;
         let entry_matches = match (&invocation.entry, lookup.entry.wiring) {
-            (wamn_capability_authority::connection::InvocationEntry::Route, None) => {
+            (wamn_authority::connection::InvocationEntry::Route, None) => {
                 lookup.entry.package_id == invocation.origin.package_id
             }
-            (
-                wamn_capability_authority::connection::InvocationEntry::Wiring(position),
-                Some(wiring),
-            ) => {
+            (wamn_authority::connection::InvocationEntry::Wiring(position), Some(wiring)) => {
                 lookup.entry.package_id == position.package_id
                     && wiring.wiring_id == position.wiring_id
                     && u32::try_from(wiring.wiring_version).ok() == Some(position.wiring_version)
@@ -1120,7 +1115,7 @@ impl WamnPostgres {
         project: &str,
         project_env_key: &str,
         principal: &wamn_identity_protocol::PrincipalId,
-    ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
+    ) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
         let grants = self
             .read_principal_grants(
                 project,
@@ -1139,7 +1134,7 @@ impl WamnPostgres {
         project_env_key: &str,
         principal: &wamn_identity_protocol::PrincipalId,
         class: AuthorityClass,
-    ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
+    ) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
         anyhow::ensure!(
             valid_project(project),
             "invalid operation-permission project"
@@ -1225,7 +1220,7 @@ impl WamnPostgres {
     /// from its row of `platform.environment`, read as `wamn_app`
     /// (docs/architecture/execution.md#routing-and-availability). No row means
     /// active. The host keeps the answer in its [auth
-    /// memory](wamn_capability_authority::auth_cache).
+    /// memory](wamn_authority::auth_cache).
     pub async fn environment_inactive(
         &self,
         project: &str,
@@ -1333,7 +1328,7 @@ impl WamnPostgres {
         Ok(grants
             .active
             .then(|| {
-                wamn_capability_authority::auth_cache::role_caller(
+                wamn_authority::auth_cache::role_caller(
                     principal.to_string().as_str(),
                     role,
                     &grants.roles,
@@ -1435,7 +1430,7 @@ impl WamnPostgres {
     /// Supply isolated auth memory for capability boundary fixtures.
     pub fn with_auth_cache_for_test(
         mut self,
-        auth: Arc<wamn_capability_authority::auth_cache::AuthCache>,
+        auth: Arc<wamn_authority::auth_cache::AuthCache>,
     ) -> Self {
         self.auth = auth;
         self
@@ -1448,7 +1443,7 @@ impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
         self.set_hierarchy_reader(key, reader);
     }
 
-    fn auth_cache(&self) -> &Arc<wamn_capability_authority::auth_cache::AuthCache> {
+    fn auth_cache(&self) -> &Arc<wamn_authority::auth_cache::AuthCache> {
         self.auth_cache()
     }
 
@@ -1482,7 +1477,7 @@ impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
         project: &str,
         key: &str,
         principal: &wamn_identity_protocol::PrincipalId,
-    ) -> anyhow::Result<wamn_capability_authority::auth_cache::PrincipalGrants> {
+    ) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
         self.principal_grants(project, key, principal).await
     }
 }

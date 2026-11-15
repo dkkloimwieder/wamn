@@ -220,7 +220,7 @@ The selector prepares the guest numbering refusal test through `input:numbering-
 
 ```sh
 cargo build --manifest-path apps/Cargo.toml -p wamn-postgres-statements --example numbering_refusal --target wasm32-wasip2
-"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database tests --url-env DATABASE_URL -- cargo test -p wamn-postgres-capability --lib query_tests::live_an_invalid_timezone_setting_is_refused -- --ignored --exact
+"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database tests --url-env DATABASE_URL -- cargo test -p wamn-sql --lib query_tests::live_an_invalid_timezone_setting_is_refused -- --ignored --exact
 ```
 
 The generated exclusion tests in `apps/Cargo.toml` need PostgreSQL diagnostics, so each runs through its own example.
@@ -441,8 +441,8 @@ Both runners use the shared process boundary in `cargo xtask require-test-result
 The silence limit and the absolute deadline apply independently. Output cannot extend a deadline.
 The epoch interruption case lives in `wamn-engine --test deadline`.
 Pure calendar scheduling decisions live in `wamn-workflow --test schedule_decisions`.
-Admission authority stays in `wamn-run-state --test admission_live`.
-`wamn-run-state --test run_state_live` covers atomic admission, lease recovery, fencing and retention.
+Admission authority stays in `wamn-control-provision --test admission_live`.
+`wamn-control-provision --test run_state_live` covers atomic admission, lease recovery, fencing and retention.
 Live schedule cases call the service with its real clock and can take several minutes.
 Schedule storage stays in `wamn-environment --test workflow_schedule_live`.
 Broker acknowledgement lives in `wamn-environment --test workflow_event_nats`.
@@ -1232,5 +1232,5 @@ The test starts private database, broker, registry, TLS, and Modbus fixtures.
 It tests good and bad candidates, version selection, cached compilation, authority refusal, and unchanged generation and credential counts.
 
 ```bash
-cargo test --locked --offline -p wamn-execution-host --test control_route_live --features wamn-postgres-capability/wasm_component_model_implements,wash-runtime/washlet connection_test::candidate_http_and_modbus_health_commit_nothing -- --ignored --exact --nocapture
+cargo test --locked --offline -p wamn-execution-host --test control_route_live --features wamn-sql/wasm_component_model_implements,wash-runtime/washlet connection_test::candidate_http_and_modbus_health_commit_nothing -- --ignored --exact --nocapture
 ```

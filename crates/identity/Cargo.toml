@@ -19,7 +19,6 @@ jsonwebtoken = { workspace = true }
 wamn-digest.workspace = true
 uuid = { workspace = true }
 anyhow = { workspace = true }
-tracing = { workspace = true }
 argon2 = { workspace = true }
 zeroize = { workspace = true }
 base64 = { workspace = true }
@@ -39,10 +38,8 @@ url = { workspace = true }
 sha2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 chrono = { workspace = true }
-wamn-postgres-capability = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 async-trait = { workspace = true }
-wamn-test-infrastructure = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync"] }
 # The live tests apply the system schema composition and bind platform principals.
 wamn-control-provision = { workspace = true, features = ["test-util"] }

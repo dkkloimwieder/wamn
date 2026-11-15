@@ -167,7 +167,7 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) org: &'a str,
     /// Publishes each user row and status change of an environment.
     pub(crate) changes: &'a Publisher,
-    pub(crate) oauth: Option<&'a wamn_http_capability::oauth_authorization::Authorization>,
+    pub(crate) oauth: Option<&'a wamn_http::oauth_authorization::Authorization>,
     pub(crate) connection_health: Option<&'a crate::connection_health::ConnectionHealth>,
 }
 

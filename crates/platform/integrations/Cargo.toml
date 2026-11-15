@@ -14,12 +14,11 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 uuid.workspace = true
-wamn-capability-authority.workspace = true
 wamn-catalog.workspace = true
 wamn-connections.workspace = true
 wamn-engine.workspace = true
 wamn-package-artifact.workspace = true
-wamn-postgres-capability.workspace = true
+wamn-sql.workspace = true
 wash-runtime.workspace = true
 wasmtime.workspace = true
 

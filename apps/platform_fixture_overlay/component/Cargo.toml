@@ -6,9 +6,6 @@ description = "Package-grain platform fixture overlay operation component"
 license = "Apache-2.0"
 
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
-uuid.workspace = true
 wamn-data-access = { workspace = true }
 wamn-postgres-statements = { workspace = true }
 wit-bindgen = { workspace = true }

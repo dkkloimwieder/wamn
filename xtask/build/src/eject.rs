@@ -122,7 +122,7 @@ pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
         "format ejected action: {}",
         String::from_utf8_lossy(&formatting.stderr)
     );
-    let span = implementation.span();
+    let span: proc_macro2::Span = implementation.span();
     let offset = |line: usize, column: usize| {
         original
             .split_inclusive('\n')

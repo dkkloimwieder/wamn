@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::{OperationTransaction, SessionIdentity, WamnPostgres};
-use wamn_capability_authority::connection::{
+use wamn_authority::connection::{
     ConnectionExecutionClosure, ConnectionInvocation, InvocationEntry,
 };
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
@@ -57,11 +57,9 @@ pub fn validate_context(
         identity.project_env_key == context.release.target().project_env_key
             && identity.project.as_deref() == Some(context.connections.project())
             && identity.release.as_ref()
-                == Some(
-                    &wamn_capability_authority::identity::ReleaseIdentity::from_loaded(
-                        &context.release
-                    )
-                ),
+                == Some(&wamn_authority::identity::ReleaseIdentity::from_loaded(
+                    &context.release
+                )),
         "invocation release authority mismatch"
     );
     Ok(())
@@ -79,9 +77,9 @@ pub fn bind_test_context(
     postgres.scopes.update::<Authority, _>(scope, |record| {
         record.identity.project_env_key = context.release.target().project_env_key.clone();
         record.identity.project = Some(context.connections.project().to_owned());
-        record.identity.release = Some(
-            wamn_capability_authority::identity::ReleaseIdentity::from_loaded(&context.release),
-        );
+        record.identity.release = Some(wamn_authority::identity::ReleaseIdentity::from_loaded(
+            &context.release,
+        ));
         record.context = Some(context);
     });
 }

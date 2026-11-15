@@ -211,8 +211,6 @@ dependencies = [
 name = "client-acme-receiving"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
  "uuid",
  "wamn-data-access",
  "wamn-postgres-statements",
@@ -401,9 +399,6 @@ dependencies = [
 name = "device"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
- "uuid",
  "wamn-data-access",
  "wit-bindgen 0.62.0",
 ]
@@ -498,9 +493,7 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 name = "fixture"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
- "uuid",
  "wamn-data-access",
  "wamn-postgres-statements",
  "wit-bindgen 0.62.0",
@@ -510,9 +503,6 @@ dependencies = [
 name = "fixture-overlay"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
- "uuid",
  "wamn-data-access",
  "wamn-postgres-statements",
  "wit-bindgen 0.62.0",
@@ -1058,9 +1048,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 name = "modbus-reader"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
- "uuid",
  "wamn-data-access",
  "wit-bindgen 0.62.0",
 ]
@@ -1071,9 +1059,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "jsonata-expression",
- "serde",
  "serde_json",
- "uuid",
  "wamn-data-access",
  "wit-bindgen 0.62.0",
 ]
@@ -1229,7 +1215,6 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 name = "receiving"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
  "uuid",
  "wamn-data-access",
@@ -1304,9 +1289,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "jsonata-core",
- "serde",
  "serde_json",
- "uuid",
  "wamn-data-access",
  "wit-bindgen 0.62.0",
 ]
@@ -1317,7 +1300,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "uuid",
  "wamn-data-access",
  "wamn-postgres-statements",
  "wit-bindgen 0.62.0",
@@ -1333,9 +1315,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 name = "samples"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
- "uuid",
  "wamn-data-access",
  "wamn-postgres-statements",
  "wit-bindgen 0.62.0",
@@ -1942,15 +1922,11 @@ dependencies = [
  "wamn-event-wire",
  "wamn-record-history",
  "wamn-scalar",
- "wit-parser 0.254.2",
 ]
 
 [[package]]
 name = "wamn-component-policy"
 version = "0.1.0"
-dependencies = [
- "serde_json",
-]
 
 [[package]]
 name = "wamn-data-access"
@@ -1988,9 +1964,6 @@ dependencies = [
 name = "wamn-integration"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
- "uuid",
  "wamn-data-access",
  "wamn-postgres-statements",
  "wit-bindgen 0.62.0",
@@ -2105,7 +2078,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1d0246511d901aacf25d2dc9111f0054947de5e093fe662099e709ff7530dc3"
 dependencies = [
  "leb128fmt",
- "wasmparser 0.259.0",
+ "wasmparser",
 ]
 
 [[package]]
@@ -2117,18 +2090,7 @@ dependencies = [
  "anyhow",
  "indexmap",
  "wasm-encoder",
- "wasmparser 0.259.0",
-]
-
-[[package]]
-name = "wasmparser"
-version = "0.254.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5ff8685b587722894b6f25958fc608d315b93b8d23647bfb567664e7006d757"
-dependencies = [
- "bitflags",
- "indexmap",
- "semver",
+ "wasmparser",
 ]
 
 [[package]]
@@ -2241,7 +2203,7 @@ checksum = "72ad22a37ecbc0e1fdca34d2b670ba41368cb0920735643e00fdf39a16ee5431"
 dependencies = [
  "anyhow",
  "heck",
- "wit-parser 0.259.0",
+ "wit-parser",
 ]
 
 [[package]]
@@ -2290,27 +2252,8 @@ dependencies = [
  "serde_json",
  "wasm-encoder",
  "wasm-metadata",
- "wasmparser 0.259.0",
- "wit-parser 0.259.0",
-]
-
-[[package]]
-name = "wit-parser"
-version = "0.254.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22672d61bfb9df46a16b46ce38522293aee1cc4749fc84a3464ce4083b3d5fd6"
-dependencies = [
- "anyhow",
- "hashbrown 0.17.1",
- "id-arena",
- "indexmap",
- "log",
- "semver",
- "serde",
- "serde_derive",
- "serde_json",
- "unicode-ident",
- "wasmparser 0.254.2",
+ "wasmparser",
+ "wit-parser",
 ]
 
 [[package]]
@@ -2329,7 +2272,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "unicode-ident",
- "wasmparser 0.259.0",
+ "wasmparser",
 ]
 
 [[package]]
@@ -2338,7 +2281,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "uuid",
  "wamn-data-access",
  "wamn-postgres-statements",
  "wamn-scalar",

@@ -21,11 +21,9 @@ use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHttpRouting};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_postgres_capability::{
-    AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
-};
+use wamn_sql::{AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
 
-#[path = "../../platform/postgres-capability/tests/support/session_fixture.rs"]
+#[path = "support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also provides verifier-only fetch barriers."
@@ -88,7 +86,7 @@ async fn install(
         .execute(&mut *admin)
         .await
         .map(drop)?;
-    sqlx::raw_sql(include_str!("../../../deploy/sql/app-schema.sql"))
+    sqlx::raw_sql(include_str!("../../../../deploy/sql/app-schema.sql"))
         .execute(&mut *admin)
         .await
         .map(drop)?;
@@ -165,8 +163,6 @@ async fn seed(admin: &mut Client) -> anyhow::Result<()> {
         .execute(&mut *admin)
         .await
         .expect("commit fixture transaction");
-    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-        .bind(&first).execute(&mut *admin).await?;
     Ok(())
 }
 
@@ -333,7 +329,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         .execute(&mut other_admin)
         .await
         .map(drop)?;
-    sqlx::raw_sql(include_str!("../../../deploy/sql/app-schema.sql"))
+    sqlx::raw_sql(include_str!("../../../../deploy/sql/app-schema.sql"))
         .execute(&mut other_admin)
         .await
         .map(drop)?;

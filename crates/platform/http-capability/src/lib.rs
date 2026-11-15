@@ -17,40 +17,36 @@ use std::time::Duration;
 use anyhow::Context as _;
 
 use tracing::Instrument as _;
-use wamn_capability_authority::EffectOutcome;
+use wamn_authority::EffectOutcome;
 #[cfg(test)]
-use wamn_capability_authority::connection::{
-    ConnectionExecutionClosure, ConnectionOrigin, InvocationEntry, authorize_candidate_closure,
+use wamn_authority::connection::{
+    ConnectionExecutionClosure, InvocationEntry, authorize_candidate_closure,
     authorize_release_closure, entry_lookup, test_release,
 };
-use wamn_capability_authority::connection::{ConnectionInvocation, authorize_snapshot};
+use wamn_authority::connection::{ConnectionInvocation, authorize_snapshot};
 #[cfg(test)]
-use wamn_capability_authority::identity::{CandidateBindingWorld, ConnectionEffectSnapshot};
-use wamn_capability_authority::normalize_portable_http_target;
+use wamn_authority::identity::{CandidateBindingWorld, ConnectionEffectSnapshot};
+use wamn_authority::normalize_portable_http_target;
 use wamn_catalog::ConnectionTypeDescriptor;
-#[cfg(test)]
-use wamn_catalog::{ServingComponent, ServingManifest};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::{Accessor, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use wamn_capability_authority::connection_authority::{
+use wamn_authority::connection_authority::{
     AuthorityDecision, AuthorityError, HttpConnectionAuthority, TokioDnsResolver,
     bound_http_target, bound_oauth_token, resolve_http_request,
 };
-use wamn_capability_authority::effect_span::{
+use wamn_authority::effect_span::{
     EFFECT_OPERATION, EffectIdentity, EffectOutcomeGuard, HTTP_EFFECT_DURATION_MS, effect_span,
     record_effect_ms, record_wiring,
 };
-#[cfg(test)]
-use wamn_engine::release_manifest::LoadedRelease;
 
 use wamn_connections::connection_credentials::ConnectionGeneration;
 use wamn_connections::connection_facts::{ConnectionFacts, Secret};
 use wamn_connections::connection_memory::{ConnectionFact, ConnectionStatus};
-use wamn_postgres_capability::WamnPostgres;
+use wamn_sql::WamnPostgres;
 
 mod authentication;
 mod jwt;
@@ -77,7 +73,7 @@ mod bindings {
 }
 
 use bindings::wamn::connection::http::{self, Header, Request, Response};
-use wamn_capability_authority::connection::ConnectionError;
+use wamn_authority::connection::ConnectionError;
 
 pub const CONNECTION_HTTP_ID: &str = "wamn-connection-http";
 const AUTHORITY_SNAPSHOT_UNAVAILABLE: &str = "connection-authority-unavailable";
@@ -101,8 +97,16 @@ impl std::fmt::Debug for ConnectionHttp {
 
 /// Host-owned services and identity for the trusted HTTP effect.
 pub struct ConnectionHttp {
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub postgres: Arc<WamnPostgres>,
+    #[cfg(not(feature = "test-util"))]
     postgres: Arc<WamnPostgres>,
     transport: Arc<HttpTransport>,
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub allowed_hosts: Arc<[AllowedHost]>,
+    #[cfg(not(feature = "test-util"))]
     allowed_hosts: Arc<[AllowedHost]>,
 }
 
@@ -194,9 +198,8 @@ impl ConnectionHttp {
         component_id: &str,
         request: &Request,
     ) -> Result<Response, ConnectionError> {
-        let context =
-            wamn_postgres_capability::invocation::context(&self.postgres.scopes, component_id)
-                .map_err(|_| ConnectionError::AttestationInvalid)?;
+        let context = wamn_sql::invocation::context(&self.postgres.scopes, component_id)
+            .map_err(|_| ConnectionError::AttestationInvalid)?;
         let facts = &context.connections;
         let oauth2_cache = facts.oauth_tokens();
         let first = self.attempt(&context, component_id, request, None).await?;
@@ -252,7 +255,7 @@ impl ConnectionHttp {
 
     async fn attempt(
         &self,
-        context: &wamn_postgres_capability::invocation::ReleaseContext,
+        context: &wamn_sql::invocation::ReleaseContext,
         component_id: &str,
         request: &Request,
         rejected: Option<&str>,
@@ -273,7 +276,7 @@ impl ConnectionHttp {
             .ok_or(ConnectionError::AttestationInvalid)?;
         let facts = &context.connections;
         let environment = facts.environment();
-        let snapshot = wamn_postgres_capability::connection_binding::resolve(
+        let snapshot = wamn_sql::connection_binding::resolve(
             &self.postgres,
             component_id,
             &request.requirement,
@@ -290,9 +293,8 @@ impl ConnectionHttp {
             .definition
             .as_ref()
             .ok_or(ConnectionError::CredentialUnavailable)?;
-        let authority =
-            wamn_capability_authority::connection_authority::parse_http_definition(definition)
-                .map_err(|error| authority_denied("definition", &error))?;
+        let authority = wamn_authority::connection_authority::parse_http_definition(definition)
+            .map_err(|error| authority_denied("definition", &error))?;
         let decision = resolve_http_request(
             &authority,
             &target,
@@ -411,7 +413,7 @@ impl ConnectionHttp {
         let principal = self
             .postgres
             .scopes
-            .read::<wamn_postgres_capability::invocation::Authority, _>(component_id, |record| {
+            .read::<wamn_sql::invocation::Authority, _>(component_id, |record| {
                 record
                     .identity
                     .user_id
@@ -747,7 +749,7 @@ pub fn inject_trace_context(headers: &mut hyper::header::HeaderMap) {
 async fn execute(
     transport: &HttpTransport,
     identity: ClientIdentity,
-    decision: wamn_capability_authority::connection_authority::AuthorityDecision,
+    decision: wamn_authority::connection_authority::AuthorityDecision,
     request: &Request,
     credentials: HashMap<String, String>,
 ) -> Result<Response, ConnectionError> {
@@ -840,8 +842,7 @@ pub async fn health(
     credential: Option<&str>,
 ) -> Result<(), String> {
     async {
-        let authority =
-            wamn_capability_authority::connection_authority::parse_http_definition(parameters)?;
+        let authority = wamn_authority::connection_authority::parse_http_definition(parameters)?;
         let url = url::Url::parse(authority.canonical_base_url())?;
         anyhow::ensure!(url.scheme() == "https", "HTTP health requires TLS");
         let host = url.host_str().context("HTTP authority has no host")?;
@@ -961,7 +962,7 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<Connecti
 /// `ConnectionError::AttestationInvalid`, and an empty value says so where a
 /// missing field would look like lost instrumentation.
 fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
-    let make_span = |identity: Option<&wamn_capability_authority::identity::SessionIdentity>| {
+    let make_span = |identity: Option<&wamn_authority::identity::SessionIdentity>| {
         effect_span!(
             "wamn.connection_http",
             EffectIdentity {
@@ -981,7 +982,7 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
     let span = plugin
         .postgres
         .scopes
-        .read::<wamn_postgres_capability::invocation::Authority, _>(component_id, |record| {
+        .read::<wamn_sql::invocation::Authority, _>(component_id, |record| {
             make_span(Some(&record.identity))
         })
         .unwrap_or_else(|| make_span(None));
@@ -1089,12 +1090,9 @@ impl<T: 'static + Send> http::HostWithStore<T> for SharedCtx {
                 if plugin
                     .postgres
                     .scopes
-                    .read::<wamn_postgres_capability::invocation::Authority, _>(
-                        &component_id,
-                        |record| {
-                            record_duration(record.identity.project.as_deref().unwrap_or(""));
-                        },
-                    )
+                    .read::<wamn_sql::invocation::Authority, _>(&component_id, |record| {
+                        record_duration(record.identity.project.as_deref().unwrap_or(""));
+                    })
                     .is_none()
                 {
                     record_duration("");
@@ -1123,12 +1121,9 @@ impl<T: 'static + Send> http::HostWithStore<T> for SharedCtx {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
 
-    use wamn_catalog::{
-        AdmittedComponentOperation, OperationType, PackageCoordinate,
-        SERVING_MANIFEST_FORMAT_VERSION, ServingRelease, ServingRoute,
-    };
+    use wamn_catalog::{OperationType, PackageCoordinate, ServingRoute};
 
     use super::*;
 
@@ -1136,51 +1131,15 @@ mod tests {
     use wamn_connections::connection_credentials::ConnectionCredentials;
     use wamn_connections::connection_memory::ConnectionMemory;
 
+    use crate::test_util::{
+        digest, effect_request, fixture_wiring_hash, interface_address, invocation, manifest,
+        snapshot,
+    };
+
     mod credential_retry_tests;
     mod oauth2_tests;
 
-    use wamn_postgres_capability::WamnPostgresConfig;
-
-    pub(super) fn interface_address() -> std::net::IpAddr {
-        let socket = std::net::UdpSocket::bind("0.0.0.0:0").expect("address selection socket");
-        socket
-            .connect("192.0.2.1:9")
-            .expect("select a private interface");
-        socket.local_addr().expect("interface address").ip()
-    }
-
-    fn digest(byte: char) -> String {
-        format!("sha256:{}", byte.to_string().repeat(64))
-    }
-
-    fn invocation() -> ConnectionInvocation {
-        ConnectionInvocation {
-            origin: ConnectionOrigin {
-                package_id: "package_a".to_string(),
-                component_digest: digest('a'),
-                component: "notifier".to_string(),
-                interface_version: "0.1".to_string(),
-                operation: "orders:notify/dispatch@1.0.0".to_string(),
-            },
-            entry: wamn_capability_authority::connection::InvocationEntry::Wiring(
-                wamn_capability_authority::connection::WiringPosition {
-                    package_id: "package_a".to_string(),
-                    wiring_hash: fixture_wiring_hash(),
-                    wiring_id: "orders".to_string(),
-                    wiring_version: 3,
-                    node_id: "notify".to_string(),
-                    occurrence: 2,
-                    configuration: Default::default(),
-                },
-            ),
-            package_id: "package_a".to_string(),
-            component_digest: digest('a'),
-            component: "notifier".to_string(),
-            operation: "orders:notify/dispatch@1.0.0".to_string(),
-            closure: ConnectionExecutionClosure::Released,
-            effects: None,
-        }
-    }
+    use wamn_sql::WamnPostgresConfig;
 
     fn offline_postgres() -> WamnPostgres {
         WamnPostgres::new(WamnPostgresConfig {
@@ -1225,52 +1184,10 @@ mod tests {
     }
 
     /// The hash of the fixture wiring's graph, the one the manifest carries.
-    fn fixture_wiring_hash() -> String {
-        wamn_catalog::fixture_graph("orders", 3)
-            .wiring_hash()
-            .as_str()
-            .to_owned()
-    }
-
-    fn snapshot() -> ConnectionEffectSnapshot {
-        ConnectionEffectSnapshot {
-            connection_name: None,
-            read_only: false,
-            wiring_hash: Some(fixture_wiring_hash()),
-            component: Some("notifier".to_string()),
-            interface_version: Some("0.1".to_string()),
-            operation: Some("orders:notify/dispatch@1.0.0".to_string()),
-            registered_operation: Some("package-a:orders/notify@1.0.0".to_string()),
-            requirement_json: Some(serde_json::json!({
-                "component-digest": digest('a'),
-                "store-alias": "erp",
-                "requirement": {
-                    "requirement-type": "http",
-                    "contract": ConnectionTypeDescriptor::http_v1().contract,
-                },
-            })),
-            requirement_hash: Some(digest('d')),
-            node_permitted: true,
-            binding_active: true,
-            binding_valid: true,
-            instance_id: Some("manager".to_string()),
-            validation_hash: Some(digest('e')),
-            requirement_type: Some("http".to_string()),
-            contract: Some(ConnectionTypeDescriptor::http_v1().contract),
-            instance_enabled: true,
-            active_generation: Some(7),
-            pinned_generation: None,
-            instance_revision: Some(2),
-            generation: Some(7),
-            definition: Some(serde_json::json!({})),
-            definition_hash: Some(digest('c')),
-            credential_handle: Some("manager-v7".to_string()),
-        }
-    }
 
     #[test]
     fn admitted_connection_facts_cannot_be_retargeted() {
-        use wamn_capability_authority::identity::CandidateConnectionBinding;
+        use wamn_authority::identity::CandidateConnectionBinding;
         let mut snapshot = snapshot();
         snapshot.pinned_generation = snapshot.generation;
         let mut admitted = invocation();
@@ -1324,48 +1241,6 @@ mod tests {
         }
         admitted.origin.operation = "another-operation".into();
         assert!(authorize_candidate_closure(&admitted, &snapshot, &binding).is_err());
-    }
-
-    fn manifest() -> ServingManifest {
-        let invocation = invocation();
-        let snapshot = snapshot();
-        ServingManifest {
-            composed_entry: None,
-            format_version: SERVING_MANIFEST_FORMAT_VERSION,
-            release: ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("package_a", "1.0.0").unwrap()]),
-            },
-            components: BTreeSet::from([ServingComponent {
-                runtime_schema: None,
-                descriptor: {
-                    let mut descriptor = wamn_catalog::ComponentDescriptor::named(
-                        snapshot.component.clone().expect("component"),
-                        snapshot
-                            .interface_version
-                            .clone()
-                            .expect("interface version"),
-                        invocation.component_digest.clone(),
-                    );
-                    descriptor.operations = BTreeMap::from([(
-                        snapshot.operation.expect("operation"),
-                        AdmittedComponentOperation {
-                            host_transaction: false,
-                            input_ports: Vec::new(),
-                            output_ports: Vec::new(),
-                            parameters: Vec::new(),
-                            committed_result_schema: None,
-
-                            registered_operation: snapshot.registered_operation,
-                        },
-                    )]);
-                    descriptor
-                },
-                package_id: invocation.package_id,
-            }]),
-            routes: BTreeSet::new(),
-            attachments: BTreeMap::new(),
-            host_routes: BTreeSet::new(),
-        }
     }
 
     #[test]
@@ -1571,17 +1446,6 @@ mod tests {
         assert_eq!(headers["idempotency-key"], "host");
     }
 
-    fn effect_request(headers: Vec<Header>) -> Request {
-        Request {
-            requirement: "manager".to_string(),
-            method: "POST".to_string(),
-            path_and_query: "/notify".to_string(),
-            headers,
-            body: None,
-            idempotency_key: None,
-        }
-    }
-
     #[test]
     fn guest_headers_cannot_supply_transport_or_proxy_authority() {
         for name in [
@@ -1695,12 +1559,7 @@ mod tests {
             "dev",
         ));
         let release = test_release("org-a");
-        wamn_postgres_capability::invocation::bind_test_context(
-            &postgres,
-            "component-store-7",
-            facts,
-            release,
-        );
+        wamn_sql::invocation::bind_test_context(&postgres, "component-store-7", facts, release);
         ConnectionHttp::new(
             postgres,
             Arc::new(HttpTransport::new().expect("HTTP transport")),
@@ -1832,3 +1691,7 @@ mod connection_mode_tests {
 
 mod oauth;
 pub mod oauth_authorization;
+
+/// Shared HTTP fixtures for host invocation tests.
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;

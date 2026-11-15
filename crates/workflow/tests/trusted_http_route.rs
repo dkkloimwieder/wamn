@@ -43,9 +43,9 @@ use wamn_engine::component_artifact::{component_artifact_config_bytes, component
 use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{OperationHost, OperationHostConfig};
-use wamn_http_capability::transport::HttpTransport;
+use wamn_http::transport::HttpTransport;
 use wamn_identity_protocol::AuthorityClass;
-use wamn_postgres_capability::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
+use wamn_sql::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_workflow::RouterDriver;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
 

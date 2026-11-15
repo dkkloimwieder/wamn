@@ -102,7 +102,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     .build()
     .await?;
     let oauth = Arc::new(
-        wamn_http_capability::oauth_authorization::Authorization::new(
+        wamn_http::oauth_authorization::Authorization::new(
             &format!("http://{}", ingress.addr()),
             Arc::new(wamn_connections::oauth_encryption::Envelope::from_file(
                 &key,
@@ -138,7 +138,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
         }
     });
     ingress.start().await?;
-    let (_nats_server, nats) = wamn_capability_authority::auth_cache::test_util::nats().await;
+    let (_nats_server, nats) = wamn_authority::auth_cache::test_util::nats().await;
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {

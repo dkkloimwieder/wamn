@@ -42,16 +42,14 @@ use wamn_engine::engine::{
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::native_routes::{DeliveryRequest, Source};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-use wamn_events_capability::WamnJetstream;
+use wamn_events::WamnJetstream;
 use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
 };
-use wamn_http_capability::transport::HttpTransport;
+use wamn_http::transport::HttpTransport;
 use wamn_identity_protocol::PrincipalId;
-use wamn_postgres_capability::{
-    AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
-};
 use wamn_registry::Triple;
+use wamn_sql::{AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_workflow::author_workflow::{
     AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
     author_workflow_in_databases,
@@ -675,7 +673,7 @@ impl Fixture {
             self.driver(release).await,
             Arc::clone(&self.postgres),
             Arc::new(
-                WamnJetstream::new(wamn_events_capability::WamnJetstreamConfig::default())
+                WamnJetstream::new(wamn_events::WamnJetstreamConfig::default())
                     .await
                     .expect("event transport initializes"),
             ),

@@ -21,9 +21,7 @@ use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHt
 use wamn_engine::operation::invocation_policy::InvocationPolicy as _;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_postgres_capability::{
-    AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
-};
+use wamn_sql::{AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
 
 use super::invoke_native;
 use super::trace::TraceCapture;
@@ -1095,9 +1093,8 @@ async fn warm_postgres_with_pool(
         },
     )?;
     let provider = Arc::new(StaticCredentialProvider::new(projects, None));
-    let postgres = WamnPostgres::with_provider(
-        Arc::clone(&provider) as Arc<dyn wamn_postgres_capability::CredentialProvider>
-    );
+    let postgres =
+        WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn wamn_sql::CredentialProvider>);
     Ok((Arc::new(postgres), provider))
 }
 

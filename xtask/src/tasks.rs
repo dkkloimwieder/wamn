@@ -261,11 +261,11 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
         );
     }
     for package in [
-        "wamn-postgres-capability",
-        "wamn-http-capability",
+        "wamn-sql",
+        "wamn-http",
         "wamn-blobstore",
         "wamn-authentication",
-        "wamn-events-capability",
+        "wamn-events",
         "wamn-execution-host",
     ] {
         let all = linked(root, package, &[]).await?;

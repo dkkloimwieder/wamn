@@ -19,13 +19,11 @@ sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime
 
 wamn-compiler = { workspace = true }
 wamn-digest.workspace = true
-wamn-event-wire = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 # The per-project-env credential Secrets render as JSON (kubectl apply accepts
 # JSON manifests). No schemars — this is a provisioning tool, not a published
 # contract.
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
 
 # wamn-q3n.6 provision-org: the org Cluster-PAIR renderer takes the registry's
 # Org / Tier / Side vocabulary and derives cluster names via `cluster_name`, so
@@ -33,12 +31,10 @@ serde_yaml = { workspace = true }
 # A lean pure→pure edge (wamn-registry deps serde + serde_json only).
 wamn-registry = { workspace = true }
 postgres-protocol = { workspace = true }
-wamn-catalog = { workspace = true }
 # The `sha256:<hex>` spelling of bundle, file and schema digests.
 # The platform principal rows take their component list, names, and derived
 # ids from the platform model.
 wamn-identity-protocol = { workspace = true }
-wamn-run-state = { workspace = true }
 # The audit retention role name is a record history platform fixture name.
 wamn-record-history = { workspace = true }
 
@@ -48,6 +44,9 @@ sha2 = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+wamn-run-state = { workspace = true }
+wamn-catalog = { workspace = true, features = ["test-util"] }
+chrono.workspace = true
 wamn-registry = { workspace = true, features = ["test-util"] }
 pg_query = "=6.2.1"
 wamn-scalar.workspace = true

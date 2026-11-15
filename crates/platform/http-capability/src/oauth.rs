@@ -8,7 +8,7 @@ use oauth2::{
 };
 use serde::Deserialize;
 
-use wamn_capability_authority::connection::ConnectionError;
+use wamn_authority::connection::ConnectionError;
 
 // The endpoint is required before any exchange can be built.
 type Client =
@@ -91,7 +91,7 @@ fn credential(
 
 pub(crate) struct Transport {
     pub http: crate::transport::HttpTransport,
-    pub decision: wamn_capability_authority::connection_authority::AuthorityDecision,
+    pub decision: wamn_authority::connection_authority::AuthorityDecision,
     pub identity: Option<crate::transport::ClientIdentity>,
 }
 

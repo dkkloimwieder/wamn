@@ -15,7 +15,7 @@ use wamn_package_artifact::{PackageRegistry, Repository};
 
 use wamn_connections::connection_facts::{ConnectionFacts, bounded};
 use wamn_connections::connection_memory::{ConnectionFact, ConnectionStatus};
-use wamn_postgres_capability::WamnPostgres;
+use wamn_sql::WamnPostgres;
 
 type InstanceKey = (uuid::Uuid, i64, Option<uuid::Uuid>);
 
@@ -353,7 +353,7 @@ impl ConnectionDispatch for ComponentImports {
         parameters: &[wasmtime::component::Val],
     ) -> anyhow::Result<Option<anyhow::Result<Vec<wasmtime::component::Val>>>> {
         let (scopes, scope) = scope.context("integration call has no scope")?;
-        let context = wamn_postgres_capability::invocation::context(scopes, scope)?;
+        let context = wamn_sql::invocation::context(scopes, scope)?;
         anyhow::ensure!(
             Arc::ptr_eq(&context.connections, &self.resources.facts)
                 && context.release.release().manifest_digest.as_str()
@@ -361,7 +361,7 @@ impl ConnectionDispatch for ComponentImports {
             "integration invocation release mismatch"
         );
         let declared = scopes
-            .read::<wamn_postgres_capability::invocation::Authority, _>(scope, |record| {
+            .read::<wamn_sql::invocation::Authority, _>(scope, |record| {
                 record.invocation.as_ref().is_some_and(|invocation| {
                     invocation
                         .connection(context.release.manifest(), name)

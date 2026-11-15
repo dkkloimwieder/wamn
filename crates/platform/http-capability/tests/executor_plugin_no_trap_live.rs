@@ -46,8 +46,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use wamn_engine::engine::build_engine;
-use wamn_http_capability::{self, CONNECTION_HTTP_ID, ConnectionHttp};
-use wamn_postgres_capability::{self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig};
+use wamn_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
+use wamn_sql::{self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig};
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
@@ -310,12 +310,7 @@ async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_no
         postgres as Arc<dyn HostPlugin + Send + Sync>,
     );
 
-    let (outcome, trail) = drive_guest(
-        &postgres_guest(),
-        plugins,
-        wamn_postgres_capability::add_to_linker,
-    )
-    .await;
+    let (outcome, trail) = drive_guest(&postgres_guest(), plugins, wamn_sql::add_to_linker).await;
 
     outcome.expect("the guest survived the postgres refusal");
     // `1` is `err`, and `1` again is `connection-unavailable` — the second case
@@ -447,7 +442,7 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
     let allowed_hosts: Arc<[AllowedHost]> = Vec::new().into();
     let effect = Arc::new(ConnectionHttp::new(
         Arc::clone(&postgres),
-        Arc::new(wamn_http_capability::transport::HttpTransport::new().expect("HTTP transport")),
+        Arc::new(wamn_http::transport::HttpTransport::new().expect("HTTP transport")),
         allowed_hosts,
     ));
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
@@ -456,12 +451,8 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
         effect as Arc<dyn HostPlugin + Send + Sync>,
     );
 
-    let (outcome, trail) = drive_guest(
-        &connection_http_guest(),
-        plugins,
-        wamn_http_capability::add_to_linker,
-    )
-    .await;
+    let (outcome, trail) =
+        drive_guest(&connection_http_guest(), plugins, wamn_http::add_to_linker).await;
 
     outcome.expect("the guest survived the effect refusal");
     // `1` is `err`; `3` is `attestation-invalid`. Both are non-zero, so the

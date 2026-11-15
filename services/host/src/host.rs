@@ -42,12 +42,12 @@ use wamn_engine::engine::{
 };
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_http_capability::transport::HttpTransport;
+use wamn_http::transport::HttpTransport;
 use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_postgres_capability::AuthorityClass;
-use wamn_postgres_capability::ClassCredentials;
-use wamn_postgres_capability::WamnPostgres;
 use wamn_registry::Triple;
+use wamn_sql::AuthorityClass;
+use wamn_sql::ClassCredentials;
+use wamn_sql::WamnPostgres;
 use wamn_workflow::DEFAULT_QUEUE_LEASE_TTL_MS;
 
 #[expect(

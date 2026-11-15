@@ -12,14 +12,14 @@ use wamn_identity_protocol::PlatformComponent;
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 
 fn deploy_dir() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy")
 }
 
 fn app_schema_sql() -> String {
     format!(
         "\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
         wamn_catalog::CATALOG_SCHEMA_SQL,
-        include_str!("../../../deploy/sql/app-schema.sql")
+        include_str!("../../../../deploy/sql/app-schema.sql")
     )
 }
 
@@ -143,7 +143,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // The fixture writes as U1, its test principal, whose row stamps itself.
     writeln!(
         script,
-        "INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'{U1}'::uuid); BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','admin:seed-isolation-fixture');\n\
+        "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','admin:seed-isolation-fixture');\n\
          INSERT INTO platform.\"user\" (id, type, email) VALUES \
            ('{U1}','user','u1@t1'),('{U2}','service','u2@t1'),('{U3}','user','u3@t2');\n\
          INSERT INTO platform.role (name) VALUES ('admin'),('clerk');\n\
@@ -621,7 +621,7 @@ async fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres(
             .expect("the value is in range");
         assert_eq!(
             spelled,
-            wamn_postgres_capability::canonical_timestamptz(held),
+            wamn_sql::canonical_timestamptz(held),
             "the row image must spell the held value as the canonicalizer does"
         );
     }
@@ -684,7 +684,7 @@ async fn timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_p
             .expect("the value is in range");
         assert_eq!(
             spelled,
-            wamn_postgres_capability::canonical_timestamptz(held),
+            wamn_sql::canonical_timestamptz(held),
             "the value image must spell the held value as the canonicalizer does"
         );
     }

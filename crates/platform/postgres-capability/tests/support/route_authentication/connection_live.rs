@@ -2,9 +2,7 @@
 use super::*;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
-use wamn_postgres_capability::{
-    AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
-};
+use wamn_sql::{AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
 
 use sqlx::Connection as _;
 async fn connect(url: &str) -> sqlx::PgConnection {
@@ -84,8 +82,6 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .execute(&mut project)
         .await
         .expect("commit fixture transaction");
-    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-        .bind("770df186-ac15-579e-b46b-c297cae2011b").execute(&mut project).await.unwrap();
     let mut reader = url::Url::parse(database.as_str()).unwrap();
     reader.set_username(&role).unwrap();
     reader.set_password(Some("fixture-password")).unwrap();
@@ -272,7 +268,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
 #[tokio::test]
 #[ignore = "requires: postgres, nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
-    use crate::route_authentication::PlatformRouteAuthenticator;
+    use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
     let live_platform_principal =
         wamn_identity_protocol::PlatformComponent::Executor.principal_id();
     use wamn_platform_identity::{assign_project_role, create_service, issue_pat, revoke_pat};
@@ -404,9 +400,9 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     let mut pg =
         WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(projects, None)));
     let ttl = std::time::Duration::from_secs(3600);
-    pg = pg.with_auth_cache_for_test(Arc::new(
-        wamn_capability_authority::auth_cache::AuthCache::with_ttl(ttl),
-    ));
+    pg = pg.with_auth_cache_for_test(Arc::new(wamn_authority::auth_cache::AuthCache::with_ttl(
+        ttl,
+    )));
     let pg = Arc::new(pg);
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::sql::grant_identity_reader_surface_sql(),
@@ -435,10 +431,10 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         Some(identity_reader),
         None,
     );
-    let route = crate::route_authentication::test_util::routing(&serde_json::json!(["pat"]))
+    let route = crate::test_util::routing(&serde_json::json!(["pat"]))
         .with_authenticator(Arc::new(authentication));
-    let (_nats, client) = wamn_capability_authority::auth_cache::test_util::nats().await;
-    let writer = wamn_capability_authority::auth_cache::test_util::watched(
+    let (_nats, client) = wamn_authority::auth_cache::test_util::nats().await;
+    let writer = wamn_authority::auth_cache::test_util::watched(
         &client,
         Some("org--dev--a"),
         Arc::clone(pg.auth_cache()),
@@ -459,10 +455,9 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         "the cached PAT still answers before the drop"
     );
     writer.publish(drops).await;
-    wamn_capability_authority::auth_cache::test_util::until(
-        "the identity drop removes the PAT",
-        || pg.auth_cache().pat(issued.token()).is_none(),
-    )
+    wamn_authority::auth_cache::test_util::until("the identity drop removes the PAT", || {
+        pg.auth_cache().pat(issued.token()).is_none()
+    })
     .await;
     assert_eq!(
         request().await.unwrap_err(),

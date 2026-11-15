@@ -22,9 +22,9 @@ use sha2::{Digest as _, Sha256};
 use sqlx::{Row as _, Statement as _};
 use wamn_number_pattern::Policy;
 
-use wamn_capability_authority::identity::SessionIdentity;
-use wamn_postgres_capability::WamnPostgres;
-use wamn_postgres_capability::write_log::Claim;
+use wamn_authority::identity::SessionIdentity;
+use wamn_sql::WamnPostgres;
+use wamn_sql::write_log::Claim;
 const SEQUENCE_SQL: &str =
     "SELECT id::text, pattern FROM platform.number_sequence WHERE application = $1 AND name = $2";
 

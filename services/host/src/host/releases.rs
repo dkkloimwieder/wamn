@@ -12,13 +12,13 @@ use wamn_catalog::{ApplicationDefinition, ServingManifest};
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-use wamn_events_capability::WamnJetstream;
+use wamn_events::WamnJetstream;
 use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
 };
-use wamn_http_capability::transport::HttpTransport;
+use wamn_http::transport::HttpTransport;
 use wamn_kubernetes::kubernetes_api::KubernetesApi;
-use wamn_postgres_capability::WamnPostgres;
+use wamn_sql::WamnPostgres;
 use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;

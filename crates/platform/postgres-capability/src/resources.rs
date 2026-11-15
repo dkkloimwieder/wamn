@@ -5,7 +5,7 @@ use super::types::map_pg_error;
 use super::{PgError, SqlValue, WAMN_POSTGRES_ID, WamnPostgres, client, statement_wit};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use wamn_capability_authority::effect_span::{
+use wamn_authority::effect_span::{
     EffectIdentity, EffectRun, effect_span, record_effect_ms, record_wiring,
 };
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
@@ -220,7 +220,7 @@ pub(super) fn db_span_for_project(
         &span,
         invocation
             .as_ref()
-            .map(wamn_capability_authority::connection::ConnectionInvocation::effect_wiring),
+            .map(wamn_authority::connection::ConnectionInvocation::effect_wiring),
     );
     span
 }
