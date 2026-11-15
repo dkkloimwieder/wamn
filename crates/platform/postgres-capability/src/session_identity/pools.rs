@@ -1,5 +1,4 @@
 use sqlx::Row as _;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -10,7 +9,7 @@ use tracing::Instrument as _;
 use wamn_identity_protocol::AuthorityClass;
 
 use super::super::pool::{
-    CheckoutProbe, PoolKey, PoolLifecycle, ProjectPool, ResolvedCredential, destroy_connection,
+    CheckoutProbe, PoolKey, ProjectPool, ResolvedCredential, destroy_connection,
 };
 use super::super::{DEFAULT_PROJECT, PgError};
 use super::WamnPostgres;
@@ -23,37 +22,27 @@ impl WamnPostgres {
         _project: &str,
     ) -> anyhow::Result<sqlx::PgPool> {
         let options = wamn_postgres::connect_options(&cfg.database_url).await?;
-        let username = options.get_username().to_owned();
         let timeout = cfg.statement_timeout_ms.to_string();
-        let size = u32::try_from(PoolLifecycle::for_class(class).max_size(cfg))?;
-        Ok(PgPoolOptions::new().max_connections(size)
+        let size = u32::try_from(match class {
+            AuthorityClass::GuestSql | AuthorityClass::DynamicSql => cfg.guest_pool_max_size,
+            AuthorityClass::ExecutorPlatform
+            | AuthorityClass::CallableHttp
+            | AuthorityClass::Administration => cfg.platform_pool_max_size,
+        })?;
+        Ok(PgPoolOptions::new()
+            .max_connections(size)
             .acquire_timeout(std::time::Duration::from_millis(cfg.wait_timeout_ms))
             .after_connect(move |connection, _| {
-                let username = username.clone();
                 let timeout = timeout.clone();
                 Box::pin(async move {
-                    let row = sqlx::query("SELECT current_user::text, pg_has_role(current_user, $1, 'MEMBER'), current_setting('standard_conforming_strings'), NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname=current_user")
-                        .bind(class.acl_role()).fetch_one(&mut *connection).await?;
-                    if row.get::<String, _>(0) != username || !row.get::<bool, _>(1) || row.get::<String, _>(2) != "on" || !row.get::<bool, _>(3) {
-                        return Err(sqlx::Error::Protocol("database login does not hold its configured authority".into()));
-                    }
                     sqlx::query("SELECT set_config('statement_timeout', $1, false)")
-                        .bind(timeout).execute(connection).await?;
+                        .bind(timeout)
+                        .execute(connection)
+                        .await?;
                     Ok(())
                 })
-            }).connect_lazy_with(options))
-    }
-
-    /// Resolve + lazily build (memoized) the pool for a project. Unknown project
-    /// or a build/resolution failure ⇒ `connection-unavailable`.
-    fn pools(
-        &self,
-        lifecycle: PoolLifecycle,
-    ) -> &std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>> {
-        match lifecycle {
-            PoolLifecycle::Guest => &self.guest_pools,
-            PoolLifecycle::Platform => &self.platform_pools,
-        }
+            })
+            .connect_lazy_with(options))
     }
 
     pub(super) async fn ensure_pool(
@@ -62,19 +51,12 @@ impl WamnPostgres {
         project: &str,
         project_env_key: Option<&str>,
     ) -> Result<Arc<ProjectPool>, PgError> {
-        let lifecycle = PoolLifecycle::for_class(class);
-        let pools = self.pools(lifecycle);
-        let key = PoolKey::new(project, class, project_env_key);
-        if let Some(pool) = pools.read().expect("pools lock poisoned").get(&key) {
-            return Ok(Arc::clone(pool));
-        }
         let cfg = match self.provider.resolve(project, class, project_env_key) {
             Ok(Some(c)) => c,
             Ok(None) => {
                 tracing::warn!(
                     project,
                     class = class.as_str(),
-                    lifecycle = lifecycle.label(),
                     "wamn:postgres: no credentials for project"
                 );
                 return Err(PgError::ConnectionUnavailable);
@@ -83,13 +65,18 @@ impl WamnPostgres {
                 tracing::warn!(
                     project,
                     class = class.as_str(),
-                    lifecycle = lifecycle.label(),
                     error = %e,
                     "wamn:postgres: credential resolution failed"
                 );
                 return Err(PgError::ConnectionUnavailable);
             }
         };
+        let (login, _) = wamn_postgres::identity(&cfg.database_url)
+            .map_err(|_| PgError::ConnectionUnavailable)?;
+        let key = PoolKey::new(project, login);
+        if let Some(pool) = self.pools.read().expect("pools lock poisoned").get(&key) {
+            return Ok(Arc::clone(pool));
+        }
         let pp = match Self::build_pool(&cfg, class, project).await {
             Ok(pool) => Arc::new(ProjectPool {
                 pool,
@@ -100,46 +87,19 @@ impl WamnPostgres {
                 tracing::warn!(
                     project,
                     class = class.as_str(),
-                    lifecycle = lifecycle.label(),
                     error = %e,
                     "wamn:postgres: pool build failed"
                 );
                 return Err(PgError::ConnectionUnavailable);
             }
         };
-        let mut w = pools.write().expect("pools lock poisoned");
+        let mut w = self.pools.write().expect("pools lock poisoned");
         Ok(Arc::clone(w.entry(key).or_insert(pp)))
     }
 
     /// Connections destroyed instead of repooled since startup.
     pub fn destroyed_connections(&self) -> u64 {
         self.destroyed.load(Ordering::Relaxed)
-    }
-
-    #[cfg(test)]
-    pub(super) fn pool_status_all_by_lifecycle(
-        &self,
-    ) -> Vec<(PoolLifecycle, String, (usize, usize, usize))> {
-        let mut statuses = Vec::new();
-        for (lifecycle, pools) in [
-            (PoolLifecycle::Guest, &self.guest_pools),
-            (PoolLifecycle::Platform, &self.platform_pools),
-        ] {
-            statuses.extend(
-                pools
-                    .read()
-                    .expect("pools lock poisoned")
-                    .iter()
-                    .map(|(key, pp)| {
-                        (
-                            lifecycle,
-                            key.project().to_string(),
-                            (pp.pool.size() as usize, pp.pool.num_idle(), 0),
-                        )
-                    }),
-            );
-        }
-        statuses
     }
 
     /// acquire a raw connection from the default project and report its state
@@ -188,7 +148,6 @@ impl WamnPostgres {
                 tracing::warn!(
                     project,
                     class = class.as_str(),
-                    lifecycle = PoolLifecycle::for_class(class).label(),
                     error = %e,
                     "wamn:postgres pool checkout failed"
                 );

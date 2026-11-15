@@ -74,7 +74,7 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Connection projections precede the catalog references to them.
-CREATE SCHEMA platform AUTHORIZATION CURRENT_USER;
+CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION CURRENT_USER;
 
 CREATE TABLE platform.external_system (
     id uuid PRIMARY KEY,
@@ -270,11 +270,11 @@ BEGIN
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE catalog.%I FORCE ROW LEVEL SECURITY', relation_name);
         EXECUTE format(
-            'CREATE POLICY %I ON catalog.%I TO wamn_app USING (wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()) WITH CHECK (wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key())',
+            'CREATE POLICY %I ON catalog.%I TO wamn_app, wamn_query USING (wamn_authority.project_key(project_env_key) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_role()) IS NOT NULL) WITH CHECK (wamn_authority.project_key(project_env_key) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_role()) IS NOT NULL)',
             relation_name || '_project', relation_name
         );
         EXECUTE format(
-            'CREATE POLICY %I ON catalog.%I AS PERMISSIVE FOR ALL TO wamn_platform USING (true) WITH CHECK (true)',
+            'CREATE POLICY %I ON catalog.%I AS PERMISSIVE FOR ALL TO wamn_platform USING ((SELECT wamn_authority.current_role()) IS NOT NULL) WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL)',
             relation_name || '_platform', relation_name
         );
         EXECUTE format(

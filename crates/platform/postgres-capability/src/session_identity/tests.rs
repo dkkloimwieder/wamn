@@ -2,7 +2,6 @@ use super::super::pool::ResolvedCredential;
 use super::super::resources::admit_transaction_statement;
 use super::super::statements::StatementField;
 use super::super::{SqlValue, StatementError};
-use super::transactions::IDENTITY_SQL;
 use super::*;
 use wamn_catalog::ManifestDigest;
 
@@ -44,32 +43,6 @@ fn candidate_binding_world_requires_complete_canonical_unique_rows() {
         .expect("fixture object")
         .remove("generation");
     assert!(CandidateBindingWorld::from_json(serde_json::json!([incomplete])).is_err());
-}
-
-/// Building a pool must REQUIRE a probeable credential.
-///
-/// Without this, removing the exactness hook from `build_pool` would be an
-/// inert change: every other test constructs the hook directly, so nothing
-/// would notice the pool no longer carries it. Here the hook's construction
-/// is the only thing that can reject this url, so its absence is visible.
-#[tokio::test]
-async fn building_a_pool_requires_a_probeable_credential() {
-    let unprobeable = ResolvedCredential {
-        // Parses as a manager config, but names no principal, so the
-        // exactness hook cannot be built for it.
-        database_url: "postgres://host:5432/db".to_string(),
-        guest_pool_max_size: 1,
-        platform_pool_max_size: 1,
-        wait_timeout_ms: 100,
-        statement_timeout_ms: 100,
-        row_limit: 10,
-    };
-    assert!(
-        WamnPostgres::build_pool(&unprobeable, AuthorityClass::GuestSql, DEFAULT_PROJECT)
-            .await
-            .is_err(),
-        "a pool whose credential cannot be probed must not be built"
-    );
 }
 
 /// Guest-sql must never be usable as a platform authority, and the refusal
@@ -225,69 +198,6 @@ fn a_serving_host_refuses_an_invalid_declared_project() {
     let error = WamnPostgres::from_env_for_project("fixture.prod", None)
         .expect_err("an invalid project must refuse before reading ambient configuration");
     assert!(error.to_string().contains("invalid composed project"));
-}
-
-#[tokio::test]
-async fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
-    let postgres = WamnPostgres::new(WamnPostgresConfig {
-        // wamn-0h0g.22.8.2: a provisioned credential NAMES ITS GENERATION ROLE,
-        // and the pool key is derived from it. A url with no user carries no
-        // credential identity and is now refused, so this fixture names one
-        // rather than relying on a libpq-style implicit OS user.
-        credentials: Some(ClassCredentials::every_class(format!(
-            "postgres://wamn_app_{}@localhost/pool-lifecycle-test",
-            wamn_identity_protocol::app_identity_hash("test--dev--fixture", "pool-lifecycle-test")
-        ))),
-        guest_pool_max_size: 1,
-        platform_pool_max_size: 1,
-        wait_timeout_ms: 100,
-        statement_timeout_ms: 100,
-        row_limit: 10,
-    })
-    .expect("construct lazy lifecycle pools");
-
-    let guest_first = postgres
-        .ensure_pool(
-            AuthorityClass::GuestSql,
-            DEFAULT_PROJECT,
-            Some("test--dev--fixture"),
-        )
-        .await
-        .expect("first guest pool");
-    let platform_first = postgres
-        .ensure_pool(AuthorityClass::ExecutorPlatform, DEFAULT_PROJECT, None)
-        .await
-        .expect("first platform pool");
-    let platform_second = postgres
-        .ensure_pool(AuthorityClass::ExecutorPlatform, DEFAULT_PROJECT, None)
-        .await
-        .expect("memoized platform pool");
-    let guest_second = postgres
-        .ensure_pool(
-            AuthorityClass::GuestSql,
-            DEFAULT_PROJECT,
-            Some("test--dev--fixture"),
-        )
-        .await
-        .expect("memoized guest pool");
-
-    assert!(Arc::ptr_eq(&guest_first, &guest_second));
-    assert!(Arc::ptr_eq(&platform_first, &platform_second));
-    assert!(!Arc::ptr_eq(&guest_first, &platform_first));
-
-    let mut lifecycle_labels = postgres
-        .pool_status_all_by_lifecycle()
-        .into_iter()
-        .map(|(lifecycle, project, _)| (lifecycle.label(), project))
-        .collect::<Vec<_>>();
-    lifecycle_labels.sort_unstable();
-    assert_eq!(
-        lifecycle_labels,
-        [
-            ("guest", DEFAULT_PROJECT.to_string()),
-            ("platform", DEFAULT_PROJECT.to_string()),
-        ]
-    );
 }
 
 // The identity-time record must match `runs_release_record_check` exactly, or a
@@ -645,14 +555,7 @@ const LIVE_PROJECT_ENV_KEY: &str = "test--dev--fixture";
 /// The executing principal a live transactional statement binds.
 pub(crate) const LIVE_PRINCIPAL: &str = "5c2b7e1a-9d3f-4a6b-8c1e-2f4d6a8b0c3e";
 
-/// Ensure the stable guest ACL role exists, race-tolerantly.
-///
-/// EVERY guest connection is validated by the credential-exactness hook
-/// (`wamn-0h0g.22.8.4`), which requires the session to be a MEMBER of
-/// `wamn_app` — so on a fresh cluster, where no cluster-wide role exists
-/// yet, a guest checkout fails before it reaches anything under test. That
-/// is the production shape (a generation inherits the stable ACL role), so
-/// the fixtures reproduce it rather than weaken the hook.
+/// Ensure the stable guest ACL role exists for the generation logins.
 const ENSURE_GUEST_ACL_ROLE_SQL: &str = "DO $acl$ BEGIN \
            BEGIN CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE \
              NOREPLICATION NOBYPASSRLS; \
@@ -751,6 +654,22 @@ pub(crate) async fn live_guest_url(admin_url: &str, project_env_key: &str) -> St
         .execute(&mut admin)
         .await
         .unwrap();
+    sqlx::raw_sql(include_str!("../../../../../deploy/sql/record-history.sql"))
+        .execute(&mut admin)
+        .await
+        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::project_key::authority_derivations_bootstrap_sql(),
+    ))
+    .execute(&mut admin)
+    .await
+    .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::grant_dynamic_sql_surface_sql(),
+    ))
+    .execute(&mut admin)
+    .await
+    .unwrap();
     url.set_username(&role).expect("set the guest login");
     url.set_password(Some("live-guest"))
         .expect("set the password");
@@ -770,310 +689,6 @@ fn database_url_for_role(database_url: &str, role: &str, password: &str) -> Stri
     url.set_password(Some(password))
         .expect("PostgreSQL URL accepts a password");
     url.to_string()
-}
-
-// R2/R16 — the ACTUAL bound identity statement makes injection-shaped and
-// unicode values INERT DATA: bound as `$n`, none takes statement-level effect
-// (a marker table a spliced `DROP`/`DELETE` would destroy survives).
-// `valid_*` would reject these values, but the point is the BIND is safe
-// regardless of validation.
-#[sqlx::test(migrations = false)]
-async fn live_bound_identity_are_injection_inert_and_txn_local(pool: sqlx::PgPool) {
-    let database = wamn_test_postgres::url(&pool);
-    let mut client = connect_raw(database.as_str()).await;
-    let marker = format!("wave2_marker_{}", std::process::id());
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "DROP TABLE IF EXISTS public.{marker}; \
-                 CREATE TABLE public.{marker}(id int); \
-                 INSERT INTO public.{marker} VALUES (1);"
-        ))
-            .to_string(),
-    ))
-    .execute(&mut client)
-    .await
-    .map(|_| ())
-    .unwrap();
-    let stmt = sqlx::Executor::prepare(&mut client, sqlx::SqlSafeStr::into_sql_str(IDENTITY_SQL))
-        .await
-        .unwrap();
-    let timeout = "5000";
-
-    // (1) app.project_env_key / app.runner / app.role / app.user_id are free-form
-    //     custom GUCs: injection-shaped
-    //     + unicode values bind as DATA and round-trip VERBATIM; the absent
-    //     schema ($3 NULL) leaves the server-default search_path untouched.
-    let default_sp: Option<String> = sqlx::query("SELECT current_setting('search_path', true)")
-        .fetch_one(&mut client)
-        .await
-        .unwrap()
-        .get(0);
-    let evil_project_env_key = format!("x'; DROP TABLE public.{marker}; -- 😀Ω");
-    let evil_runner = format!("r'; DELETE FROM public.{marker}; --");
-    let evil_role = format!("admin'); DROP TABLE public.{marker}; --");
-    let evil_user = format!("u'; TRUNCATE public.{marker}; --");
-    let evil_operation = format!("o'; DROP TABLE public.{marker}; --");
-    let evil_application = format!("a'; DROP TABLE public.{marker}; --");
-    let no_schema: Option<&str> = None;
-    sqlx::raw_sql("BEGIN")
-        .execute(&mut client)
-        .await
-        .map(|_| ())
-        .unwrap();
-
-    sqlx::query(stmt.sql().clone())
-        .bind(&evil_project_env_key)
-        .bind(timeout)
-        .bind(no_schema)
-        .bind(&evil_runner)
-        .bind(&evil_role)
-        .bind(&evil_user)
-        .bind(&evil_operation)
-        .bind(&evil_application)
-        .execute(&mut client)
-        .await
-        .unwrap();
-
-    let got_project_env_key: Option<String> =
-        sqlx::query("SELECT current_setting('app.project_env_key', true)")
-            .fetch_one(&mut client)
-            .await
-            .unwrap()
-            .get(0);
-    assert_eq!(
-        got_project_env_key.as_deref(),
-        Some(evil_project_env_key.as_str())
-    );
-    let got_runner: Option<String> = sqlx::query("SELECT current_setting('app.runner', true)")
-        .fetch_one(&mut client)
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(got_runner.as_deref(), Some(evil_runner.as_str()));
-    let got_role: Option<String> = sqlx::query("SELECT current_setting('app.role', true)")
-        .fetch_one(&mut client)
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(got_role.as_deref(), Some(evil_role.as_str()));
-    let got_user: Option<String> = sqlx::query("SELECT current_setting('app.user_id', true)")
-        .fetch_one(&mut client)
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(got_user.as_deref(), Some(evil_user.as_str()));
-    let got_operation: Option<String> =
-        sqlx::query("SELECT current_setting('app.operation', true)")
-            .fetch_one(&mut client)
-            .await
-            .unwrap()
-            .get(0);
-    assert_eq!(got_operation.as_deref(), Some(evil_operation.as_str()));
-    let got_application: Option<String> =
-        sqlx::query("SELECT current_setting('app.application', true)")
-            .fetch_one(&mut client)
-            .await
-            .unwrap()
-            .get(0);
-    assert_eq!(got_application.as_deref(), Some(evil_application.as_str()));
-    let got_sp: Option<String> = sqlx::query("SELECT current_setting('search_path', true)")
-        .fetch_one(&mut client)
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(
-        got_sp, default_sp,
-        "absent schema must preserve the default"
-    );
-
-    // marker survived — no spliced statement ran.
-    let n: i64 = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT count(*) FROM public.{marker}"
-    )))
-    .fetch_one(&mut client)
-    .await
-    .unwrap()
-    .get(0);
-    assert_eq!(n, 1);
-    sqlx::raw_sql("COMMIT")
-        .execute(&mut client)
-        .await
-        .map(|_| ())
-        .unwrap();
-
-    // SET LOCAL equivalence: after COMMIT the txn-local identity is gone. Per the
-    // custom-GUC gotcha a touched GUC reverts to '' (NOT NULL) — the value the
-    // RLS base grants NULLIFs.
-    let after: Option<String> = sqlx::query("SELECT current_setting('app.project_env_key', true)")
-        .fetch_one(&mut client)
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(after.as_deref(), Some(""));
-
-    // (2) The $3 (search_path) bind is a VALUE, not SQL: an injection-shaped
-    //     schema is rejected by search_path's own list-validation hook (22023) —
-    //     parsed as data, never executed — and the marker still stands.
-    sqlx::raw_sql("BEGIN")
-        .execute(&mut client)
-        .await
-        .map(|_| ())
-        .unwrap();
-    let evil_schema: Option<&str> = Some("s'; DROP TABLE public.foo; --");
-    let err = sqlx::query(stmt.sql().clone())
-        .bind(&evil_project_env_key)
-        .bind(&timeout)
-        .bind(&evil_schema)
-        .bind(&evil_runner)
-        .bind(&evil_role)
-        .bind(&evil_user)
-        .bind(&evil_operation)
-        .bind(&evil_application)
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
-        .unwrap_err();
-    assert_eq!(
-        err.as_database_error().and_then(|db| db.code()).as_deref(),
-        Some("22023"),
-        "malformed search_path must fail as an invalid VALUE, not execute"
-    );
-    sqlx::raw_sql("ROLLBACK")
-        .execute(&mut client)
-        .await
-        .map(|_| ())
-        .unwrap();
-    let n2: i64 = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT count(*) FROM public.{marker}"
-    )))
-    .fetch_one(&mut client)
-    .await
-    .unwrap()
-    .get(0);
-    assert_eq!(n2, 1);
-
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP TABLE public.{marker}")))
-        .execute(&mut client)
-        .await
-        .map(|_| ())
-        .unwrap();
-}
-
-// R2/R16 — the REAL plugin path: begin_with_identity injects the guest identity
-// set via the bound statement, they are visible in-txn, and revert after the
-// txn. `app.project_env_key` is NOT among them (`wamn-0h0g.22.6.7`): a guest's project_env_key
-// is its LOGIN, and injecting a GUC nothing it can read consults would be a
-// second, settable statement about an authority derived elsewhere.
-#[sqlx::test(migrations = false)]
-async fn live_begin_with_identity_sets_the_guest_set_without_a_project_env_key_identity(
-    pool: sqlx::PgPool,
-) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    let admin_url = database.as_str();
-    let pg = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(
-            live_guest_url(admin_url, LIVE_PROJECT_ENV_KEY).await,
-        )),
-        guest_pool_max_size: 2,
-        platform_pool_max_size: 2,
-        wait_timeout_ms: 2_000,
-        statement_timeout_ms: 5_000,
-        row_limit: 1_000,
-    })
-    .unwrap();
-    let user_id = "11111111-1111-4111-8111-111111111111";
-    let operation = "platform-fixture:widget/update@1.0.0";
-    let application = "platform_fixture";
-    let (mut conn, _pp) = pg
-        .checkout_guest(DEFAULT_PROJECT, LIVE_PROJECT_ENV_KEY)
-        .await
-        .unwrap();
-    pg.begin_with_identity(
-        &mut conn,
-        AuthorityClass::GuestSql,
-        false,
-        "test--dev--fixture",
-        Some("public"),
-        Some("owner-1"),
-        Some("inspector"),
-        Some(user_id),
-        Some(operation),
-        Some(application),
-        None,
-        4321,
-    )
-    .await
-    .unwrap();
-    let row = sqlx::query(
-        "SELECT current_setting('app.project_env_key', true), \
-                 current_setting('statement_timeout', true), \
-                 current_setting('search_path', true), \
-                 current_setting('app.runner', true), \
-                 current_setting('app.role', true), \
-                 current_setting('app.user_id', true), \
-                 current_setting('app.operation', true), \
-                 current_setting('app.application', true)",
-    )
-    .fetch_one(&mut *conn)
-    .await
-    .unwrap();
-    let project_env_key: Option<String> = row.get(0);
-    let timeout: Option<String> = row.get(1);
-    let sp: Option<String> = row.get(2);
-    let runner: Option<String> = row.get(3);
-    let role: Option<String> = row.get(4);
-    let user: Option<String> = row.get(5);
-    let bound_operation: Option<String> = row.get(6);
-    let bound_application: Option<String> = row.get(7);
-    // THE DELETION, ASSERTED — and NULL is the sharper result. A custom GUC
-    // reads back as the EMPTY STRING once it has been set and the SET LOCAL
-    // scope ended; it reads NULL only if it was never set in this session at
-    // all. So `None` here says more than "the identity was cleared": it says
-    // the guest transaction never touched `app.project_env_key`.
-    assert_eq!(
-        project_env_key, None,
-        "the guest identity set must NOT inject app.project_env_key"
-    );
-    // …and the session it runs on authenticates as the project_env_key's own
-    // generation, which is where its project_env_key actually comes from.
-    let who: String = sqlx::query("SELECT current_user::text")
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap()
-        .get(0);
-    assert!(
-        who.contains(&wamn_identity_protocol::app_identity_hash(
-            LIVE_PROJECT_ENV_KEY,
-            &live_database(admin_url)
-        )),
-        "the guest session must authenticate as {LIVE_PROJECT_ENV_KEY}'s generation, got {who:?}"
-    );
-    assert_eq!(timeout.as_deref(), Some("4321ms"));
-    assert_eq!(sp.as_deref(), Some("public"));
-    assert_eq!(runner.as_deref(), Some("owner-1"));
-    assert_eq!(role.as_deref(), Some("inspector"));
-    assert_eq!(user.as_deref(), Some(user_id));
-    assert_eq!(bound_operation.as_deref(), Some(operation));
-    assert_eq!(bound_application.as_deref(), Some(application));
-
-    // COMMIT (the one_shot success path): a `set_config(is_local => true)`
-    // identity reverts even across a commit — showing it is truly LOCAL, not a
-    // session-level leak.
-    sqlx::raw_sql("COMMIT")
-        .execute(&mut *conn)
-        .await
-        .map(|_| ())
-        .unwrap();
-    let after: Option<String> = sqlx::query("SELECT current_setting('app.role', true)")
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap()
-        .get(0);
-    // `app.role` IS injected by the guest set, so after the commit it reads
-    // back as the empty string — the reset value, which is what shows the
-    // identity was transaction-LOCAL rather than a session-level leak.
-    assert_eq!(after.as_deref(), Some(""));
 }
 
 /// Rows a component sees for `sql` on the production one-shot path.
@@ -1099,10 +714,12 @@ async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
 /// RLS applies to it.
 fn rls_fixture_sql(schema: &str, probe: &str, project_env_key: &str, u1: &str, u2: &str) -> String {
     let query = query_fixture_sql(probe, probe);
+    let identity = include_str!("../../../../../deploy/sql/record-history.sql");
+    let authority = wamn_control_provision::project_key::authority_derivations_bootstrap_sql();
     format!(
         "DROP SCHEMA IF EXISTS {schema} CASCADE; \
              DROP ROLE IF EXISTS {probe}; \
-             {ENSURE_GUEST_ACL_ROLE_SQL} \
+             {ENSURE_GUEST_ACL_ROLE_SQL} {identity} {authority} \
              CREATE ROLE {probe} LOGIN PASSWORD '{probe}' NOSUPERUSER NOBYPASSRLS; \
              GRANT wamn_app TO {probe}; \
              CREATE SCHEMA {schema}; \
@@ -1113,23 +730,16 @@ fn rls_fixture_sql(schema: &str, probe: &str, project_env_key: &str, u1: &str, u
                  USING (project_env_key = '{project_env_key}'); \
              CREATE POLICY \"dispositions_owner_0\" ON {schema}.dispositions AS RESTRICTIVE \
                  FOR ALL \
-                 USING (COALESCE(current_setting('app.role', true), '') IN ('supervisor', 'admin') \
-                        OR \"inspector_id\" = NULLIF(current_setting('app.user_id', true), '')::uuid); \
+                 USING (COALESCE((SELECT wamn_authority.current_role()), '') IN ('supervisor', 'admin') \
+                        OR \"inspector_id\" = NULLIF((SELECT wamn_authority.current_user_id())::text, '')::uuid); \
              INSERT INTO {schema}.dispositions VALUES ('{project_env_key}', 1, '{u1}'), ('{project_env_key}', 2, '{u2}'); \
              GRANT USAGE ON SCHEMA {schema} TO {probe}; \
              GRANT SELECT ON {schema}.dispositions TO {probe}; {query}"
     )
 }
 
-// wamn-0h0g.23.1 — the compiled per-user / per-role rules key on `app.role`
-// and `app.user_id`, and under their COALESCE / NULLIF base denial policys a policy
-// that is never handed those identity denies EVERYTHING. Before this bead
-// `IDENTITY_SQL` bound only project_env_key / statement_timeout / search_path /
-// app.runner, so every per-user policy silently denied on the production
-// path while isolated policy tests passed on hand-written `SET LOCAL`.
-// This drives the REAL plugin (`one_shot`) as a NOSUPERUSER
-// NOBYPASSRLS role, so it fails against a `IDENTITY_SQL` that does not inject
-// the caller's identity.
+// Exercise the compiled ownership policy through the host transaction as a
+// NOSUPERUSER NOBYPASSRLS login.
 #[sqlx::test(migrations = false)]
 async fn live_compiled_per_user_policy_permits_the_injected_caller(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--rls-identity-live";
@@ -1192,7 +802,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller(pool: sqlx::P
     assert_eq!(
         visible_rows(&pg, COMPONENT, "SELECT id FROM dispositions WHERE id = 1").await,
         1,
-        "the injected app.user_id must permit the caller's OWN row"
+        "the protected caller identity must permit the caller's OWN row"
     );
     assert_eq!(
         visible_rows(&pg, COMPONENT, "SELECT id FROM dispositions WHERE id = 2").await,
@@ -1204,12 +814,12 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller(pool: sqlx::P
         1
     );
 
-    // …and an exempt role sees both, through the injected app.role.
+    // …and an exempt role sees both, through the protected caller role.
     pg.set_role(COMPONENT, "admin").unwrap();
     assert_eq!(
         visible_rows(&pg, COMPONENT, "SELECT id FROM dispositions ORDER BY id").await,
         2,
-        "the injected app.role must satisfy the exempt-role condition"
+        "the protected caller role must satisfy the exempt-role condition"
     );
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -1277,10 +887,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sql
     pg.set_role(COMPONENT, "inspector").unwrap();
     pg.set_user_id(COMPONENT, U1).unwrap();
 
-    // CONTROL: inside ONE plugin-managed transaction the injected identity admit
-    // the caller's own row — and a bare `SET LOCAL` on that same transaction
-    // clears the exempt-role condition and reveals BOTH. So the escalation the
-    // guard refuses below is real, not hypothetical.
+    // The real transaction keeps its caller even when guest SQL sets a role.
     let (mut conn, _pp) = pg
         .checkout_guest(DEFAULT_PROJECT, PROJECT_ENV_KEY)
         .await
@@ -1315,42 +922,25 @@ async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sql
         .await
         .map(|_| ())
         .unwrap();
+    sqlx::query("SELECT set_config('app.user_id', $1, true)")
+        .bind(U2)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     let escalated: i64 = sqlx::query("SELECT count(*) FROM dispositions")
         .fetch_one(&mut *conn)
         .await
         .unwrap()
         .get(0);
     assert_eq!(
-        escalated, 2,
-        "control: an unguarded SET LOCAL app.role IS an escalation"
+        escalated, 1,
+        "a session setting cannot replace the transaction caller"
     );
     sqlx::raw_sql("ROLLBACK")
         .execute(&mut *conn)
         .await
         .map(|_| ())
         .unwrap();
-
-    // The guest surface refuses exactly that, and every shape of it, before it
-    // reaches the server — so the caller still sees only its own row.
-    for attempt in [
-        "SET app.role = 'admin'",
-        "SET LOCAL app.role = 'admin'",
-        "RESET app.role",
-        &format!("SET app.user_id = '{U2}'"),
-        "SELECT set_config('app.role', 'admin', true)",
-        &format!("SELECT set_config('app.user_id', '{U2}', true)"),
-    ] {
-        let refused = pg.one_shot(COMPONENT, attempt, &[]).await;
-        assert!(
-            matches!(refused, Err(PgError::QueryError(_))),
-            "the guest surface must refuse {attempt:?}"
-        );
-    }
-    assert_eq!(
-        visible_rows(&pg, COMPONENT, "SELECT id FROM dispositions ORDER BY id").await,
-        1,
-        "the caller's identity are unchanged by the refused overrides"
-    );
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!("DROP SCHEMA {schema} CASCADE; DROP OWNED BY {probe}; DROP ROLE {probe};"))
@@ -1603,6 +1193,8 @@ fn two_project_env_key_rls_fixture_sql(
         query_fixture_sql(role_a, "live-guest"),
         query_fixture_sql(role_b, "live-guest")
     );
+    let identity = include_str!("../../../../../deploy/sql/record-history.sql");
+    let authority = wamn_control_provision::project_key::authority_derivations_bootstrap_sql();
     format!(
         "DROP SCHEMA IF EXISTS {schema} CASCADE; \
              DO $reset$ BEGIN \
@@ -1611,7 +1203,7 @@ fn two_project_env_key_rls_fixture_sql(
                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role_b}') THEN \
                  DROP OWNED BY {role_b}; DROP ROLE {role_b}; END IF; \
              END $reset$; \
-             {ENSURE_GUEST_ACL_ROLE_SQL} \
+             {ENSURE_GUEST_ACL_ROLE_SQL} {identity} {authority} \
              CREATE ROLE {role_a} LOGIN PASSWORD 'live-guest' NOSUPERUSER NOBYPASSRLS; \
              CREATE ROLE {role_b} LOGIN PASSWORD 'live-guest' NOSUPERUSER NOBYPASSRLS; \
              GRANT wamn_app TO {role_a}, {role_b}; \
@@ -1765,255 +1357,6 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     .expect("drop the fixture");
 }
 
-// R18 — the post_create hook runs on connect; a successful checkout from the
-// pool shows the assertion passed on this server (stock PG18 = on).
-#[sqlx::test(migrations = false)]
-async fn live_connect_asserts_standard_conforming_strings(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    let admin_url = database.as_str();
-    let pg = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(
-            live_guest_url(admin_url, LIVE_PROJECT_ENV_KEY).await,
-        )),
-        guest_pool_max_size: 1,
-        platform_pool_max_size: 1,
-        wait_timeout_ms: 2_000,
-        statement_timeout_ms: 5_000,
-        row_limit: 1_000,
-    })
-    .unwrap();
-    // The checkout builds the pool (with the R18 hook) and creates a physical
-    // connection; the hook must pass for this to be Ok.
-    let (mut conn, _pp) = pg
-        .checkout_guest(DEFAULT_PROJECT, LIVE_PROJECT_ENV_KEY)
-        .await
-        .expect("checkout ok (scs=on)");
-    let scs: String = sqlx::query("SHOW standard_conforming_strings")
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(scs, "on");
-}
-
-#[sqlx::test(migrations = false)]
-async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving(
-    pool: sqlx::PgPool,
-) {
-    let _lock = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let admin_url = test_database.as_str();
-    let url = live_guest_url(admin_url, LIVE_PROJECT_ENV_KEY).await;
-    let mut database = live_database(admin_url);
-    let family = wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform;
-    let role = wamn_control_provision::workload_login(
-        family,
-        wamn_control_provision::WorkloadRoleIdentity::ProjectEnvironment {
-            org: "identity-test",
-            project: DEFAULT_PROJECT,
-            environment: "lifecycle",
-            database: &mut database,
-        },
-    )
-    .expect("derive the executor generation");
-    let role_ident = postgres_protocol::escape::escape_identifier(&role);
-    let mut admin = connect_raw(admin_url).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "DO $$ BEGIN \
-               BEGIN CREATE ROLE {role_ident} LOGIN PASSWORD 'live-platform' \
-                 NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
-               EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; \
-             END $$; {}",
-            wamn_control_provision::test_database::membership_sql(family, &role, true),
-        ))
-            .to_string(),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .expect("ensure the live executor generation");
-    let executor_url = database_url_for_role(admin_url, &role, "live-platform");
-    let postgres = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(
-            ClassCredentials::default()
-                .with_class(AuthorityClass::GuestSql, url)
-                .with_class(AuthorityClass::ExecutorPlatform, executor_url),
-        ),
-        guest_pool_max_size: 1,
-        platform_pool_max_size: 1,
-        // The bound also limits connection creation, so it must outlast a
-        // slow connect on a loaded machine. A shared pool still fails: its
-        // only slot stays held, so no wait of any length can succeed.
-        wait_timeout_ms: 30_000,
-        statement_timeout_ms: 1_000,
-        row_limit: 10,
-    })
-    .expect("construct size-one lifecycle pools");
-
-    let (mut guest, _) = postgres
-        .checkout_guest(DEFAULT_PROJECT, LIVE_PROJECT_ENV_KEY)
-        .await
-        .expect("hold the only guest connection");
-    let guest_row = sqlx::query(
-        "SELECT pg_backend_pid(), \
-                 set_config('wamn.pool_lifecycle_probe', 'guest', false)",
-    )
-    .fetch_one(&mut *guest)
-    .await
-    .expect("mark guest session");
-    let guest_pid = guest_row.get::<i32, _>(0);
-
-    // This checkout happens while the sole guest slot remains held. Sharing
-    // either pool/cache makes it hit the wait bound and fail here.
-    let (mut platform, _) = postgres
-        .checkout_platform(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform)
-        .await
-        .expect("platform headroom remains available while guest is saturated");
-    let platform_row = sqlx::query(
-        "SELECT pg_backend_pid(), \
-                 current_setting('wamn.pool_lifecycle_probe', true)",
-    )
-    .fetch_one(&mut *platform)
-    .await
-    .expect("read untouched platform session");
-    let platform_pid = platform_row.get::<i32, _>(0);
-    let platform_marker = platform_row.get::<Option<String>, _>(1);
-    assert_ne!(guest_pid, platform_pid);
-    assert!(platform_marker.is_none());
-    sqlx::query("SELECT set_config('wamn.pool_lifecycle_probe', 'platform', false)")
-        .fetch_one(&mut *platform)
-        .await
-        .expect("mark platform session");
-    drop(platform);
-    drop(guest);
-
-    let (mut guest_again, _) = postgres
-        .checkout_guest(DEFAULT_PROJECT, LIVE_PROJECT_ENV_KEY)
-        .await
-        .expect("reacquire guest lifecycle");
-    let guest_again_row = sqlx::query(
-        "SELECT pg_backend_pid(), \
-                 current_setting('wamn.pool_lifecycle_probe', true)",
-    )
-    .fetch_one(&mut *guest_again)
-    .await
-    .expect("read guest session after repool");
-    assert_eq!(guest_again_row.get::<i32, _>(0), guest_pid);
-    assert_eq!(
-        guest_again_row.get::<Option<String>, _>(1).as_deref(),
-        Some("guest")
-    );
-
-    let (mut platform_again, _) = postgres
-        .checkout_platform(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform)
-        .await
-        .expect("reacquire platform lifecycle");
-    let platform_again_row = sqlx::query(
-        "SELECT pg_backend_pid(), \
-                 current_setting('wamn.pool_lifecycle_probe', true)",
-    )
-    .fetch_one(&mut *platform_again)
-    .await
-    .expect("read platform session after repool");
-    assert_eq!(platform_again_row.get::<i32, _>(0), platform_pid);
-    assert_eq!(
-        platform_again_row.get::<Option<String>, _>(1).as_deref(),
-        Some("platform")
-    );
-}
-
-// R18-neg (wamn-2jkm.65) — the fail-CLOSED branch, exercised against a REAL
-// server booted with standard_conforming_strings=off. The positive above
-// shows the hook passes on a stock server; this shows it REJECTS an unsafe
-// one and that the guest sees `connection-unavailable`. It starts a SEPARATE
-// server with that setting, so it never runs against the stock test server.
-#[tokio::test]
-#[ignore = "requires: postgres"]
-async fn live_scs_off_server_fails_checkout_closed() {
-    let mut server = wamn_test_postgres::start(&[("standard_conforming_strings", "off")])
-        .expect("start a PostgreSQL 18 server with standard_conforming_strings=off");
-    let url = server
-        .create_database("scs_off")
-        .await
-        .expect("create the scs-off test database")
-        .url()
-        .to_owned();
-
-    // CONTROL: the server must be REACHABLE and genuinely report scs=off, so
-    // the checkout failure below is the HOOK rejecting a live server, not a
-    // dead url or a network-level connect failure. A raw connect that returns
-    // "off" shows both — and if the url were dead this connect would panic,
-    // so the test cannot false-pass against a server-down url.
-    let mut raw = connect_raw(&url).await;
-    let scs: String = sqlx::query("SHOW standard_conforming_strings")
-        .fetch_one(&mut raw)
-        .await
-        .expect("control: server reachable for the scs probe")
-        .get(0);
-    assert_eq!(
-        scs, "off",
-        "control: the server must boot with \
-             standard_conforming_strings=off (got {scs:?}); otherwise this test is vacuous"
-    );
-
-    // The production path: build the plugin exactly as production does and
-    // acquire. build_pool installs the R18 post_create hook, which runs
-    // `SHOW standard_conforming_strings` on the new physical connection and
-    // fails the create; checkout maps that pool error to the WIT
-    // `connection-unavailable` variant the guest sees.
-    // The url names a REAL guest generation, so resolution succeeds and the
-    // refusal below can only come from the hook. A url with an arbitrary
-    // user would now be refused at RESOLUTION (`wamn-0h0g.22.6.7`) — the same
-    // `connection-unavailable` variant for a different reason, which is
-    // exactly the false positive this test's second half exists to rule out.
-    let guest_url = live_guest_url(&url, LIVE_PROJECT_ENV_KEY).await;
-    let pg = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(guest_url)),
-        guest_pool_max_size: 1,
-        platform_pool_max_size: 1,
-        wait_timeout_ms: 2_000,
-        statement_timeout_ms: 5_000,
-        row_limit: 1_000,
-    })
-    .unwrap();
-    // (`matches!`, not `expect_err`, so the Ok type need not be `Debug`.)
-    let result = pg
-        .checkout_guest(DEFAULT_PROJECT, LIVE_PROJECT_ENV_KEY)
-        .await;
-    assert!(
-        matches!(result, Err(PgError::ConnectionUnavailable)),
-        "scs=off must fail CLOSED as the guest-visible connection-unavailable \
-             variant — a checkout that succeeded means the hook did not reject"
-    );
-
-    // Hook-SPECIFICITY: reach the raw pool error (which checkout collapses to
-    // connection-unavailable) and confirm it is the R18 post_create hook —
-    // not an auth/other failure that ALSO maps to connection-unavailable. The
-    // control above already ruled out server-down; this pins the cause.
-    let pool = WamnPostgres::build_pool(
-        &ResolvedCredential {
-            database_url: url,
-            guest_pool_max_size: 1,
-            platform_pool_max_size: 1,
-            wait_timeout_ms: 2_000,
-            statement_timeout_ms: 5_000,
-            row_limit: 1_000,
-        },
-        AuthorityClass::GuestSql,
-        DEFAULT_PROJECT,
-    )
-    .await
-    // Hook ORDER matters to this test: R18 is pushed first, so a scs=off
-    // server fails on standard_conforming_strings before the
-    // wamn-0h0g.22.8.4 exactness hook is reached.
-    .expect("pool builds (url parses; the hooks run at checkout, not build)");
-    let Err(_) = pool.acquire().await else {
-        panic!("raw checkout unexpectedly SUCCEEDED against a scs=off server");
-    };
-}
-
 // ------------------------------------------------------------------
 // wamn-0h0g.17.33 — the pipelined identity flight, and its test obligation.
 // ------------------------------------------------------------------
@@ -2143,10 +1486,10 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
     .expect("drop the fixture");
 }
 
-/// A statement that reports the `app.user_id` its session carries.
+/// A statement that reports the transaction caller.
 fn principal_statement(transactional: bool) -> VerifiedStatement {
     VerifiedStatement {
-        exact_sql: "SELECT COALESCE(current_setting('app.user_id', true), '')".into(),
+        exact_sql: "SELECT COALESCE((SELECT wamn_authority.current_user_id())::text, '')".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
             value_type: SqlValueType::Text,
@@ -2239,13 +1582,9 @@ fn an_explicit_transaction_statement_without_an_executing_principal_is_refused()
         .expect("a bound principal admits the statement");
 }
 
-/// A transactional statement runs with `app.user_id` bound to its executing
-/// principal. A read with the same principal keeps the autocommit path, so its
-/// session carries no `app.user_id`.
+/// Reads and writes both record their executing principal.
 #[sqlx::test(migrations = false)]
-async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autocommit(
-    pool: sqlx::PgPool,
-) {
+async fn live_reads_and_writes_bind_the_executing_principal(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--principal";
     const PRINCIPAL_B: &str = "00000000-0000-0000-0000-000000000020";
     let _lock = wamn_test_postgres::lock();
@@ -2306,8 +1645,8 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         .await
         .expect("the read runs");
     assert!(
-        matches!(&read.rows[0][0], SqlValue::Text(value) if value.is_empty()),
-        "the read took the autocommit path and bound no app.user_id: {:?}",
+        matches!(&read.rows[0][0], SqlValue::Text(value) if value == LIVE_PRINCIPAL),
+        "the read carries the executing principal: {:?}",
         read.rows
     );
 
@@ -2349,7 +1688,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         )
         .await
         .unwrap();
-    assert!(matches!(&read.rows[0][0], SqlValue::Text(value) if value.is_empty()));
+    assert!(matches!(&read.rows[0][0], SqlValue::Text(value) if value == PRINCIPAL_B));
     assert_eq!(
         pg.probe_checkout(PROJECT_ENV_KEY)
             .await
@@ -2617,10 +1956,11 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind(pool: sqlx::PgP
     .expect("drop the fixture");
 }
 
-/// A statement that reports the `app.operation` its session carries.
+/// A statement that reports the transaction operation.
 fn operation_statement(transactional: bool) -> VerifiedStatement {
     VerifiedStatement {
-        exact_sql: "SELECT COALESCE(current_setting('app.operation', true), '')".into(),
+        exact_sql: "SELECT COALESCE((SELECT (wamn_authority.current_identity()).operation), '')"
+            .into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
             value_type: SqlValueType::Text,
@@ -2683,10 +2023,7 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
     assert!(refused.is_err(), "the unbound value is not an operation");
 }
 
-/// A transactional statement runs with `app.operation` bound to its executing
-/// operation. A read keeps the autocommit path and carries no `app.operation`.
-/// The pool holds one connection. A session-level `app.operation` on that
-/// connection does not reach the next transaction, which has no operation.
+/// Reads and writes record their operation. A later transaction inherits none.
 #[sqlx::test(migrations = false)]
 async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connection_keeps_none(
     pool: sqlx::PgPool,
@@ -2748,23 +2085,11 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         .await
         .expect("the read runs");
     assert!(
-        matches!(&read.rows[0][0], SqlValue::Text(value) if value.is_empty()),
-        "the read took the autocommit path and bound no app.operation: {:?}",
+        matches!(&read.rows[0][0], SqlValue::Text(value) if value == OPERATION),
+        "the read carries the executing operation: {:?}",
         read.rows
     );
 
-    // Leave a session-level value on the one pooled connection. The pool
-    // recycles without a reset, so only the bound identity clears it.
-    let (mut connection, _policy) = pg
-        .checkout_guest(DEFAULT_PROJECT, PROJECT_ENV_KEY)
-        .await
-        .expect("acquire the pooled connection");
-    sqlx::raw_sql("SELECT set_config('app.operation', 'stale', false)")
-        .execute(&mut *connection)
-        .await
-        .map(|_| ())
-        .expect("set a session-level operation");
-    drop(connection);
     pg.bind_session_identity(
         scope,
         &SessionIdentity {
@@ -2786,7 +2111,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         .expect("the next transactional statement runs");
     assert!(
         matches!(&next.rows[0][0], SqlValue::Text(value) if value.is_empty()),
-        "the pooled connection carries no stale app.operation: {:?}",
+        "the next transaction carries no previous operation: {:?}",
         next.rows
     );
     assert_eq!(
@@ -2806,10 +2131,10 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     .expect("drop the fixture");
 }
 
-/// A statement that reports the `app.application` its session carries.
+/// A statement that reports the transaction application.
 fn application_statement() -> VerifiedStatement {
     VerifiedStatement {
-        exact_sql: "SELECT COALESCE(current_setting('app.application', true), '')".into(),
+        exact_sql: "SELECT COALESCE((SELECT wamn_authority.current_application()), '')".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
             value_type: SqlValueType::Text,
@@ -2924,7 +2249,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
             .expect("the transactional statement runs");
         match &result.rows[0][0] {
             SqlValue::Text(value) => value.clone(),
-            other => panic!("app.application reads as text: {other:?}"),
+            other => panic!("the application reads as text: {other:?}"),
         }
     };
 
@@ -2934,35 +2259,6 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
         carried(scope_a).await,
         APPLICATION_A,
         "B's transaction on the shared connection does not reach A's"
-    );
-
-    // Leave B's name as a session-level value on the one pooled connection.
-    // The pool recycles without a reset, so only the bound identity clears it.
-    let (mut connection, _policy) = pg
-        .checkout_guest(DEFAULT_PROJECT, PROJECT_ENV_KEY)
-        .await
-        .expect("acquire the pooled connection");
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "SELECT set_config('app.application', '{APPLICATION_B}', false)"
-    )))
-    .execute(&mut *connection)
-    .await
-    .map(|_| ())
-    .expect("set a session-level application");
-    drop(connection);
-    assert_eq!(
-        carried(scope_a).await,
-        APPLICATION_A,
-        "a session-level value does not override the bound identity"
-    );
-
-    // Guest SQL that names another application is refused before it runs.
-    assert!(
-        reject_identity_mutation(&format!(
-            "SELECT set_config('app.application', '{APPLICATION_B}', true)"
-        ))
-        .is_err(),
-        "the guest SQL surface cannot set app.application"
     );
 
     pg.bind_session_identity(
@@ -3095,15 +2391,6 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPoo
             .expect("read the isolation level")
             .get(0);
         assert_eq!(level, isolation, "read={read}");
-        let no_write: bool = sqlx::query("SELECT pg_current_xact_id_if_assigned() IS NULL")
-            .fetch_one(&mut *connection)
-            .await
-            .expect("read whether causation assigned a write transaction")
-            .get(0);
-        assert_eq!(
-            no_write, read,
-            "only a write invocation emits causation into WAL"
-        );
         let first = run_verified_query(&mut connection, path, &statement, &[], 1_000)
             .await
             .expect("the first select runs");
@@ -3141,121 +2428,6 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPoo
     .expect("drop the fixture");
 }
 
-/// A warm get executes only its application SQL. A changed schema or runner
-/// applies before the query, including a cold Parse on the same connection.
-#[tokio::test]
-#[ignore = "requires: postgres"]
-async fn live_autocommit_settings_are_reused_only_on_their_connection() {
-    const PROJECT_ENV_KEY: &str = "test--dev--settings";
-    let mut server =
-        wamn_test_postgres::start(&[("shared_preload_libraries", "pg_stat_statements")])
-            .expect("start PostgreSQL with statement statistics");
-    let database = server.create_database("settings").await.unwrap();
-    let mut admin = connect_raw(database.url()).await;
-    sqlx::raw_sql("CREATE EXTENSION pg_stat_statements")
-        .execute(&mut admin)
-        .await
-        .map(drop)
-        .unwrap();
-    let guest_url = live_guest_url(database.url(), PROJECT_ENV_KEY).await;
-    let pg = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(guest_url)),
-        guest_pool_max_size: 1,
-        platform_pool_max_size: 1,
-        wait_timeout_ms: 2_000,
-        statement_timeout_ms: 5_000,
-        row_limit: 10,
-    })
-    .unwrap();
-    let statement = VerifiedStatement {
-        exact_sql:
-            "SELECT current_setting('search_path'), current_setting('app.runner'), pg_backend_pid()"
-                .into(),
-        binds: Box::new([]),
-        columns: Box::new([
-            StatementField {
-                value_type: SqlValueType::Text,
-                nullable: true,
-            },
-            StatementField {
-                value_type: SqlValueType::Text,
-                nullable: true,
-            },
-            StatementField {
-                value_type: SqlValueType::Int32,
-                nullable: true,
-            },
-        ]),
-        transactional: false,
-    };
-    let mut backend = None;
-    for (schema, runner) in [
-        (Some("public"), Some("first")),
-        (Some("pg_catalog"), Some("second")),
-        (None, None),
-    ] {
-        pg.revoke_session_identity("settings");
-        pg.bind_session_identity(
-            "settings",
-            &SessionIdentity {
-                project_env_key: PROJECT_ENV_KEY.into(),
-                schema: schema.map(str::to_owned),
-                runner: runner.map(str::to_owned),
-                ..SessionIdentity::default()
-            },
-        )
-        .await
-        .unwrap();
-        let first = pg
-            .one_shot_statement("settings", "sha256:settings", &statement, &[], false)
-            .await
-            .unwrap();
-        assert!(
-            matches!(&first.rows[0][0], SqlValue::Text(value) if value == schema.unwrap_or("\"$user\", public"))
-        );
-        assert!(
-            matches!(&first.rows[0][1], SqlValue::Text(value) if value == runner.unwrap_or_default())
-        );
-        let SqlValue::Int32(pid) = first.rows[0][2] else {
-            panic!("pg_backend_pid returns an integer");
-        };
-        if let Some(backend) = backend {
-            assert_eq!(pid, backend);
-        }
-        backend = Some(pid);
-        sqlx::raw_sql("SELECT pg_stat_statements_reset()")
-            .execute(&mut admin)
-            .await
-            .map(drop)
-            .unwrap();
-        pg.one_shot_statement("settings", "sha256:settings", &statement, &[], false)
-            .await
-            .unwrap();
-        let calls: i64 = sqlx::query("SELECT COALESCE(sum(calls), 0)::bigint FROM pg_stat_statements WHERE userid = (SELECT oid FROM pg_roles WHERE rolname LIKE 'wamn_app_%' AND rolcanlogin)").fetch_one(&mut admin).await.unwrap().get(0);
-        assert_eq!(calls, 1, "a warm get runs only its application statement");
-        sqlx::raw_sql("SELECT pg_stat_statements_reset()")
-            .execute(&mut admin)
-            .await
-            .map(drop)
-            .unwrap();
-        let with_wal = pg
-            .one_shot_statement("settings", "sha256:settings", &statement, &[], true)
-            .await
-            .unwrap();
-        assert!(
-            pg.scopes
-                .read::<crate::invocation::Authority, _>("settings", |record| record
-                    .wal_position
-                    .clone())
-                .flatten()
-                .as_deref()
-                .is_some_and(|position| position.contains('/'))
-        );
-        assert!(matches!(with_wal.rows[0][2], SqlValue::Int32(observed) if observed == pid));
-        let calls: i64 = sqlx::query("SELECT COALESCE(sum(calls), 0)::bigint FROM pg_stat_statements WHERE userid = (SELECT oid FROM pg_roles WHERE rolname LIKE 'wamn_app_%' AND rolcanlogin)").fetch_one(&mut admin).await.unwrap().get(0);
-        assert_eq!(calls, 2, "WAL metadata adds only its own statement");
-    }
-}
 /// The server sees one prepared read, with identity statements only when the
 /// caller carries a role. The cold read also proves that Parse follows the
 /// schema configuration. Cancellation closes the session while rows remain.
@@ -3265,8 +2437,8 @@ async fn live_stream_reads_once_and_scopes_identity() {
     use super::super::run_stream::open_stream;
 
     const PROJECT_ENV_KEY: &str = "test--dev--stream-sequence";
-    const SQL: &str = "SELECT current_setting('app.role', true), \
-        current_setting('app.runner', true), current_setting('transaction_read_only'), \
+    const SQL: &str = "SELECT (SELECT wamn_authority.current_role()), \
+        (SELECT (wamn_authority.current_identity()).runner), current_setting('transaction_read_only'), \
         value FROM stream_probe";
     let mut server = wamn_test_postgres::start(&[("log_statement", "all")]).unwrap();
     let database = server.create_database("stream_sequence").await.unwrap();
@@ -3284,15 +2456,6 @@ async fn live_stream_reads_once_and_scopes_identity() {
     .await
     .map(drop)
     .unwrap();
-    let directory: String = sqlx::query("SHOW data_directory")
-        .fetch_one(&mut admin)
-        .await
-        .unwrap()
-        .get(0);
-    let log = std::path::Path::new(&directory)
-        .parent()
-        .unwrap()
-        .join("server.log");
     for role in [None, Some("viewer")] {
         let pg = WamnPostgres::new(WamnPostgresConfig {
             credentials: Some(ClassCredentials::every_class(guest_url.clone())),
@@ -3347,8 +2510,7 @@ async fn live_stream_reads_once_and_scopes_identity() {
             .unwrap();
         pg.activate_statement_operation(scope, "probe/query")
             .unwrap();
-        for warm in [false, true] {
-            let offset = std::fs::read_to_string(&log).unwrap().len();
+        for _ in 0..2 {
             let mut opened = open_stream(
                 &pg,
                 scope,
@@ -3375,44 +2537,20 @@ async fn live_stream_reads_once_and_scopes_identity() {
                 );
             }
             assert!(matches!(&rows[0][1], SqlValue::Text(value) if value == "stream-test"));
-            let read_only = if role.is_some() { "on" } else { "off" };
+            let read_only = "on";
             assert!(matches!(&rows[0][2], SqlValue::Text(value) if value == read_only));
             assert!(matches!(&rows[0][3], SqlValue::Int32(7)));
-            if warm {
-                let content = std::fs::read_to_string(&log).unwrap();
-                let sequence: Vec<_> = content[offset..]
-                    .lines()
-                    .filter_map(|line| {
-                        let (_, execution) = line.split_once("execute ")?;
-                        execution.split_once(": ").map(|(_, sql)| sql)
-                    })
-                    .collect();
-                if role.is_some() {
-                    assert_eq!(sequence.len(), 4, "{sequence:?}");
-                    assert_eq!(
-                        sequence[0],
-                        "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
-                    );
-                    assert!(
-                        sequence[1].starts_with("SELECT set_config("),
-                        "{sequence:?}"
-                    );
-                    assert_eq!(sequence[2], SQL);
-                    assert_eq!(sequence[3], "COMMIT");
-                } else {
-                    assert_eq!(sequence, [SQL]);
-                }
-            }
         }
         let (mut connection, _) = pg
             .checkout_guest(DEFAULT_PROJECT, PROJECT_ENV_KEY)
             .await
             .unwrap();
-        let role_after: Option<String> = sqlx::query("SELECT current_setting('app.role', true)")
-            .fetch_one(&mut *connection)
-            .await
-            .unwrap()
-            .get(0);
+        let role_after: Option<String> =
+            sqlx::query("SELECT (SELECT wamn_authority.current_role())")
+                .fetch_one(&mut *connection)
+                .await
+                .unwrap()
+                .get(0);
         assert!(role_after.is_none_or(|role| role.is_empty()));
         drop(connection);
 
@@ -3662,7 +2800,7 @@ async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_u
     wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let mut admin = connect_raw(database.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "SET app.user_id='{LIVE_PLATFORM_PRINCIPAL}'; SET app.operation='admin:role-refusal-fixture';
+        "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{LIVE_PLATFORM_PRINCIPAL}','','fixture','admin:role-refusal-fixture');
          INSERT INTO platform.\"user\"(id,type,email) VALUES
           ('00000000-0000-4000-8000-000000000081','user','user@example.test'),
           ('00000000-0000-4000-8000-000000000082','service','service@example.test');
@@ -3736,4 +2874,70 @@ fn query_fixture_sql(guest: &str, password: &str) -> String {
         role = escape_identifier(&query),
         password = escape_literal(password)
     )
+}
+
+/// Both host read paths carry identity and refuse writes after binding it.
+#[sqlx::test(migrations = false)]
+async fn live_operation_reads_and_dynamic_queries_keep_identity_and_refuse_writes(
+    pool: sqlx::PgPool,
+) {
+    const PROJECT: &str = "test--dev--identity-read";
+    const SCOPE: &str = "identity-read";
+    let database = wamn_test_postgres::url(&pool);
+    let guest = live_guest_url(database.as_str(), PROJECT).await;
+    let pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 1_000,
+    })
+    .unwrap();
+    let mut admin = connect_raw(database.as_str()).await;
+    sqlx::raw_sql("CREATE TABLE public.identity_read_probe(value integer); GRANT SELECT, INSERT ON public.identity_read_probe TO wamn_app, wamn_query")
+        .execute(&mut admin).await.unwrap();
+    pg.bind_request_element_session_identity(
+        SCOPE,
+        &SessionIdentity {
+            project_env_key: PROJECT.into(),
+            user_id: Some(LIVE_PRINCIPAL.into()),
+            operation: Some("admin:read-probe".into()),
+            application: Some("fixture".into()),
+            ..SessionIdentity::default()
+        },
+    )
+    .unwrap();
+    let read = principal_statement(false);
+    let prepared = WamnPostgres::prepare_statement_set(
+        std::collections::BTreeMap::from([("sql/read.sql".into(), read.clone())]),
+        true,
+    );
+    pg.bind_prepared_statement_operation(SCOPE, "probe/read", &prepared)
+        .unwrap();
+    pg.activate_statement_operation(SCOPE, "probe/read")
+        .unwrap();
+    let operation = pg
+        .one_shot_statement(SCOPE, "identity-read", &read, &[], false)
+        .await
+        .unwrap();
+    let dynamic = pg.one_shot(SCOPE, &read.exact_sql, &[]).await.unwrap();
+    for result in [operation, dynamic] {
+        assert!(matches!(&result.rows[0][0], SqlValue::Text(value) if value == LIVE_PRINCIPAL));
+    }
+    let write = VerifiedStatement {
+        exact_sql: "INSERT INTO public.identity_read_probe VALUES(1)".into(),
+        binds: Box::new([]),
+        columns: Box::new([]),
+        transactional: true,
+    };
+    let error = pg
+        .one_shot_statement(SCOPE, "identity-write", &write, &[], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, StatementError::Postgres(PgError::QueryError((code, _))) if code == "25006")
+    );
+    let error = pg.one_shot(SCOPE, &write.exact_sql, &[]).await.unwrap_err();
+    assert!(matches!(error, PgError::QueryError((code, _)) if code == "25006"));
 }

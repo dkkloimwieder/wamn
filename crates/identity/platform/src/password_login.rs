@@ -171,12 +171,14 @@ pub async fn authenticate_renewal(
     let Some((login, consumed, usable)) = lookup(tx, issuer, audience, &digest).await? else {
         return Ok(None);
     };
-    sqlx::query("SELECT set_config('app.user_id', $1, true)")
-        .bind(login.principal.to_string().as_str())
-        .execute(&mut **tx)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(|error| database(&error))?;
+    sqlx::query(
+        "INSERT INTO platform.tx_identity(user_id,role,application) VALUES($1::text::uuid,'','')",
+    )
+    .bind(login.principal.to_string().as_str())
+    .execute(&mut **tx)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(|error| database(&error))?;
     if consumed {
         revoke_family(tx, &login, drops).await?;
         return Ok(None);

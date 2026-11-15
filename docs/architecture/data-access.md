@@ -492,7 +492,7 @@ The package declares numbering in `wamn.k`:
 
 - `sequences` names each number sequence and gives its default `pattern`. `callable = True` gives the package's commands the generated `sequences::<name>::next` and `peek`.
 - `number = "<sequence>"` on a model field makes the generated insert fill that field with the next number.
-- `role = "actor"` on a model field makes the generated insert fill it from `app.user_id`. The generated update fills a field named `updated_by` in the same way and never changes another actor field.
+- `role = "actor"` on a model field makes the generated insert fill it from `wamn_authority.current_user_id()`. The generated update fills a field named `updated_by` in the same way and never changes another actor field.
 
 An overlay is a model whose `owner` is another package. It inherits the owner's `number` and actor declarations, even when it declares no `fields`. The build reads them, and the sequence patterns, from the compiled manifest of the base build. The generated overlay insert numbers and stamps the inherited fields, and the generated overlay update fills an inherited `updated_by`.
 
@@ -536,9 +536,9 @@ The guest calls `next-number(name, keys)` or `peek-number(name, keys)` of `wamn:
 `keys` maps each value that the pattern names (`per=`, `reset=` and `{field:}`) to its text, or to none for a null.
 The keys are not a record, so any command can call the function with values of its choice.
 The application is the name that the `applications` map of `environment.k` gives the package of the operation.
-The host binds that name to `app.application` for each operation, and it refuses a package that belongs to no application or to two.
+The host stores that name in `platform.tx_identity.application` for each operation, and it refuses a package that belongs to no application or to two.
 The plugin reads the application from host state and resolves the sequence by that application and the name.
-It never reads the `app.application` identity, because guest SQL can rewrite that identity.
+This value also appears in the protected transaction identity.
 Both calls run only in an open operation transaction, and they return `permission-denied` outside one.
 
 `next-number` advances each counter of the pattern and renders the new values.
@@ -597,7 +597,7 @@ The records are the single-column unique text columns of the application's schem
 It also refuses a `per=` counter, whose values never change.
 The route answers `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live`, or `idempotency_conflict`.
 
-On Postgres the three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter`, so the application role keeps no `UPDATE` on `number_counter`. Each runs on the sequence id alone and refuses an id that is not a sequence. None reads the `app.application` identity, because guest SQL can rewrite it. The plugin knows the operation's application from host state. It resolves the application and the sequence name to the sequence id, and it passes that id to the function. An application guest writes through the statements its package declares. It may also read through `wamn:postgres/client`, which uses the SELECT-only login. Component admission guards declared statements. It parses each declared statement with PostgreSQL's own grammar (`pg_query`) and walks the whole parse tree. It refuses a statement that names `bump_counter`, `assign_counter` or `set_counter` (in any quoting, case or schema), that writes a `platform.*` relation, that holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` identifier or string, or that does not parse (owner ruling 2026-10-24). Publish runs the same test on the statements of each pushed descriptor. The compiler owns the parsed SQL policy. The host and component admission use that policy in `wamn-compiler::declared_sql`. The host applies it to both declared and raw SQL. So only the plugin reaches the functions. SQLite needs the same rule, because it has no roles. The identity stays set, for logging only. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
+On Postgres the three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter`, so the application role keeps no `UPDATE` on `number_counter`. Each runs on the sequence id alone and refuses an id that is not a sequence. The application also appears in the protected transaction identity. The plugin knows the operation's application from host state. It resolves the application and the sequence name to the sequence id, and it passes that id to the function. An application guest writes through the statements its package declares. It may also read through `wamn:postgres/client`, which uses the SELECT-only login. Component admission guards declared statements. It parses each declared statement with PostgreSQL's own grammar (`pg_query`) and walks the whole parse tree. It refuses a statement that names `bump_counter`, `assign_counter` or `set_counter` (in any quoting, case or schema), that writes a `platform.*` relation, that holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` identifier or string, or that does not parse (owner ruling 2026-10-24). Publish runs the same test on the statements of each pushed descriptor. The compiler owns the parsed SQL policy. The host and component admission use that policy in `wamn-compiler::declared_sql`. The host applies it to both declared and raw SQL. So only the plugin reaches the functions. SQLite needs the same rule, because it has no roles. The identity stays set, for logging only. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
 
 - `per=`: look up `(counter, key_value)` with no lock — mappings are immutable, so a hit is safe to render. On a miss, `assign_counter(sequence, counter, key_value)` takes a per-key `pg_advisory_xact_lock`, looks again, and returns the existing mapping or allocates from the `''` allocator and inserts the key row with that value. Two concurrent misses for one key allocate once, so `per=` has no gaps. The first line of a batch pays the allocator lock; every later line pays only its own counter (owner ruling 2026-10-23).
 
@@ -667,7 +667,7 @@ A stamp column needs no default, because the trigger sets every selected value.
 
 [`deploy/sql/record-history.sql`](../../deploy/sql/record-history.sql) creates schema `wamn_history` and the trigger function `wamn_history.stamp_row`.
 The `CATALOG_SCHEMA_SQL` composition carries the file, and the file applies again without error.
-The function reads the actor from `app.user_id` and the time from `transaction_timestamp()`.
+The function reads the actor from `wamn_authority.current_user_id()` and the time from `transaction_timestamp()`.
 Every stamp in one transaction carries the same instant, and that instant is not the commit time.
 
 - An insert sets every selected column.
@@ -678,10 +678,9 @@ Every stamp in one transaction carries the same instant, and that instant is not
 - A write with no bound actor raises SQLSTATE `55000` with the message `actor-required`, for every column selection.
 
 The function reads no user row, and no stamp column has a foreign key.
-The platform trigger functions read `app.user_id`.
+The platform trigger functions read `wamn_authority.current_user_id()`.
 Generated statements read it too: a create fills each actor field, an update fills the `updated_by` actor field, and a tombstone delete sets `deleted_by`.
-No authorization or row policy reads it.
-`wamn_history.log_row_change` reads `app.operation` to record attribution.
+`wamn_history.log_row_change` reads `(wamn_authority.current_identity()).operation` to record attribution.
 
 The compiler emits each selected stamp function and trigger in an immutable migration under `history/`.
 The trigger runs before each inserted or updated row and calls `wamn_history.<schema>__<relation>_stamp()`.
@@ -709,8 +708,8 @@ An entry has these columns:
 - `project_id`: the project of the row, only in a legacy history table under a project base grants.
 - `row_key`: a JSONB object of the primary key columns.
 - `type`: `insert`, `update`, or `delete`.
-- `operation`: the source of the write, from `app.operation`.
-- `changed_by`: the actor, from `app.user_id`.
+- `operation`: the source of the write, from `(wamn_authority.current_identity()).operation`.
+- `changed_by`: the actor, from `wamn_authority.current_user_id()`.
 - `changed_at`: the one time of the entry, from `transaction_timestamp()`. Retention expires entries by this time.
 - `transaction_id`: the 64-bit value of `pg_current_xact_id()`, stored as `bigint`.
 - `before` and `after`: the JSONB images. A package relation keeps the `to_jsonb` spelling, and a platform relation keeps the spelling of `wamn_history.row_image`.
@@ -722,8 +721,8 @@ The platform binding owns the closed component list, so a new component needs no
 
 The function refuses a write that it cannot log:
 
-- A write with no bound `app.user_id` raises SQLSTATE `55000` with the message `actor-required`, as the stamp function does.
-- A write with no bound `app.operation` raises SQLSTATE `55000` with the message `operation-required`.
+- A write with no bound `wamn_authority.current_user_id()` raises SQLSTATE `55000` with the message `actor-required`, as the stamp function does.
+- A write with no bound `(wamn_authority.current_identity()).operation` raises SQLSTATE `55000` with the message `operation-required`.
 - A write to a relation with no primary key raises SQLSTATE `55000` with the message `history-key-required`.
 
 Entry contents:
@@ -854,15 +853,25 @@ Only the consumer schema requires CDC capture.
 
 ### Actors
 
+The host inserts one caller row into `platform.tx_identity` immediately after `BEGIN`.
+The primary key is `pg_current_xact_id()`. A trigger refuses another transaction id.
+Application and dynamic query logins have INSERT only. The first insert fixes the caller until the transaction ends.
+The SECURITY DEFINER function `wamn_authority.current_identity()` reads only that transaction's row.
+Its accessors expose the user, role, and application. Policies call them through `(SELECT ...)` and refuse a missing identity.
+A read operation and a dynamic query use REPEATABLE READ. After the insert, the host sets the transaction to READ ONLY.
+The host keeps `search_path` and `statement_timeout` local to the transaction.
+A shared map holds one pool per project and login.
+
+
 The actor is the `platform."user"` id of the executing principal, never the credential.
 The [execution page](execution.md#native-dispatch) lists the principal that the host binds for each type of delivery.
-A writer outside the host binds `app.user_id` with `set_config` in its own transaction.
+A writer outside the host inserts its caller into `platform.tx_identity` in its own transaction.
 Provisioning binds `wamn:provisioning`.
 apply-package binds `wamn:apply-package` for package writes and operation grants.
 The retention task binds `wamn:audit-retention`.
-The binding of a platform component also sets `app.operation` to the same `wamn:<component>` name.
+The identity row of a platform component also sets `operation` to the same `wamn:<component>` name.
 Administrative SQL must bind the operator's user row, and test fixtures must bind a provisioned test principal.
-Administrative SQL and test fixtures also bind `app.operation` as `admin:<kebab-purpose>`, including a transaction that only deletes rows.
+Administrative SQL and test fixtures also bind `(wamn_authority.current_identity()).operation` as `admin:<kebab-purpose>`, including a transaction that only deletes rows.
 
 `platform."user".type` is `user`, `service`, or `platform`, and it has no default.
 Users have `user` rows, stations and integrations have `service` rows, and platform components have `platform` rows.
@@ -1038,7 +1047,7 @@ It stamps `identity.session_keys`, `session_signing_state`, and `password_attemp
 The full control schema stamps registry declarations and `wamn_authority.author_login_projects`.
 The system operations tables carry no stamps.
 In the system database, the actor is an `identity.principals` id.
-The system identity tables record the actor only. A control route binds `app.operation` to its sealed operation id, and no column stores it.
+The system identity tables record the actor only. A control route inserts `operation` to its sealed operation id, and no column stores it.
 The system database keeps stamps only and no history table, as its [limits](#limits) state.
 
 The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provision/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
@@ -1143,8 +1152,8 @@ The caller sees `permission-denied`.
 The host's [auth memory](execution.md#auth-memory) answers the test, and a miss reads the row.
 A removed row stays accepted until a change message clears the memory or 60 seconds pass.
 There is still no foreign key on a stamp column.
-Modified application SQL can forge actor attribution and `app.operation`.
-Record history gives no tamper resistance against modified application code or administrative SQL.
+Application SQL cannot replace the host caller. A second identity insert fails, and application logins cannot update or delete identity rows.
+Administrative SQL still controls its own attribution.
 
 A very large `"P<n>D"` day count stops the retention verb at that relation, and the verb prunes no later relation of that database.
 

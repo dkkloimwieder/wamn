@@ -2,7 +2,10 @@
 DO $apply_connect$ BEGIN
     EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_apply', current_database());
 END $apply_connect$;
-GRANT USAGE ON SCHEMA registry, identity, catalog, wamn_authority TO wamn_apply;
+GRANT USAGE ON SCHEMA registry, identity, catalog, platform, wamn_authority TO wamn_apply;
+GRANT INSERT ON platform.tx_identity TO wamn_apply;
+GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_user_id(),
+    wamn_authority.current_role(), wamn_authority.current_application() TO wamn_apply;
 GRANT SELECT ON registry.orgs, registry.env_policies, registry.environment_projects,
     registry.target, registry.meta, identity.org_roles, identity.project_roles,
     identity.project_env_memberships, identity.principals,

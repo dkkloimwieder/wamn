@@ -1,6 +1,6 @@
 BEGIN;
-SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true),
-       set_config('app.operation', 'admin:seed-catalog-history', true);
+INSERT INTO platform.tx_identity(user_id,role,application,operation)
+VALUES('00000000-0000-4000-8000-0000000000f1','','fixture','admin:seed-catalog-history');
 INSERT INTO platform."user" (id, type, email, display_name) VALUES
     ('00000000-0000-4000-8000-0000000000f1', 'user', 'creator@example.invalid', 'creator'),
     ('00000000-0000-4000-8000-0000000000f2', 'user', 'editor@example.invalid', 'editor');
@@ -40,14 +40,15 @@ BEGIN
             '00000000-0000-4000-8000-0000000000f1', relation
         ) INTO stamped;
         ASSERT stamped, format('%s insert stamps', relation);
-        PERFORM set_config('app.user_id', '', true);
+        DELETE FROM platform.tx_identity WHERE xid = pg_current_xact_id();
         BEGIN
             EXECUTE format('INSERT INTO catalog.%I SELECT * FROM catalog.%I', relation, relation);
             RAISE EXCEPTION '% accepted an insert without an actor', relation;
         EXCEPTION WHEN SQLSTATE '55000' THEN
             ASSERT SQLERRM = 'actor-required', format('%s missing actor: %s', relation, SQLERRM);
         END;
-        PERFORM set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true);
+        INSERT INTO platform.tx_identity(user_id,role,application,operation)
+        VALUES('00000000-0000-4000-8000-0000000000f1','','fixture','admin:seed-catalog-history');
         IF relation NOT IN ('packages', 'release_connection', 'connection_binding') THEN
             BEGIN
                 EXECUTE format('UPDATE catalog.%I SET created_by = created_by', relation);

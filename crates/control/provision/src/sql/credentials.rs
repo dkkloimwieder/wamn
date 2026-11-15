@@ -37,7 +37,7 @@ pub fn grant_workload_login_sql(family: WorkloadRoleFamily, database: &str, role
 /// Grant the dynamic SQL role reads without inheriting any application writer.
 pub fn grant_dynamic_sql_surface_sql() -> String {
     format!(
-        "{} DO $read$ DECLARE target record; BEGIN FOR target IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname NOT IN ('information_schema', 'wamn_history') LOOP EXECUTE format('GRANT USAGE ON SCHEMA %I TO wamn_query', target.nspname); EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO wamn_query', target.nspname); END LOOP; END $read$; GRANT EXECUTE ON FUNCTION wamn_authority.project_key(text), wamn_authority.current_project_key() TO wamn_query;",
+        "{} DO $read$ DECLARE target record; BEGIN FOR target IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname NOT IN ('information_schema', 'wamn_history') LOOP EXECUTE format('GRANT USAGE ON SCHEMA %I TO wamn_query', target.nspname); EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO wamn_query', target.nspname); END LOOP; END $read$; REVOKE ALL ON platform.tx_identity FROM wamn_query; GRANT INSERT ON platform.tx_identity TO wamn_query; GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_user_id(), wamn_authority.current_role(), wamn_authority.current_application() TO wamn_query; GRANT EXECUTE ON FUNCTION wamn_authority.project_key(text), wamn_authority.current_project_key() TO wamn_query;",
         ensure_acl_role_sql("wamn_query")
     )
 }

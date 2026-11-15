@@ -384,11 +384,10 @@ pub async fn write_release(
         .await
         .context("begin the release cache write")?;
     sqlx::query(
-        "SELECT set_config('app.user_id', $1, true), \
-             set_config('app.operation', 'wamn:provisioning', true)",
+        "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES($1::text::uuid,'','','wamn:provisioning')",
     )
     .bind(actor)
-    .fetch_one(&mut *transaction)
+    .execute(&mut *transaction)
     .await
     .context("bind the release publisher and provisioning operation")?;
     sqlx::query("SELECT set_config('app.project_env_key', $1, true)")

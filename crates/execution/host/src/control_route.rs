@@ -991,8 +991,7 @@ impl ControlRoutes<'_> {
     ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
         let mut transaction = writer.begin().await?;
         sqlx::query(
-            "SELECT pg_catalog.set_config('app.user_id', $1, true), \
-                 pg_catalog.set_config('app.operation', $2, true)",
+            "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
         )
         .bind(caller.to_string().as_str())
         .bind(&attachment.operation)
@@ -1122,7 +1121,7 @@ async fn write_application(
 
     let result = async {
         let mut transaction = client.begin().await?;
-        sqlx::query("SELECT pg_catalog.set_config('app.user_id', $1, true), pg_catalog.set_config('app.operation', $2, true)").bind(caller.to_string().as_str()).bind(&attachment.operation).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES($1::text::uuid,'','',$2)").bind(caller.to_string().as_str()).bind(&attachment.operation).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
         require_platform_rows(&mut transaction).await?;
         let mut drops = AuthDrops::default();
         project_authority(system, &mut transaction, target, principal, &mut drops).await?;
@@ -1250,8 +1249,7 @@ async fn write_status(
     let result = async {
         let mut transaction = client.begin().await?;
         sqlx::query(
-            "SELECT pg_catalog.set_config('app.user_id', $1, true), \
-                 pg_catalog.set_config('app.operation', $2, true)",
+            "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
         )
         .bind(caller.to_string().as_str())
         .bind(&attachment.operation)

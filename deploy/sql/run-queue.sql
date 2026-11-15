@@ -13,17 +13,9 @@
 -- Project-environment provisioning and schema reconciliation apply this artifact
 -- after `run-state.sql`; it is not an independent durability domain.
 --
--- Security shape DELIBERATELY DIVERGES from the rest of the platform, and this
--- is the determination rather than an oversight (wamn-0h0g.22.6.3): the guest
--- ACL role holds NO privilege on `run_queue` — measured from
--- has_table_privilege, and this file contains no GRANT to it — so the identity
--- here is HOST-INJECTED, not guest-settable. Re-keying it onto `current_user`
--- would be change without a threat, and would break the host writers that do
--- reach it. FORCE RLS therefore stays keyed on
--- NULLIF(current_setting('app.project_env_key', true), ''), NULL (=> zero rows) when no
--- identity was injected — PG resets a custom GUC to '' (not NULL) after SET LOCAL,
--- and CHECK (project_env_key <> '') forbids a ''-project row, so an empty identity
--- matches nothing structurally.
+-- Only host roles can read or write the queue. A project database holds one
+-- project. FORCE RLS requires the protected caller row, and table grants
+-- select the host roles that can use it.
 --
 -- TARGET: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
 -- reconciliation. Every row shares one project-global FIFO ordered by
@@ -78,7 +70,8 @@ CREATE INDEX run_queue_leasable ON wamn_run.run_queue
 ALTER TABLE wamn_run.run_queue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.run_queue FORCE ROW LEVEL SECURITY;
 CREATE POLICY run_queue_project_env_key ON wamn_run.run_queue
-    USING (project_env_key = NULLIF(current_setting('app.project_env_key', true), ''))
-    WITH CHECK (project_env_key = NULLIF(current_setting('app.project_env_key', true), ''));
+    TO wamn_platform
+    USING ((SELECT wamn_authority.current_role()) IS NOT NULL)
+    WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL);
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.run_queue
     FROM PUBLIC, wamn_app;

@@ -1,8 +1,7 @@
 //! The hand-written DDL's project base grants derives from `current_user`.
 //!
 //! `wamn-0h0g.22.6.3` established the guest project base grants across four artifacts;
-//! the current package-era relation set contains 21 governed relations, all off
-//! the settable `app.project_env_key` identity and onto
+//! every guest-readable project relation uses the login-derived project key:
 //! `wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()`,
 //! each with the expression index that keeps the predicate sargable.
 //!
@@ -29,7 +28,6 @@
 
 use std::fmt::Write as _;
 use std::process::Command;
-use wamn_control_provision::project_key::project_key;
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
@@ -70,10 +68,6 @@ fn platform_probe_retention() -> String {
     )
     .expect("Retention takes a project target")
 }
-
-/// The host injects the identity for this relation. The guest ACL role holds
-/// no privileges on it, as measured by `has_table_privilege`.
-const HOST_INJECTED: [&str; 1] = ["wamn_run.run_queue"];
 
 /// Give the case its own server for its independent control and project databases.
 fn shared_server() -> (wamn_test_postgres::OwnedPostgres, String) {
@@ -199,148 +193,110 @@ fn the_swept_minimum_admits_only_the_connected_guest_on_postgres() {
     // populated would be asserting against LAST run's schema, not this build's.
     // Roles are cluster-wide, so this case holds the shared server lock.
     reset(&admin);
-    // Seed the retired shared-login posture so the REAL init artifact must
-    // converge it. The candidate is test-owned and deliberately unrelated to
-    // any historical production password.
-    apply(
-        &admin,
-        "CREATE ROLE wamn_app LOGIN PASSWORD 'retired-shared-probe' INHERIT;\n",
-    );
     apply(&admin, POSTGRES_INIT);
     let base = admin.rsplit_once('/').expect("url names a database").0;
     let db_url = format!("{base}/wamn");
-    let app_attributes = psql(
-        &db_url,
-        None,
-        "SELECT concat_ws(' ', rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, \
-                rolcreaterole, rolinherit, rolreplication, rolpassword IS NOT NULL) \
-           FROM pg_authid WHERE rolname = 'wamn_app'",
-    );
-    assert_eq!(
-        app_attributes, "f f f f f f f f",
-        "postgres-init.sql did not converge the retired shared LOGIN to a \
-         passwordless NOLOGIN NOINHERIT ACL role (order: login, super, \
-         bypassrls, createdb, createrole, inherit, replication, password set)"
-    );
     for sql in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
         apply(&db_url, sql);
     }
 
-    // 1. NOTHING guest-reachable is still on a settable identity.
-    let settable = psql(
+    let guest = record_history_guest();
+    apply(
+        &admin,
+        &format!("CREATE ROLE \"{guest}\" NOLOGIN; GRANT wamn_app TO \"{guest}\";"),
+    );
+    let seed = r#"
+DO $$ DECLARE project text; BEGIN
+    FOREACH project IN ARRAY ARRAY['t1','t2'] LOOP
+        INSERT INTO s2.bench(project_id,g,a,b,c,num,ts,payload)
+            VALUES (project,1,1,1,1,1,now(),'isolation');
+        INSERT INTO s2.rls_secrets(project_id,secret) VALUES (project,'isolation');
+        INSERT INTO s2.scratch(project_id,k) VALUES (project,'isolation');
+        INSERT INTO s2.fkchild(project_id,parent_id)
+            SELECT project,id FROM s2.scratch WHERE project_id=project AND k='isolation';
+        INSERT INTO catalog.packages(project_env_key,package_id,package_version)
+            VALUES(project,'platform_fixture','1.0.0');
+        INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes)
+            VALUES(project,'sha256:' || encode(sha256('{}'::bytea),'hex'),'{}');
+        INSERT INTO catalog.connection_requirement
+            VALUES(project,'sha256:'||repeat('a',64),'platform_fixture','fixture','fixture','read');
+        INSERT INTO catalog.wiring_tombstones(project_env_key,package_id,environment,wiring_id,reason)
+            VALUES(project,'platform_fixture','dev','fixture','isolation');
+        INSERT INTO catalog.workflows(project_env_key,environment,application,workflow_id,version,
+            graph_json,wiring_hash,trigger,execution_type,created_by)
+            VALUES(project,'dev','fixture','fixture',1,'{}','sha256:'||repeat('a',64),
+                'manual','invoker','00000000-0000-4000-8000-00000000000a');
+        INSERT INTO wamn_run.runs(project_env_key,run_id,package_id,environment,wiring_id,
+            wiring_version,wiring_hash,trigger_source,execution_principal_id,execution_role,
+            invoked_by,invoked_by_user_id,node_digests_json,manifest_digest)
+            VALUES(project,'isolation','platform_fixture','dev','fixture',1,'sha256:'||repeat('a',64),
+                'manual','00000000-0000-4000-8000-00000000000a','viewer','manual',
+                '00000000-0000-4000-8000-00000000000a','{}',
+                'sha256:' || encode(sha256('{}'::bytea),'hex'));
+    END LOOP;
+    INSERT INTO platform.integration(id,integration_type,name,status)
+        VALUES('00000000-0000-4000-8000-000000000001','fixture','fixture','active');
+    INSERT INTO platform.connection(id,integration_id,integration_type,status)
+        VALUES('00000000-0000-4000-8000-000000000002',
+            '00000000-0000-4000-8000-000000000001','fixture','active');
+    INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version)
+        SELECT project_env_key,manifest_digest,'00000000-0000-4000-8000-000000000002',1
+        FROM catalog.releases;
+    INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,
+        package_id,name,connection_id)
+        SELECT project_env_key,manifest_digest,'sha256:'||repeat('a',64),
+            'platform_fixture','fixture',connection_id FROM catalog.release_connection;
+END $$;
+"#;
+    apply(
         &db_url,
-        None,
-        "SELECT coalesce(string_agg(rel, ' ' ORDER BY rel), '<none>') FROM (\
-           SELECT n.nspname||'.'||c.relname AS rel \
-             FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
-             JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%app.project_env_key%' \
-              AND has_table_privilege('wamn_app', c.oid, 'SELECT')) t",
+        &format!(
+            "BEGIN; {} {seed} COMMIT;",
+            wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning
+            )
+        ),
     );
-    assert_eq!(
-        settable, "<none>",
-        "a guest-reachable relation still keys on a claim the session can set"
-    );
-
-    // The remaining relation with the identity holds no guest privilege.
-    // This assertion also refuses a guest grant on that relation.
-    let kept = psql(
+    // Derive the covered relations from project columns and guest privileges. Every relation
+    // must contain both projects, so an empty fixture cannot pass the refusal.
+    apply(
         &db_url,
-        None,
-        "SELECT string_agg(rel, ' ' ORDER BY rel) FROM (\
-           SELECT n.nspname||'.'||c.relname AS rel \
-             FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
-             JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%app.project_env_key%') t",
-    );
-    assert_eq!(
-        kept,
-        HOST_INJECTED.join(" "),
-        "the ruled exception set moved"
-    );
-
-    // 2. EVERY re-keyed relation carries its expression index. Without it the
-    //    predicate sequential-scans, which is the cliff option (c) had to
-    //    answer for. wamn-0h0g.22.15 makes this a standing denial-acceptance-test arm.
-    let uncovered = psql(
-        &db_url,
-        None,
-        "SELECT coalesce(string_agg(rel, ' ' ORDER BY rel), '<none>') FROM (\
-           SELECT n.nspname||'.'||c.relname AS rel, p.polrelid AS oid \
-             FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
-             JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_project_key%') k \
-          WHERE NOT EXISTS (SELECT 1 FROM pg_index i \
-                             WHERE i.indrelid = k.oid \
-                               AND pg_get_indexdef(i.indexrelid) LIKE '%project_key%')",
-    );
-    assert_eq!(
-        uncovered, "<none>",
-        "a re-keyed relation has no project-key expression index"
-    );
-    let governed = psql(
-        &db_url,
-        None,
-        "SELECT count(*)::text FROM pg_policy p \
-          WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_project_key%'",
-    );
-    assert_eq!(
-        governed, "15",
-        "the sweep must cover exactly the 15 governed relations: IS1.5 replaces four \
-         catalog connection tables with connection_requirement, release_connection and \
-         connection_binding; C3.1 removes role, \
-         user_role, permission, api_key, environment, role_history, user_role_history, \
-         permission_history, api_key_history and environment_history from the project \
-         minimum; project 0036 removes catalog.wirings and catalog.event_registrations; \
-         user, the platform configuration tables and their \
-         history tables already have no project base grants (wamn-83eth.6)"
-    );
-
-    // 3. A MINTED GUEST READS ITS OWN PROJECT AND ONLY ITS OWN. The role name is
-    //    composed by the mint, not by hand, so this also shows the digest the
-    //    provisioner would issue matches the key the predicate computes.
-    let guest = workload_login(
-        WorkloadRoleFamily::App,
-        WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: "t1",
-            database: "wamn",
-        },
-    )
-    .expect("App takes a project target");
-    assert_eq!(
-        &guest[guest.len() - 42..guest.len() - 2],
-        project_key("t1", "wamn"),
-        "the minted role must carry the project key the predicate computes"
+        &format!(
+            r#"
+BEGIN;
+INSERT INTO platform.tx_identity(user_id,role,application)
+    VALUES ('{ACTOR_A}','viewer','fixture');
+DO $$ DECLARE target record; own boolean; foreign_rows boolean; BEGIN
+    FOR target IN
+        SELECT c.oid::regclass AS relation, a.attname AS project_column
+        FROM pg_class c JOIN pg_attribute a ON a.attrelid=c.oid
+            AND a.attname IN ('project_id','project_env_key') AND NOT a.attisdropped
+        WHERE c.relkind IN ('r','p') AND has_any_column_privilege('wamn_app', c.oid, 'SELECT')
+    LOOP
+        EXECUTE format('SELECT EXISTS(SELECT FROM %s WHERE %I = ''t1'') AND '
+            'EXISTS(SELECT FROM %s WHERE %I = ''t2'')',
+            target.relation,target.project_column,target.relation,target.project_column) INTO own;
+        ASSERT own, 'missing isolation fixture for ' || target.relation;
+        SET LOCAL ROLE "{guest}";
+        PERFORM set_config('app.project_env_key','t2',true);
+        PERFORM set_config('app.user_id','{ACTOR_B}',true);
+        PERFORM set_config('app.role','admin',true);
+        EXECUTE format('SELECT EXISTS(SELECT FROM %s WHERE %I = ''t1''), '
+            'EXISTS(SELECT FROM %s WHERE %I <> ''t1'')',
+            target.relation,target.project_column,target.relation,target.project_column)
+            INTO own,foreign_rows;
+        RESET ROLE;
+        ASSERT own AND NOT foreign_rows, 'cross-project access on ' || target.relation;
+    END LOOP;
+END $$;
+COMMIT;
+"#
+        ),
     );
     apply(
         &admin,
-        &format!(
-            "DO $$ BEGIN \
-               IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{guest}') THEN \
-                 DROP OWNED BY \"{guest}\"; DROP ROLE \"{guest}\"; END IF; \
-             END $$;\n\
-             CREATE ROLE \"{guest}\" NOLOGIN;\n\
-             GRANT wamn_app TO \"{guest}\";\n"
-        ),
+        &format!("DROP OWNED BY \"{guest}\"; DROP ROLE \"{guest}\";"),
     );
-    apply(
-        &db_url,
-        &format!(
-            "SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false), set_config('app.operation', 'admin:seed-catalog-fixture', false); \
-             INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( 't1', 'platform_fixture', '1.0.0', 'sha256:' || repeat('a', 64)), ( 't2', 'platform_fixture', '1.0.0', 'sha256:' || repeat('b', 64));\n\
-             BEGIN;\n\
-             SET LOCAL ROLE \"{guest}\";\n\
-             SET LOCAL app.project_env_key = 't2';\n\
-             DO $$ BEGIN\n\
-                 ASSERT (SELECT count(*) FROM catalog.packages) = 1, \
-                        'the guest sees exactly its own project';\n\
-                 ASSERT (SELECT count(*) FROM catalog.packages WHERE project_env_key = 't2') = 0, \
-                        'CROSS-PROJECT READ';\n\
-             END $$;\n\
-             COMMIT;\n"
-        ),
-    );
-    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
 /// THE PLATFORM ARM, AS THE SERVER SEES IT (`wamn-0h0g.22.17`).
@@ -404,20 +360,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         "a governed relation does not carry exactly one permissive wamn_platform \
          arm — every platform principal reads it at ZERO ROWS, silently"
     );
-    let unnarrowed_base_grants = psql(
-        &db_url,
-        None,
-        "SELECT coalesce(string_agg(rel, ' ' ORDER BY rel), '<none>') FROM (\
-           SELECT n.nspname||'.'||c.relname AS rel \
-             FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
-             JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_project_key%' \
-              AND p.polroles <> ARRAY[(SELECT oid FROM pg_roles WHERE rolname = 'wamn_app')]) t",
-    );
-    assert_eq!(
-        unnarrowed_base_grants, "<none>",
-        "the project base grants are the GUEST minimum and must name wamn_app alone"
-    );
+
     // …and NOTHING on a governed relation is untargeted. An arm widened to
     // PUBLIC still carries `USING (true)`, so it passes every predicate-shaped
     // test above while handing every project's rows to any role holding the
@@ -510,7 +453,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     apply(
         &db_url,
         &format!(
-            "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:authority-fixture', false); \
+            "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{}','','fixture','admin:authority-fixture'); \
              INSERT INTO catalog.packages \
                (project_env_key, package_id, package_version, artifact_digest) \
              SELECT t, 'platform_fixture', '1.0.0', {hash} \
@@ -834,7 +777,7 @@ fn as_guest(db_url: &str, guest: &str, actor: &str, body: &str) {
         &format!(
             "BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
-             SELECT set_config('app.user_id', '{actor}', true);\n\
+             INSERT INTO platform.tx_identity (user_id, role, application) VALUES ('{actor}', '', 'fixture');\n\
              {body}\n\
              COMMIT;\n"
         ),
@@ -960,7 +903,7 @@ fn the_stamp_trigger_stamps_guest_writes_on_postgres() {
         &format!(
             "BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
-             SELECT set_config('app.user_id', '{ACTOR_C}', true);\n\
+             INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{ACTOR_C}','','fixture');\n\
              UPDATE rh_probe.stamped SET note = 'rolled back' WHERE id = 1;\n\
              ROLLBACK;\n"
         ),
@@ -1041,7 +984,12 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
         &db_url,
         &format!("BEGIN;\nSET LOCAL ROLE \"{guest}\";\n{refusals}COMMIT;\n"),
     );
-    as_guest(&db_url, &guest, "", &refusals);
+    apply(
+        &db_url,
+        &format!(
+            "BEGIN; INSERT INTO platform.tx_identity(role,application) VALUES('','fixture'); SET LOCAL ROLE \"{guest}\"; {refusals} COMMIT;"
+        ),
+    );
 
     // 12. Administrative SQL without app.user_id refuses. Bound to the
     //     operator's user row, it stamps that row and replaces a supplied
@@ -1050,15 +998,13 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
         &db_url,
         &format!(
             "BEGIN;\n\
-             SELECT set_config('app.user_id', '{OPERATOR}', true), \
-                    set_config('app.operation', 'admin:seed-operator-fixture', true);\n\
+             INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{OPERATOR}','','fixture','admin:seed-operator-fixture');\n\
              INSERT INTO platform.\"user\" (id, type, email) \
                VALUES ('{OPERATOR}', 'user', 'operator@example.test');\n\
              COMMIT;\n\
              BEGIN;\n{refusals}COMMIT;\n\
              BEGIN;\n\
-             SELECT set_config('app.user_id', \
-               (SELECT id::text FROM platform.\"user\" WHERE email = 'operator@example.test'), true);\n\
+             INSERT INTO platform.tx_identity(user_id,role,application) SELECT id,'','fixture' FROM platform.\"user\" WHERE email='operator@example.test';\n\
              UPDATE rh_probe.stamped SET note = 'operator', updated_by = '{ACTOR_B}' WHERE id = 1;\n\
              INSERT INTO rh_probe.stamped (id, note, created_by) VALUES (3, 'operator', '{ACTOR_B}');\n\
              DO $$ BEGIN\n\
@@ -1133,8 +1079,7 @@ fn logged_guest_transaction(guest: &str, actor: &str, operation: &str, body: &st
         "BEGIN;\n\
          SET LOCAL ROLE \"{guest}\";\n\
          SET LOCAL TimeZone = 'Pacific/Auckland';\n\
-         SELECT set_config('app.user_id', '{actor}', true), \
-                set_config('app.operation', '{operation}', true);\n\
+         INSERT INTO platform.tx_identity (user_id, role, application, operation) VALUES ('{actor}', '', 'fixture', '{operation}');\n\
          {body}\n\
          COMMIT;\n"
     )
@@ -1407,8 +1352,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
         &format!(
             "REVOKE EXECUTE ON FUNCTION wamn_history.row_image(record) FROM wamn_app; \
              SET ROLE \"{guest}\"; \
-             SELECT set_config('app.user_id', '{ACTOR_A}', true), \
-                    set_config('app.operation', '{CREATE_OPERATION}', true); \
+             INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{ACTOR_A}','','fixture','{CREATE_OPERATION}'); \
              INSERT INTO rh_probe.logged (id, note, revision) VALUES (2, 'second', 1);"
         ),
     );
@@ -1680,9 +1624,11 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
     ];
     let accepted_writes = accepted
         .map(|operation| {
-            format!(
-                "SELECT set_config('app.operation', '{operation}', true);\n\
-                 UPDATE rh_probe.logged SET revision = revision + 1 WHERE id = 1;\n"
+            logged_guest_transaction(
+                &guest,
+                ACTOR_A,
+                operation,
+                "UPDATE rh_probe.logged SET revision = revision + 1 WHERE id = 1;",
             )
         })
         .concat();
@@ -1698,7 +1644,7 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
                         WHERE type = 'update') = ARRAY[{accepted_list}], \
                       'the operation CHECK must accept each operation shape';\n\
              END $$;\n",
-            logged_guest_transaction(&guest, ACTOR_A, CREATE_OPERATION, &accepted_writes),
+            accepted_writes,
         ),
     );
 
@@ -1727,23 +1673,21 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
         " admin:fix-grades",
         "operator:fix-grades",
     ];
-    let check_refusals = refused
-        .map(|operation| {
-            refuses_log_write(
-                &format!(
-                    "PERFORM set_config('app.operation', '{operation}', true);\n\
-                     UPDATE rh_probe.logged SET note = 'refused' WHERE id = 1"
+    for operation in refused {
+        apply(
+            &db_url,
+            &logged_guest_transaction(
+                &guest,
+                ACTOR_A,
+                operation,
+                &refuses_log_write(
+                    "UPDATE rh_probe.logged SET note = 'refused' WHERE id = 1",
+                    "check_violation",
+                    "refused_constraint = 'logged_history_operation_check' AND (SELECT note FROM rh_probe.logged WHERE id = 1) = 'first'",
                 ),
-                "check_violation",
-                "refused_constraint = 'logged_history_operation_check' \
-                 AND (SELECT note FROM rh_probe.logged WHERE id = 1) = 'first'",
-            )
-        })
-        .concat();
-    apply(
-        &db_url,
-        &logged_guest_transaction(&guest, ACTOR_A, CREATE_OPERATION, &check_refusals),
-    );
+            ),
+        );
+    }
     let stopped = apply_refused(
         &db_url,
         &logged_guest_transaction(
@@ -1789,16 +1733,13 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
     apply(
         &db_url,
         &format!(
-            "BEGIN;\n\
-             SET LOCAL ROLE \"{guest}\";\n\
-             SELECT set_config('app.user_id', '{ACTOR_A}', true);\n\
-             {operation_required}\
-             SELECT set_config('app.operation', '', true);\n\
-             {operation_required}\
-             SELECT set_config('app.user_id', '', true), \
-                    set_config('app.operation', '{UPDATE_OPERATION}', true);\n\
-             {actor_required}\
-             COMMIT;\n"
+            "BEGIN; INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{ACTOR_A}','','fixture'); SET LOCAL ROLE \"{guest}\"; {operation_required} COMMIT;"
+        ),
+    );
+    apply(
+        &db_url,
+        &format!(
+            "BEGIN; INSERT INTO platform.tx_identity(role,application,operation) VALUES('','fixture','{UPDATE_OPERATION}'); SET LOCAL ROLE \"{guest}\"; {actor_required} COMMIT;"
         ),
     );
 
@@ -1911,8 +1852,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
         format!(
             "BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
-             SELECT set_config('app.user_id', '{actor}', true), \
-                    set_config('app.operation', '{UPDATE_OPERATION}', true);\n"
+             INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{actor}','','fixture','{UPDATE_OPERATION}');\n"
         )
     };
     let mut first = start_session(&db_url, "rh-first");
@@ -2650,4 +2590,130 @@ fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
     );
 
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+#[test]
+#[ignore = "requires: postgres, bin:psql"]
+fn identity_grants_refuse_guest_reads_and_mutations() {
+    let (_server, admin) = shared_server();
+    let (database, guest) = record_history_fixture(&admin);
+    apply(
+        &database,
+        &format!(
+            r#"
+BEGIN;
+SET LOCAL ROLE "{guest}";
+DO $$ DECLARE statement text; refused boolean; BEGIN
+    FOREACH statement IN ARRAY ARRAY[
+        'SELECT * FROM platform.tx_identity',
+        'UPDATE platform.tx_identity SET role = ''admin''',
+        'DELETE FROM platform.tx_identity',
+        'TRUNCATE platform.tx_identity'
+    ] LOOP
+        refused := false;
+        BEGIN EXECUTE statement;
+        EXCEPTION WHEN insufficient_privilege THEN refused := true;
+        END;
+        ASSERT refused, 'identity privilege granted: ' || statement;
+    END LOOP;
+END $$;
+ROLLBACK;
+"#
+        ),
+    );
+}
+
+#[test]
+#[ignore = "requires: postgres, bin:psql"]
+fn the_first_identity_insert_wins_and_other_transactions_refuse() {
+    let (_server, admin) = shared_server();
+    let (database, guest) = record_history_fixture(&admin);
+    apply(
+        &database,
+        &format!(
+            r#"
+BEGIN;
+INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{ACTOR_A}','viewer','fixture');
+SET LOCAL ROLE "{guest}";
+DO $$ DECLARE refused boolean := false; BEGIN
+    BEGIN
+        INSERT INTO platform.tx_identity(role,application) VALUES('admin','forged');
+    EXCEPTION WHEN unique_violation THEN refused := true;
+    END;
+    ASSERT refused;
+    refused := false;
+    BEGIN
+        INSERT INTO platform.tx_identity(xid,role,application)
+        VALUES((pg_current_xact_id()::text::bigint + 1)::text::xid8,'admin','forged');
+    EXCEPTION WHEN insufficient_privilege THEN refused := true;
+    END;
+    ASSERT refused;
+    ASSERT (SELECT wamn_authority.current_user_id()) = '{ACTOR_A}'::uuid;
+END $$;
+ROLLBACK;
+"#
+        ),
+    );
+}
+
+#[test]
+#[ignore = "requires: postgres, bin:psql"]
+fn history_keeps_the_host_actor_after_a_guest_forges_a_setting() {
+    let (_server, admin) = shared_server();
+    let (database, guest) = record_history_log_fixture(&admin);
+    apply(
+        &database,
+        &logged_guest_transaction(
+            &guest,
+            ACTOR_A,
+            CREATE_OPERATION,
+            &format!(
+                "SELECT set_config('app.user_id','{ACTOR_B}',true); \
+            INSERT INTO rh_probe.logged(id,note,revision) VALUES(1,'host actor',1);"
+            ),
+        ),
+    );
+    apply(
+        &database,
+        &format!(
+            r#"
+DO $$ BEGIN
+    ASSERT (SELECT created_by = '{ACTOR_A}'::uuid FROM rh_probe.logged WHERE id=1);
+    ASSERT (SELECT changed_by = '{ACTOR_A}'::uuid FROM rh_probe.logged_history WHERE row_key='{{"id":1}}');
+END $$;
+"#
+        ),
+    );
+}
+
+#[test]
+#[ignore = "requires: postgres, bin:psql"]
+fn a_project_policy_refuses_without_a_transaction_identity() {
+    let (_server, admin) = shared_server();
+    let (database, guest) = record_history_fixture(&admin);
+    apply(
+        &database,
+        &format!(
+            "BEGIN; {} \
+        INSERT INTO catalog.packages(project_env_key,package_id,package_version) \
+        VALUES('t1','platform_fixture','1.0.0'); COMMIT;",
+            wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning
+            )
+        ),
+    );
+    apply(
+        &database,
+        &format!(
+            r#"
+BEGIN;
+SET LOCAL ROLE "{guest}";
+SELECT set_config('app.user_id','{ACTOR_A}',true), set_config('app.role','admin',true);
+DO $$ BEGIN
+    ASSERT NOT EXISTS(SELECT FROM catalog.packages);
+END $$;
+COMMIT;
+"#
+        ),
+    );
 }

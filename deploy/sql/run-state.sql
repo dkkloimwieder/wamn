@@ -18,7 +18,7 @@
 -- Security shape mirrors the rest of the platform (s2/s3, catalog): project
 -- separation from `current_user` (wamn-0h0g.22.6). Every guest-reachable table
 -- FORCEs RLS keyed on
---   wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()
+--   wamn_authority.project_key(project_env_key) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_role()) IS NOT NULL
 -- and carries the matching `<table>_tkey` expression index; CHECK
 -- (project_env_key <> '') forbids a ''-project row, so the minimum is structural.
 --
@@ -332,13 +332,13 @@ CREATE INDEX runs_run_deadline ON wamn_run.runs (project_env_key, run_deadline_a
 ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_project_env_key ON wamn_run.runs
-    TO wamn_app
-    USING (wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key())
-    WITH CHECK (wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key());
+    TO wamn_app, wamn_query
+    USING (wamn_authority.project_key(project_env_key) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_role()) IS NOT NULL)
+    WITH CHECK (wamn_authority.project_key(project_env_key) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_role()) IS NOT NULL);
 CREATE POLICY runs_platform ON wamn_run.runs
     AS PERMISSIVE FOR ALL TO wamn_platform
-    USING (true)
-    WITH CHECK (true);
+    USING ((SELECT wamn_authority.current_role()) IS NOT NULL)
+    WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL);
 CREATE INDEX runs_tkey
     ON wamn_run.runs ((wamn_authority.project_key(project_env_key)));
 
@@ -370,7 +370,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- cluster: `DELETE`, plus `SELECT` on EXACTLY the three columns the prune
 -- statement's WHERE clause reads. The `SELECT` is COLUMN-TARGETED and that is
 -- load bearing, not tidiness. `wamn_run_retention` is a member of
--- `wamn_platform`, whose one permissive base policy arm is `USING (true)`, so a
+-- `wamn_platform`, whose permissive policy admits every row after caller binding, so a
 -- table-level `SELECT` here would let a retention credential read EVERY
 -- project's `input_json`, `result_json` and `state_json` — measured. Column
 -- scoping is the only grant-shaped bound available: PostgreSQL privileges are
@@ -392,9 +392,8 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- THE ACCEPTED RESIDUAL (`wamn-0h0g.22.34`). Column scoping bounds WHAT a
 -- retention credential may read; it bounds nothing about WHOSE rows it may
 -- delete. A raw session holding a retention generation credential can DELETE
--- another project's terminal runs, because the shared `USING (true)` base policy arm
--- matches every row and PostgreSQL privileges are relation- and column-shaped,
--- never row-shaped. There is no grant that expresses "only this project's rows".
+-- another project's terminal runs after it binds a caller identity. PostgreSQL
+-- privileges apply to relations and columns, not individual rows. There is no grant that expresses "only this project's rows".
 --
 -- This is ACCEPTED, not overlooked, on silo reasoning: ONE PROJECT-ENVIRONMENT
 -- DATABASE SERVES EXACTLY ONE PROJECT, so the "other project" the residual

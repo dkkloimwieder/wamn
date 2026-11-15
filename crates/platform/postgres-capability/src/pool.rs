@@ -455,25 +455,19 @@ impl CredentialProvider for StaticCredentialProvider {
 // Plugin
 // ---------------------------------------------------------------------------
 
-/// A pool belongs to one project, authority and project environment.
+/// A pool belongs to one project and authenticated login.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct PoolKey {
     project: Box<str>,
-    class: AuthorityClass,
-    project_env_key: Option<Box<str>>,
+    login: Box<str>,
 }
 
 impl PoolKey {
-    pub(super) fn new(project: &str, class: AuthorityClass, project_env_key: Option<&str>) -> Self {
+    pub(super) fn new(project: &str, login: String) -> Self {
         Self {
             project: project.into(),
-            class,
-            project_env_key: project_env_key.map(Into::into),
+            login: login.into_boxed_str(),
         }
-    }
-    #[cfg(test)]
-    pub(super) fn project(&self) -> &str {
-        &self.project
     }
 }
 
@@ -481,43 +475,6 @@ pub(super) struct ProjectPool {
     pub(super) pool: PgPool,
     pub(super) statement_timeout_ms: u32,
     pub(super) row_limit: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PoolLifecycle {
-    Guest,
-    Platform,
-}
-
-impl PoolLifecycle {
-    /// Which pool cache an authority class draws from.
-    ///
-    /// The class SUBSUMES the lifecycle, so a caller never pairs the two by
-    /// hand and a guest-sql checkout against the platform cache is
-    /// unrepresentable rather than merely unreviewed. Exhaustive on purpose: a
-    /// new class is a compile error here, not a silent Platform default.
-    pub(super) const fn for_class(class: AuthorityClass) -> Self {
-        match class {
-            AuthorityClass::GuestSql | AuthorityClass::DynamicSql => Self::Guest,
-            AuthorityClass::ExecutorPlatform
-            | AuthorityClass::CallableHttp
-            | AuthorityClass::Administration => Self::Platform,
-        }
-    }
-
-    pub(super) const fn label(self) -> &'static str {
-        match self {
-            Self::Guest => "guest",
-            Self::Platform => "platform",
-        }
-    }
-
-    pub(super) const fn max_size(self, config: &ResolvedCredential) -> usize {
-        match self {
-            Self::Guest => config.guest_pool_max_size,
-            Self::Platform => config.platform_pool_max_size,
-        }
-    }
 }
 
 /// Raw checkout state, observed before any identity injection. Condition probes use

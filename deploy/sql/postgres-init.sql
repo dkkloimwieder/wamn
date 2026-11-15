@@ -5,7 +5,7 @@
 -- Security shape under test: ONE stable ACL role (wamn_app, not owner, no
 -- BYPASSRLS) and project separation from `current_user` (wamn-0h0g.22.6). RLS
 -- policies key on
---   wamn_authority.project_key(project_id) = wamn_authority.current_project_key()
+--   wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key())
 -- so a session that can set its own identity gains nothing: the connected role is
 -- the one thing it cannot rewrite. A role outside the guest login
 -- convention derives NULL and matches no row, and CHECK (project_id <> '')
@@ -182,8 +182,8 @@ ALTER TABLE s2.bench ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.bench FORCE ROW LEVEL SECURITY;
 CREATE POLICY bench_project ON s2.bench
     TO wamn_app
-    USING (wamn_authority.project_key(project_id) = wamn_authority.current_project_key())
-    WITH CHECK (wamn_authority.project_key(project_id) = wamn_authority.current_project_key());
+    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()))
+    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()));
 CREATE POLICY bench_platform ON s2.bench
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
@@ -210,8 +210,8 @@ ALTER TABLE s2.rls_secrets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.rls_secrets FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_secrets_project ON s2.rls_secrets
     TO wamn_app
-    USING (wamn_authority.project_key(project_id) = wamn_authority.current_project_key())
-    WITH CHECK (wamn_authority.project_key(project_id) = wamn_authority.current_project_key());
+    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()))
+    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()));
 CREATE POLICY rls_secrets_platform ON s2.rls_secrets
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
@@ -241,8 +241,8 @@ ALTER TABLE s2.scratch ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.scratch FORCE ROW LEVEL SECURITY;
 CREATE POLICY scratch_project ON s2.scratch
     TO wamn_app
-    USING (wamn_authority.project_key(project_id) = wamn_authority.current_project_key())
-    WITH CHECK (wamn_authority.project_key(project_id) = wamn_authority.current_project_key());
+    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()))
+    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()));
 CREATE POLICY scratch_platform ON s2.scratch
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
@@ -263,8 +263,8 @@ ALTER TABLE s2.fkchild ENABLE ROW LEVEL SECURITY;
 ALTER TABLE s2.fkchild FORCE ROW LEVEL SECURITY;
 CREATE POLICY fkchild_project ON s2.fkchild
     TO wamn_app
-    USING (wamn_authority.project_key(project_id) = wamn_authority.current_project_key())
-    WITH CHECK (wamn_authority.project_key(project_id) = wamn_authority.current_project_key());
+    USING (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()))
+    WITH CHECK (wamn_authority.project_key(project_id) = (SELECT wamn_authority.current_project_key()));
 CREATE POLICY fkchild_platform ON s2.fkchild
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)

@@ -314,12 +314,14 @@ async fn bind_actor(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     actor: &PrincipalId,
 ) -> Result<(), PasswordError> {
-    sqlx::query("SELECT set_config('app.user_id', $1, true)")
-        .bind(actor.to_string().as_str())
-        .execute(&mut **tx)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(|source| database(&source))?;
+    sqlx::query(
+        "INSERT INTO platform.tx_identity(user_id,role,application) VALUES($1::text::uuid,'','')",
+    )
+    .bind(actor.to_string().as_str())
+    .execute(&mut **tx)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(|source| database(&source))?;
     Ok(())
 }
 /// Lock the principal, and return the cause and its reason when it cannot
