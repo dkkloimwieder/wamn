@@ -43,7 +43,7 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
         .await
         .map(drop)
         .expect("install the system schema");
-    sqlx::raw_sql("SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'")
+    sqlx::raw_sql("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture');")
         .execute(&mut db)
         .await
         .map(drop)

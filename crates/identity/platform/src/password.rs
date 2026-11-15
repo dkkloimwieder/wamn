@@ -315,7 +315,7 @@ async fn bind_actor(
     actor: &PrincipalId,
 ) -> Result<(), PasswordError> {
     sqlx::query(
-        "INSERT INTO platform.tx_identity(user_id,role,application) VALUES($1::text::uuid,'','')",
+        "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1::text::uuid,'','')",
     )
     .bind(actor.to_string().as_str())
     .execute(&mut **tx)
@@ -390,6 +390,7 @@ async fn issue_token(
     let hash = token.digest();
     let secret = token.into_secret();
     let mut tx = client.begin().await.map_err(|source| database(&source))?;
+    bind_actor(&mut tx, actor).await?;
     if let Some((cause, reason)) =
         lock_account(&mut tx, principal, purpose == RESET_PURPOSE).await?
     {
@@ -411,7 +412,6 @@ async fn issue_token(
             ));
         }
     }
-    bind_actor(&mut tx, actor).await?;
     let expires_at: String = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')").bind(&hash).bind(principal.to_string().as_str()).bind(purpose).bind(lifetime).fetch_one(&mut *tx).await.map_err(|source| database(&source))?.get(0);
     tx.commit().await.map_err(|source| database(&source))?;
     Ok(Invitation { secret, expires_at })
@@ -497,7 +497,18 @@ async fn establish_password(
     enrollment_policy(&password)?;
     let digest = token_hash(secret, purpose)
         .ok_or_else(|| refused("invitation refused", RefusalCause::UnknownSecret))?;
-    if let Some(cause) = usable_token(client, principal, &digest, purpose).await? {
+    let mut read = client
+        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
+        .await
+        .map_err(|source| database(&source))?;
+    bind_actor(&mut read, principal).await?;
+    sqlx::query("SET TRANSACTION READ ONLY")
+        .execute(&mut *read)
+        .await
+        .map_err(|source| database(&source))?;
+    let cause = usable_token(&mut read, principal, &digest, purpose).await?;
+    read.commit().await.map_err(|source| database(&source))?;
+    if let Some(cause) = cause {
         return Err(refused("invitation refused", cause));
     }
     let hash = work.hash(password).await?;
@@ -512,6 +523,7 @@ async fn store_password(
     purpose: &str,
 ) -> Result<(), PasswordError> {
     let mut tx = client.begin().await.map_err(|source| database(&source))?;
+    bind_actor(&mut tx, principal).await?;
     if let Some((cause, reason)) =
         lock_account(&mut tx, principal, purpose == RESET_PURPOSE).await?
     {
@@ -520,7 +532,6 @@ async fn store_password(
     if let Some(cause) = usable_token(&mut tx, principal, token_digest, purpose).await? {
         return Err(refused("invitation refused", cause));
     }
-    bind_actor(&mut tx, principal).await?;
     if purpose == RESET_PURPOSE {
         sqlx::query("UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1::text::uuid").bind(principal.to_string().as_str()).bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
         // reset_password records the drop of this revoke after the commit.

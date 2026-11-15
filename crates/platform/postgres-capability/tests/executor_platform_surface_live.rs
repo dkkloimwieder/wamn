@@ -57,7 +57,7 @@ async fn begin_bound(client: &mut Client) -> anyhow::Result<()> {
         .execute(&mut *client)
         .await
         .map(drop)?;
-    sqlx::query("SELECT set_config('app.project_env_key', $1, true), set_config('app.user_id', $2, true), set_config('app.operation', $3, true)").bind(&PROJECT_ENV_KEY).bind(&wamn_control_provision::PlatformComponent::Executor.principal_id().to_string()).bind(&wamn_control_provision::PlatformComponent::Executor.principal_name()).execute(&mut *client).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture',$2)").bind(&wamn_control_provision::PlatformComponent::Executor.principal_id().to_string()).bind(&wamn_control_provision::PlatformComponent::Executor.principal_name()).execute(&mut *client).await.map(|result| result.rows_affected())?;
     Ok(())
 }
 
@@ -69,7 +69,6 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
     let test_database = wamn_test_postgres::url(&pool);
     let admin_url = test_database.as_str();
     let mut admin = connect(admin_url).await?;
-    sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:executor-surface-fixture', false)").bind(&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let database: String = sqlx::query("SELECT current_database()::text")
         .fetch_one(&mut admin)
         .await?

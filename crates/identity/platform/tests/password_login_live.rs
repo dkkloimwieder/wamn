@@ -11,7 +11,6 @@ use wamn_platform_identity::{create_user, disable_principal};
 
 const ISSUER: &str = "https://identity.example.invalid";
 const AUDIENCE: &str = "demo:widgets:dev:a1b2c3d4";
-const ACTOR: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 
 async fn connect(url: &str, role: &str) -> Client {
     let mut client = wamn_postgres::connect(url).await.unwrap();
@@ -20,12 +19,6 @@ async fn connect(url: &str, role: &str) -> Client {
         .execute(&mut client)
         .await
         .map(drop)
-        .unwrap();
-    sqlx::query("SELECT set_config('app.user_id',$1,false)")
-        .bind(&ACTOR)
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
         .unwrap();
     client
 }

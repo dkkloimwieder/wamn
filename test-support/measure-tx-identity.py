@@ -28,17 +28,29 @@ with psycopg.connect(args.connection, autocommit=True) as connection:
     for sample in range(args.samples + 10):
         # Alternate order to reduce drift. Exclude ten warm-up pairs.
         for identity in ([False, True] if sample % 2 else [True, False]):
+            if sample == 0 and identity:
+                print("before_identity", connection.execute(
+                    "SELECT to_jsonb(w), pg_current_wal_flush_lsn(), "
+                    "(SELECT jsonb_agg(to_jsonb(i)) FROM pg_stat_io i WHERE object='wal') "
+                    "FROM pg_stat_wal w"
+                ).fetchone())
             connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
             if identity:
                 connection.execute(
-                    "INSERT INTO platform.tx_identity (role, application, operation) "
-                    "VALUES ('measurement', 'measurement', 'admin:measurement')"
+                    "INSERT INTO platform.tx_identity (principal_id, role, application, operation) "
+                    "VALUES ('00000000-0000-4000-8000-000000000001', 'measurement', 'measurement', 'admin:measurement')"
                 )
             connection.execute("SET TRANSACTION READ ONLY")
             connection.execute("SELECT 1").fetchone()
             start = time.perf_counter_ns()
             connection.execute("COMMIT")
             elapsed = (time.perf_counter_ns() - start) / 1_000_000
+            if sample == 0 and identity:
+                print("after_identity", connection.execute(
+                    "SELECT to_jsonb(w), pg_current_wal_flush_lsn(), "
+                    "(SELECT jsonb_agg(to_jsonb(i)) FROM pg_stat_io i WHERE object='wal') "
+                    "FROM pg_stat_wal w"
+                ).fetchone())
             if sample >= 10:
                 results[identity].append(elapsed)
 for identity, samples in results.items():

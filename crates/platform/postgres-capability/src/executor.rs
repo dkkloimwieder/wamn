@@ -123,6 +123,12 @@ impl WamnPostgres {
             .map_err(|error| failure("checkout executor connection", error))?;
         // Cancellation destroys a connection whose transaction has not ended.
         let mut connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
+        let principal = identity
+            .user
+            .map(std::borrow::Cow::Borrowed)
+            .unwrap_or_else(|| {
+                std::borrow::Cow::Owned(PlatformComponent::Executor.principal_id().to_string())
+            });
         self.begin_with_identity(
             connection.connection(),
             AuthorityClass::ExecutorPlatform,
@@ -131,8 +137,8 @@ impl WamnPostgres {
             identity.schema,
             identity.runner,
             None,
-            identity.user,
-            identity.operation,
+            Some(principal.as_ref()),
+            Some(identity.operation.unwrap_or("wamn:executor")),
             identity.application,
             None,
             policy.statement_timeout_ms,
@@ -211,6 +217,9 @@ impl wamn_connections::production_lease::ExecutorDatabase for WamnPostgres {
             false,
         )
         .await
+    }
+    fn project_env_key(&self, component: &str) -> Option<String> {
+        self.project_env_key_for(component)
     }
     fn runner(&self, component: &str) -> Option<String> {
         self.runner_for(component)

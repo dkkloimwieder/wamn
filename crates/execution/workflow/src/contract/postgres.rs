@@ -57,8 +57,13 @@ impl PostgresWorkflows {
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<(), WorkflowError> {
         let executor = PlatformComponent::Executor;
-        sqlx::query("SELECT set_config('search_path', $1, true), set_config('app.project_env_key', $2, true), \
-                 set_config('app.user_id', $3, true), set_config('app.operation', $4, true)").bind(&self.schema).bind(self.project_env_key()).bind(executor.principal_id().to_string()).bind(executor.principal_name()).fetch_one(&mut **transaction)
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','', $2)")
+            .bind(executor.principal_id().to_string()).bind(executor.principal_name())
+            .execute(&mut **transaction).await
+            .map_err(|error| WorkflowError::storage("bind the transaction principal", error))?;
+        sqlx::query("SELECT set_config('search_path', $1, true)")
+            .bind(&self.schema)
+            .execute(&mut **transaction)
             .await
             .map_err(|error| WorkflowError::storage("target the transaction", error))?;
         Ok(())
@@ -73,7 +78,13 @@ impl PostgresWorkflows {
             .await
             .map_err(|error| WorkflowError::storage("begin park", error))?;
         self.target(&mut tx).await?;
-        wamn_run_state::management::park(&mut tx, self.environment(), run_id).await?;
+        wamn_run_state::management::park(
+            &mut tx,
+            self.project_env_key(),
+            self.environment(),
+            run_id,
+        )
+        .await?;
         tx.commit()
             .await
             .map_err(|error| WorkflowError::storage("commit park", error))?;
@@ -86,7 +97,13 @@ impl PostgresWorkflows {
             .await
             .map_err(|error| WorkflowError::storage("begin release", error))?;
         self.target(&mut tx).await?;
-        wamn_run_state::management::release(&mut tx, self.environment(), run_id).await?;
+        wamn_run_state::management::release(
+            &mut tx,
+            self.project_env_key(),
+            self.environment(),
+            run_id,
+        )
+        .await?;
         tx.commit()
             .await
             .map_err(|error| WorkflowError::storage("commit release", error))?;
@@ -99,7 +116,13 @@ impl PostgresWorkflows {
             .await
             .map_err(|error| WorkflowError::storage("begin list", error))?;
         self.target(&mut tx).await?;
-        let result = wamn_run_state::management::list(&mut tx, self.environment(), limit).await?;
+        let result = wamn_run_state::management::list(
+            &mut tx,
+            self.project_env_key(),
+            self.environment(),
+            limit,
+        )
+        .await?;
         tx.commit()
             .await
             .map_err(|error| WorkflowError::storage("commit list", error))?;

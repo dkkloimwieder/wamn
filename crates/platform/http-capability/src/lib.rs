@@ -355,7 +355,7 @@ impl ConnectionHttp {
                 &authority,
                 decision,
                 request,
-                (facts, &connection, &fact, &configuration),
+                (facts, &connection, &fact, &configuration, component_id),
                 rejected,
             )
             .await?;
@@ -376,11 +376,12 @@ impl ConnectionHttp {
         authority: &HttpConnectionAuthority,
         mut decision: AuthorityDecision,
         request: &Request,
-        (facts, connection, fact, configuration): (
+        (facts, connection, fact, configuration, component_id): (
             &ConnectionFacts,
             &uuid::Uuid,
             &ConnectionFact,
             &ConnectionGeneration,
+            &str,
         ),
         rejected: Option<&str>,
     ) -> Result<(Response, Option<String>), ConnectionError> {
@@ -407,11 +408,23 @@ impl ConnectionHttp {
                 .await
                 .map(|response| (response, None));
         }
+        let principal = self
+            .postgres
+            .scopes
+            .read::<wamn_postgres_capability::invocation::Authority, _>(component_id, |record| {
+                record
+                    .identity
+                    .user_id
+                    .as_deref()
+                    .and_then(|id| uuid::Uuid::parse_str(id).ok())
+            })
+            .flatten()
+            .ok_or(ConnectionError::AttestationInvalid)?;
         let key = (*connection, identity.generation);
         let token = self
             .oauth2_token(
                 facts,
-                &identity,
+                (&identity, principal),
                 authority,
                 (auth_type, &parameters, material),
                 &key,
@@ -432,7 +445,7 @@ impl ConnectionHttp {
     async fn oauth2_token(
         &self,
         facts: &ConnectionFacts,
-        identity: &ClientIdentity,
+        (identity, principal): (&ClientIdentity, uuid::Uuid),
         authority: &HttpConnectionAuthority,
         (auth_type, parameters, material): (&str, &serde_json::Value, Option<&str>),
         key: &wamn_connections::oauth_token::CacheKey,
@@ -453,6 +466,7 @@ impl ConnectionHttp {
         let available = wamn_connections::oauth_token::get(
             wamn_connections::oauth_token::Request {
                 reader: &facts.reader(),
+                principal,
                 project: facts.project(),
                 environment: facts.environment(),
                 connection: key.0,

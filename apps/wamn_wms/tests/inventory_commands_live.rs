@@ -12,8 +12,7 @@ const MISSING: &str = "00000000-0000-0000-0000-000000000499";
 const LOCATION: &str = "00000000-0000-0000-0000-000000000201";
 const OCCURRED: &str = "2026-09-05T00:00:00Z";
 const CONTEXT: &str = "SET LOCAL search_path = wms, public;
-    SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true),
-           set_config('app.operation', 'admin:inventory-sql-test', true);";
+    INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('00000000-0000-4000-8000-0000000000f1'::text::uuid,'','fixture','admin:inventory-sql-test');";
 
 async fn run(client: &mut Client, sql: &str) -> anyhow::Result<sqlx::postgres::PgRow> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_owned()))

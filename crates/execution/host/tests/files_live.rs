@@ -118,7 +118,11 @@ impl FileHost {
         let (mut host, postgres, administration_url) =
             application_fixture::application_host_with_release(name, Arc::clone(&release)).await?;
         let mut writer = application_fixture::connect(&administration_url).await?;
-        sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:file-host-fixture',false)").bind(&host.first).execute(&mut writer).await.map(|result| result.rows_affected())?;
+        sqlx::raw_sql("BEGIN")
+            .execute(&mut writer)
+            .await
+            .expect("begin fixture transaction");
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:file-host-fixture')").bind(&host.first).execute(&mut writer).await.map(|result| result.rows_affected())?;
         for action in ["put", "get", "delete", "expose"] {
             sqlx::query("INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader',$1)").bind(&format!("wamn-control:file/{action}")).execute(&mut writer).await.map(|result| result.rows_affected())?;
         }
@@ -145,6 +149,10 @@ impl FileHost {
             sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
             sqlx::query("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&alias).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
         }
+        sqlx::raw_sql("COMMIT")
+            .execute(&mut writer)
+            .await
+            .expect("commit fixture transaction");
         let credentials = Arc::new(
             ConnectionCredentials::from_database(registry.reader.clone(), ORG).with_store(Arc::<
                 wamn_test_infrastructure::credentials::MemoryStore,
@@ -562,8 +570,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     let mut administration = application_fixture::connect(&fixture.administration_url).await?;
     let mut target = administration.begin().await?;
     sqlx::query(
-        "SELECT set_config('app.user_id',$1,true), \
-             set_config('app.operation','admin:file-host-fixture',true)",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:file-host-fixture')",
     )
     .bind(&fixture.host.first)
     .execute(&mut *target)
@@ -597,6 +604,8 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         .execute(&mut fixture.writer)
         .await
         .map(drop)?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:file-host-fixture')")
+        .bind(&fixture.host.first).execute(&mut fixture.writer).await?;
     sqlx::query("INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key,exposure) VALUES($1::text::uuid,'files',$2::text::uuid,'pending.txt','text/plain',$3,$4,$5,'application')").bind(&fresh.to_string()).bind(&fixture.registry.connection_id).bind(&i64::try_from(staged.size)?).bind(&staged.sha256).bind(&staged.blob_key).execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
     store.finish(fresh).await?;
     assert_eq!(
@@ -758,9 +767,23 @@ async fn application_file_route_requires_its_grant_and_enforces_exposure_and_own
     assert_eq!(read.1["content-type"], "text/plain");
     assert_eq!(read.2, b"route bytes");
     assert_eq!(fixture.read("files", id, None).await?.0, 401);
-    sqlx::query("DELETE FROM platform.permission WHERE role_name='purchase-reader' AND permission='wamn-control:file/get'").execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
+    let mut transaction = wamn_test_postgres::transaction(
+        &mut fixture.writer,
+        &fixture.host.first,
+        "admin:file-host-fixture",
+    )
+    .await?;
+    sqlx::query("DELETE FROM platform.permission WHERE role_name='purchase-reader' AND permission='wamn-control:file/get'").execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+    transaction.commit().await?;
     assert_eq!(fixture.read("files", id, Some(&token)).await?.0, 403);
-    sqlx::query("INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader','wamn-control:file/get')").execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
+    let mut transaction = wamn_test_postgres::transaction(
+        &mut fixture.writer,
+        &fixture.host.first,
+        "admin:file-host-fixture",
+    )
+    .await?;
+    sqlx::query("INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader','wamn-control:file/get')").execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+    transaction.commit().await?;
     assert_eq!(fixture.read("other", id, Some(&token)).await?.0, 404);
     assert!(
         fixture
@@ -849,8 +872,15 @@ async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() ->
         .await?;
     let id = Uuid::new_v4();
     let staged = store.stage(id, &b"committed staging"[..]).await?;
+    let mut transaction = wamn_test_postgres::transaction(
+        &mut fixture.writer,
+        &fixture.host.first,
+        "admin:file-host-fixture",
+    )
+    .await?;
     sqlx::query("INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key) \
-         VALUES ($1::text::uuid,'files',$2::text::uuid,'crash.txt','text/plain',$3,$4,$5)").bind(&id.to_string()).bind(&fixture.registry.connection_id).bind(&i64::try_from(staged.size)?).bind(&staged.sha256).bind(&staged.blob_key).execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
+         VALUES ($1::text::uuid,'files',$2::text::uuid,'crash.txt','text/plain',$3,$4,$5)").bind(&id.to_string()).bind(&fixture.registry.connection_id).bind(&i64::try_from(staged.size)?).bind(&staged.sha256).bind(&staged.blob_key).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+    transaction.commit().await?;
     assert_eq!(
         sqlx::query("SELECT count(*) FROM platform.file WHERE id=$1::text::uuid")
             .bind(&id.to_string())
@@ -1139,11 +1169,18 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
         .registry
         .configure("connection.disable", json!({"name":files::STORE_NAME}))
         .await?;
+    let mut transaction = wamn_test_postgres::transaction(
+        &mut fixture.writer,
+        &fixture.host.first,
+        "admin:file-host-fixture",
+    )
+    .await?;
     sqlx::query("UPDATE platform.connection SET status='disabled' WHERE id=$1::text::uuid")
         .bind(&fixture.registry.connection_id)
-        .execute(&mut fixture.writer)
+        .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())?;
+    transaction.commit().await?;
     let row = sqlx::query("SELECT f.id::text,c.status FROM file_fixture.document d JOIN platform.file f ON f.id=d.file_id JOIN platform.connection c ON c.id=f.connection_id").fetch_one(&mut guest).await?;
     assert_eq!(row.get::<String, _>(0), id.to_string());
     assert_eq!(row.get::<String, _>(1), "disabled");
@@ -1214,17 +1251,24 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     );
     // Grant only the package operation to this caller. The upload grants belong
     // to the fixture setup, and are removed before the signed read begins.
+    let mut transaction = wamn_test_postgres::transaction(
+        &mut fixture.writer,
+        &fixture.host.first,
+        "admin:file-host-fixture",
+    )
+    .await?;
     sqlx::query("DELETE FROM platform.permission WHERE role_name='purchase-reader'")
-        .execute(&mut fixture.writer)
+        .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())?;
     sqlx::query(
         "INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader',$1)",
     )
     .bind(&signed_read::OPERATION.split('@').next().unwrap())
-    .execute(&mut fixture.writer)
+    .execute(&mut *transaction)
     .await
     .map(|result| result.rows_affected())?;
+    transaction.commit().await?;
     let caller = fixture
         .host
         .routing

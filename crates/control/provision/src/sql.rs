@@ -692,7 +692,10 @@ fn grant_system_reader_surface_sql(
         "{ensure} \
          REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {plane} FROM {role}; \
          REVOKE ALL PRIVILEGES ON SCHEMA {plane} FROM {role}; \
-         GRANT USAGE ON SCHEMA {schema} TO {role};",
+         GRANT USAGE ON SCHEMA {schema}, platform, wamn_authority TO {role}; \
+         REVOKE ALL ON platform.tx_identity, platform.login_principal FROM {role}; \
+         GRANT INSERT ON platform.tx_identity TO {role}; \
+         GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO {role};",
         ensure = ensure_workload_acl_role_sql(family),
     );
     for relation in relations {
@@ -706,23 +709,8 @@ fn grant_system_reader_surface_sql(
     sql
 }
 
-/// Converge `wamn_identity_reader` to its exact identity read surface.
-///
-/// `SELECT` on four `identity` relations, and NO `INSERT` and NO `UPDATE`
-/// anywhere. The consuming statements are plain reads that take no row lock, so
-/// a genuinely SELECT-only role serves the surface as it stands.
-///
-/// **SELECT-only is correct only because `POST /login` no longer exists.** The
-/// live cluster role carries `SELECT, INSERT, UPDATE`; its `INSERT` was added
-/// deliberately when that route did exist, and the grant then drifted
-/// SELECT-only -> +INSERT -> +INSERT,UPDATE out of band THREE times.
-/// the identity service’s
-/// `only_the_mounted_types_have_a_route_and_the_rest_answer_a_bare_501` decides
-/// the mounted route list by CALLING route selection, so a re-mounted session
-/// route changes an answer that test reads. The write privilege such a route
-/// would need is pinned separately by
-/// `the_identity_reader_grants_no_insert_and_no_update`, so the fourth drift
-/// fails a test instead of landing.
+/// Grant identity reads and INSERT only on the transaction caller table.
+/// The reader cannot insert or update identity records.
 pub fn grant_identity_reader_surface_sql() -> String {
     let mut sql = grant_system_reader_surface_sql(
         WorkloadRoleFamily::IdentityReader,
@@ -842,7 +830,7 @@ pub fn control_surface_grants_sql() -> String {
          GRANT USAGE ON SCHEMA {schemas}, platform, wamn_authority TO {role}; \
          GRANT INSERT ON platform.tx_identity TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), \
-           wamn_authority.current_user_id(), wamn_authority.current_role(), \
+           wamn_authority.current_principal_id(), wamn_authority.current_role(), \
            wamn_authority.current_application() TO {role};"
     );
     for (schema, relation, privileges) in CONTROL_SURFACE {
@@ -889,6 +877,11 @@ pub fn control_surface_grants_sql() -> String {
 /// a family stays per-family (`wamn-0h0g.22.16`).
 pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
     match family {
+        WorkloadRoleFamily::AuditRetention => Some(format!(
+            "{} {}",
+            ensure_workload_acl_role_sql(family),
+            crate::audit_retention::reconcile_audit_retention_grants_sql()
+        )),
         WorkloadRoleFamily::Query => Some(grant_dynamic_sql_surface_sql()),
         WorkloadRoleFamily::ExecutorPlatform => {
             Some(grant_executor_platform_surface_sql("wamn_run"))

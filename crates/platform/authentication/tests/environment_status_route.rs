@@ -30,7 +30,6 @@ const PROJECT_ENV_KEY: &str = "org-a--dev--project";
 const ROUTE: &str = "purchase-read-http";
 const READ: &str = "status-test:purchase/read@1.0.0";
 const PASSWORD: &str = "environment-status-test-only";
-const ACTOR: &str = "11111111-1111-4111-8111-111111111111";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let client = wamn_postgres::connect(url).await?;
@@ -167,14 +166,6 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
 
     // No row means active, and an anonymous route admits no caller.
     assert_eq!(admitted(&route).await, Ok(false));
-    sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:environment-status-fixture', false)",
-    )
-    .bind(&ACTOR)
-    .execute(&mut admin)
-    .await
-    .map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO platform.environment (status) VALUES ('inactive')")
         .execute(&mut admin)
         .await

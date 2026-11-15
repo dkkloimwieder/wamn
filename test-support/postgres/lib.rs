@@ -17,6 +17,18 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, ensure};
 use url::Url;
 
+/// Begin a fixture write under its principal and operation.
+pub async fn transaction<'connection>(
+    connection: &'connection mut sqlx::PgConnection,
+    principal: &str,
+    operation: &str,
+) -> Result<sqlx::Transaction<'connection, sqlx::Postgres>, sqlx::Error> {
+    let mut transaction = sqlx::Connection::begin(connection).await?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture',$2)")
+        .bind(principal).bind(operation).execute(&mut *transaction).await?;
+    Ok(transaction)
+}
+
 const POSTGRES_BIN: &str = "/usr/lib/postgresql/18/bin";
 
 fn postgres_bin(override_directory: Option<std::ffi::OsString>) -> PathBuf {

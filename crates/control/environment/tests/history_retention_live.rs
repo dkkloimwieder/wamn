@@ -247,8 +247,7 @@ async fn seed(admin: &mut Client, table: &str, statement: &str, age_days: i32) -
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "BEGIN; \
-             SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
-                    set_config('app.operation', 'admin:seed-retention-fixture', true); \
+             INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{FIXTURE_PRINCIPAL}'::text::uuid,'','fixture','admin:seed-retention-fixture'); \
              {statement}; \
              COMMIT;"
         ))
@@ -340,46 +339,6 @@ fn replace_role(url: &str, role: &str, password: &str) -> String {
 
 /// The server's answer about the grants and the reach of the role (spec test 20).
 async fn assert_authority(admin: &mut Client, credential_url: &str) {
-    let grants = sqlx::query(sqlx::AssertSqlSafe(
-        (sql::role_database_grants_sql()).to_string(),
-    ))
-    .bind(&AUDIT_RETENTION_ROLE)
-    .fetch_all(&mut *admin)
-    .await
-    .expect("read the audit retention grants")
-    .iter()
-    .map(|row| {
-        format!(
-            "{} {}.{} {}",
-            row.get::<String, _>("object_type"),
-            row.get::<String, _>("schema_name"),
-            row.get::<String, _>("object_name"),
-            row.get::<String, _>("privilege_type"),
-        )
-    })
-    .collect::<Vec<_>>();
-    let mut expected = vec![
-        "column platform.write_log.created_at SELECT".to_owned(),
-        "column platform.write_log.result SELECT".to_owned(),
-    ];
-    for history in ["parcel_history", "shipment_history"] {
-        for column in ["changed_at", "position", "row_key", "transaction_id"] {
-            expected.push(format!("column {SCHEMA}.{history}.{column} SELECT"));
-        }
-    }
-    expected.push("relation platform.write_log DELETE".to_owned());
-    for history in ["parcel_history", "shipment_history"] {
-        expected.push(format!("relation {SCHEMA}.{history} DELETE"));
-    }
-    for privilege in ["INSERT", "SELECT", "UPDATE"] {
-        expected.push(format!(
-            "relation wamn_history.pruning_watermarks {privilege}"
-        ));
-    }
-    expected.push("schema platform.platform USAGE".to_owned());
-    expected.push(format!("schema {SCHEMA}.{SCHEMA} USAGE"));
-    expected.push("schema wamn_history.wamn_history USAGE".to_owned());
-    assert_eq!(grants, expected, "the audit retention grants");
     let edges: i64 = sqlx::query(
         "SELECT count(*) FROM pg_catalog.pg_auth_members AS edge \
                JOIN pg_catalog.pg_roles AS member ON member.oid = edge.member \

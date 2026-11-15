@@ -722,7 +722,7 @@ Run this transaction in `psql` on that administrative connection:
 \prompt 'Replacement email: ' replacement_email
 BEGIN;
 SET LOCAL ROLE wamn_system;
-INSERT INTO platform.tx_identity(user_id, role, application, operation)
+INSERT INTO platform.tx_identity(principal_id, role, application, operation)
 VALUES (:'administrator_id'::uuid, '', '', 'admin:change-email');
 SELECT EXISTS (
     SELECT 1 FROM identity.principals
@@ -894,17 +894,22 @@ The HTTP interface keeps its `credential-unavailable` result.
 
 ### Transaction identity retention
 
-The control service removes expired transaction identities every minute.
+The control service removes expired transaction identities every minute in a separate task.
+Cleanup runs do not overlap. Each database operation has a five-second limit.
+Shutdown cancels the task before the service drains HTTP connections.
 It connects to each configured project through its platform SQL credential and acts as `wamn_db_owner`.
 It also cleans the control database as `wamn_system`.
 It deletes rows with `xid < pg_snapshot_xmin(pg_current_snapshot())`.
 The UNLOGGED table `platform.tx_identity` stays outside CDC publications. A crash discards its rows.
 
-Before merging an identity change, measure read COMMIT latency against the deployed primary and its synchronous standby configuration:
+Before merging an identity change, measure read COMMIT latency with the deployed Postgres major version. The private test server is sufficient:
 
 ```sh
-python3 test-support/measure-tx-identity.py 'service=project-primary' --samples 200
+wamn-test-postgres --database identity_measurement --url-env DATABASE_URL -- sh -ec '
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f deploy/sql/record-history.sql
+  python3 test-support/measure-tx-identity.py "$DATABASE_URL" --samples 200
+'
 ```
 
 The script needs psycopg 3 and a login that can insert identity rows.
-It reports COMMIT round trips with and without the insert. It creates no schema and changes no server configuration.
+It reports COMMIT round trips with and without the insert, WAL counters from `pg_stat_wal` and `pg_stat_io`, and the flushed WAL position. It creates no schema and changes no server configuration.

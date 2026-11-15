@@ -574,7 +574,7 @@ pub(crate) async fn ensure_live_user_rows(admin_url: &str, principals: &[&str]) 
             .unwrap();
     }
     sqlx::raw_sql("BEGIN").execute(&mut admin).await.unwrap();
-    sqlx::query("INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES ($1::text::uuid,'','fixture','admin:identity-fixture')")
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES ($1::text::uuid,'','fixture','admin:identity-fixture')")
         .bind(LIVE_PRINCIPAL).execute(&mut admin).await.unwrap();
     for principal in principals {
         sqlx::query("INSERT INTO platform.\"user\" (id,type,email,display_name) VALUES ($1::text::uuid,$2,$1 || '@example.invalid',$3)")
@@ -739,7 +739,7 @@ fn rls_fixture_sql(schema: &str, probe: &str, project_env_key: &str, u1: &str, u
              CREATE POLICY \"dispositions_owner_0\" ON {schema}.dispositions AS RESTRICTIVE \
                  FOR ALL \
                  USING (COALESCE((SELECT wamn_authority.current_role()), '') IN ('supervisor', 'admin') \
-                        OR \"inspector_id\" = NULLIF((SELECT wamn_authority.current_user_id())::text, '')::uuid); \
+                        OR \"inspector_id\" = NULLIF((SELECT wamn_authority.current_principal_id())::text, '')::uuid); \
              INSERT INTO {schema}.dispositions VALUES ('{project_env_key}', 1, '{u1}'), ('{project_env_key}', 2, '{u2}'); \
              GRANT USAGE ON SCHEMA {schema} TO {probe}; \
              GRANT SELECT ON {schema}.dispositions TO {probe}; {query}"
@@ -1220,7 +1220,8 @@ fn two_project_env_key_rls_fixture_sql(
              INSERT INTO {schema}.dispositions \
                  VALUES ('{a}', 1), ('{a}', 2), ('{b}', 3); \
              GRANT USAGE ON SCHEMA {schema} TO {role_a}, {role_b}; \
-             GRANT SELECT ON {schema}.dispositions TO {role_a}, {role_b}; {query}"
+             GRANT SELECT ON {schema}.dispositions TO {role_a}, {role_b}; {query} {dynamic}",
+        dynamic = wamn_control_provision::sql::grant_dynamic_sql_surface_sql(),
     )
 }
 
@@ -1274,6 +1275,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     .map(drop)
     .expect("seed the two-project_env_key RLS fixture as the superuser owner");
 
+    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let mut url = url::Url::parse(admin_url).expect("parse the live test url");
     url.set_username(&role_a).expect("set A's login");
     url.set_password(Some("live-guest"))
@@ -1292,6 +1294,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     let identity = |project_env_key: &str| SessionIdentity {
         project_env_key: project_env_key.to_string(),
         schema: Some(schema.clone()),
+        user_id: Some(LIVE_PRINCIPAL.into()),
         ..SessionIdentity::default()
     };
     pg.bind_session_identity(scope_a, &identity(PROJECT_ENV_KEY_A))
@@ -1470,7 +1473,7 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
 
 /// A statement that reports the transaction caller.
 fn principal_statement() -> &'static str {
-    "SELECT COALESCE((SELECT wamn_authority.current_user_id())::text, '')"
+    "SELECT COALESCE((SELECT wamn_authority.current_principal_id())::text, '')"
 }
 
 /// Reads and writes both record their executing principal.
@@ -2119,6 +2122,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPoo
         wamn_identity_protocol::app_identity_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
+    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("CREATE TABLE IF NOT EXISTS public.read_snapshot_fixture \
@@ -2143,6 +2147,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot(pool: sqlx::PgPoo
         scope,
         &SessionIdentity {
             project_env_key: PROJECT_ENV_KEY.to_string(),
+            user_id: Some(LIVE_PRINCIPAL.into()),
             ..SessionIdentity::default()
         },
     )
@@ -2293,7 +2298,7 @@ async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_u
     wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let mut admin = connect_raw(database.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{LIVE_PLATFORM_PRINCIPAL}','','fixture','admin:role-refusal-fixture');
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{LIVE_PLATFORM_PRINCIPAL}','','fixture','admin:role-refusal-fixture');
          INSERT INTO platform.\"user\"(id,type,email) VALUES
           ('00000000-0000-4000-8000-000000000081','user','user@example.test'),
           ('00000000-0000-4000-8000-000000000082','service','service@example.test');

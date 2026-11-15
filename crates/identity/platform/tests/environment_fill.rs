@@ -23,7 +23,7 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
             &wamn_control_provision::test_database::seed_org_project_env_sql(
                 "fill", "fixture", "dev",
             ),
-            "SET app.user_id='770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.meta SET platform_domain='example.invalid'",
+            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture'); UPDATE registry.meta SET platform_domain='example.invalid'",
         ];
         let mut setup_connection = wamn_postgres::connect(system.as_str()).await.unwrap();
         for batch in batches {

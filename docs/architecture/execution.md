@@ -468,7 +468,7 @@ SQLx runs each statement on the same connection and waits for its result before 
 A cold connection also prepares its statements.
 No counter trigger, changed-relation read, or counter reset runs on the write path.
 
-The host stores the executing principal in `platform.tx_identity.user_id` for each transaction.
+The host stores the executing principal in `platform.tx_identity.principal_id` for each transaction.
 [Record history](data-access.md#record-history) stamps that principal on every write.
 
 - An authenticated caller of a route binds its principal id.
@@ -941,6 +941,7 @@ The cache identity includes both `key_id` and `wrapped_key`.
 Debug output omits keys and plaintext.
 
 The host refreshes tokens under a system database transaction.
+Its first statement records the call's executing principal in `platform.tx_identity`.
 It locks `registry.connection` with `FOR NO KEY UPDATE`, then reads the shared token row again.
 A token is due when its expiry is within 60 seconds, including negative infinity.
 A waiting host uses the row that the first host writes.

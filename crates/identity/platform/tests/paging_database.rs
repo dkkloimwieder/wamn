@@ -1,6 +1,6 @@
 //! Keyset queries against an owned, disposable PostgreSQL server.
 
-use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
+use wamn_control_provision::SYSTEM_SCHEMA_SQL;
 use wamn_platform_identity::{control, create_or_reuse_user, org};
 
 #[tokio::test]
@@ -19,12 +19,6 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         .execute(&mut client)
         .await
         .map(drop)
-        .unwrap();
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
         .unwrap();
     sqlx::raw_sql("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES
            ('acme', 'pooled', 'wamn-pg'), ('other', 'pooled', 'wamn-pg');

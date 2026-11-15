@@ -15,6 +15,8 @@ pub trait ExecutorDatabase: Send + Sync {
         &self,
         component: &str,
     ) -> impl std::future::Future<Output = Result<ConnectionGuard, ProductionLeaseError>> + Send;
+    /// The project database identity bound to this component.
+    fn project_env_key(&self, component: &str) -> Option<String>;
     /// The host-bound queue runner for this component.
     fn runner(&self, component: &str) -> Option<String>;
     /// The release that this component serves.
@@ -43,10 +45,17 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
     async fn executor_bound<T>(
         &self,
         component: &str,
-        work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, ProductionLeaseError>,
+        work: impl AsyncFnOnce(&mut sqlx::PgConnection, &str) -> Result<T, ProductionLeaseError>,
     ) -> Result<T, ProductionLeaseError> {
+        let project_env_key = self.database.project_env_key(component).ok_or_else(|| {
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
+                "resolve executor identity",
+                "component has no host-injected project",
+            )
+        })?;
         let mut connection = self.database.bound_connection(component).await?;
-        match work(connection.connection()).await {
+        match work(connection.connection(), &project_env_key).await {
             Ok(value) => {
                 sqlx::raw_sql("COMMIT")
                     .execute(connection.connection())
@@ -88,9 +97,10 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
         let digest = self.database.manifest_digest(component_id);
         let digest = digest.as_deref();
         let result = self
-            .executor_bound(component_id, async |connection| {
+            .executor_bound(component_id, async |connection, project_env_key| {
                 persistence::lease_next(
                     connection,
+                    project_env_key,
                     &runner,
                     package_ids,
                     environment,
@@ -115,8 +125,15 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
         grace_ms: i64,
     ) -> Result<ProductionReapResult, ProductionLeaseError> {
         let result = self
-            .executor_bound(component_id, async |connection| {
-                persistence::reap_exhausted(connection, package_ids, environment, grace_ms).await
+            .executor_bound(component_id, async |connection, project_env_key| {
+                persistence::reap_exhausted(
+                    connection,
+                    project_env_key,
+                    package_ids,
+                    environment,
+                    grace_ms,
+                )
+                .await
             })
             .await?;
         Ok(result)
@@ -138,9 +155,16 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
             )
         })?;
         let result = self
-            .executor_bound(component_id, async |connection| {
-                persistence::renew(connection, run_id, &runner, lease_generation, lease_ttl_ms)
-                    .await
+            .executor_bound(component_id, async |connection, project_env_key| {
+                persistence::renew(
+                    connection,
+                    project_env_key,
+                    run_id,
+                    &runner,
+                    lease_generation,
+                    lease_ttl_ms,
+                )
+                .await
             })
             .await?;
         Ok(result)
@@ -162,9 +186,16 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
             )
         })?;
         let result = self
-            .executor_bound(component_id, async |connection| {
-                persistence::complete(connection, run_id, &runner, lease_generation, completion)
-                    .await
+            .executor_bound(component_id, async |connection, project_env_key| {
+                persistence::complete(
+                    connection,
+                    project_env_key,
+                    run_id,
+                    &runner,
+                    lease_generation,
+                    completion,
+                )
+                .await
             })
             .await?;
         Ok(result)
@@ -186,9 +217,10 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
             )
         })?;
         let result = self
-            .executor_bound(component_id, async |connection| {
+            .executor_bound(component_id, async |connection, project_env_key| {
                 persistence::record_deadline_adjustments(
                     connection,
+                    project_env_key,
                     run_id,
                     &runner,
                     lease_generation,
@@ -215,8 +247,15 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
             )
         })?;
         let result = self
-            .executor_bound(component_id, async |connection| {
-                persistence::release_lease(connection, run_id, &runner, lease_generation).await
+            .executor_bound(component_id, async |connection, project_env_key| {
+                persistence::release_lease(
+                    connection,
+                    project_env_key,
+                    run_id,
+                    &runner,
+                    lease_generation,
+                )
+                .await
             })
             .await?;
         Ok(result)
@@ -235,8 +274,15 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
             return Ok(false);
         };
         let result = self
-            .executor_bound(component_id, async |connection| {
-                persistence::pinned_backlog(connection, package_ids, environment, digest).await
+            .executor_bound(component_id, async |connection, project_env_key| {
+                persistence::pinned_backlog(
+                    connection,
+                    project_env_key,
+                    package_ids,
+                    environment,
+                    digest,
+                )
+                .await
             })
             .await?;
         Ok(result)

@@ -497,7 +497,7 @@ The package declares numbering in `wamn.k`:
 
 - `sequences` names each number sequence and gives its default `pattern`. `callable = True` gives the package's commands the generated `sequences::<name>::next` and `peek`.
 - `number = "<sequence>"` on a model field makes the generated insert fill that field with the next number.
-- `role = "actor"` on a model field makes the generated insert fill it from `wamn_authority.current_user_id()`. The generated update fills a field named `updated_by` in the same way and never changes another actor field.
+- `role = "actor"` on a model field makes the generated insert fill it from `wamn_authority.current_principal_id()`. The generated update fills a field named `updated_by` in the same way and never changes another actor field.
 
 An overlay is a model whose `owner` is another package. It inherits the owner's `number` and actor declarations, even when it declares no `fields`. The build reads them, and the sequence patterns, from the compiled manifest of the base build. The generated overlay insert numbers and stamps the inherited fields, and the generated overlay update fills an inherited `updated_by`.
 
@@ -676,7 +676,7 @@ A stamp column needs no default, because the trigger sets every selected value.
 
 [`deploy/sql/record-history.sql`](../../deploy/sql/record-history.sql) creates schema `wamn_history` and the trigger function `wamn_history.stamp_row`.
 The `CATALOG_SCHEMA_SQL` composition carries the file, and the file applies again without error.
-The function reads the actor from `wamn_authority.current_user_id()` and the time from `transaction_timestamp()`.
+The function reads the actor from `wamn_authority.current_principal_id()` and the time from `transaction_timestamp()`.
 Every stamp in one transaction carries the same instant, and that instant is not the commit time.
 
 - An insert sets every selected column.
@@ -687,7 +687,7 @@ Every stamp in one transaction carries the same instant, and that instant is not
 - A write with no bound actor raises SQLSTATE `55000` with the message `actor-required`, for every column selection.
 
 The function reads no user row, and no stamp column has a foreign key.
-The platform trigger functions read `wamn_authority.current_user_id()`.
+The platform trigger functions read `wamn_authority.current_principal_id()`.
 Generated statements read it too: a create fills each actor field, an update fills the `updated_by` actor field, and a tombstone delete sets `deleted_by`.
 `wamn_history.log_row_change` reads `(wamn_authority.current_identity()).operation` to record attribution.
 
@@ -718,7 +718,7 @@ An entry has these columns:
 - `row_key`: a JSONB object of the primary key columns.
 - `type`: `insert`, `update`, or `delete`.
 - `operation`: the source of the write, from `(wamn_authority.current_identity()).operation`.
-- `changed_by`: the actor, from `wamn_authority.current_user_id()`.
+- `changed_by`: the actor, from `wamn_authority.current_principal_id()`.
 - `changed_at`: the one time of the entry, from `transaction_timestamp()`. Retention expires entries by this time.
 - `transaction_id`: the 64-bit value of `pg_current_xact_id()`, stored as `bigint`.
 - `before` and `after`: the JSONB images. A package relation keeps the `to_jsonb` spelling, and a platform relation keeps the spelling of `wamn_history.row_image`.
@@ -730,7 +730,7 @@ The platform binding owns the closed component list, so a new component needs no
 
 The function refuses a write that it cannot log:
 
-- A write with no bound `wamn_authority.current_user_id()` raises SQLSTATE `55000` with the message `actor-required`, as the stamp function does.
+- A write with no bound `wamn_authority.current_principal_id()` raises SQLSTATE `55000` with the message `actor-required`, as the stamp function does.
 - A write with no bound `(wamn_authority.current_identity()).operation` raises SQLSTATE `55000` with the message `operation-required`.
 - A write to a relation with no primary key raises SQLSTATE `55000` with the message `history-key-required`.
 
@@ -844,10 +844,11 @@ The change feed reads that watermark to find an expired cursor.
 apply-package owns the grants of the role.
 It grants them in the transaction that reconciles the log triggers.
 The role holds schema `USAGE`, `DELETE`, and `SELECT (row_key, position, changed_at)` on each history table whose log trigger carries `"P<n>D"`.
-It revokes every other privilege of the role, so a change to `"unlimited"` or `"none"` revokes the grants.
+It also grants INSERT on `platform.tx_identity`, schema USAGE, and execution of the identity accessors.
+It revokes every other privilege of the role. A change to `"unlimited"` or `"none"` removes that history table from its grants.
 It changes nothing in a database that has no role.
 The provisioning grant verifier reads `pg_trigger` in each database with the query that the verb runs.
-It refuses any other grant, a grant on an `unlimited` history table, and a grant in a reserved schema or `platform`.
+It refuses any other grant and a grant on an `unlimited` history table.
 
 ### Integration state
 
@@ -865,8 +866,9 @@ Only the consumer schema requires CDC capture.
 The host inserts one caller row into `platform.tx_identity` immediately after `BEGIN`.
 The primary key is `pg_current_xact_id()`. A trigger refuses another transaction id.
 Application and dynamic query logins have INSERT only. The first insert fixes the caller until the transaction ends.
-The SECURITY DEFINER function `wamn_authority.current_identity()` reads only that transaction's row.
-Its accessors expose the user, role, and application. Policies call them through `(SELECT ...)` and refuse a missing identity.
+The SECURITY DEFINER function `wamn_authority.current_identity()` reads that transaction's row.
+The row carries a required `principal_id`. It can name a user, a service, a platform component, or a workflow run's principal.
+Its accessors expose the principal, role, and application. Policies call them through `(SELECT ...)` and refuse a missing identity.
 A read operation and a dynamic query use REPEATABLE READ. After the insert, the host sets the transaction to READ ONLY.
 The host keeps `search_path` and `statement_timeout` local to the transaction.
 A shared map holds one pool per project and login.
@@ -874,6 +876,9 @@ A shared map holds one pool per project and login.
 The actor is the `platform."user"` id of the executing principal, never the credential.
 The [execution page](execution.md#native-dispatch) lists the principal that the host binds for each type of delivery.
 A writer outside the host inserts its caller into `platform.tx_identity` in its own transaction.
+Migrations insert no identity row. Their platform login uses the protected `platform.login_principal` lookup.
+The migration and build verification logins map to `ApplyPackage`. `wamn_db_owner` maps to `Provisioning`.
+The platform owner owns this lookup. Application logins have no privileges on it.
 Provisioning binds `wamn:provisioning`.
 apply-package binds `wamn:apply-package` for package writes and operation grants.
 The retention task binds `wamn:audit-retention`.

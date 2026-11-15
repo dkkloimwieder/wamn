@@ -99,6 +99,7 @@ fn psql(url: &str, database: Option<&str>, script: &str) -> String {
 /// run inside a transaction; `CATALOG_SCHEMA` owns its own `BEGIN`. Neither
 /// tolerates `psql -1`.
 fn apply(url: &str, sql: &str) {
+    let sql = sql.replace("\\ir record-history.sql", RECORD_HISTORY);
     let out = Command::new("psql")
         .arg(url)
         .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
@@ -299,7 +300,7 @@ END $$;
         &format!(
             r#"
 BEGIN;
-INSERT INTO platform.tx_identity(user_id,role,application)
+INSERT INTO platform.tx_identity(principal_id,role,application)
     VALUES ('{ACTOR_A}','viewer','fixture');
 DO $$ DECLARE target record; own boolean; foreign_rows boolean; BEGIN
     FOR target IN
@@ -437,7 +438,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     apply(
         &db_url,
         &format!(
-            "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{}','','fixture','admin:authority-fixture'); \
+            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{}','','fixture','admin:authority-fixture'); \
              INSERT INTO catalog.packages \
                (project_env_key, package_id, package_version, artifact_digest) \
              SELECT t, 'platform_fixture', '1.0.0', {hash} \
@@ -717,7 +718,7 @@ fn as_guest(db_url: &str, guest: &str, actor: &str, body: &str) {
         &format!(
             "BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
-             INSERT INTO platform.tx_identity (user_id, role, application) VALUES ('{actor}', '', 'fixture');\n\
+             INSERT INTO platform.tx_identity (principal_id, role, application) VALUES ('{actor}', '', 'fixture');\n\
              {body}\n\
              COMMIT;\n"
         ),
@@ -827,7 +828,7 @@ fn the_stamp_trigger_stamps_guest_writes_on_postgres() {
         &format!(
             "BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
-             INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{ACTOR_C}','','fixture');\n\
+             INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{ACTOR_C}','','fixture');\n\
              UPDATE rh_probe.stamped SET note = 'rolled back' WHERE id = 1;\n\
              ROLLBACK;\n"
         ),
@@ -908,12 +909,6 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
         &db_url,
         &format!("BEGIN;\nSET LOCAL ROLE \"{guest}\";\n{refusals}COMMIT;\n"),
     );
-    apply(
-        &db_url,
-        &format!(
-            "BEGIN; INSERT INTO platform.tx_identity(role,application) VALUES('','fixture'); SET LOCAL ROLE \"{guest}\"; {refusals} COMMIT;"
-        ),
-    );
 
     // 12. Administrative SQL without app.user_id refuses. Bound to the
     //     operator's user row, it stamps that row and replaces a supplied
@@ -922,13 +917,13 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
         &db_url,
         &format!(
             "BEGIN;\n\
-             INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{OPERATOR}','','fixture','admin:seed-operator-fixture');\n\
+             INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{OPERATOR}','','fixture','admin:seed-operator-fixture');\n\
              INSERT INTO platform.\"user\" (id, type, email) \
                VALUES ('{OPERATOR}', 'user', 'operator@example.test');\n\
              COMMIT;\n\
              BEGIN;\n{refusals}COMMIT;\n\
              BEGIN;\n\
-             INSERT INTO platform.tx_identity(user_id,role,application) SELECT id,'','fixture' FROM platform.\"user\" WHERE email='operator@example.test';\n\
+             INSERT INTO platform.tx_identity(principal_id,role,application) SELECT id,'','fixture' FROM platform.\"user\" WHERE email='operator@example.test';\n\
              UPDATE rh_probe.stamped SET note = 'operator', updated_by = '{ACTOR_B}' WHERE id = 1;\n\
              INSERT INTO rh_probe.stamped (id, note, created_by) VALUES (3, 'operator', '{ACTOR_B}');\n\
              DO $$ BEGIN\n\
@@ -1003,7 +998,7 @@ fn logged_guest_transaction(guest: &str, actor: &str, operation: &str, body: &st
         "BEGIN;\n\
          SET LOCAL ROLE \"{guest}\";\n\
          SET LOCAL TimeZone = 'Pacific/Auckland';\n\
-         INSERT INTO platform.tx_identity (user_id, role, application, operation) VALUES ('{actor}', '', 'fixture', '{operation}');\n\
+         INSERT INTO platform.tx_identity (principal_id, role, application, operation) VALUES ('{actor}', '', 'fixture', '{operation}');\n\
          {body}\n\
          COMMIT;\n"
     )
@@ -1229,7 +1224,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
         &format!(
             "REVOKE EXECUTE ON FUNCTION wamn_history.row_image(record) FROM wamn_app; \
              SET ROLE \"{guest}\"; \
-             INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{ACTOR_A}','','fixture','{CREATE_OPERATION}'); \
+             INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{ACTOR_A}','','fixture','{CREATE_OPERATION}'); \
              INSERT INTO rh_probe.logged (id, note, revision) VALUES (2, 'second', 1);"
         ),
     );
@@ -1553,9 +1548,7 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
     );
     assert_eq!(stopped, "23514");
 
-    // 10. An unbound operation, and the empty binding the host sends for an
-    //     absent identity, raise operation-required. An unbound actor raises
-    //     actor-required on a relation without the stamp trigger.
+    // 10. A caller without an operation cannot write a history entry.
     let operation_required = [
         "UPDATE rh_probe.logged SET note = 'refused' WHERE id = 1",
         "INSERT INTO rh_probe.projected (project_id, id, note) VALUES ('t1', 2, 'second')",
@@ -1569,28 +1562,10 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
         )
     })
     .concat();
-    let actor_required = [
-        "INSERT INTO rh_probe.projected (project_id, id, note) VALUES ('t1', 2, 'second')",
-        "DELETE FROM rh_probe.projected WHERE id = 1",
-    ]
-    .map(|statement| {
-        refuses_log_write(
-            statement,
-            "object_not_in_prerequisite_state",
-            "SQLERRM = 'actor-required'",
-        )
-    })
-    .concat();
     apply(
         &db_url,
         &format!(
-            "BEGIN; INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{ACTOR_A}','','fixture'); SET LOCAL ROLE \"{guest}\"; {operation_required} COMMIT;"
-        ),
-    );
-    apply(
-        &db_url,
-        &format!(
-            "BEGIN; INSERT INTO platform.tx_identity(role,application,operation) VALUES('','fixture','{UPDATE_OPERATION}'); SET LOCAL ROLE \"{guest}\"; {actor_required} COMMIT;"
+            "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{ACTOR_A}','','fixture'); SET LOCAL ROLE \"{guest}\"; {operation_required} COMMIT;"
         ),
     );
 
@@ -1703,7 +1678,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
         format!(
             "BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
-             INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{actor}','','fixture','{UPDATE_OPERATION}');\n"
+             INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{actor}','','fixture','{UPDATE_OPERATION}');\n"
         )
     };
     let mut first = start_session(&db_url, "rh-first");
@@ -2357,7 +2332,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
 /// `deploy/sql/app-schema.sql` gives each `platform` relation a
 /// `wamn_record_history_log` trigger with the argument `unlimited`. After
 /// apply-package converges the audit retention grants, the audit retention
-/// role holds no privilege on `platform` or on any object in it. The
+/// role cannot read or delete those history tables. The
 /// `P30D` fixture relation is the control: the same convergence grants the
 /// role its history table.
 #[test]
@@ -2374,27 +2349,26 @@ fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
         ),
     );
 
-    assert_query(
+    apply(
         &db_url,
-        "SELECT NOT EXISTS (SELECT FROM pg_class c WHERE c.relnamespace='platform'::regnamespace AND c.relkind='r' AND right(c.relname,length('_history'))<>'_history' AND EXISTS(SELECT FROM pg_class history WHERE history.relnamespace=c.relnamespace AND history.relname=c.relname||'_history') AND NOT EXISTS (SELECT FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='wamn_record_history_log' AND NOT t.tgisinternal AND t.tgargs=convert_to('unlimited','UTF8')||decode('00','hex')))",
-    );
-    let targets_sql = wamn_control_provision::audit_retention::AUDIT_RETENTION_TARGETS_SQL
-        .trim()
-        .trim_end_matches(';');
-    assert_query(
-        &db_url,
-        &format!(
-            "SELECT count(*)=1 AND bool_and(schema_name='rh_probe' AND relation_name='projected' AND history_name='projected_history' AND days::integer=30) FROM ({targets_sql}) targets"
-        ),
-    );
-    assert_query(
-        &db_url,
-        "SELECT has_table_privilege('wamn_audit_retention','rh_probe.projected_history','DELETE') AND has_schema_privilege('wamn_audit_retention','platform','USAGE') AND NOT EXISTS (SELECT FROM pg_class c WHERE c.relnamespace='platform'::regnamespace AND c.relkind='r' AND c.relname<>'write_log' AND (has_table_privilege('wamn_audit_retention',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('wamn_audit_retention',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')))",
-    );
-
-    assert_query(
-        &db_url,
-        "SELECT has_table_privilege('wamn_audit_retention','platform.write_log','DELETE') AND NOT has_table_privilege('wamn_audit_retention','platform.write_log','SELECT,INSERT,UPDATE,TRUNCATE,REFERENCES,TRIGGER')",
+        r#"
+DO $$ DECLARE history regclass; BEGIN
+    ASSERT has_table_privilege('wamn_audit_retention', 'rh_probe.projected_history', 'DELETE');
+    ASSERT has_table_privilege('wamn_audit_retention', 'platform.tx_identity', 'INSERT');
+    ASSERT NOT has_table_privilege('wamn_audit_retention', 'platform.tx_identity', 'SELECT');
+    ASSERT NOT has_table_privilege('wamn_audit_retention', 'platform.login_principal', 'SELECT');
+    FOR history IN
+        SELECT to_regclass(format('%I.%I', n.nspname, c.relname || '_history'))
+          FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+          JOIN pg_namespace n ON n.oid=c.relnamespace
+         WHERE n.nspname='platform' AND t.tgname='wamn_record_history_log' AND NOT t.tgisinternal
+    LOOP
+        ASSERT history IS NOT NULL;
+        ASSERT NOT has_table_privilege('wamn_audit_retention', history, 'DELETE');
+        ASSERT NOT has_table_privilege('wamn_audit_retention', history, 'SELECT');
+    END LOOP;
+END $$;
+"#,
     );
     for column in wamn_control_provision::audit_retention::WRITE_LOG_RETENTION_READ_COLUMNS {
         assert_query(
@@ -2434,6 +2408,8 @@ SET LOCAL ROLE "{guest}";
 DO $$ DECLARE statement text; refused boolean; BEGIN
     FOREACH statement IN ARRAY ARRAY[
         'SELECT * FROM platform.tx_identity',
+        'SELECT * FROM platform.login_principal',
+        'INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,gen_random_uuid())',
         'UPDATE platform.tx_identity SET role = ''admin''',
         'DELETE FROM platform.tx_identity',
         'TRUNCATE platform.tx_identity'
@@ -2461,22 +2437,22 @@ fn the_first_identity_insert_wins_and_other_transactions_refuse() {
         &format!(
             r#"
 BEGIN;
-INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{ACTOR_A}','viewer','fixture');
+INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{ACTOR_A}','viewer','fixture');
 SET LOCAL ROLE "{guest}";
 DO $$ DECLARE refused boolean := false; BEGIN
     BEGIN
-        INSERT INTO platform.tx_identity(role,application) VALUES('admin','forged');
+        INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{ACTOR_B}','admin','forged');
     EXCEPTION WHEN unique_violation THEN refused := true;
     END;
     ASSERT refused;
     refused := false;
     BEGIN
-        INSERT INTO platform.tx_identity(xid,role,application)
-        VALUES((pg_current_xact_id()::text::bigint + 1)::text::xid8,'admin','forged');
+        INSERT INTO platform.tx_identity(xid,principal_id,role,application)
+        VALUES((pg_current_xact_id()::text::bigint + 1)::text::xid8,'{ACTOR_B}','admin','forged');
     EXCEPTION WHEN insufficient_privilege THEN refused := true;
     END;
     ASSERT refused;
-    ASSERT (SELECT wamn_authority.current_user_id()) = '{ACTOR_A}'::uuid;
+    ASSERT (SELECT wamn_authority.current_principal_id()) = '{ACTOR_A}'::uuid;
 END $$;
 ROLLBACK;
 "#

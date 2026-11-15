@@ -38,7 +38,7 @@ CREATE SCHEMA IF NOT EXISTS wamn_authority AUTHORIZATION CURRENT_USER;
 REVOKE ALL ON SCHEMA wamn_authority FROM PUBLIC;
 CREATE UNLOGGED TABLE IF NOT EXISTS platform.tx_identity (
     xid xid8 PRIMARY KEY DEFAULT pg_current_xact_id(),
-    user_id uuid,
+    principal_id uuid NOT NULL,
     role text NOT NULL,
     application text NOT NULL,
     operation text,
@@ -60,19 +60,42 @@ REVOKE ALL ON FUNCTION wamn_authority.check_identity_xid() FROM PUBLIC;
 CREATE OR REPLACE TRIGGER identity_xid BEFORE INSERT ON platform.tx_identity
     FOR EACH ROW EXECUTE FUNCTION wamn_authority.check_identity_xid();
 
+CREATE TABLE IF NOT EXISTS platform.login_principal (
+    login name PRIMARY KEY,
+    principal_id uuid NOT NULL
+);
+ALTER TABLE platform.login_principal OWNER TO CURRENT_USER;
+REVOKE ALL ON platform.login_principal FROM PUBLIC;
+INSERT INTO platform.login_principal(login, principal_id)
+SELECT DISTINCT login::name, principal_id::uuid FROM (VALUES (current_user, '770df186-ac15-579e-b46b-c297cae2011b'),
+       (session_user, '770df186-ac15-579e-b46b-c297cae2011b'),
+       ('wamn_db_owner', '770df186-ac15-579e-b46b-c297cae2011b')) AS binding(login, principal_id)
+ON CONFLICT (login) DO NOTHING;
+
 CREATE OR REPLACE FUNCTION wamn_authority.current_identity()
 RETURNS platform.tx_identity
 LANGUAGE sql SECURITY DEFINER STABLE
 SET search_path = pg_catalog AS $$
     SELECT identity FROM platform.tx_identity AS identity
     WHERE xid = pg_current_xact_id()
+    UNION ALL
+    SELECT ROW(pg_current_xact_id(), principal_id, '', '',
+               CASE principal_id
+                   WHEN '7695180f-4b9a-581f-84ef-d7e9cdbd2b77'::uuid THEN 'wamn:apply-package'
+                   ELSE 'wamn:provisioning'
+               END, NULL)::platform.tx_identity
+      FROM platform.login_principal
+     -- SECURITY DEFINER changes current_user. The native role setting retains
+     -- the invoking role, or session_user when SET ROLE is not active.
+     WHERE login = COALESCE(NULLIF(current_setting('role'), 'none'), session_user)::name
+       AND NOT EXISTS (SELECT FROM platform.tx_identity WHERE xid = pg_current_xact_id())
 $$;
 ALTER FUNCTION wamn_authority.current_identity() OWNER TO CURRENT_USER;
 REVOKE ALL ON FUNCTION wamn_authority.current_identity() FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION wamn_authority.current_user_id()
+CREATE OR REPLACE FUNCTION wamn_authority.current_principal_id()
 RETURNS uuid LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
-    SELECT (SELECT wamn_authority.current_identity()).user_id
+    SELECT (SELECT wamn_authority.current_identity()).principal_id
 $$;
 CREATE OR REPLACE FUNCTION wamn_authority.current_role()
 RETURNS text LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
@@ -82,7 +105,7 @@ CREATE OR REPLACE FUNCTION wamn_authority.current_application()
 RETURNS text LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
     SELECT (SELECT wamn_authority.current_identity()).application
 $$;
-REVOKE ALL ON FUNCTION wamn_authority.current_user_id(),
+REVOKE ALL ON FUNCTION wamn_authority.current_principal_id(),
     wamn_authority.current_role(), wamn_authority.current_application() FROM PUBLIC;
 
 DO $query_role$ BEGIN
@@ -100,36 +123,18 @@ DECLARE writer text;
 BEGIN
     FOR writer IN SELECT rolname FROM pg_roles WHERE rolname IN
         ('wamn_app', 'wamn_query', 'wamn_platform', 'wamn_db_owner',
-         'wamn_system', 'wamn_control', 'wamn_identity', 'wamn_apply') LOOP
+         'wamn_system', 'wamn_control', 'wamn_identity_issuer', 'wamn_apply') LOOP
         EXECUTE format('GRANT USAGE ON SCHEMA platform, wamn_authority TO %I', writer);
         IF writer <> current_user THEN
-            EXECUTE format('REVOKE ALL ON platform.tx_identity FROM %I', writer);
+            EXECUTE format('REVOKE ALL ON platform.tx_identity, platform.login_principal FROM %I', writer);
             EXECUTE format('GRANT INSERT ON platform.tx_identity TO %I', writer);
         END IF;
         EXECUTE format('GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), '
-            'wamn_authority.current_user_id(), wamn_authority.current_role(), '
+            'wamn_authority.current_principal_id(), wamn_authority.current_role(), '
             'wamn_authority.current_application() TO %I', writer);
     END LOOP;
 END
 $identity_grants$;
-
--- Existing project policies also refuse a transaction with no caller.
-DO $identity_policies$
-DECLARE relation regclass; policy record;
-BEGIN
-    FOR policy IN SELECT polrelid::regclass AS relation, polname FROM pg_policy
-        WHERE (SELECT oid FROM pg_roles WHERE rolname = 'wamn_app') = ANY(polroles) LOOP
-        EXECUTE format('ALTER POLICY %I ON %s TO wamn_app, wamn_query', policy.polname, policy.relation);
-    END LOOP;
-    FOR relation IN SELECT DISTINCT polrelid::regclass FROM pg_policy
-        WHERE (SELECT oid FROM pg_roles WHERE rolname = 'wamn_app') = ANY(polroles) LOOP
-        EXECUTE format('DROP POLICY IF EXISTS caller_identity ON %s', relation);
-        EXECUTE format('CREATE POLICY caller_identity ON %s AS RESTRICTIVE '
-            'USING ((SELECT wamn_authority.current_role()) IS NOT NULL) '
-            'WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL)', relation);
-    END LOOP;
-END
-$identity_policies$;
 
 -- Test setups drop catalog and apply CATALOG_SCHEMA_SQL again on the same
 -- database. wamn_history stays, so the schema and function DDL is idempotent.
@@ -151,7 +156,7 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog
 AS $stamp_row$
 DECLARE
-    actor uuid := (SELECT wamn_authority.current_user_id());
+    actor uuid := (SELECT wamn_authority.current_principal_id());
     fresh jsonb;
     stamps jsonb;
 BEGIN
@@ -308,7 +313,7 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog
 AS $log_row_change$
 DECLARE
-    actor uuid := (SELECT wamn_authority.current_user_id());
+    actor uuid := (SELECT wamn_authority.current_principal_id());
     operation text := (SELECT (wamn_authority.current_identity()).operation);
     history text := format('%I.%I', TG_TABLE_SCHEMA, TG_TABLE_NAME || '_history');
     old_row jsonb := COALESCE(wamn_history.row_image(OLD), '{}');

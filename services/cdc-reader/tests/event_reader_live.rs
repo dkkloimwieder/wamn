@@ -353,16 +353,6 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .await
         .map(drop)
         .expect("apply the complete catalog bootstrap (the package/effective-release store)");
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .execute(&mut sys)
-        .await
-        .map(|result| result.rows_affected())
-        .expect("bind the provisioning actor");
     sqlx::query(sqlx::AssertSqlSafe((upsert_org_sql()).to_string()))
         .bind(&ORG)
         .bind(&"pooled")

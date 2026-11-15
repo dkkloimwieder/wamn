@@ -189,7 +189,9 @@ pub fn identity_issuer_login(issuer: &str) -> anyhow::Result<String> {
 pub fn grant_identity_issuer_surface_sql() -> String {
     let role = escape_identifier(IDENTITY_ISSUER_ROLE);
     let mut sql = format!(
-        "{} GRANT USAGE ON SCHEMA identity, registry TO {role}; \
+        "{} GRANT USAGE ON SCHEMA identity, registry, platform, wamn_authority TO {role}; \
+         GRANT INSERT ON platform.tx_identity TO {role}; \
+         GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO {role}; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON \
            identity.session_keys, identity.session_signing_state TO {role}; GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO {role};",
         crate::sql::ensure_acl_role_sql(IDENTITY_ISSUER_ROLE),

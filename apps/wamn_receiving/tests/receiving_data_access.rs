@@ -779,9 +779,9 @@ mod tests {
     }
 
     async fn bind_actor(client: &mut Client, actor: Uuid) -> Result<()> {
+        sqlx::raw_sql("COMMIT; BEGIN").execute(&mut *client).await?;
         sqlx::query(
-            "SELECT set_config('app.user_id', $1, false), \
-                        set_config('app.operation', $2, false)",
+            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture',$2)",
         )
         .bind(&actor.hyphenated().to_string())
         .bind(&FIXTURE_OPERATION)

@@ -124,8 +124,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "BEGIN; \
-             SELECT set_config('app.user_id', '{MEMBER}', true), \
-                    set_config('app.operation', 'admin:host-route-fixture', true); \
+             INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{MEMBER}'::text::uuid,'','fixture','admin:host-route-fixture'); \
              INSERT INTO platform.role (name) VALUES ('written'); \
              DELETE FROM platform.role WHERE name = 'written'; \
              COMMIT;"
@@ -829,15 +828,6 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
     .execute(&mut admin)
     .await
     .map(drop)?;
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO identity.principals(id,type,subject,email,display_name) \
              VALUES($1::text::uuid,'user','control-route@example.test','control-route@example.test','Control route fixture')").bind(&principal).execute(&mut admin).await.map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO identity.org_memberships(principal_id,org,status) VALUES($1::text::uuid,$2,'active')").bind(&principal).bind(&ORG).execute(&mut admin).await.map(|result| result.rows_affected())?;

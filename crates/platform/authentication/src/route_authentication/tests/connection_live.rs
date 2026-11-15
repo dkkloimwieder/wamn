@@ -74,8 +74,16 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .await
     .map(drop)
     .unwrap();
-    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:connection-principal',false)").bind(&principal).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut project)
+        .await
+        .expect("begin fixture transaction");
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:connection-principal')").bind(&principal).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
     sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test')").bind(&principal).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut project)
+        .await
+        .expect("commit fixture transaction");
     let mut reader = url::Url::parse(database.as_str()).unwrap();
     reader.set_username(&role).unwrap();
     reader.set_password(Some("fixture-password")).unwrap();
@@ -291,7 +299,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     let mut admin = connect(system.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "SET ROLE wamn_system; \
-         SELECT set_config('app.user_id', '{live_platform_principal}', false); \
+         INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{live_platform_principal}'::text::uuid,'','fixture','admin:fixture'); \
          INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('org', 'pooled', 'test'); \
          INSERT INTO registry.projects (org, id) VALUES ('org', 'project');"
     ))).execute(&mut admin).await.map(drop).unwrap();
@@ -366,7 +374,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         .unwrap();
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "SET ROLE \"{administration}\"; SET app.user_id = '{live_platform_principal}'; SET app.operation = 'admin:seed-pat-drop-fixture';"
+        "SET ROLE \"{administration}\"; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{live_platform_principal}'::text::uuid,'','fixture','admin:seed-pat-drop-fixture');"
     ))).execute(&mut project_admin).await.map(drop).unwrap();
     sqlx::query("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'service', 'pat-drop@example.test')").bind(&principal.id().to_string().as_str()).execute(&mut project_admin).await.map(|result| result.rows_affected()).unwrap();
     let mut http_url = url::Url::parse(project.as_str()).unwrap();

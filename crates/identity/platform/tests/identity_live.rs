@@ -45,12 +45,6 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     let provisioning = provisioning_principal_is_seeded(&mut client).await;
     unbound_identity_writes_refuse(&mut client).await;
     // The fixture is platform setup, so it writes as wamn:provisioning.
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&provisioning.to_string().as_str())
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
-        .expect("bind wamn:provisioning for the fixture session");
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
@@ -338,7 +332,7 @@ async fn project_environment_membership_round_trip(
     assert_eq!(stored.get::<String, _>(0), user.id().to_string().as_str());
     assert_eq!(stored.get::<i64, _>(1), 1);
     let stamped: bool = sqlx::query(
-        "SELECT created_by = updated_by AND created_by = current_setting('app.user_id')::uuid \
+        "SELECT created_by = updated_by AND created_by = (SELECT wamn_authority.current_principal_id()) \
              FROM identity.project_env_memberships",
     )
     .fetch_one(&mut *client)

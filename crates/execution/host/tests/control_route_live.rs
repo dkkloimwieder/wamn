@@ -229,11 +229,6 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     let (logins, _billing, _shop) = environments(&mut admin, admin_url, "org").await?;
 
     // The org owner, an enrolled user and a new user, written as provisioning.
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name) in [
         ("boss@example.test", "Boss"),
@@ -564,11 +559,6 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
 
     // An org admin, a project admin of billing and a plain member.
     let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&provisioning)
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name, grants) in [
         (
@@ -943,11 +933,6 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     let control_url = install(&mut admin, admin_url).await?;
     let (logins, mut billing, mut shop) =
         environments(&mut admin, admin_url, "application").await?;
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name, org_admin) in [
         ("boss@example.test", "Boss", true),
@@ -1201,11 +1186,6 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     let mut admin = connect(admin_url).await?;
     let control_url = install(&mut admin, admin_url).await?;
     let (logins, mut billing, mut shop) = environments(&mut admin, admin_url, "status").await?;
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name, org_admin) in [
         ("boss@example.test", "Boss", true),
@@ -1456,12 +1436,6 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     let (logins, _billing, _shop) = environments(&mut admin, admin_url, "ledger").await?;
 
     // Two org admins and a project admin of billing.
-    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&provisioning)
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name, grants) in [
         (
@@ -1671,11 +1645,6 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
     let control_url = install(&mut admin, database.url()).await?;
     let (logins, mut billing, mut shop) =
         environments(&mut admin, database.url(), "counts").await?;
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())?;
     let principal = create_or_reuse_user(&mut admin, "counts@example.test", "Counts")
         .await?
         .principal_id;
@@ -1942,7 +1911,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
-            "SET app.user_id='{}'; UPDATE registry.meta SET platform_domain='example.test'",
+            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{}'::text::uuid,'','fixture','admin:fixture'); UPDATE registry.meta SET platform_domain='example.test'",
             PlatformComponent::Provisioning.principal_id()
         ))
             .to_string(),
@@ -2267,7 +2236,6 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
     let control_url = install(&mut admin, database.url()).await?;
     let (logins, billing, _shop) =
         environments(&mut admin, database.url(), "grant_projection_order").await?;
-    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','wamn:provisioning',false)").bind(&PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let boss = create_or_reuse_user(&mut admin, "boss-order@example.test", "Boss")
         .await?
         .principal_id;

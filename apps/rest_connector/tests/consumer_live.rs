@@ -37,18 +37,6 @@ pub async fn execution_role(
     let mut project = wamn_postgres::connect(database.as_str()).await?;
 
     sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:schedule-fixture', false)",
-    )
-    .bind(
-        &wamn_identity_protocol::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
-    )
-    .execute(&mut project)
-    .await
-    .map(|result| result.rows_affected())?;
-    sqlx::query(
         "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', 'enabler@example.test') ON CONFLICT (id) DO NOTHING",
     )
@@ -98,15 +86,6 @@ pub async fn workflow_host(
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
     wamn_environment::platform_migrations::install_project(admin).await?;
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(
-            &wamn_identity_protocol::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .execute(&mut *admin)
-        .await
-        .map(|result| result.rows_affected())?;
 
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;

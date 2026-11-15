@@ -101,10 +101,12 @@ struct QueueState {
 /// The facts that name why a park or a release changed nothing.
 async fn queue_state(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     environment: &str,
     run_id: &str,
 ) -> Result<Option<QueueState>, WorkflowError> {
     let row = sqlx::query(sqlx::AssertSqlSafe(select_run_queue_state_sql()))
+        .bind(project_env_key)
         .bind(run_id)
         .bind(environment)
         .fetch_optional(&mut *connection)
@@ -124,17 +126,19 @@ async fn queue_state(
 /// Hold an unleased queued run until an explicit release.
 pub async fn park(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     environment: &str,
     run_id: &str,
 ) -> Result<(), WorkflowError> {
     let parked = sqlx::query(sqlx::AssertSqlSafe(park_queued_run_sql()))
+        .bind(project_env_key)
         .bind(run_id)
         .bind(environment)
         .fetch_optional(&mut *connection)
         .await
         .map_err(|error| WorkflowError::storage("park the run", error))?;
     if parked.is_none() {
-        match queue_state(connection, environment, run_id).await? {
+        match queue_state(connection, project_env_key, environment, run_id).await? {
             None => {
                 return Err(WorkflowError::new(
                     WorkflowErrorType::NotFound,
@@ -172,26 +176,30 @@ pub async fn park(
 /// Make a parked run eligible for leasing.
 pub async fn release(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     environment: &str,
     run_id: &str,
 ) -> Result<(), WorkflowError> {
     let released = sqlx::query(sqlx::AssertSqlSafe(release_parked_run_sql()))
+        .bind(project_env_key)
         .bind(run_id)
         .bind(environment)
         .fetch_optional(&mut *connection)
         .await
         .map_err(|error| WorkflowError::storage("release the run", error))?;
     if released.is_none() {
-        return Err(match queue_state(connection, environment, run_id).await? {
-            None => WorkflowError::new(
-                WorkflowErrorType::NotFound,
-                format!("run {run_id} does not exist"),
-            ),
-            Some(_) => WorkflowError::new(
-                WorkflowErrorType::NotParked,
-                format!("run {run_id} is not parked"),
-            ),
-        });
+        return Err(
+            match queue_state(connection, project_env_key, environment, run_id).await? {
+                None => WorkflowError::new(
+                    WorkflowErrorType::NotFound,
+                    format!("run {run_id} does not exist"),
+                ),
+                Some(_) => WorkflowError::new(
+                    WorkflowErrorType::NotParked,
+                    format!("run {run_id} is not parked"),
+                ),
+            },
+        );
     }
     Ok(())
 }
@@ -199,12 +207,14 @@ pub async fn release(
 /// Read the newest runs in the authorized environment.
 pub async fn list(
     connection: &mut sqlx::PgConnection,
+    project_env_key: &str,
     environment: &str,
     limit: u32,
 ) -> Result<Vec<WorkflowRun>, WorkflowError> {
     let limit = i64::from(limit);
 
     let rows = sqlx::query(sqlx::AssertSqlSafe(list_workflow_runs_sql()))
+        .bind(project_env_key)
         .bind(environment)
         .bind(limit)
         .fetch_all(&mut *connection)

@@ -6,9 +6,6 @@ use wamn_run_state::queue::select_production_lease_sql;
 const EXECUTOR_LOGIN: &str = "wamn_matrix_executor_login";
 
 fn psql(url: &str, script: &str) -> Output {
-    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
-    let script =
-        format!("SET app.user_id='{actor}'; SET app.operation='admin:run-state-fixture'; {script}");
     let mut child = Command::new("psql")
         .args(["-X", "-v", "ON_ERROR_STOP=1", "-Atq", url])
         .stdin(Stdio::piped())
@@ -165,10 +162,10 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
     success(
         &url,
         &format!(
-            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; \
+            "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('d318d033-29ea-5cb0-ab56-24340413fbcc','','fixture','wamn:executor'); SET LOCAL ROLE {EXECUTOR_LOGIN}; \
         SET LOCAL app.project_env_key='t1'; SET LOCAL search_path=wamn_run; \
         DO $test$ DECLARE selected record; BEGIN \
-            EXECUTE $lease${lease}$lease$ INTO STRICT selected USING ARRAY['cat'],'dev', \
+            EXECUTE $lease${lease}$lease$ INTO STRICT selected USING 't1',ARRAY['cat'],'dev', \
                 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'; \
             ASSERT selected.run_id IS NOT NULL; \
         END $test$; ROLLBACK;"
@@ -192,7 +189,7 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
     success(
         &url,
         &format!(
-            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; \
+            "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('d318d033-29ea-5cb0-ab56-24340413fbcc','','fixture','wamn:executor'); SET LOCAL ROLE {EXECUTOR_LOGIN}; \
         SET LOCAL app.project_env_key='other'; SET LOCAL search_path=wamn_run; \
         DO $test$ DECLARE selected record; BEGIN \
             EXECUTE $lease${lease}$lease$ INTO selected USING ARRAY['cat'],'dev', \

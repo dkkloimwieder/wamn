@@ -13,7 +13,6 @@ use wamn_broker::Publisher;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
-use wamn_control_provision::PlatformComponent;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
@@ -130,11 +129,6 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
 
     // The users and their grants, written as provisioning, and one password
     // login of each admin for the control audience.
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name) in [
         ("boss@example.test", "Boss"),

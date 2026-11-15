@@ -102,14 +102,6 @@ pub(super) async fn install(
         .as_str()
         .expect("fixture principal")
         .to_owned();
-    sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:seed-host-route-fixture', false)",
-    )
-    .bind(&first)
-    .execute(&mut *admin)
-    .await
-    .map(|result| result.rows_affected())?;
     let mut writer = connect(&login(admin_url, &administration)?).await?;
     let identity =
         sqlx::query("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user")
@@ -119,7 +111,11 @@ pub(super) async fn install(
         !identity.get::<bool, _>(0) && !identity.get::<bool, _>(1),
         "fixture configuration uses the administration login"
     );
-    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:seed-host-route-fixture',false)").bind(&first).execute(&mut writer).await.map(|result| result.rows_affected())?;
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut writer)
+        .await
+        .expect("begin fixture transaction");
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:seed-host-route-fixture')").bind(&first).execute(&mut writer).await.map(|result| result.rows_affected())?;
     for role in ["admin", "purchase-reader"] {
         sqlx::query("INSERT INTO platform.role (name) VALUES ($1)")
             .bind(&role)
@@ -157,6 +153,10 @@ pub(super) async fn install(
         .await
         .map(|result| result.rows_affected())?;
     }
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut writer)
+        .await
+        .expect("commit fixture transaction");
     Ok((admitter, administration))
 }
 

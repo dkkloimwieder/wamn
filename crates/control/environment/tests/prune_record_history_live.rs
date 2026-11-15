@@ -66,8 +66,7 @@ async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Client, String) {
                ON inventory.widget FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D'); \
              GRANT USAGE ON SCHEMA inventory TO wamn_app; \
              GRANT SELECT ON inventory.widget, inventory.widget_history TO wamn_app; \
-             SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', false), \
-                    set_config('app.operation', 'admin:seed-history-fixture', false);").execute(&mut client).await.map(drop)
+             ").execute(&mut client).await.map(drop)
         .expect("install history and seed authority");
     (database, client, changes)
 }

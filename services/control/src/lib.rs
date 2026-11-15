@@ -311,7 +311,6 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     let cleanup_pool = pool.clone();
     let identity_databases = config.administration_dir.clone();
     let identity_system = config.apply_database.to_json()?;
-    let mut cleanup_ticks = tokio::time::interval(std::time::Duration::from_secs(60));
     let keys = wamn_authentication::session_keys::IssuerKeys::new(
         wamn_authentication::session_keys::IssuerKeysConfig::new(
             &config.session_issuer,
@@ -386,20 +385,37 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     let org: Arc<str> = config.org.into();
     let routing = Arc::new(FlowHttpRouting::new(Arc::default()));
     let listener = tokio::net::TcpListener::bind(config.http_addr).await?;
+    let cleanup_org = Arc::clone(&org);
+    let mut maintenance = tokio::task::JoinSet::new();
+    maintenance.spawn(async move {
+        let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60));
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticks.tick().await;
+            if let Err(error) = retention::identities(&identity_databases, &identity_system).await {
+                tracing::warn!(%error, "transaction identity retention failed");
+            }
+            let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                wamn_execution_host::credential_cleanup::collect(
+                    &mut *cleanup_pool.acquire().await?,
+                    &cleanup_org,
+                )
+                .await
+            })
+            .await;
+            match result {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => tracing::warn!(%error, "credential collection failed"),
+                Err(error) => tracing::warn!(%error, "credential collection timed out"),
+            }
+        }
+    });
     let mut connections = tokio::task::JoinSet::new();
     let shutdown = shutdown();
     tokio::pin!(shutdown);
     loop {
         tokio::select! {
             signal = &mut shutdown => { signal?; break; }
-            _ = cleanup_ticks.tick() => {
-                if let Err(error) = retention::identities(&identity_databases, &identity_system).await {
-                    tracing::warn!(%error, "transaction identity retention failed");
-                }
-                if let Err(error) = async { wamn_execution_host::credential_cleanup::collect(&mut *cleanup_pool.acquire().await?, &org).await }.await {
-                    tracing::warn!(%error, "credential collection failed");
-                }
-            }
             Some(result) = connections.join_next(), if !connections.is_empty() => {
                 if let Err(error) = result { tracing::warn!(%error, "control connection failed"); }
             }
@@ -433,6 +449,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             }
         }
     }
+    maintenance.shutdown().await;
     let drain = async { while connections.join_next().await.is_some() {} };
     if tokio::time::timeout(wamn_engine::lifecycle::RUNTIME_SHUTDOWN_BUDGET, drain)
         .await

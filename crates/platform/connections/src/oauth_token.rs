@@ -162,6 +162,8 @@ fn retain_until(started: Instant, seconds_left: f64) -> Option<Instant> {
 
 pub struct Request<'a> {
     pub reader: &'a ConnectionCredentials,
+    /// The host-attested executing principal of this call.
+    pub principal: uuid::Uuid,
     pub project: &'a str,
     pub environment: &'a str,
     pub connection: uuid::Uuid,
@@ -202,6 +204,10 @@ where
 {
     let mut database = request.reader.oauth_database().await?;
     let mut tx = database.begin().await?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')")
+        .bind(request.principal)
+        .execute(&mut *tx)
+        .await?;
     lock(&mut tx, request).await?;
     let started = Instant::now();
     let stored = read_row(&mut tx, request.connection, envelope).await?;

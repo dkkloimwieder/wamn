@@ -581,18 +581,6 @@ pub mod workflow {
             AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
         };
 
-        sqlx::query(
-            "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:schedule-fixture', false)",
-        )
-        .bind(
-            &wamn_identity_protocol::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .execute(&mut *project)
-        .await
-        .map(|result| result.rows_affected())?;
         sqlx::query("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING").bind(&ENABLER).execute(&mut *project).await.map(|result| result.rows_affected())?;
         let bytes: Vec<u8> = sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2").bind(&environment.project_env_key).bind(&environment.digest).fetch_one(&mut *project)
         .await?
@@ -841,18 +829,6 @@ pub mod workflow {
     ) -> anyhow::Result<()> {
         let project_env_key = environment.project_env_key;
         let mut project = connect_owned(environment.project_url).await?;
-        sqlx::query(
-            "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:schedule-fixture', false)",
-        )
-        .bind(
-            &wamn_identity_protocol::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .execute(&mut project)
-        .await
-        .map(|result| result.rows_affected())?;
         sqlx::query(
             "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', $2) ON CONFLICT (id) DO NOTHING",

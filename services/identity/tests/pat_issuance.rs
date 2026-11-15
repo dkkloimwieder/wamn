@@ -202,12 +202,6 @@ async fn operator_pat_issuance_over_https() {
     let targeted = targeted.to_string();
 
     // The fixture is platform setup, so it writes as wamn:provisioning.
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
-        .execute(&mut system)
-        .await
-        .map(|result| result.rows_affected())
-        .expect_redacted("bind wamn:provisioning for the fixture session");
     let user = create_user(
         &mut system,
         "pat-user",

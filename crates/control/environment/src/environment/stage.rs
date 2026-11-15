@@ -380,7 +380,7 @@ pub async fn write_release(
         .await
         .context("begin the release cache write")?;
     sqlx::query(
-        "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES($1::text::uuid,'','','wamn:provisioning')",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','','wamn:provisioning')",
     )
     .bind(actor)
     .execute(&mut *transaction)

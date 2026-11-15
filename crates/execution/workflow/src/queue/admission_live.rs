@@ -130,7 +130,6 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
     .execute(&mut admin)
     .await
     .map(drop)?;
-    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)").bind(&PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut admin).await.map(|result| result.rows_affected())?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("INSERT INTO platform.\"user\" (id,type,email) VALUES ('{SERVICE}','service','automation@example.invalid');
       INSERT INTO platform.role (name) VALUES ('automation');
       INSERT INTO platform.user_role (user_id,role_name) VALUES ('{SERVICE}','automation');

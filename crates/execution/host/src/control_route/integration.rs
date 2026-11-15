@@ -205,7 +205,7 @@ impl ControlRoutes<'_> {
         for client in &mut clients {
             let mut target = client.begin().await?;
             sqlx::query(
-                "INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
+                "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
             )
             .bind(caller.to_string().as_str())
             .bind(&attachment.operation)

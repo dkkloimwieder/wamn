@@ -72,9 +72,12 @@ impl Execution {
         }
         let mut application = wamn_postgres::connect(&database).await?;
         if operation == "workflow.list" {
-            let mut tx = application.begin().await?;
-            sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
-                .bind(&key)
+            let mut tx = application
+                .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
+                .await?;
+            sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','','admin:workflow-list')")
+                .bind(caller.to_string()).execute(&mut *tx).await?;
+            sqlx::query("SET TRANSACTION READ ONLY")
                 .execute(&mut *tx)
                 .await?;
             let rows = sqlx::query("SELECT to_jsonb(w) AS document FROM catalog.workflows w WHERE project_env_key=$1 AND environment=$2 ORDER BY application, workflow_id, version")

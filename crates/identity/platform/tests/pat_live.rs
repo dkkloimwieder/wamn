@@ -187,12 +187,6 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     );
 
     // The rest of the fixture is platform setup, so it writes as wamn:provisioning.
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&provisioning)
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
-        .expect("bind wamn:provisioning for the fixture session");
     platform_principal_cannot_hold_a_token(&mut client, &provisioning).await;
     token_rows_refuse_malformed_values(&mut client, user.id(), &prefix).await;
 

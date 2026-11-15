@@ -67,7 +67,7 @@ pub fn seed_org_project_env_sql(org: &str, project: &str, env: &str) -> String {
     let env = escape_literal(env);
     let actor = crate::PlatformComponent::Provisioning.principal_id();
     format!(
-        "INSERT INTO platform.tx_identity(user_id,role,application) VALUES('{actor}','','fixture') ON CONFLICT(xid) DO NOTHING; \
+        "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{actor}','','fixture') ON CONFLICT(xid) DO NOTHING; \
          INSERT INTO registry.orgs(id,placement_type) VALUES ({org},'dedicated') ON CONFLICT DO NOTHING; \
          INSERT INTO registry.projects(org,id) VALUES ({org},{project}) ON CONFLICT DO NOTHING; \
          INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) \
@@ -147,7 +147,7 @@ mod tests {
             "CREATE ROLE {login} LOGIN INHERIT NOSUPERUSER NOBYPASSRLS; \
              GRANT wamn_control TO {login}; SET SESSION AUTHORIZATION {login}; \
              SET ROLE wamn_control; \
-             INSERT INTO platform.tx_identity(user_id,role,application) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture'); \
+             INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture'); \
              SELECT set_config('app.project_env_key','other--dev--orders',false); \
              DO $isolation$ BEGIN \
                  ASSERT EXISTS (SELECT FROM registry.projects WHERE org='acme'); \
@@ -249,6 +249,15 @@ pub async fn platform_migration_input(
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {name} LOGIN PASSWORD 'platform-migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT {} TO {name} WITH INHERIT TRUE, SET FALSE; GRANT CONNECT ON DATABASE {} TO {name}",
         postgres_protocol::escape::escape_literal(&role.name), scope.owner_role(), postgres_protocol::escape::escape_identifier(database))))
         .execute(&mut admin).await?;
+    let identity_exists: bool =
+        sqlx::query_scalar("SELECT to_regclass('platform.login_principal') IS NOT NULL")
+            .fetch_one(&mut admin)
+            .await?;
+    if identity_exists {
+        sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+            .bind(&role.name).bind(crate::PlatformComponent::Provisioning.principal_id())
+            .execute(&mut admin).await?;
+    }
     let mut url = url::Url::parse(input)?;
     url.set_username(&role.name)
         .map_err(|()| anyhow::anyhow!("fixture login"))?;

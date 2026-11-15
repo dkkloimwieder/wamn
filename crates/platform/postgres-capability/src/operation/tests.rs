@@ -396,7 +396,7 @@ async fn unavailable_principal_database_returns_connection_unavailable(pool: sql
 async fn missing_principal_returns_permission_denied(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture(&pool).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; INSERT INTO platform.tx_identity(user_id,role,application,operation) VALUES('{LIVE_PRINCIPAL}','','fixture','admin:remove-fixture-user'); DELETE FROM platform.\"user\"; COMMIT")))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{LIVE_PRINCIPAL}','','fixture','admin:remove-fixture-user'); DELETE FROM platform.\"user\"; COMMIT")))
         .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
         .await
         .unwrap();

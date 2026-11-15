@@ -73,8 +73,16 @@ impl Fixture {
             .await
             .unwrap();
 
-        sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:connection-principal',false)").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::raw_sql("BEGIN")
+            .execute(&mut client)
+            .await
+            .expect("begin fixture transaction");
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:connection-principal')").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
         sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test') ON CONFLICT DO NOTHING").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::raw_sql("COMMIT")
+            .execute(&mut client)
+            .await
+            .expect("commit fixture transaction");
         let base = wamn_postgres_capability::WamnPostgresConfig {
             credentials: None,
             guest_pool_max_size: 1,

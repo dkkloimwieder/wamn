@@ -21,16 +21,6 @@ impl Fixture {
             .await
             .map(drop)
             .unwrap();
-        sqlx::query("SELECT set_config('app.user_id', $1, false)")
-            .bind(
-                &wamn_control_provision::PlatformComponent::Provisioning
-                    .principal_id()
-                    .to_string(),
-            )
-            .execute(&mut admin)
-            .await
-            .map(|result| result.rows_affected())
-            .unwrap();
         for project in ["project-a", "project-b", "host-project", "other-project"] {
             sqlx::raw_sql(sqlx::AssertSqlSafe(
                 (&wamn_control_provision::test_database::seed_org_project_env_sql(

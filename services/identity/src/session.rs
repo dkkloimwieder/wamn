@@ -178,8 +178,14 @@ pub(super) async fn authorized_roles(
     let target = &configured.binding;
     let triple = target.triple();
     let mut database = inner.database().await.map_err(|_| failed())?;
-    if !has_project_env_membership(
+    let mut transaction = wamn_platform_identity::transaction::read_connection(
         &mut database.client,
+        &principal.id().to_string(),
+    )
+    .await
+    .map_err(|_| failed())?;
+    if !has_project_env_membership(
+        &mut transaction,
         principal.id(),
         &triple.org,
         &triple.project,
@@ -195,7 +201,7 @@ pub(super) async fn authorized_roles(
         .bind(&triple.project)
         .bind(triple.env.as_str())
         .bind(target.instance_suffix())
-        .fetch_one(&mut database.client)
+        .fetch_one(&mut *transaction)
         .await
         .map_err(|_| failed())?
         .get(0);
@@ -204,7 +210,7 @@ pub(super) async fn authorized_roles(
     }
 
     if wamn_platform_identity::control::is_project_admin(
-        &mut database.client,
+        &mut transaction,
         principal.id(),
         &triple.org,
         &triple.project,
@@ -213,9 +219,11 @@ pub(super) async fn authorized_roles(
     .await
     .map_err(|_| failed())?
     {
+        transaction.commit().await.map_err(|_| failed())?;
         return Ok(vec![wamn_identity_protocol::ADMIN_ROLE.to_owned()]);
     }
 
+    transaction.commit().await.map_err(|_| failed())?;
     // Take the connection out while it is in use. Cancellation or a failed
     // query drops its driver, so no abandoned query stays on a retained reader.
     let mut retained = configured.reader.lock().await;
@@ -225,12 +233,19 @@ pub(super) async fn authorized_roles(
             .await
             .map_err(|_| failed())?,
     };
+    let mut transaction = wamn_platform_identity::transaction::read_connection(
+        &mut roles_database.client,
+        &principal.id().to_string(),
+    )
+    .await
+    .map_err(|_| failed())?;
     let rows = sqlx::query(ENVIRONMENT_ROLES_SQL)
         .bind(principal.id().to_string().as_str())
-        .fetch_all(&mut roles_database.client)
+        .fetch_all(&mut *transaction)
         .await
         .map_err(|_| failed())?;
     let roles: Vec<String> = rows.iter().map(|row| row.get(0)).collect();
+    transaction.commit().await.map_err(|_| failed())?;
     *retained = Some(roles_database);
     drop(retained);
     if roles.is_empty() {

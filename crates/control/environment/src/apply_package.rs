@@ -29,8 +29,6 @@ pub use wamn_publish::package_source::{PackageRoot, read_package_directory, read
 pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.data-access:' || current_database(), 0))";
 
-const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
-
 /// Inputs of one exact package application.
 #[derive(Debug)]
 pub struct ApplyPackageRequest {
@@ -303,7 +301,6 @@ async fn apply(
     let table = wamn_control_provision::migration::history_table(project_env_key, &package_id);
     wamn_control_provision::migration::prepare_history(&mut tx, &table, &login).await?;
     tx.commit().await?;
-    migration::bind_session(&mut executor, project_env_key).await?;
     let migrations_applied =
         crate::migrations::run(&mut executor, package.migrations, table).await?;
     let mut tx = migration::begin(client, project_env_key).await?;

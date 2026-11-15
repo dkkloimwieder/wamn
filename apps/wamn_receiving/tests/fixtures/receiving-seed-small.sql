@@ -31,9 +31,8 @@ SET row_security = off;
 
 -- The record history trigger requires an actor, and a dump carries none.
 -- These two settings hold for the whole session that applies this file.
-SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false),
-       set_config('app.project_env_key_id', 'acme--dev--receiving', false),
-       set_config('app.operation', 'admin:seed-receiving-fixture', false);
+BEGIN;
+INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-receiving-fixture');
 
 --
 -- Data for Name: item; Type: TABLE DATA; Schema: receiving; Owner: postgres
@@ -171,3 +170,5 @@ bf7775ce-62cf-aa5e-322a-c6f9c5734135	28949ddd-af64-b13f-7b52-8b5db8ef4756	10	660
 
 \unrestrict rXiZKKEkHtO9vKielwGjqLWNa7xEru151gdbKYyFyuQXhdmtG5DpTXFCS1ZwQJy
 
+
+COMMIT;

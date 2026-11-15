@@ -182,7 +182,13 @@ fn psql_tuples(url: &str, query: &str) -> (bool, String, String) {
 /// Run one statement in a session authenticated AS the reader and return the
 /// SQLSTATE it raised, or `None` when it succeeded.
 fn reader_sqlstate(reader_url: &str, statement: &str) -> Option<String> {
-    let (ok, _, err) = psql(reader_url, statement);
+    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    let (ok, _, err) = psql(
+        reader_url,
+        &format!(
+            "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{actor}','','fixture'); {statement}; COMMIT;"
+        ),
+    );
     if ok {
         return None;
     }
@@ -248,13 +254,21 @@ async fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches
     }
 
     // No reader can delegate its privileges to another role.
-    for (reader, _, _) in &reader_url {
+    for (reader, url, _) in &reader_url {
         let grants: Vec<bool> = sqlx::query_scalar(ROLE_GRANTS_SQL)
             .bind(reader.family().acl_role())
             .fetch_all(&pool)
             .await
             .unwrap();
         assert!(grants.into_iter().all(|grantable| !grantable));
+        assert_eq!(
+            reader_sqlstate(url, "SELECT principal_id FROM platform.login_principal"),
+            Some("42501".to_owned())
+        );
+        assert_eq!(
+            reader_sqlstate(url, "SELECT principal_id FROM platform.tx_identity"),
+            Some("42501".to_owned())
+        );
     }
     assert_eq!(
         reader_sqlstate(&reader_url[1].1, "SELECT id FROM registry.connection"),

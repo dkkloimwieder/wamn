@@ -143,8 +143,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // The fixture writes as U1, its test principal, whose row stamps itself.
     writeln!(
         script,
-        "SET app.user_id = '{U1}';\n\
-         SET app.operation = 'admin:seed-isolation-fixture';\n\
+        "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','admin:seed-isolation-fixture');\n\
          INSERT INTO platform.\"user\" (id, type, email) VALUES \
            ('{U1}','user','u1@t1'),('{U2}','service','u2@t1'),('{U3}','user','u3@t2');\n\
          INSERT INTO platform.role (name) VALUES ('admin'),('clerk');\n\
@@ -155,6 +154,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     )
     .expect("writing to a String cannot fail");
 
+    script.push_str("COMMIT;\n");
     // Each generation reads the users, roles and settings of its database.
     writeln!(
         script,
@@ -342,8 +342,7 @@ async fn platform_rows_carry_their_pinned_ids_on_postgres(pool: sqlx::PgPool) {
     // The fixture writes as its first admitted user row below.
     writeln!(
         script,
-        "COMMIT;\nSET app.user_id = '{FIXTURE_USER}';\n\
-         SET app.operation = 'admin:seed-platform-row-fixture';"
+        "COMMIT;\nBEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{FIXTURE_USER}'::uuid,'','fixture','admin:seed-platform-row-fixture');"
     )
     .expect("writing to a String cannot fail");
     // Every refused row sits in its own subtransaction, so the fresh rows
@@ -431,6 +430,7 @@ async fn platform_rows_carry_their_pinned_ids_on_postgres(pool: sqlx::PgPool) {
     for component in PlatformComponent::ALL {
         writeln!(script, "DO $$ BEGIN ASSERT EXISTS (SELECT FROM platform.\"user\" WHERE id='{}' AND type='platform' AND display_name='{}'), 'platform principal must retain its identity'; END $$;", component.principal_id(), component.principal_name()).unwrap();
     }
+    script.push_str("COMMIT;\n");
     run(&url, &script);
 }
 
@@ -447,12 +447,7 @@ async fn platform_relations_stamp_provisioning_writes_on_postgres(pool: sqlx::Pg
     script.push_str(&app_schema_sql());
     script.push_str("\nBEGIN;\n");
     script.push_str(&platform_principals_sql("example.invalid").unwrap());
-    script.push_str(
-        "COMMIT;\nDO $$ BEGIN
-        ASSERT COALESCE(current_setting('app.user_id', true), '') = '';
-        ASSERT COALESCE(current_setting('app.operation', true), '') = '';
-        END $$;\n",
-    );
+    script.push_str("COMMIT;\n");
     let provisioning = PlatformComponent::Provisioning.principal_id();
     let operation = PlatformComponent::Provisioning.principal_name();
     for component in PlatformComponent::ALL {
@@ -491,8 +486,7 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
     writeln!(
         script,
         "BEGIN;\n\
-         SET LOCAL app.user_id = '{U1}';\n\
-         SET LOCAL app.operation = '{SEED}';\n\
+         INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','{SEED}');\n\
          INSERT INTO platform.\"user\" (id, type, email) VALUES \
            ('{U1}', 'user', 'u1@t1'), ('{U2}', 'user', 'u2@t2'), \
            ('{U3}', 'service', 'u3@t1');\n\
@@ -507,8 +501,7 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
            ('{K1}', '{U1}', 'ci', 'hash-1', 'wk_a'), ('{K2}', '{U1}', 'cd', 'hash-2', 'wk_b');\n\
          COMMIT;\n\
          BEGIN;\n\
-         SET LOCAL app.user_id = '{U2}';\n\
-         SET LOCAL app.operation = '{CHANGE}';\n\
+         INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U2}'::uuid,'','fixture','{CHANGE}');\n\
          UPDATE platform.\"user\" SET status = 'disabled' WHERE id = '{U2}';\n\
          UPDATE platform.role SET description = 'administrators' WHERE name = 'admin';\n\
          UPDATE platform.user_role SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
@@ -517,8 +510,7 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
          UPDATE platform.api_key SET revoked_at = '2026-09-14T00:00:00Z' WHERE id = '{K1}';\n\
          COMMIT;\n\
          BEGIN;\n\
-         SET LOCAL app.user_id = '{U3}';\n\
-         SET LOCAL app.operation = '{REMOVE}';\n\
+         INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U3}'::uuid,'','fixture','{REMOVE}');\n\
          DELETE FROM platform.api_key WHERE id = '{K2}';\n\
          DELETE FROM platform.setting;\n\
          DELETE FROM platform.\"user\" WHERE id = '{U1}';\n\

@@ -183,7 +183,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) 
         .map(drop)
         .unwrap();
     let mut transaction = client.begin().await.unwrap();
-    sqlx::raw_sql("INSERT INTO platform.tx_identity(user_id,role,application) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture')")
+    sqlx::raw_sql("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture')")
         .execute(&mut *transaction)
         .await
         .map(drop)

@@ -52,7 +52,7 @@ async fn application_query_uses_the_read_login_and_database_grants_refuse_a_writ
         .expect("guest query export");
     let (_, rows) = store.run_concurrent(async |accessor| {
         let (response,) = query.call_concurrent(accessor, (
-            "SELECT $1::integer, current_user = $2 AND pg_has_role(current_user, 'wamn_query', 'MEMBER') AND NOT pg_has_role(current_user, 'wamn_app', 'MEMBER'), (wamn_authority.current_user_id())::text".into(),
+            "SELECT $1::integer, current_user = $2 AND pg_has_role(current_user, 'wamn_query', 'MEMBER') AND NOT pg_has_role(current_user, 'wamn_app', 'MEMBER'), (wamn_authority.current_principal_id())::text".into(),
             vec![SqlValue::Int32(17), SqlValue::Text(query_login)],
         )).await?;
         collect(accessor, response).await
@@ -174,6 +174,9 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
         .unwrap(),
     );
     postgres.set_project_env_key(SCOPE, PROJECT).unwrap();
+    postgres
+        .set_user_id(SCOPE, crate::session_identity::tests::LIVE_PRINCIPAL)
+        .unwrap();
     let (mut store, instance) = guest(Arc::clone(&postgres), SCOPE, TRANSACTION_GUEST).await;
     let open = instance
         .get_typed_func::<(), (Result<ResourceAny, PgError>,)>(&mut store, "open")

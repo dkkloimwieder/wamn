@@ -27,7 +27,7 @@ const LIVE_ROW: &str = "model.deleted_at IS NULL";
 /// The actor reads the same setting that `wamn_history.stamp_row` reads. That
 /// trigger fires on this UPDATE and refuses an unbound actor first, so an
 /// actorless tombstone never reaches the row.
-const TOMBSTONE_ASSIGNMENT: &str = "        deleted_at = transaction_timestamp(),\n        deleted_by = (SELECT wamn_authority.current_user_id())";
+const TOMBSTONE_ASSIGNMENT: &str = "        deleted_at = transaction_timestamp(),\n        deleted_by = (SELECT wamn_authority.current_principal_id())";
 
 pub(crate) fn get(table: &Table, tombstoned: bool) -> String {
     let key_cast = key_cast(table);
@@ -75,7 +75,7 @@ pub(crate) fn create(
     }
     for field in model.actor_fields() {
         values.push(format!(
-            "(SELECT wamn_authority.current_user_id())::{}",
+            "(SELECT wamn_authority.current_principal_id())::{}",
             postgres_type(column_type(table, field))
         ));
         columns.push(field);
@@ -151,7 +151,7 @@ pub(crate) fn update(
         })
         .chain(model.update_actor_field().map(|field| {
             format!(
-                "        {field} = CASE\n            WHEN {changed}\n            THEN (SELECT wamn_authority.current_user_id())::{}\n            ELSE model.{field}\n        END",
+                "        {field} = CASE\n            WHEN {changed}\n            THEN (SELECT wamn_authority.current_principal_id())::{}\n            ELSE model.{field}\n        END",
                 postgres_type(column_type(table, field))
             )
         }))

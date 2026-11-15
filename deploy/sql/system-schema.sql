@@ -199,9 +199,6 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 -- The deployment metadata seed binds the platform actor in its transaction.
 DO $meta$ BEGIN
-  INSERT INTO platform.tx_identity (user_id, role, application, operation)
-    VALUES ('770df186-ac15-579e-b46b-c297cae2011b', '', '', 'wamn:provisioning')
-    ON CONFLICT (xid) DO NOTHING;
   INSERT INTO registry.meta DEFAULT VALUES;
 END $meta$;
 
@@ -421,9 +418,6 @@ CREATE TRIGGER wamn_record_history_stamp
 -- The wamn:provisioning row is the first identity row. The block binds
 -- that principal for the current transaction, so the row stamps itself.
 DO $provisioning$ BEGIN
-  INSERT INTO platform.tx_identity (user_id, role, application, operation)
-    VALUES ('770df186-ac15-579e-b46b-c297cae2011b', '', '', 'wamn:provisioning')
-    ON CONFLICT (xid) DO NOTHING;
   INSERT INTO identity.principals (id, type, subject, display_name)
   VALUES ('770df186-ac15-579e-b46b-c297cae2011b', 'platform',
           'wamn:provisioning', 'wamn:provisioning');
@@ -1901,7 +1895,7 @@ BEGIN
           WHEN 'identity.oauth_token' THEN 'registry.control_connection(connection_id)'
           ELSE 'org = registry.control_org()' END;
         -- The policy also exists when bootstrap creates the ACL role later.
-        predicate := 'CASE WHEN COALESCE(pg_has_role(session_user,to_regrole(''wamn_control''),''member''),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper) THEN (' || predicate || ') ELSE true END';
+        predicate := '(SELECT wamn_authority.current_principal_id()) IS NOT NULL AND CASE WHEN COALESCE(pg_has_role(session_user,to_regrole(''wamn_control''),''member''),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper) THEN (' || predicate || ') ELSE true END';
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('CREATE POLICY control_org ON %s USING (%s) WITH CHECK (%s)',relation_name,predicate,predicate);
     END LOOP;

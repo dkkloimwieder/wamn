@@ -8,9 +8,6 @@ const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
 const STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 
 fn psql(url: &str, script: &str) -> std::process::Output {
-    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
-    let script =
-        format!("SET app.user_id='{actor}'; SET app.operation='admin:provision-fixture'; {script}");
     let mut child = Command::new("psql")
         .arg(url)
         .args([

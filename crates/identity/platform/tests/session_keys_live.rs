@@ -202,7 +202,7 @@ async fn session_key_lifecycle_on_postgres(pool: sqlx::PgPool) {
 
     // Age only the already-retired fixture row; do not wait fifteen minutes or
     // replace the production clock/retirement query with a mock.
-    sqlx::raw_sql("BEGIN; SET LOCAL app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'")
+    sqlx::raw_sql("BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture');")
         .execute(&mut admin)
         .await
         .map(drop)

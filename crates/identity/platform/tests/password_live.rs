@@ -32,12 +32,6 @@ async fn connect(url: &str) -> Client {
         .await
         .map(drop)
         .unwrap();
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(&actor().to_string().as_str())
-        .execute(&mut client)
-        .await
-        .map(|result| result.rows_affected())
-        .unwrap();
     client
 }
 async fn new_user(client: &mut Client, name: &str) -> Principal {

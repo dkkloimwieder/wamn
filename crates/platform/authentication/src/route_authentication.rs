@@ -275,17 +275,24 @@ impl PlatformRouteAuthenticator {
                     return Ok(true);
                 }
                 let ticket = cache.identity_ticket();
+                let mut transaction = wamn_platform_identity::transaction::read_pool(
+                    identity_reader,
+                    &claims.sub.to_string(),
+                )
+                .await
+                .map_err(|_| authentication_unavailable())?;
                 let active = wamn_platform_identity::session_token::session_is_active(
-                    &mut *identity_reader
-                        .acquire()
-                        .await
-                        .map_err(|_| authentication_unavailable())?,
+                    &mut transaction,
                     claims,
                     project,
                     environment,
                 )
                 .await
                 .map_err(|_| authentication_unavailable())?;
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|_| authentication_unavailable())?;
                 if active {
                     let deadline = u64::try_from(claims.exp)
                         .ok()
@@ -415,20 +422,27 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 principal
             } else {
                 let ticket = cache.identity_ticket();
-                let principal = wamn_platform_identity::authenticate_route_pat(
-                    &mut *identity_reader
-                        .acquire()
-                        .await
-                        .map_err(|_| authentication_unavailable())?,
-                    token,
+                let mut transaction = wamn_platform_identity::transaction::read_pool(
+                    identity_reader,
+                    &wamn_identity_protocol::PlatformComponent::Provisioning
+                        .principal_id()
+                        .to_string(),
                 )
-                .instrument(tracing::info_span!("wamn.auth.identity"))
                 .await
-                .map_err(|error| {
-                    tracing::warn!(error = %error, "route PAT authentication unavailable");
-                    authentication_unavailable()
-                })?
-                .ok_or_else(unauthorized)?;
+                .map_err(|_| authentication_unavailable())?;
+                let principal =
+                    wamn_platform_identity::authenticate_route_pat(&mut transaction, token)
+                        .instrument(tracing::info_span!("wamn.auth.identity"))
+                        .await
+                        .map_err(|error| {
+                            tracing::warn!(error = %error, "route PAT authentication unavailable");
+                            authentication_unavailable()
+                        })?
+                        .ok_or_else(unauthorized)?;
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|_| authentication_unavailable())?;
                 cache.keep_pat(ticket, token, &principal);
                 principal
             };
@@ -543,19 +557,26 @@ impl ControlRouteAuthenticator {
             csrf.map(|required| (headers, required)),
             async |_| Ok(()),
             async |claims| {
-                wamn_platform_identity::control::control_session_is_active(
-                    &mut *self
-                        .control
-                        .acquire()
-                        .await
-                        .map_err(|_| authentication_unavailable())?,
+                let mut transaction = wamn_platform_identity::transaction::read_pool(
+                    &self.control,
+                    &claims.sub.to_string(),
+                )
+                .await
+                .map_err(|_| authentication_unavailable())?;
+                let active = wamn_platform_identity::control::control_session_is_active(
+                    &mut transaction,
                     claims,
                 )
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "control authority unavailable");
                     authentication_unavailable()
-                })
+                })?;
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|_| authentication_unavailable())?;
+                Ok(active)
             },
         )
         .await?;

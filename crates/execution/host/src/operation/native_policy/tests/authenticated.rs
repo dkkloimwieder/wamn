@@ -122,10 +122,13 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
     .execute(&mut admin)
     .await
     .map(drop)?;
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut admin)
+        .await
+        .expect("begin fixture transaction");
     // The fixture writes as its test principal, whose row stamps itself.
     sqlx::query(
-        "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:seed-native-policy-fixture', false)",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:seed-native-policy-fixture')",
     )
     .bind(&FIXTURE_PRINCIPAL)
     .execute(&mut admin)
@@ -163,6 +166,10 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
     .execute(&mut admin)
     .await
     .map(|result| result.rows_affected())?;
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut admin)
+        .await
+        .expect("commit fixture transaction");
     let mut authorized_url = url::Url::parse(admin_url)?;
     authorized_url
         .set_username(&generation)
@@ -232,7 +239,11 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
         &[&first, second],
     )
     .await?;
-    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:seed-session-authority',false)").bind(&FIXTURE_PRINCIPAL).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut admin)
+        .await
+        .expect("begin fixture transaction");
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:seed-session-authority')").bind(&FIXTURE_PRINCIPAL).execute(&mut admin).await.map(|result| result.rows_affected())?;
     for (principal, email) in [
         (&*first, "alice@example.test"),
         (second, "bob@example.test"),
@@ -288,6 +299,10 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
             )?),
     )?);
     let route = FlowHttpRouting::for_test(Some(release)).with_authenticator(authentication);
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut admin)
+        .await
+        .expect("commit fixture transaction");
     Ok((server, route))
 }
 
@@ -1029,10 +1044,18 @@ async fn warm_postgres_with_pool(
     .execute(&mut admin)
     .await
     .map(drop)?;
-    sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-test', false)").bind(&FIXTURE_PRINCIPAL).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut admin)
+        .await
+        .expect("begin fixture transaction");
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:warm-test')").bind(&FIXTURE_PRINCIPAL).execute(&mut admin).await.map(|result| result.rows_affected())?;
     for principal in principals {
         sqlx::query("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'user', $1 || '@example.invalid')").bind(principal).execute(&mut admin).await.map(|result| result.rows_affected())?;
     }
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut admin)
+        .await
+        .expect("commit fixture transaction");
     let mut url = url::Url::parse(admin_url)?;
     url.set_username(&role)
         .map_err(|()| anyhow::anyhow!("guest username"))?;
@@ -1090,15 +1113,6 @@ async fn pat_caller(
     let system_database = url::Url::parse(coordinate.url())?;
     wamn_control_provision::test_database::system(system_database.as_str()).await;
     let mut system = connect(system_database.as_str()).await?;
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .execute(&mut system)
-        .await
-        .map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ($1, 'pooled', 'warm-test')").bind(&ORG).execute(&mut system).await.map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO registry.projects (org, id) VALUES ($1, $2)")
         .bind(&ORG)
@@ -1132,15 +1146,18 @@ async fn pat_caller(
     )
     .await?;
     let mut admin = connect(admin_url).await?;
-    sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-pat-test', false)").bind(&FIXTURE_PRINCIPAL).execute(&mut admin).await.map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'service','warm-pat@example.invalid')").bind(&principal.id().to_string().as_str()).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    let mut transaction =
+        wamn_test_postgres::transaction(&mut admin, FIXTURE_PRINCIPAL, "admin:warm-pat-test")
+            .await?;
+    sqlx::query("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'service','warm-pat@example.invalid')").bind(&principal.id().to_string().as_str()).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
     sqlx::query(
         "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'native-child')",
     )
     .bind(&principal.id().to_string().as_str())
-    .execute(&mut admin)
+    .execute(&mut *transaction)
     .await
     .map(|result| result.rows_affected())?;
+    transaction.commit().await?;
     let reader_role = workload_login(
         WorkloadRoleFamily::IdentityReader,
         WorkloadRoleIdentity::Control {

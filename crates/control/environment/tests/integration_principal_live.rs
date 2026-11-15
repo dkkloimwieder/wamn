@@ -32,7 +32,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     )
     .unwrap();
     wamn_control_provision::test_database::system(system.as_str()).await;
-    sqlx::raw_sql("SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.meta SET platform_domain = 'example.invalid'").execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap()).await?;
+    sqlx::raw_sql("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture'); UPDATE registry.meta SET platform_domain = 'example.invalid'").execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap()).await?;
 
     let project = url::Url::parse(
         case_server
@@ -50,15 +50,6 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     .execute(&mut admin)
     .await
     .map(drop)?;
-    sqlx::query("SELECT set_config('app.user_id', $1, false)")
-        .bind(
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .execute(&mut admin)
-        .await
-        .map(|result| result.rows_affected())?;
 
     for package in ["consumer", "integration"] {
         sqlx::query("INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( $1,$2,'1.0.0',$3)").bind(&PROJECT_ENV_KEY).bind(&package).bind(&format!("sha256:{}", "a".repeat(64))).execute(&mut admin).await.map(|result| result.rows_affected())?;

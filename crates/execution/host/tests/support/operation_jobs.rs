@@ -11,7 +11,7 @@ async fn operations_refuse_unrelated_project_authority_before_execution() -> any
     let control_url = install(&mut admin, database.url()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
-            "SET app.user_id='{}'",
+            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{}'::text::uuid,'','fixture','admin:fixture');",
             PlatformComponent::Provisioning.principal_id()
         ))
             .to_string(),

@@ -1023,7 +1023,7 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
     let result = async {
         let mut writer = wamn_postgres::connect(&project_url).await?;
 
-        sqlx::raw_sql("SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), false), set_config('app.operation', 'admin:screen-feed', false);
+        sqlx::raw_sql("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES((SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin')::text::uuid,'','fixture','admin:screen-feed');
             INSERT INTO inventory.feed_order VALUES ('00000000-0000-4000-8000-000000000001', 'order one'), ('00000000-0000-4000-8000-000000000002', 'order two');
             INSERT INTO inventory.feed_item VALUES ('00000000-0000-4000-8000-000000000011', 'item one'), ('00000000-0000-4000-8000-000000000012', 'item two');
             INSERT INTO inventory.feed_line(id, order_id, item_id, label) VALUES
@@ -1145,8 +1145,7 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
                 .context("connect the feed writer")?;
 
         sqlx::raw_sql("BEGIN;
-                 SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), true),
-                        set_config('app.operation', 'admin:feed-reader', true);
+                 INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES((SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin')::text::uuid,'','fixture','admin:feed-reader');
                  INSERT INTO platform.role (name)
                      SELECT 'reader' FROM platform.user_role WHERE role_name = 'admin';
                  INSERT INTO platform.permission (role_name, permission)
@@ -1161,8 +1160,7 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
                 .await
                 .context("connect the held writer")?;
 
-        let stamp = "SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'reader'), true),
-                            set_config('app.operation', 'admin:feed-write', true)";
+        let stamp = "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES((SELECT user_id::text FROM platform.user_role WHERE role_name = 'reader')::text::uuid,'','fixture','admin:feed-write')";
         let mut held = holder.begin().await.context("begin the held transaction")?;
         sqlx::raw_sql(sqlx::AssertSqlSafe((stamp).to_string())).execute(&mut *held).await.map(drop).context("stamp the held transaction")?;
         let held_row = sqlx::query("UPDATE inventory.widget SET note = 'held', edit_version = edit_version + 1
