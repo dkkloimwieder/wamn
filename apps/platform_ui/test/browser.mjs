@@ -539,8 +539,12 @@ try {
     assert.ok(Number.isInteger(observedRelease[count]) && observedRelease[count] >= 1, `${count} is answered`);
   }
   await assertTiles(page, observedRelease);
-  await page.getByRole("combobox", { name: "Application release" })
-    .locator("option").filter({ hasText: fixture.releaseDigest }).first().waitFor({ state: "attached" });
+  await page
+    .getByRole("combobox", { name: "Application release" })
+    .locator("option")
+    .filter({ hasText: fixture.releaseDigest })
+    .first()
+    .waitFor({ state: "attached" });
   assert.equal(await page.getByRole("table").count(), 0);
   assert.deepEqual(splashReads, [{ project: fixture.releaseProject, env: fixture.releaseEnv }]);
   await capture(page, "environment");
