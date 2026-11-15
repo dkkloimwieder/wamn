@@ -287,7 +287,10 @@ impl Authority {
         // write that changes no row records nothing.
         for repeat in [false, true] {
             let mut drops = ConnectionDrops::default();
-            let mut tx = project.begin().await.unwrap();
+            let mut tx =
+                wamn_environment::provision_project_env::provisioning_transaction(&mut *project)
+                    .await
+                    .unwrap();
             bindings::write(
                 &mut tx,
                 PROJECT_ENV_KEY,

@@ -108,11 +108,15 @@ fn component(
     aliases: &[&str],
 ) -> anyhow::Result<ServingComponent> {
     let mut resolve = wit_parser::Resolve::new();
+    resolve.push_str(
+        "integration.wit",
+        "package wamn-integration:data@1.0.0; interface get { run: func(); } interface update { run: func(); }",
+    )?;
     let mut imports = String::new();
     for alias in aliases {
         write!(imports, "import {alias}: http;")?;
     }
-    let package = resolve.push_str("http.wit", &format!("package wamn:connection@0.1.0; interface http {{ get: func(); }} world {name} {{ {imports} export run: func(); }}"))?;
+    let package = resolve.push_str("http.wit", &format!("package wamn:connection@0.1.0; interface http {{ get: func(); }} world {name} {{ {imports} export run: func(); export wamn-integration:data/get@1.0.0; export wamn-integration:data/update@1.0.0; }}"))?;
     let world = resolve.select_world(&[package], Some(name))?;
     let mut module =
         wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
@@ -127,9 +131,24 @@ fn component(
         .validate(true)
         .encode()?;
     let mut descriptor = ComponentDescriptor::named(name, "1.0.0", bytes_sha256(&bytes));
-    descriptor.operations = serde_json::from_value(json!({
-        "run": {"input-ports": [], "output-ports": [], "parameters": []}
-    }))?;
+    descriptor.operations = serde_json::from_value(serde_json::Value::Object(
+        resolve.worlds[world]
+            .exports
+            .keys()
+            .map(|key| {
+                let name = match key {
+                    wit_parser::WorldKey::Name(name) => name.to_owned(),
+                    wit_parser::WorldKey::Interface(id) => resolve
+                        .id_of(*id)
+                        .expect("fixture exports a named interface"),
+                };
+                (
+                    name,
+                    json!({"input-ports": [], "output-ports": [], "parameters": []}),
+                )
+            })
+            .collect(),
+    ))?;
     descriptor.connections = aliases
         .iter()
         .map(|alias| wamn_catalog::ComponentConnection {
@@ -193,6 +212,19 @@ fn package(
         ),
     )?;
     if let Some(component) = component {
+        value["components"][name]["connections"] = serde_json::to_value(
+            component
+                .descriptor
+                .connections
+                .iter()
+                .map(|connection| {
+                    connection
+                        .store_alias
+                        .name()
+                        .expect("fixture connection has a literal alias")
+                })
+                .collect::<Vec<_>>(),
+        )?;
         value["sequences"] = json!({"document": {"pattern": "DOC-{seq:number}"}});
         value["base_dependencies"] = json!({"state":{"package":"wamn_integration","version":"1.0.0","digest":STATE_DIGEST,"operations":["data.get","data.update"]}});
         for connection in &component.descriptor.connections {
@@ -529,10 +561,20 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     }
     assert_eq!(installed.packages["a"], state.packages["a"]);
     document.applications.get_mut("b").unwrap().current = b_current;
+    sql::initialize(
+        &platform,
+        &document,
+        system.url(),
+        &platform_migration_input,
+        &migration_input,
+        Some("b"),
+    )
+    .await
+    .context("initialize b")?;
     let mut observer_url = admin_url;
     observer_url.set_path(&database_name);
     let mut observer = connect(observer_url.as_str()).await?;
-    // Explicit SQL application grants the new package and retains the existing one.
+    // Provisioning defaults cover the new package and retain the existing one.
     for package in [&old_package, &b_package] {
         for model in package.models.values() {
             let relation = format!("{}.{}", model.schema, model.table);
@@ -564,7 +606,18 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .iter()
         .flat_map(|package| package.models.values().map(|model| model.schema.as_str()))
         .collect::<BTreeSet<_>>();
-    let installed_schemas = sqlx::query("SELECT nspname::text FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner WHERE r.rolname LIKE 'wamn_migration_%' AND $1::text IS NOT NULL").bind(&PROJECT_ENV_KEY).fetch_all(&mut observer).await?.into_iter().map(|row| row.get::<String, _>(0)).collect::<BTreeSet<_>>();
+    let migration_url = url::Url::parse(&migration_input)?;
+    let installed_schemas = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT n.nspname::text FROM pg_namespace n \
+         JOIN pg_class c ON c.relnamespace=n.oid \
+         JOIN pg_roles r ON r.oid=c.relowner \
+         WHERE c.relkind IN ('r','p','v','m') AND r.rolname=$1",
+    )
+    .bind(migration_url.username())
+    .fetch_all(&mut observer)
+    .await?
+    .into_iter()
+    .collect::<BTreeSet<_>>();
     assert_eq!(
         schemas,
         installed_schemas.iter().map(String::as_str).collect()
@@ -682,6 +735,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     candidate
         .connections
         .insert("extra".into(), candidate.connections["upstream"].clone());
+    candidate.components.get_mut("a").unwrap().connections =
+        candidate.connections.keys().cloned().collect();
     candidate
         .base_dependencies
         .get_mut("state")
@@ -757,6 +812,11 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     failed_packages[0]
         .connections
         .insert("failed".into(), declaration);
+    failed_packages[0]
+        .components
+        .get_mut("a")
+        .unwrap()
+        .connections = failed_packages[0].connections.keys().cloned().collect();
     // A shared generated role refuses before changing another principal's authority.
     let mut project = connect(observer_url.as_str()).await?;
     let mut tx = project.begin().await?;
@@ -836,7 +896,6 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .await?
         .is_some()
     );
-    drop(postgres);
     let caller = permissions(&mut observer, a_user.id().to_string().as_str()).await?;
     assert!(caller.contains("wamn-integration:data/get"));
     assert!(caller.contains("wamn-integration:data/update"));

@@ -306,11 +306,6 @@ async fn apply(
     let mut tx = migration::begin(client, project_env_key).await?;
     entity_maps::reconcile_entity_maps(&mut tx, &plan, &package.manifest).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::grant_dynamic_sql_surface_sql(),
-    ))
-    .execute(&mut *tx)
-    .await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::sql::grant_executor_history_reads_sql(),
     ))
     .execute(&mut *tx)

@@ -211,14 +211,18 @@ async fn resolve_or_create_service_drops(
     subject: &str,
     display_name: &str,
 ) -> anyhow::Result<(Principal, AuthDrops)> {
-    if let Some(principal) = resolve_subject(&mut *client, PrincipalType::Service, subject)
+    let mut transaction = provisioning_transaction(client).await?;
+    if let Some(principal) = resolve_subject(&mut transaction, PrincipalType::Service, subject)
         .await
         .context("resolve service principal")?
     {
+        transaction
+            .commit()
+            .await
+            .context("commit service principal lookup")?;
         return Ok((principal, AuthDrops::default()));
     }
 
-    let mut transaction = provisioning_transaction(client).await?;
     let mut drops = AuthDrops::default();
     match create_service(&mut transaction, subject, display_name, &mut drops).await {
         Ok(principal) => {
@@ -233,11 +237,16 @@ async fn resolve_or_create_service_drops(
                 .rollback()
                 .await
                 .context("roll back conflicting service principal")?;
-            resolve_subject(&mut *client, PrincipalType::Service, subject)
+            let mut transaction = provisioning_transaction(client).await?;
+            let principal = resolve_subject(&mut transaction, PrincipalType::Service, subject)
                 .await
                 .context("resolve concurrently created service principal")?
-                .context("service principal conflict was not resolvable")
-                .map(|principal| (principal, AuthDrops::default()))
+                .context("service principal conflict was not resolvable")?;
+            transaction
+                .commit()
+                .await
+                .context("commit service principal lookup")?;
+            Ok((principal, AuthDrops::default()))
         }
         Err(error) => Err(error).context("create service principal"),
     }

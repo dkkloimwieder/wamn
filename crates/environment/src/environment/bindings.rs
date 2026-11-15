@@ -201,6 +201,7 @@ pub async fn analyse(
 
 /// Write the release's versions and names after its requirements exist. A
 /// changed row records the memory key of the release in `drops`.
+/// The caller binds the transaction's principal before writing.
 pub async fn write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
@@ -210,14 +211,6 @@ pub async fn write(
     drops: &mut wamn_broker::connection_changes::ConnectionDrops,
 ) -> anyhow::Result<()> {
     let mut changed = 0;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ),
-    ))
-    .execute(&mut **tx)
-    .await
-    .map(drop)?;
     for binding in bindings {
         let active = sqlx::query("SELECT 1 FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id \
              WHERE c.id=$1::text::uuid AND c.status='active' AND i.status='active'").bind(&binding.connection_id).fetch_optional(&mut **tx).await?.is_some();
