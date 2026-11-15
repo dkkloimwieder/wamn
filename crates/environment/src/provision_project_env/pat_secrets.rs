@@ -11,7 +11,7 @@ use wamn_broker::auth_changes::AuthDrops;
 use super::{
     Client, Duration, IdentityErrorType, PatClient, Path, PathBuf, Principal, PrincipalStatus,
     PrincipalType, Triple, Value, assign_project_role, authenticate_pat, create_service, json,
-    operator_subject, provisioning_transaction, resolve_subject, revoke_pat, write_secret_json,
+    provisioning_transaction, resolve_subject, revoke_pat, write_secret_json,
 };
 
 /// One PAT `Secret` that provisioning issued and wrote.
@@ -115,7 +115,7 @@ pub async fn mint_pat(
     purpose: PatPurpose,
     changes: &Publisher,
 ) -> anyhow::Result<(Principal, wamn_identity_protocol::wire::PatResponse)> {
-    let subject = purpose.subject(triple)?;
+    let subject = purpose.subject(triple);
     let display_name = purpose.display_name(triple);
     let principal = resolve_or_create_service(client, &subject, &display_name, changes).await?;
     anyhow::ensure!(
@@ -179,7 +179,7 @@ pub async fn mint_management_author_pat(
     changes: &Publisher,
 ) -> anyhow::Result<wamn_identity_protocol::wire::PatResponse> {
     let pat_client = PatClient::new(issuer)?;
-    super::validate_project_env(&triple.org, &triple.project, triple.env.as_str())?;
+    super::validate_project_env(&triple.org, &triple.project, &triple.env)?;
     super::read_project_env_instance(system_url, triple).await?;
     let mut client = wamn_postgres::connect(system_url)
         .await

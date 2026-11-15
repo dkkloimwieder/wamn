@@ -32,7 +32,7 @@ struct Target {
 }
 
 impl Target {
-    fn new(slug: &str) -> Self {
+    fn new(slug: &wamn_registry::EnvName) -> Self {
         Self {
             db: wamn_registry::name::project_env_database_stem("acme", "billing", slug),
             owner: format!("wamn_db_owner_{slug}"),
@@ -47,23 +47,19 @@ impl Target {
     /// BYTES. For an ASCII database name the two agree exactly — so an
     /// ASCII-only condition cannot tell a correct implementation from a broken one,
     /// and the disagreement it would miss is every guest read refusing.
-    fn multibyte(slug: &str) -> Self {
+    fn multibyte(slug: &wamn_registry::EnvName) -> Self {
         let mut target = Self::new(slug);
         target.db.push_str("-\u{f6}\u{e4}");
         target
     }
 }
 
-/// Projects spanning the charset `valid_project_env_key` admits (ASCII alphanumeric plus
-/// `-` and `_`), including the boundary lengths where a framing bug would show.
+/// Deployment keys exercise the canonical characters and the shared name budget.
 const PROJECT_ENV_KEYS: &[&str] = &[
-    "acme",
-    "t1",
-    "a",
-    "project-with-hyphens",
-    "project_with_underscores",
-    "A1b2C3",
-    "0123456789012345678901234567890123456789012345678901234567890123",
+    "a--0--p",
+    "acme--dev--orders",
+    "acme-corp--prod--p9",
+    "a--dev--ppppppppppppppppppppppppppppppppppppp",
 ];
 
 fn psql(url: &str, database: Option<&str>, script: &str) -> String {
@@ -142,7 +138,7 @@ fn ddl(target: &Target) -> String {
 async fn the_sql_project_key_equals_the_rust_project_key(pool: sqlx::PgPool) {
     let test_database = wamn_test_postgres::url(&pool);
     let admin = test_database.as_str().to_owned();
-    let target = Target::new("agree");
+    let target = Target::new(&"agree".parse().unwrap());
     let db_url = reset(&admin, &target);
     psql_file(&db_url, &ddl(&target));
 
@@ -152,7 +148,7 @@ async fn the_sql_project_key_equals_the_rust_project_key(pool: sqlx::PgPool) {
             None,
             &format!("SELECT wamn_authority.project_key('{project_env_key}')"),
         );
-        let expected = project_key(project_env_key, &target.db);
+        let expected = project_key(&project_env_key.parse().unwrap(), &target.db);
         assert_eq!(
             observed, expected,
             "project {project_env_key:?}: the SQL derivation and the Rust derivation \
@@ -172,7 +168,7 @@ async fn the_sql_project_key_equals_the_rust_project_key(pool: sqlx::PgPool) {
 async fn the_function_carries_the_flags_the_expression_index_requires(pool: sqlx::PgPool) {
     let test_database = wamn_test_postgres::url(&pool);
     let admin = test_database.as_str().to_owned();
-    let target = Target::new("flags");
+    let target = Target::new(&"flags".parse().unwrap());
     let db_url = reset(&admin, &target);
     psql_file(&db_url, &ddl(&target));
 
@@ -205,7 +201,7 @@ async fn the_function_carries_the_flags_the_expression_index_requires(pool: sqlx
 async fn the_guest_may_execute_the_derivation_and_may_not_replace_it(pool: sqlx::PgPool) {
     let test_database = wamn_test_postgres::url(&pool);
     let admin = test_database.as_str().to_owned();
-    let target = Target::new("grants");
+    let target = Target::new(&"grants".parse().unwrap());
     let db_url = reset(&admin, &target);
     psql_file(&db_url, &ddl(&target));
     let mut connection = wamn_postgres::connect(&db_url).await.unwrap();
@@ -289,11 +285,11 @@ fn role_url(admin_url: &str, role: &wamn_identity_protocol::LoginName, database:
 async fn the_session_derivation_returns_the_key_of_the_connected_guest_login(pool: sqlx::PgPool) {
     let test_database = wamn_test_postgres::url(&pool);
     let admin = test_database.as_str().to_owned();
-    let target = Target::new("session");
+    let target = Target::new(&"session".parse().unwrap());
     let db_url = reset(&admin, &target);
     psql_file(&db_url, &ddl(&target));
 
-    let project_env_key = "acme";
+    let project_env_key = &"acme--dev--billing".parse().unwrap();
     let key = project_key(project_env_key, &target.db);
     let login = workload_login(
         WorkloadRoleFamily::App,
@@ -394,7 +390,7 @@ async fn bootstrap_and_reapplication_preserve_project_key_behavior(pool: sqlx::P
     let test_database = wamn_test_postgres::url(&pool);
     let admin = test_database.as_str().to_owned();
     // MULTI-BYTE ON PURPOSE — see `Target::multibyte`.
-    let target = Target::multibyte("boot");
+    let target = Target::multibyte(&"boot".parse().unwrap());
     let db_url = reset(&admin, &target);
 
     let bootstrap = authority_derivations_bootstrap_sql()
@@ -420,7 +416,7 @@ async fn bootstrap_and_reapplication_preserve_project_key_behavior(pool: sqlx::P
                 &db_url,
                 &format!(
                     "DO $$ BEGIN ASSERT wamn_authority.project_key('{project_env_key}') = '{}'; END $$;",
-                    project_key(project_env_key, &target.db)
+                    project_key(&project_env_key.parse().unwrap(), &target.db)
                 ),
             );
         }

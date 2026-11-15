@@ -28,9 +28,9 @@ use wamn_authority::connection::{ConnectionExecutionClosure, InvocationEntry, Wi
 /// The pinned graph and execution identity of one queued workflow.
 #[derive(Debug)]
 pub struct WorkflowRunRequest {
-    pub project_env_key: String,
+    pub project_env_key: wamn_registry::ProjectEnvKey,
     pub package_id: String,
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub delivery_id: String,

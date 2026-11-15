@@ -1,6 +1,6 @@
 {
   "target": {
-    "project_env_key": "org-a",
+    "project_env_key": "org-a--dev--project",
     "package-id": "source_fixture",
     "package-version": "1.0.0"
   },

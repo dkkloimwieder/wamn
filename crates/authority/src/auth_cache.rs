@@ -29,9 +29,7 @@ use std::time::{Duration, SystemTime};
 use wamn_broker::Publisher;
 
 use async_nats::jetstream::kv::Store;
-use wamn_broker::auth_changes::{
-    BUCKET, IDENTITY_TOKEN, principal_key, project_env_key as environment_status_key,
-};
+use wamn_broker::auth_changes::{BUCKET, IDENTITY_TOKEN, environment_status_key, principal_key};
 use wamn_platform_identity::AuthenticatedPrincipal;
 
 pub use crate::kv_memory::Ticket;
@@ -231,7 +229,7 @@ impl AuthCache {
     /// The grants of a principal, or the ticket of a read of them.
     pub fn grants(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> Result<PrincipalGrants, Ticket> {
         let key = principal_key(project_env_key, principal);
@@ -246,7 +244,7 @@ impl AuthCache {
     /// provisioned-principal test of the identity binding.
     pub async fn keep_grants(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
         ticket: Ticket,
         grants: PrincipalGrants,
@@ -258,7 +256,10 @@ impl AuthCache {
     }
 
     /// Whether the environment is inactive, or the ticket of a read of it.
-    pub fn environment_inactive(&self, project_env_key: &str) -> Result<bool, Ticket> {
+    pub fn environment_inactive(
+        &self,
+        project_env_key: &wamn_registry::ProjectEnvKey,
+    ) -> Result<bool, Ticket> {
         let key = environment_status_key(project_env_key);
         match self.memory.answer(&key) {
             Ok(Answer::Environment { inactive }) => Ok(inactive),
@@ -269,7 +270,7 @@ impl AuthCache {
 
     pub async fn keep_environment_inactive(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         ticket: Ticket,
         inactive: bool,
     ) {
@@ -319,12 +320,12 @@ impl Watched for AuthCache {
 /// control host serves every project, so it watches every key.
 pub fn replicate(
     client: &async_nats::Client,
-    project_env_key: Option<&str>,
+    project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     holder: Arc<AuthCache>,
 ) -> Publisher {
     let filters = match project_env_key {
         Some(project_env_key) => vec![
-            wamn_registry::name::nats_subject(&[project_env_key, ">"]),
+            wamn_registry::name::nats_subject(&[project_env_key.as_str(), ">"]),
             wamn_registry::name::nats_subject(&[IDENTITY_TOKEN, ">"]),
         ],
         None => vec![">".to_owned()],
@@ -348,23 +349,39 @@ pub mod tests {
         let p: wamn_identity_protocol::PrincipalId =
             "00000000-0000-4000-8000-000000000001".parse().unwrap();
         let cache = AuthCache::with_ttl(Duration::from_secs(60));
-        let ticket = cache.environment_inactive("t").unwrap_err();
-        cache.keep_environment_inactive("t", ticket, true).await;
-        let ticket = cache.grants("t", &p).unwrap_err();
+        let ticket = cache
+            .environment_inactive(&"t--dev--project".parse().unwrap())
+            .unwrap_err();
+        cache
+            .keep_environment_inactive(&"t--dev--project".parse().unwrap(), ticket, true)
+            .await;
+        let ticket = cache
+            .grants(&"t--dev--project".parse().unwrap(), &p)
+            .unwrap_err();
         let present = PrincipalGrants {
             present: true,
             user: false,
             ..PrincipalGrants::default()
         };
-        cache.keep_grants("t", &p, ticket, present).await;
+        cache
+            .keep_grants(&"t--dev--project".parse().unwrap(), &p, ticket, present)
+            .await;
         cache.keep_session_active(
             cache.identity_ticket(),
             "token",
             &p,
             SystemTime::now() + Duration::from_secs(3600),
         );
-        assert!(cache.environment_inactive("t").is_err());
-        assert!(cache.grants("t", &p).is_err());
+        assert!(
+            cache
+                .environment_inactive(&"t--dev--project".parse().unwrap())
+                .is_err()
+        );
+        assert!(
+            cache
+                .grants(&"t--dev--project".parse().unwrap(), &p)
+                .is_err()
+        );
         assert!(!cache.session_active("token"));
     }
 
@@ -376,15 +393,22 @@ pub mod tests {
         let (_server, client) = nats().await;
         let cache = Arc::new(AuthCache::with_ttl(Duration::from_millis(50)));
         watched(&client, None, Arc::clone(&cache)).await;
-        let ticket = cache.environment_inactive("t").unwrap_err();
-        cache.keep_environment_inactive("t", ticket, true).await;
+        let ticket = cache
+            .environment_inactive(&"t--dev--project".parse().unwrap())
+            .unwrap_err();
+        cache
+            .keep_environment_inactive(&"t--dev--project".parse().unwrap(), ticket, true)
+            .await;
         cache.keep_session_active(
             cache.identity_ticket(),
             "token",
             &p,
             SystemTime::now() + Duration::from_secs(3600),
         );
-        assert_eq!(cache.environment_inactive("t"), Ok(true));
+        assert_eq!(
+            cache.environment_inactive(&"t--dev--project".parse().unwrap()),
+            Ok(true)
+        );
         assert!(cache.session_active("token"));
         assert!(!cache.session_active("other"));
 
@@ -404,20 +428,37 @@ pub mod tests {
             SystemTime::now() + Duration::from_secs(3600),
         );
         assert!(!cache.session_active("stale"));
-        assert!(cache.environment_inactive("t").is_err());
+        assert!(
+            cache
+                .environment_inactive(&"t--dev--project".parse().unwrap())
+                .is_err()
+        );
         assert!(!cache.session_active("token"));
 
         // The bucket still holds the key of `t`, so a put with no revision
         // fails there. A key the bucket does not hold shows the expiry.
-        let ticket = cache.environment_inactive("u").unwrap_err();
-        cache.keep_environment_inactive("u", ticket, false).await;
-        assert_eq!(cache.environment_inactive("u"), Ok(false));
+        let ticket = cache
+            .environment_inactive(&"u--dev--project".parse().unwrap())
+            .unwrap_err();
+        cache
+            .keep_environment_inactive(&"u--dev--project".parse().unwrap(), ticket, false)
+            .await;
+        assert_eq!(
+            cache.environment_inactive(&"u--dev--project".parse().unwrap()),
+            Ok(false)
+        );
         // The watch also delivers the put, which can renew the fact once.
         until("the fact expires", || {
-            cache.environment_inactive("u").is_err()
+            cache
+                .environment_inactive(&"u--dev--project".parse().unwrap())
+                .is_err()
         })
         .await;
-        assert!(cache.environment_inactive("u").is_err());
+        assert!(
+            cache
+                .environment_inactive(&"u--dev--project".parse().unwrap())
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -433,9 +474,21 @@ pub mod tests {
         let a = Arc::new(AuthCache::with_ttl(Duration::from_secs(60)));
         let b = Arc::new(AuthCache::with_ttl(Duration::from_secs(60)));
         let other = Arc::new(AuthCache::with_ttl(Duration::from_secs(60)));
-        let writer = replicate(&client, Some("t"), Arc::clone(&a));
-        replicate(&client, Some("t"), Arc::clone(&b));
-        replicate(&client, Some("u"), Arc::clone(&other));
+        let writer = replicate(
+            &client,
+            Some(&"t--dev--project".parse().unwrap()),
+            Arc::clone(&a),
+        );
+        replicate(
+            &client,
+            Some(&"t--dev--project".parse().unwrap()),
+            Arc::clone(&b),
+        );
+        replicate(
+            &client,
+            Some(&"u--dev--project".parse().unwrap()),
+            Arc::clone(&other),
+        );
         for cache in [&a, &b, &other] {
             until("the watch runs", || cache.memory.bucket().is_some()).await;
         }
@@ -446,58 +499,135 @@ pub mod tests {
         };
 
         // A fact one host keeps reaches the other host of the project only.
-        let ticket = a.grants("t", &p).unwrap_err();
-        a.keep_grants("t", &p, ticket, present.clone()).await;
-        assert_eq!(a.grants("t", &p), Ok(present.clone()));
-        until("host b sees the grants", || b.grants("t", &p).is_ok()).await;
-        assert!(b.grants("t", &p).unwrap().present);
-        assert!(other.grants("t", &p).is_err());
+        let ticket = a
+            .grants(&"t--dev--project".parse().unwrap(), &p)
+            .unwrap_err();
+        a.keep_grants(
+            &"t--dev--project".parse().unwrap(),
+            &p,
+            ticket,
+            present.clone(),
+        )
+        .await;
+        assert_eq!(
+            a.grants(&"t--dev--project".parse().unwrap(), &p),
+            Ok(present.clone())
+        );
+        until("host b sees the grants", || {
+            b.grants(&"t--dev--project".parse().unwrap(), &p).is_ok()
+        })
+        .await;
+        assert!(
+            b.grants(&"t--dev--project".parse().unwrap(), &p)
+                .unwrap()
+                .present
+        );
+        assert!(
+            other
+                .grants(&"t--dev--project".parse().unwrap(), &p)
+                .is_err()
+        );
 
-        let ticket = other.grants("u", &p).unwrap_err();
-        other.keep_grants("u", &p, ticket, present.clone()).await;
-        let ticket = other.environment_inactive("u").unwrap_err();
-        other.keep_environment_inactive("u", ticket, true).await;
-        assert_eq!(other.grants("u", &p), Ok(present.clone()));
-        assert_eq!(other.environment_inactive("u"), Ok(true));
+        let ticket = other
+            .grants(&"u--dev--project".parse().unwrap(), &p)
+            .unwrap_err();
+        other
+            .keep_grants(
+                &"u--dev--project".parse().unwrap(),
+                &p,
+                ticket,
+                present.clone(),
+            )
+            .await;
+        let ticket = other
+            .environment_inactive(&"u--dev--project".parse().unwrap())
+            .unwrap_err();
+        other
+            .keep_environment_inactive(&"u--dev--project".parse().unwrap(), ticket, true)
+            .await;
+        assert_eq!(
+            other.grants(&"u--dev--project".parse().unwrap(), &p),
+            Ok(present.clone())
+        );
+        assert_eq!(
+            other.environment_inactive(&"u--dev--project".parse().unwrap()),
+            Ok(true)
+        );
 
         // A writer's delete reaches both hosts.
         let mut drops = AuthDrops::default();
-        drops.principal("t", &p);
+        drops.principal(&"t--dev--project".parse().unwrap(), &p);
         writer.publish(drops).await;
-        until("host a drops the grants", || a.grants("t", &p).is_err()).await;
-        until("host b drops the grants", || b.grants("t", &p).is_err()).await;
+        until("host a drops the grants", || {
+            a.grants(&"t--dev--project".parse().unwrap(), &p).is_err()
+        })
+        .await;
+        until("host b drops the grants", || {
+            b.grants(&"t--dev--project".parse().unwrap(), &p).is_err()
+        })
+        .await;
 
         // A delete during a read refuses the put of the read.
-        let ticket = a.grants("t", &p).unwrap_err();
+        let ticket = a
+            .grants(&"t--dev--project".parse().unwrap(), &p)
+            .unwrap_err();
         let mut drops = AuthDrops::default();
-        drops.principal("t", &p);
+        drops.principal(&"t--dev--project".parse().unwrap(), &p);
         writer.publish(drops).await;
-        a.keep_grants("t", &p, ticket, present.clone()).await;
-        assert!(a.grants("t", &p).is_err());
+        a.keep_grants(
+            &"t--dev--project".parse().unwrap(),
+            &p,
+            ticket,
+            present.clone(),
+        )
+        .await;
+        assert!(a.grants(&"t--dev--project".parse().unwrap(), &p).is_err());
 
         // A project change deletes every key of the project.
         until("host a sees the second delete", || {
-            a.memory.ticket(&principal_key("t", &p)) != ticket
+            a.memory
+                .ticket(&principal_key(&"t--dev--project".parse().unwrap(), &p))
+                != ticket
         })
         .await;
-        let ticket = a.grants("t", &p).unwrap_err();
-        a.keep_grants("t", &p, ticket, present.clone()).await;
-        let ticket = a.environment_inactive("t").unwrap_err();
-        a.keep_environment_inactive("t", ticket, false).await;
+        let ticket = a
+            .grants(&"t--dev--project".parse().unwrap(), &p)
+            .unwrap_err();
+        a.keep_grants(
+            &"t--dev--project".parse().unwrap(),
+            &p,
+            ticket,
+            present.clone(),
+        )
+        .await;
+        let ticket = a
+            .environment_inactive(&"t--dev--project".parse().unwrap())
+            .unwrap_err();
+        a.keep_environment_inactive(&"t--dev--project".parse().unwrap(), ticket, false)
+            .await;
         until("host b sees the environment", || {
-            b.environment_inactive("t") == Ok(false) && b.grants("t", &p).is_ok()
+            b.environment_inactive(&"t--dev--project".parse().unwrap()) == Ok(false)
+                && b.grants(&"t--dev--project".parse().unwrap(), &p).is_ok()
         })
         .await;
         let mut drops = AuthDrops::default();
-        drops.project_env_key("t");
+        drops.project_env_key(&"t--dev--project".parse().unwrap());
         writer.publish(drops).await;
         until("host b drops the project", || {
-            b.environment_inactive("t").is_err() && b.grants("t", &p).is_err()
+            b.environment_inactive(&"t--dev--project".parse().unwrap())
+                .is_err()
+                && b.grants(&"t--dev--project".parse().unwrap(), &p).is_err()
         })
         .await;
 
-        assert_eq!(other.grants("u", &p), Ok(present.clone()));
-        assert_eq!(other.environment_inactive("u"), Ok(true));
+        assert_eq!(
+            other.grants(&"u--dev--project".parse().unwrap(), &p),
+            Ok(present.clone())
+        );
+        assert_eq!(
+            other.environment_inactive(&"u--dev--project".parse().unwrap()),
+            Ok(true)
+        );
 
         // An identity change drops the session of its principal on every
         // host, and a session read during any identity change is not kept.

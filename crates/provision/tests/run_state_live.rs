@@ -108,7 +108,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let app_login = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: "t1",
+            project_env_key: &"t1--dev--project".parse().unwrap(),
             database: &database,
         },
     )
@@ -150,10 +150,10 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
              {catalog} {run_state} {run_queue} {app_schema} \
              INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'770df186-ac15-579e-b46b-c297cae2011b'); \
              BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture','admin:fixture'); \
-             INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 't1','cat','1.0.0', \
+             INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 't1--dev--project','cat','1.0.0', \
                'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
              INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
-             VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
+             VALUES ('t1--dev--project','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
              COMMIT; GRANT wamn_platform TO wamn_executor_platform \
                WITH INHERIT TRUE, SET FALSE, ADMIN FALSE; \
              {executor_generation}"
@@ -174,10 +174,10 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let input = serde_json::json!({"order": 7});
     let nodes = serde_json::json!({"read": digest});
     let run = RunAdmission {
-        project_env_key: "t1",
+        project_env_key: &"t1--dev--project".parse().unwrap(),
         application: "cat",
         manifest_digest: &digest,
-        environment: "prod",
+        environment: &"prod".parse().unwrap(),
         workflow_id: "workflow",
         workflow_version: 1,
         wiring_hash: &digest,
@@ -219,10 +219,10 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         let mut tx = bound_transaction(&mut worker).await?;
         let error = persistence::lease_next(
             &mut tx,
-            "t1",
+            &"t1--dev--project".parse().unwrap(),
             "worker",
             &invalid,
-            "prod",
+            &"prod".parse().unwrap(),
             30000,
             Some(&digest),
         )
@@ -254,10 +254,10 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     assert!(matches!(
         persistence::lease_next(
             &mut tx,
-            "t1",
+            &"t1--dev--project".parse().unwrap(),
             "worker",
             &applications,
-            "prod",
+            &"prod".parse().unwrap(),
             30000,
             Some(
                 &"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -276,10 +276,10 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         ..
     }) = persistence::lease_next(
         &mut tx,
-        "t1",
+        &"t1--dev--project".parse().unwrap(),
         "worker",
         &applications,
-        "prod",
+        &"prod".parse().unwrap(),
         30000,
         Some(&digest),
     )
@@ -303,10 +303,10 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         ..
     }) = persistence::lease_next(
         &mut tx,
-        "t1",
+        &"t1--dev--project".parse().unwrap(),
         "next-worker",
         &applications,
-        "prod",
+        &"prod".parse().unwrap(),
         30000,
         Some(&digest),
     )
@@ -331,7 +331,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         let mut tx = bound_transaction(&mut stale).await?;
         let result = persistence::complete(
             &mut tx,
-            "t1",
+            &"t1--dev--project".parse().unwrap(),
             &stale_run,
             "worker",
             first,
@@ -360,13 +360,21 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     assert_eq!(row.get::<i32, _>(1), 1);
     let mut tx = bound_transaction(&mut worker).await?;
     assert_eq!(
-        persistence::renew(&mut tx, "t1", run_id, "worker", first, 30000).await?,
+        persistence::renew(
+            &mut tx,
+            &"t1--dev--project".parse().unwrap(),
+            run_id,
+            "worker",
+            first,
+            30000
+        )
+        .await?,
         ProductionLeaseRenewal::FenceLost
     );
     assert_eq!(
         persistence::complete(
             &mut tx,
-            "t1",
+            &"t1--dev--project".parse().unwrap(),
             run_id,
             "next-worker",
             second,
@@ -385,7 +393,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     assert!(!queued);
 
     // Use another installed release so a missing pin guard cannot hide behind its foreign key.
-    sqlx::raw_sql("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ('t1','sha256:'||encode(sha256('[]'::bytea),'hex'),'[]'::bytea)")
+    sqlx::raw_sql("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ('t1--dev--project','sha256:'||encode(sha256('[]'::bytea),'hex'),'[]'::bytea)")
         .execute(&mut admin).await?;
     for assignment in [
         "package_id='other'",
@@ -540,7 +548,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let row = sqlx::query(sqlx::AssertSqlSafe(
         wamn_run_state::transitions::terminalize_sql(),
     ))
-    .bind("t1")
+    .bind("t1--dev--project")
     .bind(run_id)
     .bind(&lineage_id)
     .bind("worker")
@@ -581,7 +589,14 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .bind(&exhausted_id).execute(&mut admin).await?;
     let mut tx = bound_transaction(&mut worker).await?;
     assert_eq!(
-        persistence::reap_exhausted(&mut tx, "t1", &applications, "prod", 0).await?,
+        persistence::reap_exhausted(
+            &mut tx,
+            &"t1--dev--project".parse().unwrap(),
+            &applications,
+            &"prod".parse().unwrap(),
+            0
+        )
+        .await?,
         ProductionReapResult::Reaped {
             run_id: exhausted_id
         }
@@ -601,7 +616,8 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .execute(&mut *retention)
         .await?;
     assert_eq!(
-        persistence::prune_terminal_runs(&mut retention, "t1", 30).await?,
+        persistence::prune_terminal_runs(&mut retention, &"t1--dev--project".parse().unwrap(), 30)
+            .await?,
         2
     );
     retention.commit().await?;

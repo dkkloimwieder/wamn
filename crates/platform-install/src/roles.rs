@@ -95,7 +95,7 @@ pub async fn registered(registry_input: &str, namespace: &str) -> anyhow::Result
         };
         let org = wamn_control_provision::Org { id: org, placement };
         let project_cluster = wamn_control_provision::cluster_of(&org, &policy).name;
-        let triple = Triple::new(org.id, environment.as_str(), project_name);
+        let triple = Triple::new(org.id, environment.parse()?, project_name);
         project(
             &mut declarations,
             &triple,

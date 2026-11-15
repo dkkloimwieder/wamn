@@ -9,7 +9,7 @@ use anyhow::Context as _;
 pub fn release_name(
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
     application: &str,
 ) -> anyhow::Result<String> {
     wamn_control_provision::environment_names::application_release_name(
@@ -30,13 +30,18 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 
 /// The application HTTP role exists when the manifest has an HTTP route attachment.
 /// Each role's configuration derives from the coordinate.
-pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) -> Vec<Role> {
+pub fn roles(
+    manifest: &ServingManifest,
+    org: &str,
+    project: &str,
+    env: &wamn_registry::EnvName,
+) -> Vec<Role> {
     let project_env_key = wamn_control_provision::project_env_key(org, project, env);
     let target = |extra: &[(&str, &str)]| -> Mapping {
         [
             ("wamn.project_env_key", project_env_key.as_str()),
             ("wamn.project", project),
-            ("wamn.environment", env),
+            ("wamn.environment", env.as_str()),
         ]
         .iter()
         .chain(extra)
@@ -181,7 +186,7 @@ impl RoleName {
 pub struct ValuesInput {
     pub org: String,
     pub project: String,
-    pub env: String,
+    pub env: wamn_registry::EnvName,
     /// `sha256:<hex>` of the release manifest.
     pub manifest_digest: wamn_digest::Digest,
     pub artifact_base: String,

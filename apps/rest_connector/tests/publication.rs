@@ -28,7 +28,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
     );
     let admissions = vec![base, destination, component];
     let target = ComponentPackageCoordinate {
-        project_env_key: "rest--test--publication".into(),
+        project_env_key: "rest--test--publication".parse().unwrap(),
         package_id: "rest_connector".into(),
         package_version: "0.1.1".into(),
     };
@@ -50,7 +50,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
         application: None,
         org: "rest".into(),
         project: "publication".into(),
-        environment: "test".into(),
+        environment: "test".parse().unwrap(),
         packages: [
             "wamn_integration",
             "rest_connector",

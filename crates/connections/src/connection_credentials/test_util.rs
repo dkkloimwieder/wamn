@@ -24,7 +24,9 @@ impl Fixture {
         for project in ["project-a", "project-b", "host-project", "other-project"] {
             sqlx::raw_sql(sqlx::AssertSqlSafe(
                 (&wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "acme", project, "dev",
+                    "acme",
+                    project,
+                    &"dev".parse().unwrap(),
                 ))
                     .to_string(),
             ))
@@ -113,7 +115,7 @@ impl Fixture {
             let stored = self
                 .store
                 .put(
-                    &wamn_registry::Triple::new("acme", "dev", *project),
+                    &wamn_registry::Triple::new("acme", "dev".parse().unwrap(), *project),
                     uuid::Uuid::new_v4(),
                     value.as_bytes(),
                 )
@@ -153,7 +155,11 @@ impl Fixture {
                 .to_string(),
         ))
         .bind(&role)
-        .bind(&wamn_registry::project_env_key("acme", project, "dev"))
+        .bind(&wamn_registry::project_env_key(
+            "acme",
+            project,
+            &"dev".parse().unwrap(),
+        ))
         .bind(&"acme")
         .bind(&project)
         .bind(&"dev")

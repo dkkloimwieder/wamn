@@ -30,10 +30,10 @@ fn main() -> anyhow::Result<()> {
     let work = PathBuf::from(&arguments[0]);
     let target = Triple::new(
         arguments[1].as_str(),
-        arguments[3].as_str(),
+        arguments[3].parse()?,
         arguments[2].as_str(),
     );
-    let project_env_key = &arguments[4];
+    let project_env_key: wamn_registry::ProjectEnvKey = arguments[4].parse()?;
     let replicas: usize = arguments[5].parse().context("parse the stream replicas")?;
     let source = source_stream_config(&target, replicas, Duration::from_secs(120));
     let advisory = advisory_stream_config(&target, replicas);
@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
     let broker = event_broker::prepare(
         &work,
         &target,
-        project_env_key,
+        &project_env_key,
         &source,
         &advisory,
         &consumers,

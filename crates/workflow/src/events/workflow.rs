@@ -49,7 +49,7 @@ impl EventTrigger {
         event: &SourceEvent,
         sequence: u64,
         packages: &BTreeSet<String>,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> Result<Option<serde_json::Value>, TriggerMatchError> {
         if sequence <= self.enable_sequence {
             return Ok(None);
@@ -118,13 +118,23 @@ mod tests {
         };
         assert!(
             trigger
-                .matches(&source, 41, &packages, "project")
+                .matches(
+                    &source,
+                    41,
+                    &packages,
+                    &"project--dev--project".parse().unwrap()
+                )
                 .unwrap()
                 .is_none()
         );
         assert!(
             trigger
-                .matches(&source, 42, &packages, "project")
+                .matches(
+                    &source,
+                    42,
+                    &packages,
+                    &"project--dev--project".parse().unwrap()
+                )
                 .unwrap()
                 .is_some()
         );
@@ -148,7 +158,12 @@ mod tests {
         ] {
             assert!(
                 changed
-                    .matches(&source, 42, &packages, "project")
+                    .matches(
+                        &source,
+                        42,
+                        &packages,
+                        &"project--dev--project".parse().unwrap()
+                    )
                     .unwrap()
                     .is_none()
             );
@@ -158,8 +173,22 @@ mod tests {
             ..trigger.clone()
         };
         assert_eq!(
-            trigger.matches(&source, 42, &packages, "project").unwrap(),
-            second.matches(&source, 42, &packages, "project").unwrap()
+            trigger
+                .matches(
+                    &source,
+                    42,
+                    &packages,
+                    &"project--dev--project".parse().unwrap()
+                )
+                .unwrap(),
+            second
+                .matches(
+                    &source,
+                    42,
+                    &packages,
+                    &"project--dev--project".parse().unwrap()
+                )
+                .unwrap()
         );
         let SourceEvent::Cdc(mut missing_old) = source else {
             unreachable!()
@@ -167,7 +196,12 @@ mod tests {
         missing_old.old = None;
         assert_eq!(
             trigger
-                .matches(&SourceEvent::Cdc(missing_old), 42, &packages, "project")
+                .matches(
+                    &SourceEvent::Cdc(missing_old),
+                    42,
+                    &packages,
+                    &"project--dev--project".parse().unwrap()
+                )
                 .unwrap_err()
                 .type_,
             TriggerMatchErrorType::Event

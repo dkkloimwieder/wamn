@@ -2165,6 +2165,7 @@ dependencies = [
  "wamn-digest",
  "wamn-event-wire",
  "wamn-record-history",
+ "wamn-registry",
  "wamn-scalar",
 ]
 
@@ -2267,6 +2268,7 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "sqlx",
  "tokio",
  "uuid",

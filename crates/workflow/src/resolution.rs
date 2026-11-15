@@ -24,8 +24,8 @@ pub struct ResolvedActiveWiring {
 /// The facts a manual run row carries, which key its resolution.
 #[derive(Debug, Clone, Copy)]
 pub struct WorkflowRunKey<'a> {
-    pub project_env_key: &'a str,
-    pub environment: &'a str,
+    pub project_env_key: &'a wamn_registry::ProjectEnvKey,
+    pub environment: &'a wamn_registry::EnvName,
     /// The application, by the name the environment declares: the run's
     /// package id.
     pub application: &'a str,
@@ -184,14 +184,14 @@ pub async fn resolve_workflow(
     run: &WorkflowRunKey<'_>,
 ) -> anyhow::Result<ResolvedActiveWiring> {
     anyhow::ensure!(
-        release.target().project_env_key == run.project_env_key
-            && release.target().environment == run.environment
+        &release.target().project_env_key == run.project_env_key
+            && &release.target().environment == run.environment
             && &release.release().manifest_digest == run.manifest_digest,
         "workflow run release differs from the loaded release"
     );
     let version = i32::try_from(run.version).context("workflow version exceeds int")?;
     let (graph_json, hash) = postgres
-        .executor_read(project, run.project_env_key, async |connection| {
+        .executor_read(project, async |connection| {
             wamn_run_state::admission::workflow_version(
                 connection,
                 run.project_env_key,
@@ -251,7 +251,7 @@ mod tests {
     fn manifest() -> ServingManifest {
         let fact = AdmittedComponent {
             target: ComponentPackageCoordinate {
-                project_env_key: "t1".to_owned(),
+                project_env_key: "t1--dev--project".parse().unwrap(),
                 package_id: APPLICATION.to_owned(),
                 package_version: "1.0.0".to_owned(),
             },
@@ -313,9 +313,13 @@ mod tests {
     ) -> WorkflowRunKey<'a> {
         static PACKAGES: std::sync::LazyLock<BTreeSet<String>> =
             std::sync::LazyLock::new(|| BTreeSet::from([APPLICATION.to_owned()]));
+        static KEY: std::sync::LazyLock<wamn_registry::ProjectEnvKey> =
+            std::sync::LazyLock::new(|| "t1--dev--project".parse().unwrap());
+        static ENV: std::sync::LazyLock<wamn_registry::EnvName> =
+            std::sync::LazyLock::new(|| "dev".parse().unwrap());
         WorkflowRunKey {
-            project_env_key: "t1",
-            environment: "dev",
+            project_env_key: &KEY,
+            environment: &ENV,
             application: "erp",
             application_packages: &PACKAGES,
             workflow_id: "nightly",
@@ -333,7 +337,10 @@ mod tests {
         let digests = BTreeMap::from([("node".to_owned(), *DIGEST)]);
         let resolved = resolve_workflow_in_release(
             &run(&hash, &digests),
-            &manifest().admitted_components("t1").unwrap().into(),
+            &manifest()
+                .admitted_components(&"t1--dev--project".parse().unwrap())
+                .unwrap()
+                .into(),
             document,
             &hash,
         )
@@ -355,7 +362,10 @@ mod tests {
         ] {
             let refusal = resolve_workflow_in_release(
                 &run(&hash, &digests),
-                &manifest().admitted_components("t1").unwrap().into(),
+                &manifest()
+                    .admitted_components(&"t1--dev--project".parse().unwrap())
+                    .unwrap()
+                    .into(),
                 document.clone(),
                 &hash,
             )
@@ -375,7 +385,10 @@ mod tests {
         // The stored row carries another hash than the run.
         let refusal = resolve_workflow_in_release(
             &run(&OTHER, &digests),
-            &manifest().admitted_components("t1").unwrap().into(),
+            &manifest()
+                .admitted_components(&"t1--dev--project".parse().unwrap())
+                .unwrap()
+                .into(),
             document.clone(),
             &hash,
         )
@@ -387,7 +400,10 @@ mod tests {
         // The stored graph does not hash to its row.
         let refusal = resolve_workflow_in_release(
             &run(&OTHER, &digests),
-            &manifest().admitted_components("t1").unwrap().into(),
+            &manifest()
+                .admitted_components(&"t1--dev--project".parse().unwrap())
+                .unwrap()
+                .into(),
             document,
             &OTHER,
         )

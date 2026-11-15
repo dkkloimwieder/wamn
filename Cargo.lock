@@ -5537,6 +5537,7 @@ dependencies = [
  "wamn-component-composer",
  "wamn-digest",
  "wamn-engine",
+ "wamn-registry",
  "wat",
 ]
 
@@ -5559,6 +5560,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-postgres",
  "wamn-record-history",
+ "wamn-registry",
  "wamn-scalar",
 ]
 
@@ -5932,6 +5934,7 @@ dependencies = [
  "wamn-component-policy",
  "wamn-digest",
  "wamn-identity-protocol",
+ "wamn-registry",
  "wash-runtime",
  "wasmparser 0.261.0",
  "wasmtime",
@@ -6618,6 +6621,7 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "sqlx",
  "tokio",
  "uuid",
@@ -6661,6 +6665,7 @@ dependencies = [
  "wamn-digest",
  "wamn-event-wire",
  "wamn-identity-protocol",
+ "wamn-registry",
 ]
 
 [[package]]
@@ -8280,6 +8285,7 @@ dependencies = [
  "wamn-platform-install",
  "wamn-postgres",
  "wamn-publish",
+ "wamn-registry",
  "wamn-release-control",
  "wamn-test-postgres",
  "wash-runtime",

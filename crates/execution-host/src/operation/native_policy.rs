@@ -227,7 +227,7 @@ impl NativePolicy {
             .context("native-invocation-component-identity-mismatch")?;
         let fact = &component.fact;
         anyhow::ensure!(
-            fact.target.project_env_key == acquisition.identity.project_env_key
+            Some(&fact.target.project_env_key) == acquisition.identity.project_env_key.as_ref()
                 && acquisition.invocation.operation == operation
                 && acquisition.identity.project.as_deref() == Some(self.resources.project.as_str())
                 && acquisition.identity.release.as_ref()

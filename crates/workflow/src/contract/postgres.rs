@@ -13,8 +13,8 @@ pub struct PostgresWorkflows {
     client: Mutex<Client>,
     /// The run plane schema, for example `wamn_run`.
     schema: String,
-    project_env_key: String,
-    environment: String,
+    project_env_key: wamn_registry::ProjectEnvKey,
+    environment: wamn_registry::EnvName,
 }
 
 impl std::fmt::Debug for PostgresWorkflows {
@@ -32,22 +32,22 @@ impl PostgresWorkflows {
     pub fn new(
         client: Client,
         schema: impl Into<String>,
-        project_env_key: impl Into<String>,
-        environment: impl Into<String>,
+        project_env_key: wamn_registry::ProjectEnvKey,
+        environment: wamn_registry::EnvName,
     ) -> Self {
         Self {
             client: Mutex::new(client),
             schema: schema.into(),
-            project_env_key: project_env_key.into(),
-            environment: environment.into(),
+            project_env_key,
+            environment,
         }
     }
 
-    fn project_env_key(&self) -> &str {
+    fn project_env_key(&self) -> &wamn_registry::ProjectEnvKey {
         &self.project_env_key
     }
 
-    fn environment(&self) -> &str {
+    fn environment(&self) -> &wamn_registry::EnvName {
         &self.environment
     }
 

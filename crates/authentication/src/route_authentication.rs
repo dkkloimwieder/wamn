@@ -87,9 +87,11 @@ impl EnvironmentStatusReader {
 
 #[async_trait::async_trait]
 impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusReader {
-    async fn inactive(&self, project_env_key: &str) -> anyhow::Result<bool> {
-        let target = wamn_registry::name::parse_project_env_key(project_env_key)
-            .ok_or_else(|| anyhow::anyhow!("invalid project deployment key"))?;
+    async fn inactive(
+        &self,
+        project_env_key: &wamn_registry::ProjectEnvKey,
+    ) -> anyhow::Result<bool> {
+        let target = wamn_registry::ProjectEnvKey::triple(project_env_key);
         self.postgres
             .environment_inactive(&target.project, project_env_key)
             .await
@@ -100,9 +102,9 @@ impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusRead
 #[derive(Debug)]
 pub struct PlatformRouteAuthenticator {
     postgres: Arc<dyn AuthorizationStore>,
-    projects: std::collections::HashMap<String, Arc<ConnectionFacts>>,
+    projects: std::collections::HashMap<wamn_registry::ProjectEnvKey, Arc<ConnectionFacts>>,
     identity_reader: Option<sqlx::PgPool>,
-    verifiers: std::collections::HashMap<String, SessionVerifier<IssuerKeys>>,
+    verifiers: std::collections::HashMap<wamn_registry::ProjectEnvKey, SessionVerifier<IssuerKeys>>,
 }
 
 impl PlatformRouteAuthenticator {
@@ -112,7 +114,7 @@ impl PlatformRouteAuthenticator {
         facts: impl IntoIterator<Item = Arc<ConnectionFacts>>,
         identity: Option<(
             sqlx::PgPool,
-            std::collections::HashMap<String, SessionVerifier<IssuerKeys>>,
+            std::collections::HashMap<wamn_registry::ProjectEnvKey, SessionVerifier<IssuerKeys>>,
         )>,
     ) -> Self {
         let projects: std::collections::HashMap<_, _> = facts
@@ -140,7 +142,7 @@ impl PlatformRouteAuthenticator {
     #[cfg(any(test, feature = "test-util"))]
     pub fn for_test<S: AuthorizationStore + 'static>(
         postgres: Arc<S>,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         identity_reader: Option<sqlx::PgPool>,
         verifier: Option<SessionVerifier<IssuerKeys>>,
     ) -> Self {
@@ -229,8 +231,8 @@ impl PlatformRouteAuthenticator {
         token: &str,
         cookie_headers: Option<(&[Header], bool)>,
         project: &str,
-        project_env_key: &str,
-        environment: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
+        environment: &wamn_registry::EnvName,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
         let verifier = self
             .verifiers
@@ -327,10 +329,10 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         &self,
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let coordinate =
-            wamn_registry::name::parse_project_env_key(&request.target.project_env_key)
-                .filter(|coordinate| coordinate.env.as_str() == request.target.environment)
-                .ok_or_else(authentication_unavailable)?;
+        let coordinate = wamn_registry::ProjectEnvKey::triple(&request.target.project_env_key);
+        if coordinate.env != request.target.environment {
+            return Err(authentication_unavailable());
+        }
         let project = coordinate.project.as_str();
         if let AttachmentAuthPolicy::Signature { header, credential } = request.policy {
             let principal = self

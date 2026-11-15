@@ -57,7 +57,7 @@ pub(super) fn generation(
         WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
-            environment: "dev",
+            environment: &"dev".parse().unwrap(),
             database,
         },
     )?)
@@ -185,7 +185,7 @@ pub(super) async fn app_generation(
     let role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: PROJECT_ENV_KEY,
+            project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
             database,
         },
     )?;
@@ -265,10 +265,13 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&serde_json::to_value(&manifest)?),
         "host route test",
-        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "dev")
-            .with_applications(serde_json::from_value(
-                json!({"receiving": {"packages": ["session_test"]}}),
-            )?),
+        wamn_engine::release_manifest::ReleaseTarget::new(
+            PROJECT_ENV_KEY.parse().unwrap(),
+            "dev".parse().unwrap(),
+        )
+        .with_applications(serde_json::from_value(
+            json!({"receiving": {"packages": ["session_test"]}}),
+        )?),
     )?))
 }
 
@@ -314,8 +317,14 @@ pub(super) async fn application_host_with_release(
         .bind(&first).execute(&mut admin).await?;
     let server = Server::start().await;
     let (verifier, token_clock, key_clock) = server.verifier();
-    session_fixture::install_authority(&mut admin, PROJECT, "dev", AUDIENCE, &[&first, MEMBER])
-        .await?;
+    session_fixture::install_authority(
+        &mut admin,
+        PROJECT,
+        &"dev".parse().unwrap(),
+        AUDIENCE,
+        &[&first, MEMBER],
+    )
+    .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&sql::grant_identity_reader_surface_sql()).to_string(),
     ))
@@ -352,7 +361,7 @@ pub(super) async fn application_host_with_release(
     let routing = FlowHttpRouting::for_test(Some(Arc::clone(&release))).with_authenticator(
         Arc::new(PlatformRouteAuthenticator::for_test(
             Arc::clone(&postgres_credentials),
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             Some(reader().await?),
             Some(verifier),
         )),

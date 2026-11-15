@@ -104,9 +104,9 @@ impl Fixture {
             self.changes.clone(),
             Arc::new(self.credentials.reader(project).await),
             &postgres,
-            &wamn_registry::project_env_key("acme", project, "dev"),
+            &wamn_registry::project_env_key("acme", project, &"dev".parse().unwrap()),
             project,
-            "dev",
+            &"dev".parse().unwrap(),
         ));
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             wamn_control_provision::sql::grant_identity_reader_surface_sql(),
@@ -374,7 +374,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     let mut fixture = Fixture::new().await;
     fixture.changes = replicate(
         &mut client,
-        Some(PROJECT_ENV_KEY),
+        Some(&PROJECT_ENV_KEY.parse().unwrap()),
         Arc::clone(&fixture.memory),
     );
     until("the connection watch runs", || fixture.memory.watched()).await;
@@ -393,7 +393,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
         .get(0);
     let old = fixture
         .memory
-        .connection(PROJECT_ENV_KEY, &connection)
+        .connection(&PROJECT_ENV_KEY.parse().unwrap(), &connection)
         .unwrap();
     assert_eq!(&old.service_principal_id, caller.principal_id());
 
@@ -445,7 +445,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     until("the host sees the committed delete", || {
         fixture
             .memory
-            .connection(PROJECT_ENV_KEY, &connection)
+            .connection(&PROJECT_ENV_KEY.parse().unwrap(), &connection)
             .is_err()
     })
     .await;
@@ -458,7 +458,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     );
     let new = fixture
         .memory
-        .connection(PROJECT_ENV_KEY, &connection)
+        .connection(&PROJECT_ENV_KEY.parse().unwrap(), &connection)
         .unwrap();
     assert_eq!(new.active_generation, old.active_generation + 1);
     assert_ne!(new.credential_id, old.credential_id);

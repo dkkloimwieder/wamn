@@ -6,7 +6,7 @@ use wamn_broker::authorization::test_util::{
 };
 use wamn_registry::Triple;
 fn document(project: &str) -> Triple {
-    Triple::new("test", "dev", project)
+    Triple::new("test", "dev".parse().unwrap(), project)
 }
 /// The control host and an environment host open their auth memory
 /// watches as their own users on a real server (docs/plan/alignment.md
@@ -74,11 +74,11 @@ async fn the_control_and_environment_users_open_their_memory_watches() {
     wamn_broker::kv_memory::create_buckets(&admin)
         .await
         .unwrap();
-    let project_env_key = wamn_registry::project_env_key("test", "one", "dev");
+    let project_env_key = wamn_registry::project_env_key("test", "one", &"dev".parse().unwrap());
     for (user, target) in [
         (
             wamn_registry::environment_nats_user(&project_env_key),
-            Some(project_env_key.as_str()),
+            Some(&project_env_key),
         ),
         (wamn_registry::control_nats_user("test"), None),
     ] {

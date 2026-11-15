@@ -73,9 +73,9 @@ pub struct CarriedRelease {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseTarget {
     /// The composed `org--env--project` key of the project environment.
-    pub project_env_key: String,
+    pub project_env_key: wamn_registry::ProjectEnvKey,
     /// The short environment name, such as `dev`.
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
     /// The single application name and its packages
     /// (docs/architecture/execution.md#workflows).
     pub applications: wamn_catalog::EnvironmentApplications,
@@ -83,10 +83,13 @@ pub struct ReleaseTarget {
 
 impl ReleaseTarget {
     /// A target of one project and environment that declares no application.
-    pub fn new(project_env_key: impl Into<String>, environment: impl Into<String>) -> Self {
+    pub fn new(
+        project_env_key: wamn_registry::ProjectEnvKey,
+        environment: wamn_registry::EnvName,
+    ) -> Self {
         Self {
-            project_env_key: project_env_key.into(),
-            environment: environment.into(),
+            project_env_key,
+            environment,
             applications: wamn_catalog::EnvironmentApplications::new(),
         }
     }
@@ -221,7 +224,12 @@ impl LoadedRelease {
                 manifest_digest: manifest.digest(),
             },
             manifest,
-            target: ReleaseTarget::new(wamn_catalog::host_route_package(), "control"),
+            target: ReleaseTarget::new(
+                "platform--control--service"
+                    .parse()
+                    .expect("control coordinates"),
+                "control".parse().expect("control environment"),
+            ),
             components: Vec::new().into(),
         }
     }
@@ -406,16 +414,17 @@ mod tests {
     }
 
     fn target() -> ReleaseTarget {
-        ReleaseTarget::new("t1", "prod").with_applications(
-            [(
-                "catalog".to_owned(),
-                wamn_catalog::ApplicationDefinition {
-                    connections: std::collections::BTreeMap::new(),
-                    packages: ["cat".to_owned()].into(),
-                },
-            )]
-            .into(),
-        )
+        ReleaseTarget::new("t1--dev--project".parse().unwrap(), "prod".parse().unwrap())
+            .with_applications(
+                [(
+                    "catalog".to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        connections: std::collections::BTreeMap::new(),
+                        packages: ["cat".to_owned()].into(),
+                    },
+                )]
+                .into(),
+            )
     }
 
     /// A private scratch mount, named for its test so runs cannot collide.
@@ -565,7 +574,7 @@ mod tests {
     fn carried_fact() -> AdmittedComponent {
         AdmittedComponent {
             target: wamn_catalog::ComponentPackageCoordinate {
-                project_env_key: "t1".into(),
+                project_env_key: "t1--dev--project".parse().unwrap(),
                 package_id: "cat".into(),
                 package_version: "1.0.0".into(),
             },
@@ -601,7 +610,7 @@ mod tests {
 
         let mutations: [(&str, Mutation); 5] = [
             ("another project", |fact| {
-                fact.target.project_env_key = "t2".into();
+                fact.target.project_env_key = "t2--dev--project".parse().unwrap();
             }),
             ("another package version", |fact| {
                 fact.target.package_version = "2.0.0".into();

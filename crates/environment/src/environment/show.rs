@@ -20,7 +20,7 @@ pub async fn serving_application(
     let name = wamn_control_provision::environment_names::application_release_name(
         &triple.org,
         &triple.project,
-        triple.env.as_str(),
+        &triple.env,
         application,
     )?;
     let revision = read_revision(platform, &name)

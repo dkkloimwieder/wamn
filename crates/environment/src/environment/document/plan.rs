@@ -7,11 +7,11 @@ use anyhow::Context as _;
 pub struct EnvironmentDocument {
     pub org: String,
     pub project: String,
-    pub env: String,
+    pub env: wamn_registry::EnvName,
     /// The immutable deployment target name.
     pub target: String,
     /// A policy of `registry.env_policies`, by name.
-    pub policy: String,
+    pub policy: wamn_registry::EnvName,
     /// Maximum project credential revocation delay, in seconds.
     pub revocation_seconds: u32,
     #[serde(default)]
@@ -142,7 +142,6 @@ impl EnvironmentDocument {
     pub(super) fn require_valid(&self) -> anyhow::Result<()> {
         wamn_control_provision::validate_project_env(&self.org, &self.project, &self.env)
             .context("the environment coordinate is not valid")?;
-        ensure!(!self.policy.is_empty(), "policy is empty");
         ensure!(
             self.revocation_seconds <= 3600,
             "revocation_seconds must be between 0 and 3600"
@@ -226,7 +225,7 @@ impl EnvironmentDocument {
 
     /// The coordinate.
     pub fn triple(&self) -> Triple {
-        Triple::new(self.org.as_str(), self.env.as_str(), self.project.as_str())
+        Triple::new(self.org.as_str(), self.env.clone(), self.project.as_str())
     }
 
     /// The canonical bytes: RFC 8785 JSON.

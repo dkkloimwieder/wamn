@@ -1,5 +1,4 @@
-use super::{Triple, Value, json, operator_subject};
-use anyhow::Context as _;
+use super::{Triple, Value, json};
 
 pub(in super::super) fn render_pat_secret(
     triple: &Triple,
@@ -10,7 +9,7 @@ pub(in super::super) fn render_pat_secret(
     prefix: &str,
     expires_at: &str,
 ) -> anyhow::Result<Value> {
-    let subject = purpose.subject(triple)?;
+    let subject = purpose.subject(triple);
     Ok(json!({
         "apiVersion": "v1",
         "kind": "Secret",
@@ -22,7 +21,7 @@ pub(in super::super) fn render_pat_secret(
                 "app.kubernetes.io/component": "project-env-pat",
                 "wamn.org": triple.org,
                 "wamn.project": triple.project,
-                "wamn.env": triple.env.as_str(),
+                "wamn.env": &triple.env,
             },
             "annotations": {
                 "wamn.io/credential-purpose": purpose.purpose,
@@ -78,17 +77,13 @@ pub(in super::super) const OPERATOR: PatPurpose = PatPurpose {
 };
 
 impl PatPurpose {
-    pub fn subject(self, triple: &Triple) -> anyhow::Result<String> {
-        if self == OPERATOR {
-            return operator_subject(&triple.org, &triple.project, triple.env.as_str())
-                .context("derive the canonical operator subject");
-        }
-        Ok(wamn_registry::name::service_resource(
+    pub fn subject(self, triple: &Triple) -> String {
+        wamn_registry::name::service_resource(
             self.subject_stem,
             &triple.org,
             &triple.project,
-            triple.env.as_str(),
-        ))
+            &triple.env,
+        )
     }
 
     pub(in super::super) fn display_name(self, triple: &Triple) -> String {
@@ -103,7 +98,7 @@ impl PatPurpose {
             self.secret_stem,
             &triple.org,
             &triple.project,
-            triple.env.as_str(),
+            &triple.env,
         )
     }
 }

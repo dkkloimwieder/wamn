@@ -4,21 +4,21 @@ VALUES('00000000-0000-4000-8000-0000000000f1','','fixture','admin:seed-catalog-h
 INSERT INTO platform."user" (id, type, email, display_name) VALUES
     ('00000000-0000-4000-8000-0000000000f1', 'user', 'creator@example.invalid', 'creator'),
     ('00000000-0000-4000-8000-0000000000f2', 'user', 'editor@example.invalid', 'editor');
-INSERT INTO catalog.packages ( project_env_key, package_id, package_version) VALUES ( 'history', 'fixture', '1');
+INSERT INTO catalog.packages ( project_env_key, package_id, package_version) VALUES ( 'history--dev--fixture', 'fixture', '1');
 INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes)
-VALUES ('history', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}'::bytea);
+VALUES ('history--dev--fixture', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}'::bytea);
 INSERT INTO platform.integration (id,integration_type,name,status)
 VALUES ('10000000-0000-4000-8000-000000000001','http','history-http','active');
 INSERT INTO platform.connection (id,integration_id,integration_type,status)
 VALUES ('10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001','http','active');
 INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode)
-VALUES ('history','sha256:' || repeat('a',64),'fixture','store','wamn:connection/http@0.1.0','write');
+VALUES ('history--dev--fixture','sha256:' || repeat('a',64),'fixture','store','wamn:connection/http@0.1.0','write');
 INSERT INTO catalog.release_connection (project_env_key,manifest_digest,connection_id,version)
-VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'10000000-0000-4000-8000-000000000002',1);
+VALUES ('history--dev--fixture','sha256:' || encode(sha256('{}'::bytea),'hex'),'10000000-0000-4000-8000-000000000002',1);
 INSERT INTO catalog.connection_binding (project_env_key,manifest_digest,component_digest,package_id,name,connection_id)
-VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','store','10000000-0000-4000-8000-000000000002');
+VALUES ('history--dev--fixture','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','store','10000000-0000-4000-8000-000000000002');
 INSERT INTO catalog.wiring_tombstones (project_env_key, package_id, environment, wiring_id, reason)
-VALUES ('history', 'fixture', 'dev', 'retired', 'fixture');
+VALUES ('history--dev--fixture', 'fixture', 'dev', 'retired', 'fixture');
 DO $assert_inserts$
 DECLARE
     relation text;

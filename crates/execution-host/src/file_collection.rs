@@ -1,6 +1,6 @@
 //! SELECT-only file reads and a session lock for one native collector.
 
-use wamn_registry::identifiers::{valid_project, valid_project_env_key};
+use wamn_registry::identifiers::valid_project;
 use wamn_sql::WamnPostgres;
 
 /// A dedicated reader releases its advisory lock when its connection closes.
@@ -14,12 +14,9 @@ impl FileCollection {
     pub async fn acquire(
         postgres: &WamnPostgres,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<Option<FileCollection>> {
-        anyhow::ensure!(
-            valid_project(project) && valid_project_env_key(project_env_key),
-            "invalid file collector scope"
-        );
+        anyhow::ensure!(valid_project(project), "invalid file collector scope");
         let connection = postgres
             .application_connection(project, project_env_key)
             .await?;

@@ -451,7 +451,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         Some(ann.to_string().as_str())
     );
     assert_eq!(granted["org_admin"].as_bool(), Some(true));
-    let projects: Vec<(String, Option<String>)> = sqlx::query_as(
+    let projects: Vec<(String, Option<wamn_registry::EnvName>)> = sqlx::query_as(
         "SELECT p.id,ep.env FROM registry.projects p
          LEFT JOIN registry.environment_projects ep ON ep.org=p.org AND ep.project=p.id
          WHERE p.org=$1 ORDER BY p.id,ep.env",
@@ -466,7 +466,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
                 &ann,
                 ORG,
                 project,
-                env.as_deref()
+                env.as_ref()
             )
             .await?
         );
@@ -487,7 +487,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
                 &ann,
                 ORG,
                 project,
-                env.as_deref()
+                env.as_ref()
             )
             .await?
         );
@@ -600,7 +600,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             changes: Publisher::default(),
         },
     );
-    let member = |principal: PrincipalId, env: &str| json!({"project": "billing", "env": env, "principal_id": principal});
+    let member = |principal: PrincipalId, env: &wamn_registry::EnvName| json!({"project": "billing", "env": env, "principal_id": principal});
     let project_admin =
         |principal: PrincipalId| json!({"project": "billing", "principal_id": principal});
 
@@ -613,8 +613,8 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "billing", "env": "dev"}),
         ),
         ("member/list", json!({"project": "billing"})),
-        ("member/grant", member(ann, "dev")),
-        ("member/revoke", member(ann, "dev")),
+        ("member/grant", member(ann, &"dev".parse().unwrap())),
+        ("member/revoke", member(ann, &"dev".parse().unwrap())),
         ("project-admin/grant", project_admin(ann)),
         ("project-admin/revoke", project_admin(ann)),
     ] {
@@ -653,7 +653,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     )
     .await
     .expect("project environments");
-    let expected_environments: Vec<(String, String)> = sqlx::query_as(
+    let expected_environments: Vec<(String, wamn_registry::EnvName)> = sqlx::query_as(
         "SELECT ep.env,e.status FROM registry.environment_projects ep
          JOIN registry.environments e USING(org,env)
          WHERE ep.org=$1 AND ep.project=$2 ORDER BY ep.env",
@@ -690,9 +690,14 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
 
     // A membership goes to an active org member in an environment of the
     // project.
-    let response = call(&delivery, "member/grant", cat, member(ann, "dev"))
-        .await
-        .expect("route response");
+    let response = call(
+        &delivery,
+        "member/grant",
+        cat,
+        member(ann, &"dev".parse().unwrap()),
+    )
+    .await
+    .expect("route response");
     assert_eq!(
         response["principal_id"].as_str(),
         Some(ann.to_string().as_str())
@@ -715,9 +720,14 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             )
         ]
     );
-    let refusal = call(&delivery, "member/grant", cat, member(ann, "prod"))
-        .await
-        .unwrap_err();
+    let refusal = call(
+        &delivery,
+        "member/grant",
+        cat,
+        member(ann, &"prod".parse().unwrap()),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(refusal["code"], "environment_not_found");
     assert_eq!(refusal["detail"]["field"], "env");
     let members = call(&delivery, "member/list", cat, json!({"project": "billing"}))
@@ -757,7 +767,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             expected
                 .environments
                 .iter()
-                .map(String::as_str)
+                .map(wamn_registry::EnvName::as_str)
                 .collect::<Vec<_>>()
         );
     }
@@ -773,7 +783,12 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     .expect("a filtered page");
     let expected_page: Vec<_> = expected_members
         .iter()
-        .filter(|member| member.environments.iter().any(|env| env == "dev"))
+        .filter(|member| {
+            member
+                .environments
+                .iter()
+                .any(|env| env == &"dev".parse().unwrap())
+        })
         .take(2)
         .collect();
     let returned_page = page["members"].as_array().expect("members");
@@ -794,7 +809,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             expected
                 .environments
                 .iter()
-                .map(String::as_str)
+                .map(wamn_registry::EnvName::as_str)
                 .collect::<Vec<_>>()
         );
     }
@@ -832,14 +847,24 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     assert_eq!(refusal["detail"]["field"], "environment");
 
     // A covering grant refuses the revoke below it.
-    let refusal = call(&delivery, "member/revoke", boss, member(cat, "dev"))
-        .await
-        .unwrap_err();
+    let refusal = call(
+        &delivery,
+        "member/revoke",
+        boss,
+        member(cat, &"dev".parse().unwrap()),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(refusal["code"], "admin_covered");
     assert_eq!(refusal["detail"]["field"], "principal_id");
-    let refusal = call(&delivery, "member/revoke", cat, member(boss, "dev"))
-        .await
-        .unwrap_err();
+    let refusal = call(
+        &delivery,
+        "member/revoke",
+        cat,
+        member(boss, &"dev".parse().unwrap()),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(refusal["code"], "admin_covered");
     assert_eq!(refusal["detail"]["field"], "principal_id");
     let refusal = call(&delivery, "project-admin/revoke", cat, project_admin(boss))
@@ -888,9 +913,14 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     );
     assert_eq!(response["project"], "billing");
     assert_eq!(response["project_admin"].as_bool(), Some(false));
-    let response = call(&delivery, "member/revoke", cat, member(ann, "dev"))
-        .await
-        .expect("route response");
+    let response = call(
+        &delivery,
+        "member/revoke",
+        cat,
+        member(ann, &"dev".parse().unwrap()),
+    )
+    .await
+    .expect("route response");
     assert_eq!(
         response["principal_id"].as_str(),
         Some(ann.to_string().as_str())
@@ -1035,7 +1065,8 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
 
     // System state stays authoritative if a later application write fails.
     let shop_key = logins.join(wamn_control_provision::control_administration_key(
-        "shop", "dev",
+        "shop",
+        &"dev".parse().unwrap(),
     ));
     let shop_login = std::fs::read_to_string(&shop_key)?;
     std::fs::write(&shop_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
@@ -1263,7 +1294,8 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
 
     // Activation commits the registry first. A later projection can fail independently.
     let shop_key = logins.join(wamn_control_provision::control_administration_key(
-        "shop", "dev",
+        "shop",
+        &"dev".parse().unwrap(),
     ));
     let shop_login = std::fs::read_to_string(&shop_key)?;
     std::fs::write(&shop_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
@@ -1286,7 +1318,8 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
 
     // Inactivation commits the registry only after all project writes succeed.
     let billing_key = logins.join(wamn_control_provision::control_administration_key(
-        "billing", "dev",
+        "billing",
+        &"dev".parse().unwrap(),
     ));
     std::fs::write(&billing_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
     let refusal = call(&delivery, "environment/inactivate", boss, billing_dev)
@@ -1470,7 +1503,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     )
     .await
     .expect("an org admin lists the environments of ledger");
-    let expected_environments: Vec<String> = sqlx::query_scalar(
+    let expected_environments: Vec<wamn_registry::EnvName> = sqlx::query_scalar(
         "SELECT env FROM registry.environment_projects WHERE org=$1 AND project=$2 ORDER BY env",
     )
     .bind(ORG)
@@ -1489,7 +1522,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             .collect::<Vec<_>>(),
         expected_environments
             .iter()
-            .map(String::as_str)
+            .map(wamn_registry::EnvName::as_str)
             .collect::<Vec<_>>()
     );
     assert_eq!(
@@ -1533,7 +1566,7 @@ struct FixedStatus;
 
 #[async_trait::async_trait]
 impl wamn_execution_host::environment_status::StatusSource for FixedStatus {
-    async fn read(&self, _: &str, _: &str, _: &str) -> anyhow::Result<Value> {
+    async fn read(&self, _: &str, _: &str, _: &wamn_registry::EnvName) -> anyhow::Result<Value> {
         Ok(
             json!({"digest": wamn_digest::Digest::from([1; 32]), "rollout": {"replicas": 1}, "workloads": [], "live": []}),
         )
@@ -1575,7 +1608,7 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
             &user,
             ORG,
             &MemberGrants {
-                memberships: [("billing".into(), "dev".into())].into(),
+                memberships: [("billing".into(), "dev".parse().unwrap())].into(),
                 ..MemberGrants::default()
             },
         )
@@ -1682,7 +1715,8 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
         if missing_credential {
             std::fs::remove_file(
                 logins.join(wamn_control_provision::control_administration_key(
-                    "billing", "dev",
+                    "billing",
+                    &"dev".parse().unwrap(),
                 )),
             )?;
         }
@@ -1996,8 +2030,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
         .parse::<wamn_digest::Digest>()
         .unwrap();
-    sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&digest).bind(&b"{}".as_slice()).execute(&mut billing).await.map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&digest).bind(&identity).execute(&mut billing).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&wamn_registry::project_env_key(ORG,"billing", &"dev".parse().unwrap())).bind(&digest).bind(&b"{}".as_slice()).execute(&mut billing).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)").bind(&wamn_registry::project_env_key(ORG,"billing", &"dev".parse().unwrap())).bind(&digest).bind(&identity).execute(&mut billing).await.map(|result| result.rows_affected())?;
     sqlx::raw_sql("COMMIT")
         .execute(&mut billing)
         .await
@@ -2046,7 +2080,10 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     billing_url.set_path(
         url::Url::parse(
             std::fs::read_to_string(logins.join(
-                wamn_control_provision::control_administration_key("billing", "dev"),
+                wamn_control_provision::control_administration_key(
+                    "billing",
+                    &"dev".parse().unwrap(),
+                ),
             ))?
             .trim(),
         )?

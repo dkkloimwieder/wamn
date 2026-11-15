@@ -550,6 +550,10 @@ Each component of the release carries its admitted descriptor from the package a
 Set `RELEASE_DIGEST` to it.
 The manifest names no environment key and no environment, so one release has one digest in every environment.
 The composed `project_env_key` is `<org>--<environment>--<project>`.
+An environment name contains 1 to 40 lowercase letters, digits, or isolated hyphens.
+It starts and ends with a letter or digit. The three key components share a 41-byte budget.
+Org and project names also refuse the reserved `wamn` prefix. Environment names permit that prefix.
+`wamn-registry` parses both values at external boundaries.
 The separate `environment` field keeps the short name.
 The release also names no route host.
 The route host is only the `host` of the http workload config. The router matches routes under it.

@@ -58,7 +58,7 @@ async fn runtime_credentials(database: &url::Url) -> ClassCredentials {
             WorkloadRoleIdentity::ProjectEnvironment {
                 org: "connection-binding-project",
                 project: DEFAULT_PROJECT,
-                environment: "dev",
+                environment: &"dev".parse().unwrap(),
                 database: name,
             },
         )
@@ -143,7 +143,7 @@ async fn provision_project(project: &mut Client, project_url: &str) {
             &project_url,
             &"connection-binding-project",
             &"fixture",
-            &"dev",
+            &"dev".parse().unwrap(),
         )
         .await
         .unwrap(),
@@ -159,7 +159,7 @@ async fn provision_project(project: &mut Client, project_url: &str) {
         database_url: project_url.to_string(),
         org: "connection-binding-project".into(),
         project: "fixture".into(),
-        environment: "dev".into(),
+        environment: "dev".parse().unwrap(),
     })
     .await
     .expect("apply the connection-binding package fixture");
@@ -190,7 +190,7 @@ impl Authority {
             (&wamn_control_provision::test_database::seed_org_project_env_sql(
                 "connection-binding-project",
                 DEFAULT_PROJECT,
-                "dev",
+                &"dev".parse().unwrap(),
             ))
                 .to_string(),
         ))
@@ -283,7 +283,7 @@ impl Authority {
                     .unwrap();
             bindings::write(
                 &mut tx,
-                PROJECT_ENV_KEY,
+                &PROJECT_ENV_KEY.parse().unwrap(),
                 digest,
                 document,
                 &selected,
@@ -294,7 +294,7 @@ impl Authority {
             tx.commit().await.unwrap();
             let mut expected = ConnectionDrops::default();
             if !repeat && !drops.is_empty() {
-                expected.release(PROJECT_ENV_KEY, digest);
+                expected.release(&PROJECT_ENV_KEY.parse().unwrap(), digest);
             }
             assert_eq!(drops, expected, "repeated write: {repeat}");
         }
@@ -486,26 +486,27 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         })
         .unwrap(),
     );
-    postgres
-        .set_project_env_key(COMPONENT_ID, PROJECT_ENV_KEY)
-        .unwrap();
+    postgres.set_project_env_key(COMPONENT_ID, &PROJECT_ENV_KEY.parse().unwrap());
     let facts = Arc::new(ConnectionFacts::new(
         Arc::new(ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(authority.reader().await),
         &postgres,
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         DEFAULT_PROJECT,
-        ENVIRONMENT,
+        &ENVIRONMENT.parse().unwrap(),
     ));
     let release = Arc::new(
         wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "read binding fixture",
-            wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
-                .with_applications(
-                    serde_json::from_value(json!({PACKAGE: {"packages": [PACKAGE]}})).unwrap(),
-                ),
+            wamn_engine::release_manifest::ReleaseTarget::new(
+                PROJECT_ENV_KEY.parse().unwrap(),
+                ENVIRONMENT.parse().unwrap(),
+            )
+            .with_applications(
+                serde_json::from_value(json!({PACKAGE: {"packages": [PACKAGE]}})).unwrap(),
+            ),
         )
         .unwrap(),
     );
@@ -576,7 +577,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     let snapshot = postgres
         .connection_effect_snapshot(
             COMPONENT_ID,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             &ConnectionEffectLookup {
                 entry,
                 origin_package_id: PACKAGE,
@@ -587,7 +588,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
                 package_id: PACKAGE,
                 operation: "wamn:node/handler@0.1.0",
                 manifest_digest: &manifest_digest,
-                environment: ENVIRONMENT,
+                environment: &ENVIRONMENT.parse().unwrap(),
                 component_digest: &HTTP_SIDECAR.parse().unwrap(),
                 store_alias: "erp",
                 candidate_binding: None,
@@ -616,7 +617,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     };
     invocation.closure = ConnectionExecutionClosure::Candidate {
         manifest_digest,
-        environment: ENVIRONMENT.into(),
+        environment: ENVIRONMENT.parse().unwrap(),
         wiring_hash: document.wiring_hash(),
         component: "http-sidecar".into(),
         interface_version: "0.1.0".into(),
@@ -746,8 +747,11 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     let release = wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "shared blob alias fixture",
-        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
-            .with_applications(document.membership()),
+        wamn_engine::release_manifest::ReleaseTarget::new(
+            PROJECT_ENV_KEY.parse().unwrap(),
+            ENVIRONMENT.parse().unwrap(),
+        )
+        .with_applications(document.membership()),
     )
     .unwrap();
     let postgres = Arc::new(
@@ -760,17 +764,15 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
         })
         .unwrap(),
     );
-    postgres
-        .set_project_env_key(COMPONENT_ID, PROJECT_ENV_KEY)
-        .unwrap();
+    postgres.set_project_env_key(COMPONENT_ID, &PROJECT_ENV_KEY.parse().unwrap());
     let facts = Arc::new(ConnectionFacts::new(
         Arc::new(ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(authority.reader().await),
         &postgres,
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         DEFAULT_PROJECT,
-        ENVIRONMENT,
+        &ENVIRONMENT.parse().unwrap(),
     ));
     let wiring = WiringDocument::new(
         "store_label",
@@ -873,7 +875,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     ] {
         invocation.closure = ConnectionExecutionClosure::Candidate {
             manifest_digest: digest.clone(),
-            environment: ENVIRONMENT.into(),
+            environment: ENVIRONMENT.parse().unwrap(),
             wiring_hash: invocation.entry.wiring().unwrap().wiring_hash,
             component: invocation.component.clone(),
             interface_version: invocation.origin.interface_version.clone(),

@@ -47,7 +47,7 @@ pub struct RecoverCaptureGapArgs {
     #[arg(long)]
     pub project: String,
     #[arg(long)]
-    pub env: String,
+    pub env: wamn_registry::EnvName,
 }
 
 #[derive(Debug, Args)]
@@ -55,7 +55,7 @@ pub struct CloseCaptureGapArgs {
     #[arg(long)]
     pub project: String,
     #[arg(long)]
-    pub env: String,
+    pub env: wamn_registry::EnvName,
 }
 
 /// TLS credentials and the identity service endpoint for operator PAT issuance.

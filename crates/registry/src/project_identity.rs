@@ -38,10 +38,13 @@ pub(crate) fn frame(output: &mut Vec<u8>, value: &[u8]) {
 /// The database is part of the preimage because role names are CLUSTER-wide:
 /// without it, one project in two project-environment databases would derive one
 /// key and collide on a single login.
-pub fn app_identity_hash(project_env_key: &str, database: &str) -> String {
+pub fn app_identity_hash(project_env_key: &crate::ProjectEnvKey, database: &str) -> String {
     let mut preimage = Vec::new();
     frame(&mut preimage, APP_IDENTITY_DOMAIN);
-    for (tag, value) in [("project_env_key", project_env_key), ("database", database)] {
+    for (tag, value) in [
+        ("project_env_key", project_env_key.as_str()),
+        ("database", database),
+    ] {
         frame(&mut preimage, tag.as_bytes());
         frame(&mut preimage, value.as_bytes());
     }
@@ -57,12 +60,20 @@ mod tests {
     /// for is the case that gets asserted.
     #[test]
     fn framing_separates_fields_that_concatenate_alike() {
-        assert_ne!(app_identity_hash("ab", "c"), app_identity_hash("a", "bc"));
+        let first = "a--dev--bc".parse().unwrap();
+        let second = "a--dev--b".parse().unwrap();
+        assert_ne!(
+            app_identity_hash(&first, "d"),
+            app_identity_hash(&second, "cd")
+        );
     }
 
     #[test]
     fn the_digest_is_the_forty_hex_identity_convention() {
-        let key = app_identity_hash("acme", "wamn-db-acme--billing--dev");
+        let key = app_identity_hash(
+            &"acme--dev--project".parse().unwrap(),
+            "wamn-db-acme--billing--dev",
+        );
         assert_eq!(key.len(), 40);
         assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
     }

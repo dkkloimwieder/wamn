@@ -114,7 +114,7 @@ pub async fn initialize(
 pub async fn materialize_application_principals(
     system_url: &str,
     project_url: &str,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
     changes: &wamn_broker::Publisher,
@@ -207,7 +207,7 @@ pub async fn materialize_application_principals(
 pub async fn write_runtime_grants(
     system: &mut sqlx::PgConnection,
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
     drops: &mut wamn_broker::auth_changes::AuthDrops,
@@ -375,7 +375,7 @@ pub(super) async fn open(
 /// When `manifest` does not hash to `digest`, or the write fails.
 pub async fn write_release(
     project_url: &str,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     digest: &wamn_digest::Digest,
     manifest: &wamn_catalog::ServingManifest,
     actor: &wamn_identity_protocol::PrincipalId,
@@ -461,10 +461,18 @@ mod tests {
             host_routes: BTreeSet::new(),
         };
         let digest = manifest.digest();
+        let project_env_key: wamn_registry::ProjectEnvKey =
+            "history--dev--project".parse().unwrap();
         let publisher: wamn_identity_protocol::PrincipalId = uuid::Uuid::new_v4().into();
-        super::write_release(database.as_str(), "history", &digest, &manifest, &publisher)
-            .await
-            .unwrap();
+        super::write_release(
+            database.as_str(),
+            &project_env_key,
+            &digest,
+            &manifest,
+            &publisher,
+        )
+        .await
+        .unwrap();
         let mut client = super::super::analyse::connect_project(database.as_str())
             .await
             .unwrap();
@@ -473,7 +481,7 @@ mod tests {
                 "SELECT created_by, updated_by, created_at::text, updated_at::text \
                  FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
             )
-            .bind(&"history")
+            .bind(&project_env_key)
             .bind(&&digest)
             .fetch_one(&mut client)
             .await
@@ -490,7 +498,7 @@ mod tests {
         assert_eq!(before.2, before.3);
         super::write_release(
             database.as_str(),
-            "history",
+            &project_env_key,
             &digest,
             &manifest,
             &uuid::Uuid::new_v4().into(),

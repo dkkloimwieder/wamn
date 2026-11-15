@@ -16,7 +16,7 @@ pub trait ExecutorDatabase: Send + Sync {
         component: &str,
     ) -> impl std::future::Future<Output = Result<ConnectionGuard, ProductionLeaseError>> + Send;
     /// The project database identity bound to this component.
-    fn project_env_key(&self, component: &str) -> Option<String>;
+    fn project_env_key(&self, component: &str) -> Option<wamn_registry::ProjectEnvKey>;
     /// The host-bound queue runner for this component.
     fn runner(&self, component: &str) -> Option<String>;
     /// The release that this component serves.
@@ -45,7 +45,10 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
     async fn executor_bound<T>(
         &self,
         component: &str,
-        work: impl AsyncFnOnce(&mut sqlx::PgConnection, &str) -> Result<T, ProductionLeaseError>,
+        work: impl AsyncFnOnce(
+            &mut sqlx::PgConnection,
+            &wamn_registry::ProjectEnvKey,
+        ) -> Result<T, ProductionLeaseError>,
     ) -> Result<T, ProductionLeaseError> {
         let project_env_key = self.database.project_env_key(component).ok_or_else(|| {
             ProductionLeaseError::new(
@@ -84,7 +87,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
         &self,
         component_id: &str,
         package_ids: &[String],
-        environment: &str,
+        environment: &wamn_registry::EnvName,
         lease_ttl_ms: i64,
     ) -> Result<ProductionLeaseResult, ProductionLeaseError> {
         let runner = self.database.runner(component_id).ok_or_else(|| {
@@ -121,7 +124,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
         &self,
         component_id: &str,
         package_ids: &[String],
-        environment: &str,
+        environment: &wamn_registry::EnvName,
         grace_ms: i64,
     ) -> Result<ProductionReapResult, ProductionLeaseError> {
         let result = self
@@ -266,7 +269,7 @@ impl<'a, D: ExecutorDatabase> ProductionLeases<'a, D> {
         &self,
         component_id: &str,
         package_ids: &[String],
-        environment: &str,
+        environment: &wamn_registry::EnvName,
     ) -> Result<bool, ProductionLeaseError> {
         let digest = self.database.manifest_digest(component_id);
         let digest = digest.as_ref();

@@ -12,7 +12,6 @@ use anyhow::Context as _;
 use sqlx::Row as _;
 use sqlx::postgres::PgRow as Row;
 use wamn_control_provision::{EnvPolicy, RecoveryDomain};
-use wamn_registry::Env;
 
 /// Map one `select_env_policies_sql` / `select_env_policy_sql` row into an
 /// [`EnvPolicy`]. Column order: `name, recovery_domain::text, promotion_rank,
@@ -23,7 +22,7 @@ pub fn env_policy_from_row(row: &Row) -> anyhow::Result<EnvPolicy> {
     let recovery_domain: RecoveryDomain =
         serde_json::from_str(&recovery_text).context("parse recovery_domain jsonb")?;
     Ok(EnvPolicy {
-        name: Env::new(row.get::<String, _>(0)),
+        name: row.try_get(0)?,
         recovery_domain,
         promotion_rank: row.get(2),
         instances: row.get(3),
@@ -42,7 +41,7 @@ pub fn env_policy_from_row(row: &Row) -> anyhow::Result<EnvPolicy> {
 pub async fn read_env_policy(
     client: &mut sqlx::PgConnection,
     org: &str,
-    name: &str,
+    name: &wamn_registry::EnvName,
 ) -> anyhow::Result<Option<EnvPolicy>> {
     let rows = sqlx::query(sqlx::AssertSqlSafe(
         (wamn_registry::sql::select_env_policy_sql().as_str()).to_string(),

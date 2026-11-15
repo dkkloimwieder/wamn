@@ -145,15 +145,15 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
              {executor_surface} \
               \
              BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture','admin:admission-fixture'); \
-             INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 't1','cat','1.0.0','sha256:{manifest_hash}'); \
+             INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 't1--dev--project','cat','1.0.0','sha256:{manifest_hash}'); \
              INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
-             VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
+             VALUES ('t1--dev--project','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
              INSERT INTO wamn_run.runs \
                (project_env_key,run_id,wiring_hash,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json,execution_principal_id,execution_role,invoked_by,invoked_by_user_id,node_digests_json) \
-             VALUES ('t1','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','dev','legacy-wiring',1, \
+             VALUES ('t1--dev--project','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','dev','legacy-wiring',1, \
                      'dispatched','manual','{{}}','00000000-0000-0000-0000-000000000001','admin','manual','00000000-0000-0000-0000-000000000001','{{}}'); \
-             INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('t1','run-1'); COMMIT;",
+             INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('t1--dev--project','run-1'); COMMIT;",
             manifest_hash = "a".repeat(64),
         ),
     );
@@ -165,7 +165,7 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
             "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('d318d033-29ea-5cb0-ab56-24340413fbcc','','fixture','wamn:executor'); SET LOCAL ROLE {EXECUTOR_LOGIN}; \
         SET LOCAL search_path=wamn_run; \
         DO $test$ DECLARE selected record; BEGIN \
-            EXECUTE $lease${lease}$lease$ INTO STRICT selected USING 't1',ARRAY['cat'],'dev', \
+            EXECUTE $lease${lease}$lease$ INTO STRICT selected USING 't1--dev--project',ARRAY['cat'],'dev', \
                 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'; \
             ASSERT selected.run_id IS NOT NULL; \
         END $test$; ROLLBACK;"
@@ -174,7 +174,7 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
     for statement in [
         "SELECT * FROM wamn_run.run_queue",
         "UPDATE wamn_run.runs SET status='completed'",
-        "INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('t1','run-1')",
+        "INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('t1--dev--project','run-1')",
     ] {
         let output = psql(
             &url,

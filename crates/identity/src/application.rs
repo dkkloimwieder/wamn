@@ -75,7 +75,7 @@ pub async fn require_platform_rows(client: &mut sqlx::PgConnection) -> Result<()
 /// its host reads (docs/architecture/execution.md#routing-and-availability).
 pub async fn write_environment_status(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     status: crate::org::EnvironmentStatus,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -92,7 +92,7 @@ pub async fn write_environment_status(
 /// Write the user row of `user`, and keep a row that exists.
 pub async fn write_user(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     user: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -111,7 +111,7 @@ pub async fn write_user(
 /// Write the user row of the service principal `service`.
 pub async fn write_service(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     service: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -130,7 +130,7 @@ pub async fn write_service(
 /// Remove the `admin` row of the principal. Its other roles stay.
 pub async fn remove_admin(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     principal_id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -149,7 +149,7 @@ pub async fn remove_admin(
 /// rows and its API keys.
 pub async fn remove_user(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     principal_id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -287,7 +287,7 @@ const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
@@ -317,7 +317,7 @@ pub async fn create_role(
 /// delete of an absent role changes nothing.
 pub async fn delete_role(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
@@ -360,7 +360,7 @@ pub async fn require_role(
 /// release serves it or not.
 async fn grant_permission(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
@@ -380,7 +380,7 @@ async fn grant_permission(
 /// does not hold refuses.
 async fn revoke_permission(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
@@ -407,7 +407,7 @@ async fn revoke_permission(
 /// changes nothing.
 async fn grant_user_role(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     user_id: &wamn_identity_protocol::PrincipalId,
     role: &str,
     drops: &mut AuthDrops,
@@ -427,7 +427,7 @@ async fn grant_user_role(
 /// does not hold changes nothing.
 async fn revoke_user_role(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     user_id: &wamn_identity_protocol::PrincipalId,
     role: &str,
     drops: &mut AuthDrops,
@@ -626,8 +626,8 @@ pub async fn project_authority(
 pub struct ApplicationTarget<'a> {
     pub org: &'a str,
     pub project: &'a str,
-    pub env: &'a str,
-    pub project_env_key: &'a str,
+    pub env: &'a wamn_registry::EnvName,
+    pub project_env_key: &'a wamn_registry::ProjectEnvKey,
 }
 
 /// The authenticated actor of an authored application grant.
@@ -669,7 +669,7 @@ pub fn permission_is_grantable(reference: &str) -> bool {
 /// The caller serializes role and permission writes with the application lock.
 pub async fn mutate_grant(
     client: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     authority: GrantAuthority<'_>,
     change: GrantChange<'_>,
     drops: &mut AuthDrops,
@@ -774,7 +774,7 @@ pub async fn mutate_grant(
 /// A failed application mutation with its environment and original error.
 #[derive(Debug)]
 pub struct GrantError {
-    project_env_key: String,
+    project_env_key: wamn_registry::ProjectEnvKey,
     source: AdministrationError,
 }
 

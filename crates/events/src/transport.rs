@@ -144,7 +144,7 @@ pub struct WamnJetstream {
     stream_replicas: Option<usize>,
     dup_window_secs: Option<u64>,
     /// Event coordinates come from the platform bootstrap, separately from DB authority.
-    event_coordinates: EventCoordinates,
+    event_coordinates: Option<Triple>,
     /// Validated once when the host constructs the plugin.
     ctx: Option<Context>,
     stream: Option<async_nats::jetstream::stream::Stream>,
@@ -153,23 +153,15 @@ pub struct WamnJetstream {
 /// Host identity for event publication and tracing.
 #[derive(Clone, Debug)]
 struct JetstreamIdentity<'a> {
-    project_env_key: Box<str>,
+    project_env_key: wamn_registry::ProjectEnvKey,
     project: &'a str,
-    environment: &'a str,
+    environment: &'a wamn_registry::EnvName,
 }
 
-#[derive(Debug, Default)]
-struct EventCoordinates {
-    org: Box<str>,
-    project: Box<str>,
-    environment: Box<str>,
-}
-
-fn require_event_coordinates(coordinates: &EventCoordinates) -> Result<(), DerivedPublishError> {
+fn require_event_coordinates(coordinates: &Triple) -> Result<(), DerivedPublishError> {
     for (name, value) in [
-        ("org", coordinates.org.as_ref()),
-        ("project", coordinates.project.as_ref()),
-        ("environment", coordinates.environment.as_ref()),
+        ("org", coordinates.org.as_str()),
+        ("project", coordinates.project.as_str()),
     ] {
         if !wamn_event_wire::valid_subject_token(value) {
             return Err(DerivedPublishError::new(
@@ -205,10 +197,10 @@ struct DerivedPublishWiring {
 
 fn prepare_derived_publication<'a>(
     identity: JetstreamIdentity<'a>,
-    coordinates: &EventCoordinates,
+    coordinates: &Triple,
     request: DerivedPublishRequest,
 ) -> Result<PreparedDerivedPublication<'a>, DerivedPublishError> {
-    if identity.environment != coordinates.environment.as_ref() {
+    if identity.environment != &coordinates.env {
         return Err(DerivedPublishError::new(
             DerivedPublishErrorType::UnboundIdentity,
             "derived event environment differs from the platform event binding",
@@ -240,9 +232,9 @@ fn prepare_derived_publication<'a>(
     }
 
     let event = DerivedEvent::new(
-        identity.project_env_key.to_string(),
-        coordinates.project.to_string(),
-        coordinates.environment.to_string(),
+        identity.project_env_key.clone(),
+        coordinates.project.clone(),
+        coordinates.env.clone(),
         request.package_id,
         request.entity,
         request.operation,
@@ -253,24 +245,20 @@ fn prepare_derived_publication<'a>(
     let event_subject = subject(
         &coordinates.org,
         &coordinates.project,
-        &coordinates.environment,
+        &coordinates.env,
         &event.entity,
         event.op,
     );
     let message_id = derived_msg_id(
         &identity.project_env_key,
         &coordinates.project,
-        &coordinates.environment,
+        &coordinates.env,
         &event.package_id,
         &event.entity,
         event.op,
         &event.dedup_id,
     );
-    let expected_stream = stream_name(
-        &coordinates.org,
-        &coordinates.project,
-        &coordinates.environment,
-    );
+    let expected_stream = stream_name(&coordinates.org, &coordinates.project, &coordinates.env);
     let source = wamn_event_wire::SourceEvent::Derived(event);
     let body = serde_json::to_vec(&source).map_err(|error| {
         DerivedPublishError::new(
@@ -307,7 +295,7 @@ fn js_span(
     let span = effect_span!(
         "wamn.jetstream",
         EffectIdentity {
-            project_env_key: &identity.project_env_key,
+            project_env_key: Some(&identity.project_env_key),
             project: identity.project,
             component: component_id,
         },
@@ -336,13 +324,7 @@ impl WamnJetstream {
         let mut plugin = Self {
             stream_replicas: cfg.stream_replicas,
             dup_window_secs: cfg.dup_window_secs,
-            event_coordinates: cfg
-                .event_target
-                .map_or_else(EventCoordinates::default, |target| EventCoordinates {
-                    org: target.org.into_boxed_str(),
-                    project: target.project.into_boxed_str(),
-                    environment: target.env.as_str().into(),
-                }),
+            event_coordinates: cfg.event_target,
             ctx: None,
             stream: None,
         };
@@ -351,7 +333,12 @@ impl WamnJetstream {
             "event connection requires host coordinates"
         );
         let expected = if has_target {
-            require_event_coordinates(&plugin.event_coordinates)?;
+            require_event_coordinates(
+                plugin
+                    .event_coordinates
+                    .as_ref()
+                    .expect("event target is present"),
+            )?;
             Some(plugin.expected_event_streams()?)
         } else {
             None
@@ -397,14 +384,13 @@ impl WamnJetstream {
                         "WAMN_EVT_DUP_WINDOW_SECS must declare a positive duplicate window",
                     )
                 })?;
-        let target = Triple::new(
-            self.event_coordinates.org.as_ref(),
-            self.event_coordinates.environment.as_ref(),
-            self.event_coordinates.project.as_ref(),
-        );
+        let target = self
+            .event_coordinates
+            .as_ref()
+            .context("event target is absent")?;
         Ok([
-            source_stream_config(&target, replicas, duplicate_window),
-            advisory_stream_config(&target, replicas),
+            source_stream_config(target, replicas, duplicate_window),
+            advisory_stream_config(target, replicas),
         ])
     }
 
@@ -414,23 +400,22 @@ impl WamnJetstream {
         &self,
         request: DerivedPublishRequest,
     ) -> Result<DerivedPublishAck, DerivedPublishError> {
-        if self.event_coordinates.org.is_empty() {
-            return Err(DerivedPublishError::new(
+        let coordinates = self.event_coordinates.as_ref().ok_or_else(|| {
+            DerivedPublishError::new(
                 DerivedPublishErrorType::UnboundIdentity,
                 "event target is absent",
-            ));
-        }
+            )
+        })?;
         let identity = JetstreamIdentity {
             project_env_key: wamn_registry::project_env_key(
-                &self.event_coordinates.org,
-                &self.event_coordinates.project,
-                &self.event_coordinates.environment,
-            )
-            .into(),
-            project: &self.event_coordinates.project,
-            environment: &self.event_coordinates.environment,
+                &coordinates.org,
+                &coordinates.project,
+                &coordinates.env,
+            ),
+            project: &coordinates.project,
+            environment: &coordinates.env,
         };
-        let publication = prepare_derived_publication(identity, &self.event_coordinates, request)?;
+        let publication = prepare_derived_publication(identity, coordinates, request)?;
         let mut headers = HeaderMap::new();
         headers.insert(NATS_MESSAGE_ID, publication.message_id.as_str());
 
@@ -553,7 +538,7 @@ mod tests {
     /// A bound publisher without a broker connection.
     async fn span_test_plugin() -> WamnJetstream {
         WamnJetstream::new(WamnJetstreamConfig {
-            event_target: Some(Triple::new("fixture", "dev", "widgets")),
+            event_target: Some(Triple::new("fixture", "dev".parse().unwrap(), "widgets")),
             stream_replicas: Some(1),
             dup_window_secs: Some(120),
             ..Default::default()
@@ -578,16 +563,17 @@ mod tests {
     #[test]
     fn derived_publication_uses_only_the_bound_identity_and_admitted_selector() {
         let dangerous_author_id = "author\r\nNats-Msg-Id: forged";
+        let environment = "dev".parse().unwrap();
         let publication = prepare_derived_publication(
             JetstreamIdentity {
-                project_env_key: "fixture-route-auth".into(),
+                project_env_key: "fixture-route-auth--dev--project".parse().unwrap(),
                 project: "database-project".into(),
-                environment: "dev".into(),
+                environment: &environment,
             },
-            &EventCoordinates {
+            &Triple {
                 org: "fixture".into(),
                 project: "widgets".into(),
-                environment: "dev".into(),
+                env: "dev".parse().unwrap(),
             },
             derived_request("component-1", dangerous_author_id),
         )
@@ -596,9 +582,9 @@ mod tests {
         assert_eq!(
             publication.message_id,
             derived_msg_id(
-                "fixture-route-auth",
+                &"fixture-route-auth--dev--project".parse().unwrap(),
                 "widgets",
-                "dev",
+                &"dev".parse().unwrap(),
                 "platform_fixture",
                 "orders",
                 Op::Update,
@@ -609,9 +595,12 @@ mod tests {
         assert!(!publication.message_id.contains("\r\n"));
 
         let event = DerivedEvent::from_slice(&publication.body).expect("derived wire decodes");
-        assert_eq!(event.project_env_key, "fixture-route-auth");
+        assert_eq!(
+            event.project_env_key,
+            "fixture-route-auth--dev--project".parse().unwrap()
+        );
         assert_eq!(event.project, "widgets");
-        assert_eq!(event.environment, "dev");
+        assert_eq!(event.environment, "dev".parse().unwrap());
         assert_eq!(event.package_id, "platform_fixture");
         assert_eq!(event.entity, "orders");
         assert_eq!(event.op, Op::Update);
@@ -627,16 +616,16 @@ mod tests {
     #[test]
     fn derived_publication_refuses_a_noncanonical_package_identity() {
         let identity = JetstreamIdentity {
-            project_env_key: "fixture".into(),
+            project_env_key: "fixture--dev--project".parse().unwrap(),
             project: "app".into(),
-            environment: "dev".into(),
+            environment: &"dev".parse().unwrap(),
         };
         let mut request = derived_request("component-1", "author:orders:7");
         request.package_id = " platform_fixture".into();
-        let coordinates = EventCoordinates {
+        let coordinates = Triple {
             org: "fixture".into(),
             project: "app".into(),
-            environment: "dev".into(),
+            env: "dev".parse().unwrap(),
         };
         let error = prepare_derived_publication(identity, &coordinates, request)
             .expect_err("a noncanonical package identity must refuse");
@@ -646,9 +635,9 @@ mod tests {
     #[tokio::test]
     async fn construction_refuses_invalid_event_coordinates_before_connect() {
         for target in [
-            Triple::new("", "dev", "widgets"),
-            Triple::new("fixture", "dev", ""),
-            Triple::new("fixture.>", "dev", "widgets"),
+            Triple::new("", "dev".parse().unwrap(), "widgets"),
+            Triple::new("fixture", "dev".parse().unwrap(), ""),
+            Triple::new("fixture.>", "dev".parse().unwrap(), "widgets"),
         ] {
             assert!(
                 WamnJetstream::new(WamnJetstreamConfig {
@@ -671,7 +660,7 @@ mod tests {
         ] {
             assert!(
                 WamnJetstream::new(WamnJetstreamConfig {
-                    event_target: Some(Triple::new("fixture", "dev", "widgets")),
+                    event_target: Some(Triple::new("fixture", "dev".parse().unwrap(), "widgets")),
                     stream_replicas: replicas,
                     dup_window_secs: window,
                     ..Default::default()
@@ -681,7 +670,7 @@ mod tests {
             );
         }
         WamnJetstream::new(WamnJetstreamConfig {
-            event_target: Some(Triple::new("fixture", "dev", "widgets")),
+            event_target: Some(Triple::new("fixture", "dev".parse().unwrap(), "widgets")),
             stream_replicas: Some(3),
             dup_window_secs: Some(120),
             ..Default::default()
@@ -702,7 +691,7 @@ mod tests {
         let stream = "EVT_13_wamnjsderived_3_dev_3_app";
         let event_subject = "evt.wamnjsderived.dev.app.orders.update";
         let _ = ctx.delete_stream(stream).await;
-        let target = Triple::new("wamnjsderived", "dev", "app");
+        let target = Triple::new("wamnjsderived", "dev".parse().unwrap(), "app");
         let advisory_config = advisory_stream_config(&target, 1);
         let advisory_name = advisory_config.name.clone();
         let _ = ctx.delete_stream(&advisory_name).await;

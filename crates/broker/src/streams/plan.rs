@@ -14,13 +14,9 @@ pub fn validate_inputs(
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
     };
     ensure!(
-        [
-            target.org.as_str(),
-            target.project.as_str(),
-            target.env.as_str()
-        ]
-        .into_iter()
-        .all(&token),
+        [target.org.as_str(), target.project.as_str(),]
+            .into_iter()
+            .all(&token),
         "event coordinates must be nonempty broker tokens"
     );
     ensure!(
@@ -31,8 +27,7 @@ pub fn validate_inputs(
         !duplicate_window.is_zero(),
         "event duplicate window must be positive"
     );
-    let prefix =
-        wamn_registry::name::event_prefix(&target.org, &target.project, target.env.as_str());
+    let prefix = wamn_registry::name::event_prefix(&target.org, &target.project, &target.env);
     let mut names = std::collections::BTreeSet::new();
     for config in consumers {
         let durable = config

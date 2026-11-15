@@ -66,12 +66,14 @@ async fn project_env_database_ownership_and_connect_are_targeted(pool: sqlx::PgP
 
     // TWO project-env databases: a single one makes every cross-database sweep
     // below vacuous (a loop over one row shows nothing about the cluster).
-    let first = project_env_database_name("acme", "ownership", "dev", "k3m9x2p7");
-    let second = project_env_database_name("acme", "ownership", "prod", "q80zdw41");
+    let first = project_env_database_name("acme", "ownership", &"dev".parse().unwrap(), "k3m9x2p7");
+    let second =
+        project_env_database_name("acme", "ownership", &"prod".parse().unwrap(), "q80zdw41");
     // A sibling database makes the privilege-reach assertion non-vacuous. The
     // test creates and drops it, but never runs a project privilege builder
     // against it.
-    let canary = project_env_database_name("acme", "ownership", "canary", "v6n1br4c");
+    let canary =
+        project_env_database_name("acme", "ownership", &"canary".parse().unwrap(), "v6n1br4c");
 
     // Clean slate — a leftover healthy role would satisfy the idempotent guard
     // and mask a mutated builder (the M2 condition-blind-spot lesson).

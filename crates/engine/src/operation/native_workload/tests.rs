@@ -37,7 +37,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
     NativeComponent {
         fact: AdmittedComponent {
             target: ComponentPackageCoordinate {
-                project_env_key: "org-a".into(),
+                project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: export.split(':').next().expect("package namespace").into(),
                 package_version: "1.0.0".into(),
             },

@@ -105,23 +105,23 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
         &format!(
             "BEGIN;\n\
              INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('00000000-0000-4000-8000-000000000001'::text::uuid,'','fixture','admin:seed-family-surface-fixture');\n\
-             INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 'org-a','orders','1.0.0','{digest}');\n\
+             INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 'org-a--prod--orders','orders','1.0.0','{digest}');\n\
              INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
-             VALUES ('org-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}');\n\
+             VALUES ('org-a--prod--orders','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}');\n\
              INSERT INTO platform.integration (id,integration_type,name,status) \
              VALUES ('00000000-0000-4000-8000-000000000011','http','upstream','active');\n\
              INSERT INTO platform.connection (id,integration_id,integration_type,status) \
              VALUES ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000011','http','active');\n\
              INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode) \
-             VALUES ('org-a','{digest}','orders','upstream','wamn:connection/http@0.1.0','write');\n\
+             VALUES ('org-a--prod--orders','{digest}','orders','upstream','wamn:connection/http@0.1.0','write');\n\
              INSERT INTO catalog.release_connection (project_env_key,manifest_digest,connection_id,version) \
-             VALUES ('org-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','00000000-0000-4000-8000-000000000012',1);\n\
+             VALUES ('org-a--prod--orders','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','00000000-0000-4000-8000-000000000012',1);\n\
              INSERT INTO catalog.connection_binding (project_env_key,manifest_digest,component_digest,package_id,name,connection_id) \
-             VALUES ('org-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{digest}','orders','upstream','00000000-0000-4000-8000-000000000012');\n\
+             VALUES ('org-a--prod--orders','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{digest}','orders','upstream','00000000-0000-4000-8000-000000000012');\n\
              INSERT INTO catalog.workflows \
                (project_env_key, environment, application, workflow_id, version, graph_json, \
                 wiring_hash, trigger, execution_type, execution_role, created_by) \
-             VALUES ('org-a', 'prod', 'orders', 'send', 1, '{{}}', '{digest}', \
+             VALUES ('org-a--prod--orders', 'prod', 'orders', 'send', 1, '{{}}', '{digest}', \
                      'manual', 'role', 'widget-reader', \
                      '00000000-0000-4000-8000-000000000001');\n\
              INSERT INTO platform.role (name) \
@@ -179,7 +179,7 @@ async fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads(pool: sq
         bound_query(
             &as_login,
             "SELECT count(graph_json) FROM catalog.workflows \
-              WHERE project_env_key = 'org-a' AND environment = 'prod' \
+              WHERE project_env_key = 'org-a--prod--orders' AND environment = 'prod' \
                 AND application = 'orders' AND workflow_id = 'send' AND version = 1"
         )
         .parse::<i64>()

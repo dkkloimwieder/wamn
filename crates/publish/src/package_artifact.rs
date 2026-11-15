@@ -104,7 +104,11 @@ pub const DESCRIPTOR_DIRECTORY: &str = "descriptors";
 
 /// The project that admission writes into a component target. A package
 /// artifact is project-free, and a descriptor drops the target.
-const ADMISSION_PROJECT_ENV_KEY: &str = "package-artifact";
+fn admission_project_env_key() -> wamn_registry::ProjectEnvKey {
+    "platform--package--artifact"
+        .parse()
+        .expect("package admission coordinate")
+}
 
 /// The platform packages a package-owned component is admitted with.
 const OWNED_PLATFORM_PACKAGES: [&str; 2] = ["wamn:node", "wamn:postgres"];
@@ -205,7 +209,7 @@ pub(crate) async fn connection_components(
         use wamn_component_artifact::component_artifact_source::ComponentArtifactSource;
         use wamn_engine::artifact_source::ArtifactSource as _;
         let target = ComponentPackageCoordinate::new(
-            ADMISSION_PROJECT_ENV_KEY,
+            &admission_project_env_key(),
             &manifest.package.id,
             &manifest.package.version,
         )?;
@@ -234,7 +238,7 @@ pub(crate) async fn connection_components(
             let document = crate::component_declaration::render_package_declaration(
                 root,
                 &source.name,
-                ADMISSION_PROJECT_ENV_KEY,
+                &admission_project_env_key(),
             )?;
             let declaration: ComponentDeclaration = serde_json::from_value(document)?;
             let bytes = std::fs::read(source.file).context("read package component binary")?;
@@ -517,7 +521,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         let document = crate::component_declaration::render_package_declaration(
             root,
             &source.name,
-            ADMISSION_PROJECT_ENV_KEY,
+            &admission_project_env_key(),
         )?;
         let platform_packages = OWNED_PLATFORM_PACKAGES.map(str::to_owned).to_vec();
         let mut connections: Vec<ComponentConnection> =

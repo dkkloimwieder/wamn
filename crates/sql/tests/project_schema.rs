@@ -56,7 +56,10 @@ fn current_database(url: &str) -> String {
     database.to_owned()
 }
 
-fn app_generation(database: &str, project_env_key: &str) -> wamn_identity_protocol::LoginName {
+fn app_generation(
+    database: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+) -> wamn_identity_protocol::LoginName {
     workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
@@ -77,8 +80,8 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
     const U4: &str = "44444444-4444-4444-4444-444444444444";
-    const PROJECT_ENV_KEY_1: &str = "t1";
-    const PROJECT_ENV_KEY_2: &str = "t2";
+    const PROJECT_ENV_KEY_1: &str = "t1--dev--project";
+    const PROJECT_ENV_KEY_2: &str = "t2--dev--project";
 
     let _serialized = wamn_test_postgres::lock();
     let mut case_server = wamn_test_postgres::start(&[]).unwrap();
@@ -93,7 +96,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     let url = test_database.as_str().to_owned();
 
     let database = current_database(&url);
-    let project_env_key_1_app = app_generation(&database, PROJECT_ENV_KEY_1);
+    let project_env_key_1_app = app_generation(&database, &PROJECT_ENV_KEY_1.parse().unwrap());
 
     let other = url::Url::parse(
         case_server
@@ -104,7 +107,8 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     )
     .unwrap();
     let other_database = current_database(other.as_str());
-    let project_env_key_2_app = app_generation(&other_database, PROJECT_ENV_KEY_2);
+    let project_env_key_2_app =
+        app_generation(&other_database, &PROJECT_ENV_KEY_2.parse().unwrap());
     let mut other_script = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::App,
         &other_database,

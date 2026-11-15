@@ -250,7 +250,11 @@ pub async fn fixture(pool: &sqlx::PgPool) -> Fixture {
         LoadedRelease::load_canonical_bytes(
             &served.canonical_bytes(),
             "schedule-live",
-            ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT).with_applications(declared()),
+            ReleaseTarget::new(
+                PROJECT_ENV_KEY.parse().unwrap(),
+                ENVIRONMENT.parse().unwrap(),
+            )
+            .with_applications(declared()),
         )
         .expect("the fixture release loads"),
     );
@@ -308,14 +312,14 @@ pub async fn targeted_postgres(admin: &mut Client, url: &str) -> (Arc<WamnPostgr
     ] {
         let target = if family == WorkloadRoleFamily::App {
             WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: PROJECT_ENV_KEY,
+                project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
                 database: &database,
             }
         } else {
             WorkloadRoleIdentity::ProjectEnvironment {
                 org: PROJECT_ENV_KEY,
                 project: PROJECT,
-                environment: ENVIRONMENT,
+                environment: &ENVIRONMENT.parse().unwrap(),
                 database: &database,
             }
         };
@@ -396,7 +400,7 @@ impl Fixture {
             &AuthorWorkflowRequest {
                 org: "schedule-live",
                 project: "default",
-                environment: ENVIRONMENT,
+                environment: &ENVIRONMENT.parse().unwrap(),
                 application: APP,
                 declared,
                 document: &document,
@@ -415,12 +419,12 @@ impl Fixture {
     pub async fn enable(&mut self, id: &str, enabler: &str) -> Result<(), WorkflowLifecycleError> {
         enable_workflow(
             &self.url,
-            &Triple::new("acme", ENVIRONMENT, APPLICATION),
+            &Triple::new("acme", ENVIRONMENT.parse().unwrap(), APPLICATION),
             &mut self.admin,
             &WorkflowVersion {
                 org: "schedule-live",
                 project: "default",
-                environment: ENVIRONMENT,
+                environment: &ENVIRONMENT.parse().unwrap(),
                 application: APP,
                 workflow_id: id,
                 version: 1,
@@ -438,12 +442,12 @@ impl Fixture {
     pub async fn disable(&mut self, id: &str) -> Result<(), WorkflowLifecycleError> {
         disable_workflow(
             &self.url,
-            &Triple::new("acme", ENVIRONMENT, APPLICATION),
+            &Triple::new("acme", ENVIRONMENT.parse().unwrap(), APPLICATION),
             &mut self.admin,
             &WorkflowVersion {
                 org: "schedule-live",
                 project: "default",
-                environment: ENVIRONMENT,
+                environment: &ENVIRONMENT.parse().unwrap(),
                 application: APP,
                 workflow_id: id,
                 version: 1,
@@ -523,9 +527,15 @@ impl Fixture {
                     wamn_broker::Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
                     &self.postgres,
-                    self.release.target().project_env_key.as_str(),
+                    &self
+                        .release
+                        .target()
+                        .project_env_key
+                        .as_str()
+                        .parse()
+                        .unwrap(),
                     PROJECT,
-                    self.release.target().environment.as_str(),
+                    &self.release.target().environment,
                 )),
                 Arc::clone(&self.logging),
                 Arc::from([]),
@@ -623,7 +633,7 @@ pub async fn admit(
             sequence,
             source_event_id: &wamn_event_wire::msg_id(
                 PROJECT,
-                ENVIRONMENT,
+                &ENVIRONMENT.parse().unwrap(),
                 &wamn_event_wire::CdcIdentity {
                     system_id: 1,
                     timeline: 1,
@@ -721,8 +731,11 @@ pub async fn release_variant(
     let release = LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "event-live",
-        ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
-            .with_applications([(application.to_owned(), declared().remove(APP).unwrap())].into()),
+        ReleaseTarget::new(
+            PROJECT_ENV_KEY.parse().unwrap(),
+            ENVIRONMENT.parse().unwrap(),
+        )
+        .with_applications([(application.to_owned(), declared().remove(APP).unwrap())].into()),
     )
     .unwrap();
     sqlx::query("INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest).bind(&manifest.canonical_bytes()).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();

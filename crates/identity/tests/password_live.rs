@@ -62,7 +62,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations(pool
         user.id(),
         "password-test",
         "widgets",
-        "dev",
+        &"dev".parse().unwrap(),
     )
     .await
     .unwrap();

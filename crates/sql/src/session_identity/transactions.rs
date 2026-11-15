@@ -111,7 +111,6 @@ impl WamnPostgres {
         conn: &mut sqlx::PgConnection,
         class: AuthorityClass,
         read: bool,
-        project_env_key: &str,
         schema: Option<&str>,
         runner: Option<&str>,
         role: Option<&str>,
@@ -124,7 +123,6 @@ impl WamnPostgres {
         Self::prepare_identity(
             class,
             read,
-            project_env_key,
             schema,
             runner,
             role,
@@ -145,7 +143,6 @@ impl WamnPostgres {
     pub(in super::super) fn prepare_identity(
         class: AuthorityClass,
         read: bool,
-        project_env_key: &str,
         schema: Option<&str>,
         runner: Option<&str>,
         role: Option<&str>,
@@ -157,14 +154,7 @@ impl WamnPostgres {
     ) -> Result<BoundIdentity, PgError> {
         // The project selected this connection credential. Refuse malformed values
         // before opening its transaction.
-        validate_session_identity(
-            project_env_key,
-            schema,
-            runner,
-            role,
-            operation,
-            application,
-        )?;
+        validate_session_identity(schema, runner, role, operation, application)?;
         let principal = user_id.ok_or_else(|| {
             PgError::QueryError(("55000".to_owned(), "actor-required".to_owned()))
         })?;

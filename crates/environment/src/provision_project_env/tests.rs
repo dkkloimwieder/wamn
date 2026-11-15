@@ -38,9 +38,9 @@ fn the_minted_instance_suffix_is_a_fresh_valid_dns_label_tail() {
 fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
     // The name validation runs first — a reserved / non-slug project id fails
     // without touching the registry or emitting a CR.
-    assert!(validate_project_env("demo", "wamn-x", "dev").is_err());
-    assert!(validate_project_env("demo", "Bad", "prod").is_err());
-    assert!(validate_project_env("demo", "billing", "prod").is_ok());
+    assert!(validate_project_env("demo", "wamn-x", &"dev".parse().unwrap()).is_err());
+    assert!(validate_project_env("demo", "Bad", &"prod".parse().unwrap()).is_err());
+    assert!(validate_project_env("demo", "billing", &"prod".parse().unwrap()).is_ok());
 }
 
 /// The target cluster is DERIVED (D18 `cluster_of`) from the org's placement +
@@ -145,7 +145,7 @@ async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
             changes: wamn_broker::Publisher::default(),
             org: "acme".into(),
             project: "billing".into(),
-            env: "dev".into(),
+            env: "dev".parse().unwrap(),
             policy: None,
             target: "cloud".to_owned(),
             disposable,
@@ -194,7 +194,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) 
         .map(drop)
         .unwrap();
     transaction.commit().await.unwrap();
-    let triple = Triple::new("demo", "dev", "inventory");
+    let triple = Triple::new("demo", "dev".parse().unwrap(), "inventory");
     for disposable in [Some(true), None] {
         do_record_project_env(
             &mut client,

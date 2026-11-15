@@ -16,7 +16,7 @@ use wamn_platform_identity::application::{
 pub struct Request {
     pub org: String,
     pub project: String,
-    pub env: String,
+    pub env: wamn_registry::EnvName,
     pub name: String,
     pub display_name: String,
     pub roles: Vec<RoleName>,

@@ -101,8 +101,8 @@ struct QueueState {
 /// The facts that name why a park or a release changed nothing.
 async fn queue_state(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     run_id: &str,
 ) -> Result<Option<QueueState>, WorkflowError> {
     let row = sqlx::query(sqlx::AssertSqlSafe(select_run_queue_state_sql()))
@@ -126,8 +126,8 @@ async fn queue_state(
 /// Hold an unleased queued run until an explicit release.
 pub async fn park(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     run_id: &str,
 ) -> Result<(), WorkflowError> {
     let parked = sqlx::query(sqlx::AssertSqlSafe(park_queued_run_sql()))
@@ -176,8 +176,8 @@ pub async fn park(
 /// Make a parked run eligible for leasing.
 pub async fn release(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     run_id: &str,
 ) -> Result<(), WorkflowError> {
     let released = sqlx::query(sqlx::AssertSqlSafe(release_parked_run_sql()))
@@ -207,8 +207,8 @@ pub async fn release(
 /// Read the newest runs in the authorized environment.
 pub async fn list(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     limit: u32,
 ) -> Result<Vec<WorkflowRun>, WorkflowError> {
     let limit = i64::from(limit);

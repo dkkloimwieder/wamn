@@ -58,16 +58,45 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
     let mut drops = AuthDrops::default();
+    let project_env_key = "t1--dev--project".parse().unwrap();
 
-    change!(client, |tx| create_role(&mut tx, "t1", "admin", &mut drops)).unwrap_err();
-    change!(client, |tx| create_role(&mut tx, "t1", "Clerk", &mut drops)).unwrap_err();
-    assert!(change!(client, |tx| create_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
-    assert!(!change!(client, |tx| create_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
+    change!(client, |tx| create_role(
+        &mut tx,
+        &project_env_key,
+        "admin",
+        &mut drops
+    ))
+    .unwrap_err();
+    change!(client, |tx| create_role(
+        &mut tx,
+        &project_env_key,
+        "Clerk",
+        &mut drops
+    ))
+    .unwrap_err();
+    assert!(
+        change!(client, |tx| create_role(
+            &mut tx,
+            &project_env_key,
+            "clerk",
+            &mut drops
+        ))
+        .unwrap()
+    );
+    assert!(
+        !change!(client, |tx| create_role(
+            &mut tx,
+            &project_env_key,
+            "clerk",
+            &mut drops
+        ))
+        .unwrap()
+    );
 
     change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
             &mut tx,
-            "t1",
+            &project_env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
                 role: "admin",
@@ -83,7 +112,7 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     let dormant = change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
             &mut tx,
-            "t1",
+            &project_env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
                 role: "clerk",
@@ -99,7 +128,7 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     let granted = change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
             &mut tx,
-            "t1",
+            &project_env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
                 role: "clerk",
@@ -114,7 +143,7 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     let again = change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
             &mut tx,
-            "t1",
+            &project_env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
                 role: "clerk",
@@ -129,7 +158,7 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
             &mut tx,
-            "t1",
+            &project_env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
                 role: "clerk",
@@ -149,7 +178,7 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
             &mut tx,
-            "t1",
+            &project_env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
                 role: "clerk",
@@ -167,7 +196,7 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
             &mut tx,
-            "t1",
+            &project_env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
                 role: "clerk",
@@ -179,11 +208,33 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     })
     .unwrap_err();
 
-    change!(client, |tx| delete_role(&mut tx, "t1", "admin", &mut drops)).unwrap_err();
-    assert!(change!(client, |tx| delete_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
+    change!(client, |tx| delete_role(
+        &mut tx,
+        &project_env_key,
+        "admin",
+        &mut drops
+    ))
+    .unwrap_err();
+    assert!(
+        change!(client, |tx| delete_role(
+            &mut tx,
+            &project_env_key,
+            "clerk",
+            &mut drops
+        ))
+        .unwrap()
+    );
     assert!(
         rows(&mut client).await.is_empty(),
         "the role took its rows with it"
     );
-    assert!(!change!(client, |tx| delete_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
+    assert!(
+        !change!(client, |tx| delete_role(
+            &mut tx,
+            &project_env_key,
+            "clerk",
+            &mut drops
+        ))
+        .unwrap()
+    );
 }

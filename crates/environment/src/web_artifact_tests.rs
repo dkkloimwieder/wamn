@@ -24,7 +24,7 @@ async fn two_environments_with_the_same_web_digest_share_one_completed_upload() 
         "applications": {"fixture": {"revocation_seconds":5,"hostname": "dev.example.com", "client": {"package": "web_fixture", "web": packed.digest}}}}))
     .unwrap();
     let mut second = first.clone();
-    second.env = "staging".into();
+    second.env = "staging".parse().unwrap();
     second.applications.get_mut("fixture").unwrap().hostname = "staging.example.com".into();
     let store = InMemory::new();
     let web = &first.applications["fixture"].client.as_ref().unwrap().web;

@@ -1,7 +1,7 @@
 //! Fill identity rows when an environment is provisioned.
 
 use crate::application::{self, ApplicationTarget, ApplicationUser};
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeSet;
 
@@ -57,10 +57,6 @@ pub async fn fill(
     for id in principals {
         application::project_authority(&mut system, &mut project, target, &id, &mut drops).await?;
     }
-    ensure!(
-        !target.project_env_key.is_empty(),
-        "project environment key is empty"
-    );
     project.commit().await?;
     system.commit().await?;
     changes.publish(drops).await;

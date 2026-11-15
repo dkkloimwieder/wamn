@@ -22,7 +22,6 @@
 //! registry rows — a template is consulted only at stamp time.
 
 use crate::placement::{EnvPolicy, Org, OrgEnvPolicy, Placement, RecoveryDomain};
-use wamn_registry::Env;
 
 /// A named org preset: a placement shape plus the env-policy set it stamps.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,7 +68,9 @@ impl Template {
             pooled: false,
             policies: vec![
                 EnvPolicy::dev(),
-                canary(RecoveryDomain::SharedWith(Env::new("prod"))),
+                canary(RecoveryDomain::SharedWith(
+                    "prod".parse().expect("valid environment name"),
+                )),
                 EnvPolicy::prod(),
             ],
         }
@@ -127,7 +128,7 @@ impl Template {
 /// difference the templates encode).
 fn canary(recovery_domain: RecoveryDomain) -> EnvPolicy {
     EnvPolicy {
-        name: Env::new("canary"),
+        name: "canary".parse().expect("valid environment name"),
         recovery_domain,
         promotion_rank: 20,
         instances: 2,
@@ -161,11 +162,11 @@ mod tests {
         let canary = standard
             .policies
             .iter()
-            .find(|p| p.name == "canary")
+            .find(|p| p.name == "canary".parse().unwrap())
             .expect("standard stamps a canary policy");
         assert_eq!(
             canary.recovery_domain,
-            RecoveryDomain::SharedWith(Env::new("prod")),
+            RecoveryDomain::SharedWith("prod".parse().expect("valid environment name")),
             "standard canary co-resides in prod's recovery domain (T2)"
         );
 
@@ -173,7 +174,7 @@ mod tests {
         let canary = dedicated
             .policies
             .iter()
-            .find(|p| p.name == "canary")
+            .find(|p| p.name == "canary".parse().unwrap())
             .expect("dedicated stamps a canary policy");
         assert_eq!(
             canary.recovery_domain,

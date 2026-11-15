@@ -6,14 +6,16 @@ use wamn_digest::sha256;
 /// ruling of 2026-10-09 on `wamn-snz0`). The first apply, the analysis of
 /// `env apply` and the host target all derive it here, so neither the
 /// environment document nor the serving manifest repeats the composed key.
-pub fn project_env_key(org: &str, project: &str, env: &str) -> String {
+pub fn project_env_key(org: &str, project: &str, env: &crate::EnvName) -> crate::ProjectEnvKey {
     format!("{org}--{env}--{project}")
+        .parse()
+        .expect("validated registry coordinates fit a deployment key")
 }
 
 /// The NATS user of the environment `project_env_key`. Its client certificate
 /// carries this DNS name, and its replies use the inbox `_INBOX_<user>`
 /// (docs/plan/alignment.md R5).
-pub fn environment_nats_user(project_env_key: &str) -> String {
+pub fn environment_nats_user(project_env_key: &crate::ProjectEnvKey) -> String {
     format!("wamn-env-{project_env_key}")
 }
 
@@ -24,12 +26,12 @@ pub fn control_nats_user(org: &str) -> String {
 }
 
 /// Coordinates of one shared environment, without a project database.
-pub fn environment_key(org: &str, env: &str) -> String {
+pub fn environment_key(org: &str, env: &crate::EnvName) -> String {
     format!("{org}--{env}")
 }
 
 /// The Secret that stores a project deployment's credential values.
-pub fn credential_secret_name(org: &str, project: &str, env: &str) -> String {
+pub fn credential_secret_name(org: &str, project: &str, env: &crate::EnvName) -> String {
     format!("wamn-credential-{}", project_env_key(org, project, env))
 }
 
@@ -75,21 +77,26 @@ pub const CDC_OBJECT_PREFIX: &str = "wamn_cdc_";
 /// there. `--` separates the identity components (the coordinate
 /// convention). Validate the assembled length with the provisioning coordinate validator
 /// before use; quote it in DDL (it contains hyphens) with the provisioning SQL builder.
-pub fn project_env_database_name(org: &str, project: &str, env: &str, instance: &str) -> String {
+pub fn project_env_database_name(
+    org: &str,
+    project: &str,
+    env: &crate::EnvName,
+    instance: &str,
+) -> String {
     format!(
         "{}{INSTANCE_SUFFIX_SEPARATOR}{instance}",
         project_env_database_stem(org, project, env)
     )
 }
 
-pub fn project_env_database_stem(org: &str, project: &str, env: &str) -> String {
+pub fn project_env_database_stem(org: &str, project: &str, env: &crate::EnvName) -> String {
     format!("{DB_PREFIX}{org}--{env}--{project}")
 }
 
 /// The per-project-env credential Secret name:
 /// `wamn-db-<org>--<env>--<project>`. It stays triple-only because its namespace
 /// carries the instance identity; its URL names the suffixed Postgres database.
-pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
+pub fn project_env_secret_name(org: &str, project: &str, env: &crate::EnvName) -> String {
     project_env_database_stem(org, project, env)
 }
 
@@ -102,7 +109,7 @@ pub fn control_administration_secret_name(org: &str) -> String {
 
 /// The key of one environment in [`control_administration_secret_name`]:
 /// `<env>--<project>`, the file name the mounted Secret shows.
-pub fn control_administration_key(project: &str, env: &str) -> String {
+pub fn control_administration_key(project: &str, env: &crate::EnvName) -> String {
     format!("{env}--{project}")
 }
 
@@ -124,7 +131,12 @@ pub fn control_administration_key(project: &str, env: &str) -> String {
 /// Validate the triple's assembled length with the provisioning coordinate validator and the
 /// suffix with the provisioning instance validator before use; a triple that does not
 /// fit is refused, not shortened.
-pub fn project_env_namespace(org: &str, project: &str, env: &str, instance: &str) -> String {
+pub fn project_env_namespace(
+    org: &str,
+    project: &str,
+    env: &crate::EnvName,
+    instance: &str,
+) -> String {
     format!(
         "{}{INSTANCE_SUFFIX_SEPARATOR}{instance}",
         project_env_namespace_stem(org, project, env)
@@ -133,7 +145,7 @@ pub fn project_env_namespace(org: &str, project: &str, env: &str, instance: &str
 
 /// The namespace's identity stem `wamn-<org>--<env>--<project>` — the part the
 /// triple contributes, bounded by [`MAX_NAMESPACE_STEM_LEN`].
-pub fn project_env_namespace_stem(org: &str, project: &str, env: &str) -> String {
+pub fn project_env_namespace_stem(org: &str, project: &str, env: &crate::EnvName) -> String {
     format!("{NAMESPACE_PREFIX}{org}--{env}--{project}")
 }
 
@@ -142,7 +154,7 @@ pub fn project_env_namespace_stem(org: &str, project: &str, env: &str) -> String
 /// `wamn-db-…` query-credential Secret — the replication credential is a
 /// separate, higher-privilege tier (R8b), so a leaked query credential never
 /// implies the WAL and vice versa.
-pub fn project_env_cdc_secret_name(org: &str, project: &str, env: &str) -> String {
+pub fn project_env_cdc_secret_name(org: &str, project: &str, env: &crate::EnvName) -> String {
     format!("{CDC_SECRET_PREFIX}{org}--{env}--{project}")
 }
 
@@ -155,22 +167,27 @@ pub fn project_env_cdc_secret_name(org: &str, project: &str, env: &str) -> Strin
 /// carries; identity always travels in the registration row / Secret labels,
 /// never parsed back out of a name. Validate the assembled length with
 /// the provisioning CDC validator before use.
-pub fn cdc_object_name(org: &str, project: &str, env: &str, instance: &str) -> String {
+pub fn cdc_object_name(org: &str, project: &str, env: &crate::EnvName, instance: &str) -> String {
     format!("{}__{instance}", cdc_object_name_stem(org, project, env))
 }
 
-pub fn cdc_object_name_stem(org: &str, project: &str, env: &str) -> String {
+pub fn cdc_object_name_stem(org: &str, project: &str, env: &crate::EnvName) -> String {
     let flat = |s: &str| s.replace('-', "_");
     format!(
         "{CDC_OBJECT_PREFIX}{}__{}__{}",
         flat(org),
-        flat(env),
+        flat(env.as_str()),
         flat(project)
     )
 }
 
 /// A workload credential Secret for one project deployment.
-pub fn workload_secret_name(prefix: &str, org: &str, project: &str, env: &str) -> String {
+pub fn workload_secret_name(
+    prefix: &str,
+    org: &str,
+    project: &str,
+    env: &crate::EnvName,
+) -> String {
     format!("{prefix}{}", project_env_key(org, project, env))
 }
 /// A workload credential Secret shared by an org.
@@ -182,35 +199,31 @@ pub fn workload_secret_prefix(stem: &str) -> String {
     format!("wamn-{stem}-")
 }
 /// A broker certificate Secret.
-pub fn nats_certificate(key: &str) -> String {
+pub fn nats_certificate(key: &crate::ProjectEnvKey) -> String {
     format!("wamn-nats-{key}")
 }
 /// A control broker certificate Secret.
 pub fn control_nats_certificate(org: &str) -> String {
     format!("wamn-nats-control-{org}")
 }
-/// The operator service principal of a project deployment.
-pub fn operator_subject(org: &str, project: &str, env: &str) -> String {
-    format!("wamn-operator-{}", project_env_key(org, project, env))
-}
 /// A scheduled application's service principal.
-pub fn application_subject(key: &str, package: &str) -> String {
+pub fn application_subject(key: &crate::ProjectEnvKey, package: &str) -> String {
     format!("wamn-app-{key}--{package}")
 }
 /// The operator presenter Secret.
-pub fn operator_secret(org: &str, project: &str, env: &str) -> String {
+pub fn operator_secret(org: &str, project: &str, env: &crate::EnvName) -> String {
     format!("wamn-pat-operator-{}", project_env_key(org, project, env))
 }
 /// The prefix shared by a project deployment's event subjects.
-pub fn event_prefix(org: &str, project: &str, env: &str) -> String {
+pub fn event_prefix(org: &str, project: &str, env: &crate::EnvName) -> String {
     format!("evt.{org}.{env}.{project}.")
 }
 /// A subject within a project deployment's event stream.
-pub fn event_subject(org: &str, project: &str, env: &str, tail: &str) -> String {
+pub fn event_subject(org: &str, project: &str, env: &crate::EnvName, tail: &str) -> String {
     format!("{}{tail}", event_prefix(org, project, env))
 }
 /// The host group for the local development loop.
-pub fn dev_host_group(key: &str) -> String {
+pub fn dev_host_group(key: &crate::ProjectEnvKey) -> String {
     format!("wamn-dev-{key}")
 }
 /// The Job and account of an org's control operation.
@@ -234,26 +247,28 @@ pub const HASH_LEN: usize = 20;
 /// # Errors
 ///
 /// When the coordinate is not valid.
-pub fn environment_resource_name(org: &str, project: &str, env: &str) -> Result<String, NameError> {
-    validate_coordinate("org", org, true)?;
-    validate_coordinate("environment", env, false)?;
-    validate_coordinate("project", project, true)?;
+pub fn environment_resource_name(
+    org: &str,
+    project: &str,
+    env: &crate::EnvName,
+) -> Result<String, NameError> {
+    validate_coordinate("org", org)?;
+    validate_coordinate("project", project)?;
     let hash = hex::encode(sha256(format!("{org}/{env}/{project}").as_bytes()));
-    let slug: String = env.chars().take(SLUG_LEN).collect();
+    let slug: String = env.as_str().chars().take(SLUG_LEN).collect();
     Ok(format!("e-{slug}-{}", &hash[..HASH_LEN]))
 }
 
 /// The Helm release and host group shared by an org and environment.
-pub fn environment_host_name(org: &str, env: &str) -> Result<String, NameError> {
-    validate_coordinate("org", org, true)?;
-    validate_coordinate("environment", env, false)?;
+pub fn environment_host_name(org: &str, env: &crate::EnvName) -> Result<String, NameError> {
+    validate_coordinate("org", org)?;
     let hash = hex::encode(sha256(format!("{org}/{env}").as_bytes()));
-    let slug: String = env.chars().take(SLUG_LEN).collect();
+    let slug: String = env.as_str().chars().take(SLUG_LEN).collect();
     Ok(format!("h-{slug}-{}", &hash[..HASH_LEN]))
 }
 
 /// The ServiceAccount shared by an environment's project resources.
-pub fn environment_service_account(org: &str, env: &str) -> String {
+pub fn environment_service_account(org: &str, env: &crate::EnvName) -> String {
     format!("wamn-host-{}", environment_key(org, env))
 }
 
@@ -261,40 +276,28 @@ pub fn environment_service_account(org: &str, env: &str) -> String {
 pub fn application_release_name(
     org: &str,
     project: &str,
-    env: &str,
+    env: &crate::EnvName,
     application: &str,
 ) -> Result<String, NameError> {
-    validate_coordinate("org", org, true)?;
-    validate_coordinate("environment", env, false)?;
-    validate_coordinate("project", project, true)?;
+    validate_coordinate("org", org)?;
+    validate_coordinate("project", project)?;
     let hash = hex::encode(sha256(
         format!("{org}/{env}/{project}/{application}").as_bytes(),
     ));
-    let slug: String = env.chars().take(SLUG_LEN).collect();
+    let slug: String = env.as_str().chars().take(SLUG_LEN).collect();
     Ok(format!("r-{slug}-{}", &hash[..HASH_LEN]))
 }
 
-/// Read the registry coordinate encoded in a canonical project deployment key.
-pub fn parse_project_env_key(key: &str) -> Option<crate::Triple> {
-    if !crate::identifiers::valid_project_env_key(key) {
-        return None;
-    }
-    let mut parts = key.split("--");
-    let org = parts.next()?;
-    let env = parts.next()?;
-    let project = parts.next()?;
-    Some(crate::Triple::new(org, env, project))
-}
 /// A project deployment's complete event subscription.
-pub fn stream_subjects(org: &str, project: &str, env: &str) -> String {
+pub fn stream_subjects(org: &str, project: &str, env: &crate::EnvName) -> String {
     event_subject(org, project, env, ">")
 }
 /// The event stream of one project deployment. Length framing separates every coordinate.
-pub fn stream_name(org: &str, project: &str, env: &str) -> String {
+pub fn stream_name(org: &str, project: &str, env: &crate::EnvName) -> String {
     format!(
         "EVT_{}_{org}_{}_{env}_{}_{project}",
         org.len(),
-        env.len(),
+        env.as_str().len(),
         project.len()
     )
 }
@@ -311,12 +314,12 @@ pub fn application_event_consumer(application: &str, package: &str, entity: &str
 }
 
 /// The coordinate label in a host status response.
-pub fn host_status(org: &str, project: &str, env: &str) -> String {
+pub fn host_status(org: &str, project: &str, env: &crate::EnvName) -> String {
     format!("{org}/{env}/{project}")
 }
 
 /// The database cluster of a dedicated org and recovery owner.
-pub fn cluster(org: &str, owner: &str) -> String {
+pub fn cluster(org: &str, owner: &crate::EnvName) -> String {
     format!("{org}-{owner}")
 }
 
@@ -332,14 +335,8 @@ impl std::fmt::Display for NameError {
     }
 }
 impl std::error::Error for NameError {}
-fn validate_coordinate(
-    coordinate: &'static str,
-    value: &str,
-    reserved: bool,
-) -> Result<(), NameError> {
-    if crate::identifiers::project_id_reason(value).is_none()
-        && (!reserved || !crate::identifiers::project_id_is_reserved(value))
-    {
+fn validate_coordinate(coordinate: &'static str, value: &str) -> Result<(), NameError> {
+    if crate::identifiers::valid_project(value) {
         return Ok(());
     }
     Err(NameError {
@@ -353,7 +350,7 @@ pub fn resource_suffix(resource: &str, purpose: &str) -> String {
     format!("{resource}-{purpose}")
 }
 /// A service resource derived from its project deployment.
-pub fn service_resource(stem: &str, org: &str, project: &str, env: &str) -> String {
+pub fn service_resource(stem: &str, org: &str, project: &str, env: &crate::EnvName) -> String {
     format!("{stem}-{}", project_env_key(org, project, env))
 }
 /// A login name derived from its credential identity.
@@ -366,7 +363,7 @@ pub fn credential_login(prefix: &str, identity_hash: &str) -> wamn_identity_prot
         .expect("derived login fits PostgreSQL identifiers")
 }
 /// The audience of one project database instance.
-pub fn project_audience(org: &str, project: &str, env: &str, instance: &str) -> String {
+pub fn project_audience(org: &str, project: &str, env: &crate::EnvName, instance: &str) -> String {
     format!("urn:wamn:project-env:{org}:{env}:{project}:{instance}")
 }
 /// The audience of one org's control service.
@@ -379,8 +376,8 @@ pub fn inbox(user: &str) -> String {
 }
 
 /// The release discovery filter for a validated environment slug.
-pub fn application_release_filter(env: &str) -> String {
-    let slug: String = env.chars().take(SLUG_LEN).collect();
+pub fn application_release_filter(env: &crate::EnvName) -> String {
+    let slug: String = env.as_str().chars().take(SLUG_LEN).collect();
     format!("^r-{slug}-")
 }
 /// The advisory stream of one event source.
@@ -402,7 +399,7 @@ pub fn nats_token(prefix: &str, identity: &str, suffix: &str) -> String {
 }
 
 /// The memory key of one connection's current facts.
-pub fn connection_key(project: &str, id: impl std::fmt::Display) -> String {
+pub fn connection_key(project: &crate::ProjectEnvKey, id: impl std::fmt::Display) -> String {
     format!("{project}.connection.{id}")
 }
 
@@ -415,23 +412,24 @@ pub fn host_selector(group: &str) -> String {
 mod tests {
     use super::*;
     #[test]
-    fn resource_coordinates_round_trip_and_keep_project_databases_separate() {
-        let first = crate::Triple::new("acme", "dev", "billing");
-        let key = project_env_key(&first.org, &first.project, first.env.as_str());
-        assert_eq!(parse_project_env_key(&key), Some(first));
-        assert_ne!(key, project_env_key("acme", "shipping", "dev"));
+    fn resource_coordinates_keep_project_databases_separate() {
+        let first = crate::Triple::new("acme", "dev".parse().unwrap(), "billing");
+        let key = project_env_key(&first.org, &first.project, &first.env);
         assert_ne!(
-            project_env_database_name("acme", "billing", "dev", "abcdefgh"),
-            project_env_database_name("acme", "shipping", "dev", "abcdefgh")
+            key,
+            project_env_key("acme", "shipping", &"dev".parse().unwrap())
         );
-        let resource = environment_resource_name("acme", "billing", "dev").unwrap();
+        assert_ne!(
+            project_env_database_name("acme", "billing", &"dev".parse().unwrap(), "abcdefgh"),
+            project_env_database_name("acme", "shipping", &"dev".parse().unwrap(), "abcdefgh")
+        );
+        let resource =
+            environment_resource_name("acme", "billing", &"dev".parse().unwrap()).unwrap();
         assert!(resource.len() <= 47);
         assert_ne!(
             resource,
-            environment_resource_name("acme", "shipping", "dev").unwrap()
+            environment_resource_name("acme", "shipping", &"dev".parse().unwrap()).unwrap()
         );
-        assert!(environment_resource_name("acme", "billing", "Bad Env").is_err());
-        assert!(parse_project_env_key("acme--project").is_none());
     }
 }
 

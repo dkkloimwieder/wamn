@@ -65,17 +65,20 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "environment status test",
-        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "dev")
-            .with_applications(
-                [(
-                    "purchasing".to_owned(),
-                    wamn_catalog::ApplicationDefinition {
-                        connections: std::collections::BTreeMap::new(),
-                        packages: ["status_test".to_owned()].into(),
-                    },
-                )]
-                .into(),
-            ),
+        wamn_engine::release_manifest::ReleaseTarget::new(
+            PROJECT_ENV_KEY.parse().unwrap(),
+            "dev".parse().unwrap(),
+        )
+        .with_applications(
+            [(
+                "purchasing".to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    connections: std::collections::BTreeMap::new(),
+                    packages: ["status_test".to_owned()].into(),
+                },
+            )]
+            .into(),
+        ),
     )?))
 }
 
@@ -102,7 +105,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     let generation = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: PROJECT_ENV_KEY,
+            project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
             database: &database,
         },
     )?;
@@ -160,7 +163,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     let route = FlowHttpRouting::for_test(Some(release()?))
         .with_authenticator(Arc::new(PlatformRouteAuthenticator::for_test(
             Arc::clone(&reader),
-            "host-project",
+            &"host-project--dev--project".parse().unwrap(),
             None,
             None,
         )))

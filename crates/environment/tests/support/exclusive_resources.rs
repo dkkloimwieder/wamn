@@ -58,7 +58,7 @@ impl Fixture {
         let mut admin = connect(database.as_str()).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE wamn_system; BEGIN; {} {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",
             bind_platform_principal_sql(PlatformComponent::Provisioning),
-            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev")))).execute(&mut admin).await.map(drop)?;
+            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", &"dev".parse().unwrap())))).execute(&mut admin).await.map(drop)?;
         let registry = local_registry::LocalRegistry::start("exclusive-resources");
         registry.ready().await;
         let auth = scratch.path().join("auth.json");
@@ -262,7 +262,10 @@ impl Fixture {
         )
         .await?;
         let mut drops = ConnectionDrops::default();
-        drops.release("acme--dev--one", &self.release.release().manifest_digest);
+        drops.release(
+            &"acme--dev--one".parse().unwrap(),
+            &self.release.release().manifest_digest,
+        );
         changes.publish(drops).await;
         Ok(())
     }
@@ -273,7 +276,7 @@ impl Fixture {
             Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&leases)));
         let changes = wamn_connections::connection_memory::replicate(
             nats,
-            Some("acme--dev--one"),
+            Some(&"acme--dev--one".parse().unwrap()),
             Arc::clone(&memory),
         );
         until("the exclusive host watches connections", || {
@@ -285,9 +288,9 @@ impl Fixture {
             changes,
             Arc::clone(&self.credentials),
             &self.postgres,
-            "acme--dev--one",
+            &"acme--dev--one".parse().unwrap(),
             "one",
-            "dev",
+            &"dev".parse().unwrap(),
         ));
         let integrations = Integrations::new(
             Arc::clone(&facts),
@@ -396,7 +399,9 @@ async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow:
         .change("meter", "connection.disable", &changes)
         .await?;
     until("the old host drops X", || {
-        a.memory.connection("acme--dev--one", &id).is_err()
+        a.memory
+            .connection(&"acme--dev--one".parse().unwrap(), &id)
+            .is_err()
     })
     .await;
     assert!(
@@ -424,7 +429,10 @@ async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow:
     );
     assert!(disabled.elapsed() < Duration::from_secs(60));
     assert_eq!(
-        a.memory.connection("acme--dev--one", &id).unwrap().status,
+        a.memory
+            .connection(&"acme--dev--one".parse().unwrap(), &id)
+            .unwrap()
+            .status,
         wamn_connections::connection_memory::ConnectionStatus::Disabled
     );
     a.leases.shutdown().await;

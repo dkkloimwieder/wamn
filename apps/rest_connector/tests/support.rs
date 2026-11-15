@@ -26,7 +26,7 @@ pub fn admit(
     bases: BTreeSet<wamn_digest::Digest>,
 ) -> ComponentAdmission {
     let target = ComponentPackageCoordinate {
-        project_env_key: "rest--test--publication".into(),
+        project_env_key: "rest--test--publication".parse().unwrap(),
         package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
         package_version: "0.1.1".into(),
     };
@@ -72,7 +72,9 @@ pub fn palette() -> Vec<wamn_publish::palette::PaletteComponent> {
             bytes: std::fs::read(component.file).expect("read the built palette component"),
             facts: component
                 .declaration
-                .into_admitted(wamn_catalog::palette_target("rest--test--publication")),
+                .into_admitted(wamn_catalog::palette_target(
+                    &"rest--test--publication".parse().unwrap(),
+                )),
         })
         .collect()
 }

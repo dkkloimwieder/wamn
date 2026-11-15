@@ -34,10 +34,7 @@ pub async fn wait_administration(
         else {
             return Ok(());
         };
-        let key = wamn_control_provision::control_administration_key(
-            &triple.project,
-            triple.env.as_str(),
-        );
+        let key = wamn_control_provision::control_administration_key(&triple.project, &triple.env);
         let login = present
             .then(|| {
                 secret["data"][&key]

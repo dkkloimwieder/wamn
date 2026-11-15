@@ -48,7 +48,12 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let mut fifo = Vec::new();
     for _ in 0..3 {
         let result = wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .lease_next(
+                COMPONENT,
+                &release_package_ids,
+                &ENVIRONMENT.parse().unwrap(),
+                30_000,
+            )
             .await?;
         let ProductionLeaseResult::Ready {
             run_id, package_id, ..
@@ -90,7 +95,12 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     assert_eq!(locked.get::<String, _>(0), "double-a");
     let skipped = ready_run(
         wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .lease_next(
+                COMPONENT,
+                &release_package_ids,
+                &ENVIRONMENT.parse().unwrap(),
+                30_000,
+            )
             .await?,
     );
     assert_eq!(skipped, "double-b");
@@ -100,7 +110,12 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .map(drop)?;
     let released = ready_run(
         wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .lease_next(
+                COMPONENT,
+                &release_package_ids,
+                &ENVIRONMENT.parse().unwrap(),
+                30_000,
+            )
             .await?,
     );
     let acquired = BTreeSet::from([skipped, released]);
@@ -113,7 +128,12 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     seed_exhausted_run(admin, "janitor").await?;
     assert_eq!(
         wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_exhausted(
+                COMPONENT,
+                &release_package_ids,
+                &ENVIRONMENT.parse().unwrap(),
+                0
+            )
             .await?,
         ProductionReapResult::Reaped {
             run_id: "janitor".into()
@@ -165,7 +185,12 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     .await
     .map(drop)?;
     let starved = wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-        .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+        .lease_next(
+            COMPONENT,
+            &release_package_ids,
+            &ENVIRONMENT.parse().unwrap(),
+            30_000,
+        )
         .await
         .expect_err("the probed grant refuses");
     assert_eq!(starved.error_type(), ProductionLeaseErrorType::Storage);
@@ -186,7 +211,12 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     .map(drop)?;
     assert_eq!(
         wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
+            .reap_exhausted(
+                COMPONENT,
+                &release_package_ids,
+                &ENVIRONMENT.parse().unwrap(),
+                0
+            )
             .await?,
         ProductionReapResult::Reaped {
             run_id: "grant-refused".into()
@@ -205,7 +235,12 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     assert_eq!(
         ready_run(
             wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-                .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+                .lease_next(
+                    COMPONENT,
+                    &release_package_ids,
+                    &ENVIRONMENT.parse().unwrap(),
+                    30_000
+                )
                 .await?
         ),
         "release-record"
@@ -217,7 +252,12 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     assert_eq!(
         ready_run(
             wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-                .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+                .lease_next(
+                    COMPONENT,
+                    &release_package_ids,
+                    &ENVIRONMENT.parse().unwrap(),
+                    30_000
+                )
                 .await?
         ),
         "release-record"
@@ -231,20 +271,33 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     expire_effect_run(admin, "release-record").await?;
     assert_eq!(
         wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .lease_next(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .lease_next(
+                ROLLED_COMPONENT,
+                &release_package_ids,
+                &ENVIRONMENT.parse().unwrap(),
+                30_000
+            )
             .await?,
         ProductionLeaseResult::Empty,
         "a different release must not select an admitted run"
     );
     assert!(
         wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .pinned_backlog(COMPONENT, &release_package_ids, ENVIRONMENT)
+            .pinned_backlog(
+                COMPONENT,
+                &release_package_ids,
+                &ENVIRONMENT.parse().unwrap()
+            )
             .await?,
         "the expired run is the pinned backlog of its own release"
     );
     assert!(
         !wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .pinned_backlog(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT)
+            .pinned_backlog(
+                ROLLED_COMPONENT,
+                &release_package_ids,
+                &ENVIRONMENT.parse().unwrap()
+            )
             .await?,
         "another release has no pinned backlog"
     );
@@ -252,7 +305,12 @@ async fn production_lease_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     assert_eq!(
         ready_run(
             wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-                .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+                .lease_next(
+                    COMPONENT,
+                    &release_package_ids,
+                    &ENVIRONMENT.parse().unwrap(),
+                    30_000
+                )
                 .await?
         ),
         "release-record"
@@ -306,14 +364,14 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
 
     let actor = wamn_identity_protocol::PlatformComponent::Executor.principal_id();
     let admitted = plugin
-        .executor_write("default", PROJECT_ENV_KEY, async |connection| {
+        .executor_write("default", async |connection| {
             wamn_events::admission::admit_manual_run(
                 connection,
-                PROJECT_ENV_KEY,
+                &PROJECT_ENV_KEY.parse().unwrap(),
                 &wamn_events::admission::ManualRunAdmission {
                     package_id: PACKAGE_ID,
                     manifest_digest: &POD_MANIFEST_DIGEST.parse().unwrap(),
-                    environment: ENVIRONMENT,
+                    environment: &ENVIRONMENT.parse().unwrap(),
                     workflow_id: WIRING_ID,
                     workflow_version: WIRING_VERSION,
                     wiring_hash: &EMPTY_HASH.parse().unwrap(),
@@ -348,7 +406,12 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
     seed_run(admin, "history-lease", PACKAGE_ID).await?;
     let acquired = ready_run(
         wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .lease_next(COMPONENT, &[PACKAGE_ID.to_owned()], ENVIRONMENT, 30_000)
+            .lease_next(
+                COMPONENT,
+                &[PACKAGE_ID.to_owned()],
+                &ENVIRONMENT.parse().unwrap(),
+                30_000,
+            )
             .await?,
     );
     assert_eq!(acquired, "history-lease");
@@ -385,7 +448,7 @@ async fn mixed_retries_end_with_the_last_cause(pool: sqlx::PgPool) -> anyhow::Re
             .await
             .map(|result| result.rows_affected())?;
         let lease = wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .lease_next(COMPONENT, &packages, &ENVIRONMENT.parse().unwrap(), 30_000)
             .await?;
         let ProductionLeaseResult::Ready {
             lease_generation, ..
@@ -405,7 +468,7 @@ async fn mixed_retries_end_with_the_last_cause(pool: sqlx::PgPool) -> anyhow::Re
             .await
             .map(|result| result.rows_affected())?;
         let lease = wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .lease_next(COMPONENT, &packages, &ENVIRONMENT.parse().unwrap(), 30_000)
             .await?;
         assert_eq!(ready_run(lease), run);
         assert_eq!(
@@ -415,7 +478,7 @@ async fn mixed_retries_end_with_the_last_cause(pool: sqlx::PgPool) -> anyhow::Re
         );
         expire_effect_run(admin, run).await?;
         let lease = wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .lease_next(COMPONENT, &packages, &ENVIRONMENT.parse().unwrap(), 30_000)
             .await?;
         let ProductionLeaseResult::Ready {
             lease_generation, ..
@@ -445,7 +508,7 @@ async fn mixed_retries_end_with_the_last_cause(pool: sqlx::PgPool) -> anyhow::Re
             assert_eq!(
                 ready_run(
                     wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-                        .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+                        .lease_next(COMPONENT, &packages, &ENVIRONMENT.parse().unwrap(), 30_000)
                         .await?
                 ),
                 run
@@ -454,13 +517,13 @@ async fn mixed_retries_end_with_the_last_cause(pool: sqlx::PgPool) -> anyhow::Re
             expire_effect_run(admin, run).await?;
             assert!(matches!(
                 wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-                    .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+                    .lease_next(COMPONENT, &packages, &ENVIRONMENT.parse().unwrap(), 30_000)
                     .await?,
                 ProductionLeaseResult::Empty
             ));
             assert_eq!(
                 wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-                    .reap_exhausted(COMPONENT, &packages, ENVIRONMENT, 0)
+                    .reap_exhausted(COMPONENT, &packages, &ENVIRONMENT.parse().unwrap(), 0)
                     .await?,
                 ProductionReapResult::Reaped {
                     run_id: run.to_owned()
@@ -498,7 +561,7 @@ async fn lease_release_fences_and_bounds_backoff(pool: sqlx::PgPool) -> anyhow::
         let run = format!("backoff-{attempts}");
         seed_run(admin, &run, PACKAGE_ID).await?;
         let lease = wamn_connections::production_lease::ProductionLeases::new(plugin.as_ref())
-            .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .lease_next(COMPONENT, &packages, &ENVIRONMENT.parse().unwrap(), 30_000)
             .await?;
         let ProductionLeaseResult::Ready {
             lease_generation, ..

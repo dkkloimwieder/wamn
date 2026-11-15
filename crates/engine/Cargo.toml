@@ -11,6 +11,7 @@ test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]
+wamn-registry.workspace = true
 wamn-digest.workspace = true
 # The pinned runtime's shared multiplexing code needs OCI's SHA-256 dependency.
 wash-runtime = { workspace = true, features = ["oci"] }

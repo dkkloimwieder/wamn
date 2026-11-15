@@ -171,7 +171,7 @@ struct Environment<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     project: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    env: Option<&'a str>,
+    env: Option<&'a wamn_registry::EnvName>,
 }
 
 #[derive(Deserialize)]
@@ -547,7 +547,7 @@ async fn handle(
                                     aud: target.audience().into(),
                                     org: &triple.org,
                                     project: Some(&triple.project),
-                                    env: Some(triple.env.as_str()),
+                                    env: Some(&triple.env),
                                 });
                                 if read_limit.is_some_and(|limit| environments.len() >= limit) {
                                     break;

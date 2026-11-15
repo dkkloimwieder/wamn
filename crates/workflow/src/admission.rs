@@ -96,7 +96,7 @@ pub async fn admit_schedule_run(
     let input = serde_json::json!({"due": due});
     let key = format!("schedule:{application}/{workflow_id}:{due}");
     postgres
-        .executor_write(project, &target.project_env_key, async |connection| {
+        .executor_write(project, async |connection| {
             let Some(row) = admission::enabled_schedule(
                 connection,
                 &target.project_env_key,

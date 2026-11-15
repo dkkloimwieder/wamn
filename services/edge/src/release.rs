@@ -290,7 +290,7 @@ pub(crate) mod test_util {
         };
         let fact = AdmittedComponent {
             target: ComponentPackageCoordinate {
-                project_env_key: "org-a".into(),
+                project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: "scale".into(),
                 package_version: "1.0.0".into(),
             },
@@ -356,7 +356,11 @@ pub(crate) mod test_util {
         }))
         .unwrap();
         std::fs::write(directory.join(BUNDLE_FILE_NAME), &bundle).unwrap();
-        let target = ReleaseTarget::new("org-a", "edge").with_applications(BTreeMap::from([(
+        let target = ReleaseTarget::new(
+            "org-a--dev--project".parse().unwrap(),
+            "edge".parse().unwrap(),
+        )
+        .with_applications(BTreeMap::from([(
             "scale".into(),
             wamn_catalog::ApplicationDefinition {
                 packages: BTreeSet::from(["scale".into()]),

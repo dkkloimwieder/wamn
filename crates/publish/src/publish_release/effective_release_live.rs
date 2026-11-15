@@ -93,7 +93,7 @@ fn admit_components(
         let declaration = crate::component_declaration::render_package_declaration(
             &input.root,
             input.component,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
         )
         .unwrap_or_else(|error| panic!("render {}: {error}", input.component));
         let declaration: ComponentDeclaration = serde_json::from_value(declaration)
@@ -163,7 +163,7 @@ fn base_and_overlay_project_admitted_routes() {
     let request = PublishReleaseManifest {
         org: "effective-release-poc",
         project: "fixture",
-        environment: ENVIRONMENT,
+        environment: &ENVIRONMENT.parse().unwrap(),
         packages: &packages,
         attachments: &attachments,
         environment_is_disposable: false,

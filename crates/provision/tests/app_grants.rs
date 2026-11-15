@@ -20,7 +20,7 @@ async fn application_logins_cannot_reach_mapped_platform_logins(pool: sqlx::PgPo
     let query_login = workload_login(
         WorkloadRoleFamily::Query,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: "t1",
+            project_env_key: &"t1--dev--project".parse().unwrap(),
             database,
         },
     )

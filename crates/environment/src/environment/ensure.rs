@@ -41,7 +41,7 @@ pub async fn provision_resources(
         .context("environment provisioning requires the event broker")?;
     let mut admin = connect(admin_url).await?;
     let triple = document.triple();
-    let policy = document.policy.as_str();
+    let policy = &document.policy;
     let cluster = resolve_cluster(&platform.system_database_url, &document.org, policy).await?;
     let private = PrivateDirectory::create()?;
     let namespace = platform.target.namespace.as_str();
@@ -173,7 +173,10 @@ pub(super) async fn resources_in_place(
     Ok(true)
 }
 
-pub(super) fn environment_host_name(org: &str, env: &str) -> anyhow::Result<String> {
+pub(super) fn environment_host_name(
+    org: &str,
+    env: &wamn_registry::EnvName,
+) -> anyhow::Result<String> {
     Ok(wamn_registry::name::environment_host_name(org, env)?)
 }
 
@@ -401,7 +404,7 @@ pub(super) async fn provision_environment_host(
 
 /// Remove one project's runtime access while leaving the other projects served.
 pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
-    let name = environment_host_name(&triple.org, triple.env.as_str())?;
+    let name = environment_host_name(&triple.org, &triple.env)?;
     let Some(mut values) = crate::platform::resources::release_values(
         &platform.target,
         &platform.target.namespace,
@@ -483,7 +486,7 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     let mut removed = vec![wamn_registry::credential_secret_name(
         &triple.org,
         &triple.project,
-        triple.env.as_str(),
+        &triple.env,
     )];
     removed.extend(
         wamn_control_provision::WorkloadRoleFamily::project_env_families().map(|family| {
@@ -491,7 +494,7 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
                 family,
                 &triple.org,
                 &triple.project,
-                triple.env.as_str(),
+                &triple.env,
             )
         }),
     );
@@ -512,7 +515,7 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
 pub async fn provision(
     platform: &Platform,
     document: &EnvironmentDocument,
-    policy: &str,
+    policy: &wamn_registry::EnvName,
     admin_url: &str,
     secret: &Path,
     pat_secret: Option<&Path>,

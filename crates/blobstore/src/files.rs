@@ -164,7 +164,7 @@ pub struct FileStore {
     bound: BoundContainer,
     signer: Arc<dyn Signer>,
     cdn_host: Option<url::Url>,
-    environment: String,
+    environment: wamn_registry::EnvName,
     deadline: tokio::time::Instant,
 }
 impl fmt::Debug for FileStore {
@@ -205,7 +205,7 @@ impl Drop for UploadGuard {
 }
 
 /// The live key stored in `platform.file.blob_key`.
-pub fn live_key(environment: &str, id: Uuid) -> String {
+pub fn live_key(environment: &wamn_registry::EnvName, id: Uuid) -> String {
     format!("{environment}/{FILE_PREFIX}live/{id}")
 }
 fn staging_key(blob_key: &str) -> String {
@@ -341,23 +341,16 @@ impl FileStore {
         bound: BoundContainer,
         signer: Arc<dyn Signer>,
         cdn_host: Option<url::Url>,
-        environment: &str,
+        environment: &wamn_registry::EnvName,
         deadline: tokio::time::Instant,
-    ) -> Result<Self, FileStorageError> {
-        if let Some(reason) = wamn_registry::identifiers::project_id_reason(environment) {
-            return Err(FileStorageError::new(
-                FileStorageErrorType::Refused,
-                "environment",
-                reason,
-            ));
-        }
-        Ok(Self {
+    ) -> Self {
+        Self {
             bound,
             signer,
             cdn_host,
             environment: environment.to_owned(),
             deadline,
-        })
+        }
     }
 
     async fn run<T>(
@@ -696,10 +689,9 @@ mod tests {
                 bound,
                 Arc::new(RecordingSigner::default()),
                 cdn.map(|host| url::Url::parse(&format!("https://{host}")).unwrap()),
-                "dev",
+                &"dev".parse().unwrap(),
                 tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
-            )
-            .unwrap(),
+            ),
             backend,
         )
     }
@@ -711,7 +703,10 @@ mod tests {
         let staged = files.stage(id, &b"abc"[..]).await.unwrap();
         assert_eq!(staged.size, 3);
         let staging = Path::from(format!("project/app/dev/_wamn_files/staging/{id}"));
-        let live = Path::from(format!("project/app/{}", live_key("dev", id)));
+        let live = Path::from(format!(
+            "project/app/{}",
+            live_key(&"dev".parse().unwrap(), id)
+        ));
         assert!(backend.head(&staging).await.is_ok());
         assert!(backend.head(&live).await.is_err());
         let reader = FileStore {
@@ -720,7 +715,7 @@ mod tests {
         };
         assert_eq!(
             reader
-                .get(&live_key("dev", id))
+                .get(&live_key(&"dev".parse().unwrap(), id))
                 .await
                 .unwrap()
                 .bytes()
@@ -731,20 +726,45 @@ mod tests {
         assert!(backend.head(&staging).await.is_err());
         assert!(backend.head(&live).await.is_ok());
         files.finish(id).await.unwrap();
-        files.expose(&live_key("dev", id)).await.unwrap();
-        files.expose(&live_key("dev", id)).await.unwrap();
-        let public = Path::from(format!("project/app/{}", public_key(&live_key("dev", id))));
+        files
+            .expose(&live_key(&"dev".parse().unwrap(), id))
+            .await
+            .unwrap();
+        files
+            .expose(&live_key(&"dev".parse().unwrap(), id))
+            .await
+            .unwrap();
+        let public = Path::from(format!(
+            "project/app/{}",
+            public_key(&live_key(&"dev".parse().unwrap(), id))
+        ));
         backend.head(&public).await.unwrap();
-        files.unexpose(&live_key("dev", id)).await.unwrap();
-        files.unexpose(&live_key("dev", id)).await.unwrap();
+        files
+            .unexpose(&live_key(&"dev".parse().unwrap(), id))
+            .await
+            .unwrap();
+        files
+            .unexpose(&live_key(&"dev".parse().unwrap(), id))
+            .await
+            .unwrap();
         assert!(matches!(
             backend.get(&public).await,
             Err(object_store::Error::NotFound { .. })
         ));
-        files.delete(&live_key("dev", id)).await.unwrap();
-        files.delete(&live_key("dev", id)).await.unwrap();
+        files
+            .delete(&live_key(&"dev".parse().unwrap(), id))
+            .await
+            .unwrap();
+        files
+            .delete(&live_key(&"dev".parse().unwrap(), id))
+            .await
+            .unwrap();
         assert_eq!(
-            files.get(&live_key("dev", id)).await.unwrap_err().type_,
+            files
+                .get(&live_key(&"dev".parse().unwrap(), id))
+                .await
+                .unwrap_err()
+                .type_,
             FileStorageErrorType::NotFound
         );
     }
@@ -850,7 +870,7 @@ mod tests {
     async fn collection_refuses_objects_from_another_environment_on_the_same_store() {
         let (files, backend) = store(false, None);
         let other = FileStore {
-            environment: "prod".into(),
+            environment: "prod".parse().unwrap(),
             ..files.clone()
         };
         let id = Uuid::new_v4();
@@ -895,18 +915,6 @@ mod tests {
                 .len(),
             2
         );
-        for environment in ["", "../prod", "dev/prod"] {
-            assert!(
-                FileStore::new(
-                    files.bound.clone(),
-                    Arc::new(RecordingSigner::default()),
-                    None,
-                    environment,
-                    files.deadline,
-                )
-                .is_err()
-            );
-        }
     }
 
     #[tokio::test]
@@ -920,7 +928,7 @@ mod tests {
             files.finish(id).await.unwrap();
             assert_eq!(
                 files
-                    .get(&live_key("dev", id))
+                    .get(&live_key(&"dev".parse().unwrap(), id))
                     .await
                     .unwrap()
                     .bytes()
@@ -1040,7 +1048,7 @@ mod tests {
             backend
                 .head(&Path::from(format!(
                     "project/app/{}",
-                    staging_key(&live_key("dev", overflow_id))
+                    staging_key(&live_key(&"dev".parse().unwrap(), overflow_id))
                 )))
                 .await
                 .is_err()
@@ -1062,14 +1070,17 @@ mod tests {
             backend
                 .head(&Path::from(format!(
                     "project/app/{}",
-                    staging_key(&live_key("dev", id))
+                    staging_key(&live_key(&"dev".parse().unwrap(), id))
                 )))
                 .await
                 .is_err()
         );
         assert!(
             backend
-                .head(&Path::from(format!("project/app/{}", live_key("dev", id))))
+                .head(&Path::from(format!(
+                    "project/app/{}",
+                    live_key(&"dev".parse().unwrap(), id)
+                )))
                 .await
                 .is_err()
         );
@@ -1082,9 +1093,9 @@ mod tests {
         files.bound.put("ordinary", vec![1]).await.unwrap();
         files.stage(id, &b"original"[..]).await.unwrap();
         for key in [
-            staging_key(&live_key("dev", id)),
-            live_key("dev", id),
-            public_key(&live_key("dev", id)),
+            staging_key(&live_key(&"dev".parse().unwrap(), id)),
+            live_key(&"dev".parse().unwrap(), id),
+            public_key(&live_key(&"dev".parse().unwrap(), id)),
             format!("dev//public//_wamn_files/live/{id}"),
             format!("prod/_wamn_files/live/{id}"),
             format!("prod/public/_wamn_files/live/{id}"),
@@ -1102,11 +1113,14 @@ mod tests {
         assert_eq!(files.bound.get("ordinary").await.unwrap(), vec![1]);
         assert!(files.path("../other/secret").is_err());
         files.finish(id).await.unwrap();
-        files.expose(&live_key("dev", id)).await.unwrap();
+        files
+            .expose(&live_key(&"dev".parse().unwrap(), id))
+            .await
+            .unwrap();
         assert!(files.bound.clear().await.is_err());
         assert_eq!(
             files
-                .get(&live_key("dev", id))
+                .get(&live_key(&"dev".parse().unwrap(), id))
                 .await
                 .unwrap()
                 .bytes()
@@ -1131,9 +1145,24 @@ mod tests {
             FileStorageErrorType::Refused
         );
         assert!(files.finish(id).await.is_err());
-        assert!(files.delete(&live_key("dev", id)).await.is_err());
-        assert!(files.expose(&live_key("dev", id)).await.is_err());
-        assert!(files.unexpose(&live_key("dev", id)).await.is_err());
+        assert!(
+            files
+                .delete(&live_key(&"dev".parse().unwrap(), id))
+                .await
+                .is_err()
+        );
+        assert!(
+            files
+                .expose(&live_key(&"dev".parse().unwrap(), id))
+                .await
+                .is_err()
+        );
+        assert!(
+            files
+                .unexpose(&live_key(&"dev".parse().unwrap(), id))
+                .await
+                .is_err()
+        );
         assert!(
             backend
                 .list(None)
@@ -1250,13 +1279,14 @@ mod tests {
                 bound,
                 Arc::new(RecordingSigner::default()),
                 Some(url::Url::parse("https://cdn.example.com").unwrap()),
-                "dev",
+                &"dev".parse().unwrap(),
                 tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
-            )
-            .unwrap();
+            );
             let id = Uuid::new_v4();
-            let live = files.path(&live_key("dev", id)).unwrap();
-            let staged = files.path(&staging_key(&live_key("dev", id))).unwrap();
+            let live = files.path(&live_key(&"dev".parse().unwrap(), id)).unwrap();
+            let staged = files
+                .path(&staging_key(&live_key(&"dev".parse().unwrap(), id)))
+                .unwrap();
             backend
                 .inner
                 .put(&staged, Bytes::from_static(b"staged").into())
@@ -1270,10 +1300,16 @@ mod tests {
                     .unwrap();
             }
             files
-                .signed_url(&live_key("dev", id), Duration::from_secs(30))
+                .signed_url(
+                    &live_key(&"dev".parse().unwrap(), id),
+                    Duration::from_secs(30),
+                )
                 .await
                 .unwrap();
-            files.expose(&live_key("dev", id)).await.unwrap();
+            files
+                .expose(&live_key(&"dev".parse().unwrap(), id))
+                .await
+                .unwrap();
             {
                 let calls = backend.calls.lock().unwrap();
                 assert_eq!(calls.iter().filter(|(verb, _)| *verb == "head").count(), 2);
@@ -1287,7 +1323,11 @@ mod tests {
             assert_eq!(backend.inner.head(&staged).await.is_err(), missing_live);
             let bytes = backend
                 .inner
-                .get(&files.path(&public_key(&live_key("dev", id))).unwrap())
+                .get(
+                    &files
+                        .path(&public_key(&live_key(&"dev".parse().unwrap(), id)))
+                        .unwrap(),
+                )
                 .await
                 .unwrap()
                 .bytes()
@@ -1320,18 +1360,24 @@ mod tests {
             bound,
             Arc::<RecordingSigner>::clone(&signer),
             Some(url::Url::parse("https://cdn.example.com").unwrap()),
-            "dev",
+            &"dev".parse().unwrap(),
             tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
-        )
-        .unwrap();
+        );
         let id = Uuid::new_v4();
         assert_eq!(
-            files.expose(&live_key("dev", id)).await.unwrap_err().type_,
+            files
+                .expose(&live_key(&"dev".parse().unwrap(), id))
+                .await
+                .unwrap_err()
+                .type_,
             FileStorageErrorType::Backend
         );
         assert_eq!(
             files
-                .signed_url(&live_key("dev", id), Duration::from_secs(30))
+                .signed_url(
+                    &live_key(&"dev".parse().unwrap(), id),
+                    Duration::from_secs(30)
+                )
                 .await
                 .unwrap_err()
                 .type_,
@@ -1356,16 +1402,22 @@ mod tests {
         let id = Uuid::new_v4();
         files.stage(id, &b"x"[..]).await.unwrap();
         files
-            .signed_url(&live_key("dev", id), Duration::from_secs(30))
+            .signed_url(
+                &live_key(&"dev".parse().unwrap(), id),
+                Duration::from_secs(30),
+            )
             .await
             .unwrap();
         files
-            .signed_url(&live_key("dev", id), Duration::from_hours(1))
+            .signed_url(
+                &live_key(&"dev".parse().unwrap(), id),
+                Duration::from_hours(1),
+            )
             .await
             .unwrap();
         assert!(
             files
-                .signed_url(&live_key("dev", id), Duration::ZERO)
+                .signed_url(&live_key(&"dev".parse().unwrap(), id), Duration::ZERO)
                 .await
                 .is_err()
         );
@@ -1373,7 +1425,10 @@ mod tests {
         assert_eq!(
             calls[0],
             (
-                Path::from(format!("project/app/{}", live_key("dev", id))),
+                Path::from(format!(
+                    "project/app/{}",
+                    live_key(&"dev".parse().unwrap(), id)
+                )),
                 Duration::from_secs(30)
             )
         );
@@ -1386,7 +1441,7 @@ mod tests {
         let (files, backend) = store(false, None);
         assert_eq!(
             files
-                .expose(&live_key("dev", Uuid::new_v4()))
+                .expose(&live_key(&"dev".parse().unwrap(), Uuid::new_v4()))
                 .await
                 .unwrap_err()
                 .type_,

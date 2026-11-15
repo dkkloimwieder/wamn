@@ -35,7 +35,7 @@ pub async fn prune(
                 retained.insert(revision.manifest_digest().context("Helm revision has no release digest")?.to_owned());
             }
         }
-        let project_env_key = wamn_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str());
+        let project_env_key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
         let url = super::ensure::project_url(platform, triple).await?;
         let mut project = super::analyse::connect_project(&url).await?;
         let mut releases = BTreeMap::new();
@@ -74,7 +74,7 @@ pub async fn prune(
 /// Returns database errors. Unknown host identity refuses cleanup.
 pub async fn prune_releases(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     retained: &BTreeSet<wamn_digest::Digest>,
     drops: &mut wamn_broker::connection_changes::ConnectionDrops,
 ) -> anyhow::Result<Vec<wamn_digest::Digest>> {
@@ -128,7 +128,7 @@ pub async fn prune_releases(
 pub async fn retire_runtime_grants(
     system: &mut sqlx::PgConnection,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     releases: &BTreeMap<wamn_digest::Digest, (wamn_catalog::ServingManifest, Vec<PackageManifest>)>,
     retired: &[wamn_digest::Digest],
     drops: &mut wamn_broker::auth_changes::AuthDrops,

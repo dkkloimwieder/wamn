@@ -394,7 +394,7 @@ fn identifier_cases() -> String {
     }
     for env in &envs {
         case(
-            wamn_registry::identifiers::project_id_reason(env).is_none(),
+            env.parse::<wamn_registry::EnvName>().is_ok(),
             format!(
                 "INSERT INTO registry.env_policies \
                  (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \

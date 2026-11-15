@@ -26,7 +26,7 @@ impl Execution {
     pub(crate) fn application_database(
         &self,
         project: &str,
-        environment: &str,
+        environment: &wamn_registry::EnvName,
     ) -> anyhow::Result<String> {
         wamn_control_provision::validate_project_env(&self.org, project, environment)?;
         let key = wamn_control_provision::control_administration_key(project, environment);
@@ -77,7 +77,7 @@ impl wamn_execution_host::ControlExecution for Execution {
                 #[serde(deny_unknown_fields)]
                 struct Request {
                     project: String,
-                    env: String,
+                    env: wamn_registry::EnvName,
                 }
                 let request: Request = serde_json::from_str(payload)?;
                 if operation == "capture_gap.close" {
@@ -96,7 +96,7 @@ impl wamn_execution_host::ControlExecution for Execution {
                     );
                 }
                 let triple =
-                    wamn_registry::Triple::new(&self.org, request.env.as_str(), &request.project);
+                    wamn_registry::Triple::new(&self.org, request.env.clone(), &request.project);
                 let instance = wamn_environment::provision_project_env::read_project_env_instance(
                     &self.platform.system_database_url,
                     &triple,
@@ -142,7 +142,7 @@ impl wamn_execution_host::ControlExecution for Execution {
                 #[serde(deny_unknown_fields)]
                 struct Request {
                     project: String,
-                    env: String,
+                    env: wamn_registry::EnvName,
                     name: String,
                     display_name: String,
                     roles: Vec<wamn_identity_protocol::RoleName>,

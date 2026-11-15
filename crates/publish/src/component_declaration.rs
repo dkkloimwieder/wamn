@@ -156,7 +156,7 @@ pub fn authored_base_digests(
 pub fn render_package_declaration(
     package_root: &Path,
     component: &str,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> Result<Value, ComponentDeclarationError> {
     let invalid = |source: String| {
         ComponentDeclarationError::invalid(
@@ -235,7 +235,7 @@ mod tests {
     fn a_palette_declaration_requires_a_binding_selection() {
         let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests");
         let target = wamn_catalog::ComponentPackageCoordinate {
-            project_env_key: "org-a".to_owned(),
+            project_env_key: "org-a--dev--project".parse().unwrap(),
             package_id: "wamn_wms".to_owned(),
             package_version: "1.0.0".to_owned(),
         };

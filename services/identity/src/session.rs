@@ -187,7 +187,7 @@ pub(super) async fn authorized_roles(
         principal.id(),
         &triple.org,
         &triple.project,
-        triple.env.as_str(),
+        &triple.env,
     )
     .await
     .map_err(|_| failed())?
@@ -197,7 +197,7 @@ pub(super) async fn authorized_roles(
     let current: bool = sqlx::query(CURRENT_TARGET_SQL)
         .bind(&triple.org)
         .bind(&triple.project)
-        .bind(triple.env.as_str())
+        .bind(&triple.env)
         .bind(target.instance_suffix())
         .fetch_one(&mut *transaction)
         .await
@@ -212,7 +212,7 @@ pub(super) async fn authorized_roles(
         principal.id(),
         &triple.org,
         &triple.project,
-        Some(triple.env.as_str()),
+        Some(&triple.env),
     )
     .await
     .map_err(|_| failed())?

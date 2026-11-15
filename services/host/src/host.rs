@@ -140,7 +140,7 @@ pub struct HostArgs {
     /// environment name again in its `extraArgs`, and the last value wins
     /// (R1, R6).
     #[arg(long = "environment", overrides_with = "environment")]
-    pub environment: Option<String>,
+    pub environment: Option<wamn_registry::EnvName>,
 
     /// Environment chart projection listing the projects this host serves.
     #[arg(long)]
@@ -480,7 +480,7 @@ fn host_credentials(
 
 fn session_verifier(
     args: &HostArgs,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     project: &str,
     suffix: &str,
     http_admitter_url: &str,
@@ -493,7 +493,7 @@ fn session_verifier(
         .session_issuer
         .as_deref()
         .context("a session route requires --session-issuer")?;
-    let audience = session_audience(&Triple::new(org, environment, project), suffix)?;
+    let audience = session_audience(&Triple::new(org, environment.clone(), project), suffix)?;
     let database = project_env_database_name(org, project, environment, suffix);
     // Compare trusted deployment coordinates, not anything carried by a token.
     // Parsing failures never attach the credential-bearing URL to diagnostics.
@@ -1242,9 +1242,10 @@ mod tests {
             LoadedRelease::load_canonical_bytes(
                 &bytes,
                 "startup release",
-                ReleaseTarget::new("acme--dev--wms", "dev").with_applications(
-                    serde_json::from_str(r#"{"store":{"packages":["cat"]}}"#).unwrap(),
-                ),
+                ReleaseTarget::new("acme--dev--wms".parse().unwrap(), "dev".parse().unwrap())
+                    .with_applications(
+                        serde_json::from_str(r#"{"store":{"packages":["cat"]}}"#).unwrap(),
+                    ),
             )
             .unwrap(),
         );
@@ -1286,7 +1287,7 @@ mod tests {
         ])
         .unwrap()
         .args;
-        assert_eq!(args.environment.as_deref(), Some("staging"));
+        assert_eq!(args.environment.as_ref(), Some(&"staging".parse().unwrap()));
         assert_eq!(
             host_namespace(Some("wamn-system".to_owned())).as_deref(),
             Some("wamn-system")
@@ -1384,7 +1385,7 @@ host:
         ])
         .unwrap()
         .args;
-        assert_eq!(args.environment.as_deref(), Some("dev"));
+        assert_eq!(args.environment.as_ref(), Some(&"dev".parse().unwrap()));
     }
 
     #[test]
@@ -1873,7 +1874,7 @@ host:
         ] {
             let error = session_verifier(
                 &cli.args,
-                "dev",
+                &"dev".parse().unwrap(),
                 "widgets",
                 "k3m9x2p7",
                 &format!("postgres://reader:secret@localhost/{database}"),

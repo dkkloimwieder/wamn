@@ -38,7 +38,7 @@ mod event_batch {
             .await
             .unwrap();
         let broker = async_nats::jetstream::new(client.clone());
-        let coordinate = Triple::new("schedule-live", ENVIRONMENT, PROJECT);
+        let coordinate = Triple::new("schedule-live", ENVIRONMENT.parse().unwrap(), PROJECT);
         let source =
             wamn_broker::events::source_stream_config(&coordinate, 1, Duration::from_secs(120));
         let advisory = wamn_broker::events::advisory_stream_config(&coordinate, 1);
@@ -71,7 +71,7 @@ mod event_batch {
         let subject = wamn_registry::name::event_subject(
             "schedule-live",
             PROJECT,
-            ENVIRONMENT,
+            &ENVIRONMENT.parse().unwrap(),
             "order.insert",
         );
         let mut expected = std::collections::BTreeMap::new();
@@ -86,7 +86,7 @@ mod event_batch {
             let body = envelope("insert", txid, lsn);
             let id = wamn_event_wire::msg_id(
                 PROJECT,
-                ENVIRONMENT,
+                &ENVIRONMENT.parse().unwrap(),
                 &wamn_event_wire::CdcIdentity {
                     system_id: 1,
                     timeline: 1,
@@ -292,8 +292,8 @@ async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<
         .unwrap();
     let broker = async_nats::jetstream::new(client);
     let project = format!("p{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
-    let target = Triple::new("reset", "dev", &project);
-    let other = Triple::new("reset", "other", &project);
+    let target = Triple::new("reset", "dev".parse().unwrap(), &project);
+    let other = Triple::new("reset", "other".parse().unwrap(), &project);
     let mut streams = Vec::new();
     for coordinate in [&target, &other] {
         wamn_broker::streams::provision(&broker, coordinate, 1, Duration::from_secs(120), &[])

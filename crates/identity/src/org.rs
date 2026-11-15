@@ -118,15 +118,14 @@ pub async fn grant_member(
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> Result<(), IdentityError> {
     let org = active_member(client, principal_id, org).await?;
     let project = require_target_segment("project", project)?;
-    let env = require_target_segment("env", env)?;
     let found: bool = sqlx::query(ENV_IN_PROJECT_SQL)
         .bind(&org)
         .bind(&project)
-        .bind(&env)
+        .bind(env)
         .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -138,7 +137,7 @@ pub async fn grant_member(
             format!("environment {project}/{env} is not an environment of org {org}"),
         ));
     }
-    crate::grant_project_env_membership(client, principal_id, &org, &project, &env).await
+    crate::grant_project_env_membership(client, principal_id, &org, &project, env).await
 }
 
 const HOLDS_ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles \
@@ -152,7 +151,7 @@ pub async fn revoke_member(
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = require_target_segment("org", org)?;
@@ -311,7 +310,7 @@ pub struct MemberGrants {
     pub project_admins: Vec<String>,
     /// Environments of the org, as `(project, env)`, where the user gets a
     /// membership.
-    pub memberships: Vec<(String, String)>,
+    pub memberships: Vec<(String, wamn_registry::EnvName)>,
 }
 
 /// Write the active org membership of an invited user, then each requested
@@ -491,20 +490,17 @@ pub async fn org_environments(
     client: &mut sqlx::PgConnection,
     org: &str,
     project: Option<&str>,
-) -> Result<Vec<(String, String)>, IdentityError> {
+) -> Result<Vec<(String, wamn_registry::EnvName)>, IdentityError> {
     let org = require_target_segment("org", org)?;
     let project = project
         .map(|project| require_target_segment("project", project))
         .transpose()?;
-    Ok(sqlx::query(ORG_ENVIRONMENTS_SQL)
+    sqlx::query_as(ORG_ENVIRONMENTS_SQL)
         .bind(&org)
         .bind(&project)
         .fetch_all(&mut *client)
         .await
-        .map_err(|error| database_error(&error))?
-        .iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect())
+        .map_err(|error| database_error(&error))
 }
 
 /// The status of a project environment
@@ -532,7 +528,7 @@ impl EnvironmentStatus {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct EnvironmentSummary {
     /// The environment name.
-    pub name: String,
+    pub name: wamn_registry::EnvName,
     /// The state from registry.environments.status.
     pub state: String,
 }
@@ -545,8 +541,8 @@ pub async fn status_environments(
     client: &mut sqlx::PgConnection,
     org: &str,
     project: &str,
-    env: Option<&str>,
-) -> Result<Vec<String>, IdentityError> {
+    env: Option<&wamn_registry::EnvName>,
+) -> Result<Vec<wamn_registry::EnvName>, IdentityError> {
     let org = require_target_segment("org", org)?;
     let project = require_target_segment("project", project)?;
     let Some(env) = env else {
@@ -570,11 +566,10 @@ pub async fn status_environments(
             .map(|entry| entry.name)
             .collect());
     };
-    let env = require_target_segment("env", env)?;
     let found: bool = sqlx::query(ENV_IN_PROJECT_SQL)
         .bind(&org)
         .bind(&project)
-        .bind(&env)
+        .bind(env)
         .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -586,7 +581,7 @@ pub async fn status_environments(
             format!("environment {project}/{env} is not an environment of org {org}"),
         ));
     }
-    Ok(vec![env])
+    Ok(vec![env.clone()])
 }
 
 const ENVIRONMENT_STATUS_SQL: &str =
@@ -598,7 +593,7 @@ pub async fn set_environment_status(
     client: &mut sqlx::PgConnection,
     org: &str,
     project: &str,
-    environments: &[String],
+    environments: &[wamn_registry::EnvName],
     status: EnvironmentStatus,
 ) -> Result<(), IdentityError> {
     let org = require_target_segment("org", org)?;
@@ -668,7 +663,7 @@ pub async fn project_envs_page(
 ) -> Result<Vec<EnvironmentSummary>, IdentityError> {
     let org = require_target_segment("org", org)?;
     let project = require_target_segment("project", project)?;
-    Ok(sqlx::query(PROJECT_ENVS_SQL)
+    sqlx::query(PROJECT_ENVS_SQL)
         .bind(&org)
         .bind(&project)
         .bind(after)
@@ -677,11 +672,13 @@ pub async fn project_envs_page(
         .await
         .map_err(|error| database_error(&error))?
         .iter()
-        .map(|row| EnvironmentSummary {
-            name: row.get(0),
-            state: row.get(1),
+        .map(|row| {
+            Ok(EnvironmentSummary {
+                name: row.try_get(0).map_err(|error| database_error(&error))?,
+                state: row.get(1),
+            })
         })
-        .collect())
+        .collect::<Result<_, IdentityError>>()
 }
 
 /// Every user with a membership or a project role in the project, with the
@@ -703,7 +700,7 @@ pub struct ProjectMember {
     /// Whether the user holds `project-admin` in the project.
     pub project_admin: bool,
     /// The environments of the project where the user is a member.
-    pub environments: Vec<String>,
+    pub environments: Vec<wamn_registry::EnvName>,
 }
 
 /// The users of one project of `org`, by email.
@@ -721,16 +718,13 @@ pub async fn project_members_page(
     client: &mut sqlx::PgConnection,
     org: &str,
     project: &str,
-    environment: Option<&str>,
+    environment: Option<&wamn_registry::EnvName>,
     after: Option<&str>,
     after_id: Option<&PrincipalId>,
     limit: Option<i64>,
 ) -> Result<Vec<ProjectMember>, IdentityError> {
     let org = require_target_segment("org", org)?;
     let project = require_target_segment("project", project)?;
-    let environment = environment
-        .map(|environment| require_target_segment("environment", environment))
-        .transpose()?;
     sqlx::query(PROJECT_MEMBERS_SQL)
         .bind(&org)
         .bind(&project)
@@ -739,7 +733,7 @@ pub async fn project_members_page(
         .bind(after)
         .bind(after_id)
         .bind(limit)
-        .bind(&environment)
+        .bind(environment)
         .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -806,10 +800,9 @@ pub async fn grant_environment_admin(
     client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
     org: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> Result<(), IdentityError> {
     let org = active_member(client, principal, org).await?;
-    let env = require_target_segment("environment", env)?;
     sqlx::query("INSERT INTO identity.environment_roles (principal_id,org,env,role) VALUES ($1,$2,$3,'environment-admin') ON CONFLICT DO NOTHING").bind(principal).bind(&org).bind(&env).execute(&mut *client).await.map(|result| result.rows_affected()).map_err(|error| database_error(&error))?;
     Ok(())
 }
@@ -818,11 +811,10 @@ pub async fn revoke_environment_admin(
     client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
     org: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = require_target_segment("org", org)?;
-    let env = require_target_segment("environment", env)?;
     lock_membership(client, principal, &org).await?;
     sqlx::query(
         "DELETE FROM identity.environment_roles WHERE principal_id=$1 AND org=$2 AND env=$3",

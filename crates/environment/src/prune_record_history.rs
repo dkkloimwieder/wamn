@@ -50,12 +50,12 @@ pub struct PruneRecordHistoryRequest {
 
     pub org: String,
     pub project: String,
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
 }
 
 impl PruneRecordHistoryRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> String {
+    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
         wamn_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -78,7 +78,7 @@ pub struct PrunedHistory {
 pub async fn prune_expired_record_history(
     request: PruneRecordHistoryRequest,
 ) -> anyhow::Result<Vec<PrunedHistory>> {
-    if [&request.org, &request.project, &request.environment]
+    if [&request.org, &request.project]
         .iter()
         .any(|part| part.trim().is_empty())
     {
@@ -104,7 +104,7 @@ pub async fn prune_expired_record_history(
 /// the database from it.
 async fn verify_audit_retention_identity(
     client: &mut Client,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<()> {
     let row =
         sqlx::query("SELECT current_user::text AS role, current_database()::text AS database")

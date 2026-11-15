@@ -140,7 +140,7 @@ impl ConnectionCredentials {
     pub async fn connection_fact(
         &self,
         project: &str,
-        environment: &str,
+        environment: &wamn_registry::EnvName,
         id: &uuid::Uuid,
     ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
         let (mut client, org) = self.reader().await?;
@@ -167,7 +167,7 @@ impl ConnectionCredentials {
     pub async fn connection_generation(
         &self,
         project: &str,
-        environment: &str,
+        environment: &wamn_registry::EnvName,
         id: &uuid::Uuid,
         generation: i64,
     ) -> anyhow::Result<Option<ConnectionGeneration>> {
@@ -188,7 +188,7 @@ impl ConnectionCredentials {
     pub async fn credential_secret(
         &self,
         project: &str,
-        environment: &str,
+        environment: &wamn_registry::EnvName,
         credential: &uuid::Uuid,
     ) -> anyhow::Result<Option<String>> {
         let (mut client, org) = self.reader().await?;
@@ -218,7 +218,7 @@ impl ConnectionCredentials {
     pub async fn env_connections(
         &self,
         project: &str,
-        environment: &str,
+        environment: &wamn_registry::EnvName,
     ) -> anyhow::Result<std::collections::BTreeMap<String, uuid::Uuid>> {
         let (mut client, org) = self.reader().await?;
         wamn_registry::connections::environment(&mut client, org, project, environment)
@@ -257,15 +257,22 @@ mod tests {
         fixture.put("erp", "other", &["project-b"]).await;
         fixture.put("erp", "current", &["project-a"]).await;
         let reader = fixture.reader("project-a").await;
-        let id = reader.env_connections("project-a", "dev").await.unwrap()["erp"];
+        let id = reader
+            .env_connections("project-a", &"dev".parse().unwrap())
+            .await
+            .unwrap()["erp"];
         let fact = reader
-            .connection_fact("project-a", "dev", &id)
+            .connection_fact("project-a", &"dev".parse().unwrap(), &id)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(
             reader
-                .credential_secret("project-a", "dev", &fact.credential_id.unwrap())
+                .credential_secret(
+                    "project-a",
+                    &"dev".parse().unwrap(),
+                    &fact.credential_id.unwrap()
+                )
                 .await
                 .unwrap()
                 .as_deref(),
@@ -273,7 +280,7 @@ mod tests {
         );
         assert!(
             reader
-                .env_connections("project-b", "dev")
+                .env_connections("project-b", &"dev".parse().unwrap())
                 .await
                 .unwrap()
                 .is_empty()
@@ -302,7 +309,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             reader
-                .connection_fact("project-a", "dev", &id)
+                .connection_fact("project-a", &"dev".parse().unwrap(), &id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -322,14 +329,17 @@ mod tests {
         fixture.put_store("files", "first", &["project-a"]).await;
         fixture.put("erp", "http", &["project-a"]).await;
         let reader = fixture.reader("project-a").await;
-        let map = reader.env_connections("project-a", "dev").await.unwrap();
+        let map = reader
+            .env_connections("project-a", &"dev".parse().unwrap())
+            .await
+            .unwrap();
         assert_eq!(
             map.keys().map(String::as_str).collect::<Vec<_>>(),
             ["erp", "files"]
         );
         let store = map["files"];
         let first = reader
-            .connection_fact("project-a", "dev", &store)
+            .connection_fact("project-a", &"dev".parse().unwrap(), &store)
             .await
             .unwrap()
             .unwrap();
@@ -337,7 +347,7 @@ mod tests {
         let first_credential = first.credential_id.unwrap();
         fixture.put_store("files", "current", &["project-a"]).await;
         let current = reader
-            .connection_fact("project-a", "dev", &store)
+            .connection_fact("project-a", &"dev".parse().unwrap(), &store)
             .await
             .unwrap()
             .unwrap();
@@ -345,7 +355,12 @@ mod tests {
         assert_ne!(current.credential_id, Some(first_credential));
         // A generation and a credential never change under their ids.
         let generation = reader
-            .connection_generation("project-a", "dev", &store, first.active_generation)
+            .connection_generation(
+                "project-a",
+                &"dev".parse().unwrap(),
+                &store,
+                first.active_generation,
+            )
             .await
             .unwrap()
             .unwrap();
@@ -355,7 +370,7 @@ mod tests {
         assert_eq!(generation.parameters["container"], "files");
         assert_eq!(
             reader
-                .credential_secret("project-a", "dev", &first_credential)
+                .credential_secret("project-a", &"dev".parse().unwrap(), &first_credential)
                 .await
                 .unwrap()
                 .as_deref(),
@@ -363,7 +378,11 @@ mod tests {
         );
         assert_eq!(
             reader
-                .credential_secret("project-a", "dev", &current.credential_id.unwrap())
+                .credential_secret(
+                    "project-a",
+                    &"dev".parse().unwrap(),
+                    &current.credential_id.unwrap()
+                )
                 .await
                 .unwrap()
                 .as_deref(),
@@ -372,14 +391,14 @@ mod tests {
         // Another project of the login reads nothing.
         assert!(
             reader
-                .connection_fact("project-b", "dev", &store)
+                .connection_fact("project-b", &"dev".parse().unwrap(), &store)
                 .await
                 .unwrap()
                 .is_none()
         );
         assert!(
             reader
-                .credential_secret("project-b", "dev", &first_credential)
+                .credential_secret("project-b", &"dev".parse().unwrap(), &first_credential)
                 .await
                 .unwrap()
                 .is_none()
@@ -391,7 +410,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             reader
-                .connection_fact("project-a", "dev", &store)
+                .connection_fact("project-a", &"dev".parse().unwrap(), &store)
                 .await
                 .unwrap()
                 .unwrap()
@@ -417,14 +436,22 @@ mod tests {
             )
             .await;
         let reader = fixture.reader("project-a").await;
-        let id = reader.env_connections("project-a", "dev").await.unwrap()["erp"];
+        let id = reader
+            .env_connections("project-a", &"dev".parse().unwrap())
+            .await
+            .unwrap()["erp"];
         let fact = reader
-            .connection_fact("project-a", "dev", &id)
+            .connection_fact("project-a", &"dev".parse().unwrap(), &id)
             .await
             .unwrap()
             .unwrap();
         let generation = reader
-            .connection_generation("project-a", "dev", &id, fact.active_generation)
+            .connection_generation(
+                "project-a",
+                &"dev".parse().unwrap(),
+                &id,
+                fact.active_generation,
+            )
             .await
             .unwrap()
             .unwrap();
@@ -433,7 +460,11 @@ mod tests {
         assert!(generation.parameters["auth"].get("client_secret").is_none());
         assert_eq!(
             reader
-                .credential_secret("project-a", "dev", &fact.credential_id.unwrap())
+                .credential_secret(
+                    "project-a",
+                    &"dev".parse().unwrap(),
+                    &fact.credential_id.unwrap()
+                )
                 .await
                 .unwrap()
                 .as_deref(),
@@ -451,7 +482,7 @@ mod tests {
     async fn an_absent_reader_is_unavailable() {
         assert!(
             ConnectionCredentials::empty()
-                .connection_fact("project-a", "dev", &uuid::Uuid::new_v4())
+                .connection_fact("project-a", &"dev".parse().unwrap(), &uuid::Uuid::new_v4())
                 .await
                 .is_err()
         );

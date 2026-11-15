@@ -19,7 +19,7 @@ fn broker_permissions_confine_each_role_to_its_environment() -> anyhow::Result<(
     use wamn_test_infrastructure::{event_broker, scratch::ScratchRoot};
 
     let root = ScratchRoot::create()?;
-    let target = Triple::new("example", "dev", "fixture");
+    let target = Triple::new("example", "dev".parse().unwrap(), "fixture");
     let source = source_stream_config(&target, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&target, 1);
     let consumer = event_consumer_config(
@@ -31,7 +31,7 @@ fn broker_permissions_confine_each_role_to_its_environment() -> anyhow::Result<(
     let broker = event_broker::prepare(
         root.path(),
         &target,
-        "project",
+        &wamn_registry::project_env_key(&target.org, &target.project, &target.env),
         &source,
         &advisory,
         &[consumer],
@@ -167,8 +167,8 @@ fn broker_permissions_confine_each_role_to_its_environment() -> anyhow::Result<(
             );
         }
         for foreign in [
-            Triple::new("example", "dev", "other"),
-            Triple::new("example", "prod", "fixture"),
+            Triple::new("example", "dev".parse().unwrap(), "other"),
+            Triple::new("example", "prod".parse().unwrap(), "fixture"),
         ] {
             let stream = source_stream_config(&foreign, 1, Duration::from_secs(120));
             let advisory = advisory_stream_config(&foreign, 1);
@@ -272,13 +272,13 @@ async fn retained_broker_advisory(type_: DeliveryAdvisoryType) -> anyhow::Result
         DeliveryAdvisoryType::MaxDeliver => "exhausted",
         DeliveryAdvisoryType::Terminated => "terminated",
     };
-    let target = Triple::new(format!("c-{name}"), "dev", "app");
-    let source_name = stream_name(&target.org, &target.project, target.env.as_str());
+    let target = Triple::new(format!("c-{name}"), "dev".parse().unwrap(), "app");
+    let source_name = stream_name(&target.org, &target.project, &target.env);
     let advisory_name = delivery_advisory_stream(&source_name);
     let subject = wamn_registry::name::event_subject(
         &target.org,
         &target.project,
-        target.env.as_str(),
+        &target.env,
         "item.update",
     );
     let consumer = event_consumer_config(name, &subject, Duration::from_millis(100), 2);
@@ -1215,9 +1215,9 @@ async fn targeted_broker_behavior(
     );
     std::fs::DirBuilder::new().mode(0o700).create(root.path())?;
     let targets = [
-        Triple::new("example", "dev", "fixture"),
-        Triple::new("example", "dev", "other"),
-        Triple::new("example", "prod", "fixture"),
+        Triple::new("example", "dev".parse().unwrap(), "fixture"),
+        Triple::new("example", "dev".parse().unwrap(), "other"),
+        Triple::new("example", "prod".parse().unwrap(), "fixture"),
     ];
     let mut brokers = Vec::new();
     let mut declarations = Vec::new();
@@ -1266,7 +1266,7 @@ async fn targeted_broker_behavior(
             &authority,
             &directory,
             target,
-            "route-project",
+            &wamn_registry::project_env_key(&target.org, &target.project, &target.env),
             &source,
             &advisory,
             &consumers,

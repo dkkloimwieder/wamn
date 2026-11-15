@@ -595,7 +595,7 @@ impl ServingManifest {
     /// Resolve the manifest's admitted component facts for one project environment.
     pub fn admitted_components(
         &self,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> Result<Vec<AdmittedComponent>, CatalogIdentityError> {
         self.components
             .iter()

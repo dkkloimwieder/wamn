@@ -55,9 +55,9 @@ type HttpClient = Client<PinnedConnector, Full<Bytes>>;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ConnectionIdentity {
-    pub(crate) project_env_key: Box<str>,
+    pub(crate) project_env_key: wamn_registry::ProjectEnvKey,
     pub(crate) project: Box<str>,
-    pub(crate) environment: Box<str>,
+    pub(crate) environment: wamn_registry::EnvName,
     pub(crate) instance: Box<str>,
 }
 

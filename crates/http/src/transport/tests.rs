@@ -414,9 +414,9 @@ async fn host_authentication_reaches_the_peer_without_changing_the_guest_request
 fn identity(generation: i64) -> ClientIdentity {
     ClientIdentity {
         connection: ConnectionIdentity {
-            project_env_key: "project".into(),
+            project_env_key: "project--dev--project".parse().unwrap(),
             project: "project".into(),
-            environment: "environment".into(),
+            environment: "environment".parse().unwrap(),
             instance: "connection".into(),
         },
         package: "package".into(),
@@ -732,13 +732,13 @@ async fn every_client_identity_field_and_peer_separates_pools() {
     changed.connection.instance = "other".into();
     variants.push(changed);
     let mut changed = initial.clone();
-    changed.connection.project_env_key = "other".into();
+    changed.connection.project_env_key = "other--dev--project".parse().unwrap();
     variants.push(changed);
     let mut changed = initial.clone();
     changed.connection.project = "other".into();
     variants.push(changed);
     let mut changed = initial.clone();
-    changed.connection.environment = "other".into();
+    changed.connection.environment = "other".parse().unwrap();
     variants.push(changed);
     for variant in &variants {
         transport

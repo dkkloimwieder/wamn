@@ -71,7 +71,7 @@ pub struct Request<'a> {
     pub operation: &'a str,
     pub org: &'a str,
     pub project: &'a str,
-    pub env: &'a str,
+    pub env: &'a wamn_registry::EnvName,
     pub application: Option<&'a str>,
     pub release: Option<&'a wamn_digest::Digest>,
 }
@@ -94,7 +94,7 @@ pub async fn execute(
         "unknown application operation"
     );
     wamn_control_provision::validate_project_env(request.org, request.project, request.env)?;
-    let triple = wamn_registry::Triple::new(request.org, request.env, request.project);
+    let triple = wamn_registry::Triple::new(request.org, request.env.clone(), request.project);
     match request.operation {
         "deploy" => {
             let analysis = super::apply_selection(

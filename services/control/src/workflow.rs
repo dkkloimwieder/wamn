@@ -15,7 +15,7 @@ use crate::execution::Execution;
 #[serde(deny_unknown_fields)]
 struct Request {
     project: String,
-    env: String,
+    env: wamn_registry::EnvName,
     application: Option<String>,
     workflow_id: Option<String>,
     version: Option<u32>,
@@ -42,7 +42,7 @@ impl Execution {
         let request: Request = serde_json::from_str(payload)?;
         let platform = &self.platform;
         let database = self.application_database(&request.project, &request.env)?;
-        let triple = wamn_registry::Triple::new(&self.org, request.env.as_str(), &request.project);
+        let triple = wamn_registry::Triple::new(&self.org, request.env.clone(), &request.project);
         let key = wamn_registry::project_env_key(&self.org, &request.project, &request.env);
         if matches!(
             operation,
@@ -52,7 +52,7 @@ impl Execution {
                 wamn_postgres::connect(&database).await?,
                 "wamn_run",
                 key,
-                &request.env,
+                request.env,
             );
             return Ok(match operation {
                 "workflow.park" => {

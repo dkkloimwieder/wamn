@@ -26,7 +26,13 @@ async fn enroll(fixture: &mut Fixture, email: &str, password: &str) -> Principal
         .await
         .expect_redacted("user");
     seed_user(&mut fixture.environments[0].client, &user, "receiver").await;
-    grant(&mut fixture.system.client, &user, "demo", "dev").await;
+    grant(
+        &mut fixture.system.client,
+        &user,
+        "demo",
+        &"dev".parse().unwrap(),
+    )
+    .await;
     let actor = PlatformComponent::Provisioning.principal_id();
     let mut issuer = connect(&fixture.issuer_url).await;
     let invitation = issue_invitation(&mut issuer.client, &actor, user.id())
@@ -147,7 +153,7 @@ async fn active(fixture: &Fixture, body: &Value) -> bool {
         &mut *fixture.observations.acquire().await.unwrap(),
         &claims(fixture, body).await,
         "widgets",
-        "dev",
+        &"dev".parse().unwrap(),
     )
     .await
     .expect_redacted("current session authority")
@@ -233,7 +239,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         user.id(),
         "demo",
         "widgets",
-        "dev",
+        &"dev".parse().unwrap(),
         &mut AuthDrops::default(),
     )
     .await
@@ -246,7 +252,13 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    grant(&mut fixture.system.client, &user, "demo", "dev").await;
+    grant(
+        &mut fixture.system.client,
+        &user,
+        "demo",
+        &"dev".parse().unwrap(),
+    )
+    .await;
     let mut mutation = fixture_transaction(&mut fixture.environments[0].client).await;
     sqlx::query("UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid")
         .bind(&user.id().to_string().as_str())

@@ -26,7 +26,7 @@ pub async fn observe(
     let reports = wamn_kubernetes::environment_state::residency(
         &platform.target.namespace,
         &triple.org,
-        triple.env.as_str(),
+        &triple.env,
         |path| async move {
             let body = super::ensure::kubectl(
                 platform,
@@ -134,8 +134,8 @@ pub struct Stranded {
 /// When the project database cannot be read.
 pub async fn stranded(
     project_url: &str,
-    project_env_key: &str,
-    environment: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    environment: &wamn_registry::EnvName,
     applications: Option<&[String]>,
     live: &BTreeMap<(String, wamn_digest::Digest), usize>,
 ) -> anyhow::Result<Vec<Stranded>> {

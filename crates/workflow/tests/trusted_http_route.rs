@@ -50,7 +50,7 @@ use wamn_workflow::RouterDriver;
 use wash_runtime::plugin::wasi_logging::TracingLogger;
 
 /// The one project every seeded row and every identity is bound to.
-pub const PROJECT_ENV_KEY: &str = "org-a";
+pub const PROJECT_ENV_KEY: &str = "org-a--prod--default";
 pub const PACKAGE: &str = "orders";
 pub const ENVIRONMENT: &str = "prod";
 pub const PACKAGE_VERSION: &str = "1.0.0";
@@ -124,9 +124,9 @@ impl TrustedHttpRoute {
     pub async fn execute(&self, id: u64) -> anyhow::Result<wamn_workflow::Outcome> {
         self.driver
             .execute_workflow(wamn_workflow::WorkflowRunRequest {
-                project_env_key: PROJECT_ENV_KEY.to_owned(),
+                project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
                 package_id: PACKAGE.to_owned(),
-                environment: ENVIRONMENT.to_owned(),
+                environment: ENVIRONMENT.parse().unwrap(),
                 wiring_id: WIRING_ID.to_owned(),
                 wiring_version: WIRING_VERSION,
                 delivery_id: format!("reuse-{id}"),
@@ -174,7 +174,7 @@ async fn credential_fixture(
         wamn_control_provision::test_database::seed_org_project_env_sql(
             "acme",
             PROJECT,
-            ENVIRONMENT,
+            &ENVIRONMENT.parse().unwrap(),
         ),
     ))
     .execute(&mut admin)
@@ -200,7 +200,7 @@ async fn credential_fixture(
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
         let stored = credential_store
             .put(
-                &wamn_registry::Triple::new("acme", ENVIRONMENT, PROJECT),
+                &wamn_registry::Triple::new("acme", ENVIRONMENT.parse().unwrap(), PROJECT),
                 uuid::Uuid::new_v4(),
                 secret.as_bytes(),
             )
@@ -294,17 +294,20 @@ async fn build_with_credentials(
         LoadedRelease::load_canonical_bytes(
             &wamn_digest::canonical_json_bytes(&release_manifest(&admitted, &document)),
             "trusted-http-route fixture",
-            wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
-                .with_applications(
-                    [(
-                        "orders".to_owned(),
-                        wamn_catalog::ApplicationDefinition {
-                            connections: std::collections::BTreeMap::new(),
-                            packages: [PACKAGE.to_owned()].into(),
-                        },
-                    )]
-                    .into(),
-                ),
+            wamn_engine::release_manifest::ReleaseTarget::new(
+                PROJECT_ENV_KEY.parse().unwrap(),
+                ENVIRONMENT.parse().unwrap(),
+            )
+            .with_applications(
+                [(
+                    "orders".to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        connections: std::collections::BTreeMap::new(),
+                        packages: [PACKAGE.to_owned()].into(),
+                    },
+                )]
+                .into(),
+            ),
         )
         .context("load the fixture serving manifest")?,
     );
@@ -342,9 +345,9 @@ async fn build_with_credentials(
         wamn_broker::Publisher::default(),
         Arc::new(credentials),
         &postgres,
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         PROJECT,
-        ENVIRONMENT,
+        &ENVIRONMENT.parse().unwrap(),
     ));
     let driver = Arc::new(RouterDriver::new(Arc::new(
         OperationHost::new(
@@ -382,8 +385,11 @@ async fn build_with_credentials(
 fn declaration() -> anyhow::Result<ComponentDeclaration> {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let template = PathBuf::from(format!("{root}/guests/http-request/declaration.json.in"));
-    let target =
-        wamn_catalog::ComponentPackageCoordinate::new(PROJECT_ENV_KEY, PACKAGE, PACKAGE_VERSION)?;
+    let target = wamn_catalog::ComponentPackageCoordinate::new(
+        &PROJECT_ENV_KEY.parse().unwrap(),
+        PACKAGE,
+        PACKAGE_VERSION,
+    )?;
     let document = wamn_publish::component_declaration::render_palette_declaration(
         &template,
         &target,
@@ -671,16 +677,20 @@ async fn seed_with_client(
     let database = config
         .get_database()
         .context("the disposable admin URL names no database")?;
+    let triple = PROJECT_ENV_KEY
+        .parse::<wamn_registry::ProjectEnvKey>()
+        .unwrap()
+        .triple();
     let target = WorkloadRoleIdentity::ProjectEnvironment {
-        org: PROJECT_ENV_KEY,
-        project: PROJECT,
-        environment: ENVIRONMENT,
+        org: &triple.org,
+        project: &triple.project,
+        environment: &triple.env,
         database,
     };
     let guest_role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: PROJECT_ENV_KEY,
+            project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
             database,
         },
     )?;

@@ -234,17 +234,20 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "session route test",
-        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "dev")
-            .with_applications(
-                [(
-                    "purchasing".to_owned(),
-                    wamn_catalog::ApplicationDefinition {
-                        connections: std::collections::BTreeMap::new(),
-                        packages: ["session_test".to_owned()].into(),
-                    },
-                )]
-                .into(),
-            ),
+        wamn_engine::release_manifest::ReleaseTarget::new(
+            PROJECT_ENV_KEY.parse().unwrap(),
+            "dev".parse().unwrap(),
+        )
+        .with_applications(
+            [(
+                "purchasing".to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    connections: std::collections::BTreeMap::new(),
+                    packages: ["session_test".to_owned()].into(),
+                },
+            )]
+            .into(),
+        ),
     )?))
 }
 
@@ -323,7 +326,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
-            environment: "dev",
+            environment: &"dev".parse().unwrap(),
             database: &database,
         },
     )?;
@@ -377,7 +380,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     session_fixture::install_authority(
         &mut admin,
         PROJECT,
-        "dev",
+        &"dev".parse().unwrap(),
         AUDIENCE,
         &[claims()["sub"].as_str().unwrap(), SECOND_PRINCIPAL],
     )
@@ -405,7 +408,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     let reader = permission_reader(url.as_str())?;
     let authentication = Arc::new(PlatformRouteAuthenticator::for_test(
         Arc::clone(&reader),
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         Some(identity_reader.clone()),
         Some(verifier.clone()),
     ));
@@ -473,7 +476,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     // on a host whose release serves it, with no write in between.
     let granted = wamn_platform_identity::application::mutate_grant(
         &mut admin,
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::Permission {
             role: "purchase-writer",
@@ -488,7 +491,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     let later = FlowHttpRouting::for_test(Some(Arc::clone(&serving))).with_authenticator(Arc::new(
         PlatformRouteAuthenticator::for_test(
             permission_reader(url.as_str())?,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             Some(identity_reader),
             Some(verifier),
         ),
@@ -631,7 +634,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         ),
         (
             "UPDATE identity.password_logins SET audience='wrong'",
-            "UPDATE identity.password_logins SET audience='urn:wamn:project-env:org-a:project:dev:instance-one'",
+            "UPDATE identity.password_logins SET audience='urn:wamn:project-env:org-a:dev:project:instance-one'",
         ),
         (
             "UPDATE identity.password_logins SET authenticated_at=now()-interval '9 hours',expires_at=now()-interval '1 hour',renewal_expires_at=now()-interval '8 hours'",

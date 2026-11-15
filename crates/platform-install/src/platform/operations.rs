@@ -8,12 +8,12 @@ pub fn values(triple: &Triple, cluster: &str, database: &str) -> anyhow::Result<
     let name = wamn_control_provision::environment_names::environment_resource_name(
         &triple.org,
         &triple.project,
-        triple.env.as_str(),
+        &triple.env,
     )?;
     let capture = wamn_control_provision::project_env_cdc_secret_name(
         &triple.org,
         &triple.project,
-        triple.env.as_str(),
+        &triple.env,
     );
     Ok(json!({"operations":{"name":name,"cluster":cluster,"database":database,"capture":capture}}))
 }
@@ -29,7 +29,7 @@ pub async fn provision(
     let name = wamn_control_provision::environment_names::environment_resource_name(
         &triple.org,
         &triple.project,
-        triple.env.as_str(),
+        &triple.env,
     )?;
     let target = Target {
         namespace: triple.org.clone(),

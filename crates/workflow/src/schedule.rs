@@ -80,7 +80,7 @@ impl PostgresSchedules {
         );
         let applications = vec![self.application.clone()];
         self.postgres
-            .executor_read(&self.project, &target.project_env_key, async |connection| {
+            .executor_read(&self.project, async |connection| {
                 Ok(wamn_run_state::admission::enabled_schedules(
                     connection,
                     &target.project_env_key,

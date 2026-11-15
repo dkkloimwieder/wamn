@@ -77,7 +77,7 @@ impl KubernetesStore {
                 ));
             }
             if let Some(target) = target {
-                document.metadata.attributes.insert("labels".into(), json!({"wamn.org":target.org,"wamn.project":target.project,"wamn.env":target.env.as_str()}));
+                document.metadata.attributes.insert("labels".into(), json!({"wamn.org":target.org,"wamn.project":target.project,"wamn.env":&target.env}));
             }
             if let Some(value) = value {
                 document.data.insert(version.into(), STANDARD.encode(value));
@@ -132,7 +132,7 @@ impl Store for KubernetesStore {
                 "the environment coordinate is absent",
             ));
         }
-        let reference = credential_secret_name(&target.org, &target.project, target.env.as_str());
+        let reference = credential_secret_name(&target.org, &target.project, &target.env);
         let version = credential_id.to_string();
         self.change(&reference, &version, Some(value), Some(target))
             .await?;

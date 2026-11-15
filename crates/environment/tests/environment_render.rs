@@ -235,7 +235,11 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
         ("west H", "west", &h, 70),
     ] {
         let manifest = manifest(bytes)?;
-        let document = fixture_document(env, &format!("{env}.orders.example"), &manifest.digest());
+        let document = fixture_document(
+            &env.parse().unwrap(),
+            &format!("{env}.orders.example"),
+            &manifest.digest(),
+        );
         let group = fixture_host_group(&document, "registry.invalid");
         let path = work.path().join(format!("{env}-event-host-group.yaml"));
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
@@ -282,7 +286,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
 
 fn pat_release(project: &str) -> anyhow::Result<()> {
     use wamn_release_control::release_chart::ValuesInput;
-    let target = Triple::new("acme", "dev", project);
+    let target = Triple::new("acme", "dev".parse().unwrap(), project);
     let secrets = credential_secrets(&target, NAMESPACE);
     let manifest = manifest(&fixture_releases()?[2])?;
     let object_store_secret_name = (project == "wms").then(|| {
@@ -290,18 +294,18 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
             "wamn-object-store-credentials-",
             "acme",
             project,
-            "dev",
+            &"dev".parse().unwrap(),
         )
     });
     let mut secrets = secrets;
     if let Some(name) = &object_store_secret_name {
         secrets.push(prerequisite(name, &["credentials.json"], NAMESPACE));
     }
-    let roles = render_fixture::fixture_roles(&manifest, "acme", project, "dev");
+    let roles = render_fixture::fixture_roles(&manifest, "acme", project, &"dev".parse().unwrap());
     let values = wamn_release_control::release_chart::values(&ValuesInput {
         org: "acme".into(),
         project: project.into(),
-        env: "dev".into(),
+        env: "dev".parse().unwrap(),
         manifest_digest: manifest.digest(),
         artifact_base: "registry.invalid/wamn/releases".into(),
         route_host: format!("{project}.example"),
@@ -341,7 +345,9 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
     )?);
     secrets.push(prerequisite(
         &wamn_registry::name::nats_certificate(&wamn_registry::project_env_key(
-            "acme", project, "dev",
+            "acme",
+            project,
+            &"dev".parse().unwrap(),
         )),
         &["ca.crt", "tls.crt", "tls.key"],
         NAMESPACE,
@@ -371,7 +377,7 @@ async fn unavailable_registry_configuration_refuses_lifecycle_operations() -> an
     use wamn_environment::environment::{self, Platform};
     let scratch = ScratchRoot::create()?;
     let digest = wamn_digest::bytes_sha256(b"selected release");
-    let document = fixture_document("dev", "orders.example", &digest);
+    let document = fixture_document(&"dev".parse().unwrap(), "orders.example", &digest);
     let triple = document.triple();
     let application = document.applications.keys().next().unwrap();
     let kubeconfig = scratch.path().join("invalid-kubeconfig");

@@ -52,7 +52,7 @@ pub async fn fact(
     connection: &mut PgConnection,
     org: &str,
     project: &str,
-    env: &str,
+    env: &crate::EnvName,
     id: &Uuid,
 ) -> Result<Option<ConnectionFact>, sqlx::Error> {
     sqlx::query("SELECT active_generation, active, credential_id, exclusive, target_id, resource_key, target_type, service_principal_id FROM registry.read_connection_fact($1,$2,$3,$4)")
@@ -72,7 +72,7 @@ pub async fn generation(
     connection: &mut PgConnection,
     org: &str,
     project: &str,
-    env: &str,
+    env: &crate::EnvName,
     id: &Uuid,
     generation: i64,
 ) -> Result<Option<ConnectionGeneration>, sqlx::Error> {
@@ -92,7 +92,7 @@ pub async fn credential(
     connection: &mut PgConnection,
     org: &str,
     project: &str,
-    env: &str,
+    env: &crate::EnvName,
     id: &Uuid,
 ) -> Result<Option<CredentialReference>, sqlx::Error> {
     let row =
@@ -122,7 +122,7 @@ pub async fn environment(
     connection: &mut PgConnection,
     org: &str,
     project: &str,
-    env: &str,
+    env: &crate::EnvName,
 ) -> Result<BTreeMap<String, Uuid>, sqlx::Error> {
     Ok(sqlx::query_as::<_, (String, Uuid)>(
         "SELECT name, id FROM registry.read_env_connections($1,$2,$3)",
@@ -163,7 +163,7 @@ pub async fn projection(
     connection: &mut PgConnection,
     org: &str,
     project: &str,
-    env: &str,
+    env: &crate::EnvName,
 ) -> Result<Value, sqlx::Error> {
     sqlx::query_scalar("SELECT registry.connection_projection($1,$2,$3)")
         .bind(org)

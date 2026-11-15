@@ -26,14 +26,13 @@ impl WamnJetstream {
             .stream
             .as_ref()
             .ok_or(anyhow::anyhow!("event connection unavailable"))?;
-        let target = wamn_registry::Triple::new(
-            self.event_coordinates.org.as_ref(),
-            self.event_coordinates.environment.as_ref(),
-            self.event_coordinates.project.as_ref(),
-        );
+        let target = self
+            .event_coordinates
+            .as_ref()
+            .context("event target is absent")?;
         for &(application, package, entity) in sources {
             let config =
-                wamn_broker::events::application_consumer(&target, application, package, entity)?;
+                wamn_broker::events::application_consumer(target, application, package, entity)?;
             let consumer = stream
                 .get_consumer::<PullConfig>(
                     config.durable_name.as_deref().expect("declared durable"),
@@ -75,10 +74,10 @@ impl WamnJetstream {
                             &wamn_registry::project_env_key(
                                 &target.org,
                                 &target.project,
-                                target.env.as_str(),
+                                &target.env,
                             ),
                             &target.project,
-                            target.env.as_str(),
+                            &target.env,
                             &[id.as_str()],
                         )
                         .is_some()

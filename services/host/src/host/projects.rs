@@ -51,7 +51,10 @@ impl std::error::Error for StatePoisoned {}
 #[derive(Default)]
 struct Project {
     credentials: StaticCredentialProvider,
-    authentication: Option<(String, Arc<PlatformRouteAuthenticator>)>,
+    authentication: Option<(
+        wamn_registry::ProjectEnvKey,
+        Arc<PlatformRouteAuthenticator>,
+    )>,
     releases: Option<Arc<releases::Releases>>,
 }
 
@@ -82,7 +85,7 @@ impl CredentialProvider for Credentials {
         &self,
         project: &str,
         class: AuthorityClass,
-        project_env_key: Option<&str>,
+        project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
         let Some(state) = self.0.get(project) else {
             return Ok(None);
@@ -107,9 +110,7 @@ impl RouteAuthenticator for Authentication {
         &self,
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let coordinate =
-            wamn_registry::name::parse_project_env_key(&request.target.project_env_key)
-                .ok_or_else(authentication_unavailable)?;
+        let coordinate = wamn_registry::ProjectEnvKey::triple(&request.target.project_env_key);
         let state = self
             .0
             .get(&coordinate.project)
@@ -200,12 +201,12 @@ impl Environment {
     ) -> anyhow::Result<Arc<releases::ResidentRelease>> {
         let key = annotations
             .get("wamn.project_env_key")
-            .context("workload has no project deployment")?;
-        let coordinate = wamn_registry::name::parse_project_env_key(key)
-            .context("invalid workload project deployment")?;
+            .context("workload has no project deployment")?
+            .parse::<wamn_registry::ProjectEnvKey>()?;
+        let coordinate = key.triple();
         anyhow::ensure!(
             Some(coordinate.org.as_str()) == self.args.org.as_deref()
-                && Some(coordinate.env.as_str()) == self.args.environment.as_deref()
+                && Some(&coordinate.env) == self.args.environment.as_ref()
                 && self.declared()?.contains(&coordinate.project),
             "workload belongs to another environment"
         );
@@ -261,7 +262,7 @@ impl Environment {
             .context("environment host requires an org")?;
         let environment = args
             .environment
-            .as_deref()
+            .as_ref()
             .context("environment host requires an environment")?;
         let directory = args
             .projects
@@ -342,9 +343,9 @@ impl Environment {
         .await?;
         let reader = wamn_postgres::pool(&connection, 4).await?;
         let identity = wamn_postgres::pool(&identity, 4).await?;
-        let target = ReleaseTarget::new(&key, environment);
+        let target = ReleaseTarget::new(key.clone(), environment.clone());
         let mut events = WamnJetstreamConfig::from_env().with_nats(nats.clone());
-        events.event_target = Some(Triple::new(org, environment, project));
+        events.event_target = Some(Triple::new(org, environment.clone(), project));
         let jetstream = Arc::new(WamnJetstream::new(events).await?);
         let base = args
             .component_artifact_base
@@ -606,11 +607,10 @@ impl wamn_execution_host::file_route::ResidencyReader for Environment {
 
 #[async_trait::async_trait]
 impl wamn_engine::flow_http_routing::EnvironmentStatus for Environment {
-    async fn inactive(&self, key: &str) -> anyhow::Result<bool> {
-        let coordinate = wamn_registry::name::parse_project_env_key(key)
-            .context("invalid request project deployment")?;
+    async fn inactive(&self, key: &wamn_registry::ProjectEnvKey) -> anyhow::Result<bool> {
+        let coordinate = key.triple();
         if Some(coordinate.org.as_str()) != self.args.org.as_deref()
-            || Some(coordinate.env.as_str()) != self.args.environment.as_deref()
+            || Some(&coordinate.env) != self.args.environment.as_ref()
             || !self.declared()?.contains(&coordinate.project)
         {
             return Ok(true);

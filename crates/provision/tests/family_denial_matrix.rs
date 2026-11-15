@@ -34,8 +34,8 @@ const ENVIRONMENT: &str = "dev";
 
 /// The project every project-targeted generation in this acceptance test is minted for, and
 /// the project the guest may read. `PROJECT_B` is the neighbour it may not.
-const PROJECT_ENV_KEY_A: &str = "t1";
-const PROJECT_ENV_KEY_B: &str = "t2";
+const PROJECT_ENV_KEY_A: &str = "acme--dev--billing";
+const PROJECT_ENV_KEY_B: &str = "acme--dev--other";
 
 /// Throwaway password for the probe logins. Not a credential of record: the
 /// condition builds and drops these roles inside a disposable container.
@@ -182,19 +182,19 @@ struct Fixture {
 fn generation(family: WorkloadRoleFamily) -> wamn_identity_protocol::LoginName {
     let target = match family.identity_type() {
         WorkloadRoleIdentityType::ProjectEnvKey => WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: PROJECT_ENV_KEY_A,
+            project_env_key: &PROJECT_ENV_KEY_A.parse().unwrap(),
             database: DATABASE,
         },
         WorkloadRoleIdentityType::ProjectEnvironment => WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
-            environment: ENVIRONMENT,
+            environment: &ENVIRONMENT.parse().unwrap(),
             database: DATABASE,
         },
         WorkloadRoleIdentityType::Control => WorkloadRoleIdentity::Control {
             org: ORG,
             project: PROJECT,
-            environment: ENVIRONMENT,
+            environment: &ENVIRONMENT.parse().unwrap(),
             database: CONTROL_DATABASE,
         },
         WorkloadRoleIdentityType::Org => WorkloadRoleIdentity::Org {
@@ -271,7 +271,7 @@ fn reset(admin: &str) {
 /// an empty table, and the platform arm's whole assertion is that it reads BOTH.
 const SEED: &str = "\
 DO $seed$ DECLARE t text; BEGIN
-FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
+FOREACH t IN ARRAY ARRAY['acme--dev--billing','acme--dev--other'] LOOP
   INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( t, 'widgets', '1.0.0', 'sha256:'||repeat('f',64));
   INSERT INTO catalog.releases
     (project_env_key, manifest_digest, canonical_bytes)

@@ -17,7 +17,7 @@ use wamn_digest::bytes_sha256;
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
 use wamn_engine::release_manifest::ReleaseTarget;
 
-const PROJECT_ENV_KEY: &str = "t1";
+const PROJECT_ENV_KEY: &str = "t1--edge--scale";
 const PACKAGE: &str = "scale";
 const VERSION: &str = "1.0.0";
 const COMPONENT: &str = "device";
@@ -61,7 +61,7 @@ fn manifest() -> ServingManifest {
 fn fact() -> AdmittedComponent {
     AdmittedComponent {
         target: ComponentPackageCoordinate {
-            project_env_key: PROJECT_ENV_KEY.into(),
+            project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
             package_id: PACKAGE.into(),
             package_version: VERSION.into(),
         },
@@ -140,7 +140,7 @@ fn write(directory: &Path, name: &str, bytes: &[u8]) {
 }
 
 fn target() -> ReleaseTarget {
-    ReleaseTarget::new(PROJECT_ENV_KEY, "edge").with_applications(
+    ReleaseTarget::new(PROJECT_ENV_KEY.parse().unwrap(), "edge".parse().unwrap()).with_applications(
         [(
             "weighing".to_owned(),
             wamn_catalog::ApplicationDefinition {

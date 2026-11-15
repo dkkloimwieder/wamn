@@ -49,7 +49,7 @@ impl WamnPostgres {
         &self,
         class: AuthorityClass,
         project: &str,
-        project_env_key: Option<&str>,
+        project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> Result<Arc<ProjectPool>, PgError> {
         let cfg = match self.provider.resolve(project, class, project_env_key) {
             Ok(Some(c)) => c,
@@ -103,7 +103,10 @@ impl WamnPostgres {
 
     /// acquire a raw connection from the default project and report its state
     /// *before* any identity injection. Condition verification only.
-    pub async fn probe_checkout(&self, project_env_key: &str) -> anyhow::Result<CheckoutProbe> {
+    pub async fn probe_checkout(
+        &self,
+        project_env_key: &wamn_registry::ProjectEnvKey,
+    ) -> anyhow::Result<CheckoutProbe> {
         self.probe_checkout_of(DEFAULT_PROJECT, project_env_key)
             .await
     }
@@ -115,7 +118,7 @@ impl WamnPostgres {
     pub async fn probe_checkout_of(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<CheckoutProbe> {
         let pp = self
             .ensure_pool(AuthorityClass::GuestSql, project, Some(project_env_key))
@@ -139,7 +142,7 @@ impl WamnPostgres {
         &self,
         class: AuthorityClass,
         project: &str,
-        project_env_key: Option<&str>,
+        project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         async {
             let pp = self.ensure_pool(class, project, project_env_key).await?;
@@ -174,7 +177,7 @@ impl WamnPostgres {
     pub(in super::super) async fn checkout_dynamic(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         self.checkout_class(AuthorityClass::DynamicSql, project, Some(project_env_key))
             .await
@@ -183,7 +186,7 @@ impl WamnPostgres {
     pub(in super::super) async fn checkout_guest(
         &self,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         self.checkout_class(AuthorityClass::GuestSql, project, Some(project_env_key))
             .await
@@ -196,7 +199,7 @@ impl WamnPostgres {
         &self,
         _component_id: &str,
         project: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> Result<(Object, Arc<ProjectPool>, AuthorityClass), PgError> {
         let class = AuthorityClass::GuestSql;
         let (connection, pool) = self.checkout_guest(project, project_env_key).await?;

@@ -8,7 +8,8 @@ use anyhow::Context as _;
 use sqlx::PgPool;
 pub(super) type Object = sqlx::pool::PoolConnection<sqlx::Postgres>;
 
-use wamn_identity_protocol::{AuthorityClass, app_identity_hash};
+use wamn_identity_protocol::AuthorityClass;
+use wamn_registry::app_identity_hash;
 
 use super::DEFAULT_PROJECT;
 use wamn_engine::engine::MAX_HOST_CALL_DURATION;
@@ -249,7 +250,7 @@ pub trait CredentialProvider: Send + Sync {
         &self,
         project: &str,
         class: AuthorityClass,
-        project_env_key: Option<&str>,
+        project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> anyhow::Result<Option<ResolvedCredential>>;
 }
 
@@ -410,7 +411,7 @@ impl CredentialProvider for StaticCredentialProvider {
         &self,
         project: &str,
         class: AuthorityClass,
-        project_env_key: Option<&str>,
+        project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
         let Some(cfg) = self.projects.get(project) else {
             return Ok(None);
@@ -594,13 +595,13 @@ mod tests {
     fn the_guest_project_env_key_requirement_reads_the_credential_the_guest_would_connect_with() {
         let credentials = ClassCredentials::every_class(format!(
             "postgres://wamn_app_{}:pw@db/billing",
-            app_identity_hash("acme", "billing")
+            app_identity_hash(&"acme--dev--project".parse().unwrap(), "billing")
         ))
         .with_class(
             AuthorityClass::GuestSql,
             format!(
                 "postgres://wamn_app_{}:pw@db/billing",
-                app_identity_hash("evil", "billing")
+                app_identity_hash(&"evil--dev--project".parse().unwrap(), "billing")
             ),
         );
         let mut projects = HashMap::new();
@@ -609,7 +610,11 @@ mod tests {
 
         assert!(
             provider
-                .resolve("billing", AuthorityClass::GuestSql, Some("acme"))
+                .resolve(
+                    "billing",
+                    AuthorityClass::GuestSql,
+                    Some(&"acme--dev--project".parse().unwrap())
+                )
                 .is_err(),
             "the guest credential is minted for another project and must be REFUSED, \
              not borrowed — reading the platform credential here would admit a \
@@ -617,7 +622,11 @@ mod tests {
         );
         assert!(
             provider
-                .resolve("billing", AuthorityClass::GuestSql, Some("evil"))
+                .resolve(
+                    "billing",
+                    AuthorityClass::GuestSql,
+                    Some(&"evil--dev--project".parse().unwrap())
+                )
                 .expect("the guest credential's own project resolves")
                 .is_some()
         );

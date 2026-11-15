@@ -20,7 +20,7 @@ struct HealthStatus(tokio::sync::Mutex<Option<wamn_digest::Digest>>);
 
 #[async_trait::async_trait]
 impl wamn_execution_host::environment_status::StatusSource for HealthStatus {
-    async fn read(&self, _: &str, _: &str, _: &str) -> anyhow::Result<Value> {
+    async fn read(&self, _: &str, _: &str, _: &wamn_registry::EnvName) -> anyhow::Result<Value> {
         Ok(json!({"digest":self.0.lock().await.clone()}))
     }
 }
@@ -342,8 +342,8 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         .await
         .unwrap();
     let canonical = b"{}".as_slice();
-    let digest: wamn_digest::Digest = sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&canonical).fetch_one(&mut billing).await?.get(0);
-    sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,2)").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&digest).bind(&connection["id"].as_str().unwrap()).execute(&mut billing).await.map(|result| result.rows_affected())?;
+    let digest: wamn_digest::Digest = sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest").bind(&wamn_registry::project_env_key(ORG,"billing", &"dev".parse().unwrap())).bind(&canonical).fetch_one(&mut billing).await?.get(0);
+    sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,2)").bind(&wamn_registry::project_env_key(ORG,"billing", &"dev".parse().unwrap())).bind(&digest).bind(&connection["id"].as_str().unwrap()).execute(&mut billing).await.map(|result| result.rows_affected())?;
     *live.0.lock().await = Some(digest);
     let before = counts(&mut admin).await?;
     {

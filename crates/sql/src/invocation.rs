@@ -24,8 +24,8 @@ impl ReleaseContext {
         connections: Arc<wamn_connections::connection_facts::ConnectionFacts>,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
-            release.target().project_env_key == connections.project_env_key()
-                && release.target().environment == connections.environment(),
+            &release.target().project_env_key == connections.project_env_key()
+                && &release.target().environment == connections.environment(),
             "connection release target mismatch"
         );
         Ok(Self {
@@ -54,7 +54,7 @@ pub fn validate_context(
     context: &ReleaseContext,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        identity.project_env_key == context.release.target().project_env_key
+        identity.project_env_key.as_ref() == Some(&context.release.target().project_env_key)
             && identity.project.as_deref() == Some(context.connections.project())
             && identity.release.as_ref()
                 == Some(&wamn_authority::identity::ReleaseIdentity::from_loaded(
@@ -75,7 +75,7 @@ pub fn bind_test_context(
 ) {
     let context = Arc::new(ReleaseContext::new(release, connections).expect("fixture context"));
     postgres.scopes.update::<Authority, _>(scope, |record| {
-        record.identity.project_env_key = context.release.target().project_env_key.clone();
+        record.identity.project_env_key = Some(context.release.target().project_env_key.clone());
         record.identity.project = Some(context.connections.project().to_owned());
         record.identity.release = Some(wamn_authority::identity::ReleaseIdentity::from_loaded(
             &context.release,
@@ -187,7 +187,7 @@ impl AuthorizedInvocation {
 pub(crate) fn identity(scopes: &InvocationScopes, scope: &str) -> Option<SessionIdentity> {
     scopes
         .read::<Authority, _>(scope, |record| record.identity.clone())
-        .filter(|identity| !identity.project_env_key.is_empty())
+        .filter(|identity| identity.project_env_key.is_some())
 }
 
 pub fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::Result<()> {
@@ -208,14 +208,13 @@ pub fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::Result<
         "connection-http-invocation-invalid"
     );
     if let ConnectionExecutionClosure::Candidate {
-        environment,
         component,
         interface_version,
         ..
     } = &invocation.closure
     {
         anyhow::ensure!(
-            !environment.is_empty() && !component.is_empty() && !interface_version.is_empty(),
+            !component.is_empty() && !interface_version.is_empty(),
             "connection-http-candidate-closure-invalid"
         );
     }

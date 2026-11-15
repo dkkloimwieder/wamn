@@ -28,8 +28,12 @@ mod native_files {
             &[],
         )?
         .published;
-        let roles =
-            wamn_release_control::release_chart::roles(&published.manifest, ORG, PROJECT, "files");
+        let roles = wamn_release_control::release_chart::roles(
+            &published.manifest,
+            ORG,
+            PROJECT,
+            &"files".parse().unwrap(),
+        );
         assert!(
             roles
                 .iter()

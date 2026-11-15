@@ -180,6 +180,8 @@ struct PrincipalRequest {
 #[derive(Deserialize)]
 struct ProjectTarget {
     project: String,
+    env: Option<wamn_registry::EnvName>,
+    source_env: Option<wamn_registry::EnvName>,
 }
 
 /// The request of `member.list`, beside its paging. The page refuses an
@@ -208,7 +210,7 @@ struct ProjectPrincipalRequest {
 #[serde(deny_unknown_fields)]
 struct MemberRequest {
     project: String,
-    env: String,
+    env: wamn_registry::EnvName,
     principal_id: wamn_identity_protocol::PrincipalId,
 }
 
@@ -216,14 +218,14 @@ struct MemberRequest {
 #[serde(deny_unknown_fields)]
 struct EnvironmentRequest {
     project: String,
-    env: String,
+    env: wamn_registry::EnvName,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReleaseRequest {
     project: String,
-    env: String,
+    env: wamn_registry::EnvName,
     digest: wamn_digest::Digest,
 }
 
@@ -244,7 +246,7 @@ struct InviteRequest {
 #[serde(deny_unknown_fields)]
 struct MembershipRequest {
     project: String,
-    env: String,
+    env: wamn_registry::EnvName,
 }
 
 impl ControlRoutes<'_> {
@@ -262,7 +264,15 @@ impl ControlRoutes<'_> {
                 attachment,
                 caller,
                 input["project"].as_str(),
-                input["env"].as_str(),
+                input["env"]
+                    .as_str()
+                    .map(str::parse::<wamn_registry::EnvName>)
+                    .transpose()
+                    .map_err(|_| Refusal::Declared {
+                        code: "invalid_input",
+                        detail: json!({"field":"env"}),
+                    })?
+                    .as_ref(),
             )
             .await?;
         transaction.commit().await?;
@@ -298,7 +308,15 @@ impl ControlRoutes<'_> {
                             connection,
                             caller,
                             Some(&project),
-                            target["env"].as_str(),
+                            target["env"]
+                                .as_str()
+                                .map(str::parse::<wamn_registry::EnvName>)
+                                .transpose()
+                                .map_err(|_| Refusal::Declared {
+                                    code: "invalid_input",
+                                    detail: json!({"field":"env"}),
+                                })?
+                                .as_ref(),
                         )
                         .await?)
                 })
@@ -552,13 +570,22 @@ impl ControlRoutes<'_> {
                     Some(&request.project),
                     Order::Principal,
                 )?;
+                let environment = request
+                    .environment
+                    .as_str()
+                    .map(str::parse::<wamn_registry::EnvName>)
+                    .transpose()
+                    .map_err(|_| Refusal::Declared {
+                        code: "invalid_input",
+                        detail: json!({"field":"environment"}),
+                    })?;
                 let members = self
                     .read(caller, async |connection| {
                         Ok(project_members_page(
                             connection,
                             self.org,
                             &request.project,
-                            request.environment.as_str(),
+                            environment.as_ref(),
                             page.after(0),
                             page.after_principal(),
                             page.read_limit(),
@@ -800,7 +827,7 @@ impl ControlRoutes<'_> {
         drops.identity(&user.principal_id);
         transaction.commit().await?;
         self.changes.publish(drops).await;
-        let mut environments: std::collections::BTreeSet<(String, String)> =
+        let mut environments: std::collections::BTreeSet<(String, wamn_registry::EnvName)> =
             grants.memberships.into_iter().collect();
         let admin_targets: Vec<Option<&str>> = if grants.org_admin {
             vec![None]
@@ -849,21 +876,18 @@ impl ControlRoutes<'_> {
         attachment: &HostAttachment,
         caller: &PrincipalId,
         project: &str,
-        env: Option<&str>,
+        env: Option<&wamn_registry::EnvName>,
         status: EnvironmentStatus,
     ) -> Result<(), Refusal> {
         let mut writer = self.writer.lock().await;
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
         let envs = status_environments(&mut transaction, self.org, project, env).await?;
-        let environments: Vec<(String, String)> =
-            sqlx::query(wamn_registry::sql::ENVIRONMENT_PROJECTS)
+        let environments: Vec<(String, wamn_registry::EnvName)> =
+            sqlx::query_as(wamn_registry::sql::ENVIRONMENT_PROJECTS)
                 .bind(self.org)
                 .bind(&envs)
                 .fetch_all(&mut *transaction)
-                .await?
-                .into_iter()
-                .map(|row| (row.get(0), row.get(1)))
-                .collect();
+                .await?;
         if status == EnvironmentStatus::Inactive {
             self.write_statuses(attachment, caller, &environments, status)
                 .await?;
@@ -884,7 +908,7 @@ impl ControlRoutes<'_> {
         &self,
         attachment: &HostAttachment,
         caller: &PrincipalId,
-        environments: &[(String, String)],
+        environments: &[(String, wamn_registry::EnvName)],
         status: EnvironmentStatus,
     ) -> Result<(), Refusal> {
         let logins = self.logins(environments)?;
@@ -897,7 +921,7 @@ impl ControlRoutes<'_> {
                     tracing::warn!(
                         error = format!("{error:#}"),
                         project,
-                        env,
+                        %env,
                         reference = attachment.reference,
                         "an environment status write failed"
                     );
@@ -911,7 +935,10 @@ impl ControlRoutes<'_> {
 
     /// The administration login of each environment, all read before the
     /// first write.
-    fn logins(&self, environments: &[(String, String)]) -> Result<Vec<String>, Refusal> {
+    fn logins(
+        &self,
+        environments: &[(String, wamn_registry::EnvName)],
+    ) -> Result<Vec<String>, Refusal> {
         if environments.is_empty() {
             return Ok(Vec::new());
         }
@@ -957,7 +984,7 @@ impl ControlRoutes<'_> {
         &self,
         caller: &PrincipalId,
         project: Option<&str>,
-    ) -> Result<Vec<(String, String)>, Refusal> {
+    ) -> Result<Vec<(String, wamn_registry::EnvName)>, Refusal> {
         self.read(caller, async |connection| {
             Ok(org_environments(connection, self.org, project).await?)
         })
@@ -971,7 +998,7 @@ impl ControlRoutes<'_> {
         attachment: &HostAttachment,
         caller: &PrincipalId,
         principal: &PrincipalId,
-        environments: &[(String, String)],
+        environments: &[(String, wamn_registry::EnvName)],
     ) -> Result<(), Refusal> {
         let logins = self.logins(environments)?;
         let mut system = writer.begin().await?;
@@ -994,7 +1021,7 @@ impl ControlRoutes<'_> {
                     tracing::warn!(
                         error = format!("{error:#}"),
                         project,
-                        env,
+                        %env,
                         "an application projection failed"
                     );
                     return Err(incomplete(project, env, &completed));
@@ -1035,7 +1062,7 @@ impl ControlRoutes<'_> {
         attachment: &HostAttachment,
         caller: &PrincipalId,
         project: Option<&str>,
-        environment: Option<&str>,
+        environment: Option<&wamn_registry::EnvName>,
     ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
         let mut transaction = writer.begin().await?;
         sqlx::query(
@@ -1071,7 +1098,7 @@ impl ControlRoutes<'_> {
         client: &mut sqlx::PgConnection,
         caller: &PrincipalId,
         project: Option<&str>,
-        environment: Option<&str>,
+        environment: Option<&wamn_registry::EnvName>,
     ) -> Result<bool, Refusal> {
         if is_org_admin(client, caller, self.org).await? {
             return Ok(true);
@@ -1113,20 +1140,20 @@ async fn application_counts(url: &str, caller: &PrincipalId) -> anyhow::Result<(
 
 async fn optional_status_count<T>(
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
     source: &str,
     read: impl std::future::Future<Output = anyhow::Result<T>>,
 ) -> Option<T> {
     match tokio::time::timeout(STATUS_COUNTS_TIMEOUT, read).await {
         Ok(Ok(value)) => Some(value),
         Ok(Err(error)) => {
-            tracing::warn!(%error, project, env, source, "environment status count read failed");
+            tracing::warn!(%error, project, %env, source, "environment status count read failed");
             None
         }
         Err(_) => {
             tracing::warn!(
                 project,
-                env,
+                %env,
                 source,
                 "environment status count read timed out"
             );
@@ -1138,7 +1165,7 @@ async fn optional_status_count<T>(
 async fn status_with_counts(
     mut status: Value,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
     application: impl std::future::Future<Output = anyhow::Result<(i32, i32)>>,
     memberships: impl std::future::Future<Output = anyhow::Result<i32>>,
 ) -> Value {
@@ -1240,7 +1267,7 @@ async fn release_profile(
 /// administration login. It returns the drops of the write.
 async fn write_status(
     url: &str,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     status: EnvironmentStatus,
@@ -1325,7 +1352,7 @@ fn principal(payload: &str) -> Result<PrincipalId, Refusal> {
 
 /// The refusal of a write whose application rows stopped at `project/env`,
 /// with the environments that completed.
-fn incomplete(project: &str, env: &str, completed: &[String]) -> Refusal {
+fn incomplete(project: &str, env: &wamn_registry::EnvName, completed: &[String]) -> Refusal {
     Refusal::Declared {
         code: "application_write_incomplete",
         detail: json!({
@@ -1487,7 +1514,7 @@ mod tests {
         let answer = status_with_counts(
             status.clone(),
             "billing",
-            "dev",
+            &"dev".parse().unwrap(),
             async { anyhow::bail!("application unavailable") },
             async { anyhow::bail!("control unavailable") },
         )
@@ -1502,9 +1529,13 @@ mod tests {
 
     #[tokio::test]
     async fn status_keeps_independent_counts_and_zero() {
-        let answer = status_with_counts(json!({}), "billing", "dev", async { Ok((0, 2)) }, async {
-            anyhow::bail!("control unavailable")
-        })
+        let answer = status_with_counts(
+            json!({}),
+            "billing",
+            &"dev".parse().unwrap(),
+            async { Ok((0, 2)) },
+            async { anyhow::bail!("control unavailable") },
+        )
         .await;
         {
             let observed = &(answer);
@@ -1515,7 +1546,7 @@ mod tests {
         let answer = status_with_counts(
             json!({}),
             "billing",
-            "dev",
+            &"dev".parse().unwrap(),
             async { anyhow::bail!("application unavailable") },
             async { Ok(3) },
         )
@@ -1533,7 +1564,7 @@ mod tests {
         let answer = status_with_counts(
             json!({"digest": "sha256:live"}),
             "billing",
-            "dev",
+            &"dev".parse().unwrap(),
             std::future::pending(),
             std::future::pending(),
         )

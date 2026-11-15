@@ -209,7 +209,7 @@ pub struct RegistryFileConnections {
     pub facts: Arc<wamn_connections::connection_facts::ConnectionFacts>,
     pub org: String,
     pub project: String,
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
 }
 impl fmt::Debug for RegistryFileConnections {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -494,7 +494,6 @@ impl FileRoutes {
         self.postgres
             .administration_transaction(
                 &self.project,
-                &self.release.target().project_env_key,
                 principal,
                 &format!(
                     "wamn-control:file/{action}@{}",
@@ -535,7 +534,7 @@ impl FileRoutes {
         let id = Uuid::new_v4();
         let staged = store.stage(id, body).await?;
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
-        self.postgres.administration_transaction(&self.project, &self.release.target().project_env_key, &principal,
+        self.postgres.administration_transaction(&self.project, &principal,
             &format!("wamn-control:file/put@{}", wamn_catalog::host_route_version()), async |client| {
                 sqlx::query("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')").bind(id.to_string()).bind(application).bind(&connection.id).bind(name).bind(media_type).bind(size).bind(staged.sha256).bind(&staged.blob_key).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(())
@@ -612,7 +611,6 @@ impl FileRoutes {
         self.postgres
             .administration_transaction(
                 &self.project,
-                &self.release.target().project_env_key,
                 &principal,
                 &format!(
                     "wamn-control:file/delete@{}",
@@ -685,7 +683,7 @@ impl FileRoutes {
             request.exposure,
         )
         .await?;
-        let written = self.postgres.administration_transaction(&self.project, &self.release.target().project_env_key, &principal,
+        let written = self.postgres.administration_transaction(&self.project, &principal,
             &format!("wamn-control:file/expose@{}", wamn_catalog::host_route_version()), async |client| {
                 let updated = sqlx::query("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)").bind(request.file_id.to_string()).bind(&request.application).bind(request.exposure.literal()).bind(&url).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(updated)
@@ -1236,7 +1234,11 @@ mod tests {
             LoadedRelease::load_canonical_bytes(
                 &manifest.canonical_bytes(),
                 "files-test",
-                ReleaseTarget::new("acme", "dev").with_applications(BTreeMap::from([(
+                ReleaseTarget::new(
+                    "acme--dev--project".parse().unwrap(),
+                    "dev".parse().unwrap(),
+                )
+                .with_applications(BTreeMap::from([(
                     "orders".into(),
                     ApplicationDefinition {
                         packages: BTreeSet::from(["app".into()]),
@@ -1308,7 +1310,7 @@ mod tests {
                     &postgres,
                     &release.target().project_env_key,
                     "project",
-                    "dev",
+                    &"dev".parse().unwrap(),
                 )),
             )
             .unwrap(),

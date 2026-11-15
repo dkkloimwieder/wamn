@@ -42,7 +42,7 @@ pub fn system_reader_identity_hash(
     reader: SystemReader,
     org: &str,
     project: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     database: &str,
 ) -> String {
     workload_role_identity_hash(
@@ -61,7 +61,7 @@ pub fn system_reader_login(
     reader: SystemReader,
     org: &str,
     project: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     database: &str,
 ) -> wamn_identity_protocol::LoginName {
     workload_login(

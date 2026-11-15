@@ -21,7 +21,7 @@ pub async fn admit_event_batch(
     let target = release.target();
     let project_env_key = &target.project_env_key;
     postgres
-        .executor_write(project, project_env_key, async |connection| {
+        .executor_write(project, async |connection| {
             let source = SourceEvent::decode(admission.envelope.as_bytes())
                 .map_err(|error| ProductionLeaseError::invalid("decode event", error))?;
             if admission.sequence == 0
@@ -180,7 +180,7 @@ pub async fn admit_application_events(
 ) -> anyhow::Result<()> {
     let target = release.target();
     let triggers = postgres
-        .executor_read(project, &target.project_env_key, async |connection| {
+        .executor_read(project, async |connection| {
             admission::event_workflows(
                 connection,
                 &target.project_env_key,

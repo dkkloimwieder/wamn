@@ -124,22 +124,11 @@ pub const MAX_PAT_LABEL_LEN: usize = 200;
 /// every issued token dies within a year even if nobody revokes it.
 pub const MAX_PAT_TTL: Duration = Duration::from_hours(365 * 24);
 
-/// Construct the canonical subject of the operator service principal of one
-/// environment.
-pub fn operator_subject(
-    org: &str,
-    project: &str,
-    environment: &str,
-) -> Result<String, IdentityError> {
-    canonical_subject(&wamn_registry::name::operator_subject(
-        org,
-        project,
-        environment,
-    ))
-}
-
 /// The service subject of one scheduled application in one environment project.
-pub fn application_subject(project_env_key: &str, package: &str) -> Result<String, IdentityError> {
+pub fn application_subject(
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    package: &str,
+) -> Result<String, IdentityError> {
     canonical_subject(&wamn_registry::name::application_subject(
         project_env_key,
         package,
@@ -871,16 +860,15 @@ pub async fn grant_project_env_membership(
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> Result<(), IdentityError> {
     let org = org::active_member(client, principal_id, org).await?;
     let project = require_target_segment("project", project)?;
-    let env = require_target_segment("env", env)?;
     sqlx::query(GRANT_PROJECT_ENV_MEMBERSHIP_SQL)
         .bind(principal_id)
         .bind(&org)
         .bind(&project)
-        .bind(&env)
+        .bind(env)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -897,16 +885,15 @@ pub async fn has_project_env_membership(
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> Result<bool, IdentityError> {
     let org = require_target_segment("org", org)?;
     let project = require_target_segment("project", project)?;
-    let env = require_target_segment("env", env)?;
     sqlx::query(SELECT_PROJECT_ENV_MEMBERSHIP_SQL)
         .bind(principal_id)
         .bind(&org)
         .bind(&project)
-        .bind(&env)
+        .bind(env)
         .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -920,18 +907,17 @@ pub async fn revoke_project_env_membership(
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
     drops: &mut AuthDrops,
 ) -> Result<bool, IdentityError> {
     let org = require_target_segment("org", org)?;
     org::lock_membership(client, principal_id, &org).await?;
     let project = require_target_segment("project", project)?;
-    let env = require_target_segment("env", env)?;
     let removed = sqlx::query(REVOKE_PROJECT_ENV_MEMBERSHIP_SQL)
         .bind(principal_id)
         .bind(&org)
         .bind(&project)
-        .bind(&env)
+        .bind(env)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -1146,14 +1132,13 @@ mod tests {
     #[test]
     fn application_subject_is_targeted_to_project_env_key_and_package() {
         assert_ne!(
-            application_subject("acme--prod--erp", "integration").unwrap(),
-            application_subject("acme--dev--erp", "integration").unwrap()
+            application_subject(&"acme--prod--erp".parse().unwrap(), "integration").unwrap(),
+            application_subject(&"acme--dev--erp".parse().unwrap(), "integration").unwrap()
         );
         assert_ne!(
-            application_subject("acme--prod--erp", "integration").unwrap(),
-            application_subject("acme--prod--erp", "consumer").unwrap()
+            application_subject(&"acme--prod--erp".parse().unwrap(), "integration").unwrap(),
+            application_subject(&"acme--prod--erp".parse().unwrap(), "consumer").unwrap()
         );
-        assert!(application_subject("bad project", "integration").is_err());
     }
 
     #[test]
@@ -1224,15 +1209,6 @@ mod tests {
                 "accepted email {invalid:?}"
             );
         }
-    }
-
-    #[test]
-    fn operator_subject_is_exactly_environment_targeted_and_validated() {
-        assert_ne!(
-            operator_subject("demo", "widgets", "prod").unwrap(),
-            operator_subject("demo", "widgets", "dev").unwrap()
-        );
-        assert!(operator_subject("demo", "two words", "prod").is_err());
     }
 
     #[test]

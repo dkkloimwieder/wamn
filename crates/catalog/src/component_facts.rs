@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::package::validate_canonical_operation_for_package;
-use crate::{CatalogIdentityError, PackageCoordinate, validate_text};
+use crate::{CatalogIdentityError, PackageCoordinate};
 
 const JSON_SCHEMA_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
 const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
@@ -16,20 +16,19 @@ const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
 /// Package coordinate that owns an admitted component.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentPackageCoordinate {
-    pub project_env_key: String,
+    pub project_env_key: wamn_registry::ProjectEnvKey,
     pub package_id: String,
     pub package_version: String,
 }
 
 impl ComponentPackageCoordinate {
     pub fn new(
-        project_env_key: impl Into<String>,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         package_id: impl Into<String>,
         package_version: impl Into<String>,
     ) -> Result<Self, CatalogIdentityError> {
-        let project_env_key = project_env_key.into();
+        let project_env_key = project_env_key.clone();
         let coordinate = PackageCoordinate::new(package_id, package_version)?;
-        validate_text(&project_env_key, "project_env_key")?;
         Ok(Self {
             project_env_key,
             package_id: coordinate.package_id().to_owned(),
@@ -92,7 +91,9 @@ impl<'de> Deserialize<'de> for ComponentPackageCoordinate {
                 .remove(name)
                 .ok_or_else(|| serde::de::Error::missing_field(name))
         };
-        let project_env_key = take("project_env_key")?;
+        let project_env_key = take("project_env_key")?
+            .parse()
+            .map_err(serde::de::Error::custom)?;
         let package_id = take("package-id")?;
         let package_version = take("package-version")?;
         if let Some(name) = fields.keys().next() {
@@ -101,7 +102,7 @@ impl<'de> Deserialize<'de> for ComponentPackageCoordinate {
                 &["project_env_key", "package-id", "package-version"],
             ));
         }
-        Self::new(project_env_key, package_id, package_version).map_err(serde::de::Error::custom)
+        Self::new(&project_env_key, package_id, package_version).map_err(serde::de::Error::custom)
     }
 }
 
@@ -974,7 +975,7 @@ mod tests {
         ComponentDeclaration {
             connections: Vec::new(),
             target: ComponentPackageCoordinate {
-                project_env_key: "org-a".to_string(),
+                project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: "orders".to_string(),
                 package_version: "1.2.0".to_string(),
             },
@@ -1086,11 +1087,11 @@ mod tests {
     #[test]
     fn persisted_component_target_uses_the_package_coordinate_guard() {
         assert!(serde_json::from_str::<ComponentPackageCoordinate>(
-            r#"{"project_env_key":"first","project_env_key":"second","package-id":"orders","package-version":"1.0.0"}"#
+            r#"{"project_env_key":"first--dev--project","project_env_key":"second--dev--project","package-id":"orders","package-version":"1.0.0"}"#
         ).is_err());
         assert!(
             serde_json::from_value::<ComponentPackageCoordinate>(json!({
-                "project_env_key": "org-a",
+                "project_env_key": "org-a--dev--project",
                 "package-id": "not-snake",
                 "package-version": "1.0.0"
             }))
@@ -1303,7 +1304,7 @@ mod tests {
     fn migration_defaulted_fact(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
             target: ComponentPackageCoordinate {
-                project_env_key: "org-a".to_string(),
+                project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: "orders".to_string(),
                 package_version: "1.2.0".to_string(),
             },

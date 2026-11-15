@@ -278,7 +278,7 @@ mod tests {
         ValuesInput {
             org: "acme".into(),
             project: "wms".into(),
-            env: "prod".into(),
+            env: "prod".parse().unwrap(),
             manifest_digest: DIGEST.parse().unwrap(),
             artifact_base: "registry.example/releases".into(),
             route_host: "wms.acme.example".into(),

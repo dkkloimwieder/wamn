@@ -182,7 +182,7 @@ impl Application {
         let mut declaration = wamn_publish::component_declaration::render_package_declaration(
             &package,
             "modbus_reader",
-            "acme--dev--one",
+            &"acme--dev--one".parse().unwrap(),
         )?;
         declaration["target"]["package-version"] = json!("0.1.0");
         let operation = declaration["operations"]
@@ -381,14 +381,17 @@ fn loaded_release(
     wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "connection read fixture",
-        wamn_engine::release_manifest::ReleaseTarget::new("acme--dev--one", "dev")
-            .with_applications(
-                [(
-                    application.to_owned(),
-                    document.membership().remove(application).unwrap(),
-                )]
-                .into(),
-            ),
+        wamn_engine::release_manifest::ReleaseTarget::new(
+            "acme--dev--one".parse().unwrap(),
+            "dev".parse().unwrap(),
+        )
+        .with_applications(
+            [(
+                application.to_owned(),
+                document.membership().remove(application).unwrap(),
+            )]
+            .into(),
+        ),
     )
     .map_err(Into::into)
 }
@@ -445,11 +448,11 @@ async fn apply(
         let bindings = bindings::analyse(&mut source, &selected, packages).await?;
         source.commit().await?;
         let release = loaded_release(document, application)?;
-        let project_env_key = "acme--dev--one";
+        let project_env_key: wamn_registry::ProjectEnvKey = "acme--dev--one".parse()?;
         let digest = &release.release().manifest_digest;
         wamn_environment::environment::stage::write_release(
             project_url,
-            project_env_key,
+            &project_env_key,
             digest,
             release.manifest(),
             &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
@@ -477,7 +480,7 @@ async fn apply(
         }
         bindings::write(
             &mut tx,
-            project_env_key,
+            &project_env_key,
             digest,
             &selected,
             &bindings,
@@ -519,7 +522,11 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "SET ROLE wamn_system; {}",
-            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev")
+            wamn_control_provision::test_database::seed_org_project_env_sql(
+                "acme",
+                "one",
+                &"dev".parse().unwrap()
+            )
         ))
             .to_string(),
     ))
@@ -676,9 +683,9 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         wamn_broker::Publisher::default(),
         Arc::clone(&credentials),
         &postgres,
-        "acme--dev--one",
+        &"acme--dev--one".parse().unwrap(),
         "one",
-        "dev",
+        &"dev".parse().unwrap(),
     ));
     let imports = async |document: &EnvironmentDocument,
                          application: &str,

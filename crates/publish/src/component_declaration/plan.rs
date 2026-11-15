@@ -20,13 +20,13 @@ pub(super) fn render_palette_declaration(
         (
             "project_env_key",
             COMPONENT_DECLARATION_PLACEHOLDER,
-            &target.project_env_key,
+            target.project_env_key.as_str(),
         ),
-        ("package-id", "__PACKAGE_ID__", &target.package_id),
+        ("package-id", "__PACKAGE_ID__", target.package_id.as_str()),
         (
             "package-version",
             "__PACKAGE_VERSION__",
-            &target.package_version,
+            target.package_version.as_str(),
         ),
     ] {
         let slot = document
@@ -37,7 +37,7 @@ pub(super) fn render_palette_declaration(
                 "must leave target.{field} as the placeholder {placeholder}"
             )));
         }
-        *slot = Value::String(value.clone());
+        *slot = Value::String(value.to_owned());
     }
     for connection in document
         .get_mut("connections")

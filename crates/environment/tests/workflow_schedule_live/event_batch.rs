@@ -78,7 +78,7 @@ async fn fanout_is_atomic_idempotent_and_records_the_history_actor(pool: sqlx::P
                 "event:{}",
                 wamn_event_wire::msg_id(
                     PROJECT,
-                    ENVIRONMENT,
+                    &ENVIRONMENT.parse().unwrap(),
                     &wamn_event_wire::CdcIdentity {
                         system_id: 1,
                         timeline: 1,
@@ -140,7 +140,7 @@ async fn fanout_is_atomic_idempotent_and_records_the_history_actor(pool: sqlx::P
                 "event:{}",
                 wamn_event_wire::msg_id(
                     PROJECT,
-                    ENVIRONMENT,
+                    &ENVIRONMENT.parse().unwrap(),
                     &wamn_event_wire::CdcIdentity {
                         system_id: 1,
                         timeline: 1,

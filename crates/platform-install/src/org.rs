@@ -2,7 +2,7 @@
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_control_provision::{EnvPolicy, Org, Placement};
-use wamn_registry::Env;
+use wamn_registry::EnvName;
 
 pub fn values(org: &Org, policies: &[EnvPolicy]) -> anyhow::Result<Value> {
     let mut clusters = Vec::new();
@@ -25,7 +25,7 @@ pub fn values(org: &Org, policies: &[EnvPolicy]) -> anyhow::Result<Value> {
 
 pub fn recovery_values(
     org: &Org,
-    owner: &Env,
+    owner: &EnvName,
     policies: &[EnvPolicy],
     target: &str,
     target_time: Option<&str>,

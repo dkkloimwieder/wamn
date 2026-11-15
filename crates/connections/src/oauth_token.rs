@@ -165,7 +165,7 @@ pub struct Request<'a> {
     /// The host-attested executing principal of this call.
     pub principal: wamn_identity_protocol::PrincipalId,
     pub project: &'a str,
-    pub environment: &'a str,
+    pub environment: &'a wamn_registry::EnvName,
     pub connection: uuid::Uuid,
     pub generation: i64,
     pub authorization_code: bool,

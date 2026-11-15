@@ -243,7 +243,12 @@ async fn seed_user(client: &mut Client, principal: &Principal, role: &str) {
         .expect_redacted("commit project user fixture");
 }
 
-async fn grant(system: &mut Client, principal: &Principal, org: &str, env: &str) {
+async fn grant(
+    system: &mut Client,
+    principal: &Principal,
+    org: &str,
+    env: &wamn_registry::EnvName,
+) {
     wamn_platform_identity::org::activate_org_membership(system, principal.id(), org)
         .await
         .expect_redacted("active org membership fixture");
@@ -274,15 +279,15 @@ async fn setup(raw: &str) -> Fixture {
         let triple = Triple {
             org: org.into(),
             project: "widgets".into(),
-            env: env.into(),
+            env: env.parse().unwrap(),
         };
-        let name = project_env_database_name(org, "widgets", env, SUFFIX);
+        let name = project_env_database_name(org, "widgets", &triple.env, SUFFIX);
         let role = workload_login(
             WorkloadRoleFamily::SessionRoleReader,
             WorkloadRoleIdentity::ProjectEnvironment {
                 org,
                 project: "widgets",
-                environment: env,
+                environment: &triple.env,
                 database: &name,
             },
         )
@@ -290,7 +295,7 @@ async fn setup(raw: &str) -> Fixture {
         let target = SessionTarget::new(
             &triple,
             SUFFIX,
-            &wamn_registry::project_env_key(org, "widgets", env),
+            &wamn_registry::project_env_key(org, "widgets", &triple.env),
             &login_url(&mut admin, &name, &role),
         )
         .expect_redacted("production target capability");
@@ -440,8 +445,8 @@ async fn setup(raw: &str) -> Fixture {
         .await
         .map(|result| result.rows_affected())
         .expect_redacted("fixture project");
-        sqlx::query("INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ($1,$2,'\"own\"',0,1,'1Gi','1','1Gi','fixture')").bind(&triple.org).bind(&triple.env.as_str()).execute(&mut system.client).await.map(|result| result.rows_affected()).expect_redacted("fixture environment policy");
-        sqlx::query("WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$2,$2) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ($1,'widgets',$2,'fixture-reference',$3)").bind(&triple.org).bind(&triple.env.as_str()).bind(&SUFFIX).execute(&mut system.client).await.map(|result| result.rows_affected()).expect_redacted("current environment registry entry");
+        sqlx::query("INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ($1,$2,'\"own\"',0,1,'1Gi','1','1Gi','fixture')").bind(&triple.org).bind(&triple.env).execute(&mut system.client).await.map(|result| result.rows_affected()).expect_redacted("fixture environment policy");
+        sqlx::query("WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$2,$2) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ($1,'widgets',$2,'fixture-reference',$3)").bind(&triple.org).bind(&triple.env).bind(&SUFFIX).execute(&mut system.client).await.map(|result| result.rows_affected()).expect_redacted("current environment registry entry");
         environments.push(environment);
     }
     Fixture {
@@ -609,7 +614,13 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     .await
     .expect_redacted("password user");
     seed_user(&mut fixture.environments[0].client, &alice, "receiver").await;
-    grant(&mut fixture.system.client, &alice, "demo", "dev").await;
+    grant(
+        &mut fixture.system.client,
+        &alice,
+        "demo",
+        &"dev".parse().unwrap(),
+    )
+    .await;
     let actor = PlatformComponent::Provisioning.principal_id();
     let mut issuer = connect(&fixture.issuer_url).await;
     let invitation = issue_invitation(&mut issuer.client, &actor, alice.id())
@@ -695,7 +706,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
         alice.id(),
         "demo",
         "widgets",
-        "dev",
+        &"dev".parse().unwrap(),
         &mut AuthDrops::default(),
     )
     .await
@@ -708,7 +719,13 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
             .status(),
         401
     );
-    grant(&mut fixture.system.client, &alice, "demo", "dev").await;
+    grant(
+        &mut fixture.system.client,
+        &alice,
+        "demo",
+        &"dev".parse().unwrap(),
+    )
+    .await;
     sqlx::query("UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid")
         .bind(&alice.id().to_string().as_str())
         .execute(&mut fixture.environments[0].client)
@@ -832,24 +849,42 @@ async fn password_environment_discovery_requires_current_authority() {
     let expected = |indices: &[usize]| {
         json!({"next_cursor": null, "total": indices.len(), "environments": indices.iter().map(|index| {
         let target = &fixture.targets[*index];
-        json!({"aud":target.audience(), "org":target.triple().org, "project":"widgets", "env":target.triple().env.as_str()})
+        json!({"aud":target.audience(), "org":target.triple().org, "project":"widgets", "env":target.triple().env})
     }).collect::<Vec<_>>()})
     };
 
     // A project role alone never supplies membership, including across organizations.
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
-    grant(&mut fixture.system.client, &alice, "demo", "dev").await;
+    grant(
+        &mut fixture.system.client,
+        &alice,
+        "demo",
+        &"dev".parse().unwrap(),
+    )
+    .await;
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
-    grant(&mut fixture.system.client, &alice, "demo", "prod").await;
+    grant(
+        &mut fixture.system.client,
+        &alice,
+        "demo",
+        &"prod".parse().unwrap(),
+    )
+    .await;
     assert_environments(discover().send().await.unwrap(), expected(&[0, 1])).await;
-    grant(&mut fixture.system.client, &alice, "other", "dev").await;
+    grant(
+        &mut fixture.system.client,
+        &alice,
+        "other",
+        &"dev".parse().unwrap(),
+    )
+    .await;
     assert_environments(discover().send().await.unwrap(), expected(&[0, 1, 2])).await;
     revoke_project_env_membership(
         &mut fixture.system.client,
         alice.id(),
         "other",
         "widgets",
-        "dev",
+        &"dev".parse().unwrap(),
         &mut AuthDrops::default(),
     )
     .await
@@ -916,7 +951,7 @@ async fn password_environment_discovery_requires_current_authority() {
         alice.id(),
         "demo",
         "widgets",
-        "dev",
+        &"dev".parse().unwrap(),
         &mut AuthDrops::default(),
     )
     .await

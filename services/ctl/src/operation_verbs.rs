@@ -32,7 +32,7 @@ impl ControlHost {
         mut value: Value,
     ) -> anyhow::Result<()> {
         value["project"] = coordinate.project.as_str().into();
-        value["env"] = coordinate.env.as_str().into();
+        value["env"] = serde_json::json!(&coordinate.env);
         self.run_value(operation, value, "operation.status").await
     }
 
@@ -48,7 +48,7 @@ impl ControlHost {
         mut value: Value,
     ) -> anyhow::Result<()> {
         value["project"] = triple.project.as_str().into();
-        value["env"] = triple.env.as_str().into();
+        value["env"] = serde_json::json!(&triple.env);
         self.run_value(operation, value, "environment.operation_status")
             .await
     }
@@ -110,6 +110,7 @@ pub(crate) fn parse_coordinate(value: &str) -> anyhow::Result<wamn_registry::Tri
     let [org, env, project] = parts.as_slice() else {
         anyhow::bail!("a coordinate is org/env/project");
     };
-    wamn_control_provision::validate_project_env(org, project, env)?;
-    Ok(wamn_registry::Triple::new(*org, *env, *project))
+    let env = env.parse()?;
+    wamn_control_provision::validate_project_env(org, project, &env)?;
+    Ok(wamn_registry::Triple::new(*org, env, *project))
 }

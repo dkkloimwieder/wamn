@@ -30,7 +30,7 @@ fn identity() -> &'static ReleaseIdentity {
     static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| ReleaseIdentity {
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
-        environment: ENVIRONMENT.to_owned(),
+        environment: ENVIRONMENT.parse().unwrap(),
         route_host: "receiving.localhost".to_owned(),
         packages: JOURNEY_PACKAGES
             .iter()

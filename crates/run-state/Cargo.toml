@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-registry.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

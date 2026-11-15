@@ -46,7 +46,7 @@ struct Journey<'a> {
     run: &'a Run,
     file: PathBuf,
     project: &'a str,
-    environment: &'a str,
+    environment: &'a wamn_registry::EnvName,
     isolated_host: &'a str,
     variables: &'a BTreeMap<String, String>,
     token: &'a str,
@@ -277,7 +277,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         // External IAM grants name these service accounts before the approved run.
         Provider::Gcp => "journey".to_owned(),
     };
-    let environment = "dev".to_owned();
+    let environment: wamn_registry::EnvName = "dev".parse()?;
     let (_, domain) = run
         .document
         .route_hosts
@@ -598,7 +598,7 @@ async fn prepare_artifacts(
         std::fs::write(manifest, code)?;
         std::fs::write(initial, sql)?;
         let mut isolated = document.clone();
-        isolated.env = format!("isolated-{}", journey.environment);
+        isolated.env = format!("isolated-{}", journey.environment).parse()?;
         isolated.applications.retain(|name, _| name == "beta");
         std::fs::write(&journey.file, isolated.to_kcl())?;
         artifacts.insert(

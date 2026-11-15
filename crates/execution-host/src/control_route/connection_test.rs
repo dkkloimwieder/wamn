@@ -9,7 +9,7 @@ use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::Store as _;
 use wamn_platform_identity::connections::administration;
 
-use super::{ControlRoutes, Refusal};
+use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 
 impl ControlRoutes<'_> {
     pub(super) async fn connection_test(
@@ -54,7 +54,11 @@ impl ControlRoutes<'_> {
             .remove("credential")
             .filter(|value| !value.is_null());
         let project = request["project"].as_str().unwrap();
-        let env = request["env"].as_str().unwrap();
+        let target: ProjectTarget = parse(payload)?;
+        let env = target
+            .env
+            .as_ref()
+            .expect("connection request requires an environment");
         let context = {
             let mut writer = self.writer.lock().await;
             let mut transaction = self
@@ -86,7 +90,7 @@ impl ControlRoutes<'_> {
             .as_i64()
             .and_then(|version| i32::try_from(version).ok());
         if let Some(connection) = context["id"].as_str() {
-            let logins = self.logins(&[(project.into(), env.into())])?;
+            let logins = self.logins(&[(project.into(), env.clone())])?;
             let mut client = wamn_postgres::connect(&logins[0]).await?;
 
             let mut transaction =

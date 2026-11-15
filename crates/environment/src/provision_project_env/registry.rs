@@ -53,7 +53,11 @@ pub(super) fn mint_instance_suffix() -> anyhow::Result<String> {
 /// The `env` argument names a policy, which can differ from the environment slug.
 /// A pooled org uses its pool. A dedicated org uses the policy's recovery domain
 /// through [`cluster_of`]. The caller supplies a registry reader credential.
-pub async fn resolve_cluster(system_url: &str, org: &str, env: &str) -> anyhow::Result<String> {
+pub async fn resolve_cluster(
+    system_url: &str,
+    org: &str,
+    env: &wamn_registry::EnvName,
+) -> anyhow::Result<String> {
     let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect")?;
@@ -67,7 +71,7 @@ pub async fn resolve_cluster(system_url: &str, org: &str, env: &str) -> anyhow::
 pub(crate) async fn resolve_cluster_on(
     client: &mut sqlx::PgConnection,
     org: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> anyhow::Result<String> {
     let mut transaction = wamn_platform_identity::transaction::read_connection(
         client,
@@ -141,7 +145,10 @@ pub async fn read_project_env_instance(
 
 /// Read the policy name of one project-env's registry row. The environment
 /// document owns it (docs/architecture/overview.md#environment-lifecycle).
-pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyhow::Result<String> {
+pub async fn read_project_env_policy(
+    system_url: &str,
+    triple: &Triple,
+) -> anyhow::Result<wamn_registry::EnvName> {
     let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect")?;
@@ -173,7 +180,7 @@ pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyho
 pub(super) async fn record_project_env(
     system_url: &str,
     triple: &Triple,
-    policy: Option<&str>,
+    policy: Option<&wamn_registry::EnvName>,
     target: &str,
     secret_name: &str,
     secret_namespace: Option<&str>,
@@ -203,7 +210,7 @@ pub(super) async fn record_project_env(
 pub(super) async fn do_record_project_env(
     client: &mut sqlx::PgConnection,
     triple: &Triple,
-    policy: Option<&str>,
+    policy: Option<&wamn_registry::EnvName>,
     target: &str,
     secret_name: &str,
     secret_namespace: Option<&str>,
@@ -226,7 +233,7 @@ pub(super) async fn do_record_project_env(
             secret_namespace,
             instance_suffix: minted,
             disposable,
-            policy: policy.unwrap_or(triple.env.as_str()),
+            policy: policy.unwrap_or(&triple.env),
             target_id: &target_id,
         },
     )

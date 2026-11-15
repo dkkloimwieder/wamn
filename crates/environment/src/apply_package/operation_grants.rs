@@ -8,7 +8,7 @@ use wamn_control_provision::operation_grants::{
 /// whether a row was written. `admin` has no permission rows.
 pub(super) async fn ensure_admin_role(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     drops: &mut wamn_broker::auth_changes::AuthDrops,
 ) -> anyhow::Result<bool> {
     sqlx::query(OPERATION_GRANT_LOCK_SQL)

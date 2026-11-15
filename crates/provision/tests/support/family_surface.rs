@@ -102,7 +102,7 @@ pub fn generation(family: WorkloadRoleFamily, database: &str) -> wamn_identity_p
         WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
-            environment: ENV,
+            environment: &ENV.parse().unwrap(),
             database,
         },
     )

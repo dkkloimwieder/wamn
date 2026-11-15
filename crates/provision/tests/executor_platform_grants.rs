@@ -85,9 +85,9 @@ async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(poo
         &admin,
         "seed one run the executor may lease",
         &format!(
-            "BEGIN; {actor} INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( 't1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
+            "BEGIN; {actor} INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( 't1--dev--project', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
              \n\
-             INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}') ON CONFLICT DO NOTHING; INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, trigger_source, wiring_id, wiring_version, wiring_hash, input_json, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json, manifest_digest) VALUES ('t1', 'r1', 'widgets', 'dev', 'dispatched', 'manual', 'w', 1, 'sha256:{hash}', '{{\"a\":1}}', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{{}}', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); COMMIT;\n",
+             INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ('t1--dev--project','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}') ON CONFLICT DO NOTHING; INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, trigger_source, wiring_id, wiring_version, wiring_hash, input_json, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json, manifest_digest) VALUES ('t1--dev--project', 'r1', 'widgets', 'dev', 'dispatched', 'manual', 'w', 1, 'sha256:{hash}', '{{\"a\":1}}', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{{}}', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); COMMIT;\n",
             actor = wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning
             ),

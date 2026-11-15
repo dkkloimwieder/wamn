@@ -118,7 +118,7 @@ use crate::EffectOutcome;
 /// no such fact", never "the guest declined to send one".
 #[derive(Clone, Copy, Debug)]
 pub struct EffectIdentity<'a> {
-    pub project_env_key: &'a str,
+    pub project_env_key: Option<&'a wamn_registry::ProjectEnvKey>,
     pub project: &'a str,
     pub component: &'a str,
 }
@@ -392,7 +392,7 @@ pub fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_>>) {
 /// ```text
 /// effect_span!(
 ///     "wamn.postgres",
-///     EffectIdentity { project_env_key: &project_env_key, project: &project, component: component_id },
+///     EffectIdentity { project_env_key: Some(&project_env_key), project: &project, component: component_id },
 ///     None,
 ///     db.system = "postgresql",
 ///     db.operation = op,      // <- the trailing comma is required
@@ -433,7 +433,7 @@ macro_rules! effect_span {
         let span = tracing::info_span!(
             $name,
             $($surface_field)*
-            wamn.project_env_key = %identity.project_env_key,
+            wamn.project_env_key = identity.project_env_key.map(|key| key.as_str()).unwrap_or(""),
             wamn.project = %identity.project,
             wamn.component = %identity.component,
             wamn.package_id = tracing::field::Empty,
@@ -649,7 +649,9 @@ mod tests {
             let span = effect_span!(
                 "wamn.outcome_test",
                 EffectIdentity {
-                    project_env_key: "org-a",
+                    project_env_key: Some(
+                        &"org-a--dev--project".parse().expect("fixture coordinate")
+                    ),
                     project: "project-a",
                     component: "component-a",
                 },

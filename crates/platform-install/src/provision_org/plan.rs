@@ -30,9 +30,8 @@ pub(super) fn stamped_org(
     let mut names = std::collections::HashSet::new();
     for policy in &policies {
         anyhow::ensure!(
-            identifiers::project_id_reason(policy.policy.name.as_str()).is_none()
-                && names.insert(policy.policy.name.as_str()),
-            "invalid or duplicate environment policy"
+            names.insert(&policy.policy.name),
+            "duplicate environment policy"
         );
     }
     for policy in &policies {
@@ -40,7 +39,7 @@ pub(super) fn stamped_org(
         let mut current = &policy.policy;
         while let RecoveryDomain::SharedWith(target) = &current.recovery_domain {
             anyhow::ensure!(
-                visited.insert(current.name.as_str()),
+                visited.insert(&current.name),
                 "environment policy recovery cycle"
             );
             current = &policies

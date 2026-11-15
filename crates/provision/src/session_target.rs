@@ -6,7 +6,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use wamn_registry::{Triple, identifiers::valid_project_env_key};
+use wamn_registry::Triple;
 
 use crate::name::{project_env_database_name, validate_instance_suffix, validate_project_env};
 use wamn_postgres::ConnectionConfig;
@@ -32,27 +32,19 @@ fn refused(context: &'static str) -> SessionTargetError {
     SessionTargetError { context }
 }
 
-/// Validate the registry coordinate spelling.
-pub fn validate_session_project_env_key(project_env_key: &str) -> Result<(), SessionTargetError> {
-    if !valid_project_env_key(project_env_key) {
-        return Err(refused("session target project refused"));
-    }
-    Ok(())
-}
-
 /// Derive the exact instance-aware audience from validated provisioning coordinates.
 pub fn session_audience(
     triple: &Triple,
     instance_suffix: &str,
 ) -> Result<String, SessionTargetError> {
-    validate_project_env(&triple.org, &triple.project, triple.env.as_str())
+    validate_project_env(&triple.org, &triple.project, &triple.env)
         .map_err(|_| refused("session target coordinates refused"))?;
     validate_instance_suffix(instance_suffix)
         .map_err(|_| refused("session target instance refused"))?;
     Ok(wamn_registry::name::project_audience(
         &triple.org,
         &triple.project,
-        triple.env.as_str(),
+        &triple.env,
         instance_suffix,
     ))
 }
@@ -92,9 +84,9 @@ struct TargetDocument {
     audience: String,
     org: String,
     project: String,
-    env: String,
+    env: wamn_registry::EnvName,
     instance_suffix: String,
-    project_env_key: String,
+    project_env_key: wamn_registry::ProjectEnvKey,
     connection: SessionConnection,
 }
 
@@ -120,22 +112,17 @@ impl SessionTarget {
     pub fn new(
         triple: &Triple,
         instance_suffix: &str,
-        project_env_key: &str,
+        project_env_key: &wamn_registry::ProjectEnvKey,
         database_url: &str,
     ) -> Result<Self, SessionTargetError> {
         let audience = session_audience(triple, instance_suffix)?;
-        validate_session_project_env_key(project_env_key)?;
-        if project_env_key
-            != wamn_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str())
+        if *project_env_key
+            != wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env)
         {
             return Err(refused("session target coordinate mismatch"));
         }
-        let database = project_env_database_name(
-            &triple.org,
-            &triple.project,
-            triple.env.as_str(),
-            instance_suffix,
-        );
+        let database =
+            project_env_database_name(&triple.org, &triple.project, &triple.env, instance_suffix);
         let connection = if database_url.trim_start().starts_with('{') {
             SessionConnection::References(
                 serde_json::from_str(database_url)
@@ -151,7 +138,7 @@ impl SessionTarget {
             crate::WorkloadRoleIdentity::ProjectEnvironment {
                 org: &triple.org,
                 project: &triple.project,
-                environment: triple.env.as_str(),
+                environment: &triple.env,
                 database: &database,
             },
         )
@@ -164,7 +151,7 @@ impl SessionTarget {
                 audience,
                 org: triple.org.clone(),
                 project: triple.project.clone(),
-                env: triple.env.to_string(),
+                env: triple.env.clone(),
                 instance_suffix: instance_suffix.to_owned(),
                 project_env_key: project_env_key.to_owned(),
                 connection,
@@ -180,7 +167,7 @@ impl SessionTarget {
         let triple = Triple {
             org: document.org.clone(),
             project: document.project.clone(),
-            env: document.env.as_str().into(),
+            env: document.env.clone(),
         };
         let target = Self::new(
             &triple,
@@ -215,7 +202,7 @@ impl SessionTarget {
         &self.document.instance_suffix
     }
     /// Borrow the trusted project identity used in every role predicate.
-    pub fn project_env_key(&self) -> &str {
+    pub fn project_env_key(&self) -> &wamn_registry::ProjectEnvKey {
         &self.document.project_env_key
     }
     /// Borrow the validated reader capability for the database driver only.
@@ -230,15 +217,16 @@ mod tests {
 
     #[test]
     fn session_connections_keep_their_target_for_cluster_and_local_inputs() {
-        let triple = Triple::new("acme", "dev", "orders");
+        let triple = Triple::new("acme", "dev".parse().unwrap(), "orders");
         let instance = "aaaaaaa1";
-        let database = project_env_database_name("acme", "orders", "dev", instance);
+        let database =
+            project_env_database_name("acme", "orders", &"dev".parse().unwrap(), instance);
         let username = crate::workload_login(
             crate::WorkloadRoleFamily::SessionRoleReader,
             crate::WorkloadRoleIdentity::ProjectEnvironment {
                 org: "acme",
                 project: "orders",
-                environment: "dev",
+                environment: &"dev".parse().unwrap(),
                 database: &database,
             },
         )
@@ -257,7 +245,7 @@ mod tests {
                 name: "database-ca".into(),
             },
         };
-        let key = wamn_registry::project_env_key("acme", "orders", "dev");
+        let key = wamn_registry::project_env_key("acme", "orders", &"dev".parse().unwrap());
         let explicit = format!("postgres://{username}:password@localhost/{database}");
         for input in [native.to_json().unwrap(), explicit] {
             let target = SessionTarget::new(&triple, instance, &key, &input).unwrap();

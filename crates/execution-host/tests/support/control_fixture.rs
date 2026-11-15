@@ -98,8 +98,12 @@ pub(super) async fn project_database(
     logins: &std::path::Path,
 ) -> anyhow::Result<Client> {
     use wamn_environment::provision_project_env;
-    let mut database =
-        wamn_control_provision::project_env_database_name(ORG, project, "dev", instance);
+    let mut database = wamn_control_provision::project_env_database_name(
+        ORG,
+        project,
+        &"dev".parse().unwrap(),
+        instance,
+    );
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&provision_project_env::role_posture_sql()).to_string(),
     ))
@@ -179,13 +183,14 @@ pub(super) async fn project_database(
         Some(target_url.as_str()),
         ORG,
         project,
-        "dev",
+        &"dev".parse().unwrap(),
         WorkloadRoleFamily::Administration,
     )
     .await?;
     std::fs::write(
         logins.join(wamn_control_provision::control_administration_key(
-            project, "dev",
+            project,
+            &"dev".parse().unwrap(),
         )),
         login,
     )?;

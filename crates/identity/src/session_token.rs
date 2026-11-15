@@ -147,7 +147,7 @@ pub async fn session_is_active(
     client: &mut sqlx::PgConnection,
     claims: &SessionClaims,
     project: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
 ) -> Result<bool, IdentityError> {
     let SessionAuthority::Login(login) = &claims.authority;
     sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.principals p \

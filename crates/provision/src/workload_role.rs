@@ -3,7 +3,8 @@
 use std::fmt;
 
 use sha2::{Digest as _, Sha256};
-use wamn_identity_protocol::{AuthorityClass, app_identity_hash};
+use wamn_identity_protocol::AuthorityClass;
+use wamn_registry::app_identity_hash;
 
 use crate::name::GUEST_SECRET_PREFIX;
 
@@ -333,19 +334,19 @@ impl WorkloadRoleIdentityType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleIdentity<'a> {
     ProjectEnvKey {
-        project_env_key: &'a str,
+        project_env_key: &'a wamn_registry::ProjectEnvKey,
         database: &'a str,
     },
     ProjectEnvironment {
         org: &'a str,
         project: &'a str,
-        environment: &'a str,
+        environment: &'a wamn_registry::EnvName,
         database: &'a str,
     },
     Control {
         org: &'a str,
         project: &'a str,
-        environment: &'a str,
+        environment: &'a wamn_registry::EnvName,
         database: &'a str,
     },
     Org {
@@ -433,7 +434,7 @@ pub fn workload_role_identity_hash(
             project_env_key,
             database,
         } => {
-            push_field(&mut preimage, "project_env_key", project_env_key);
+            push_field(&mut preimage, "project_env_key", project_env_key.as_str());
             push_field(&mut preimage, "database", database);
         }
         WorkloadRoleIdentity::ProjectEnvironment {
@@ -450,7 +451,7 @@ pub fn workload_role_identity_hash(
         } => {
             push_field(&mut preimage, "org", org);
             push_field(&mut preimage, "project", project);
-            push_field(&mut preimage, "environment", environment);
+            push_field(&mut preimage, "environment", environment.as_str());
             push_field(&mut preimage, "database", database);
         }
         WorkloadRoleIdentity::Org { org, database } => {

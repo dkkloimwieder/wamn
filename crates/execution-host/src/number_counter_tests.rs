@@ -35,7 +35,7 @@ impl Live {
             WorkloadRoleIdentity::ProjectEnvironment {
                 org: "org",
                 project: "project",
-                environment: "dev",
+                environment: &"dev".parse().unwrap(),
                 database: database.path().trim_start_matches('/'),
             },
         )
@@ -57,7 +57,7 @@ impl Live {
         url.set_password(Some(ADMINISTRATION_PASSWORD))
             .expect("set the password");
         let administration = connect(url.as_str()).await;
-        let guest_url = live_guest_url(database.as_str(), PROJECT_ENV_KEY).await;
+        let guest_url = live_guest_url(database.as_str(), &PROJECT_ENV_KEY.parse().unwrap()).await;
         let mut live = Self {
             observation: connect(&guest_url).await,
             plugin: WamnPostgres::new(WamnPostgresConfig {
@@ -117,7 +117,7 @@ impl Live {
         super::set_number_counter(
             &self.plugin,
             wamn_sql::DEFAULT_PROJECT,
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             &LIVE_PRINCIPAL
                 .parse::<wamn_identity_protocol::PrincipalId>()
                 .unwrap(),
@@ -183,7 +183,7 @@ async fn counter_set_refuses_invalid_input(pool: sqlx::PgPool) {
     );
 }
 
-async fn live_guest_url(admin_url: &str, project_env_key: &str) -> String {
+async fn live_guest_url(admin_url: &str, project_env_key: &wamn_registry::ProjectEnvKey) -> String {
     let mut url = url::Url::parse(admin_url).unwrap();
     let database = url.path().trim_start_matches('/').to_owned();
     let login = workload_login(

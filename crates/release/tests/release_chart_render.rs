@@ -69,13 +69,13 @@ fn stamped_chart(scratch: &Scratch) -> PathBuf {
     chart
 }
 
-fn input(env: &str) -> ValuesInput {
+fn input(env: &wamn_registry::EnvName) -> ValuesInput {
     let mut config = Mapping::new();
     config.insert("wamn.project_env_key".into(), "acme".into());
     ValuesInput {
         org: "acme".into(),
         project: "wms".into(),
-        env: env.into(),
+        env: env.clone(),
         manifest_digest: DIGEST.parse().unwrap(),
         artifact_base: "registry.example/releases".into(),
         route_host: "wms.acme.example".into(),
@@ -97,7 +97,7 @@ fn input(env: &str) -> ValuesInput {
     }
 }
 
-fn render_values(env: &str) -> Value {
+fn render_values(env: &wamn_registry::EnvName) -> Value {
     let input = input(env);
     let mut rendered = values(&input).expect("values");
     rendered["webClients"] = serde_yaml::to_value(std::collections::BTreeMap::from([(
@@ -113,7 +113,12 @@ fn render_values(env: &str) -> Value {
     rendered
 }
 
-fn render_yaml(chart: &Path, scratch: &Scratch, env: &str, values: &Value) -> String {
+fn render_yaml(
+    chart: &Path,
+    scratch: &Scratch,
+    env: &wamn_registry::EnvName,
+    values: &Value,
+) -> String {
     let application = values["applications"]
         .as_mapping()
         .and_then(|applications| applications.keys().next())
@@ -156,7 +161,7 @@ fn applications_in_one_environment_have_independent_release_resources() {
     let chart = stamped_chart(&scratch);
     let mut seen = BTreeSet::new();
     for application in ["orders", "receiving"] {
-        let mut input = input("prod");
+        let mut input = input(&"prod".parse().unwrap());
         input.applications = BTreeMap::from([(
             application.to_owned(),
             wamn_catalog::ApplicationDefinition {
@@ -230,11 +235,11 @@ fn applications_in_one_environment_have_independent_release_resources() {
 fn the_platform_ui_digest_and_org_reach_the_release_row() {
     let scratch = Scratch::new("platform-ui-digest");
     let chart = stamped_chart(&scratch);
-    let mut values = render_values("prod");
+    let mut values = render_values(&"prod".parse().unwrap());
     values["applications"] = Value::Mapping(Mapping::new());
     values["platformUi"] = WEB_DIGEST.into();
     values["org"] = "acme".into();
-    let yaml = render_yaml(&chart, &scratch, "prod", &values);
+    let yaml = render_yaml(&chart, &scratch, &"prod".parse().unwrap(), &values);
     let row = serde_yaml::Deserializer::from_str(&yaml)
         .map(Value::deserialize)
         .collect::<Result<Vec<_>, _>>()
@@ -272,7 +277,12 @@ fn two_environments_in_one_namespace_share_no_object_name() {
     let envs = ["prod", "prod2", long.as_str(), longer.as_str()];
     let mut seen = BTreeSet::new();
     for env in envs {
-        let yaml = render_yaml(&chart, &scratch, env, &render_values(env));
+        let yaml = render_yaml(
+            &chart,
+            &scratch,
+            &env.parse().unwrap(),
+            &render_values(&env.parse().unwrap()),
+        );
         for document in serde_yaml::Deserializer::from_str(&yaml) {
             let document = Value::deserialize(document).unwrap();
             if !document.is_null() {

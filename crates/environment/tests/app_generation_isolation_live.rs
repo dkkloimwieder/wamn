@@ -49,7 +49,7 @@ const NEIGHBOUR_ENVIRONMENT: &str = "staging";
 const INSTANCE: &str = "q4w8z1n6";
 /// ONE project across both environments. Same project, different database, so the
 /// refusal cannot be explained away as a project mismatch.
-const PROJECT_ENV_KEY: &str = "project-dkzr";
+const PROJECT_ENV_KEY: &str = "dkzrisolation--dev--inventory";
 /// A throwaway probe string for a disposable server that dies with this test
 /// process. It is never printed and it names no real credential.
 const GENERATION_PROBE_PASSWORD: &str = "app-generation-probe";
@@ -101,8 +101,14 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     let url = wamn_test_postgres::url(&pool).to_string();
     let mut superuser = connect(&url).await;
 
-    let home = project_env_database_name(ORG, PROJECT, HOME_ENVIRONMENT, INSTANCE);
-    let neighbour = project_env_database_name(ORG, PROJECT, NEIGHBOUR_ENVIRONMENT, INSTANCE);
+    let home =
+        project_env_database_name(ORG, PROJECT, &HOME_ENVIRONMENT.parse().unwrap(), INSTANCE);
+    let neighbour = project_env_database_name(
+        ORG,
+        PROJECT,
+        &NEIGHBOUR_ENVIRONMENT.parse().unwrap(),
+        INSTANCE,
+    );
 
     // Step 1 of the runbook, then step 2 and step 3 for each environment, with
     // the SAME text the verb emits.
@@ -117,7 +123,7 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     let generation = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: PROJECT_ENV_KEY,
+            project_env_key: &PROJECT_ENV_KEY.parse().unwrap(),
             database: &home,
         },
     )

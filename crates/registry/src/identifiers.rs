@@ -11,21 +11,6 @@
 //! for provisioning and runtime callers. [`MAX_PROJECT_ID_LEN`] explains the
 //! shared identifier budget.
 
-/// Whether a key contains exactly three valid registry coordinates.
-pub fn valid_project_env_key(key: &str) -> bool {
-    let mut coordinates = key.split("--");
-    let (Some(org), Some(env), Some(project)) =
-        (coordinates.next(), coordinates.next(), coordinates.next())
-    else {
-        return false;
-    };
-    coordinates.next().is_none()
-        && valid_project(org)
-        && project_id_reason(env).is_none()
-        && valid_project(project)
-        && org.len() + env.len() + project.len() <= 41
-}
-
 /// Max bytes in an organization, project, or environment identifier.
 ///
 /// The number comes from the name provisioning composes, not from this crate.
@@ -134,16 +119,6 @@ pub fn valid_project(project: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn project_env_key_validation() {
-        assert!(valid_project_env_key("org-a--dev--project"));
-        assert!(!valid_project_env_key("T_1"));
-        assert!(!valid_project_env_key(""));
-        assert!(!valid_project_env_key("bad'project"));
-        assert!(!valid_project_env_key("x".repeat(65).as_str()));
-        assert!(!valid_project_env_key("a;b"));
-    }
 
     #[test]
     fn project_validation_is_the_strict_provisioned_name_rule() {

@@ -93,7 +93,7 @@ async fn install_executor(
         WorkloadRoleIdentity::ProjectEnvironment {
             org: "lease-live-org",
             project: "lease-live-project",
-            environment: ENVIRONMENT,
+            environment: &ENVIRONMENT.parse().unwrap(),
             database: &database,
         },
     )?;
@@ -285,14 +285,14 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
         plugin.set_user_id(component, &executor.principal_id())?;
         plugin.set_operation(component, &executor.principal_name())?;
     }
-    plugin.set_project_env_key(COMPONENT, PROJECT_ENV_KEY)?;
+    plugin.set_project_env_key(COMPONENT, &PROJECT_ENV_KEY.parse().unwrap());
     plugin.set_schema(COMPONENT, SCHEMA)?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
     plugin.set_release_identity(
         COMPONENT,
         ReleaseIdentity::for_test((POD_MANIFEST_DIGEST).parse::<wamn_digest::Digest>()?),
     )?;
-    plugin.set_project_env_key(ROLLED_COMPONENT, PROJECT_ENV_KEY)?;
+    plugin.set_project_env_key(ROLLED_COMPONENT, &PROJECT_ENV_KEY.parse().unwrap());
     plugin.set_schema(ROLLED_COMPONENT, SCHEMA)?;
     plugin.set_runner(ROLLED_COMPONENT, ROLLED_COMPONENT)?;
     plugin.set_release_identity(

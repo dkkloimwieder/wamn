@@ -3,7 +3,7 @@ use wamn_catalog::package_schema::AppliedPackage;
 
 pub(super) async fn record_package_schema(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     coordinate: &wamn_catalog::PackageCoordinate,
     artifact_digest: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<bool> {
@@ -21,7 +21,7 @@ pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextende
 
 pub async fn load_applied_package(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     package_id: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     read_package(
@@ -35,7 +35,7 @@ pub async fn load_applied_package(
 
 pub async fn read_applied_package(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     package_id: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     read_package(
@@ -49,7 +49,7 @@ pub async fn read_applied_package(
 
 async fn read_package(
     tx: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     package_id: &str,
     query: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
@@ -70,7 +70,7 @@ async fn read_package(
 /// Read SQLx's immutable applied versions and checksums for one package.
 pub async fn read_package_migrations(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     package_id: &str,
 ) -> anyhow::Result<Vec<sqlx::migrate::AppliedMigration>> {
     use sqlx::migrate::Migrate as _;

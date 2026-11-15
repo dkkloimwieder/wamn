@@ -20,12 +20,8 @@ pub fn source_stream_config(
     duplicate_window: Duration,
 ) -> stream::Config {
     stream::Config {
-        name: wamn_event_wire::stream_name(&target.org, &target.project, target.env.as_str()),
-        subjects: vec![stream_subjects(
-            &target.org,
-            &target.project,
-            target.env.as_str(),
-        )],
+        name: wamn_event_wire::stream_name(&target.org, &target.project, &target.env),
+        subjects: vec![stream_subjects(&target.org, &target.project, &target.env)],
         storage: StorageType::File,
         num_replicas: replicas,
         retention: RetentionPolicy::Limits,
@@ -65,7 +61,6 @@ pub fn application_consumer(
         [
             target.org.as_str(),
             target.project.as_str(),
-            target.env.as_str(),
             package,
             entity
         ]
@@ -74,8 +69,7 @@ pub fn application_consumer(
         "event coordinates and source must be nonempty broker tokens"
     );
     let durable = wamn_registry::name::application_event_consumer(application, package, entity);
-    let filter =
-        wamn_event_wire::entity_filter(&target.org, &target.project, target.env.as_str(), entity);
+    let filter = wamn_event_wire::entity_filter(&target.org, &target.project, &target.env, entity);
     Ok(application_consumer_config(&durable, &filter))
 }
 
@@ -257,7 +251,7 @@ mod tests {
 
     #[test]
     fn application_consumers_accept_application_names_and_refuse_invalid_source_tokens() {
-        let target = Triple::new("acme", "dev", "widgets");
+        let target = Triple::new("acme", "dev".parse().unwrap(), "widgets");
         let config = application_consumer(&target, "sales.eu", "orders", "order").unwrap();
         let durable = config.durable_name.as_deref().unwrap();
         assert!(wamn_event_wire::valid_subject_token(durable));
@@ -279,7 +273,7 @@ mod tests {
             assert!(application_consumer(&target, "sales.eu", "orders", invalid).is_err());
             assert!(
                 application_consumer(
-                    &Triple::new(invalid, "dev", "widgets"),
+                    &Triple::new(invalid, "dev".parse().unwrap(), "widgets"),
                     "sales.eu",
                     "orders",
                     "order"
@@ -308,7 +302,7 @@ mod tests {
     #[test]
     fn source_comparison_refuses_foreign_inputs_and_changed_delivery_policy() {
         let expected = source_stream_config(
-            &Triple::new("acme", "dev", "widgets"),
+            &Triple::new("acme", "dev".parse().unwrap(), "widgets"),
             3,
             Duration::from_secs(120),
         );
@@ -406,7 +400,7 @@ mod tests {
 
     #[test]
     fn stream_comparison_accepts_server_annotations() {
-        let target = Triple::new("acme", "dev", "widgets");
+        let target = Triple::new("acme", "dev".parse().unwrap(), "widgets");
         for expected in [
             source_stream_config(&target, 3, Duration::from_secs(120)),
             advisory_stream_config(&target, 3),
@@ -420,7 +414,8 @@ mod tests {
 
     #[test]
     fn stream_comparison_refuses_a_changed_owned_field_beside_annotations() {
-        let expected = advisory_stream_config(&Triple::new("acme", "dev", "widgets"), 3);
+        let expected =
+            advisory_stream_config(&Triple::new("acme", "dev".parse().unwrap(), "widgets"), 3);
         let reported = server_reported(&expected);
         let changed = [
             stream::Config {

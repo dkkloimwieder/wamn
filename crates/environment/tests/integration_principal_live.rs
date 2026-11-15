@@ -135,7 +135,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     materialize_application_principals(
         system.as_str(),
         project.as_str(),
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         &manifest,
         &packages,
         &Publisher::default(),
@@ -145,7 +145,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     for _ in 0..2 {
         write_release(
             project.as_str(),
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             &digest,
             &manifest,
             &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
@@ -154,7 +154,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         materialize_application_principals(
             system.as_str(),
             project.as_str(),
-            PROJECT_ENV_KEY,
+            &PROJECT_ENV_KEY.parse().unwrap(),
             &manifest,
             &packages,
             &Publisher::default(),
@@ -201,7 +201,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     materialize_application_principals(
         system.as_str(),
         project.as_str(),
-        PROJECT_ENV_KEY,
+        &PROJECT_ENV_KEY.parse().unwrap(),
         &manifest,
         &packages,
         &Publisher::default(),

@@ -134,7 +134,12 @@ pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<V
             .context("application coordinate")?
             .split('/')
             .collect();
-        release_chart::release_name(coordinate[0], coordinate[2], coordinate[1], application)?
+        release_chart::release_name(
+            coordinate[0],
+            coordinate[2],
+            &coordinate[1].parse().unwrap(),
+            application,
+        )?
     } else {
         values["runtime-operator"]["runtime"]["hostGroups"][0]["name"]
             .as_str()
@@ -352,7 +357,7 @@ pub fn fixture_roles(
     manifest: &wamn_catalog::ServingManifest,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> Vec<release_chart::Role> {
     let mut roles = release_chart::roles(manifest, org, project, env);
     for role in &mut roles {

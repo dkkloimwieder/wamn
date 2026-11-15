@@ -184,7 +184,7 @@ fn operation_owner_component(statement: &str) -> String {
 async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    let guest_url = live_guest_url(database.as_str(), PROJECT_ENV_KEY).await;
+    let guest_url = live_guest_url(database.as_str(), &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
@@ -203,7 +203,7 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool:
         .bind_session_identity(
             OPERATION_OWNER,
             &SessionIdentity {
-                project_env_key: PROJECT_ENV_KEY.into(),
+                project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
                 user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
                 operation: Some(OWNER_OPERATION.into()),
                 ..SessionIdentity::default()

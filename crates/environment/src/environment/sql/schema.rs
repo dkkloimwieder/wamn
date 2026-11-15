@@ -55,20 +55,30 @@ pub struct Diff {
     pub unknowns: Vec<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct State {
     pub disposable: Option<bool>,
     pub packages: BTreeMap<String, AppliedPackage>,
     pub unknowns: Vec<String>,
     database_url: Option<String>,
-    project_env_key: String,
+    project_env_key: wamn_registry::ProjectEnvKey,
 }
 
 pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<State> {
     let mut system = wamn_postgres::connect(&platform.system_database_url).await?;
     let mut system = crate::provision_project_env::provisioning_transaction(&mut system).await?;
     let Some(row) = analyse::read_row(&mut system, document).await? else {
-        return Ok(State::default());
+        return Ok(State {
+            disposable: None,
+            packages: BTreeMap::new(),
+            unknowns: Vec::new(),
+            database_url: None,
+            project_env_key: wamn_registry::project_env_key(
+                &document.org,
+                &document.project,
+                &document.env,
+            ),
+        });
     };
     system.commit().await?;
     let url = analyse::project_url(platform, document, &row).await?;
@@ -81,7 +91,10 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
     Ok(state)
 }
 
-pub async fn database_state(url: &str, project_env_key: &str) -> anyhow::Result<State> {
+pub async fn database_state(
+    url: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+) -> anyhow::Result<State> {
     let mut client = analyse::connect_project(url).await?;
     let mut packages = BTreeMap::new();
     for row in sqlx::query("SELECT package_id, package_version, artifact_digest FROM catalog.packages WHERE project_env_key=$1")
@@ -96,7 +109,8 @@ pub async fn database_state(url: &str, project_env_key: &str) -> anyhow::Result<
         packages,
         database_url: Some(url.to_owned()),
         project_env_key: project_env_key.to_owned(),
-        ..State::default()
+        disposable: None,
+        unknowns: Vec::new(),
     })
 }
 

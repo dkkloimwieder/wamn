@@ -327,9 +327,9 @@ impl ConnectionHttp {
         }
         let identity = ClientIdentity {
             connection: ConnectionIdentity {
-                project_env_key: facts.project_env_key().into(),
+                project_env_key: facts.project_env_key().clone(),
                 project: facts.project().into(),
-                environment: environment.into(),
+                environment: environment.clone(),
                 instance: connection.to_string().into(),
             },
             package: invocation.package_id.clone().into(),
@@ -964,7 +964,7 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
             EffectIdentity {
                 project_env_key: identity
                     .as_ref()
-                    .map_or("", |identity| identity.project_env_key.as_str()),
+                    .and_then(|identity| identity.project_env_key.as_ref()),
                 project: identity
                     .as_ref()
                     .and_then(|identity| identity.project.as_deref())
@@ -1203,7 +1203,7 @@ mod tests {
         };
         admitted.closure = ConnectionExecutionClosure::Candidate {
             manifest_digest: digest('f'),
-            environment: "dev".into(),
+            environment: "dev".parse().unwrap(),
             wiring_hash: fixture_wiring_hash(),
             component: admitted.component.clone(),
             interface_version: admitted.origin.interface_version.clone(),
@@ -1315,7 +1315,7 @@ mod tests {
 
         route.closure = ConnectionExecutionClosure::Candidate {
             manifest_digest: digest('c'),
-            environment: "prod".to_string(),
+            environment: "prod".parse().unwrap(),
             wiring_hash: digest('b'),
             component: "notifier".to_string(),
             interface_version: "0.1".to_string(),
@@ -1550,11 +1550,11 @@ mod tests {
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
-            "org-a",
+            &"org-a--dev--project".parse().unwrap(),
             "project-a",
-            "dev",
+            &"dev".parse().unwrap(),
         ));
-        let release = test_release("org-a");
+        let release = test_release(&"org-a--dev--project".parse().unwrap());
         wamn_sql::invocation::bind_test_context(&postgres, "component-store-7", facts, release);
         ConnectionHttp::new(
             postgres,

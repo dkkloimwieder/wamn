@@ -223,8 +223,8 @@ impl Integrations {
         registry_credentials: RegistryCredentialSource,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
-            facts.project_env_key() == release.target().project_env_key
-                && facts.environment() == release.target().environment
+            facts.project_env_key() == &release.target().project_env_key
+                && facts.environment() == &release.target().environment
                 && facts.project() == project,
             "integration project authority mismatch"
         );
@@ -244,7 +244,7 @@ impl Integrations {
             let digest = &component.descriptor.component_digest;
             let package = &component.package_id;
             let declared: Vec<(String, String)> = postgres.executor_read(
-                project, &release.target().project_env_key, async |connection| {
+                project, async |connection| {
                     use sqlx::Row as _;
                     Ok(sqlx::query("SELECT name,interface FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3")
                         .bind(&release.target().project_env_key).bind(package).bind(digest)

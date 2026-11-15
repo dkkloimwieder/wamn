@@ -24,15 +24,19 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants(pool: sqlx::Pg
          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA wamn_history, wamn_authority TO authdrops_role_owner; \
          SET ROLE authdrops_role_owner;").execute(&mut client).await.map(drop).unwrap();
     let mut expected = AuthDrops::default();
-    expected.project_env_key("admin-drops");
+    expected.project_env_key(&"admin-drops--dev--project".parse().unwrap());
 
     let mut tx = client.begin().await.unwrap();
     bind_apply_package_principal(&mut tx).await.unwrap();
     let mut rolled_back = AuthDrops::default();
     assert!(
-        ensure_admin_role(&mut tx, "admin-drops", &mut rolled_back)
-            .await
-            .unwrap()
+        ensure_admin_role(
+            &mut tx,
+            &"admin-drops--dev--project".parse().unwrap(),
+            &mut rolled_back
+        )
+        .await
+        .unwrap()
     );
     assert_eq!(rolled_back, expected);
     tx.rollback().await.unwrap();
@@ -41,9 +45,13 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants(pool: sqlx::Pg
     bind_apply_package_principal(&mut tx).await.unwrap();
     let mut drops = AuthDrops::default();
     assert!(
-        ensure_admin_role(&mut tx, "admin-drops", &mut drops)
-            .await
-            .unwrap()
+        ensure_admin_role(
+            &mut tx,
+            &"admin-drops--dev--project".parse().unwrap(),
+            &mut drops
+        )
+        .await
+        .unwrap()
     );
     tx.commit().await.unwrap();
     assert_eq!(drops, expected);
@@ -51,9 +59,13 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants(pool: sqlx::Pg
     bind_apply_package_principal(&mut tx).await.unwrap();
     let mut unchanged = AuthDrops::default();
     assert!(
-        !ensure_admin_role(&mut tx, "admin-drops", &mut unchanged)
-            .await
-            .unwrap()
+        !ensure_admin_role(
+            &mut tx,
+            &"admin-drops--dev--project".parse().unwrap(),
+            &mut unchanged
+        )
+        .await
+        .unwrap()
     );
     assert!(unchanged.is_empty());
     tx.commit().await.unwrap();
@@ -107,7 +119,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
         database.as_str(),
         "apply-drops",
         "fixture",
-        "dev",
+        &"dev".parse().unwrap(),
     )
     .await
     .unwrap();
@@ -116,10 +128,15 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
     owner_url.set_password(Some("authdrops")).unwrap();
     let (_server, nats) = nats().await;
     let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(3600)));
-    let changes = watched(&nats, Some("apply-drops--dev--fixture"), Arc::clone(&cache)).await;
+    let changes = watched(
+        &nats,
+        Some(&"apply-drops--dev--fixture".parse().unwrap()),
+        Arc::clone(&cache),
+    )
+    .await;
     let ticket = cache
         .grants(
-            "apply-drops--dev--fixture",
+            &"apply-drops--dev--fixture".parse().unwrap(),
             &"00000000-0000-0000-0000-000000000001"
                 .parse::<wamn_identity_protocol::PrincipalId>()
                 .unwrap(),
@@ -127,7 +144,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
         .unwrap_err();
     cache
         .keep_grants(
-            "apply-drops--dev--fixture",
+            &"apply-drops--dev--fixture".parse().unwrap(),
             &"00000000-0000-0000-0000-000000000001"
                 .parse::<wamn_identity_protocol::PrincipalId>()
                 .unwrap(),
@@ -141,7 +158,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
     assert!(
         cache
             .grants(
-                "apply-drops--dev--fixture",
+                &"apply-drops--dev--fixture".parse().unwrap(),
                 &"00000000-0000-0000-0000-000000000001"
                     .parse::<wamn_identity_protocol::PrincipalId>()
                     .unwrap()
@@ -157,7 +174,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
         database_url: owner_url.to_string(),
         org: "apply-drops".into(),
         project: "fixture".into(),
-        environment: "dev".into(),
+        environment: "dev".parse().unwrap(),
         changes,
     })
     .await
@@ -165,7 +182,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
     until("package apply publishes the admin role drop", || {
         cache
             .grants(
-                "apply-drops--dev--fixture",
+                &"apply-drops--dev--fixture".parse().unwrap(),
                 &"00000000-0000-0000-0000-000000000001"
                     .parse::<wamn_identity_protocol::PrincipalId>()
                     .unwrap(),

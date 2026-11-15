@@ -335,11 +335,15 @@ mod tests {
         let database = wamn_test_postgres::url(&pool);
         wamn_control_provision::test_database::system(database.as_str()).await;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "wms", "prod"),
+            wamn_control_provision::test_database::seed_org_project_env_sql(
+                "acme",
+                "wms",
+                &"prod".parse().unwrap(),
+            ),
         ))
         .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
         .await?;
-        let triple = Triple::new("acme", "prod", "wms");
+        let triple = Triple::new("acme", "prod".parse().unwrap(), "wms");
         let mut connection = wamn_postgres::connect(database.as_str()).await?;
         assert!(
             read_configuration(&mut connection, &triple)
@@ -467,11 +471,15 @@ mod tests {
         let database = wamn_test_postgres::url(&pool);
         wamn_control_provision::test_database::system(database.as_str()).await;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "wms", "prod"),
+            wamn_control_provision::test_database::seed_org_project_env_sql(
+                "acme",
+                "wms",
+                &"prod".parse().unwrap(),
+            ),
         ))
         .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
         .await?;
-        let triple = Triple::new("acme", "prod", "wms");
+        let triple = Triple::new("acme", "prod".parse().unwrap(), "wms");
         let mut connection = wamn_postgres::connect(database.as_str()).await?;
         let expected =
             EnvironmentDocument::from_json(&serde_json::to_vec(&configuration())?)?.configuration();
@@ -480,7 +488,7 @@ mod tests {
         assert!(configuration::write(&mut transaction, &expected).await?);
         transaction.commit().await?;
         for change in [
-            |c: &mut configuration::EnvironmentConfiguration| c.policy = "missing".into(),
+            |c: &mut configuration::EnvironmentConfiguration| c.policy = "missing".parse().unwrap(),
             |c: &mut configuration::EnvironmentConfiguration| c.target = "missing".into(),
             |c: &mut configuration::EnvironmentConfiguration| c.revocation_seconds = 3601,
             |c: &mut configuration::EnvironmentConfiguration| {
@@ -560,12 +568,16 @@ mod tests {
             Some(&expected)
         );
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "wms", "dev"),
+            wamn_control_provision::test_database::seed_org_project_env_sql(
+                "acme",
+                "wms",
+                &"dev".parse().unwrap(),
+            ),
         ))
         .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
         .await?;
         let mut redirected = expected.clone();
-        redirected.policy = "dev".into();
+        redirected.policy = "dev".parse().unwrap();
         redirected.revocation_seconds = 0;
         let mut transaction =
             crate::provision_project_env::provisioning_transaction(&mut connection).await?;
@@ -578,7 +590,7 @@ mod tests {
             read_configuration(&mut connection, &triple).await?.as_ref(),
             Some(&expected)
         );
-        let missing = Triple::new("acme", "prod", "missing");
+        let missing = Triple::new("acme", "prod".parse().unwrap(), "missing");
         assert!(
             read_configuration(&mut connection, &missing)
                 .await?

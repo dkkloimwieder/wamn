@@ -151,7 +151,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     session_fixture::install_authority(
         &mut admin,
         PROJECT,
-        "dev",
+        &"dev".parse().unwrap(),
         AUDIENCE,
         &[claims()["sub"].as_str().unwrap(), MEMBER],
     )
@@ -190,7 +190,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     let routing = FlowHttpRouting::for_test(Some(Arc::clone(&release))).with_authenticator(
         Arc::new(PlatformRouteAuthenticator::for_test(
             Arc::clone(&postgres_credentials),
-            application_fixture::PROJECT_ENV_KEY,
+            &application_fixture::PROJECT_ENV_KEY.parse().unwrap(),
             Some(identity_reader),
             Some(verifier),
         )),
@@ -824,7 +824,11 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
         .expect("fixture principal")
         .to_owned();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::seed_org_project_env_sql(ORG, PROJECT, "dev"))
+        (&wamn_control_provision::test_database::seed_org_project_env_sql(
+            ORG,
+            PROJECT,
+            &"dev".parse().unwrap(),
+        ))
             .to_string(),
     ))
     .execute(&mut admin)

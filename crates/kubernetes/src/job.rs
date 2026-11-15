@@ -60,7 +60,7 @@ pub fn environment(job: &mut Value, values: &[(&str, &str)]) {
 pub fn credential(
     job: &mut Value,
     name: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
     key: &str,
     value: &str,
 ) -> Secret {

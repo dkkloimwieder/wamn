@@ -54,7 +54,8 @@ impl Application {
             "select one fixture application"
         );
         let source_environment = document.env.clone();
-        document.env = format!("route-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+        document.env =
+            format!("route-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]).parse()?;
         let (name, application) = document
             .applications
             .first_key_value()
@@ -105,9 +106,9 @@ impl Application {
             "--project",
             &document.project,
             "--env",
-            &document.env,
+            document.env.as_str(),
             "--name",
-            &document.env,
+            document.env.as_str(),
             "--display-name",
             "Route fixture",
             "--role",

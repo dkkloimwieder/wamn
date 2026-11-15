@@ -13,7 +13,7 @@ async fn dedicated_session_reader_columns_execute_on_postgres(
         WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
             project: "widgets",
-            environment: "dev",
+            environment: &"dev".parse().unwrap(),
             database: database.path().trim_start_matches('/'),
         },
     )?;

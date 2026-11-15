@@ -9,14 +9,14 @@ use wamn_catalog::PackageCoordinate;
 pub struct ReleaseIdentity {
     pub org: String,
     pub project: String,
-    pub environment: String,
+    pub environment: wamn_registry::EnvName,
     pub route_host: String,
     pub packages: BTreeSet<PackageCoordinate>,
 }
 
 impl ReleaseIdentity {
     /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> String {
+    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
         wamn_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }

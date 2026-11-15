@@ -8,7 +8,7 @@ pub const LOGIN_PREFIX: &str = "wamn_migration";
 
 /// Derive the single migration identity from the database and environment.
 pub fn login(
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     database: &str,
 ) -> anyhow::Result<wamn_identity_protocol::LoginName> {
     Ok(crate::workload_login(
@@ -26,7 +26,7 @@ pub fn configuration(
     input: &str,
     org: &str,
     project: &str,
-    environment: &str,
+    environment: &wamn_registry::EnvName,
 ) -> anyhow::Result<String> {
     let input = wamn_postgres::configuration(input)?;
     if !input.trim_start().starts_with('{') {
@@ -46,7 +46,7 @@ pub fn configuration(
 /// Check the authenticated session before any package-controlled SQL runs.
 pub async fn require_login(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<wamn_identity_protocol::LoginName> {
     let (session, current, database, restricted): (
         wamn_identity_protocol::LoginName,
@@ -75,7 +75,7 @@ pub async fn require_login(
 }
 
 /// The history table name includes both package and environment identity.
-pub fn history_table(project_env_key: &str, package: &str) -> String {
+pub fn history_table(project_env_key: &wamn_registry::ProjectEnvKey, package: &str) -> String {
     let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([project_env_key, package]));
     format!("wamn_history.migrations_{}", &digest.hex()[..40])
 }

@@ -1,7 +1,7 @@
 //! Deployment placement and environment policy values.
 
 use serde::{Deserialize, Serialize};
-use wamn_registry::{Env, OrgId};
+use wamn_registry::{EnvName, OrgId};
 
 /// The CNPG image every provisioned cluster runs (the default seeded into
 /// [`EnvPolicy::dev`] / [`EnvPolicy::prod`]; a per-env `image` knob can override).
@@ -18,12 +18,12 @@ pub enum RecoveryDomain {
     /// Its own recovery domain — a dedicated org gives it its own cluster.
     Own,
     /// Co-located in the named env's recovery domain (JSON: `{"shared-with": "prod"}`).
-    SharedWith(Env),
+    SharedWith(EnvName),
 }
 
 /// A named, self-contained environment policy — the D18 replacement for the
 /// closed `Tier` sizing/backup semantics. The policy `name` **is** the env slug
-/// ([`Env`]); a project-env's `env` both identifies it in the [`wamn_registry::Triple`] and
+/// ([`EnvName`]); a project-env's `env` both identifies it in the [`wamn_registry::Triple`] and
 /// resolves this policy. Standalone (no inheritance). Policies are **org-targeted**
 /// (wamn-8df.4): each org owns its policy set ([`OrgEnvPolicy`]), stamped from a
 /// [`crate::Template`](crate::Template) and then customized per-env — this value type
@@ -32,7 +32,7 @@ pub enum RecoveryDomain {
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct EnvPolicy {
     /// The env slug this policy configures (its primary key).
-    pub name: Env,
+    pub name: EnvName,
     /// Whether this env owns its cluster or shares another env's recovery domain.
     pub recovery_domain: RecoveryDomain,
     /// Ordering for promotion (`dev` < `prod`).
@@ -64,7 +64,7 @@ impl EnvPolicy {
     /// The recovery-domain **owner** env whose cluster holds this env's data:
     /// itself when `own`, else its `shared-with` target. The `{org}-{owner}` name
     /// component for a dedicated org ([`cluster_of`]).
-    pub fn owner(&self) -> &Env {
+    pub fn owner(&self) -> &EnvName {
         match &self.recovery_domain {
             RecoveryDomain::Own => &self.name,
             RecoveryDomain::SharedWith(target) => target,
@@ -86,7 +86,7 @@ impl EnvPolicy {
     /// `deploy/sql/system-schema.sql` (the seed, drift-guarded) and tests share.
     pub fn dev() -> EnvPolicy {
         EnvPolicy {
-            name: Env::new("dev"),
+            name: "dev".parse().expect("valid environment name"),
             recovery_domain: RecoveryDomain::Own,
             promotion_rank: 10,
             instances: 1,
@@ -104,7 +104,7 @@ impl EnvPolicy {
     /// instances), a 6-hourly base backup + 14-day PITR window, never hibernated.
     pub fn prod() -> EnvPolicy {
         EnvPolicy {
-            name: Env::new("prod"),
+            name: "prod".parse().expect("valid environment name"),
             recovery_domain: RecoveryDomain::Own,
             promotion_rank: 30,
             instances: 3,
@@ -186,7 +186,7 @@ impl ClusterRef {
 }
 
 /// The CNPG `Cluster` name holding an `(org, env)` database — the **one rule**
-/// (D18) replacing `cluster_name` / `canary_cluster_name` / `Env::side` /
+/// (D18) replacing `cluster_name` / `canary_cluster_name` / `EnvName::side` /
 /// `Org::for_pair` / `Org::for_pool` / `Org::cluster_for_env`:
 ///
 /// - a **pooled** org places every env on its pool cluster;
@@ -201,10 +201,9 @@ impl ClusterRef {
 pub fn cluster_of(org: &Org, policy: &EnvPolicy) -> ClusterRef {
     match &org.placement {
         Placement::Pooled { pool } => ClusterRef::new(pool.clone()),
-        Placement::Dedicated => ClusterRef::new(wamn_registry::name::cluster(
-            &org.id,
-            policy.owner().as_str(),
-        )),
+        Placement::Dedicated => {
+            ClusterRef::new(wamn_registry::name::cluster(&org.id, policy.owner()))
+        }
     }
 }
 

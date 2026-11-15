@@ -10,7 +10,7 @@ pub const ENV: &str = "dev";
 pub const READER_PW: &str = "wamn_system_reader_pw";
 
 pub fn generation_role(reader: SystemReader, database: &str) -> wamn_identity_protocol::LoginName {
-    system_reader_login(reader, ORG, PROJECT, ENV, database)
+    system_reader_login(reader, ORG, PROJECT, &ENV.parse().unwrap(), database)
 }
 
 /// Drop every role this acceptance test mints, so a leftover HEALTHY role cannot satisfy

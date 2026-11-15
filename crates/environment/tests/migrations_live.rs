@@ -38,7 +38,7 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
         .bind(component.principal_id())
         .execute(&mut admin)
         .await?;
-    let table = migration::history_table("fixture--dev--one", "orders");
+    let table = migration::history_table(&"fixture--dev--one".parse().unwrap(), "orders");
     migration::prepare_history(&mut admin, &table, &"postgres".parse().unwrap()).await?;
     let first = source(
         10,
@@ -207,7 +207,7 @@ async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic
         .execute(&mut admin)
         .await?;
     let database_name = wamn_postgres::identity(database.as_str())?.1;
-    let login = migration::login("fixture--dev--one", &database_name)?;
+    let login = migration::login(&"fixture--dev--one".parse().unwrap(), &database_name)?;
     let role = postgres_protocol::escape::escape_identifier(login.as_str());
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE ROLE {role} LOGIN PASSWORD 'migration-test' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; CREATE SCHEMA application AUTHORIZATION {role}; GRANT CONNECT ON DATABASE {} TO {role}", postgres_protocol::escape::escape_identifier(&database_name))))
         .execute(&mut admin).await?;
@@ -216,9 +216,9 @@ async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic
         .username(login.as_str())
         .password("migration-test");
     let mut executor = wamn_postgres::connect(options).await?;
-    migration::require_login(&mut executor, "fixture--dev--one").await?;
+    migration::require_login(&mut executor, &"fixture--dev--one".parse().unwrap()).await?;
     assert!(
-        migration::require_login(&mut admin, "fixture--dev--one")
+        migration::require_login(&mut admin, &"fixture--dev--one".parse().unwrap())
             .await
             .is_err()
     );
@@ -261,10 +261,15 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
         database.as_str(),
         "mapping",
         "fixture",
-        "dev",
+        &"dev".parse().unwrap(),
     )
     .await?;
-    let migration_input = migration::configuration(&migration_input, "mapping", "fixture", "dev")?;
+    let migration_input = migration::configuration(
+        &migration_input,
+        "mapping",
+        "fixture",
+        &"dev".parse().unwrap(),
+    )?;
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     let write_package =
         |name: &str, entity: &str, version: &str, initial: &str| -> anyhow::Result<PackageRoot> {
@@ -303,7 +308,7 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
         migration_database_url: migration_input.clone(),
         org: "mapping".into(),
         project: "fixture".into(),
-        environment: "dev".into(),
+        environment: "dev".parse().unwrap(),
     };
     const INITIAL: &str = "CREATE TABLE fixture_app.item(id int PRIMARY KEY)";
     apply_package::apply_package_schema(request(write_package("first", "item", "1.0.0", INITIAL)?))
@@ -387,11 +392,15 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
     .unwrap();
     wamn_control_provision::test_database::system(system.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::test_database::seed_org_project_env_sql("reset", "fixture", "dev"),
+        wamn_control_provision::test_database::seed_org_project_env_sql(
+            "reset",
+            "fixture",
+            &"dev".parse().unwrap(),
+        ),
     ))
     .execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap())
     .await?;
-    let triple = wamn_registry::Triple::new("reset", "dev", "fixture");
+    let triple = wamn_registry::Triple::new("reset", "dev".parse().unwrap(), "fixture");
 
     let database = url::Url::parse(
         case_server
@@ -424,7 +433,7 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
         database.as_str(),
         "reset",
         "fixture",
-        "dev",
+        &"dev".parse().unwrap(),
     )
     .await?;
     let owner_input = wamn_control_provision::test_database::platform_migration_input(
@@ -445,7 +454,7 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
         migration_database_url: migration_input.clone(),
         org: "reset".into(),
         project: "fixture".into(),
-        environment: "dev".into(),
+        environment: "dev".parse().unwrap(),
     };
     apply_package::apply_package_schema(apply()).await?;
     let mut admin = wamn_postgres::connect(database.as_str()).await?;
@@ -502,6 +511,6 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
     let outcome = apply_package::apply_package_schema(apply()).await?;
     assert!(outcome.migrations_applied > 0);
     let mut executor = wamn_postgres::connect(&migration_input).await?;
-    migration::require_login(&mut executor, "reset--dev--fixture").await?;
+    migration::require_login(&mut executor, &"reset--dev--fixture".parse().unwrap()).await?;
     Ok(())
 }

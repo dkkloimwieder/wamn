@@ -57,7 +57,7 @@ pub const PROJECT_KEY_FUNCTION: &str = "wamn_authority.project_key";
 ///
 /// Equal by construction to the identity digest provisioning mints role names
 /// from, because it IS that function.
-pub fn project_key(project_env_key: &str, database: &str) -> String {
+pub fn project_key(project_env_key: &wamn_registry::ProjectEnvKey, database: &str) -> String {
     workload_role_identity_hash(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
@@ -230,12 +230,15 @@ mod tests {
         let expected = workload_role_identity_hash(
             WorkloadRoleFamily::App,
             WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: "acme",
+                project_env_key: &"acme--dev--project".parse().unwrap(),
                 database: DATABASE,
             },
         )
         .expect("App takes a project identity");
-        assert_eq!(project_key("acme", DATABASE), expected);
+        assert_eq!(
+            project_key(&"acme--dev--project".parse().unwrap(), DATABASE),
+            expected
+        );
     }
 
     /// THE RUNTIME COMPUTES THIS DIGEST TOO, from `wamn-run-state`, because it
@@ -248,13 +251,14 @@ mod tests {
     #[test]
     fn the_runtime_reachable_digest_is_the_same_one() {
         for (project_env_key, database) in [
-            ("acme", DATABASE),
-            ("t", "wamn-db-acme--prod--billing"),
-            (&"t".repeat(64), DATABASE),
+            ("acme--dev--billing", DATABASE),
+            ("t--prod--billing", "wamn-db-acme--prod--billing"),
+            (&format!("a--dev--{}", "p".repeat(37)), DATABASE),
         ] {
+            let project_env_key: wamn_registry::ProjectEnvKey = project_env_key.parse().unwrap();
             assert_eq!(
-                project_key(project_env_key, database),
-                wamn_identity_protocol::app_identity_hash(project_env_key, database),
+                project_key(&project_env_key, database),
+                wamn_registry::app_identity_hash(&project_env_key, database),
                 "project {project_env_key:?}: the provisioner and the runtime must agree"
             );
         }
@@ -265,8 +269,11 @@ mod tests {
     #[test]
     fn the_same_project_env_key_derives_a_different_key_per_database() {
         assert_ne!(
-            project_key("acme", DATABASE),
-            project_key("acme", "wamn-db-acme--prod--billing"),
+            project_key(&"acme--dev--project".parse().unwrap(), DATABASE),
+            project_key(
+                &"acme--dev--project".parse().unwrap(),
+                "wamn-db-acme--prod--billing"
+            ),
         );
     }
 

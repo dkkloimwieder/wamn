@@ -113,7 +113,8 @@ impl Releases {
             .get("wamn.application")
             .context("application workload has no application")?;
         anyhow::ensure!(
-            annotations.get("wamn.project_env_key") == Some(&self.resources.target.project_env_key),
+            annotations.get("wamn.project_env_key").map(String::as_str)
+                == Some(self.resources.target.project_env_key.as_str()),
             "workload belongs to another project deployment"
         );
         self.load(application, &digest.parse()?).await
@@ -205,8 +206,11 @@ impl Releases {
                 ..ApplicationDefinition::default()
             },
         )]);
-        let target = ReleaseTarget::new(&r.target.project_env_key, &r.target.environment)
-            .with_applications(applications);
+        let target = ReleaseTarget::new(
+            r.target.project_env_key.clone(),
+            r.target.environment.clone(),
+        )
+        .with_applications(applications);
         let release = Arc::new(LoadedRelease::load_canonical_bytes(
             &bytes,
             &digest.to_string(),

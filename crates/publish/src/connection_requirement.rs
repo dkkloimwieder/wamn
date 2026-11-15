@@ -12,7 +12,7 @@ use wamn_compiler::manifest::PackageManifest;
 
 pub async fn install(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     root: &Path,
     manifest: &PackageManifest,
     source: Option<
@@ -97,7 +97,7 @@ mod palette_tests {
 /// Prepare requirements only for components in the selected release, without installing SQL.
 pub async fn prepare_release(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     release: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
     source: Option<
@@ -184,7 +184,7 @@ pub async fn prepare_release(
 /// Insert or reuse exact requirements from digest-verified component bytes.
 pub async fn write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &str,
+    project_env_key: &wamn_registry::ProjectEnvKey,
     manifest: &PackageManifest,
     digest: &wamn_digest::Digest,
     connections: &[String],

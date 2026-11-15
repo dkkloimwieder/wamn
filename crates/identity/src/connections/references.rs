@@ -95,7 +95,7 @@ pub async fn project_administration(
     environment: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
-    env: &str,
+    env: &wamn_registry::EnvName,
 ) -> Result<AuthDrops, ConnectionError> {
     crate::connection_projection::project(system, environment, org, project, env)
         .await

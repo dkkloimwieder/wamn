@@ -45,8 +45,8 @@ impl EdgeApplication {
             engine,
             NativeWorkloadSpec {
                 id: next_scope("wamn-edge-application").into(),
-                namespace: target.project_env_key.clone(),
-                name: target.environment.clone(),
+                namespace: target.project_env_key.to_string(),
+                name: target.environment.to_string(),
                 components: release.native_components(),
                 warm_reuse: WarmReuse::default(),
                 local_resources: wash_runtime::types::LocalResources::default(),

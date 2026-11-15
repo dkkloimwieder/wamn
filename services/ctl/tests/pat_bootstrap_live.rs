@@ -222,10 +222,16 @@ async fn development_identity_survives_schema_reset() {
         .ok()
         .expect("reuse the developer")
         .principal_id;
-    grant_project_env_membership(&mut admin, &user, ORG, PROJECT, ENVIRONMENT)
-        .await
-        .ok()
-        .expect("grant environment membership");
+    grant_project_env_membership(
+        &mut admin,
+        &user,
+        ORG,
+        PROJECT,
+        &ENVIRONMENT.parse().unwrap(),
+    )
+    .await
+    .ok()
+    .expect("grant environment membership");
     assign_project_role(
         &mut admin,
         &user,
@@ -285,11 +291,11 @@ async fn development_identity_survives_schema_reset() {
             &application_url,
             "acme",
             "receiving",
-            "dev",
+            &"dev".parse().unwrap(),
         )
         .await
         .unwrap(),
-        &wamn_registry::Triple::new("acme", "dev", "receiving"),
+        &wamn_registry::Triple::new("acme", "dev".parse().unwrap(), "receiving"),
     )
     .await
     .unwrap();
