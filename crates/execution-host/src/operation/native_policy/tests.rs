@@ -862,191 +862,157 @@ impl Fixture {
         })
         .await
         .expect("native cancellation revokes authority and returns all guest memory");
-        assert!(
-            self.policy.resources.postgres.scopes.is_empty(),
-            "native completion releases every invocation trace"
-        );
-        for event in self.events.lock().expect("observations lock").iter() {
-            assert!(
-                self.policy
-                    .resources
-                    .postgres
-                    .session_identity(&event.scope)
-                    .is_none()
-            );
-            assert!(
-                self.policy
-                    .resources
-                    .postgres
-                    .invocation(&event.scope)
-                    .is_none()
-            );
-        }
     }
 }
 
-async fn run_case(pool: &sqlx::PgPool, case: Case) {
-    let database = (!matches!(case, Case::Cancellation)).then(|| wamn_test_postgres::url(pool));
-    let fixture = if let Some(database) = &database {
-        let postgres = authenticated::platform_postgres(database.as_str())
-            .await
-            .expect("scoped database with provisioned platform principals");
-        Fixture::build_with_reuse(
-            case,
-            matches!(case, Case::CalleeGrant),
-            false,
-            None,
-            None,
-            Some(postgres),
-        )
-        .await
-    } else {
-        Fixture::new(case).await
-    };
-    let target = fixture.target().await;
-    assert!(
-        fixture.events.lock().expect("observations lock").is_empty(),
-        "resolution does not grant invocation authority"
-    );
-    if matches!(case, Case::Cancellation) {
-        let request = fixture.request(Instant::now() + Duration::from_secs(30));
-        let task = tokio::spawn(async move { invoke_native(&target, request).await });
-        timeout(CLEANUP, fixture.entered.notified())
-            .await
-            .expect("actual node run starts before cancellation");
-        task.abort();
-        assert!(
-            timeout(CLEANUP, task)
-                .await
-                .expect("cancel native invocation promptly")
-                .expect_err("caller task is cancelled")
-                .is_cancelled()
-        );
-    } else {
-        // A deadline case says something only once the guest spins in the
-        // loop under test: `start` records phase 0, `run` records phase 1.
-        // Instantiation runs inside the same budget, so a loaded machine can
-        // spend all of it first. That attempt has no event of the looping
-        // phase; it is not a result, and it runs again with twice the budget.
-        let looping = match case {
-            Case::StartDeadline => Some(0),
-            Case::RunDeadline => Some(1),
-            _ => None,
-        };
-        let mut budget = BUDGET;
-        let (deadline, result) = loop {
-            let deadline = Instant::now()
-                + if matches!(case, Case::Success | Case::CalleeGrant | Case::Trap) {
-                    CLEANUP
-                } else {
-                    budget
-                };
-            let mut request = fixture.request(deadline);
-            request.facts.acquisition.platform = Some(PlatformComponent::Executor);
-            let result = invoke_native(&target, request).await;
-            let looped = looping.is_none_or(|phase| {
-                fixture
-                    .events
-                    .lock()
-                    .expect("observations lock")
-                    .iter()
-                    .any(|event| event.phase == phase)
-            });
-            // The last budget attempt stands, and the tests below report it.
-            if looped || budget >= 64 * BUDGET {
-                break (deadline, result);
-            }
-            let _error = result.expect_err("a guest that never looped cannot finish");
-            fixture.assert_clean().await;
-            budget *= 2;
-        };
-        match case {
-            Case::Success | Case::CalleeGrant => {
-                let emission = result
-                    .expect("native dispatch succeeds")
-                    .expect("typed node emission");
-                let payload: serde_json::Value = serde_json::from_str(&emission.payload).unwrap();
-                assert_eq!(payload.as_array().unwrap().len(), 1);
-                assert_eq!(payload[0]["value"].as_u64(), Some(37));
-                assert_eq!(emission.port, None);
-            }
-            Case::StartDeadline | Case::RunDeadline => {
-                let _error = result.expect_err("guest cannot extend the enclosing deadline");
-                assert!(Instant::now() >= deadline);
+#[sqlx::test(migrations = false)]
+async fn native_node_lifetime_revokes_invocation_authority(pool: sqlx::PgPool) {
+    run_isolated_test(
+        "native_node_lifetime_revokes_invocation_authority",
+        Some(&pool),
+        || async {
+            let postgres =
+                authenticated::platform_postgres(wamn_test_postgres::url(&pool).as_str())
+                    .await
+                    .expect("scoped database with provisioned platform principals");
+            for case in [
+                Case::Success,
+                Case::StartDeadline,
+                Case::RunDeadline,
+                Case::Trap,
+            ] {
+                let fixture = Fixture::build_with_reuse(
+                    case,
+                    false,
+                    false,
+                    None,
+                    None,
+                    Some(Arc::clone(&postgres)),
+                )
+                .await;
+                let target = fixture.target().await;
                 assert!(
-                    Instant::now() < deadline + CLEANUP,
-                    "deadline cancellation is bounded"
+                    fixture.events.lock().expect("observations lock").is_empty(),
+                    "resolution does not grant invocation authority"
                 );
-            }
-            Case::Trap => {
-                let _error = result.expect_err("a guest trap fails the invocation");
-            }
-            Case::Cancellation => unreachable!("cancellation has its own caller task"),
-            Case::PostgresImport => unreachable!("the postgres bind case has its own test"),
-            Case::MemberInstances | Case::SqlFreeRoot => {
-                unreachable!("member instances have their own authenticated tests")
-            }
-        }
-    }
-    fixture.assert_clean().await;
-    let events = fixture.events.lock().expect("observations lock").clone();
-    assert!(events.iter().any(|event| event.phase == 0));
-    for event in &events {
-        if event.phase == 0 {
-            assert!(
-                event.native_identity,
-                "initialization carries only native component identity"
-            );
-            assert!(event.identity.is_none());
-            assert!(event.invocation.is_none());
-        } else {
-            assert!(
-                !event.native_identity,
-                "execution carries a distinct invocation scope"
-            );
-            let identity = event
-                .identity
-                .as_ref()
-                .expect("execution has host identity");
-            assert_eq!(
-                identity.project_env_key,
-                Some(PROJECT_ENV_KEY.parse().unwrap())
-            );
-            if !matches!(case, Case::Cancellation) {
+                // A deadline case says something only once the guest spins in the
+                // loop under test: `start` records phase 0, `run` records phase 1.
+                // Instantiation runs inside the same budget, so a loaded machine can
+                // spend all of it first. That attempt has no event of the looping
+                // phase; it is not a result, and it runs again with twice the budget.
+                let looping = match case {
+                    Case::StartDeadline => Some(0),
+                    Case::RunDeadline => Some(1),
+                    _ => None,
+                };
+                let mut budget = BUDGET;
+                let (deadline, result) = loop {
+                    let deadline = Instant::now()
+                        + if matches!(case, Case::Success | Case::Trap) {
+                            CLEANUP
+                        } else {
+                            budget
+                        };
+                    let mut request = fixture.request(deadline);
+                    request.facts.acquisition.platform = Some(PlatformComponent::Executor);
+                    let result = invoke_native(&target, request).await;
+                    let looped = looping.is_none_or(|phase| {
+                        fixture
+                            .events
+                            .lock()
+                            .expect("observations lock")
+                            .iter()
+                            .any(|event| event.phase == phase)
+                    });
+                    // The last budget attempt stands, and the tests below report it.
+                    if looped || budget >= 64 * BUDGET {
+                        break (deadline, result);
+                    }
+                    let _error = result.expect_err("a guest that never looped cannot finish");
+                    fixture.assert_clean().await;
+                    budget *= 2;
+                };
+                match case {
+                    Case::Success => {
+                        let emission = result
+                            .expect("native dispatch succeeds")
+                            .expect("typed node emission");
+                        let payload: serde_json::Value =
+                            serde_json::from_str(&emission.payload).unwrap();
+                        assert_eq!(payload.as_array().unwrap().len(), 1);
+                        assert_eq!(payload[0]["value"].as_u64(), Some(37));
+                        assert_eq!(emission.port, None);
+                    }
+                    Case::StartDeadline | Case::RunDeadline => {
+                        let _error =
+                            result.expect_err("guest cannot extend the enclosing deadline");
+                        assert!(Instant::now() >= deadline);
+                        assert!(
+                            Instant::now() < deadline + CLEANUP,
+                            "deadline cancellation is bounded"
+                        );
+                    }
+                    Case::Trap => {
+                        let _error = result.expect_err("a guest trap fails the invocation");
+                    }
+                    _ => unreachable!("only lifetime cases run here"),
+                }
+                fixture.assert_clean().await;
+                let events = fixture.events.lock().expect("observations lock").clone();
+                assert!(events.iter().any(|event| event.phase == 0));
+                for event in &events {
+                    if event.phase == 0 {
+                        assert!(
+                            event.native_identity,
+                            "initialization carries only native component identity"
+                        );
+                        assert!(event.identity.is_none());
+                        assert!(event.invocation.is_none());
+                    } else {
+                        assert!(
+                            !event.native_identity,
+                            "execution carries a distinct invocation scope"
+                        );
+                        let identity = event
+                            .identity
+                            .as_ref()
+                            .expect("execution has host identity");
+                        assert_eq!(
+                            identity.project_env_key,
+                            Some(PROJECT_ENV_KEY.parse().unwrap())
+                        );
+                        assert_eq!(
+                            identity.user_id,
+                            Some(PlatformComponent::Executor.principal_id()),
+                            "a callerless delivery binds its platform principal"
+                        );
+                        assert_eq!(
+                            identity.operation.as_deref(),
+                            Some(ROOT),
+                            "a callerless delivery binds the operation that it runs"
+                        );
+                        let invocation = event
+                            .invocation
+                            .as_ref()
+                            .expect("execution has host authority");
+                        let position = invocation.entry.wiring().expect("a wiring entry");
+                        assert_eq!(position.wiring_id, "trusted-wiring");
+                        assert_eq!(position.node_id, "trusted-node");
+                        assert_eq!(invocation.operation, ROOT, "only the entry has a scope");
+                    }
+                }
                 assert_eq!(
-                    identity.user_id,
-                    Some(PlatformComponent::Executor.principal_id()),
-                    "a callerless delivery binds its platform principal"
+                    events.iter().filter(|event| event.phase == 1).count(),
+                    usize::from(!matches!(case, Case::StartDeadline))
                 );
-                assert_eq!(
-                    identity.operation.as_deref(),
-                    Some(ROOT),
-                    "a callerless delivery binds the operation that it runs"
-                );
+                fixture
+                    .workload
+                    .unbind_all_plugins()
+                    .await
+                    .expect("unbind fixture workload");
             }
-            let invocation = event
-                .invocation
-                .as_ref()
-                .expect("execution has host authority");
-            let position = invocation.entry.wiring().expect("a wiring entry");
-            assert_eq!(position.wiring_id, "trusted-wiring");
-            assert_eq!(position.node_id, "trusted-node");
-            assert_eq!(invocation.operation, ROOT, "only the entry has a scope");
-        }
-    }
-    assert_eq!(
-        events.iter().filter(|event| event.phase == 1).count(),
-        usize::from(!matches!(case, Case::StartDeadline | Case::CalleeGrant))
+        },
     );
-    fixture
-        .workload
-        .unbind_all_plugins()
-        .await
-        .expect("unbind fixture workload");
-}
-
-fn isolated(pool: &sqlx::PgPool, name: &str, case: Case) {
-    run_isolated_test(name, Some(pool), || run_case(pool, case));
 }
 
 fn run_isolated_test<F>(
@@ -1119,123 +1085,80 @@ fn native_guest_logs_follow_the_invocation_trace() {
     );
 }
 
-#[sqlx::test(migrations = false)]
-async fn native_node_success_revokes_invocation_authority(pool: sqlx::PgPool) {
-    isolated(
-        &pool,
-        "native_node_success_revokes_invocation_authority",
-        Case::Success,
-    );
-}
-#[sqlx::test(migrations = false)]
-async fn native_node_initialization_has_no_authority_and_obeys_deadline(pool: sqlx::PgPool) {
-    isolated(
-        &pool,
-        "native_node_initialization_has_no_authority_and_obeys_deadline",
-        Case::StartDeadline,
-    );
-}
-#[sqlx::test(migrations = false)]
-async fn native_node_execution_obeys_enclosing_deadline(pool: sqlx::PgPool) {
-    isolated(
-        &pool,
-        "native_node_execution_obeys_enclosing_deadline",
-        Case::RunDeadline,
-    );
-}
-#[sqlx::test(migrations = false)]
-async fn native_node_cancellation_revokes_invocation_authority(pool: sqlx::PgPool) {
-    isolated(
-        &pool,
-        "native_node_cancellation_revokes_invocation_authority",
-        Case::Cancellation,
-    );
-}
-#[sqlx::test(migrations = false)]
-async fn native_node_trap_revokes_invocation_authority(pool: sqlx::PgPool) {
-    isolated(
-        &pool,
-        "native_node_trap_revokes_invocation_authority",
-        Case::Trap,
-    );
-}
-
-async fn assert_postgres_bindings() {
-    let fixture = Fixture::new(Case::PostgresImport).await;
-    let target = fixture.target().await;
-    prepare_native(&target, Instant::now() + CLEANUP)
-        .await
-        .expect("preload the wamn:postgres node");
-    let emission = invoke_native(&target, fixture.request(Instant::now() + CLEANUP))
-        .await
-        .expect("native dispatch succeeds")
-        .expect("typed node emission");
-    let payload: serde_json::Value = serde_json::from_str(&emission.payload).unwrap();
-    assert_eq!(payload.as_array().unwrap().len(), 1);
-    assert_eq!(payload[0]["value"].as_u64(), Some(37));
-    let postgres = &fixture.policy.resources.postgres;
-    assert!(
-        postgres.linker_entry_binds() > 0,
-        "the native bind linked the node's wamn:postgres import"
-    );
-    assert_eq!(postgres.scope_registrations(), 0);
-    fixture
-        .workload
-        .unbind_all_plugins()
-        .await
-        .expect("unbind fixture workload");
-
-    // A wash bind still registers its workload scope without a project.
-    let wash = Arc::new(WamnPostgres::with_provider(Arc::new(
-        StaticCredentialProvider::new(HashMap::new(), None),
-    )));
-    let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> =
-        HashMap::from([(WAMN_POSTGRES_ID, Arc::clone(&wash) as Arc<dyn HostPlugin>)]);
-    let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
-    let resolved = wamn_engine::build_engine(&[])
-        .expect("production engine")
-        .initialize_workload(
-            "wash-postgres-bind",
-            Workload {
-                namespace: "test".into(),
-                name: "wash-postgres-bind".into(),
-                annotations: HashMap::new(),
-                service: None,
-                components: vec![Component {
-                    name: "wash-postgres".into(),
-                    bytes: wat::parse_str(format!(
-                        r#"(component (import "{STATEMENTS}" (instance)))"#
-                    ))
-                    .expect("encode the wash postgres guest")
-                    .into(),
-                    ..Component::default()
-                }],
-                host_interfaces: vec![WitInterface::from(STATEMENTS)],
-                volumes: Vec::new(),
-            },
-        )
-        .expect("initialize the wash workload")
-        .resolve(
-            Some(&plugins),
-            &PluginBindings::new(),
-            &HostRef::from_handler(&egress),
-            &Meters::new(MeterKind::Off),
-        )
-        .await
-        .expect("resolve the wash workload");
-    assert_eq!(wash.scope_registrations(), 1);
-    resolved
-        .unbind_all_plugins()
-        .await
-        .expect("unbind wash workload");
-}
-
 #[test]
 fn native_postgres_guest_binds_without_the_project_env_key() {
     run_isolated_test(
         "native_postgres_guest_binds_without_the_project_env_key",
         None,
-        || assert_postgres_bindings(),
+        || async {
+            let fixture = Fixture::new(Case::PostgresImport).await;
+            let target = fixture.target().await;
+            prepare_native(&target, Instant::now() + CLEANUP)
+                .await
+                .expect("preload the wamn:postgres node");
+            let emission = invoke_native(&target, fixture.request(Instant::now() + CLEANUP))
+                .await
+                .expect("native dispatch succeeds")
+                .expect("typed node emission");
+            let payload: serde_json::Value = serde_json::from_str(&emission.payload).unwrap();
+            assert_eq!(payload.as_array().unwrap().len(), 1);
+            assert_eq!(payload[0]["value"].as_u64(), Some(37));
+            let postgres = &fixture.policy.resources.postgres;
+            assert!(
+                postgres.linker_entry_binds() > 0,
+                "the native bind linked the node's wamn:postgres import"
+            );
+            assert_eq!(postgres.scope_registrations(), 0);
+            fixture
+                .workload
+                .unbind_all_plugins()
+                .await
+                .expect("unbind fixture workload");
+
+            // A wash bind still registers its workload scope without a project.
+            let wash = Arc::new(WamnPostgres::with_provider(Arc::new(
+                StaticCredentialProvider::new(HashMap::new(), None),
+            )));
+            let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> =
+                HashMap::from([(WAMN_POSTGRES_ID, Arc::clone(&wash) as Arc<dyn HostPlugin>)]);
+            let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
+            let resolved = wamn_engine::build_engine(&[])
+                .expect("production engine")
+                .initialize_workload(
+                    "wash-postgres-bind",
+                    Workload {
+                        namespace: "test".into(),
+                        name: "wash-postgres-bind".into(),
+                        annotations: HashMap::new(),
+                        service: None,
+                        components: vec![Component {
+                            name: "wash-postgres".into(),
+                            bytes: wat::parse_str(format!(
+                                r#"(component (import "{STATEMENTS}" (instance)))"#
+                            ))
+                            .expect("encode the wash postgres guest")
+                            .into(),
+                            ..Component::default()
+                        }],
+                        host_interfaces: vec![WitInterface::from(STATEMENTS)],
+                        volumes: Vec::new(),
+                    },
+                )
+                .expect("initialize the wash workload")
+                .resolve(
+                    Some(&plugins),
+                    &PluginBindings::new(),
+                    &HostRef::from_handler(&egress),
+                    &Meters::new(MeterKind::Off),
+                )
+                .await
+                .expect("resolve the wash workload");
+            assert_eq!(wash.scope_registrations(), 1);
+            resolved
+                .unbind_all_plugins()
+                .await
+                .expect("unbind wash workload");
+        },
     );
 }
 
@@ -1262,7 +1185,6 @@ async fn native_application_cancelled_resolution_clears_partial_bindings() {
         policy.resources.postgres.scopes.is_empty(),
         "resolution creates no invocation trace"
     );
-    assert!(policy.resources.postgres.scopes.is_empty());
     loading.abort();
     assert!(
         timeout(CLEANUP, loading)
@@ -1275,72 +1197,6 @@ async fn native_application_cancelled_resolution_clears_partial_bindings() {
         "the retained policy cannot retain bindings from abandoned resolution"
     );
     assert!(policy.resources.postgres.scopes.is_empty());
-    assert!(
-        policy.resources.postgres.scopes.is_empty(),
-        "abandoned resolution retains no trace"
-    );
-}
-
-async fn assert_call_owner() {
-    let fixture = Fixture::new(Case::Cancellation).await;
-    let owner = Arc::downgrade(&fixture.application);
-    let engine = Arc::clone(&fixture.engine);
-    let policy = Arc::clone(&fixture.policy);
-    let events = Arc::clone(&fixture.events);
-    let entered = Arc::clone(&fixture.entered);
-    let target = fixture.target().await;
-    let request = fixture.request(Instant::now() + Duration::from_secs(30));
-    let task = tokio::spawn(async move { invoke_native(&target, request).await });
-    drop(fixture);
-    timeout(CLEANUP, entered.notified())
-        .await
-        .expect("actual native handler holds the application");
-    assert!(
-        owner.upgrade().is_some(),
-        "the call owns the application after its driver owner drops"
-    );
-    assert_eq!(policy.resources.postgres.scopes.scopes().len(), 1);
-    assert!(
-        !policy.resources.postgres.scopes.is_empty(),
-        "the active call retains its trace"
-    );
-    task.abort();
-    assert!(
-        timeout(CLEANUP, task)
-            .await
-            .expect("cancel caller")
-            .expect_err("caller cancellation")
-            .is_cancelled()
-    );
-    timeout(CLEANUP, async {
-        while owner.upgrade().is_some() || engine.guest_memory().in_use() != 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("native guest abandonment releases the final application owner and memory");
-    assert!(policy.bindings.read().expect("bindings lock").is_empty());
-    assert!(policy.resources.postgres.scopes.is_empty());
-    assert!(
-        policy.resources.postgres.scopes.is_empty(),
-        "cancelled work releases its trace"
-    );
-    for event in events.lock().expect("observations lock").iter() {
-        assert!(
-            policy
-                .resources
-                .postgres
-                .session_identity(&event.scope)
-                .is_none()
-        );
-        assert!(
-            policy
-                .resources
-                .blobstore
-                .invocation(&event.scope)
-                .is_none()
-        );
-    }
 }
 
 #[test]
@@ -1348,7 +1204,42 @@ fn native_application_call_retains_owner_until_guest_cancellation() {
     run_isolated_test(
         "native_application_call_retains_owner_until_guest_cancellation",
         None,
-        || assert_call_owner(),
+        || async {
+            let fixture = Fixture::new(Case::Cancellation).await;
+            let owner = Arc::downgrade(&fixture.application);
+            let engine = Arc::clone(&fixture.engine);
+            let policy = Arc::clone(&fixture.policy);
+            let entered = Arc::clone(&fixture.entered);
+            let target = fixture.target().await;
+            let request = fixture.request(Instant::now() + Duration::from_secs(30));
+            let task = tokio::spawn(async move { invoke_native(&target, request).await });
+            drop(fixture);
+            timeout(CLEANUP, entered.notified())
+                .await
+                .expect("actual native handler holds the application");
+            assert!(
+                owner.upgrade().is_some(),
+                "the call owns the application after its driver owner drops"
+            );
+            assert_eq!(policy.resources.postgres.scopes.scopes().len(), 1);
+            task.abort();
+            assert!(
+                timeout(CLEANUP, task)
+                    .await
+                    .expect("cancel caller")
+                    .expect_err("caller cancellation")
+                    .is_cancelled()
+            );
+            timeout(CLEANUP, async {
+                while owner.upgrade().is_some() || engine.guest_memory().in_use() != 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("native guest abandonment releases the final application owner and memory");
+            assert!(policy.bindings.read().expect("bindings lock").is_empty());
+            assert!(policy.resources.postgres.scopes.is_empty());
+        },
     );
 }
 

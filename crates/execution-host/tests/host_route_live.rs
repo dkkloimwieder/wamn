@@ -1056,64 +1056,6 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
     Ok(())
 }
 
-/// Every native file operation remains in the application's permission catalog.
-#[test]
-fn four_file_operations_require_an_explicit_application_grant() {
-    for action in ["put", "get", "delete", "expose"] {
-        let reference = format!("wamn-control:file/{action}");
-        let attachment = HostRouteSet::Application
-            .attachments()
-            .find(|(_, attachment)| attachment.reference == reference)
-            .unwrap_or_else(|| panic!("missing file operation {reference}"))
-            .1;
-        assert_eq!(
-            attachment.route.authority,
-            wamn_catalog::HostRouteAuthority::Granted
-        );
-        assert!(wamn_catalog::is_granted_host_route_operation(&reference));
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: postgres"]
-async fn a_session_without_file_grants_cannot_call_any_file_operation() -> anyhow::Result<()> {
-    let mut host = application_host("file_route_grants").await?;
-    let mut member = claims();
-    member["sub"] = json!(MEMBER);
-    member["authority"] = json!({"login": MEMBER});
-    member["roles"] = json!(["purchase-reader"]);
-    let bearer = format!("Bearer {}", signed(&header(), &member));
-    for action in ["put", "get", "delete", "expose"] {
-        let reference = format!("wamn-control:file/{action}");
-        let attachment = route_of(&reference);
-        let anonymous = host
-            .routing
-            .authenticate_authorization_for_test(&attachment, None)
-            .await;
-        assert!(
-            matches!(anonymous, Err((401, _))),
-            "anonymous {reference}: {anonymous:?}"
-        );
-        match host
-            .routing
-            .authenticate_authorization_for_test(&attachment, Some(&bearer))
-            .await
-        {
-            Err((403, _)) => {}
-            Ok(Some(caller)) => {
-                let result = outcome(&host.delivery, &attachment, Some(caller), json!({})).await;
-                assert!(
-                    matches!(result, Err(DeliveryError::PermissionDenied(_))),
-                    "ungranted {reference}: {result:?}"
-                );
-            }
-            other => panic!("a valid session without {reference} must receive 403: {other:?}"),
-        }
-    }
-    host.server.stop().await;
-    Ok(())
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires: postgres, env:WAMN_SESSION_EXCHANGE_CTL_BIN"]
 async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> {

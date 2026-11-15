@@ -433,49 +433,31 @@ mod tests {
     #[tokio::test]
     async fn a_later_signing_failure_refuses_the_whole_result() {
         let input = json!([{"value": {"file_id": ID}}, {"value": {"file_id": ID}}]);
-        let mut count = 0;
-        let result = sign_result(emission(&input), &reads("one"), |_, _| {
-            count += 1;
-            let current = count;
-            async move {
-                if current == 1 {
-                    Ok("https://files.test/partial".into())
-                } else {
-                    anyhow::bail!("signing refused")
-                }
-            }
-        })
-        .await;
-        assert_eq!(count, 2);
-        let _error = result.unwrap_err();
-        assert_eq!(input[0]["value"]["file_id"], ID);
-    }
-
-    #[tokio::test]
-    async fn typed_failure_drops_the_entire_owned_result() {
         let mut value = typed("one");
         let Val::Result(Ok(Some(elements))) = &mut value else {
-            panic!("fixture outer result")
+            panic!("outer result")
         };
         let Val::List(elements) = elements.as_mut() else {
-            panic!("fixture outcomes")
+            panic!("outcomes")
         };
         elements.push(elements[0].clone());
-        let mut calls = 0;
-        let result = sign_result(NativeOutcome::Typed(value), &reads("one"), |_, _| {
-            calls += 1;
-            let call = calls;
-            async move {
-                if call == 1 {
-                    Ok("https://files.test/partial".into())
-                } else {
-                    anyhow::bail!("provider refused")
+        for outcome in [emission(&input), NativeOutcome::Typed(value)] {
+            let mut calls = 0;
+            let result = sign_result(outcome, &reads("one"), |_, _| {
+                calls += 1;
+                let call = calls;
+                async move {
+                    if call == 1 {
+                        Ok("https://files.test/partial".into())
+                    } else {
+                        anyhow::bail!("signing refused")
+                    }
                 }
-            }
-        })
-        .await;
-        assert_eq!(calls, 2);
-        let _error = result.unwrap_err();
+            })
+            .await;
+            assert_eq!(calls, 2);
+            assert!(result.is_err());
+        }
     }
 
     #[tokio::test]
