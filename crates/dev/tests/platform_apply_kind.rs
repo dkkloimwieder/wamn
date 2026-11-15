@@ -102,17 +102,22 @@ async fn same_name_reset_kind() -> anyhow::Result<()> {
     focused(application_deploy::Case::Reset).await
 }
 
+/// Normal and interrupted installation share one table of platform observations.
 #[tokio::test]
 #[ignore = "requires: cluster, bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, input:control-binaries"]
-async fn platform_install_recovery_kind() -> anyhow::Result<()> {
-    fresh(false).await
-}
-
-/// Fresh-platform acceptance includes installation, recovery, application recovery, and reset.
-#[tokio::test]
-#[ignore = "requires: cluster, bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script, input:control-binaries"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
-    fresh(true).await
+    let (repository, binary, kcl) = inputs()?;
+    let chart = platform_images::source_chart(&repository, &repository)?;
+    let selected = artifact_plan::select(&chart)?;
+    eprintln!("Selected chart: {}", chart.display());
+    eprintln!("Selected host: {}", selected.image("host")?);
+    report_images(&selected.values()["platform"]);
+    for interrupted in [false, true] {
+        let mut run = prepare(&repository, &chart, &binary, &kcl, None)?;
+        exercise(&run, interrupted).await?;
+        cleanup(&mut run).await?;
+    }
+    Ok(())
 }
 
 /// DEP6 acceptance uses one fresh platform and a 45-minute setup-to-cleanup bound.
@@ -304,34 +309,6 @@ async fn disposable(run: &Run) -> anyhow::Result<()> {
         namespace["metadata"]["annotations"]["wamn.dev/disposable"] == "true",
         "platform is not recorded as disposable: annotate namespace platform wamn.dev/disposable=true"
     );
-    Ok(())
-}
-
-async fn fresh(acceptance: bool) -> anyhow::Result<()> {
-    let (repository, binary, kcl) = inputs()?;
-    let chart = platform_images::source_chart(&repository, &repository)?;
-    let selected = artifact_plan::select(&chart)?;
-    eprintln!("Selected chart: {}", chart.display());
-    eprintln!("Selected host: {}", selected.image("host")?);
-    report_images(&selected.values()["platform"]);
-    // The focused recovery case always interrupts a fresh platform installation.
-    let installations: &[bool] = if acceptance { &[false, true] } else { &[true] };
-    for &interrupted in installations {
-        let mut run = prepare(&repository, &chart, &binary, &kcl, None)?;
-        let password = exercise(&run, interrupted).await?;
-        if acceptance && !interrupted {
-            application_deploy::exercise(
-                &run,
-                &[
-                    application_deploy::Case::Recovery,
-                    application_deploy::Case::Reset,
-                ],
-                &password,
-            )
-            .await?;
-        }
-        cleanup(&mut run).await?;
-    }
     Ok(())
 }
 
@@ -549,7 +526,7 @@ async fn get(run: &Run, namespace: &str, type_: &str, name: &str) -> anyhow::Res
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
-async fn exercise(run: &Run, interrupted: bool) -> anyhow::Result<String> {
+async fn exercise(run: &Run, interrupted: bool) -> anyhow::Result<()> {
     if interrupted {
         interrupt(run).await?;
     }
@@ -600,7 +577,7 @@ async fn exercise(run: &Run, interrupted: bool) -> anyhow::Result<String> {
             }),
         "deployment created a generic completion ConfigMap"
     );
-    Ok(password)
+    Ok(())
 }
 
 async fn database_state(run: &Run) -> anyhow::Result<Value> {

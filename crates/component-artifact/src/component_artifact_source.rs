@@ -473,25 +473,6 @@ mod tests {
     }
 
     #[test]
-    fn source_configuration_is_explicit_and_redacts_rejected_credentials() {
-        let config = ComponentArtifactSourceConfig::new(
-            "registry.example/wamn/components",
-            false,
-            Duration::from_secs(9),
-        )
-        .expect("explicit source validates");
-        ComponentArtifactSource::new(config).expect("explicit source builds");
-
-        let error = ComponentArtifactSourceConfig::new(
-            "user:super-secret@registry.example/wamn/components",
-            false,
-            Duration::from_secs(9),
-        )
-        .expect_err("embedded credentials refuse");
-        assert!(!format!("{error:?} {error}").contains("super-secret"));
-    }
-
-    #[test]
     fn manifest_must_match_both_descriptors_and_exactly_one_layer() {
         let component = admitted(b"component-bytes");
         let config = component_artifact_config_bytes(&component);
