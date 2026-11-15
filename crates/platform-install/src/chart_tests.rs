@@ -91,6 +91,7 @@ fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore = "requires: bin:kcl, bin:helm"]
 fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::Result<()> {
     use crate::platform::{
         document::{ClusterDocument, Provider},
@@ -391,6 +392,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
 }
 
 #[test]
+#[ignore = "requires: bin:kcl, bin:helm"]
 fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() -> anyhow::Result<()>
 {
     let template = wamn_control_provision::Template::standard();
@@ -603,6 +605,7 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
 }
 
 #[tokio::test]
+#[ignore = "requires: bin:kcl, bin:helm"]
 async fn installation_preserves_broker_mounts_and_gcp_telemetry() -> anyhow::Result<()> {
     use crate::platform::{artifact_plan, document::ClusterDocument, installation};
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

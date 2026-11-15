@@ -369,6 +369,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: bin:kcl"]
     fn show_preserves_the_cluster_configuration() {
         let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/gcp/cluster.k");
         let document =

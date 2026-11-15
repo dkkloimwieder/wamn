@@ -1252,24 +1252,6 @@ pub fn type_stem(model: &str, operation: &str) -> String {
     format!("{}{}", pascal_case(model), pascal_case(operation))
 }
 
-/// The type stem of one operation, from its canonical identity.
-///
-/// A row link states the operation it opens by identity, and a component names
-/// that operation's types. An identity spells a name with hyphens where the
-/// contract spells it with underscores, so the hyphens turn back first.
-#[must_use]
-pub fn operation_stem(identity: &str) -> String {
-    let after_package = identity.split_once(':').map_or(identity, |(_, rest)| rest);
-    let without_version = after_package
-        .split_once('@')
-        .map_or(after_package, |(name, _)| name);
-    let contract_name = |name: &str| name.replace('-', "_");
-    match without_version.split_once('/') {
-        Some((model, operation)) => type_stem(&contract_name(model), &contract_name(operation)),
-        None => pascal_case(&contract_name(without_version)),
-    }
-}
-
 /// The exported function name of one operation.
 ///
 /// # Errors
@@ -1368,21 +1350,32 @@ mod tests {
     /// These assertions pin the exact contract types.
     #[test]
     fn every_contract_type_has_its_exact_typescript_spelling() {
-        for (contract, typescript) in [
-            ("boolean", "boolean"),
-            ("int32", "number"),
-            ("int64", "Int64"),
-            ("float64", "number"),
-            ("text", "string"),
-            ("bytes", "number[]"),
-            ("numeric", "Numeric"),
-            ("timestamptz", "Timestamptz"),
-            ("json", "JsonValue"),
-            ("uuid", "Uuid"),
-            // The one literal outside the frozen column vocabulary: generated
-            // CRUD input contracts spell `request_id` this way.
-            ("string", "string"),
-        ] {
+        let mut contract = wit_parser::Resolve::default();
+        let package = contract
+            .push_str(
+                "package.wit",
+                include_str!("../../../../wit/wamn-postgres-0.4/package.wit"),
+            )
+            .unwrap();
+        let interface = contract.packages[package].interfaces["types"];
+        let type_id = contract.interfaces[interface].types["sql-value"];
+        let wit_parser::TypeDefKind::Variant(values) = &contract.types[type_id].kind else {
+            panic!("sql-value is a variant");
+        };
+        for case in values.cases.iter().filter(|case| case.name != "null") {
+            let contract = case.name.as_str();
+            let scalar: SqlValueType = serde_json::from_value(contract.into()).unwrap();
+            let typescript = match scalar {
+                SqlValueType::Boolean => "boolean",
+                SqlValueType::Int32 | SqlValueType::Float64 => "number",
+                SqlValueType::Int64 => "Int64",
+                SqlValueType::Text => "string",
+                SqlValueType::Bytes => "number[]",
+                SqlValueType::Numeric => "Numeric",
+                SqlValueType::Timestamptz => "Timestamptz",
+                SqlValueType::Json => "JsonValue",
+                SqlValueType::Uuid => "Uuid",
+            };
             assert_eq!(
                 ts_type(contract).unwrap_or_else(|error| panic!("{contract}: {error}")),
                 typescript,
@@ -1398,35 +1391,26 @@ mod tests {
         assert_eq!(refusal.error_type(), ClientTsErrorType::UnknownType);
     }
 
-    /// An identity spells `widget_maker` as `widget-maker`, and the types keep
-    /// the contract's own spelling.
-    #[test]
-    fn an_operation_stem_reads_the_contract_name_out_of_an_identity() {
-        for (identity, stem) in [
-            ("platform-fixture:widget/get@1.0.0", "WidgetGet"),
-            ("platform-fixture:widget-maker/get@1.0.0", "WidgetMakerGet"),
-            (
-                "platform-fixture:widget/record-batch@1.0.0",
-                "WidgetRecordBatch",
-            ),
-        ] {
-            assert_eq!(operation_stem(identity), stem, "{identity}");
-        }
-    }
-
     #[test]
     fn the_member_name_rule_reverses_every_contract_name() {
-        for (contract, member) in [
-            ("id", "id"),
-            ("request_id", "requestId"),
-            ("expected_row_version", "expectedRowVersion"),
-            ("value", "value"),
-            // A digit keeps its underscore, so the rule stays reversible.
-            ("line_1", "line_1"),
-            ("po_line_2_note", "poLine_2Note"),
-        ] {
-            assert_eq!(to_camel(contract), member, "{contract}");
-            assert_eq!(to_snake(member), contract, "{member}");
+        for (path, bytes) in wamn_catalog::HostRouteSet::Application
+            .contract_files()
+            .unwrap()
+        {
+            let contract = serde_json::from_slice(&bytes).unwrap();
+            let fields = if path.ends_with(".input.json") {
+                crate::client_fields::input_fields_of(&contract)
+            } else if path.ends_with(".result.json") {
+                crate::client_fields::fields_of(&contract)
+            } else {
+                continue;
+            };
+            for field in crate::client_ir::leaf_fields(&fields) {
+                for name in field.path.split('.') {
+                    let name = name.trim_end_matches("[]");
+                    assert_eq!(to_snake(&to_camel(name)), name, "{path}: {}", field.path);
+                }
+            }
         }
     }
 

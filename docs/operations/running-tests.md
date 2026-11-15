@@ -67,6 +67,9 @@ An `env:NAME` need selects its output recipe and requires a nonempty variable af
 A `bin:PROGRAM` need requires an executable on `PATH` or at the given absolute path.
 For `bin:kcl`, the selector checks `WAMN_KCL`, the pinned installation under `.tools/kcl/`, then `PATH`.
 The selector runs ignored cases only when it can supply their declared inputs.
+KCL-dependent library cases declare `bin:kcl`.
+For a direct run, prepare KCL with `cargo xtask install-kcl`.
+Then run `cargo test -p PACKAGE --lib CASE -- --ignored --exact`.
 An explicit suite fails when a selected case lacks an input.
 Selected suites own their named cases or filters, so dependency selection runs each case once.
 
@@ -295,7 +298,7 @@ Exact text remains in the cases below because the bytes or literal are the publi
 - [Connection requirement identity](../../crates/catalog/src/connection.rs), `the_requirement_hash_bytes_are_pinned`, and [catalog serialization](../../crates/schema-introspection/src/ir.rs), `catalog_retains_view_columns_and_dependencies` and `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/digest/src/lib.rs) also preserves numeric spelling, signed zero and canonical key order.
 - [SHA-256 vectors](../../crates/digest/src/lib.rs), [Ed25519 vectors](../../crates/identity-protocol/src/token/tests.rs), [HMAC vectors](../../crates/platform/http-capability/src/authentication.rs) and [release label encoding](../../crates/engine/src/release_manifest.rs): independent encoded vectors define the digest, signature or base32 value. A digest comparison is not a source-file snapshot.
 - Frozen serialized variants, refusal codes, media types, SQLSTATEs, reserved input paths, token prefixes and protocol identifiers remain literal comparisons. Their owners are [SQL values](../../crates/scalar/src/lib.rs), [identity protocols](../../crates/identity-protocol/src), [component contracts](../../crates/catalog/src), [host route contracts](../../crates/catalog/src/host_route.rs) and the RFC protocols used by the transport. HTTP request lines, authorization schemes, metadata headers, health response tokens and canonical cache keys are wire values. Security allowlists remain independent of the implementation that installs the grants.
-- [TypeScript type spelling](../../crates/compiler/src/client_ts.rs), `every_contract_type_has_its_exact_typescript_spelling`: `boolean`, `number`, `Int64`, `string`, `number[]`, `Numeric`, `Timestamptz`, `JsonValue` and `Uuid` name generated language types.
+- [TypeScript type spelling](../../crates/compiler/src/client_ts.rs), `every_contract_type_has_its_exact_typescript_spelling`: the test reads the non-null scalar types from the PostgreSQL WIT contract. Their TypeScript names are part of the client contract.
 - [HTML escaping](../../crates/execution-host/src/oauth_callback.rs) and its [HTTP boundary](../../crates/execution-host/tests/support/oauth_authorization.rs): `&lt;script&gt;&quot;&amp;&#39;` and `&lt;script&gt;&amp;&quot;&#39;` encode the supplied attack text. The unescaped text must stay absent.
 - [Generated TypeScript documentation](../../crates/compiler/tests/client_ts_behavior.test.ts) compares authored paragraphs with their input declarations. Generated comment headings and formatting are not asserted. Export names derive from the input operations; the public `Feed`, `Collection`, `Write` and `Changes` naming suffixes remain API literals.
 - [Receiving decimal arithmetic](../../apps/wamn_receiving/web/test/sync.test.tsx): `3.500`, `6.500`, `0.3`, `-0.25` and `15` are decimal values with the required scale, not formatted diagnostics.

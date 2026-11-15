@@ -1354,7 +1354,7 @@ fn supplied(runner: &Runner<'_>, type_: &str, name: &str) -> bool {
         return runner.value(name).is_some();
     }
     if type_ == "bin" && name == "kcl" {
-        return crate::kcl::binary(runner.root, |name| runner.value(name)).is_some();
+        return wamn_compiler::kcl::binary().is_ok();
     }
     if type_ == "bin" {
         return runner.value("PATH").is_some_and(|path| {
