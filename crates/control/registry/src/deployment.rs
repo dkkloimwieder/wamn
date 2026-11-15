@@ -209,3 +209,18 @@ pub async fn record(
         .await?;
     Ok(suffix)
 }
+
+/// Serialize changes to an organization's initial administrator.
+///
+/// # Errors
+/// Returns a database error if the organization is absent or cannot be locked.
+pub async fn lock_org(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT id FROM registry.orgs WHERE id=$1 FOR UPDATE")
+        .bind(org)
+        .fetch_one(&mut **transaction)
+        .await?;
+    Ok(())
+}

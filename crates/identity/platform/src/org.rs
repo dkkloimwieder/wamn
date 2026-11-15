@@ -1,8 +1,8 @@
 //! Org membership and the administrative grants of an org
 //! (docs/architecture/overview.md#organization-membership-and-administration).
 //!
-//! Each grant here is the one write of its row. `wamn-ctl invite`, the
-//! provisioning of an org owner and the control routes call these functions,
+//! Each grant here is the one write of its row. Platform installation
+//! and the control routes call these functions,
 //! inside the caller's transaction and under the caller's bound actor.
 //! These functions write system rows only. The application rows of the same
 //! grants are the functions of [`crate::application`].
@@ -317,7 +317,7 @@ pub struct MemberGrants {
 }
 
 /// Write the active org membership of an invited user, then each requested
-/// grant through its one write. `wamn-ctl invite` and `user.invite` call it.
+/// grant through its one write. Platform installation and `user.invite` call it.
 pub async fn invite_member(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,

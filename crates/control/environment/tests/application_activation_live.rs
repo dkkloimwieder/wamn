@@ -394,7 +394,14 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .execute(&mut admin)
     .await
     .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;", wamn_control_provision::test_database::seed_org_project_env_sql("acme","apps","dev")))).execute(&mut admin).await.map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "BEGIN; SET LOCAL ROLE wamn_system; {} {} COMMIT;",
+        wamn_control_provision::test_database::seed_org_project_env_sql("acme", "apps", "dev"),
+        wamn_registry::test_util::activation_target_sql()
+    )))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     let apply_input = wamn_test_infrastructure::credentials::apply_login(system.url()).await?;
     let mut platform = Platform {
         system_database_url: apply_input,

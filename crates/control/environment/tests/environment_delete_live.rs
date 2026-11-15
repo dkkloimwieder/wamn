@@ -208,11 +208,10 @@ esac
         .execute(&mut system)
         .await
         .map(drop)?;
-    let before: serde_json::Value =
-        sqlx::query("SELECT to_jsonb(e) FROM registry.environment_projects e")
-            .fetch_one(&mut system)
-            .await?
-            .get(0);
+    let before: serde_json::Value = sqlx::query(wamn_registry::test_util::deployment_rows_sql())
+        .fetch_one(&mut system)
+        .await?
+        .get(0);
     let error = delete(&platform, &triple, false, database.as_str())
         .await
         .unwrap_err();
@@ -228,11 +227,10 @@ esac
         std::fs::read("delete-mutations")?.is_empty(),
         "refusal must precede every external mutation"
     );
-    let after: serde_json::Value =
-        sqlx::query("SELECT to_jsonb(e) FROM registry.environment_projects e")
-            .fetch_one(&mut system)
-            .await?
-            .get(0);
+    let after: serde_json::Value = sqlx::query(wamn_registry::test_util::deployment_rows_sql())
+        .fetch_one(&mut system)
+        .await?
+        .get(0);
     assert_eq!(after, before);
     let run_after: serde_json::Value = sqlx::query("SELECT to_jsonb(r) FROM wamn_run.runs r")
         .fetch_one(&mut project)
@@ -282,8 +280,10 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
             .fetch_one(&mut *transaction)
             .await?;
     }
-    sqlx::raw_sql("INSERT INTO registry.target(name,type,status) VALUES ('delete-fixture','local','active'); \
-         UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='delete-fixture')").execute(&mut *transaction).await.map(drop)?;
+    sqlx::raw_sql(wamn_registry::test_util::deletion_target_sql())
+        .execute(&mut *transaction)
+        .await
+        .map(drop)?;
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     let mut auth = AuthDrops::default();
     let mut changes = ConnectionDrops::default();
@@ -378,7 +378,12 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         }
     })
     .await??;
-    assert!(sqlx::query("SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'").fetch_optional(&mut system).await?.is_some());
+    assert!(
+        sqlx::query(wamn_registry::test_util::deleted_deployment_sql())
+            .fetch_optional(&mut system)
+            .await?
+            .is_some()
+    );
     let retained =
         sqlx::query("SELECT ref, version FROM identity.credential WHERE id=$1::text::uuid")
             .bind(&id)
@@ -394,7 +399,12 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         )
         .await?;
     }
-    assert!(sqlx::query("SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'").fetch_optional(&mut system).await?.is_none());
+    assert!(
+        sqlx::query(wamn_registry::test_util::deleted_deployment_sql())
+            .fetch_optional(&mut system)
+            .await?
+            .is_none()
+    );
     assert!(
         sqlx::query("SELECT 1 FROM identity.credential WHERE id=$1::text::uuid")
             .bind(&id)
@@ -403,23 +413,19 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
             .is_none()
     );
     assert!(
-        sqlx::query(
-            "SELECT 1 FROM registry.connection WHERE org='acme' AND project='app' AND env='dev'"
-        )
-        .fetch_optional(&mut system)
-        .await?
-        .is_none()
+        sqlx::query(wamn_registry::test_util::deleted_connections_sql())
+            .fetch_optional(&mut system)
+            .await?
+            .is_none()
     );
     assert!(
-        sqlx::query(
-            "SELECT 1 FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3"
-        )
-        .bind(&other.org)
-        .bind(&other.project)
-        .bind(&other.env.as_str())
-        .fetch_optional(&mut system)
-        .await?
-        .is_some()
+        sqlx::query(wamn_registry::test_util::deployment_exists_sql())
+            .bind(&other.org)
+            .bind(&other.project)
+            .bind(&other.env.as_str())
+            .fetch_optional(&mut system)
+            .await?
+            .is_some()
     );
 
     Ok(())

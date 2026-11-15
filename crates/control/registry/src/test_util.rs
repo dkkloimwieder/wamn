@@ -119,3 +119,49 @@ pub fn seed_pat_project_sql() -> &'static str {
 pub fn seed_credential_target_sql() -> &'static str {
     "INSERT INTO registry.integration_type_auth VALUES ('http','custom'); INSERT INTO registry.target(name,type,status) VALUES ('fixture','local','active'); UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='fixture'); RESET ROLE"
 }
+
+/// Seed the application activation target.
+pub fn activation_target_sql() -> &'static str {
+    "INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud');"
+}
+
+/// Registry statement used by connection or deletion boundary tests.
+pub fn deployment_rows_sql() -> &'static str {
+    "SELECT to_jsonb(e) FROM registry.environment_projects e"
+}
+
+/// Registry statement used by connection or deletion boundary tests.
+pub fn deletion_target_sql() -> &'static str {
+    "INSERT INTO registry.target(name,type,status) VALUES ('delete-fixture','local','active'); \
+         UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='delete-fixture')"
+}
+
+/// Registry statement used by connection or deletion boundary tests.
+pub fn deleted_deployment_sql() -> &'static str {
+    "SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'"
+}
+
+/// Registry statement used by connection or deletion boundary tests.
+pub fn deleted_connections_sql() -> &'static str {
+    "SELECT 1 FROM registry.connection WHERE org='acme' AND project='app' AND env='dev'"
+}
+
+/// Registry statement used by connection or deletion boundary tests.
+pub fn deployment_exists_sql() -> &'static str {
+    "SELECT 1 FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3"
+}
+
+/// Registry statement used by connection or deletion boundary tests.
+pub fn connection_fact_fixture_id_sql() -> &'static str {
+    "SELECT id FROM registry.connection WHERE project='project-a'"
+}
+
+/// Registry statement used by connection or deletion boundary tests.
+pub fn revoke_connection_fact_sql() -> &'static str {
+    "REVOKE EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) FROM wamn_conn_reader"
+}
+
+/// Registry statement used by connection or deletion boundary tests.
+pub fn grant_connection_fact_sql() -> &'static str {
+    "GRANT EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) TO wamn_conn_reader"
+}

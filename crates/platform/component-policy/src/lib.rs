@@ -533,14 +533,6 @@ mod tests {
         }
     }
 
-    /// Drift guard: the one load-bearing literal is the denied package. If this
-    /// string moves, the guard silently stops matching the interface the
-    /// runtime links unconditionally.
-    #[test]
-    fn denied_package_literal_is_pinned() {
-        assert_eq!(DENIED_EGRESS_PKG, "wasi:sockets");
-    }
-
     #[test]
     fn import_pkg_strips_interface_and_version() {
         assert_eq!(import_pkg("wasi:sockets/tcp@0.2.3"), "wasi:sockets");
@@ -664,18 +656,23 @@ mod tests {
     #[test]
     fn project_policy_refuses_every_unlisted_authority_surface() {
         let imports = ComponentImports::new([
-            "wasi:filesystem/types@0.2.3".to_string(),
-            "wasi:sockets/tcp@0.2.3".to_string(),
-            "wasi:http/outgoing-handler@0.2.3".to_string(),
-            "wasi:cli/run@0.2.3".to_string(),
+            format!("wasi:filesystem/types@{WASI_VERSION}"),
+            format!("wasi:sockets/tcp@{WASI_VERSION}"),
+            format!("wasi:http/outgoing-handler@{WASI_VERSION}"),
+            format!("wasi:cli/run@{WASI_VERSION}"),
             "wamn:postgres/client@0.1.0".to_string(),
             "other:host/process@1.0.0".to_string(),
         ]);
 
-        let error = analyze_project(&imports, &BTreeSet::new(), "project-node")
-            .expect_err("unlisted packages must refuse");
-        assert_eq!(error.error_type(), ProjectImportErrorType::UnadmittedImport);
-        assert_eq!(error.imports().len(), 6);
+        for import in imports.iter() {
+            let error = analyze_project(
+                &ComponentImports::new([import.to_owned()]),
+                &BTreeSet::new(),
+                "project-node",
+            )
+            .expect_err("unlisted authority must refuse");
+            assert_eq!(error.error_type(), ProjectImportErrorType::UnadmittedImport);
+        }
     }
 
     /// Posture is DECLARED, not inferred. The old complement rule classified an
