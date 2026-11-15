@@ -13,39 +13,23 @@ use wamn_publish::publish_release::{PublishReleaseRequest, assemble_release};
 async fn both_applications_publish_with_exact_dependencies_and_private_state(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
+    let palette = support::palette();
     let repository = support::repository();
     let integration = repository.join("apps/wamn_integration");
     let consumer = repository.join("apps/rest_consumer_fixture");
     let connector = repository.join("apps/rest_connector");
     let roots = vec![integration.clone(), consumer.clone(), connector.clone()];
-    let base = support::admit(&integration, "wamn_integration", None, BTreeSet::new());
-    let destination = support::admit(&consumer, "rest_consumer_fixture", None, BTreeSet::new());
+    let base = support::admit(&integration, "wamn_integration", BTreeSet::new());
+    let destination = support::admit(&consumer, "rest_consumer_fixture", BTreeSet::new());
     let component = support::admit(
         &connector,
         "rest_connector",
-        None,
         BTreeSet::from([
             base.component_digest().into(),
             destination.component_digest().into(),
         ]),
     );
-    let admissions = vec![
-        base,
-        destination,
-        component,
-        support::admit(
-            &connector,
-            "http-page",
-            Some("guests/http-page/declaration.json.in"),
-            BTreeSet::new(),
-        ),
-        support::admit(
-            &connector,
-            "jsonata",
-            Some("guests/jsonata/declaration.json.in"),
-            BTreeSet::new(),
-        ),
-    ];
+    let admissions = vec![base, destination, component];
     let target = ComponentPackageCoordinate {
         project_env_key: "rest--test--publication".into(),
         package_id: "rest_connector".into(),
@@ -79,7 +63,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
         .map(|name| PackageCoordinate::new(name, "0.1.1").unwrap())
         .collect(),
     };
-    let assembled = assemble_release(&args, &roots, &admissions, &[]).unwrap();
+    let assembled = assemble_release(&args, &roots, &admissions, &palette).unwrap();
     let release = &assembled.published.manifest;
     let packages = args
         .packages

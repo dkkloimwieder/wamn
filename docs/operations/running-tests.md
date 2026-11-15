@@ -99,7 +99,8 @@ On timeout or interruption, it ends and reaps all descendants, including separat
 Guest compiler flag lookups use the selection deadline and the same process cleanup.
 
 The tool builds the guests that selected suites need.
-The `edge-samples` suite builds `apps/edge_samples` through `wamn build` before it compiles the `samples` target.
+The `edge-samples` suite builds `apps/edge_samples` through `wamn build`.
+This checks its generated inputs and guest compilation. The guest has no native test cases.
 `cargo xtask repo-lint` also compiles guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
 The platform producer builds both role components through the package component builder.
@@ -1019,6 +1020,9 @@ The platform fixture is an application too, and it builds the same way.
 The platform owns it, and a platform test takes it instead of an application.
 The crate `wamn-fixture-package` states its paths, so a test reads them without a literal of its own.
 Do not edit generated Rust directly.
+
+The publication tests for NetSuite and REST connector build the platform palette through `wamn-build`.
+Release assembly receives that palette separately from application components.
 
 The compiler describes every emitted statement with SQLx before it emits consumers.
 It records parameter types, selected columns, relation access, and transaction requirements in the compiled package document.

@@ -29,40 +29,17 @@ fn fixture() -> Fixture {
     let consumer = repository.join("apps/rest_consumer_fixture");
     let connector = repository.join("apps/netsuite");
     let roots = vec![integration.clone(), consumer.clone(), connector.clone()];
-    let base = support::admit(&integration, "wamn_integration", None, BTreeSet::new());
-    let destination = support::admit(&consumer, "rest_consumer_fixture", None, BTreeSet::new());
+    let base = support::admit(&integration, "wamn_integration", BTreeSet::new());
+    let destination = support::admit(&consumer, "rest_consumer_fixture", BTreeSet::new());
     let component = support::admit(
         &connector,
         "netsuite",
-        None,
         BTreeSet::from([
             base.component_digest().into(),
             destination.component_digest().into(),
         ]),
     );
-    let admissions = vec![
-        support::admit(
-            &connector,
-            "http-request",
-            Some("guests/http-request/declaration.json.in"),
-            BTreeSet::new(),
-        ),
-        base,
-        destination,
-        component,
-        support::admit(
-            &connector,
-            "http-page",
-            Some("guests/http-page/declaration.json.in"),
-            BTreeSet::new(),
-        ),
-        support::admit(
-            &connector,
-            "jsonata",
-            Some("guests/jsonata/declaration.json.in"),
-            BTreeSet::new(),
-        ),
-    ];
+    let admissions = vec![base, destination, component];
     let target = ComponentPackageCoordinate {
         project_env_key: "rest--test--publication".into(),
         package_id: "netsuite".into(),
@@ -113,13 +90,14 @@ fn fixture() -> Fixture {
 async fn pull_checkpoint_commits_through_the_application_role(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
+    let palette = support::palette();
     let Fixture {
         args,
         roots,
         admissions,
         documents,
     } = fixture();
-    let assembled = assemble_release(&args, &roots, &admissions, &[])?;
+    let assembled = assemble_release(&args, &roots, &admissions, &palette)?;
     condition_documents(&args, &assembled.published.manifest, &documents)?;
     checkpoint_live::invoke(&pool, &roots, &assembled.published.manifest, &admissions).await
 }
@@ -127,13 +105,14 @@ async fn pull_checkpoint_commits_through_the_application_role(
 #[test]
 #[ignore = "requires: input:netsuite"]
 fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
+    let palette = support::palette();
     let Fixture {
         args,
         roots,
         admissions,
         documents,
     } = fixture();
-    let assembled = assemble_release(&args, &roots, &admissions, &[]).unwrap();
+    let assembled = assemble_release(&args, &roots, &admissions, &palette).unwrap();
     condition_documents(&args, &assembled.published.manifest, &documents).unwrap();
     assert_eq!(
         assembled

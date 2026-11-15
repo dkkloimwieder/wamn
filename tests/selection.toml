@@ -153,15 +153,16 @@ applications = ["apps/rest_connector"]
 [[suites]]
 id = "edge-samples"
 tier = "contract"
-workspace = "apps"
-package = "samples"
+workspace = "root"
+package = ""
 select_packages = ["samples"]
-target = ["cdylib:samples"]
+target = []
 tests = []
 features = []
 prerequisites = ["edge-samples"]
 inputs = ['^apps/edge_samples/']
-execution = "libtest"
+# This package has no native cases. Preparation builds and validates its guest.
+execution = "commands"
 mode = "local"
 resource_lock = ""
 
