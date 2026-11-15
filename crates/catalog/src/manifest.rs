@@ -17,7 +17,7 @@ pub struct PackageManifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageIdentity {
     pub id: crate::PackageName,
-    pub version: String,
+    pub version: crate::package_version::PackageVersion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

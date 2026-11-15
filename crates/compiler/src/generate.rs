@@ -190,15 +190,19 @@ pub use wamn_catalog::OperationDescription;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedPackage {
     files: Box<[GeneratedFile]>,
-    operations: BTreeMap<String, OperationDescription>,
+    operations: BTreeMap<wamn_catalog::local_operation::LocalOperation, OperationDescription>,
 }
 
 impl GeneratedPackage {
-    pub(crate) fn take_operations(&mut self) -> BTreeMap<String, OperationDescription> {
+    pub(crate) fn take_operations(
+        &mut self,
+    ) -> BTreeMap<wamn_catalog::local_operation::LocalOperation, OperationDescription> {
         std::mem::take(&mut self.operations)
     }
     /// Compiled descriptions keyed by local operation name.
-    pub fn operations(&self) -> &BTreeMap<String, OperationDescription> {
+    pub fn operations(
+        &self,
+    ) -> &BTreeMap<wamn_catalog::local_operation::LocalOperation, OperationDescription> {
         &self.operations
     }
 
@@ -343,7 +347,10 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
 pub(crate) struct SqlCorpus {
     pub(crate) statements: BTreeMap<String, Vec<u8>>,
     model_paths: BTreeMap<String, BTreeMap<String, Vec<String>>>,
-    custom_operations: BTreeMap<String, crate::manifest::CustomOperationDeclaration>,
+    custom_operations: BTreeMap<
+        wamn_catalog::local_operation::LocalOperation,
+        crate::manifest::CustomOperationDeclaration,
+    >,
 }
 
 pub(crate) fn sql_corpus(
@@ -432,7 +439,10 @@ pub(crate) fn generate_described(
                 name.clone(),
                 operations::compile_custom(
                     operation,
-                    corpus.custom_operations.get(name).unwrap_or(operation),
+                    corpus
+                        .custom_operations
+                        .get(name.as_str())
+                        .unwrap_or(operation),
                 ),
             )
         })

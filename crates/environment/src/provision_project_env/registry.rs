@@ -2,10 +2,10 @@
 
 use anyhow::Context as _;
 use ring::rand::SecureRandom as _;
+use wamn_registry::instance_suffix::InstanceSuffix;
 
 use super::{
     INSTANCE_SUFFIX_LEN, Org, Placement, SystemRandom, Triple, cluster_of, read_env_policy,
-    validate_instance_suffix,
 };
 
 /// Alphabet of the provision-minted instance suffix: `[a-z0-9]`, 36 symbols, so
@@ -27,7 +27,7 @@ const INSTANCE_SUFFIX_REJECT_AT: usize = 256 - 256 % INSTANCE_SUFFIX_ALPHABET.le
 /// The mint lives HERE and not in `wamn-control-provision` because that crate is
 /// deliberately pure — no DB, no K8s client, no clock, and no entropy. It takes
 /// the suffix as a parameter and derives names from it.
-pub(super) fn mint_instance_suffix() -> anyhow::Result<String> {
+pub(super) fn mint_instance_suffix() -> anyhow::Result<InstanceSuffix> {
     let random = SystemRandom::new();
     let mut suffix = String::with_capacity(INSTANCE_SUFFIX_LEN);
     let mut draw = [0_u8; INSTANCE_SUFFIX_LEN];
@@ -46,7 +46,7 @@ pub(super) fn mint_instance_suffix() -> anyhow::Result<String> {
             }
         }
     }
-    Ok(suffix)
+    Ok(suffix.try_into()?)
 }
 
 /// Derive the target cluster from the org's placement and the named policy.
@@ -118,7 +118,7 @@ pub(crate) async fn resolve_cluster_on(
 pub async fn read_project_env_instance(
     system_url: &str,
     triple: &Triple,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<InstanceSuffix> {
     let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect")?;
@@ -133,8 +133,6 @@ pub async fn read_project_env_instance(
             .await
             .context("read project deployment")?
             .with_context(|| format!("project-env {triple} is not recorded"))?;
-        validate_instance_suffix(&stored)
-            .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
         Ok(stored)
     }
     .await;
@@ -184,9 +182,9 @@ pub(super) async fn record_project_env(
     target: &str,
     secret_name: &str,
     secret_namespace: Option<&str>,
-    minted: &str,
+    minted: &InstanceSuffix,
     disposable: Option<bool>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<InstanceSuffix> {
     let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect")?;
@@ -214,9 +212,9 @@ pub(super) async fn do_record_project_env(
     target: &str,
     secret_name: &str,
     secret_namespace: Option<&str>,
-    minted: &str,
+    minted: &InstanceSuffix,
     disposable: Option<bool>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<InstanceSuffix> {
     let mut transaction = super::provisioning_transaction(client).await?;
     wamn_registry::deployment::record_project(&mut transaction, &triple.org, &triple.project)
         .await
@@ -243,14 +241,6 @@ pub(super) async fn do_record_project_env(
         .commit()
         .await
         .context("commit registry coordinates")?;
-    // Read-or-mint: the upsert RETURNS the STORED suffix, which is the freshly
-    // minted one on a first provision and the EXISTING one when this triple was
-    // already provisioned — the upsert deliberately never refreshes it, because
-    // re-minting would orphan every resource the old suffix named. The registry
-    // is a trust boundary, so the value is re-validated before any name derives
-    // from it.
-    validate_instance_suffix(&stored)
-        .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
     Ok(stored)
 }
 

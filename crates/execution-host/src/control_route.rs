@@ -1334,7 +1334,12 @@ pub(crate) fn control_page(
         };
         target["environment"] = environment;
     }
-    Ok(ListPage::new(&input, &attachment.operation, target, order)?)
+    Ok(ListPage::new(
+        &input,
+        attachment.operation.as_str(),
+        target,
+        order,
+    )?)
 }
 
 /// The request of a route, or the delivery refusal of a payload that is not
@@ -1364,7 +1369,7 @@ fn incomplete(project: &str, env: &wamn_registry::EnvName, completed: &[String])
 
 fn denied(attachment: &HostAttachment) -> Refusal {
     Refusal::Delivery(DeliveryError::PermissionDenied(PermissionDenial {
-        operation: attachment.operation.clone(),
+        operation: attachment.operation.to_string(),
     }))
 }
 

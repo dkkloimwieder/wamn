@@ -47,6 +47,9 @@ pub(super) fn evidence(
             .and_then(|operation| operation.get("committed-result-schema"))
             .cloned(),
         terminal_operation: Some(operation.clone()),
-        direct: attachment.registered_operation.as_deref() == Some(operation),
+        direct: attachment
+            .registered_operation
+            .as_ref()
+            .is_some_and(|registered| registered.as_str() == operation),
     })
 }

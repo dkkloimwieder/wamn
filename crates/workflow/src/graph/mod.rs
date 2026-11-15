@@ -73,7 +73,7 @@ fn components(
                     target: ComponentPackageCoordinate::new(
                         &project_env_key,
                         "test".parse().unwrap(),
-                        "1.0.0",
+                        "1.0.0".parse().unwrap(),
                     )
                     .unwrap(),
                     component: node.component.clone(),

@@ -49,7 +49,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain(pool: sql
             .unwrap(),
         ),
         system_database_url: url.to_string(),
-        platform_domain: "wamn.example.test".to_owned(),
+        platform_domain: "wamn.example.test".parse().unwrap(),
     };
 
     provision_system(&request)

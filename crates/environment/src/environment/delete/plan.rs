@@ -23,7 +23,7 @@ pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
 /// When a role name cannot be derived.
 pub fn instance_roles(
     triple: &Triple,
-    instance: &str,
+    instance: &wamn_registry::instance_suffix::InstanceSuffix,
     project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<Vec<wamn_identity_protocol::LoginName>> {
     let (org, project, env) = (triple.org.as_str(), triple.project.as_str(), &triple.env);

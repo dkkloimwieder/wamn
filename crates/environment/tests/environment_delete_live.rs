@@ -95,7 +95,11 @@ esac
     .await
     .map(drop)?;
     transaction.commit().await?;
-    wamn_environment::provision_system::set_platform_domain(&mut system, "example.invalid").await?;
+    wamn_environment::provision_system::set_platform_domain(
+        &mut system,
+        &"example.invalid".parse().unwrap(),
+    )
+    .await?;
     sqlx::raw_sql("RESET ROLE")
         .execute(&mut system)
         .await
@@ -104,7 +108,9 @@ esac
         &triple.org,
         &triple.project,
         &triple.env,
-        "aaaaaaa1",
+        &"aaaaaaa1"
+            .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
+            .unwrap(),
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
@@ -327,7 +333,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         LifecycleLock::hold(
             wamn_postgres::connect(&url).await?,
             &deleting_triple,
-            async |_| delete_registry_rows(&mut deleting, &deleting_triple, "aaaaaaa1").await,
+            async |_| delete_registry_rows(&mut deleting, &deleting_triple).await,
         )
         .await
     });
@@ -382,7 +388,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         LifecycleLock::hold(
             wamn_postgres::connect(database.as_str()).await?,
             &triple,
-            async |_| delete_registry_rows(&mut system, &triple, "aaaaaaa1").await,
+            async |_| delete_registry_rows(&mut system, &triple).await,
         )
         .await?;
     }

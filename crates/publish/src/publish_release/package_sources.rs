@@ -67,13 +67,13 @@ pub(super) async fn open_application(
         let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&artifact.manifest()?)?;
         ensure!(
             &manifest.package.id == package.package_id()
-                && manifest.package.version == package.package_version(),
+                && &manifest.package.version == package.package_version(),
             "package artifact identity differs from its coordinate"
         );
         for dependency in manifest.base_dependencies.values() {
             pending.push(PackageCoordinate::new(
                 dependency.package.clone(),
-                &dependency.version,
+                dependency.version.clone(),
             )?);
         }
         selected.insert(
@@ -130,7 +130,10 @@ pub(super) fn read_package_manifests(
     let mut types = RouteContracts::new();
     for (package_id, package) in contracts {
         for contract in package {
-            types.insert((package_id.clone(), contract.operation), contract.route);
+            types.insert(
+                (package_id.clone(), contract.operation.to_string()),
+                contract.route,
+            );
         }
     }
     Ok((manifests, types))
@@ -138,7 +141,7 @@ pub(super) fn read_package_manifests(
 
 /// One generated contract of a package.
 struct PackageContract {
-    operation: String,
+    operation: wamn_catalog::registered_operation::RegisteredOperation,
     route: RouteContract,
 }
 
@@ -222,7 +225,7 @@ pub fn package_route(
     roots: &BTreeMap<wamn_catalog::PackageName, &Path>,
     package_id: &wamn_catalog::PackageName,
     component: &str,
-    operation: &str,
+    operation: &wamn_catalog::registered_operation::RegisteredOperation,
 ) -> Result<ServingRoute, PublishManifestError> {
     let unassembled = |package: &wamn_catalog::PackageName| {
         PublishManifestError::new(
@@ -324,7 +327,7 @@ mod tests {
         root: &Path,
         package_id: &wamn_catalog::PackageName,
         component: &str,
-        operation: &str,
+        operation: &wamn_catalog::registered_operation::RegisteredOperation,
     ) -> Result<wamn_catalog::ServingRoute, super::PublishManifestError> {
         let roots = BTreeMap::from([(package_id.to_owned(), root)]);
         super::package_route(&roots, package_id, component, operation)
@@ -408,7 +411,7 @@ mod tests {
     #[ignore = "requires: input:wms, input:fixture"]
     fn a_write_route_names_its_idempotency_field() {
         let wms = app("wamn_wms");
-        let route = |operation: &str| {
+        let route = |operation: &wamn_catalog::registered_operation::RegisteredOperation| {
             package_route(&wms, &"wamn_wms".parse().unwrap(), "wms", operation)
                 .expect("the operation has a contract")
                 .idempotency
@@ -419,7 +422,7 @@ mod tests {
             &app("platform_fixture"),
             &"platform_fixture".parse().unwrap(),
             "widget",
-            "platform-fixture:widget/archive@2.1.1",
+            &"platform-fixture:widget/archive@2.1.1".parse().unwrap(),
         );
         assert_eq!(
             archive.expect("the archive has a contract").idempotency,

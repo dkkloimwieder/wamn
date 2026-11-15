@@ -739,7 +739,7 @@ fn validate_query(
 fn validate_custom_operation_sql(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
-    operation: &str,
+    operation: &wamn_catalog::local_operation::LocalOperation,
     declaration: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
     for relation in &declaration.relations {
@@ -801,7 +801,7 @@ fn validate_custom_operation_sql(
 }
 
 fn validate_static_sql_relation_fields(
-    operation: &str,
+    operation: &wamn_catalog::local_operation::LocalOperation,
     relation: &crate::manifest::StaticSqlRelationDeclaration,
     columns: &BTreeSet<&str>,
     fields: &[String],
@@ -821,7 +821,7 @@ fn validate_static_sql_relation_fields(
 
 fn validate_constraint_error_mappings(
     catalog: &CatalogIr,
-    operation: &str,
+    operation: &wamn_catalog::local_operation::LocalOperation,
     declaration: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
     for name in declaration.constraint_errors.keys() {
@@ -845,7 +845,7 @@ fn validate_constraint_error_mappings(
 fn validate_delete_target(
     manifest: &PackageManifest,
     schemas: &BTreeSet<&str>,
-    operation: &str,
+    operation: &wamn_catalog::local_operation::LocalOperation,
     path: &str,
     target: &str,
 ) -> Result<(), GenerateError> {
@@ -878,10 +878,10 @@ pub(super) fn derive_relation_access(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
-    operation: &str,
+    operation: &wamn_catalog::local_operation::LocalOperation,
     declaration: &CustomOperationDeclaration,
 ) -> Result<BTreeMap<String, DerivedRelation>, GenerateError> {
-    let relations = package_relations(catalog, manifest, operation)?;
+    let relations = package_relations(catalog, manifest, operation.as_str())?;
     let schemas = relations
         .schemas
         .iter()
@@ -1093,7 +1093,7 @@ pub(super) fn derive_relations(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
-    operation: &str,
+    operation: &wamn_catalog::local_operation::LocalOperation,
     declaration: &CustomOperationDeclaration,
 ) -> Result<Vec<StaticSqlRelationDeclaration>, GenerateError> {
     let mut derived =
@@ -1488,7 +1488,7 @@ mod tests {
             &catalog,
             &manifest,
             &sources,
-            "inventory.report",
+            &"inventory.report".parse().unwrap(),
             declaration,
         )
         .expect("derive the view access from its statement");
@@ -1503,7 +1503,7 @@ mod tests {
         validate_custom_operation_sql(
             &catalog,
             &manifest,
-            "inventory.report",
+            &"inventory.report".parse().unwrap(),
             &manifest.custom_operations["inventory.report"],
         )
         .expect("accept the derived view relation");
@@ -1518,7 +1518,7 @@ mod tests {
                 &catalog,
                 &manifest,
                 &sources,
-                "inventory.report",
+                &"inventory.report".parse().unwrap(),
                 &manifest.custom_operations["inventory.report"],
             )
             .expect_err("a view cannot derive write grants");

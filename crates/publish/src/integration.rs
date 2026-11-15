@@ -2,7 +2,7 @@
 
 use sqlx::Connection as _;
 pub(super) mod plan;
-use plan::require_code;
+use wamn_registry::integration_code::IntegrationCode;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,7 +20,7 @@ use wamn_package_artifact::integration::{CONFIG_TYPE, WASM_TYPE};
 /// The immutable output of a local integration build.
 #[derive(Debug)]
 pub struct BuiltIntegration {
-    pub code: String,
+    pub code: IntegrationCode,
     pub runtime_type: RuntimeType,
     pub digest: wamn_digest::Digest,
     pub directory: PathBuf,
@@ -96,15 +96,14 @@ fn source_digest(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
 ///
 /// # Errors
 ///
-/// Refuses invalid codes, failed builds, and outputs that are not components.
-pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegration> {
-    require_code(code)?;
+/// Refuses failed builds and outputs that are not components.
+pub async fn build(repository: &Path, code: &IntegrationCode) -> anyhow::Result<BuiltIntegration> {
     let repository = repository.canonicalize()?;
-    let guest = repository.join("guests").join(code);
+    let guest = repository.join("guests").join(code.as_str());
     let source = if guest.join("Cargo.toml").is_file() {
         guest
     } else {
-        repository.join("integrations").join(code)
+        repository.join("integrations").join(code.as_str())
     };
     let root = source
         .canonicalize()
@@ -135,7 +134,7 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
     let digest = bytes_sha256(&manifest);
     let directory = repository
         .join("integrations/target/wamn")
-        .join(code)
+        .join(code.as_str())
         .join(digest.hex());
     std::fs::create_dir_all(&directory)?;
     for (name, bytes) in [
@@ -146,7 +145,7 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
         std::fs::write(directory.join(name), bytes)?;
     }
     Ok(BuiltIntegration {
-        code: code.into(),
+        code: code.clone(),
         runtime_type: RuntimeType::Wasm,
         digest,
         directory,
@@ -228,7 +227,7 @@ pub async fn push(
     wamn_engine::component_admission::validate_integration_admission(
         &engine,
         &pulled,
-        &built.code,
+        built.code.as_str(),
     )?;
     Ok(())
 }
@@ -237,16 +236,19 @@ pub async fn push(
 pub async fn record(
     registry: &PackageRegistry,
     database_url: &str,
-    code: &str,
+    code: &IntegrationCode,
     digest: &wamn_digest::Digest,
     publication: &Publication,
 ) -> anyhow::Result<()> {
-    require_code(code)?;
     let bytes = wamn_package_artifact::integration::pull(registry, code, digest).await?;
     let exports = crate::connection_requirement::exported_interfaces(&bytes)?;
     plan::require_write_interfaces(publication, &exports)?;
     let engine = wamn_engine::build_engine(&[])?;
-    wamn_engine::component_admission::validate_integration_admission(&engine, &bytes, code)?;
+    wamn_engine::component_admission::validate_integration_admission(
+        &engine,
+        &bytes,
+        code.as_str(),
+    )?;
     let mut system = wamn_postgres::connect(database_url).await?;
     let mut tx = system.begin().await?;
     sqlx::raw_sql("SET LOCAL ROLE wamn_system")

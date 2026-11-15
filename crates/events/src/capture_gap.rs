@@ -77,7 +77,7 @@ pub struct ClosedCaptureGap {
 /// Drop the lost slot, create it again under the same name, and record the gap.
 pub async fn recover_capture_gap(
     args: &RecoverCaptureGapRequest,
-    instance: &str,
+    instance: &wamn_registry::instance_suffix::InstanceSuffix,
     target: &wamn_kubernetes::Target,
 ) -> anyhow::Result<RecoveredCaptureGap> {
     validate_project_env_cdc(&args.org, &args.project, &args.env)

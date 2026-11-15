@@ -29,7 +29,7 @@ fn owners(package_id: &wamn_catalog::PackageName) -> OperationOwners {
 /// # Panics
 ///
 /// When the reference names no repository package, or does not resolve.
-pub fn sealed(reference: &str) -> String {
+pub fn sealed(reference: &str) -> wamn_catalog::registered_operation::RegisteredOperation {
     let (prefix, _) = reference
         .split_once(':')
         .unwrap_or_else(|| panic!("{reference:?} is not an operation reference"));
@@ -51,7 +51,10 @@ pub fn sealed(reference: &str) -> String {
 /// # Errors
 ///
 /// When the manifest does not parse, or the reference does not resolve.
-pub fn sealed_in(manifest: &[u8], reference: &str) -> anyhow::Result<String> {
+pub fn sealed_in(
+    manifest: &[u8],
+    reference: &str,
+) -> anyhow::Result<wamn_catalog::registered_operation::RegisteredOperation> {
     Ok(resolve_operation_reference(
         &OperationOwners::from_slice(manifest)?,
         reference,
@@ -63,6 +66,8 @@ pub fn sealed_in(manifest: &[u8], reference: &str) -> anyhow::Result<String> {
 /// # Panics
 ///
 /// When no repository package has the id.
-pub fn package_version(package_id: &wamn_catalog::PackageName) -> String {
+pub fn package_version(
+    package_id: &wamn_catalog::PackageName,
+) -> wamn_catalog::package_version::PackageVersion {
     owners(package_id).package.version
 }

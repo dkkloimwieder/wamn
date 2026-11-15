@@ -264,19 +264,21 @@ pub fn validate_component_in_release(
     component: &AdmittedComponent,
 ) -> anyhow::Result<()> {
     let manifest = release.manifest();
-    let package_version = manifest
+    let version_matches = manifest
         .release
         .packages
         .iter()
         .find(|package| package.package_id() == &component.target.package_id)
-        .map(wamn_catalog::PackageCoordinate::package_version)
-        .or_else(|| {
-            (component.target.package_id.as_str() == wamn_catalog::PALETTE_PACKAGE_ID)
-                .then_some(wamn_catalog::PALETTE_PACKAGE_VERSION)
-        });
+        .map_or_else(
+            || {
+                component.target.package_id.as_str() == wamn_catalog::PALETTE_PACKAGE_ID
+                    && component.target.package_version.as_str()
+                        == wamn_catalog::PALETTE_PACKAGE_VERSION
+            },
+            |package| package.package_version() == &component.target.package_version,
+        );
     anyhow::ensure!(
-        component.target.project_env_key == release.target().project_env_key
-            && package_version == Some(component.target.package_version.as_str()),
+        component.target.project_env_key == release.target().project_env_key && version_matches,
         "release-component-target-mismatch"
     );
     let digest = component.component_digest;
@@ -324,9 +326,11 @@ mod tests {
     fn fixture() -> ServingManifest {
         ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([
-                    PackageCoordinate::new("cat".parse().unwrap(), "1.0.0").unwrap()
-                ]),
+                packages: BTreeSet::from([PackageCoordinate::new(
+                    "cat".parse().unwrap(),
+                    "1.0.0".parse().unwrap(),
+                )
+                .unwrap()]),
             },
             BTreeSet::from([ServingComponent {
                 runtime_schema: None,
@@ -579,7 +583,7 @@ mod tests {
             target: wamn_catalog::ComponentPackageCoordinate {
                 project_env_key: "t1--dev--project".parse().unwrap(),
                 package_id: "cat".parse().unwrap(),
-                package_version: "1.0.0".into(),
+                package_version: "1.0.0".parse().unwrap(),
             },
             component: "transform".into(),
             interface_version: "0.1".into(),
@@ -616,7 +620,7 @@ mod tests {
                 fact.target.project_env_key = "t2--dev--project".parse().unwrap();
             }),
             ("another package version", |fact| {
-                fact.target.package_version = "2.0.0".into();
+                fact.target.package_version = "2.0.0".parse().unwrap();
             }),
             ("another digest", |fact| {
                 fact.component_digest =

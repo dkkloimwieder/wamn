@@ -33,7 +33,7 @@ pub(super) fn web_manifest(
         version,
         package: wamn_catalog::PackageCoordinate::new(
             record.package.id.clone(),
-            &record.package.version,
+            record.package.version.clone(),
         )?,
         contract_digest: record.outputs.manifest,
     })
@@ -59,10 +59,6 @@ pub(super) fn read_web_manifest(tar: &[u8]) -> anyhow::Result<WebManifest> {
         let web: WebManifest = serde_json::from_slice(&bytes)?;
         ensure!(bytes == web.to_bytes(), "web.json is not canonical JSON");
 
-        ensure!(
-            !web.client_package.is_empty(),
-            "web.json has no client_package"
-        );
         ensure!(!web.version.is_empty(), "web.json has no version");
         metadata = Some(web);
     }

@@ -24,7 +24,7 @@ fn value(name: &str, ty: SqlValueType, nullable: bool) -> StaticSqlValueDeclarat
 pub(super) fn prepare_sql(
     corpus: &mut BTreeMap<String, Vec<u8>>,
     catalog: &CatalogIr,
-    name: &str,
+    name: &wamn_catalog::local_operation::LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Option<CustomOperationDeclaration> {
     if operation.feed != Some(true) {
@@ -126,7 +126,7 @@ pub(super) fn prepare_sql(
 pub(super) fn emit(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &crate::manifest::PackageManifest,
-    name: &str,
+    name: &wamn_catalog::local_operation::LocalOperation,
     compiled: &super::operations::CustomDescription<'_>,
 ) -> Result<(), GenerateError> {
     let operation = compiled.declaration;
@@ -145,7 +145,7 @@ fn member(name: &str) -> String {
 fn emit_data(
     files: &mut BTreeMap<String, Vec<u8>>,
     package: &crate::manifest::PackageIdentity,
-    name: &str,
+    name: &wamn_catalog::local_operation::LocalOperation,
     compiled: &super::operations::CustomDescription<'_>,
     key_type: SqlValueType,
 ) -> Result<(), GenerateError> {
@@ -321,13 +321,13 @@ pub async fn read(connection: &mut Connection, {input}: Input, part: Option<Feed
 fn emit_component(
     files: &mut BTreeMap<String, Vec<u8>>,
     namespace: &wamn_catalog::PackageName,
-    name: &str,
+    name: &wamn_catalog::local_operation::LocalOperation,
     compiled: &super::operations::CustomDescription<'_>,
     key_type: SqlValueType,
 ) -> Result<(), GenerateError> {
     let operation = compiled.declaration;
     let stem = custom_artifact_stem(name);
-    let (group, local) = name.split_once('.').expect("validated operation");
+    let (group, local) = name.as_str().split_once('.').expect("validated operation");
     let namespace = namespace.as_str();
     let group = group.replace('-', "_");
     let local_module = local.replace('-', "_");

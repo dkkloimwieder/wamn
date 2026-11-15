@@ -4,11 +4,11 @@ pub(super) fn package_route(
     contracts: Vec<PackageContract>,
     package_id: &wamn_catalog::PackageName,
     component: &str,
-    operation: &str,
+    operation: &wamn_catalog::registered_operation::RegisteredOperation,
 ) -> Result<ServingRoute, PublishManifestError> {
     let contract = contracts
         .into_iter()
-        .find(|contract| contract.operation == operation)
+        .find(|contract| &contract.operation == operation)
         .ok_or_else(|| {
             PublishManifestError::new(
                 PublishManifestErrorType::PackageManifest,
@@ -21,7 +21,7 @@ pub(super) fn package_route(
     Ok(ServingRoute {
         package_id: package_id.to_owned(),
         component: component.to_owned(),
-        operation: operation.to_owned(),
+        operation: operation.to_string(),
         type_: contract.type_,
         reads: contract.reads,
         revision: contract.revision,

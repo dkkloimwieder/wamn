@@ -14,7 +14,7 @@ const RAW_BODY_MAXIMUM: u64 = 1_048_576;
 pub(super) fn emit_package_publication(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
-    operations: &BTreeMap<String, OperationDescription>,
+    operations: &BTreeMap<wamn_catalog::local_operation::LocalOperation, OperationDescription>,
 ) -> Result<(), GenerateError> {
     let mut attachments = BTreeMap::new();
     let mut components = BTreeMap::<String, Value>::new();
@@ -44,7 +44,10 @@ pub(super) fn emit_package_publication(
         .then(|| manifest.components.keys().next())
         .flatten();
     for (local, description) in operations {
-        let (module, action) = local.split_once('.').expect("validated operation name");
+        let (module, action) = local
+            .as_str()
+            .split_once('.')
+            .expect("validated operation name");
         let model_operation = manifest.models.get(module).and_then(|model| {
             model
                 .operations
@@ -77,7 +80,7 @@ pub(super) fn emit_package_publication(
         let mut published = json!({
             "input-ports": [{"name": "input", "schema": input}],
             "output-ports": [{"name": "main", "schema": result}],
-            "parameters": manifest.components[component].parameters.get(local).map_or(&[][..], Vec::as_slice),
+            "parameters": manifest.components[component].parameters.get(local.as_str()).map_or(&[][..], Vec::as_slice),
         });
         if description.operation.visibility.as_deref() != Some("private") {
             published["registered-operation"] = json!(identity);
@@ -354,7 +357,7 @@ pub(crate) fn result_schema(description: &OperationDescription) -> Value {
 
 pub(crate) fn openapi(
     manifest: &PackageManifest,
-    operations: &BTreeMap<String, OperationDescription>,
+    operations: &BTreeMap<wamn_catalog::local_operation::LocalOperation, OperationDescription>,
     attachments: &Value,
     components: &Value,
 ) -> Value {
@@ -369,7 +372,7 @@ pub(crate) fn openapi(
         };
         let Some(operation) = operations
             .values()
-            .find(|operation| operation.operation.operation == identity)
+            .find(|operation| operation.operation.operation.as_str() == identity)
         else {
             continue;
         };
@@ -504,13 +507,8 @@ mod tests {
         let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
             serde_json::from_slice(package.file(ATTACHMENTS).unwrap().bytes()).unwrap();
         for attachment in attachments.values().filter(|attachment| {
-            attachment.registered_operation.as_deref()
-                == Some(
-                    package.operations()["record.query"]
-                        .operation
-                        .operation
-                        .as_str(),
-                )
+            attachment.registered_operation.as_ref()
+                == Some(&package.operations()["record.query"].operation.operation)
         }) {
             let schema = attachment.definition["input-schema"].clone();
             let mut compiler = boon::Compiler::new();
@@ -535,7 +533,12 @@ mod tests {
                         .unwrap();
                     let mut schemas = boon::Schemas::new();
                     let output = compiler.compile("mem://output.json", &mut schemas).unwrap();
-                    if identity == &package.operations()["record.update"].operation.operation {
+                    if identity
+                        == package.operations()["record.update"]
+                            .operation
+                            .operation
+                            .as_str()
+                    {
                         assert!(schemas.validate(&json!([{"request_id": "r", "error": {"code": "concurrency_conflict", "detail": {"expected_row_version": 1, "observed_row_version": 2}}}]), output).is_ok());
                         assert!(schemas.validate(&json!([{"request_id": "r", "error": {"code": "concurrency_conflict", "detail": {"expected_row_version": "1", "observed_row_version": "2"}}}]), output).is_err());
                         for constraint in ["record_code_key", "record_other_key"] {

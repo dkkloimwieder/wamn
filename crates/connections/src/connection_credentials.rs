@@ -229,7 +229,7 @@ impl ConnectionCredentials {
     /// One published version of an integration type, or its newest one.
     pub async fn integration_version(
         &self,
-        integration_type: &str,
+        integration_type: &wamn_registry::integration_code::IntegrationCode,
         version: Option<i32>,
     ) -> anyhow::Result<Option<IntegrationVersion>> {
         let (mut client, _) = self.reader().await?;
@@ -365,7 +365,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(generation.name, "files");
-        assert_eq!(generation.integration_type, "s3");
+        assert_eq!(generation.integration_type, "s3".parse().unwrap());
         assert_eq!(generation.runtime_type, "host");
         assert_eq!(generation.parameters["container"], "files");
         assert_eq!(

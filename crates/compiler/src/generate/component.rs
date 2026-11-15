@@ -371,8 +371,11 @@ fn emit_package_world(
     const POSTGRES: &str =
         "  import wamn:postgres/types@0.4.0;\n  import wamn:postgres/statements@0.4.0;\n";
     let package = &manifest.package;
-    let sealed = |package: &PackageIdentity, local: &str| -> Result<String, GenerateError> {
+    let sealed = |package: &PackageIdentity,
+                  local: &wamn_catalog::local_operation::LocalOperation|
+     -> Result<String, GenerateError> {
         let (group, name) = local
+            .as_str()
             .split_once('.')
             .expect("validated operation identity has one separator");
         Ok(format!(
@@ -421,7 +424,13 @@ fn emit_package_world(
             writeln!(
                 exports,
                 "  export {};",
-                sealed(package, &format!("{model_name}.{}", action.as_str()))?
+                sealed(
+                    package,
+                    &wamn_catalog::local_operation::LocalOperation::try_from(format!(
+                        "{model_name}.{}",
+                        action.as_str()
+                    ))?
+                )?
             )
             .expect("writing to a String cannot fail");
         }

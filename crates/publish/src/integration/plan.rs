@@ -1,18 +1,5 @@
 use super::{BuiltIntegration, Publication, ensure};
 
-pub(super) fn require_code(code: &str) -> anyhow::Result<()> {
-    ensure!(
-        code.bytes()
-            .next()
-            .is_some_and(|byte| byte.is_ascii_lowercase())
-            && code.bytes().all(|byte| byte.is_ascii_lowercase()
-                || byte.is_ascii_digit()
-                || matches!(byte, b'_' | b'-')),
-        "integration code must start with a lowercase letter and contain lowercase letters, digits, underscores or hyphens"
-    );
-    Ok(())
-}
-
 pub(super) fn require_write_interfaces(
     publication: &Publication,
     exports: &[String],

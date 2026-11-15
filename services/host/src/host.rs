@@ -482,7 +482,7 @@ fn session_verifier(
     args: &HostArgs,
     environment: &wamn_registry::EnvName,
     project: &str,
-    suffix: &str,
+    suffix: &wamn_registry::instance_suffix::InstanceSuffix,
     http_admitter_url: &str,
 ) -> anyhow::Result<SessionVerifier<IssuerKeys>> {
     let org = args
@@ -1876,7 +1876,7 @@ host:
                 &cli.args,
                 &"dev".parse().unwrap(),
                 "widgets",
-                "k3m9x2p7",
+                &"k3m9x2p7".parse().unwrap(),
                 &format!("postgres://reader:secret@localhost/{database}"),
             )
             .expect_err("the permission reader must target the exact audience database");
@@ -1897,9 +1897,11 @@ host:
         descriptor.connections = connections;
         ServingManifest::new(
             ServingRelease {
-                packages: BTreeSet::from([
-                    PackageCoordinate::new("cat".parse().unwrap(), "1.0.0").unwrap()
-                ]),
+                packages: BTreeSet::from([PackageCoordinate::new(
+                    "cat".parse().unwrap(),
+                    "1.0.0".parse().unwrap(),
+                )
+                .unwrap()]),
             },
             BTreeSet::from([ServingComponent {
                 runtime_schema: None,

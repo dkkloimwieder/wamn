@@ -45,7 +45,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
                     .replace('-', "_")
                     .parse()
                     .unwrap(),
-                package_version: "1.0.0".into(),
+                package_version: "1.0.0".parse().unwrap(),
             },
             component: name.into(),
             interface_version: "1.0.0".into(),

@@ -788,10 +788,13 @@ fn request_key_field(keyed: bool) -> &'static str {
 pub(super) fn emit_custom_operation_wit(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
-    operation_name: &str,
-    compiled: &BTreeMap<String, super::operations::CustomDescription<'_>>,
+    operation_name: &wamn_catalog::local_operation::LocalOperation,
+    compiled: &BTreeMap<
+        wamn_catalog::local_operation::LocalOperation,
+        super::operations::CustomDescription<'_>,
+    >,
 ) -> Result<(), GenerateError> {
-    let (group, local_name) = operation_name.split_once('.').ok_or_else(|| {
+    let (group, local_name) = operation_name.as_str().split_once('.').ok_or_else(|| {
         GenerateError::new(
             GenerateErrorType::InvalidOperation,
             "custom operation needs a group and local name",
@@ -806,6 +809,7 @@ pub(super) fn emit_custom_operation_wit(
         .keys()
         .find_map(|candidate| {
             candidate
+                .as_str()
                 .strip_prefix(&format!("{group}."))
                 .map(|name| format!("interface {} {{", wit_name(name)))
         })
@@ -844,10 +848,13 @@ pub(super) fn emit_custom_operation_wit(
 
 fn emit_custom_group(
     package: &wamn_catalog::PackageName,
-    version: &str,
+    version: &wamn_catalog::package_version::PackageVersion,
     group: &str,
     manifest: &PackageManifest,
-    compiled: &BTreeMap<String, super::operations::CustomDescription<'_>>,
+    compiled: &BTreeMap<
+        wamn_catalog::local_operation::LocalOperation,
+        super::operations::CustomDescription<'_>,
+    >,
 ) -> String {
     let mut source = format!(
         "package {}:{}@{version};\n\n",
@@ -855,7 +862,7 @@ fn emit_custom_group(
         wit_name(group)
     );
     for (operation_name, facts) in compiled {
-        let Some(local_name) = operation_name.strip_prefix(&format!("{group}.")) else {
+        let Some(local_name) = operation_name.as_str().strip_prefix(&format!("{group}.")) else {
             continue;
         };
         let operation = facts.declaration;
@@ -882,7 +889,7 @@ fn emit_custom_group(
 
 fn emit_forwarding_interface(
     package: &wamn_catalog::PackageName,
-    version: &str,
+    version: &wamn_catalog::package_version::PackageVersion,
     group: &str,
     local_name: &str,
     dependency: &crate::manifest::BaseDependencyRequirement,
@@ -901,7 +908,7 @@ fn emit_forwarding_interface(
 
 fn emit_owned_interface(
     package: &wamn_catalog::PackageName,
-    version: &str,
+    version: &wamn_catalog::package_version::PackageVersion,
     group: &str,
     local_name: &str,
     manifest: &PackageManifest,
@@ -917,7 +924,7 @@ fn emit_owned_interface(
         wit_name(group)
     );
     for operation_name in manifest.custom_operations.keys() {
-        let Some(other_name) = operation_name.strip_prefix(&format!("{group}.")) else {
+        let Some(other_name) = operation_name.as_str().strip_prefix(&format!("{group}.")) else {
             continue;
         };
         if other_name == local_name {

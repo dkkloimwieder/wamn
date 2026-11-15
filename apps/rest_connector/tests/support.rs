@@ -32,7 +32,7 @@ pub fn admit(
             .unwrap()
             .parse()
             .unwrap(),
-        package_version: "0.1.1".into(),
+        package_version: "0.1.1".parse().unwrap(),
     };
     let declaration = render_package_declaration(package, name, &target.project_env_key).unwrap();
     let rendered = std::env::temp_dir().join(format!(

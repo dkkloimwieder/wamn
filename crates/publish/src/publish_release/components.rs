@@ -9,7 +9,13 @@ use super::{
 
 pub(super) fn resolve_component_dependency_closure(
     roots: &BTreeMap<String, AdmittedComponent>,
-    component_facts: &BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>>,
+    component_facts: &BTreeMap<
+        (
+            wamn_catalog::PackageName,
+            wamn_catalog::package_version::PackageVersion,
+        ),
+        Vec<AdmittedComponent>,
+    >,
     package_manifests: &BTreeMap<
         wamn_catalog::PackageName,
         wamn_compiler::manifest::PackageManifest,
@@ -17,7 +23,11 @@ pub(super) fn resolve_component_dependency_closure(
     rule: DependencyDigestRule,
 ) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
     let mut closure = BTreeMap::<
-        (wamn_catalog::PackageName, String, wamn_digest::Digest),
+        (
+            wamn_catalog::PackageName,
+            wamn_catalog::package_version::PackageVersion,
+            wamn_digest::Digest,
+        ),
         AdmittedComponent,
     >::new();
     let mut visited = BTreeSet::new();
@@ -41,7 +51,11 @@ pub(super) fn resolve_component_dependency_closure(
 
 fn insert_closure_component(
     closure: &mut BTreeMap<
-        (wamn_catalog::PackageName, String, wamn_digest::Digest),
+        (
+            wamn_catalog::PackageName,
+            wamn_catalog::package_version::PackageVersion,
+            wamn_digest::Digest,
+        ),
         AdmittedComponent,
     >,
     component: &AdmittedComponent,
@@ -66,17 +80,36 @@ fn insert_closure_component(
 
 /// Resolve each base the package `(package, version)` pins, then its bases.
 fn visit_base_dependencies(
-    (package, version): (&wamn_catalog::PackageName, &str),
-    component_facts: &BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>>,
+    (package, version): (
+        &wamn_catalog::PackageName,
+        &wamn_catalog::package_version::PackageVersion,
+    ),
+    component_facts: &BTreeMap<
+        (
+            wamn_catalog::PackageName,
+            wamn_catalog::package_version::PackageVersion,
+        ),
+        Vec<AdmittedComponent>,
+    >,
     package_manifests: &BTreeMap<
         wamn_catalog::PackageName,
         wamn_compiler::manifest::PackageManifest,
     >,
     rule: DependencyDigestRule,
-    path: &mut Vec<(wamn_catalog::PackageName, String)>,
-    visited: &mut BTreeSet<(wamn_catalog::PackageName, String)>,
+    path: &mut Vec<(
+        wamn_catalog::PackageName,
+        wamn_catalog::package_version::PackageVersion,
+    )>,
+    visited: &mut BTreeSet<(
+        wamn_catalog::PackageName,
+        wamn_catalog::package_version::PackageVersion,
+    )>,
     closure: &mut BTreeMap<
-        (wamn_catalog::PackageName, String, wamn_digest::Digest),
+        (
+            wamn_catalog::PackageName,
+            wamn_catalog::package_version::PackageVersion,
+            wamn_digest::Digest,
+        ),
         AdmittedComponent,
     >,
 ) -> Result<(), PublishManifestError> {
@@ -92,7 +125,7 @@ fn visit_base_dependencies(
     }
     let Some(manifest) = package_manifests
         .get(package)
-        .filter(|manifest| manifest.package.version == version)
+        .filter(|manifest| &manifest.package.version == version)
     else {
         return Ok(());
     };
@@ -119,7 +152,13 @@ fn visit_base_dependencies(
 /// digest, or under the development rule every component of the coordinate.
 fn resolve_base_dependency<'a>(
     requirement: &wamn_compiler::manifest::BaseDependencyRequirement,
-    component_facts: &'a BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>>,
+    component_facts: &'a BTreeMap<
+        (
+            wamn_catalog::PackageName,
+            wamn_catalog::package_version::PackageVersion,
+        ),
+        Vec<AdmittedComponent>,
+    >,
     rule: DependencyDigestRule,
 ) -> Result<Vec<&'a AdmittedComponent>, PublishManifestError> {
     let Some(facts) =
@@ -202,7 +241,7 @@ fn refuse_anonymous_reach(
     operation: &AdmittedComponentOperation,
     site: &str,
 ) -> Result<(), PublishManifestError> {
-    if let Some(operation) = operation.registered_operation.as_deref() {
+    if let Some(operation) = operation.registered_operation.as_ref() {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::UnauthenticatedRegisteredOperation,
             format!(

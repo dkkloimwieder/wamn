@@ -11,7 +11,7 @@ use super::{Platform, analyse, ensure, stage};
 /// Database identities resolved before a Job starts, compared under its own lock.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ExpectedDatabase {
-    active: Option<String>,
+    active: Option<wamn_registry::instance_suffix::InstanceSuffix>,
 }
 
 impl ExpectedDatabase {

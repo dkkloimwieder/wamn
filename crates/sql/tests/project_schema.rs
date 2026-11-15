@@ -339,7 +339,7 @@ async fn platform_rows_carry_their_pinned_ids_on_postgres(pool: sqlx::PgPool) {
     script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
     script.push_str("\nBEGIN;\n");
-    script.push_str(&platform_principals_sql(DOMAIN).expect("example.invalid is a domain name"));
+    script.push_str(&platform_principals_sql(&DOMAIN.parse().unwrap()));
     // The fixture writes as its first admitted user row below.
     writeln!(
         script,
@@ -447,7 +447,11 @@ async fn platform_relations_stamp_provisioning_writes_on_postgres(pool: sqlx::Pg
     script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
     script.push_str("\nBEGIN;\n");
-    script.push_str(&platform_principals_sql("example.invalid").unwrap());
+    script.push_str(&platform_principals_sql(
+        &"example.invalid"
+            .parse::<wamn_registry::platform_domain::PlatformDomain>()
+            .unwrap(),
+    ));
     script.push_str("COMMIT;\n");
     let provisioning = PlatformComponent::Provisioning.principal_id();
     let operation = PlatformComponent::Provisioning.principal_name();

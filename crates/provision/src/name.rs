@@ -34,10 +34,6 @@ pub fn validate_project_id(id: &str) -> Result<(), ProvisionError> {
     }
     Ok(())
 }
-fn is_alnum(b: u8) -> bool {
-    b.is_ascii_lowercase() || b.is_ascii_digit()
-}
-
 /// Use the registry name for a project workload credential.
 pub fn workload_secret_name(
     family: WorkloadRoleFamily,
@@ -51,22 +47,6 @@ pub fn workload_secret_name(
 /// Use the registry name for an org workload credential.
 pub fn org_workload_secret_name(family: WorkloadRoleFamily, org: &str) -> String {
     wamn_registry::name::org_workload_secret_name(&family.secret_prefix(), org)
-}
-
-/// Refuse a suffix that cannot identify a provisioned database.
-pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
-    let reason = if instance.len() != INSTANCE_SUFFIX_LEN {
-        "must be exactly 8 bytes"
-    } else if !instance.bytes().all(is_alnum) {
-        "only lowercase letters and digits are allowed"
-    } else {
-        return Ok(());
-    };
-    Err(ProvisionError::InvalidComponent {
-        component: "instance",
-        value: instance.to_string(),
-        reason,
-    })
 }
 
 /// Use the application workload name for guest SQL credentials.
@@ -99,7 +79,9 @@ pub fn validate_project_env(
         });
     }
     validate_project_id(project)?;
-    let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
+    let probe = "00000000"
+        .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
+        .expect("fixed suffix");
     let database = project_env_database_name(org, project, env, &probe);
     if database.len() > MAX_DB_NAME_LEN {
         return Err(ProvisionError::NameTooLong {
@@ -124,7 +106,9 @@ pub fn validate_project_env_cdc(
     env: &wamn_registry::EnvName,
 ) -> Result<(), ProvisionError> {
     validate_project_env(org, project, env)?;
-    let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
+    let probe = "00000000"
+        .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
+        .expect("fixed suffix");
     let cdc = cdc_object_name(org, project, env, &probe);
     if cdc.len() > MAX_DB_NAME_LEN {
         return Err(ProvisionError::NameTooLong {
@@ -246,7 +230,14 @@ mod tests {
         // 63-byte bound is tighter; take its longest admitted triple.
         let org = "o".repeat(37);
         assert!(validate_project_env(&org, "pp", &"de".parse().unwrap()).is_ok());
-        let namespace = project_env_namespace(&org, "pp", &"de".parse().unwrap(), "0z9a8b7c");
+        let namespace = project_env_namespace(
+            &org,
+            "pp",
+            &"de".parse().unwrap(),
+            &"0z9a8b7c"
+                .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
+                .unwrap(),
+        );
         assert!(namespace.len() <= MAX_NAMESPACE_LEN);
         assert!(
             namespace
@@ -258,42 +249,18 @@ mod tests {
             !namespace.starts_with('-') && !namespace.ends_with('-'),
             "a DNS-1123 label starts and ends alphanumeric: {namespace:?}"
         );
-        // The suffix decides the label's LAST byte, which is why a hyphen in it
-        // is refused before it can name anything.
-        assert!(validate_instance_suffix("k3m9x2p-").is_err());
-    }
-
-    #[test]
-    fn instance_suffix_discipline_is_the_dns_label_tail() {
-        let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
-        assert!(validate_instance_suffix("k3m9x2p7").is_ok());
-        assert!(validate_instance_suffix(&probe).is_ok());
-        for bad in [
-            "",
-            "k3m9x2p",
-            "k3m9x2p78",
-            "K3M9X2P7",
-            "k3m9x2p-",
-            "k3m9x2p_",
-        ] {
-            assert!(
-                matches!(
-                    validate_instance_suffix(bad),
-                    Err(ProvisionError::InvalidComponent {
-                        component: "instance",
-                        ..
-                    })
-                ),
-                "{bad:?} should be rejected"
-            );
-        }
     }
 
     #[test]
     fn both_global_name_bounds_account_for_the_instance_suffix() {
         // The database sits exactly on 63 bytes with 41 component bytes.
         let org = "o".repeat(37);
-        let database = project_env_database_name(&org, "pp", &"de".parse().unwrap(), INSTANCE);
+        let database = project_env_database_name(
+            &org,
+            "pp",
+            &"de".parse().unwrap(),
+            &INSTANCE.parse().unwrap(),
+        );
         assert_eq!(database.len(), MAX_DB_NAME_LEN);
         assert!(validate_project_env(&org, "pp", &"de".parse().unwrap()).is_ok());
 
@@ -310,7 +277,13 @@ mod tests {
                 <= MAX_DB_NAME_LEN
         );
         assert_eq!(
-            project_env_database_name(&over_database, "pp", &"de".parse().unwrap(), INSTANCE).len(),
+            project_env_database_name(
+                &over_database,
+                "pp",
+                &"de".parse().unwrap(),
+                &INSTANCE.parse().unwrap()
+            )
+            .len(),
             MAX_DB_NAME_LEN + 1
         );
         match validate_project_env(&over_database, "pp", &"de".parse().unwrap()) {
@@ -325,7 +298,13 @@ mod tests {
         let stem = project_env_namespace_stem(&org, "pp", &"de".parse().unwrap());
         assert_eq!(stem.len(), MAX_NAMESPACE_STEM_LEN);
         assert_eq!(
-            project_env_namespace(&org, "pp", &"de".parse().unwrap(), INSTANCE).len(),
+            project_env_namespace(
+                &org,
+                "pp",
+                &"de".parse().unwrap(),
+                &INSTANCE.parse().unwrap()
+            )
+            .len(),
             MAX_NAMESPACE_LEN
         );
     }
@@ -355,12 +334,21 @@ mod tests {
                     }
                     valid += 1;
                     let triple = (org, project, env);
-                    let db =
-                        project_env_database_name(org, project, &env.parse().unwrap(), INSTANCE);
+                    let db = project_env_database_name(
+                        org,
+                        project,
+                        &env.parse().unwrap(),
+                        &INSTANCE.parse().unwrap(),
+                    );
                     if let Some(prev) = by_db.insert(db.clone(), triple) {
                         assert_eq!(prev, triple, "database name {db:?} collides two triples");
                     }
-                    let cdc = cdc_object_name(org, project, &env.parse().unwrap(), INSTANCE);
+                    let cdc = cdc_object_name(
+                        org,
+                        project,
+                        &env.parse().unwrap(),
+                        &INSTANCE.parse().unwrap(),
+                    );
                     if let Some(prev) = by_cdc.insert(cdc.clone(), triple) {
                         assert_eq!(prev, triple, "cdc object name {cdc:?} collides two triples");
                     }

@@ -164,7 +164,7 @@ pub async fn prepare_release(
         let target = wamn_catalog::ComponentPackageCoordinate::new(
             project_env_key,
             package.package.id.clone(),
-            &package.package.version,
+            package.package.version.clone(),
         )?;
         let admitted = component.descriptor.clone().into_admitted(target);
         let bytes = source.pull_verified(&admitted.component).await?;

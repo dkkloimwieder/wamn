@@ -173,7 +173,7 @@ pub fn render_package_declaration(
     let target = wamn_catalog::ComponentPackageCoordinate::new(
         project_env_key,
         declaration.target.package_id().clone(),
-        declaration.target.package_version(),
+        declaration.target.package_version().clone(),
     )
     .map_err(|source| invalid(source.to_string()))?;
     let document = wamn_catalog::ComponentDeclaration {
@@ -237,7 +237,7 @@ mod tests {
         let target = wamn_catalog::ComponentPackageCoordinate {
             project_env_key: "org-a--dev--project".parse().unwrap(),
             package_id: "wamn_wms".parse().unwrap(),
-            package_version: "1.0.0".to_owned(),
+            package_version: "1.0.0".parse().unwrap(),
         };
         let template = palette.join("blob-put/declaration.json.in");
         let refusal = render_palette_declaration(&template, &target, None)

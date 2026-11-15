@@ -11,7 +11,9 @@ sqlx = ["dep:sqlx"]
 test-util = []
 
 [dependencies]
+
 sqlx = { workspace = true, features = ["postgres", "uuid", "derive"], optional = true }
+
 wamn-digest.workspace = true
 async-trait = { workspace = true }
 base64 = { workspace = true }

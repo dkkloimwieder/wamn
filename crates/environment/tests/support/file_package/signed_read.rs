@@ -87,7 +87,7 @@ pub(super) fn signed_read_fixture(
         &wamn_catalog::ComponentPackageCoordinate {
             project_env_key: project_env_key.clone(),
             package_id: "file_fixture".parse().unwrap(),
-            package_version: "0.1.0".into(),
+            package_version: "0.1.0".parse().unwrap(),
         },
         None,
     )?;
@@ -119,7 +119,7 @@ pub(super) fn signed_read_fixture(
         )]),
         &"file_fixture".parse().expect("valid name"),
         "signed_read",
-        OPERATION,
+        &OPERATION.parse()?,
     )?;
     let definition = json!({"id": ATTACHMENT, "type": "http", "route": {"path": "/files/signed-read"},
         "input-schema": {"type": "array"}, "raw-body-bytes": {"maximum": 1_048_576}});

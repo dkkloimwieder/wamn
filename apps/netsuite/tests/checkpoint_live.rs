@@ -144,13 +144,10 @@ pub async fn invoke(
         .registered_operation
         .clone();
     assert_eq!(
-        registered.as_deref(),
-        Some("rest-consumer-fixture:item/record@0.1.1")
+        registered.as_ref(),
+        Some(&"rest-consumer-fixture:item/record@0.1.1".parse().unwrap())
     );
-    wamn_engine::native_routes::authorize_registered_operation(
-        Some(&caller),
-        registered.as_deref(),
-    )?;
+    wamn_engine::native_routes::authorize_registered_operation(Some(&caller), registered.as_ref())?;
     let without = workflow_host
         .workflow_node_caller(
             "test",
@@ -162,7 +159,7 @@ pub async fn invoke(
         .ok_or_else(|| anyhow::anyhow!("the workflow user holds the role without the command"))?;
     let refusal = wamn_engine::native_routes::authorize_registered_operation(
         Some(&without),
-        registered.as_deref(),
+        registered.as_ref(),
     )
     .expect_err("a role without the consumer command refuses the record node");
     assert_eq!(

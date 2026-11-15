@@ -14,6 +14,7 @@ license.workspace = true
 # NEVER move this onto a normal dependency of any crate. That silently deletes
 # the fence for the whole dependency graph.
 [features]
+sqlx = []
 # `test-util` also provides the project test database minimum (`test_database`),
 # which installs the catalog on a supplied test connection.
 test-util = []

@@ -744,9 +744,9 @@ impl FileRoutes {
             .descriptor
             .operations
             .get(&invocation.operation)
-            .and_then(|operation| operation.registered_operation.as_deref())
+            .and_then(|operation| operation.registered_operation.as_ref())
             .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
-        if !caller.permits(operation) {
+        if !caller.permits(operation.as_str()) {
             return Err(refused(FileRefusal::PermissionDenied, "operation"));
         }
         let principal = caller.principal_id();
@@ -1200,7 +1200,7 @@ mod tests {
             ServingRelease {
                 packages: BTreeSet::from([PackageCoordinate::new(
                     "app".parse().expect("valid name"),
-                    "1.0.0",
+                    "1.0.0".parse().unwrap(),
                 )
                 .unwrap()]),
             },

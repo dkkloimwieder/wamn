@@ -109,7 +109,7 @@ pub struct ApplyOutcome {
     pub package_id: wamn_catalog::PackageName,
 
     /// Package version of the applied coordinate.
-    pub package_version: String,
+    pub package_version: wamn_catalog::package_version::PackageVersion,
 
     /// Number of pending migrations this application ran.
     pub migrations_applied: usize,

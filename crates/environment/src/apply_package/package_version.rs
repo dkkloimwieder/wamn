@@ -64,7 +64,7 @@ async fn read_package(
     Ok(Some(AppliedPackage {
         coordinate: wamn_catalog::PackageCoordinate::new(
             package_id.clone(),
-            row.get::<&str, _>(1),
+            row.try_get::<wamn_catalog::package_version::PackageVersion, _>(1)?,
         )?,
         artifact_digest: row.get(0),
     }))

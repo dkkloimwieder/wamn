@@ -23,9 +23,11 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
     };
     let manifest = ServingManifest::new(
         ServingRelease {
-            packages: BTreeSet::from([
-                PackageCoordinate::new("cat".parse().unwrap(), "1.0.0").unwrap()
-            ]),
+            packages: BTreeSet::from([PackageCoordinate::new(
+                "cat".parse().unwrap(),
+                "1.0.0".parse().unwrap(),
+            )
+            .unwrap()]),
         },
         BTreeSet::from([ServingComponent {
             runtime_schema: None,

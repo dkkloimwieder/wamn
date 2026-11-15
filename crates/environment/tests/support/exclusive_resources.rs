@@ -73,7 +73,7 @@ impl Fixture {
             insecure_registry: true,
             oci_ca_paths: vec![],
         };
-        let code = integration::build(scratch.path(), "modbus").await?;
+        let code = integration::build(scratch.path(), &"modbus".parse().unwrap()).await?;
         integration::publish(&code, &configuration, database.as_str(), &integration::Publication {
             version: 2,
             parameter_schema: json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),

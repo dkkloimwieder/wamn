@@ -231,7 +231,7 @@ pub enum LinkReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowLink<'a> {
     /// Canonical identity of the operation that the row opens.
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Why the row can open it.
     pub reason: LinkReason,
 }
@@ -240,7 +240,7 @@ pub struct RowLink<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RevisionBinding<'a> {
     /// Operation name that reads the current record.
-    pub read_operation: &'a str,
+    pub read_operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Input path of the read operation that takes the key.
     pub read_key_input: &'a str,
     /// Result field of the read operation that carries the key.
@@ -262,7 +262,7 @@ pub struct PopulatedInput<'a> {
     /// Input path this selector fills.
     pub input: &'a str,
     /// Canonical identity of the list operation the selector reads.
-    pub list_operation: &'a str,
+    pub list_operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Model that owns the list operation, which is the module an emitter
     /// imports it from. It is not always the model whose records it lists.
     pub list_model: &'a str,
@@ -294,7 +294,7 @@ pub struct PopulatedInput<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordRead<'a> {
     /// Canonical identity of the read.
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Model that owns the read, which is the module an emitter imports it
     /// from.
     pub model: &'a str,
@@ -323,11 +323,11 @@ pub struct ChosenRevision<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnsearchableSelector<'a> {
     /// Canonical identity of the screen that renders the selector.
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Input path the selector fills.
     pub input: &'a str,
     /// Canonical identity of the list it reads.
-    pub list_operation: &'a str,
+    pub list_operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
 }
 
 /// One input whose declared narrowing no served list of its model takes.
@@ -337,7 +337,7 @@ pub struct UnsearchableSelector<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnsatisfiedNarrowing<'a> {
     /// Canonical identity of the screen that renders the selector.
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Input path the selector fills.
     pub input: &'a str,
     /// Input path whose value narrows it.
@@ -354,7 +354,7 @@ pub struct ResolvedColumn<'a> {
     /// Result field of this screen that carries the key.
     pub column: &'a str,
     /// Canonical identity of the read that returns one record.
-    pub read_operation: &'a str,
+    pub read_operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Model that owns the read, which is the module an emitter imports it
     /// from.
     pub read_model: &'a str,
@@ -373,7 +373,7 @@ pub struct ResolvedColumn<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnresolvedColumn<'a> {
     /// Canonical identity of the screen that renders the column.
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Result field the column shows.
     pub column: &'a str,
     /// Model whose record the column names.
@@ -399,7 +399,7 @@ pub struct Narrowing<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowForm<'a> {
     /// Canonical identity of the form the row opens.
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Model that owns the form, which is the module an emitter reads it
     /// from.
     pub model: &'a str,
@@ -423,7 +423,7 @@ pub struct RowForm<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableUpdate<'a> {
     /// Canonical identity of the update.
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Model that owns the update, which is the module an emitter imports it
     /// from.
     pub model: &'a str,
@@ -457,7 +457,7 @@ pub struct EditableField<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TableAction<'a> {
     /// Canonical identity of the operation.
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Whether one call takes many rows: the operation accepts more than one
     /// outer input and runs each in its own transaction.
     pub many: bool,
@@ -470,7 +470,7 @@ pub struct TableAction<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChildTable<'a> {
     /// Canonical identity of the child's read.
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     /// Model that owns the child's read.
     pub model: &'a str,
     /// Operation name of the child's read inside its own model.
@@ -708,10 +708,15 @@ impl<'a> ClientPlan<'a> {
     ///
     /// A generator reports this list. The named operations get no component.
     #[must_use]
-    pub fn unsupported(&self) -> Vec<(&'a str, NoRole)> {
+    pub fn unsupported(
+        &self,
+    ) -> Vec<(
+        &'a wamn_catalog::registered_operation::RegisteredOperation,
+        NoRole,
+    )> {
         self.screens()
             .filter_map(|screen| match screen.role {
-                Role::Unsupported(reason) => Some((screen.contract.operation.as_str(), reason)),
+                Role::Unsupported(reason) => Some((&screen.contract.operation, reason)),
                 _ => None,
             })
             .collect()
@@ -723,10 +728,10 @@ impl<'a> ClientPlan<'a> {
     /// operations get no component, because the bindings write no invoke
     /// function for an operation with no route.
     #[must_use]
-    pub fn unserved(&self) -> Vec<&'a str> {
+    pub fn unserved(&self) -> Vec<&'a wamn_catalog::registered_operation::RegisteredOperation> {
         self.screens()
             .filter(|screen| screen.role.is_supported() && screen.contract.route.is_none())
-            .map(|screen| screen.contract.operation.as_str())
+            .map(|screen| &screen.contract.operation)
             .collect()
     }
 
@@ -746,7 +751,7 @@ impl<'a> ClientPlan<'a> {
                         .iter()
                         .any(|resolved| resolved.column == column.path);
                     (!resolved).then_some(UnresolvedColumn {
-                        operation: screen.contract.operation.as_str(),
+                        operation: &screen.contract.operation,
                         column: column.path.as_str(),
                         model: reference.model.as_str(),
                     })
@@ -769,7 +774,7 @@ impl<'a> ClientPlan<'a> {
                         .iter()
                         .any(|populated| populated.input == input.path);
                     (!honored).then_some(UnsatisfiedNarrowing {
-                        operation: screen.contract.operation.as_str(),
+                        operation: &screen.contract.operation,
                         input: input.path.as_str(),
                         narrowed_by,
                     })
@@ -791,7 +796,7 @@ impl<'a> ClientPlan<'a> {
                     .iter()
                     .filter(|populated| populated.search_input.is_none())
                     .map(|populated| UnsearchableSelector {
-                        operation: screen.contract.operation.as_str(),
+                        operation: &screen.contract.operation,
                         input: populated.input,
                         list_operation: populated.list_operation,
                     })
@@ -979,19 +984,19 @@ impl<'a> ScreenPlan<'a> {
 
 /// The facts that one screen shows to another when rows link.
 struct Target<'a> {
-    operation: &'a str,
+    operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     model: &'a str,
     name: &'a str,
     type_: &'a str,
     served: bool,
     record: Option<RecordLink<'a>>,
-    revision_read: Option<&'a str>,
+    revision_read: Option<&'a wamn_catalog::registered_operation::RegisteredOperation>,
 }
 
 impl<'a> Target<'a> {
     fn of(screen: &ScreenPlan<'a>) -> Self {
         Self {
-            operation: screen.contract.operation.as_str(),
+            operation: &screen.contract.operation,
             model: screen.model,
             name: screen.name,
             type_: screen.contract.type_.as_str(),
@@ -1045,7 +1050,7 @@ fn row_forms<'a>(screen: &ScreenPlan<'a>, forms: &[FormTarget<'a>]) -> Vec<RowFo
     };
     forms
         .iter()
-        .filter(|form| form.target.operation != screen.contract.operation)
+        .filter(|form| form.target.operation != &screen.contract.operation)
         .filter_map(|form| {
             let pairs: Vec<_> = form
                 .references
@@ -1083,7 +1088,7 @@ fn row_forms<'a>(screen: &ScreenPlan<'a>, forms: &[FormTarget<'a>]) -> Vec<RowFo
 
 /// One served list, as an input that names a record sees it.
 struct Lister<'a> {
-    operation: &'a str,
+    operation: &'a wamn_catalog::registered_operation::RegisteredOperation,
     owner: &'a str,
     name: &'a str,
     rows: Rows,
@@ -1121,7 +1126,7 @@ impl<'a> Lister<'a> {
             return None;
         };
         Some(Self {
-            operation: screen.contract.operation.as_str(),
+            operation: &screen.contract.operation,
             owner: screen.model,
             name: screen.name,
             rows: screen.rows,
@@ -1217,20 +1222,20 @@ fn record_read<'a>(
 ) -> Option<RecordRead<'a>> {
     let read = plan
         .screens()
-        .find(|candidate| candidate.contract.operation == list.operation)?
+        .find(|candidate| &candidate.contract.operation == list.operation)?
         .row_links
         .iter()
         .filter(|link| link.reason == LinkReason::Record)
         .find_map(|link| {
             plan.screens()
-                .find(|candidate| candidate.contract.operation == link.operation)
+                .find(|candidate| &candidate.contract.operation == link.operation)
         })?;
     let key_input = read.record?.key_input?;
     fields
         .iter()
         .all(|wanted| read.columns.iter().any(|field| field.path == *wanted))
         .then_some(RecordRead {
-            operation: read.contract.operation.as_str(),
+            operation: &read.contract.operation,
             model: read.model,
             name: read.name,
             key_input,
@@ -1271,7 +1276,7 @@ fn table_update<'a>(screen: &ScreenPlan<'a>, plan: &ClientPlan<'a>) -> Option<Ta
             })
             .collect();
         (!fields.is_empty()).then_some(TableUpdate {
-            operation: update.contract.operation.as_str(),
+            operation: &update.contract.operation,
             model: update.model,
             name: update.name,
             key_input,
@@ -1293,7 +1298,7 @@ fn table_actions<'a>(screen: &ScreenPlan<'a>, plan: &ClientPlan<'a>) -> Vec<Tabl
         .filter_map(|operation| {
             let target = plan
                 .screens()
-                .find(|candidate| candidate.contract.operation == operation)?;
+                .find(|candidate| &candidate.contract.operation == operation)?;
             target.contract.route.as_ref()?;
             Some(TableAction {
                 operation,
@@ -1342,7 +1347,7 @@ fn child_tables<'a>(screen: &ScreenPlan<'a>, plan: &ClientPlan<'a>) -> Vec<Child
                             .is_some_and(|reference| reference.model == parent.model)
                 })?;
                 Some(ChildTable {
-                    operation: child.contract.operation.as_str(),
+                    operation: &child.contract.operation,
                     model: child.model,
                     name: child.name,
                     field: column.path.as_str(),
@@ -1385,7 +1390,7 @@ fn populated_inputs<'a>(
             let list = lists
                 .iter()
                 .filter(|list| {
-                    list.model == reference.model && list.operation != screen.contract.operation
+                    list.model == reference.model && list.operation != &screen.contract.operation
                 })
                 .filter(|list| match narrowing_model {
                     None => true,

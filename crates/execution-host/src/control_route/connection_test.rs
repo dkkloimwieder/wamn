@@ -181,11 +181,14 @@ impl ControlRoutes<'_> {
             .map(str::parse::<wamn_digest::Digest>)
             .transpose()
             .map_err(anyhow::Error::from)?;
+        let integration_type = context["integration_type"]
+            .as_str()
+            .ok_or_else(|| invalid("integration_type"))?
+            .parse::<wamn_registry::integration_code::IntegrationCode>()
+            .map_err(|_| invalid("integration_type"))?;
         let result = health
             .probe(
-                context["integration_type"]
-                    .as_str()
-                    .ok_or_else(|| invalid("integration_type"))?,
+                &integration_type,
                 context["runtime_type"]
                     .as_str()
                     .ok_or_else(|| invalid("integration_type"))?,

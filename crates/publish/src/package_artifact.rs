@@ -56,9 +56,7 @@ pub use wamn_package_artifact::{
     COMPONENT_DESCRIPTOR_MEDIA_TYPE, NoPackageArtifact, PACKAGE_ARTIFACT_TYPE, PackageRegistry,
     PackedLayer,
 };
-use wamn_package_artifact::{
-    CREATED_ANNOTATION, PulledPackage, Repository, ensure_tag, is_dev_tag,
-};
+use wamn_package_artifact::{CREATED_ANNOTATION, PulledPackage, Repository, is_dev_tag};
 
 /// Media type of the three tar layers.
 pub const PACKAGE_TAR_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.tar";
@@ -119,7 +117,7 @@ pub struct PackedPackage {
     /// Package id from the package manifest.
     pub package_id: wamn_catalog::PackageName,
     /// Package version from the package manifest.
-    pub version: String,
+    pub version: wamn_catalog::package_version::PackageVersion,
     /// The layers in order.
     pub layers: Vec<PackedLayer>,
     /// The image manifest bytes.
@@ -130,8 +128,14 @@ pub struct PackedPackage {
 
 impl PackedPackage {
     /// The artifact tag, `<package_id>-<version>`.
-    pub fn tag(&self) -> String {
-        format!("{}-{}", self.package_id, self.version)
+    ///
+    /// # Errors
+    /// Refuses a coordinate that cannot be used as an OCI tag.
+    pub fn tag(
+        &self,
+    ) -> Result<wamn_package_artifact::tag::OciTag, wamn_package_artifact::tag::ParseOciTagError>
+    {
+        format!("{}-{}", self.package_id, self.version).parse()
     }
 }
 
@@ -161,7 +165,7 @@ pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
         })
         .collect();
     let mut packed = pack_layers(root, descriptors)?;
-    if is_dev_tag(&packed.tag()) && root.join(CREATED_FILE).is_file() {
+    if is_dev_tag(&packed.tag()?) && root.join(CREATED_FILE).is_file() {
         stamp_created(
             &mut packed,
             &std::fs::read_to_string(root.join(CREATED_FILE))?,
@@ -211,7 +215,7 @@ pub(crate) async fn connection_components(
         let target = ComponentPackageCoordinate::new(
             &admission_project_env_key(),
             manifest.package.id.clone(),
-            &manifest.package.version,
+            manifest.package.version.clone(),
         )?;
         let mut result = Vec::new();
         for descriptor in descriptors {
@@ -312,7 +316,6 @@ fn pack_layers(root: &Path, mut descriptors: Vec<DescriptorFile>) -> anyhow::Res
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let (package_id, version) = package_coordinate(&manifest_bytes)
         .with_context(|| format!("read the package of {}", manifest_path.display()))?;
-    ensure_tag(&format!("{package_id}-{version}"))?;
 
     let mut layers = vec![PackedLayer {
         media_type: PACKAGE_MANIFEST_MEDIA_TYPE.to_owned(),
@@ -341,7 +344,7 @@ fn pack_layers(root: &Path, mut descriptors: Vec<DescriptorFile>) -> anyhow::Res
     descriptors.sort_by(|left, right| left.name.cmp(&right.name));
     let mut annotations = BTreeMap::from([
         (PACKAGE_ID_ANNOTATION.to_owned(), package_id.to_string()),
-        (PACKAGE_VERSION_ANNOTATION.to_owned(), version.clone()),
+        (PACKAGE_VERSION_ANNOTATION.to_owned(), version.to_string()),
     ]);
     for descriptor in descriptors {
         ensure!(
@@ -639,7 +642,7 @@ pub enum PackagePushDisposition {
 #[derive(Debug)]
 pub struct PushedPackage {
     /// The artifact tag.
-    pub tag: String,
+    pub tag: wamn_package_artifact::tag::OciTag,
     /// `sha256:<hex>` of the image manifest.
     pub digest: wamn_digest::Digest,
     /// Whether the run pushed.
@@ -657,11 +660,15 @@ pub struct PushedPackage {
 pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<PushedPackage> {
     let mut verified = verify_package(&request.package)?;
     let packed = &mut verified.packed;
-    let tag = packed.tag();
+    let tag = packed.tag()?;
     let repository = Repository::open(&request.registry, &tag)?;
     let existing = repository.manifest().await?;
     for previous_tag in repository.tags().await? {
-        if previous_tag == tag || !previous_tag.starts_with(&format!("{}-", packed.package_id)) {
+        if previous_tag == tag
+            || !previous_tag
+                .as_str()
+                .starts_with(&format!("{}-", packed.package_id))
+        {
             continue;
         }
         let Some((bytes, _)) = Repository::open(&request.registry, &previous_tag)?
@@ -679,7 +686,8 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
         let version = manifest["annotations"][PACKAGE_VERSION_ANNOTATION]
             .as_str()
             .context("published package version is absent")?;
-        let previous = open_package(&request.registry, &packed.package_id, version).await?;
+        let previous =
+            open_package(&request.registry, &packed.package_id, &version.parse()?).await?;
         wamn_compiler::migrations::validate_append(
             &wamn_compiler::output_root(&request.package),
             previous.root(),
@@ -775,7 +783,7 @@ pub enum PackageSource {
     /// The artifact `<package_id>-<version>` in a registry.
     Artifact {
         /// The artifact tag.
-        tag: String,
+        tag: wamn_package_artifact::tag::OciTag,
         /// The package registry.
         registry: PackageRegistry,
     },
@@ -859,15 +867,15 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
 pub async fn open_package(
     registry: &PackageRegistry,
     package_id: &wamn_catalog::PackageName,
-    version: &str,
+    version: &wamn_catalog::package_version::PackageVersion,
 ) -> anyhow::Result<OpenedPackage> {
-    let tag = format!("{package_id}-{version}");
+    let tag = format!("{package_id}-{version}").parse::<wamn_package_artifact::tag::OciTag>()?;
     let pulled = Repository::open(registry, &tag)?
         .pull()
         .await?
         .ok_or_else(|| NoPackageArtifact {
             package_id: package_id.to_owned(),
-            version: version.to_owned(),
+            version: version.clone(),
         })?;
     unpack_artifact(&tag, &pulled)
 }
@@ -875,7 +883,10 @@ pub async fn open_package(
 /// Unpack the `layers` of the artifact `tag`, whose manifest digest is
 /// `digest`, into a private temporary directory, which must pack again to
 /// `digest`.
-fn unpack_artifact(tag: &str, pulled: &PulledPackage) -> anyhow::Result<OpenedPackage> {
+fn unpack_artifact(
+    tag: &wamn_package_artifact::tag::OciTag,
+    pulled: &PulledPackage,
+) -> anyhow::Result<OpenedPackage> {
     let PulledPackage {
         digest,
         layers,
@@ -904,10 +915,10 @@ fn unpack_artifact(tag: &str, pulled: &PulledPackage) -> anyhow::Result<OpenedPa
         write_file(&opened.root().join(CREATED_FILE), created.as_bytes())?;
     }
     let unpacked = pack_package(opened.root())?;
+    let unpacked_tag = unpacked.tag()?;
     ensure!(
-        unpacked.tag() == tag,
-        "package artifact {tag} holds package {}",
-        unpacked.tag()
+        &unpacked_tag == tag,
+        "package artifact {tag} holds package {unpacked_tag}"
     );
     ensure!(
         unpacked.digest == *digest,
@@ -1046,7 +1057,7 @@ mod tests {
             insecure_registry: true,
             oci_ca_paths: Vec::new(),
         };
-        let opened = open_package(&registry, &"orders".parse().unwrap(), version).await?;
+        let opened = open_package(&registry, &"orders".parse().unwrap(), &version.parse()?).await?;
         assert_eq!(
             (pack_package(opened.root())?.digest.to_string())
                 .parse::<wamn_digest::Digest>()
@@ -1100,7 +1111,7 @@ mod tests {
             schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
             package: build_record::BuildPackage {
                 id: "wamn_receiving".parse().unwrap(),
-                version: "2.1.0".to_owned(),
+                version: "2.1.0".parse().unwrap(),
             },
 
             dependencies: Vec::new(),

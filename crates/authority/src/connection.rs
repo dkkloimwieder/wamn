@@ -158,7 +158,7 @@ pub fn test_release(project_env_key: &wamn_registry::ProjectEnvKey) -> Arc<Loade
         wamn_catalog::ServingRelease {
             packages: [wamn_catalog::PackageCoordinate::new(
                 "host_service_fixture".parse().unwrap(),
-                "1.0.0",
+                "1.0.0".parse().unwrap(),
             )
             .expect("fixture package coordinate")]
             .into(),

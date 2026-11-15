@@ -320,11 +320,14 @@ pub const PACKAGE_JSON_PATH: &str = "generated/client-ts/package.json";
 /// runtime that the modules import, and the application's own configuration
 /// resolves it.
 #[must_use]
-pub fn emit_ts_package_json(client_package: &str, version: &str) -> GeneratedFile {
+pub fn emit_ts_package_json(
+    client_package: &wamn_catalog::client_package_name::ClientPackageName,
+    version: &wamn_catalog::package_version::PackageVersion,
+) -> GeneratedFile {
     let source = format!(
         "{{\n  \"name\": {name},\n  \"version\": {version},\n  \"type\": \"module\",\n  \"private\": true,\n  \"exports\": {{\n    \".\": \"./index.ts\"\n  }},\n  \"dependencies\": {{\n    {runtime}: {range}\n  }}\n}}\n",
-        name = serde_json::Value::String(client_package.to_owned()),
-        version = serde_json::Value::String(version.to_owned()),
+        name = serde_json::Value::String(client_package.to_string()),
+        version = serde_json::Value::String(version.to_string()),
         runtime = serde_json::Value::String(RUNTIME_PACKAGE.to_owned()),
         range = serde_json::Value::String(RUNTIME_VERSION_RANGE.to_owned()),
     );
@@ -399,8 +402,8 @@ fn emit_model(
         &format!("package {package} model {:?}", model.name),
     )?;
     for operation in &operations {
-        require_reversible(&operation.name, &operation.operation)?;
-        require_field_names(&operation.input_fields, &operation.operation)?;
+        require_reversible(&operation.name, operation.operation.as_str())?;
+        require_field_names(&operation.input_fields, operation.operation.as_str())?;
         require_field_names(
             operation
                 .route
@@ -408,7 +411,7 @@ fn emit_model(
                 .map_or(operation.result_fields.as_slice(), |route| {
                     route.response.fields.as_slice()
                 }),
-            &operation.operation,
+            operation.operation.as_str(),
         )?;
         let function = ts_name(&operation.name)?;
         if !names.insert(function.clone()) {
@@ -1031,7 +1034,7 @@ fn literals(values: &[String]) -> String {
 fn write_result(
     source: &mut String,
     type_stem: &str,
-    operation: &str,
+    operation: &wamn_catalog::registered_operation::RegisteredOperation,
     result_class: Option<&str>,
     feed: bool,
     fields: &[FieldIr],

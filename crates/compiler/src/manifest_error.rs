@@ -120,3 +120,9 @@ impl Error for ManifestError {
             .map(|source| source as &(dyn Error + 'static))
     }
 }
+
+impl From<wamn_catalog::local_operation::ParseLocalOperationError> for ManifestError {
+    fn from(error: wamn_catalog::local_operation::ParseLocalOperationError) -> Self {
+        Self::with_source(ManifestErrorType::InvalidIdentity, error.to_string(), error)
+    }
+}

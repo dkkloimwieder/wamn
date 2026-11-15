@@ -152,7 +152,7 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
             definition
                 .operations
                 .keys()
-                .map(move |action| format!("{model}.{}", action.as_str()))
+                .map(move |action| format!("{model}.{}", action.as_str()).parse().unwrap())
         })
         .collect();
     assert_eq!(validate_operation_vocabulary(&single).unwrap(), expected);
@@ -222,20 +222,6 @@ fn shared_operation_vocabulary_refuses_permission_identity_drift() {
             .error_type(),
         GenerateErrorType::InvalidOperation
     );
-}
-
-#[test]
-fn shared_operation_vocabulary_refuses_ambiguous_versions() {
-    for ambiguous in ["1.0.0:shadow", "1.0.0/shadow", "1.0.0@shadow"] {
-        let mut version = manifest();
-        version["package"]["version"] = json!(ambiguous);
-        assert_eq!(
-            validate_operation_vocabulary(&parsed_manifest(&version))
-                .expect_err("ambiguous package version was accepted")
-                .error_type(),
-            GenerateErrorType::InvalidIdentity
-        );
-    }
 }
 
 #[test]
@@ -1092,11 +1078,11 @@ fn an_operation_reference_takes_its_version_from_the_manifest() {
     let manifest = parsed_manifest(&overlay).operation_owners();
     assert_eq!(
         resolve_operation_reference(&manifest, "acme-inventory:gadget/assemble").unwrap(),
-        "acme-inventory:gadget/assemble@2.0.0"
+        "acme-inventory:gadget/assemble@2.0.0".parse().unwrap()
     );
     assert_eq!(
         resolve_operation_reference(&manifest, "platform-gadget:gadget/get").unwrap(),
-        "platform-gadget:gadget/get@1.0.0"
+        "platform-gadget:gadget/get@1.0.0".parse().unwrap()
     );
     for reference in [
         "acme-inventory:gadget/assemble@2.0.0",
@@ -1682,12 +1668,12 @@ fn integer_keys_use_typed_data_and_server_generated_create_ids() {
                     .unwrap();
             let parsed = syn::parse_file(data).unwrap();
             for (local, description) in package.operations() {
-                if !local.starts_with("gadget.")
+                if !local.as_str().starts_with("gadget.")
                     || !["get", "update", "delete"].contains(&description.operation.type_.as_str())
                 {
                     continue;
                 }
-                let action = local.split_once('.').unwrap().1;
+                let action = local.as_str().split_once('.').unwrap().1;
                 let function = parsed
                     .items
                     .iter()

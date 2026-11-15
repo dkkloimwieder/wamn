@@ -400,7 +400,7 @@ mod tests {
             schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
             package: build_record::BuildPackage {
                 id: "base".parse().unwrap(),
-                version: "1.0.0".into(),
+                version: "1.0.0".parse().unwrap(),
             },
             dependencies: Vec::new(),
             generator: build_record::generator().unwrap(),

@@ -250,7 +250,10 @@ mod tests {
                     attachment.route.operation.replace('.', "/")
                 );
                 let descriptor: serde_json::Value = serde_json::from_slice(&files[&path]).unwrap();
-                assert_eq!(descriptor["operation"], attachment.operation);
+                assert_eq!(
+                    descriptor["operation"].as_str(),
+                    Some(attachment.operation.as_str())
+                );
                 assert_eq!(
                     descriptor["type"],
                     serde_json::to_value(attachment.route.type_).unwrap()

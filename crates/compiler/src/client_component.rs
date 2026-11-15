@@ -111,7 +111,7 @@ pub fn emit_ts_components(
                 .contract
                 .label
                 .as_deref()
-                .unwrap_or(&screen.contract.operation);
+                .unwrap_or(screen.contract.operation.as_str());
             writeln!(labels, "export const {name}Label = {};", quote(title)).expect("write");
             imports.insert(format!("{role}Description"));
             let mut description = json!({"id": screen.contract.operation, "title": title});

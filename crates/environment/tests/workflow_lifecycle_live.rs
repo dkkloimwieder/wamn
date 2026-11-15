@@ -70,7 +70,7 @@ fn release() -> ServingManifest {
         target: ComponentPackageCoordinate {
             project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
             package_id: APPLICATION.parse().unwrap(),
-            package_version: "1.0.0".to_owned(),
+            package_version: "1.0.0".parse().unwrap(),
         },
         component: "orders_data".to_owned(),
         interface_version: "0.1".to_owned(),
@@ -78,7 +78,7 @@ fn release() -> ServingManifest {
             OPERATION.to_owned(),
             AdmittedComponentOperation {
                 committed_result_schema: None,
-                registered_operation: Some(OPERATION.to_owned()),
+                registered_operation: Some(OPERATION.parse().unwrap()),
                 host_transaction: false,
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
@@ -98,7 +98,7 @@ fn release() -> ServingManifest {
         ServingRelease {
             packages: BTreeSet::from([PackageCoordinate::new(
                 APPLICATION.parse().expect("valid fixture name"),
-                "1.0.0",
+                "1.0.0".parse().unwrap(),
             )
             .unwrap()]),
         },
@@ -155,8 +155,7 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
     .expect("install the serving release");
 
     // The platform rows twice: the second run writes nothing.
-    let principals =
-        wamn_control_provision::platform_principals_sql(DOMAIN).expect("a domain renders");
+    let principals = wamn_control_provision::platform_principals_sql(&DOMAIN.parse().unwrap());
     for _ in 0..2 {
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN;\n{principals}COMMIT;")))
             .execute(&mut project)

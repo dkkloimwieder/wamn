@@ -292,7 +292,12 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let mut client = connect(database.as_str(), None).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&platform_principals_sql("example.invalid").unwrap()).to_string(),
+        (&platform_principals_sql(
+            &"example.invalid"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut client)
     .await
@@ -482,7 +487,12 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx:
     wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let mut client = connect(database.as_str(), None).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&platform_principals_sql("example.invalid").unwrap()).to_string(),
+        (&platform_principals_sql(
+            &"example.invalid"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut client)
     .await

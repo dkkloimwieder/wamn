@@ -444,7 +444,7 @@ pub fn assemble_release(
                 && packages
                     .iter()
                     .any(|package| package.package_id() == &fact.target.package_id
-                        && package.package_version() == fact.target.package_version),
+                        && package.package_version() == &fact.target.package_version),
             "local admission is outside package membership"
         );
         release_components.insert(fact.clone(), admission.descriptor().connections)?;
@@ -644,7 +644,13 @@ fn seal_release(projected: &ServingManifest) -> Result<PublishedRelease, Publish
 /// the release carries.
 #[derive(Debug, Default)]
 pub struct ReleaseComponents {
-    facts: BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>>,
+    facts: BTreeMap<
+        (
+            wamn_catalog::PackageName,
+            wamn_catalog::package_version::PackageVersion,
+        ),
+        Vec<AdmittedComponent>,
+    >,
     connections: BTreeMap<(wamn_catalog::PackageName, String), Vec<ComponentConnection>>,
 }
 
@@ -742,7 +748,7 @@ fn descriptor_components(
         let target = ComponentPackageCoordinate::new(
             project_env_key,
             package.package_id().clone(),
-            package.package_version(),
+            package.package_version().clone(),
         )
         .context("name the release component target")?;
         for descriptor in crate::package_artifact::read_descriptors(opened.root())? {
@@ -796,7 +802,7 @@ fn validate_release_package_manifests(
                 )
             })?;
         if &manifest.package.id != package.package_id()
-            || manifest.package.version != package.package_version()
+            || &manifest.package.version != package.package_version()
         {
             return Err(PublishManifestError::new(
                 PublishManifestErrorType::PackageManifest,
@@ -821,7 +827,7 @@ mod tests {
         let manifest = source_manifest();
         let packages = BTreeSet::from([PackageCoordinate::new(
             manifest.package.id.clone(),
-            &manifest.package.version,
+            manifest.package.version.clone(),
         )
         .unwrap()]);
         let manifests: BTreeMap<
@@ -899,7 +905,7 @@ mod tests {
             definition_hash: definition_hash,
             definition,
             auth_policy: serde_json::json!({"modes": ["pat"]}),
-            registered_operation: Some(operation.to_owned()),
+            registered_operation: Some(operation.parse().unwrap()),
         }
     }
 
@@ -1052,7 +1058,7 @@ mod tests {
             definition_hash: authored_hash,
             definition,
             auth_policy: serde_json::json!({"modes": ["pat"]}),
-            registered_operation: Some("source-fixture:widget/get@1.0.0".to_owned()),
+            registered_operation: Some("source-fixture:widget/get@1.0.0".parse().unwrap()),
         };
         let authored = BTreeMap::from([("fixture-http".to_owned(), attachment)]);
 
@@ -1266,7 +1272,11 @@ mod tests {
                 packages: facts
                     .iter()
                     .map(|fact| {
-                        PackageCoordinate::new(fact.target.package_id.clone(), "1.0.0").unwrap()
+                        PackageCoordinate::new(
+                            fact.target.package_id.clone(),
+                            "1.0.0".parse().unwrap(),
+                        )
+                        .unwrap()
                     })
                     .collect(),
             },
@@ -1391,19 +1401,23 @@ mod tests {
     /// two projects read one component from one artifact.
     #[tokio::test]
     async fn a_release_component_carries_its_descriptor_layer_in_every_project_env_key() {
-        let fact = closure_component("registered-component", Some("base:widget/get@1.0.0"));
+        let fact = closure_component(
+            "registered-component",
+            Some(&"base:widget/get@1.0.0".parse().unwrap()),
+        );
         let (root, _) = unpacked_descriptor("layer", &fact);
         let opened = crate::package_artifact::open_package_source(
             crate::package_artifact::PackageSource::Directory(root.clone()),
         )
         .await
         .unwrap();
-        let packages = [PackageCoordinate::new("base".parse().unwrap(), "1.0.0").unwrap()];
+        let packages =
+            [PackageCoordinate::new("base".parse().unwrap(), "1.0.0".parse().unwrap()).unwrap()];
         let project = |project_env_key: &wamn_registry::ProjectEnvKey| {
             let components =
                 descriptor_components(project_env_key, &packages, std::slice::from_ref(&opened))
                     .unwrap();
-            let fact = &components.facts[&("base".parse().unwrap(), "1.0.0".to_owned())][0];
+            let fact = &components.facts[&("base".parse().unwrap(), "1.0.0".parse().unwrap())][0];
             ServingComponent::project(fact, components.connections(fact).unwrap())
         };
         let first = project(&"acme--dev--plant".parse().unwrap());
@@ -1504,28 +1518,35 @@ mod tests {
 
     #[test]
     fn base_dependencies_expand_the_exact_release_closure_and_refuse_cycles() {
-        let base_operation = "base:stock/record-widget@1.0.0";
-        let overlay_operation = "overlay:stock/record-widget@3.0.0";
-        let mut base = closure_component("base-component", Some(base_operation));
+        let base_operation: wamn_catalog::registered_operation::RegisteredOperation =
+            "base:stock/record-widget@1.0.0".parse().unwrap();
+        let overlay_operation: wamn_catalog::registered_operation::RegisteredOperation =
+            "overlay:stock/record-widget@3.0.0".parse().unwrap();
+        let mut base = closure_component("base-component", Some(&base_operation));
         base.target.package_id = "base".parse().unwrap();
-        let mut overlay = closure_component("overlay-component", Some(overlay_operation));
+        let mut overlay = closure_component("overlay-component", Some(&overlay_operation));
         overlay.target.package_id = "overlay".parse().unwrap();
-        overlay.target.package_version = "3.0.0".to_owned();
+        overlay.target.package_version = "3.0.0".parse().unwrap();
         overlay.component_digest = (format!("sha256:{}", "b".repeat(64)))
             .parse::<wamn_digest::Digest>()
             .unwrap();
         let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
-        let facts: BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>> =
-            BTreeMap::from([
-                (
-                    ("base".parse().unwrap(), "1.0.0".to_owned()),
-                    vec![base.clone()],
-                ),
-                (
-                    ("overlay".parse().unwrap(), "3.0.0".to_owned()),
-                    vec![overlay.clone()],
-                ),
-            ]);
+        let facts: BTreeMap<
+            (
+                wamn_catalog::PackageName,
+                wamn_catalog::package_version::PackageVersion,
+            ),
+            Vec<AdmittedComponent>,
+        > = BTreeMap::from([
+            (
+                ("base".parse().unwrap(), "1.0.0".parse().unwrap()),
+                vec![base.clone()],
+            ),
+            (
+                ("overlay".parse().unwrap(), "3.0.0".parse().unwrap()),
+                vec![overlay.clone()],
+            ),
+        ]);
         let manifests: BTreeMap<
             wamn_catalog::PackageName,
             wamn_compiler::manifest::PackageManifest,
@@ -1551,10 +1572,10 @@ mod tests {
         assert!(closure.contains(&overlay));
         let projected = ServingComponent::project(&overlay, Vec::new());
         assert_eq!(
-            projected.descriptor.operations[overlay_operation]
+            projected.descriptor.operations[overlay_operation.as_str()]
                 .registered_operation
-                .as_deref(),
-            Some(overlay_operation),
+                .as_ref(),
+            Some(&overlay_operation),
             "the overlay entry requires its own permission alone"
         );
 
@@ -1587,13 +1608,15 @@ mod tests {
     /// from this same tree, so it resolves the base by coordinate.
     #[test]
     fn a_disposable_target_expands_a_closure_whose_pinned_base_digest_moved() {
-        let base_operation = "base:stock/record-widget@1.0.0";
-        let overlay_operation = "overlay:stock/record-widget@3.0.0";
-        let mut base = closure_component("base-component", Some(base_operation));
+        let base_operation: wamn_catalog::registered_operation::RegisteredOperation =
+            "base:stock/record-widget@1.0.0".parse().unwrap();
+        let overlay_operation: wamn_catalog::registered_operation::RegisteredOperation =
+            "overlay:stock/record-widget@3.0.0".parse().unwrap();
+        let mut base = closure_component("base-component", Some(&base_operation));
         base.target.package_id = "base".parse().unwrap();
-        let mut overlay = closure_component("overlay-component", Some(overlay_operation));
+        let mut overlay = closure_component("overlay-component", Some(&overlay_operation));
         overlay.target.package_id = "overlay".parse().unwrap();
-        overlay.target.package_version = "3.0.0".to_owned();
+        overlay.target.package_version = "3.0.0".parse().unwrap();
         overlay.component_digest = (format!("sha256:{}", "b".repeat(64)))
             .parse::<wamn_digest::Digest>()
             .unwrap();
@@ -1602,17 +1625,22 @@ mod tests {
             .unwrap();
         assert_ne!(stale_pin, base.component_digest);
         let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
-        let facts: BTreeMap<(wamn_catalog::PackageName, String), Vec<AdmittedComponent>> =
-            BTreeMap::from([
-                (
-                    ("base".parse().unwrap(), "1.0.0".to_owned()),
-                    vec![base.clone()],
-                ),
-                (
-                    ("overlay".parse().unwrap(), "3.0.0".to_owned()),
-                    vec![overlay.clone()],
-                ),
-            ]);
+        let facts: BTreeMap<
+            (
+                wamn_catalog::PackageName,
+                wamn_catalog::package_version::PackageVersion,
+            ),
+            Vec<AdmittedComponent>,
+        > = BTreeMap::from([
+            (
+                ("base".parse().unwrap(), "1.0.0".parse().unwrap()),
+                vec![base.clone()],
+            ),
+            (
+                ("overlay".parse().unwrap(), "3.0.0".parse().unwrap()),
+                vec![overlay.clone()],
+            ),
+        ]);
         let manifests: BTreeMap<
             wamn_catalog::PackageName,
             wamn_compiler::manifest::PackageManifest,

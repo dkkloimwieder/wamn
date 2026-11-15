@@ -128,7 +128,12 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
         .bind(PlatformComponent::Provisioning.principal_id())
         .execute(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::platform_principals_sql("automation.invalid")?).to_string(),
+        (&wamn_control_provision::platform_principals_sql(
+            &"automation.invalid"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut admin)
     .await

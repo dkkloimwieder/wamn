@@ -64,7 +64,7 @@ pub(super) fn release(composed: bool) -> ClientContractIr {
     ClientContractIr::from_operations(
         &"platform_fixture".parse().unwrap(),
         package.operations(),
-        &BTreeMap::from([(identity, route)]),
+        &BTreeMap::from([(identity.parse().unwrap(), route)]),
     )
     .expect("claim release projects")
 }

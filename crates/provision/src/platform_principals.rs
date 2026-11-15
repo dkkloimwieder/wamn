@@ -13,41 +13,9 @@
 
 use std::fmt::Write as _;
 
-use std::fmt;
-
 use postgres_protocol::escape::escape_literal;
 use wamn_identity_protocol::{PlatformComponent, WORKFLOW_USER_NAME, workflow_user_id};
-
-/// The longest domain name in text form, in bytes.
-const MAX_DOMAIN_LEN: usize = 253;
-/// The longest domain label, in bytes.
-const MAX_LABEL_LEN: usize = 63;
-
-/// Refusal of a platform domain that is not a valid domain name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlatformDomainError {
-    domain: Box<str>,
-}
-
-impl PlatformDomainError {
-    /// The refused platform domain.
-    pub fn domain(&self) -> &str {
-        &self.domain
-    }
-}
-
-impl fmt::Display for PlatformDomainError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "platform domain {:?} is not a valid domain name: expected dot-separated labels of \
-             lowercase letters, digits, and inner hyphens",
-            self.domain
-        )
-    }
-}
-
-impl std::error::Error for PlatformDomainError {}
+use wamn_registry::platform_domain::PlatformDomain;
 
 /// Render the statement that binds `component` as the actor and the operation
 /// of the current transaction.
@@ -81,12 +49,7 @@ pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
 /// running it against a project that holds part of the list, writes the rest
 /// and changes nothing else (`wamn-0h0g.9.15`).
 ///
-/// # Errors
-///
-/// Returns [`PlatformDomainError`] when `platform_domain` is not a valid
-/// domain name.
-pub fn platform_principals_sql(platform_domain: &str) -> Result<String, PlatformDomainError> {
-    validate_platform_domain(platform_domain)?;
+pub fn platform_principals_sql(platform_domain: &PlatformDomain) -> String {
     let components = std::iter::once(PlatformComponent::Provisioning).chain(
         PlatformComponent::ALL
             .into_iter()
@@ -113,73 +76,5 @@ pub fn platform_principals_sql(platform_domain: &str) -> Result<String, Platform
         escape_literal(WORKFLOW_USER_NAME),
     )
     .expect("writing to a String cannot fail");
-    Ok(sql)
-}
-
-/// Refuse a platform domain that is not a valid domain name.
-///
-/// A valid name has dot-separated labels of lowercase ASCII letters, digits,
-/// and inner hyphens, each label at most 63 bytes and the name at most 253.
-///
-/// # Errors
-///
-/// Returns [`PlatformDomainError`] for any other value.
-pub fn validate_platform_domain(domain: &str) -> Result<(), PlatformDomainError> {
-    let valid = domain.len() <= MAX_DOMAIN_LEN
-        && domain.split('.').all(|label| {
-            !label.is_empty()
-                && label.len() <= MAX_LABEL_LEN
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        });
-    if valid {
-        Ok(())
-    } else {
-        Err(PlatformDomainError {
-            domain: domain.into(),
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_domain_name_renders() {
-        for domain in ["example.invalid", "localhost", "a-1.b2.example"] {
-            assert!(
-                platform_principals_sql(domain).is_ok(),
-                "{domain} is a valid domain name"
-            );
-        }
-    }
-
-    #[test]
-    fn a_platform_domain_that_is_not_a_domain_name_is_refused() {
-        let long_label = "a".repeat(MAX_LABEL_LEN + 1);
-        let long_domain = ["a"; 128].join(".");
-        for domain in [
-            "",
-            ".",
-            "example.",
-            ".example",
-            "exa..mple",
-            "-example.invalid",
-            "example-.invalid",
-            "Example.invalid",
-            "example.invalid/path",
-            "user@example.invalid",
-            "exa mple.invalid",
-            "example.invalid'",
-            long_label.as_str(),
-            long_domain.as_str(),
-        ] {
-            let error = platform_principals_sql(domain).unwrap_err();
-            assert_eq!(error.domain(), domain);
-        }
-    }
+    sql
 }

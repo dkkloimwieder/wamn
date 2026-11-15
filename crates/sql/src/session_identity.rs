@@ -923,7 +923,7 @@ impl WamnPostgres {
         };
         let integration_type = generation
             .as_ref()
-            .map(|generation| generation.integration_type.as_str());
+            .map(|generation| &generation.integration_type);
         let descriptor = integration_type
             .and_then(wamn_catalog::RequirementType::for_integration)
             .filter(|type_| {
@@ -972,7 +972,7 @@ impl WamnPostgres {
         let name = generation
             .as_ref()
             .map(|generation| generation.name.clone());
-        let credential_handle = if integration_type == Some("gcs") {
+        let credential_handle = if integration_type.is_some_and(|code| code.as_str() == "gcs") {
             None
         } else {
             name.as_deref()

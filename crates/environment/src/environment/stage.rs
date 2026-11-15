@@ -354,7 +354,7 @@ pub(super) async fn installed(
 pub(super) async fn open(
     platform: &Platform,
     id: &wamn_catalog::PackageName,
-    version: &str,
+    version: &wamn_catalog::package_version::PackageVersion,
 ) -> anyhow::Result<OpenedPackage> {
     let Some(base) = &platform.package_artifact_base else {
         bail!(
@@ -363,7 +363,7 @@ pub(super) async fn open(
         );
     };
     open_package_source(PackageSource::Artifact {
-        tag: format!("{id}-{version}"),
+        tag: format!("{id}-{version}").parse()?,
         registry: platform.registry(base).await?,
     })
     .await
@@ -444,7 +444,11 @@ mod tests {
         wamn_platform_identity::test_database::project_platform(database.as_str()).await;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "BEGIN; {} COMMIT;",
-            wamn_control_provision::platform_principals_sql("example.invalid").unwrap()
+            wamn_control_provision::platform_principals_sql(
+                &"example.invalid"
+                    .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                    .unwrap()
+            )
         )))
         .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
         .await
@@ -455,7 +459,7 @@ mod tests {
             release: ServingRelease {
                 packages: BTreeSet::from([PackageCoordinate::new(
                     "orders".parse().expect("valid name"),
-                    "1.0.0",
+                    "1.0.0".parse().unwrap(),
                 )
                 .unwrap()]),
             },

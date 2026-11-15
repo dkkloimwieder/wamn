@@ -45,7 +45,12 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     let mut admin = connect(project.as_str()).await?;
     wamn_environment::platform_migrations::install_project(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::platform_principals_sql("example.invalid")?).to_string(),
+        (&wamn_control_provision::platform_principals_sql(
+            &"example.invalid"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut admin)
     .await
@@ -91,7 +96,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
-                    registered_operation: Some(OPERATION.into()),
+                    registered_operation: Some(OPERATION.parse().unwrap()),
                     committed_result_schema: None,
                 },
             )]);
@@ -102,7 +107,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         include_str!("../../publish/tests/fixtures/observer_package/generated/wamn.json"),
     )?;
     package.package.id = "integration".parse().expect("valid name");
-    package.package.version = "1.0.0".into();
+    package.package.version = "1.0.0".parse().unwrap();
     package.base_dependencies = serde_json::from_value(json!({
         "state": {"package":"wamn_integration", "version":"1.0.0", "digest":(format!("sha256:{}", "b".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations":[]},
         "consumer": {"package":"consumer", "version":"1.0.0", "digest":(format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations":["item.import"]}
@@ -114,10 +119,10 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     application.descriptor.operations.insert(
         wamn_catalog::operation_token(
             &"wamn_integration".parse().unwrap(),
-            "1.0.0",
-            "setting",
-            "read",
-        ),
+            &"1.0.0".parse().unwrap(),
+            &"setting.read".parse().unwrap(),
+        )?
+        .into(),
         serde_json::from_value(json!({
             "input-ports": [], "output-ports": [], "parameters": []
         }))?,
@@ -129,12 +134,12 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     consumer.package.id = "consumer".parse().expect("valid name");
     consumer.base_dependencies.clear();
     let mut operation = consumer.custom_operations.values().next().unwrap().clone();
-    operation.permission = Some("item.import".into());
+    operation.permission = Some("item.import".parse().unwrap());
     operation.visibility = wamn_compiler::manifest::OperationVisibility::Public;
     consumer.custom_operations.clear();
     consumer
         .custom_operations
-        .insert("item.import".into(), operation);
+        .insert("item.import".parse().unwrap(), operation);
     let packages = vec![package, declaration_only, consumer];
     // Composition alone materializes the principal, before the release is written.
     materialize_application_principals(
