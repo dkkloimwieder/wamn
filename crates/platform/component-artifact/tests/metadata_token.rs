@@ -163,6 +163,7 @@ fn basic(token: &str) -> String {
 fn admitted(bytes: &[u8]) -> AdmittedComponent {
     normalize_component_fact(
         ComponentDeclaration {
+            connections: Vec::new(),
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a".to_owned(),
                 package_id: "orders".to_owned(),
@@ -173,7 +174,6 @@ fn admitted(bytes: &[u8]) -> AdmittedComponent {
             operations: BTreeMap::from([(
                 "run".to_owned(),
                 ComponentOperationDeclaration {
-                    connections: Vec::new(),
                     committed_result_schema: None,
                     registered_operation: None,
                     input_ports: vec![ComponentPortDeclaration {

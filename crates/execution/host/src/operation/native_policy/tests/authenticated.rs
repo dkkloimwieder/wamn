@@ -525,6 +525,7 @@ async fn native_authenticated_call_graph_grant(pool: sqlx::PgPool) {
 fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
     ComponentAdmissionRequest {
         declaration: ComponentDeclaration {
+            connections: Vec::new(),
             target: ComponentPackageCoordinate {
                 project_env_key: PROJECT_ENV_KEY.into(),
                 package_id: "root".into(),
@@ -535,7 +536,6 @@ fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
             operations: BTreeMap::from([(
                 ROOT.into(),
                 ComponentOperationDeclaration {
-                    connections: Vec::new(),
                     registered_operation: Some(ROOT.into()),
                     committed_result_schema: None,
                     input_ports: Vec::new(),

@@ -6,6 +6,13 @@
   },
   "component": "signed_read",
   "interface-version": "0.1.0",
+  "connections": [
+    {
+      "store-alias": "files",
+      "requirement-type": "blobstore",
+      "mode": "write"
+    }
+  ],
   "operations": {
     "file-fixture:document/signed-read@0.1.0": {
       "registered-operation": "file-fixture:document/signed-read@0.1.0",
@@ -28,13 +35,6 @@
       "parameters": []
     },
     "wamn:node/async-handler@0.1.0": {
-      "connections": [
-        {
-          "store-alias": "files",
-          "requirement-type": "blobstore",
-          "mode": "write"
-        }
-      ],
       "input-ports": [
         {
           "name": "input",

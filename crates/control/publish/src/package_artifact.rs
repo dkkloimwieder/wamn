@@ -211,12 +211,7 @@ pub(crate) async fn connection_components(
         )?;
         let mut result = Vec::new();
         for descriptor in descriptors {
-            let names = component_connection_names(
-                descriptor
-                    .operations
-                    .values()
-                    .flat_map(|operation| &operation.connections),
-            );
+            let names = component_connection_names(manifest, &descriptor.component)?;
             if names.is_empty() {
                 continue;
             }
@@ -227,7 +222,7 @@ pub(crate) async fn connection_components(
             )?;
             let facts = descriptor.into_admitted(target.clone());
             let bytes = source.pull_verified(&facts.component).await?;
-            result.push((facts.component.component_digest, names, bytes));
+            result.push((facts.component.component_digest, names.to_vec(), bytes));
         }
         return Ok(result);
     }
@@ -243,13 +238,8 @@ pub(crate) async fn connection_components(
             )?;
             let declaration: ComponentDeclaration = serde_json::from_value(document)?;
             let bytes = std::fs::read(source.file).context("read package component binary")?;
-            let names = component_connection_names(
-                declaration
-                    .operations
-                    .values()
-                    .flat_map(|operation| &operation.connections),
-            );
-            Ok((source.sha256, names, bytes))
+            let names = component_connection_names(manifest, &declaration.component)?;
+            Ok((source.sha256, names.to_vec(), bytes))
         })
         .collect()
 }
@@ -528,17 +518,8 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         )?;
         let platform_packages = OWNED_PLATFORM_PACKAGES.map(str::to_owned).to_vec();
         let mut connections: Vec<ComponentConnection> =
-            serde_json::from_value::<ComponentDeclaration>(document.clone())?
-                .operations
-                .into_values()
-                .flat_map(|operation| operation.connections)
-                .filter_map(|connection| match connection {
-                    wamn_catalog::OperationConnection::Host(connection) => Some(connection),
-                    wamn_catalog::OperationConnection::Import(_) => None,
-                })
-                .collect();
+            serde_json::from_value::<ComponentDeclaration>(document.clone())?.connections;
         connections.sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
-        connections.dedup();
         let declaration = DeclarationFile::write(&document)?;
         let admission = admit_component(AdmitComponentRequest {
             package: root.to_owned(),

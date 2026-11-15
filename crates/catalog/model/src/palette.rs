@@ -85,13 +85,13 @@ mod tests {
     fn sealed_palette_preserves_ports_and_refuses_mutable_or_unsealed_sources() {
         let facts = normalize_component_fact(
             ComponentDeclaration {
+                connections: Vec::new(),
                 target: palette_target("platform-palette"),
                 component: "transform".into(),
                 interface_version: "0.1.0".into(),
                 operations: BTreeMap::from([(
                     "wamn:node/handler@0.1.0".into(),
                     ComponentOperationDeclaration {
-                        connections: Vec::new(),
                         registered_operation: None,
                         committed_result_schema: None,
                         input_ports: vec![ComponentPortDeclaration {

@@ -113,9 +113,6 @@ pub struct CustomOperationDeclaration {
     pub component: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<String>,
-    /// External connections this operation calls. SQL uses `connection`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub connections: Vec<String>,
     pub input: CustomOperationInputDeclaration,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<CustomOperationResultDeclaration>,
@@ -767,39 +764,36 @@ impl PackageManifest {
             .collect()
     }
 
-    /// Derive the external connection declarations of a manifest operation.
-    /// Generated operations have no external connections.
-    pub fn operation_connections(
+    /// Resolve the host connections declared by one component.
+    pub fn component_connections(
         &self,
-        operation: &str,
-    ) -> Result<Vec<wamn_catalog::OperationConnection>, ManifestError> {
-        self.custom_operations
-            .get(operation)
-            .into_iter()
-            .flat_map(|operation| &operation.connections)
-            .map(|name| {
-                let declaration = self.connections.get(name).ok_or_else(|| {
-                    ManifestError::new(
+        component: &str,
+    ) -> Result<Vec<wamn_catalog::ComponentConnection>, ManifestError> {
+        self.components[component]
+            .connections
+            .iter()
+            .filter_map(|name| {
+                let Some(declaration) = self.connections.get(name) else {
+                    return Some(Err(ManifestError::new(
                         ManifestErrorType::InvalidConnection,
-                        format!("operation {operation} declares unknown connection {name}"),
-                    )
-                })?;
+                        format!("component {component} declares unknown connection {name}"),
+                    )));
+                };
                 let requirement_type = match declaration.interface.as_str() {
                     "wamn:connection/http@0.1.0" => wamn_catalog::ComponentConnectionType::Http,
                     interface if interface.starts_with("wasmcloud:blobstore/") => {
                         wamn_catalog::ComponentConnectionType::Blobstore
                     }
-                    _ => return Ok(wamn_catalog::OperationConnection::Import(name.clone())),
+                    _ => return None,
                 };
-                Ok(wamn_catalog::ComponentConnection {
+                Some(Ok(wamn_catalog::ComponentConnection {
                     store_alias: name.clone().into(),
                     requirement_type,
                     mode: match declaration.mode {
                         ConnectionMode::Read => wamn_catalog::ConnectionMode::Read,
                         ConnectionMode::Write => wamn_catalog::ConnectionMode::Write,
                     },
-                }
-                .into())
+                }))
             })
             .collect()
     }
@@ -1166,7 +1160,7 @@ fn validate_component_groups(
         ));
     }
 
-    for name in manifest.components.keys() {
+    for (name, declaration) in &manifest.components {
         if name.is_empty() {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidComponent,
@@ -1174,6 +1168,17 @@ fn validate_component_groups(
             ));
         }
         validate_identifier(name, "component")?;
+        let mut seen = BTreeSet::new();
+        for connection in &declaration.connections {
+            if !manifest.connections.contains_key(connection) || !seen.insert(connection) {
+                return Err(ManifestError::new(
+                    ManifestErrorType::InvalidConnection,
+                    format!(
+                        "component {name} declares an unknown or repeated external connection {connection}"
+                    ),
+                ));
+            }
+        }
     }
 
     let implicit = (manifest.components.len() == 1)
@@ -1210,30 +1215,6 @@ fn validate_component_groups(
                 format!("operation {operation} references unknown component {component}"),
             ));
         };
-        if let Some(declaration) = manifest.custom_operations.get(operation) {
-            let mut seen = BTreeSet::new();
-            for connection in &declaration.connections {
-                if !manifest.connections.contains_key(connection) || !seen.insert(connection) {
-                    return Err(ManifestError::new(
-                        ManifestErrorType::InvalidConnection,
-                        format!(
-                            "operation {operation} declares an unknown or repeated external connection {connection}"
-                        ),
-                    ));
-                }
-            }
-            if !declaration.connections.is_empty()
-                && (custom_operation_uses_sql(manifest, operation, declaration)
-                    || declaration.begins_host_transaction())
-            {
-                return Err(ManifestError::new(
-                    ManifestErrorType::InvalidOperation,
-                    format!(
-                        "operation {operation} combines SQL work with an external connection; split the work into separate operations"
-                    ),
-                ));
-            }
-        }
         *count += 1;
     }
     if let Some((component, _)) = grouped.iter().find(|(_, count)| **count == 0) {
@@ -2437,78 +2418,38 @@ mod tests {
     }
 
     #[test]
-    fn operation_connections_refuse_sql_and_host_transactions() {
-        let document = serde_json::json!({
+    fn component_connections_validate_declared_aliases() {
+        let mut document = serde_json::json!({
             "package": {"id": "notify", "version": "1.0.0"},
             "required_platform_policy_contract": {"id": "notify_access", "state": "satisfied"},
             "models": {},
             "connections": {"api": {"interface": "wamn:connection/http@0.1.0", "mode": "write"}},
-            "components": {"notify": {}},
+            "components": {"notify": {"connections": ["api"]}},
             "custom_operations": {"notify.send": {
                 "type": "command", "visibility": "public", "permission": "notify.send",
-                "connections": ["api"], "idempotent_by": "claim", "input": {"fields": [
-                    {"path": "idempotency_key", "type": "text", "nullable": false}
-                ]},
+                "idempotent_by": "stateless", "input": {"fields": []},
                 "result": {"class": "one", "fields": [{"path": "id", "type": "uuid", "nullable": false}]},
-                "errors": ["invalid_input", "idempotency_conflict", "retry", "timeout", "permission_denied", "internal_error"]
+                "errors": ["invalid_input", "permission_denied", "internal_error"]
             }}
         });
         let parse = |document: &serde_json::Value| {
             super::PackageManifest::from_authored_slice(&serde_json::to_vec(document).unwrap())
         };
         let manifest = parse(&document).unwrap();
-        assert!(manifest.declares_no_sql());
-        assert!(!manifest.custom_operations["notify.send"].begins_host_transaction());
-        assert!(matches!(
-            manifest
-                .operation_connections("notify.send")
-                .unwrap()
-                .as_slice(),
-            [wamn_catalog::OperationConnection::Host(_)]
-        ));
-        let mut imported = document.clone();
-        imported["connections"]["api"]["interface"] = serde_json::json!("wamn:modbus/read@1.0.0");
-        assert!(matches!(
-            parse(&imported)
-                .unwrap()
-                .operation_connections("notify.send")
-                .unwrap()
-                .as_slice(),
-            [wamn_catalog::OperationConnection::Import(_)]
-        ));
-        let mut mixed = document.clone();
-        mixed["models"] = serde_json::json!({"record": {
-            "schema": "notify", "table": "record", "owner": "notify",
-            "audit_log": {"columns": [], "retention": "none"}, "operations": {}
-        }});
-        mixed["custom_operations"]["notify.send"]["transaction"] =
-            serde_json::json!("explicit_per_input");
-        mixed["custom_operations"]["notify.send"]["automatic_retry"] = serde_json::json!(false);
-        assert!(parse(&mixed).is_err());
-        mixed["custom_operations"]["notify.send"]["connection"] = serde_json::json!("postgres");
-        mixed["custom_operations"]["notify.send"]["statements"] = serde_json::json!({
-            "send": {"path": "command/notify/send.sql", "fetch": "one", "parameters": [],
-                "row": [{"name": "id", "type": "uuid", "nullable": false}]}
-        });
-        assert!(parse(&mixed).is_err());
-        // SQL and external operations can share a component.
-        mixed["custom_operations"]["notify.sql"] = mixed["custom_operations"]["notify.send"].take();
-        mixed["custom_operations"]
-            .as_object_mut()
-            .unwrap()
-            .remove("notify.send");
-        mixed["custom_operations"]["notify.sql"]["connections"] = serde_json::json!([]);
-        mixed["custom_operations"]["notify.sql"]["permission"] = serde_json::json!("notify.sql");
-        mixed["custom_operations"]["notify.send"] =
-            document["custom_operations"]["notify.send"].clone();
-        parse(&mixed).unwrap();
+        let connections = manifest.component_connections("notify").unwrap();
+        assert!(connections.iter().any(|connection| {
+            connection.requirement_type == wamn_catalog::ComponentConnectionType::Http
+                && connection.mode == wamn_catalog::ConnectionMode::Write
+        }));
         for connections in [
             serde_json::json!(["missing"]),
             serde_json::json!(["api", "api"]),
         ] {
-            let mut invalid = document.clone();
-            invalid["custom_operations"]["notify.send"]["connections"] = connections;
-            assert!(parse(&invalid).is_err());
+            document["components"]["notify"]["connections"] = connections;
+            assert!(matches!(
+                parse(&document).unwrap_err().error_type(),
+                super::ManifestErrorType::InvalidConnection
+            ));
         }
     }
 
@@ -3043,6 +2984,9 @@ impl RoutesDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ComponentDeclaration {
+    /// External connection aliases available to every operation of this component.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<String>,
     /// Private component exports outside the generated operation interfaces.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub exports: BTreeMap<String, wamn_catalog::ComponentOperationDeclaration>,

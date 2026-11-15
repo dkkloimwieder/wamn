@@ -152,12 +152,9 @@ pub async fn prepare_release(
             .find(|package| package.package.id == component.package_id)
             .context("release component has no package manifest")?;
         let names = crate::package_artifact::component_connection_names(
-            component
-                .descriptor
-                .operations
-                .values()
-                .flat_map(|operation| &operation.connections),
-        );
+            package,
+            &component.descriptor.component,
+        )?;
         if names.is_empty() {
             continue;
         }
@@ -176,7 +173,7 @@ pub async fn prepare_release(
             project_env_key,
             package,
             &component.descriptor.component_digest,
-            &names,
+            names,
             &bytes,
         )
         .await?;

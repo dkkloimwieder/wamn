@@ -30,6 +30,7 @@ pub(super) fn emit_package_publication(
         components.insert(component.clone(), json!({
             "target": {"package-id": manifest.package.id, "package-version": manifest.package.version},
             "component": component, "interface-version": "0.1.0", "operations": declaration.exports,
+            "connections": manifest.component_connections(component)?,
         }));
     }
     let routes = &manifest.routes;
@@ -78,10 +79,6 @@ pub(super) fn emit_package_publication(
             "output-ports": [{"name": "main", "schema": result}],
             "parameters": manifest.components[component].parameters.get(local).map_or(&[][..], Vec::as_slice),
         });
-        let connections = manifest.operation_connections(local)?;
-        if !connections.is_empty() {
-            published["connections"] = json!(connections);
-        }
         if description.operation.visibility.as_deref() != Some("private") {
             published["registered-operation"] = json!(identity);
         }

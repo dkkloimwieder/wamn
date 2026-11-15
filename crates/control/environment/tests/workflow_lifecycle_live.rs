@@ -78,7 +78,6 @@ fn release() -> ServingManifest {
         operations: BTreeMap::from([(
             OPERATION.to_owned(),
             AdmittedComponentOperation {
-                connections: Vec::new(),
                 committed_result_schema: None,
                 registered_operation: Some(OPERATION.to_owned()),
                 host_transaction: false,

@@ -346,12 +346,6 @@ fn provision_project_components_for_http_manifest()
     descriptor.operations.insert(
         operation.into(),
         AdmittedComponentOperation {
-            connections: descriptor
-                .connections
-                .iter()
-                .cloned()
-                .map(Into::into)
-                .collect(),
             committed_result_schema: None,
             registered_operation: None,
             host_transaction: false,
@@ -369,12 +363,6 @@ fn provision_project_components_for_http_manifest()
             descriptor.operations = BTreeMap::from([(
                 operation.into(),
                 wamn_catalog::AdmittedComponentOperation {
-                    connections: descriptor
-                        .connections
-                        .iter()
-                        .cloned()
-                        .map(Into::into)
-                        .collect(),
                     host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
@@ -689,16 +677,6 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
                 .collect(),
         ),
     });
-    descriptor
-        .operations
-        .get_mut(OPERATION)
-        .unwrap()
-        .connections = descriptor
-        .connections
-        .iter()
-        .cloned()
-        .map(Into::into)
-        .collect();
     let manifest = wamn_catalog::ServingManifest::new(
         wamn_catalog::ServingRelease {
             packages: [PACKAGE, "nested_origin"]

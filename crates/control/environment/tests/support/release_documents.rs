@@ -316,7 +316,7 @@ pub mod http {
         let mut declaration: Value = serde_json::from_str(template)?;
         if declaration["component"] == "http-request" {
             for handle in [OUTBOUND_HANDLE, API_KEY_HANDLE, AWS_HANDLE] {
-                declaration["operations"]["wamn:node/async-handler@0.1.0"]["connections"]
+                declaration["connections"]
                     .as_array_mut()
                     .expect("HTTP requirements")
                     .push(

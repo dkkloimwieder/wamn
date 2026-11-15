@@ -42,47 +42,28 @@ pub struct ConnectionInvocation {
 }
 
 impl ConnectionInvocation {
-    /// Resolve an external connection only from this operation's declarations.
+    /// Resolve a host connection declared by the executing component.
     pub fn connection<'a>(
         &self,
         manifest: &'a ServingManifest,
         alias: &str,
-    ) -> Option<&'a wamn_catalog::OperationConnection> {
-        self.declaration(manifest)?
-            .connections
-            .iter()
-            .find(|connection| {
-                let configuration = self
-                    .entry
-                    .wiring()
-                    .map(|position| position.configuration.as_ref());
-                match connection {
-                    wamn_catalog::OperationConnection::Import(name) => name == alias,
-                    wamn_catalog::OperationConnection::Host(connection) => {
-                        connection.store_alias.name() == Some(alias)
-                            || configuration.and_then(|configuration| {
-                                connection.store_alias.resolve(configuration)
-                            }) == Some(alias)
-                    }
-                }
-            })
-    }
-
-    pub fn declaration<'a>(
-        &self,
-        manifest: &'a ServingManifest,
-    ) -> Option<&'a wamn_catalog::AdmittedComponentOperation> {
-        manifest
-            .components
-            .iter()
-            .find(|component| {
-                component.package_id == self.package_id
-                    && component.descriptor.component_digest == self.component_digest
-                    && component.descriptor.component == self.component
-            })?
-            .descriptor
-            .operations
-            .get(&self.operation)
+    ) -> Option<&'a wamn_catalog::ComponentConnection> {
+        let component = manifest.components.iter().find(|component| {
+            component.package_id == self.package_id
+                && component.descriptor.component_digest == self.component_digest
+                && component.descriptor.component == self.component
+        })?;
+        component.descriptor.operations.get(&self.operation)?;
+        let configuration = self
+            .entry
+            .wiring()
+            .map(|position| position.configuration.as_ref());
+        component.descriptor.connections.iter().find(|connection| {
+            connection.store_alias.name() == Some(alias)
+                || configuration
+                    .and_then(|configuration| connection.store_alias.resolve(configuration))
+                    == Some(alias)
+        })
     }
 
     /// The span coordinates of this invocation. A route has no wiring

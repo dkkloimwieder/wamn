@@ -42,7 +42,6 @@ fn manifest() -> ServingManifest {
                 descriptor.operations = BTreeMap::from([(
                     OPERATION.into(),
                     AdmittedComponentOperation {
-                        connections: Vec::new(),
                         host_transaction: false,
                         input_ports: Vec::new(),
                         output_ports: Vec::new(),
@@ -73,7 +72,6 @@ fn fact() -> AdmittedComponent {
         operations: BTreeMap::from([(
             OPERATION.into(),
             AdmittedComponentOperation {
-                connections: Vec::new(),
                 registered_operation: Some(PERMISSION.into()),
                 committed_result_schema: None,
                 host_transaction: false,

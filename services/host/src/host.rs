@@ -1910,12 +1910,6 @@ host:
                     descriptor.operations = BTreeMap::from([(
                         "request".into(),
                         AdmittedComponentOperation {
-                            connections: descriptor
-                                .connections
-                                .iter()
-                                .cloned()
-                                .map(Into::into)
-                                .collect(),
                             host_transaction: false,
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),

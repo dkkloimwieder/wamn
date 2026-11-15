@@ -39,7 +39,7 @@ pub use component_facts::{
     ComponentEffectProvenance, ComponentFactError, ComponentFactErrorType,
     ComponentOperationDeclaration, ComponentPackageCoordinate, ComponentParameterDeclaration,
     ComponentPortDeclaration, ComponentSchema, ComponentSqlField, ComponentSqlStatement,
-    ConnectionMode, OperationConnection, bind_component_statement_facts, normalize_component_fact,
+    ConnectionMode, bind_component_statement_facts, normalize_component_fact,
     verify_stored_effect_projection,
 };
 pub use connection::{
