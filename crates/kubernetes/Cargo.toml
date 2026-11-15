@@ -8,6 +8,7 @@ license.workspace = true
 test-util = []
 
 [dependencies]
+wamn-digest.workspace = true
 url = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }

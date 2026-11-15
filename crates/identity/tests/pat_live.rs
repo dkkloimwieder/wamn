@@ -68,8 +68,8 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     assert!(issued.record().expires_at() > issued.record().created_at());
 
     // Only a digest and non-secret lookup metadata persist.
-    let stored: (String, String) = sqlx::query(
-        "SELECT token_hash, encode(sha256(convert_to($1, 'UTF8')), 'hex') \
+    let stored: (wamn_digest::Digest, wamn_digest::Digest) = sqlx::query(
+        "SELECT token_hash, 'sha256:' || encode(sha256(convert_to($1, 'UTF8')), 'hex') \
              FROM identity.pats WHERE token_prefix = $2",
     )
     .bind(&token)
@@ -79,7 +79,6 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     .map(|row| (row.get(0), row.get(1)))
     .expect("read stored token row");
     assert_eq!(stored.0, stored.1);
-    assert_ne!(stored.0, token);
     let leaked: i64 = sqlx::query(
         "SELECT count(*) FROM identity.pats \
              WHERE token_hash = $1 OR token_prefix = $1 OR label = $1",
@@ -395,7 +394,7 @@ async fn platform_principal_cannot_hold_a_token(client: &mut Client, provisionin
         .bind(&provisioning)
         .bind(&type_)
         .bind(&"e".repeat(16))
-        .bind(&"e".repeat(64))
+        .bind(wamn_digest::Digest::from([0xee; 32]))
         .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())
@@ -421,7 +420,10 @@ async fn token_rows_refuse_malformed_values(
     principal: &PrincipalId,
     issued_prefix: &str,
 ) {
-    let (prefix, hash) = ("d".repeat(16), "d".repeat(64));
+    let (prefix, hash) = (
+        "d".repeat(16),
+        wamn_digest::Digest::from([0xdd; 32]).to_string(),
+    );
     for (case, token_prefix, token_hash, expiry, code) in [
         (
             "reused prefix",
@@ -447,14 +449,14 @@ async fn token_rows_refuse_malformed_values(
         (
             "uppercase hash",
             prefix.clone(),
-            "D".repeat(64),
+            format!("sha256:{}", "D".repeat(64)),
             "now() + interval '1 hour'",
             "23514",
         ),
         (
             "short hash",
             prefix.clone(),
-            "d".repeat(63),
+            format!("sha256:{}", "d".repeat(63)),
             "now() + interval '1 hour'",
             "23514",
         ),

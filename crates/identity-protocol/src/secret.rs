@@ -1,7 +1,6 @@
 //! Secret credential formats. Diagnostics never include secret material.
 
 use ring::rand::{SecureRandom as _, SystemRandom};
-use sha2::{Digest as _, Sha256};
 use std::{fmt, str::FromStr};
 use subtle::ConstantTimeEq as _;
 use zeroize::Zeroizing;
@@ -48,11 +47,11 @@ impl SecretToken {
     pub fn into_secret(self) -> Zeroizing<String> {
         self.0
     }
-    pub fn digest(&self) -> Vec<u8> {
-        digest(self.expose()).to_vec()
+    pub fn digest(&self) -> wamn_digest::Digest {
+        wamn_digest::bytes_sha256(self.expose().as_bytes())
     }
-    pub fn matches(&self, stored: &[u8]) -> bool {
-        self.digest().ct_eq(stored).into()
+    pub fn matches(&self, stored: &wamn_digest::Digest) -> bool {
+        self.digest().as_bytes().ct_eq(stored.as_bytes()).into()
     }
 }
 impl fmt::Debug for SecretToken {
@@ -84,10 +83,10 @@ impl PatToken {
     pub fn into_secret(self) -> Zeroizing<String> {
         self.0
     }
-    pub fn digest(&self) -> String {
-        hex::encode(digest(self.expose()))
+    pub fn digest(&self) -> wamn_digest::Digest {
+        wamn_digest::bytes_sha256(self.expose().as_bytes())
     }
-    pub fn matches(&self, stored: &str) -> bool {
+    pub fn matches(&self, stored: &wamn_digest::Digest) -> bool {
         self.digest().as_bytes().ct_eq(stored.as_bytes()).into()
     }
 }
@@ -114,10 +113,6 @@ impl fmt::Display for PatToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.expose())
     }
-}
-
-fn digest(value: &str) -> [u8; 32] {
-    Sha256::digest(value.as_bytes()).into()
 }
 
 fn random_hex<const N: usize>() -> Result<String, TokenError> {

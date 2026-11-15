@@ -1,7 +1,6 @@
 //! HTTPS lifecycle tests share the exchange suite's owned database and TLS fixtures.
 
 use super::*;
-use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use wamn_package_artifact::http_client::HttpRequest;
 use wamn_platform_identity::password::{
@@ -878,7 +877,7 @@ async fn cookie_claims(fixture: &Fixture, values: &[String; 3]) -> SessionClaims
         reason = "never print CSRF values on failure"
     )]
     {
-        assert!(verified.csrf == Some(hex::encode(Sha256::digest(values[1].as_bytes()))));
+        assert!(verified.csrf == Some(wamn_digest::bytes_sha256(values[1].as_bytes())));
     }
     verified
 }

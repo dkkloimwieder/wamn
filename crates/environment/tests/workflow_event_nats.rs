@@ -123,7 +123,7 @@ mod event_batch {
             let delivery = format!("event:{id}");
             expected.insert(
                 ("billing".to_owned(), delivery.clone()),
-                billing.release().manifest_digest.as_str().to_owned(),
+                billing.release().manifest_digest,
             );
             let before = sqlx::query("SELECT package_id FROM wamn_run.runs WHERE invoked_by = $1")
                 .bind(&delivery)
@@ -132,7 +132,7 @@ mod event_batch {
                 .unwrap();
             assert_eq!(before.len(), 1, "B admits while A is stopped");
             assert_eq!(before[0].get::<String, _>(0), "billing");
-            let mut expected_digest = loaded.release().manifest_digest.as_str().to_owned();
+            let mut expected_digest = loaded.release().manifest_digest;
             if lsn == 40 {
                 // Commit on A1, lose its ACK, then redeliver to a host without
                 // that component. The original run must retain A1's digest.
@@ -203,11 +203,8 @@ mod event_batch {
                 new.unwrap();
                 expected_digest = sqlx::query("SELECT manifest_digest FROM wamn_run.runs WHERE package_id = $1 AND invoked_by = $2").bind(&APP).bind(&delivery).fetch_one(&mut fixture.admin).await.unwrap().get(0);
                 assert!(
-                    [
-                        fixture.digest.as_str(),
-                        upgraded.release().manifest_digest.as_str()
-                    ]
-                    .contains(&expected_digest.as_str())
+                    [&fixture.digest, &upgraded.release().manifest_digest]
+                        .contains(&&expected_digest)
                 );
                 wamn_workflow::event_admission::admit_application_events(
                     &events,
@@ -260,7 +257,7 @@ mod event_batch {
                 .map(|row| {
                     (
                         (row.get::<String, _>(0), row.get::<String, _>(1)),
-                        row.get::<String, _>(2),
+                        row.get::<wamn_digest::Digest, _>(2),
                     )
                 })
                 .collect();

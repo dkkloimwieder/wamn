@@ -38,7 +38,7 @@ pub type ReleaseManifestArtifactReferenceError = ComponentArtifactReferenceError
 /// OCI tags cannot contain a colon. No default registry or repository exists.
 pub fn release_manifest_artifact_reference(
     artifact_base: &str,
-    manifest_digest: &str,
+    manifest_digest: &wamn_digest::Digest,
 ) -> Result<ReleaseManifestArtifactReference, ReleaseManifestArtifactReferenceError> {
     component_artifact_reference(artifact_base, manifest_digest)
 }
@@ -98,7 +98,7 @@ pub fn release_manifest_artifact_layout(
 /// verified layer descriptor instead; the layer digest still pins the content.
 pub fn verify_release_manifest_artifact_layout<'a>(
     manifest: &'a OciImageManifest,
-    expected_digest: &str,
+    expected_digest: &wamn_digest::Digest,
     expected_size: Option<usize>,
 ) -> Result<ReleaseManifestArtifactBlobs<'a>, ReleaseManifestLayoutRefusal> {
     let (_, _, expected_manifest) = release_manifest_artifact_layout(&[]);
@@ -122,7 +122,7 @@ pub fn verify_release_manifest_artifact_layout<'a>(
         .is_some_and(|size| layer.size != i64::try_from(size).unwrap_or(i64::MAX))
         || layer.size < 0;
     if layer.media_type != RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE
-        || layer.digest != expected_digest
+        || layer.digest.parse::<wamn_digest::Digest>().ok() != Some(*expected_digest)
         || layer_size_mismatch
         || layer.urls.is_some()
         || layer.annotations.is_some()
@@ -155,7 +155,9 @@ mod tests {
 
     #[test]
     fn mutable_or_ambient_reference_refuses() {
-        let digest = format!("sha256:{}", "a".repeat(64));
+        let digest = (format!("sha256:{}", "a".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
         for base in [
             "wamn/releases",
             "registry/releases",

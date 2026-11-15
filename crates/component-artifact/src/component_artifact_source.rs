@@ -183,8 +183,7 @@ impl ArtifactSource for ComponentArtifactSource {
             .config
             .source
             .base()
-            .reference(&component.component_digest)
-            .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
+            .reference(&component.component_digest);
         let reference = Reference::with_tag(
             artifact.registry().to_owned(),
             artifact.repository().to_owned(),
@@ -267,12 +266,8 @@ impl ArtifactSource for ComponentArtifactSource {
         reference: &str,
     ) -> Result<VerifiedEntry, ComponentArtifactFetchError> {
         let deadline = tokio::time::Instant::now() + self.config.source.timeout();
-        validate_composed_entry_path(reference)
+        let digest = validate_composed_entry_path(reference)
             .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
-        let digest = reference
-            .strip_prefix(COMPOSED_ENTRY_REPOSITORY)
-            .and_then(|rest| rest.strip_prefix('@'))
-            .expect("a valid entry path names its manifest digest");
         let registry = self.config.source.base().registry();
         let entry = Reference::with_digest(
             registry.to_owned(),
@@ -280,7 +275,7 @@ impl ArtifactSource for ComponentArtifactSource {
                 "{}/{COMPOSED_ENTRY_REPOSITORY}",
                 self.config.source.base().repository()
             ),
-            digest.to_owned(),
+            digest.to_string(),
         );
         let named = entry.whole();
         let auth = self.auth(&named).await?;
@@ -327,11 +322,12 @@ impl ArtifactSource for ComponentArtifactSource {
                     &source,
                 )
             })?;
-        verify_component_body(&bytes, layer.size, &layer.digest, &named)?;
-        Ok(VerifiedEntry {
-            bytes,
-            digest: digest.to_owned(),
-        })
+        let layer_digest = layer
+            .digest
+            .parse()
+            .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
+        verify_component_body(&bytes, layer.size, &layer_digest, &named)?;
+        Ok(VerifiedEntry { bytes, digest })
     }
 }
 
@@ -367,7 +363,7 @@ struct VerifiedManifest<'a> {
 
 fn verify_manifest<'a>(
     manifest: &'a OciImageManifest,
-    expected_component_digest: &str,
+    expected_component_digest: &wamn_digest::Digest,
     expected_config_size: usize,
     reference: &str,
 ) -> Result<VerifiedManifest<'a>, ComponentArtifactFetchError> {
@@ -383,7 +379,7 @@ fn verify_manifest<'a>(
     if component.media_type != expected_layout.layer_media_type() {
         return Err(refuse("component-artifact-layer-media-type-mismatch"));
     }
-    if component.digest != expected_component_digest {
+    if component.digest.parse::<wamn_digest::Digest>().ok() != Some(*expected_component_digest) {
         return Err(refuse("component-artifact-layer-digest-mismatch"));
     }
     if component.size < 0 {
@@ -448,10 +444,10 @@ mod tests {
         .component
     }
 
-    fn descriptor(media_type: &str, digest: &str, size: i64) -> OciDescriptor {
+    fn descriptor(media_type: &str, digest: &wamn_digest::Digest, size: i64) -> OciDescriptor {
         OciDescriptor {
             media_type: media_type.to_owned(),
-            digest: digest.to_owned(),
+            digest: digest.to_string(),
             size,
             ..OciDescriptor::default()
         }
@@ -526,7 +522,7 @@ mod tests {
             }),
             ("layer-digest", {
                 let mut value = exact.clone();
-                value.layers[0].digest = bytes_sha256(b"other");
+                value.layers[0].digest = bytes_sha256(b"other").to_string();
                 value
             }),
             ("config-media", {
@@ -572,29 +568,5 @@ mod tests {
         assert!(!rendered.contains("private"));
         assert!(!rendered.contains("registry-controlled-response-body"));
         assert!(std::error::Error::source(&error).is_none());
-    }
-
-    #[tokio::test]
-    async fn invalid_admitted_digest_refuses_before_network_io_without_echoing_it() {
-        let config = ComponentArtifactSourceConfig::new(
-            "localhost:9/wamn/components",
-            true,
-            Duration::from_millis(1),
-        )
-        .expect("source config validates");
-        let source = ComponentArtifactSource::new(config).expect("registry client builds");
-        let mut component = admitted(b"component-bytes");
-        component.component_digest = "not-a-digest-containing-private-context".to_owned();
-
-        let error = source
-            .pull_verified(&component)
-            .await
-            .expect_err("invalid admitted digest refuses locally");
-        assert_eq!(
-            error.error_type(),
-            ComponentArtifactFetchErrorType::InvalidReference
-        );
-        let rendered = format!("{error:?} {error}");
-        assert!(!rendered.contains("private-context"));
     }
 }

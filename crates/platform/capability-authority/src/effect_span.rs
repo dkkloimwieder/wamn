@@ -149,7 +149,7 @@ pub struct EffectWiring<'a> {
     pub wiring_version: u32,
     pub node_id: &'a str,
     pub occurrence: u32,
-    pub component_digest: &'a str,
+    pub component_digest: Option<&'a wamn_digest::Digest>,
     pub component_name: &'a str,
     pub operation: &'a str,
 }
@@ -352,24 +352,38 @@ pub fn record_run(span: &tracing::Span, run: Option<EffectRun<'_>>) {
 /// an empty value reads as "this effect holds no such fact" and never as "the
 /// enrichment was dropped".
 pub fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_>>) {
-    let wiring = wiring.unwrap_or(EffectWiring {
-        package_id: "",
-        wiring_id: "",
-        wiring_version: 0,
-        node_id: "",
-        occurrence: 0,
-        component_digest: "",
-        component_name: "",
-        operation: "",
-    });
-    span.record("wamn.package_id", wiring.package_id);
-    span.record("wamn.wiring_id", wiring.wiring_id);
-    span.record("wamn.wiring_version", wiring.wiring_version);
-    span.record("wamn.node_id", wiring.node_id);
-    span.record("wamn.occurrence", wiring.occurrence);
-    span.record("wamn.component_digest", wiring.component_digest);
-    span.record("wamn.component_name", wiring.component_name);
-    span.record("wamn.operation", wiring.operation);
+    span.record(
+        "wamn.package_id",
+        wiring.map_or("", |wiring| wiring.package_id),
+    );
+    span.record(
+        "wamn.wiring_id",
+        wiring.map_or("", |wiring| wiring.wiring_id),
+    );
+    span.record(
+        "wamn.wiring_version",
+        wiring.map_or(0, |wiring| wiring.wiring_version),
+    );
+    span.record("wamn.node_id", wiring.map_or("", |wiring| wiring.node_id));
+    span.record(
+        "wamn.occurrence",
+        wiring.map_or(0, |wiring| wiring.occurrence),
+    );
+    span.record(
+        "wamn.component_digest",
+        wiring
+            .and_then(|wiring| wiring.component_digest)
+            .map(std::string::ToString::to_string)
+            .unwrap_or_default(),
+    );
+    span.record(
+        "wamn.component_name",
+        wiring.map_or("", |wiring| wiring.component_name),
+    );
+    span.record(
+        "wamn.operation",
+        wiring.map_or("", |wiring| wiring.operation),
+    );
 }
 
 /// [9.1] Open one effect span: a per-surface constant name, that surface's own

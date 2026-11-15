@@ -46,7 +46,7 @@ pub struct UploadArgs {
         conflicts_with = "platform_ui",
         requires = "RegistryArgs"
     )]
-    pub web: Option<String>,
+    pub web: Option<wamn_digest::Digest>,
     #[command(flatten)]
     pub registry: crate::package_verbs::RegistryArgs,
     /// The bucket and an optional prefix, `s3://<bucket>[/<prefix>]` or
@@ -57,7 +57,7 @@ pub struct UploadArgs {
     pub bucket: Option<String>,
     /// The platform UI artifact digest, from the prepared chart.
     #[arg(long, required_unless_present = "web", conflicts_with = "web")]
-    pub platform_ui: Option<String>,
+    pub platform_ui: Option<wamn_digest::Digest>,
 }
 
 pub async fn run(args: WebArgs) -> anyhow::Result<()> {
@@ -91,7 +91,7 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
     } else {
         upload_web_artifact(
             &registry,
-            args.web.as_deref().context("upload requires --web")?,
+            args.web.as_ref().context("upload requires --web")?,
             args.bucket.as_deref().context("--web requires --bucket")?,
         )
         .await?

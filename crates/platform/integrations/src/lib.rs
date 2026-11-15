@@ -21,19 +21,19 @@ type InstanceKey = (uuid::Uuid, i64, Option<uuid::Uuid>);
 
 #[derive(Debug, Clone)]
 struct LinkedRead {
-    digest: String,
+    digest: wamn_digest::Digest,
     instance: Arc<Integration>,
 }
 
 #[derive(Debug)]
 struct ReadState {
     linked: Cache<InstanceKey, LinkedRead>,
-    bytes: HashMap<String, Arc<Vec<u8>>>,
+    bytes: HashMap<wamn_digest::Digest, Arc<Vec<u8>>>,
 }
 
 struct ReadResources {
     facts: Arc<ConnectionFacts>,
-    manifest_digest: String,
+    manifest_digest: wamn_digest::Digest,
     registry: PackageRegistry,
     registry_credentials: RegistryCredentialSource,
     state: Mutex<ReadState>,
@@ -51,7 +51,7 @@ impl std::fmt::Debug for ReadResources {
 #[derive(Debug)]
 struct ComponentReads {
     resources: Arc<ReadResources>,
-    component: String,
+    component: wamn_digest::Digest,
     package: String,
     names: HashSet<String>,
 }
@@ -130,10 +130,10 @@ impl ConnectionDispatch for ComponentReads {
             .await?;
         let digest = version
             .digest
-            .as_deref()
+            .as_ref()
             .context("wasm version has no digest")?;
         if let Some(linked) = state.linked.get(&key)
-            && linked.digest == digest
+            && linked.digest == *digest
         {
             return Ok(Some(linked.instance));
         }
@@ -207,8 +207,8 @@ impl ReadState {
 /// Process-owned imports with immutable declarations and shared links by identity.
 #[derive(Debug)]
 pub struct Integrations {
-    imports: HashMap<(String, String), Arc<IntegrationImports>>,
-    declarations: HashMap<(String, String), HashSet<String>>,
+    imports: HashMap<(wamn_digest::Digest, String), Arc<IntegrationImports>>,
+    declarations: HashMap<(wamn_digest::Digest, String), HashSet<String>>,
     resources: Arc<ReadResources>,
 }
 
@@ -230,7 +230,7 @@ impl Integrations {
         );
         let resources = Arc::new(ReadResources {
             facts,
-            manifest_digest: release.release().manifest_digest.to_string(),
+            manifest_digest: release.release().manifest_digest,
             registry,
             registry_credentials,
             state: Mutex::new(ReadState {
@@ -261,11 +261,11 @@ impl Integrations {
                 .collect();
             let dispatch = Arc::new(ComponentReads {
                 resources: Arc::clone(&resources),
-                component: digest.clone(),
+                component: *digest,
                 package: package.clone(),
                 names: names.clone(),
             });
-            let key = (digest.clone(), package.clone());
+            let key = (*digest, package.clone());
             declarations.insert(key.clone(), names);
             imports.insert(
                 key,
@@ -289,7 +289,7 @@ impl Integrations {
 
     pub fn imports(
         &self,
-        component: &str,
+        component: &wamn_digest::Digest,
         package: &str,
     ) -> anyhow::Result<Arc<IntegrationImports>> {
         self.imports
@@ -302,7 +302,7 @@ impl Integrations {
     pub async fn add_to_linker(
         &self,
         item: &mut wash_runtime::engine::workload::WorkloadItem<'_>,
-        owners: &[(&str, &str)],
+        owners: &[(&wamn_digest::Digest, &str)],
     ) -> anyhow::Result<()> {
         let mut routes = HashMap::new();
         let mut interfaces = HashSet::new();
@@ -356,8 +356,7 @@ impl ConnectionDispatch for ComponentImports {
         let context = wamn_postgres_capability::invocation::context(scopes, scope)?;
         anyhow::ensure!(
             Arc::ptr_eq(&context.connections, &self.resources.facts)
-                && context.release.release().manifest_digest.as_str()
-                    == self.resources.manifest_digest,
+                && context.release.release().manifest_digest == self.resources.manifest_digest,
             "integration invocation release mismatch"
         );
         let declared = scopes

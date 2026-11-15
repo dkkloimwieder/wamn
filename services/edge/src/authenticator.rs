@@ -56,7 +56,7 @@ impl RouteAuthenticator for EdgeAuthenticator {
             .map_err(|_| unauthorized())?;
         let claims = session.claims();
         if let Some(required) = csrf {
-            require_csrf(required, claims.csrf.as_deref(), request.headers)?;
+            require_csrf(required, claims.csrf.as_ref(), request.headers)?;
         }
         Ok(Some(AuthenticatedCaller::new(
             request.attachment_id,
@@ -83,8 +83,7 @@ mod tests {
     use ring::signature::{Ed25519KeyPair, KeyPair as _};
     use serde_json::json;
     use wamn_catalog::{
-        AttachmentAuthPolicy, AttachmentRef, AttachmentType, DefinitionHash, RouteAttachment,
-        ServedAttachment,
+        AttachmentAuthPolicy, AttachmentRef, AttachmentType, RouteAttachment, ServedAttachment,
     };
     use wamn_engine::flow_http_routing::Header;
     use wamn_identity_protocol::token::{SessionAuthority, SessionClaims};
@@ -114,7 +113,11 @@ mod tests {
             authority: SessionAuthority::Login(
                 "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b".parse().unwrap(),
             ),
-            csrf: Some("b6a2aca6b182e1a327dbc1bedc8e32cd04c0c9bfb9f3953687b047a4de985ff6".into()),
+            csrf: Some(
+                "sha256:b6a2aca6b182e1a327dbc1bedc8e32cd04c0c9bfb9f3953687b047a4de985ff6"
+                    .parse()
+                    .unwrap(),
+            ),
         }
     }
 
@@ -146,8 +149,7 @@ mod tests {
                     package_id: "scale".into(),
                     component: "device".into(),
                     operation: crate::release::test_util::OPERATION.into(),
-                    definition_hash: DefinitionHash::parse(wamn_digest::bytes_sha256(b"route"))
-                        .unwrap(),
+                    definition_hash: wamn_digest::bytes_sha256(b"route"),
                     definition: json!({}),
                     auth_policy: json!({"modes":["session"]}),
                     registered_operation: None,

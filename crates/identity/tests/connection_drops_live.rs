@@ -158,7 +158,12 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys(pool: sqlx:
     }
     let dev = connection_key("acme--dev--app", &ids[0]);
     let prod = connection_key("acme--prod--app", &ids[1]);
-    let release = release_key("acme--dev--app", &format!("sha256:{}", "ab".repeat(32)));
+    let release = release_key(
+        "acme--dev--app",
+        &(format!("sha256:{}", "ab".repeat(32)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap(),
+    );
     let other = connection_key("acme--dev--other", &ids[0]);
     let dev_map = connections_key("acme--dev--app");
     let prod_map = connections_key("acme--prod--app");

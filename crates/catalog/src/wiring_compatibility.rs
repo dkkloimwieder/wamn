@@ -446,9 +446,13 @@ mod tests {
                     parameters: Vec::new(),
                 },
             )]),
-            component_digest: format!("sha256:{}", "a".repeat(64)),
+            component_digest: (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             imports: Vec::new(),
-            imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            imports_fingerprint: (format!("sha256:{}", "b".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             effects: Vec::new(),
         }
     }

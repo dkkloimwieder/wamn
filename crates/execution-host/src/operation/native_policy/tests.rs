@@ -623,8 +623,7 @@ impl Fixture {
                     .collect(),
             });
         }
-        let mut served =
-            ServingComponent::project(&root, Vec::new()).expect("publish projects the root");
+        let mut served = ServingComponent::project(&root, Vec::new());
         if members {
             served.runtime_schema = Some("native_member".into());
         }
@@ -735,7 +734,7 @@ impl Fixture {
             NativeWorkloadSpec {
                 warm_reuse: if let Some(reclaim_seconds) = reclaim_seconds {
                     wamn_engine::warm_reuse::WarmReuse::new(
-                        &[root.component_digest.clone()],
+                        &[root.component_digest],
                         1,
                         reclaim_seconds,
                     )
@@ -818,7 +817,7 @@ impl Fixture {
                     invocation: ConnectionInvocation {
                         origin: ConnectionOrigin {
                             package_id: "root".into(),
-                            component_digest: self.root.component_digest.clone(),
+                            component_digest: self.root.component_digest,
                             component: "node".into(),
                             interface_version: self.root.interface_version.clone(),
                             operation: ROOT.into(),
@@ -827,7 +826,9 @@ impl Fixture {
                             wamn_capability_authority::connection::WiringPosition {
                                 configuration: Default::default(),
                                 package_id: "workflow".into(),
-                                wiring_hash: format!("sha256:{}", "a".repeat(64)),
+                                wiring_hash: (format!("sha256:{}", "a".repeat(64)))
+                                    .parse::<wamn_digest::Digest>()
+                                    .unwrap(),
                                 wiring_id: "trusted-wiring".into(),
                                 wiring_version: 1,
                                 node_id: "trusted-node".into(),
@@ -835,7 +836,7 @@ impl Fixture {
                             },
                         ),
                         package_id: "root".into(),
-                        component_digest: self.root.component_digest.clone(),
+                        component_digest: self.root.component_digest,
                         component: "node".into(),
                         operation: ROOT.into(),
                         closure: ConnectionExecutionClosure::Released,
@@ -1360,7 +1361,7 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         .committed_result_schema = Some(wamn_catalog::ComponentSchema {
         schema: serde_json::json!({"type": "number", "minimum": -0.0}),
     });
-    let served = ServingComponent::project(&component, Vec::new()).unwrap();
+    let served = ServingComponent::project(&component, Vec::new());
     let manifest = ServingManifest {
         composed_entry: None,
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -1393,7 +1394,9 @@ fn released_component_validation_reuses_only_the_immutable_list() {
     let retained = Arc::clone(&components);
     validate(&release, &components, Some((&release, &retained))).unwrap();
     let mut changed = Arc::clone(&components);
-    Arc::make_mut(&mut changed)[0].component_digest = format!("sha256:{}", "b".repeat(64));
+    Arc::make_mut(&mut changed)[0].component_digest = (format!("sha256:{}", "b".repeat(64)))
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     assert!(validate(&release, &changed, Some((&release, &retained))).is_err());
     let mut changed = Arc::clone(&components);
     Arc::make_mut(&mut changed)[0]

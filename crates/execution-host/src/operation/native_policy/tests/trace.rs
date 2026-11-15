@@ -143,7 +143,7 @@ impl TraceCapture {
                 .expect("admitted operation owner");
             assert_eq!(
                 attribute(invocation, "wamn.component_digest"),
-                Some(fact.component_digest.as_str())
+                Some(fact.component_digest.to_string().as_str())
             );
             let effect = effects
                 .iter()
@@ -170,7 +170,7 @@ impl TraceCapture {
             assert_eq!(effect.parent_span_id, call.span_context.span_id());
             assert_eq!(
                 attribute(effect, "wamn.component_digest"),
-                Some(fact.component_digest.as_str())
+                Some(fact.component_digest.to_string().as_str())
             );
         }
         println!("authenticated-native-trace result=pass invocations=1 host_observations=1");

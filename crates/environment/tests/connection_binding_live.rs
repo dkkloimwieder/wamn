@@ -245,7 +245,7 @@ impl Authority {
             _server: server,
         }
     }
-    fn document(digest: &str) -> EnvironmentDocument {
+    fn document(digest: &wamn_digest::Digest) -> EnvironmentDocument {
         let mut document: EnvironmentDocument = serde_json::from_value(json!({"org":"connection-binding-project","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev","revocation_seconds":60, "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
         "applications": {PACKAGE:{"revocation_seconds":5,"hostname": "fixture.example","connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap();
         let selection = document.applications.get_mut(PACKAGE).unwrap();
@@ -276,9 +276,7 @@ impl Authority {
             .await
             .unwrap();
         let digest = match document.legacy_release() {
-            wamn_environment::environment::document::DeclaredRelease::Digest(digest) => {
-                digest.as_str()
-            }
+            wamn_environment::environment::document::DeclaredRelease::Digest(digest) => digest,
             wamn_environment::environment::document::DeclaredRelease::None => {
                 unreachable!()
             }
@@ -366,8 +364,11 @@ fn declarations(integration_type: &str, mode: &str) -> wamn_compiler::manifest::
 fn provision_project_components_for_http_manifest()
 -> std::collections::BTreeSet<wamn_catalog::ServingComponent> {
     let operation = "wamn:node/handler@0.1.0";
-    let mut descriptor =
-        wamn_catalog::ComponentDescriptor::named("http-sidecar", "0.1.0", HTTP_SIDECAR);
+    let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+        "http-sidecar",
+        "0.1.0",
+        HTTP_SIDECAR.parse().unwrap(),
+    );
     descriptor
         .connections
         .push(wamn_catalog::ComponentConnection {
@@ -437,7 +438,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         Vec::new(),
     )
     .unwrap();
-    sqlx::query("INSERT INTO catalog.workflows (project_env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).bind(&PACKAGE).bind(&serde_json::to_string(&document).unwrap()).bind(&document.wiring_hash().as_str()).bind(&wamn_identity_protocol::workflow_user_id().to_string()).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO catalog.workflows (project_env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).bind(&PACKAGE).bind(&serde_json::to_string(&document).unwrap()).bind(&&document.wiring_hash()).bind(&wamn_identity_protocol::workflow_user_id().to_string()).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
     let components = provision_project_components_for_http_manifest();
     let manifest = wamn_catalog::ServingManifest::new(
         wamn_catalog::ServingRelease {
@@ -449,7 +450,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         BTreeMap::new(),
     )
     .unwrap();
-    let manifest_digest = manifest.digest().as_str().to_owned();
+    let manifest_digest = manifest.digest();
     sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)").bind(&PROJECT_ENV_KEY).bind(&manifest_digest).bind(&manifest.canonical_bytes()).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
     let address = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
     address.connect("192.0.2.1:9").unwrap();
@@ -514,7 +515,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     let mut invocation = ConnectionInvocation {
         origin: ConnectionOrigin {
             package_id: PACKAGE.into(),
-            component_digest: HTTP_SIDECAR.into(),
+            component_digest: HTTP_SIDECAR.parse().unwrap(),
             component: "http-sidecar".into(),
             interface_version: "0.1.0".into(),
             operation: "wamn:node/handler@0.1.0".into(),
@@ -526,10 +527,10 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
             node_id: "read".into(),
             occurrence: 0,
             configuration: Default::default(),
-            wiring_hash: document.wiring_hash().as_str().into(),
+            wiring_hash: document.wiring_hash(),
         }),
         package_id: PACKAGE.into(),
-        component_digest: HTTP_SIDECAR.into(),
+        component_digest: HTTP_SIDECAR.parse().unwrap(),
         component: "http-sidecar".into(),
         operation: "wamn:node/handler@0.1.0".into(),
         closure: ConnectionExecutionClosure::Released,
@@ -582,7 +583,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
             &ConnectionEffectLookup {
                 entry,
                 origin_package_id: PACKAGE,
-                origin_component_digest: HTTP_SIDECAR,
+                origin_component_digest: &HTTP_SIDECAR.parse().unwrap(),
                 origin_component: "http-sidecar",
                 origin_interface_version: "0.1.0",
                 origin_operation: "wamn:node/handler@0.1.0",
@@ -590,7 +591,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
                 operation: "wamn:node/handler@0.1.0",
                 manifest_digest: &manifest_digest,
                 environment: ENVIRONMENT,
-                component_digest: HTTP_SIDECAR,
+                component_digest: &HTTP_SIDECAR.parse().unwrap(),
                 store_alias: "erp",
                 candidate_binding: None,
             },
@@ -604,7 +605,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     postgres.revoke_invocation(COMPONENT_ID);
     let forged = CandidateConnectionBinding {
         read_only: false,
-        component_digest: HTTP_SIDECAR.into(),
+        component_digest: HTTP_SIDECAR.parse().unwrap(),
         store_alias: "erp".into(),
         requirement_hash: snapshot.requirement_hash.unwrap(),
         instance_id: snapshot.instance_id.unwrap(),
@@ -619,7 +620,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     invocation.closure = ConnectionExecutionClosure::Candidate {
         manifest_digest,
         environment: ENVIRONMENT.into(),
-        wiring_hash: document.wiring_hash().as_str().into(),
+        wiring_hash: document.wiring_hash(),
         component: "http-sidecar".into(),
         interface_version: "0.1.0".into(),
         binding_world: Arc::new(
@@ -678,7 +679,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     let database = wamn_test_postgres::url(&pool);
     let mut project = connect(database.as_str()).await;
     provision_project(&mut project, database.as_str()).await;
-    let mut descriptor = ComponentDescriptor::named("blob-put", "0.1.0", DIGEST);
+    let mut descriptor = ComponentDescriptor::named("blob-put", "0.1.0", DIGEST.parse().unwrap());
     descriptor.operations.insert(
         OPERATION.into(),
         serde_json::from_value(json!({
@@ -722,7 +723,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
         BTreeMap::new(),
     )
     .unwrap();
-    let digest = manifest.digest().as_str().to_owned();
+    let digest = manifest.digest();
     sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)")
         .bind(PROJECT_ENV_KEY).bind(&digest).bind(manifest.canonical_bytes())
         .execute(&mut project).await.unwrap();
@@ -795,7 +796,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     let mut invocation = ConnectionInvocation {
         origin: ConnectionOrigin {
             package_id: PALETTE_PACKAGE_ID.into(),
-            component_digest: DIGEST.into(),
+            component_digest: DIGEST.parse().unwrap(),
             component: "blob-put".into(),
             interface_version: "0.1.0".into(),
             operation: OPERATION.into(),
@@ -807,10 +808,10 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
             node_id: "store".into(),
             occurrence: 0,
             configuration: Arc::new(wiring.nodes["store"].params.clone()),
-            wiring_hash: wiring.wiring_hash().as_str().into(),
+            wiring_hash: wiring.wiring_hash(),
         }),
         package_id: PALETTE_PACKAGE_ID.into(),
-        component_digest: DIGEST.into(),
+        component_digest: DIGEST.parse().unwrap(),
         component: "blob-put".into(),
         operation: OPERATION.into(),
         closure: ConnectionExecutionClosure::Released,
@@ -844,7 +845,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     );
     let pinned = CandidateConnectionBinding {
         read_only: snapshot.read_only,
-        component_digest: DIGEST.into(),
+        component_digest: DIGEST.parse().unwrap(),
         store_alias: "labels".into(),
         requirement_hash: snapshot.requirement_hash.unwrap(),
         instance_id: snapshot.instance_id.unwrap(),
@@ -876,7 +877,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
         invocation.closure = ConnectionExecutionClosure::Candidate {
             manifest_digest: digest.clone(),
             environment: ENVIRONMENT.into(),
-            wiring_hash: invocation.entry.wiring().unwrap().wiring_hash.clone(),
+            wiring_hash: invocation.entry.wiring().unwrap().wiring_hash,
             component: invocation.component.clone(),
             interface_version: invocation.origin.interface_version.clone(),
             binding_world: Arc::new(

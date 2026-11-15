@@ -25,7 +25,7 @@ wamn-platform-install.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 wamn-broker = { workspace = true }
-wamn-digest.workspace = true
+wamn-digest = { workspace = true, features = ["sqlx"] }
 wit-parser = { workspace = true }
 wamn-kubernetes = { workspace = true }
 futures-util = { workspace = true }

@@ -143,7 +143,7 @@ impl FileHost {
             .execute(&mut writer)
             .await
             .expect("commit fixture transaction");
-        sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&release.manifest().canonical_bytes()).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest).bind(&release.manifest().canonical_bytes()).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
         let component = release
             .manifest()
             .components
@@ -156,8 +156,8 @@ impl FileHost {
         ] {
             let id: String=sqlx::query("SELECT c.id::text FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name=$1").bind(&name).fetch_one(&mut host.admin).await?.get(0);
             sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wasmcloud:blobstore/blobstore@0.1.0',$5)").bind(&PROJECT_ENV_KEY).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&alias).bind(&mode).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
-            sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
-            sqlx::query("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&alias).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
+            sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
+            sqlx::query("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&alias).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
         }
         let credentials = Arc::new(
             ConnectionCredentials::from_database(registry.reader.clone(), ORG).with_store(Arc::<
@@ -340,7 +340,9 @@ impl FileHost {
     }
 
     fn bind_operation(&self) -> anyhow::Result<AuthenticatedCaller> {
-        let digest = format!("sha256:{}", "a".repeat(64));
+        let digest = (format!("sha256:{}", "a".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
         self.postgres.bind_invocation(
             "file-operation",
             ConnectionInvocation {
@@ -738,7 +740,10 @@ async fn native_upload_streams_the_limit_and_hashes_the_stored_bytes() -> anyhow
     for count in std::iter::repeat_n(64 * 1024, size / (64 * 1024)).chain([size % (64 * 1024)]) {
         expected.update(vec![42; count]);
     }
-    assert_eq!(row.get::<String, _>(1), hex::encode(expected.finalize()));
+    assert_eq!(
+        row.get::<wamn_digest::Digest, _>(1),
+        wamn_digest::Digest::from(<[u8; 32]>::from(expected.finalize()))
+    );
     assert_eq!(
         row.get::<String, _>(2),
         format!("dev/_wamn_files/live/{id}")
@@ -756,8 +761,8 @@ async fn native_upload_streams_the_limit_and_hashes_the_stored_bytes() -> anyhow
     assert_eq!(stored.len(), size);
     assert!(stored.iter().all(|byte| *byte == 42));
     assert_eq!(
-        hex::encode(Sha256::digest(&stored)),
-        row.get::<String, _>(1)
+        wamn_digest::bytes_sha256(&stored),
+        row.get::<wamn_digest::Digest, _>(1)
     );
     Ok(())
 }

@@ -98,7 +98,7 @@ pub fn session(pair: &Ed25519KeyPair, kid: &str, roles: &[&str]) -> String {
 /// return the directory with the bundle digest. The directory lies under the
 /// system temporary directory, not the target directory, so the edge's
 /// `status.sock` in it stays within the Unix socket path limit (wamn-xvk3e).
-pub fn bundle(test: &str, public: &PublicSessionKey) -> (PathBuf, String) {
+pub fn bundle(test: &str, public: &PublicSessionKey) -> (PathBuf, wamn_digest::Digest) {
     static SOURCE: OnceLock<PathBuf> = OnceLock::new();
     let source = SOURCE.get_or_init(build_bundle);
     let directory = std::env::temp_dir().join(format!("edge-{test}-{}", std::process::id()));
@@ -132,14 +132,6 @@ fn build_bundle() -> PathBuf {
         .args(["build", "--locked", "--offline", "--release"])
         .args(["--target", "wasm32-wasip2", "-p", "http-route"]));
     let ingress = repository.join("apps/target/wasm32-wasip2/release/http_route.wasm");
-    let pin = std::fs::read_to_string(repository.join("guests/http-route/http_route.wasm.sha256"))
-        .expect("read the http-route pin");
-    let ingress_digest = bytes_sha256(&std::fs::read(&ingress).expect("read the route guest"));
-    assert_eq!(
-        Some(&ingress_digest["sha256:".len()..]),
-        pin.split_whitespace().next(),
-        "the http-route guest matches its pin"
-    );
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("edge-device-bundle-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);
@@ -173,7 +165,7 @@ fn run(command: &mut Command) -> Vec<u8> {
 
 /// The configuration of the edge over the bundle in `directory`, with no
 /// device.
-pub fn config(directory: &Path, digest: String) -> EdgeConfig {
+pub fn config(directory: &Path, digest: wamn_digest::Digest) -> EdgeConfig {
     EdgeConfig {
         target: TargetConfig {
             org: ORG.into(),

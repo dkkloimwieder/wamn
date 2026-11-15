@@ -15,7 +15,7 @@ pub struct DeployArgs {
     pub package: Option<PathBuf>,
     /// The published application release digest.
     #[arg(long)]
-    pub release: Option<String>,
+    pub release: Option<wamn_digest::Digest>,
     /// The application to deploy.
     #[arg(long)]
     pub application: String,
@@ -29,7 +29,7 @@ pub struct RollbackArgs {
     pub application: String,
     /// The published target release, to select an explicit release.
     #[arg(long)]
-    pub release: Option<String>,
+    pub release: Option<wamn_digest::Digest>,
     /// The target environment file. Rollback preserves schema.mode and other applications.
     #[arg(long)]
     pub env: PathBuf,
@@ -70,7 +70,7 @@ async fn deploy_source(args: DeployArgs, development: bool) -> anyhow::Result<()
             } else {
                 crate::operation_verbs::publish(&document, &package).await?
             };
-            published.1.to_string()
+            published.1
         }
         None => args
             .release

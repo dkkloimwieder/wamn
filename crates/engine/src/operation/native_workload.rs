@@ -255,7 +255,7 @@ pub(super) async fn load_native_workload(
         let mut component = Component {
             name: name.clone(),
             bytes: input.bytes.into(),
-            digest: Some(input.fact.component_digest.clone()),
+            digest: Some(input.fact.component_digest.to_string()),
             local_resources: spec.local_resources.clone(),
             ..Component::default()
         };

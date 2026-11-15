@@ -1,6 +1,5 @@
 //! Password enrollment uses the real system base grants under its non-superuser owner.
 
-use sha2::{Digest as _, Sha256};
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 
@@ -89,7 +88,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations(pool
         .unwrap();
     assert_ne!(first.secret(), second.secret());
     assert!(!format!("{first:?}").contains(first.secret()));
-    let expires: String = sqlx::query("SELECT to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM identity.password_tokens WHERE token_hash = $1").bind(&Sha256::digest(first.secret().as_bytes()).to_vec()).fetch_one(&mut client).await.unwrap().get(0);
+    let expires: String = sqlx::query("SELECT to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM identity.password_tokens WHERE token_hash = $1").bind(wamn_digest::bytes_sha256(first.secret().as_bytes())).fetch_one(&mut client).await.unwrap().get(0);
     assert_eq!(first.expires_at(), expires);
     assert_eq!(
         enroll_password(&mut client, &work, other.id(), first.secret(), password())
@@ -175,10 +174,8 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations(pool
         rows.iter()
             .all(|r| r.get::<bool, _>(1) && r.get::<&str, _>(2) == actor().to_string().as_str())
     );
-    assert!(
-        rows.iter()
-            .any(|r| r.get::<Vec<u8>, _>(0) == Sha256::digest(first.secret().as_bytes()).to_vec())
-    );
+    assert!(rows.iter().any(|r| r.get::<wamn_digest::Digest, _>(0)
+        == wamn_digest::bytes_sha256(first.secret().as_bytes())));
     disable_principal(&mut client, user.id(), &mut AuthDrops::default())
         .await
         .unwrap();
@@ -252,7 +249,7 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse(pool: sq
             .cause(),
         Some(RefusalCause::NoSuchAccount)
     );
-    let error = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'unknown-purpose', clock_timestamp() + interval '1 hour')").bind(&vec![1u8;32]).bind(&user.id().to_string().as_str()).execute(&mut client).await.map(|result| result.rows_affected()).unwrap_err();
+    let error = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'unknown-purpose', clock_timestamp() + interval '1 hour')").bind(wamn_digest::Digest::from([1u8; 32])).bind(&user.id().to_string().as_str()).execute(&mut client).await.map(|result| result.rows_affected()).unwrap_err();
     assert_eq!(
         error
             .as_database_error()
@@ -260,7 +257,7 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse(pool: sq
             .as_deref(),
         Some("23514")
     );
-    let error = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'invitation', clock_timestamp() + interval '1 hour')").bind(&vec![2u8;32]).bind(&service.id().to_string().as_str()).execute(&mut client).await.map(|result| result.rows_affected()).unwrap_err();
+    let error = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'invitation', clock_timestamp() + interval '1 hour')").bind(wamn_digest::Digest::from([2u8; 32])).bind(&service.id().to_string().as_str()).execute(&mut client).await.map(|result| result.rows_affected()).unwrap_err();
     assert_eq!(
         error
             .as_database_error()

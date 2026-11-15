@@ -218,10 +218,8 @@ pub(super) fn resource_entry(
         .values()
         .get("platformUi")
         .and_then(Value::as_str)
-        .unwrap_or("");
-    if !platform_ui.is_empty() {
-        wamn_package_artifact::ensure_digest(platform_ui)?;
-    }
+        .map(str::parse::<wamn_digest::Digest>)
+        .transpose()?;
     let config = json!({"org":org,"http_addr":"0.0.0.0:80","public_origin":format!("{scheme}://{}",document.route_hosts.control),
         "database":connection(login,wamn_control_provision::org_workload_secret_name(WorkloadRoleFamily::Control,org)),
         "apply_database":connection("wamn_apply".into(),"wamn-apply".into()),

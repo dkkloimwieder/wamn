@@ -601,9 +601,9 @@ async fn success(
     let record = sqlx::query("SELECT principal_id::text, token_hash, label, extract(epoch FROM expires_at-created_at)::bigint, created_by::text, updated_by::text FROM identity.pats WHERE token_prefix=$1").bind(&value["token_prefix"].as_str().expect("token prefix")).fetch_one(&mut *system)
         .await.expect_redacted("persisted PAT record");
     assert_eq!(record.get::<String, _>(0), principal.to_string().as_str());
-    assert!(
-        record.get::<String, _>(1) != token,
-        "storage retains no raw PAT"
+    assert_eq!(
+        record.get::<wamn_digest::Digest, _>(1),
+        wamn_digest::bytes_sha256(token.as_bytes())
     );
     assert_eq!(record.get::<String, _>(2), label.trim());
     assert_eq!(record.get::<i64, _>(3), 3600);

@@ -63,11 +63,11 @@ pub async fn drain(
 }
 
 /// Loaded application and digest membership for the database's unfinished-run boundary.
-pub fn loaded(residency: &[ReleaseResidency]) -> BTreeMap<(String, String), usize> {
+pub fn loaded(residency: &[ReleaseResidency]) -> BTreeMap<(String, wamn_digest::Digest), usize> {
     let mut live = BTreeMap::new();
     for release in residency.iter().filter(|release| release.loaded) {
         *live
-            .entry((release.application.clone(), release.manifest_digest.clone()))
+            .entry((release.application.clone(), release.manifest_digest))
             .or_default() += 1;
     }
     live
@@ -124,7 +124,7 @@ SELECT run_id, manifest_digest FROM wamn_run.runs \
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Stranded {
     pub run_id: String,
-    pub manifest_digest: String,
+    pub manifest_digest: wamn_digest::Digest,
 }
 
 /// The runs of the environment pinned to a release outside `live`.
@@ -137,11 +137,11 @@ pub async fn stranded(
     project_env_key: &str,
     environment: &str,
     applications: Option<&[String]>,
-    live: &BTreeMap<(String, String), usize>,
+    live: &BTreeMap<(String, wamn_digest::Digest), usize>,
 ) -> anyhow::Result<Vec<Stranded>> {
-    let (loaded_applications, loaded_digests): (Vec<&str>, Vec<&str>) = live
+    let (loaded_applications, loaded_digests): (Vec<&str>, Vec<wamn_digest::Digest>) = live
         .keys()
-        .map(|(application, digest)| (application.as_str(), digest.as_str()))
+        .map(|(application, digest)| (application.as_str(), *digest))
         .unzip();
     let mut client = super::analyse::connect_project(project_url).await?;
     let mut transaction = client

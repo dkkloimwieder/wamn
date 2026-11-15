@@ -233,7 +233,7 @@ async fn authority(journey: &Journey<'_>) -> anyhow::Result<Value> {
 
 pub(super) async fn exercise(
     journey: &Journey<'_>,
-    artifacts: &BTreeMap<&str, String>,
+    artifacts: &BTreeMap<&str, wamn_digest::Digest>,
 ) -> anyhow::Result<()> {
     let selected = inputs(journey.run)?;
     journey
@@ -258,7 +258,7 @@ pub(super) async fn exercise(
                         "apply",
                         app,
                         "--release",
-                        &artifacts[key],
+                        &artifacts[key].to_string(),
                         "--env",
                     ])
                     .arg(&journey.file),

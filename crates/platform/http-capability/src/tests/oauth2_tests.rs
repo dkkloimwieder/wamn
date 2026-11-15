@@ -360,7 +360,7 @@ impl Fixture {
             )
             .unwrap(),
         );
-        let manifest_digest = release.release().manifest_digest.as_str();
+        let manifest_digest = &release.release().manifest_digest;
         let mut projects = HashMap::new();
         let mut primary_database = None;
         for project in ["project-a", "project-b"] {
@@ -782,6 +782,7 @@ fn token(number: u8, expires_in: Option<u64>) -> (u16, String) {
 mod invocation;
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn claimed_requests_stop_at_the_invocation_deadline_or_cancellation() {
     use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
     use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation};
@@ -818,7 +819,7 @@ async fn claimed_requests_stop_at_the_invocation_deadline_or_cancellation() {
         let directory = tempfile::tempdir().unwrap();
         let component = plugin.release.components().first().unwrap();
         std::fs::write(
-            local_component_path(directory.path(), &component.component_digest).unwrap(),
+            local_component_path(directory.path(), &component.component_digest),
             bytes,
         )
         .unwrap();
@@ -850,8 +851,8 @@ async fn claimed_requests_stop_at_the_invocation_deadline_or_cancellation() {
         if let InvocationEntry::Wiring(position) = &mut connection.entry {
             position.package_id = "app".into();
         }
-        connection.component_digest = component.component_digest.clone();
-        connection.origin.component_digest = component.component_digest.clone();
+        connection.component_digest = component.component_digest;
+        connection.origin.component_digest = component.component_digest;
         let facts = NativeFacts::entry(
             NodeAcquisition {
                 identity: host.identity("acme--dev--project-a", Some(host.release_identity())),
@@ -948,6 +949,7 @@ async fn claimed_requests_stop_at_the_invocation_deadline_or_cancellation() {
 }
 
 #[tokio::test]
+#[ignore = "requires: postgres"]
 async fn invocation_deadline_after_response_headers_keeps_response_lost() {
     let _lock = wamn_test_postgres::lock();
     let mut endpoint = invocation::Endpoint::start().await;

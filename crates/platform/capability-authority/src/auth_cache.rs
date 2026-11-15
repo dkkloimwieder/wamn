@@ -29,7 +29,6 @@ use std::time::{Duration, SystemTime};
 use wamn_broker::Publisher;
 
 use async_nats::jetstream::kv::Store;
-use sha2::{Digest as _, Sha256};
 use wamn_broker::auth_changes::{
     BUCKET, IDENTITY_TOKEN, principal_key, project_env_key as environment_status_key,
 };
@@ -74,10 +73,10 @@ struct Token {
 }
 
 struct CredentialDeadline;
-impl moka::Expiry<[u8; 32], Arc<Token>> for CredentialDeadline {
+impl moka::Expiry<wamn_digest::Digest, Arc<Token>> for CredentialDeadline {
     fn expire_after_create(
         &self,
-        _: &[u8; 32],
+        _: &wamn_digest::Digest,
         token: &Arc<Token>,
         _: std::time::Instant,
     ) -> Option<Duration> {
@@ -91,7 +90,7 @@ impl moka::Expiry<[u8; 32], Arc<Token>> for CredentialDeadline {
 }
 
 struct Tokens {
-    tokens: moka::sync::Cache<[u8; 32], Arc<Token>>,
+    tokens: moka::sync::Cache<wamn_digest::Digest, Arc<Token>>,
     /// The local generation, advanced by identity invalidations and watch resets.
     identity_revision: u64,
 }
@@ -119,8 +118,8 @@ impl std::fmt::Debug for AuthCache {
     }
 }
 
-fn digest(token: &str) -> [u8; 32] {
-    Sha256::digest(token.as_bytes()).into()
+fn digest(token: &str) -> wamn_digest::Digest {
+    wamn_digest::bytes_sha256(token.as_bytes())
 }
 
 impl AuthCache {

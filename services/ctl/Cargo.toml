@@ -14,7 +14,7 @@ path = "src/bin/wamn.rs"
 wamn-postgres.workspace = true
 wamn-build.workspace = true
 wamn-broker = { workspace = true }
-wamn-digest.workspace = true
+wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-identity-client = { workspace = true }
 anyhow = { workspace = true }
 # `string`: `wamn-0h0g.22.16` derives the workload-generation flag set from the

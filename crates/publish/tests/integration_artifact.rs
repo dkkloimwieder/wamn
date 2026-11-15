@@ -112,7 +112,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     let row = sqlx::query("SELECT digest, count(*) OVER (), exports FROM registry.integration_type_version WHERE integration_type='fixture'").fetch_one(&mut client).await.unwrap();
-    assert_eq!(row.get::<String, _>(0), built.digest);
+    assert_eq!(row.get::<wamn_digest::Digest, _>(0), built.digest);
     assert_eq!(row.get::<i64, _>(1), 1);
     let repository = Repository::open(&configuration, &built.digest).unwrap();
     let (_, digest) = repository.manifest().await.unwrap().unwrap();
@@ -169,7 +169,10 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
         .iter()
         .find(|entry| entry["code"] == built.code)
         .unwrap();
-    assert_eq!(published["versions"][0]["digest"], built.digest);
+    assert_eq!(
+        published["versions"][0]["digest"],
+        serde_json::json!(built.digest)
+    );
 }
 
 #[sqlx::test(migrations = false)]

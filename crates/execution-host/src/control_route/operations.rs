@@ -20,7 +20,7 @@ struct Request {
     #[serde(default)]
     application: Option<String>,
     #[serde(default)]
-    release: Option<String>,
+    release: Option<wamn_digest::Digest>,
     #[serde(default)]
     job: Option<String>,
 }
@@ -204,11 +204,11 @@ impl ControlRoutes<'_> {
             .context("installed operation worker is absent")?;
         let image = worker.image.as_str();
         let (_, digest) = image
-            .rsplit_once("@sha256:")
+            .rsplit_once('@')
             .context("operation image is not pinned")?;
-        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(anyhow::anyhow!("operation image digest is invalid").into());
-        }
+        digest
+            .parse::<wamn_digest::Digest>()
+            .map_err(anyhow::Error::from)?;
         let name = format!("op-{}", uuid::Uuid::new_v4());
         let mut job = manifest(
             operation,
@@ -251,17 +251,6 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
             || application.contains(['\0', '\n', '\r']))
     {
         return Err(invalid("application"));
-    }
-    if let Some(release) = &request.release {
-        let valid = release.strip_prefix("sha256:").is_some_and(|digest| {
-            digest.len() == 64
-                && digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        });
-        if !valid {
-            return Err(invalid("release"));
-        }
     }
     match operation {
         Operation::Deploy if request.release.is_none() => {
@@ -315,9 +304,10 @@ fn manifest(
         "--env",
         request.env.as_str(),
     ];
+    let release = request.release.map(|digest| digest.to_string());
     for (flag, value) in [
         ("--application", request.application.as_deref()),
-        ("--release", request.release.as_deref()),
+        ("--release", release.as_deref()),
     ] {
         if let Some(value) = value {
             arguments.extend([flag, value]);

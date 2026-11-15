@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde_json::Value;
-use sha2::{Digest as _, Sha256};
 use wamn_catalog::{
     AttachmentAuthPolicy, AttachmentRef, AttachmentType, OperationType, ServedAttachment,
     ServingManifest, parse_attachment_auth_policy,
@@ -548,7 +547,7 @@ fn route_type(
 /// `x-wamn-csrf` header must hash to that JWT claim.
 pub fn require_csrf(
     requires_csrf: bool,
-    claims_csrf: Option<&str>,
+    claims_csrf: Option<&wamn_digest::Digest>,
     headers: &[Header],
 ) -> Result<(), AuthRejection> {
     let claim = claims_csrf.ok_or_else(unauthorized)?;
@@ -562,15 +561,16 @@ pub fn require_csrf(
     if values.next().is_some() {
         return Err(unauthorized());
     }
-    let digest = hex::encode(Sha256::digest(value.value.as_bytes()));
-    // Constant time over the equal-length case; the JWT claim is always 64 hex.
+    let digest = wamn_digest::bytes_sha256(value.value.as_bytes());
+    // Compare fixed-size digest bytes in constant time.
     let difference = digest
-        .bytes()
-        .zip(claim.bytes())
+        .as_bytes()
+        .iter()
+        .zip(claim.as_bytes())
         .fold(0_u8, |difference, (left, right)| {
             difference | (left ^ right)
         });
-    if digest.len() != claim.len() || difference != 0 {
+    if difference != 0 {
         return Err(unauthorized());
     }
     Ok(())
@@ -785,14 +785,14 @@ mod tests {
     #[test]
     fn csrf_requires_the_claim_and_one_header_that_hashes_to_it() {
         let token = "csrf-token-value";
-        let claim = hex::encode(Sha256::digest(token.as_bytes()));
+        let claim = wamn_digest::bytes_sha256(token.as_bytes());
         require_csrf(true, Some(&claim), &[header("X-Wamn-Csrf", token)])
             .expect("a matching header passes");
         for (claims_csrf, headers) in [
-            (Some(claim.as_str()), vec![]),
-            (Some(claim.as_str()), vec![header("x-wamn-csrf", "wrong")]),
+            (Some(&claim), vec![]),
+            (Some(&claim), vec![header("x-wamn-csrf", "wrong")]),
             (
-                Some(claim.as_str()),
+                Some(&claim),
                 vec![header("x-wamn-csrf", token), header("x-wamn-csrf", token)],
             ),
             (None, vec![header("x-wamn-csrf", token)]),
@@ -805,7 +805,7 @@ mod tests {
 
     #[test]
     fn csrf_not_required_skips_the_header_but_still_needs_the_claim() {
-        let claim = hex::encode(Sha256::digest(b"csrf-token-value"));
+        let claim = wamn_digest::bytes_sha256(b"csrf-token-value");
         require_csrf(false, Some(&claim), &[]).expect("no header is needed");
         assert_unauthorized(
             &require_csrf(false, None, &[])

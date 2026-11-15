@@ -335,7 +335,7 @@ pub fn emit_ts_package_json(client_package: &str, version: &str) -> GeneratedFil
 }
 
 /// Hash only row field names, contract types and nullability, in stable order.
-fn shape_digest(model: &ModelIr) -> String {
+fn shape_digest(model: &ModelIr) -> wamn_digest::Digest {
     fn fields_shape(fields: &[FieldIr]) -> serde_json::Value {
         let mut fields: Vec<_> = fields.iter().collect();
         fields.sort_by(|left, right| left.path.cmp(&right.path));

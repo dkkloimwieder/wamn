@@ -169,6 +169,11 @@ impl ControlRoutes<'_> {
         let health = self
             .connection_health
             .ok_or_else(|| invalid("integration_type"))?;
+        let digest = version["digest"]
+            .as_str()
+            .map(str::parse::<wamn_digest::Digest>)
+            .transpose()
+            .map_err(anyhow::Error::from)?;
         let result = health
             .probe(
                 context["integration_type"]
@@ -177,7 +182,7 @@ impl ControlRoutes<'_> {
                 context["runtime_type"]
                     .as_str()
                     .ok_or_else(|| invalid("integration_type"))?,
-                version["digest"].as_str(),
+                digest.as_ref(),
                 &request["parameters"],
                 auth,
                 credential.as_deref(),

@@ -14,7 +14,7 @@ use wamn_http_capability::{self, transport::HttpTransport};
 pub struct ConnectionHealth {
     transport: Arc<HttpTransport>,
     registry: Option<(PackageRegistry, RegistryCredentialSource)>,
-    bytes: Cache<String, Arc<Vec<u8>>>,
+    bytes: Cache<wamn_digest::Digest, Arc<Vec<u8>>>,
 }
 
 impl std::fmt::Debug for ConnectionHealth {
@@ -46,7 +46,7 @@ impl ConnectionHealth {
         &self,
         integration_type: &str,
         runtime: &str,
-        digest: Option<&str>,
+        digest: Option<&wamn_digest::Digest>,
         parameters: &serde_json::Value,
         auth_type: &str,
         credential: Option<&str>,
@@ -82,7 +82,7 @@ impl ConnectionHealth {
     async fn guest(
         &self,
         code: &str,
-        digest: Option<&str>,
+        digest: Option<&wamn_digest::Digest>,
         parameters: &serde_json::Value,
         auth_type: &str,
         credential: Option<&str>,
@@ -106,7 +106,7 @@ impl ConnectionHealth {
             let bytes = Arc::new(
                 wamn_package_artifact::integration::pull_from(&repository, code, digest).await?,
             );
-            self.bytes.insert(digest.into(), Arc::clone(&bytes));
+            self.bytes.insert(*digest, Arc::clone(&bytes));
             bytes
         };
         let binding = IntegrationBinding::new(

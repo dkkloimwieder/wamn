@@ -557,7 +557,8 @@ pub async fn lane(worktree: &Path, print_only: bool) -> anyhow::Result<()> {
         ensure!(status.success(), "initialize submodules: {status}");
     }
     let digest = wamn_digest::bytes_sha256(worktree.as_os_str().as_encoded_bytes());
-    let key = &digest[7..23];
+    let hex = digest.hex();
+    let key = &hex[..16];
     let home = std::env::var("HOME")?;
     println!(
         "export CARGO_TARGET_DIR='{}'\nexport WAMN_CHECKOUT_KEY='{key}'",

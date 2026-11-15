@@ -131,7 +131,7 @@ pub(super) fn plan(document: &EnvironmentDocument, authorities: &Authorities) ->
         .as_ref()
         .and_then(Revision::manifest_digest);
     match (&authorities.release, current) {
-        (Some(release), Some(current)) if release.digest == current => {
+        (Some(release), Some(current)) if release.digest == *current => {
             plan.push(format!("reapply release {current} with Helm"));
         }
         (Some(release), _) => plan.push(format!("stage and roll out release {}", release.digest)),

@@ -9,6 +9,7 @@ license.workspace = true
 test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-capability-authority/test-util", "wamn-connections/test-util", "wamn-postgres-capability/test-util"]
 
 [dependencies]
+wamn-digest = { workspace = true, features = ["sqlx"] }
 anyhow = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
@@ -54,7 +55,6 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 wat = "=1.254.2"
-wamn-digest.workspace = true
 wamn-execution-host.workspace = true
 wamn-blobstore.workspace = true
 hyper = { workspace = true, features = ["server"] }

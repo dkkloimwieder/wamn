@@ -56,7 +56,7 @@ pub struct Observed {
 pub struct RevisionStatus {
     pub number: u32,
     pub chart: String,
-    pub manifest_digest: Option<String>,
+    pub manifest_digest: Option<wamn_digest::Digest>,
 }
 
 /// Read canonical selections even when runtime or database state is unavailable.
@@ -162,7 +162,7 @@ pub async fn status(
             let revision = read_revision(platform, &release_name)
                 .await?
                 .map(|revision| RevisionStatus {
-                    manifest_digest: revision.manifest_digest().map(str::to_owned),
+                    manifest_digest: revision.manifest_digest().copied(),
                     number: revision.number,
                     chart: revision.chart,
                 });
@@ -208,7 +208,7 @@ pub async fn status(
                     .and_then(|observed| observed.revision.as_ref())
                     .and_then(|revision| revision.manifest_digest.as_ref())
                     .map_or(super::document::DeclaredRelease::None, |digest| {
-                        super::document::DeclaredRelease::Digest(digest.clone())
+                        super::document::DeclaredRelease::Digest(*digest)
                     }),
                 hostname: selection.hostname.clone(),
                 observed,
@@ -232,7 +232,7 @@ pub async fn status(
 async fn stranded_runs(
     platform: &Platform,
     triple: &Triple,
-    live: &BTreeMap<(String, String), usize>,
+    live: &BTreeMap<(String, wamn_digest::Digest), usize>,
     admin_url: &str,
 ) -> anyhow::Result<Vec<Stranded>> {
     // A lifecycle verb: the provisioning credential, as the install Jobs use.

@@ -24,9 +24,8 @@ impl RegistrySource {
         &self,
         reference: &oci_client::Reference,
         auth: &RegistryAuth,
-        digest: &str,
+        digest: &wamn_digest::Digest,
     ) -> anyhow::Result<()> {
-        crate::ensure_digest(digest)?;
         let http = crate::http_client::HttpClient::with_extra_roots(&self.ca_bundles)?;
         crate::registry_transport::delete_manifest(
             &http,

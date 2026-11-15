@@ -17,7 +17,7 @@ wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-build.workspace = true
 wamn-broker = { workspace = true }
-wamn-digest.workspace = true
+wamn-digest = { workspace = true, features = ["sqlx"] }
 wit-component = { workspace = true }
 wit-parser = { workspace = true }
 anyhow = { workspace = true }

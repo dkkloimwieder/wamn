@@ -37,18 +37,17 @@ struct PackageInput {
     root: PathBuf,
     component: &'static str,
     component_bytes: PathBuf,
-    expected_component_digest: Option<String>,
+    expected_component_digest: Option<wamn_digest::Digest>,
 }
 
 /// The base component digest, read from the ONE file that authors it.
 ///
 /// wamn-10yt.50: this test used to restate the same `sha256:` literal the
 /// overlay manifest pins, which is a third copy of a value that must be one.
-fn base_component_digest() -> String {
+fn base_component_digest() -> wamn_digest::Digest {
     let base = format!("{}@{}", wamn_fixture_package::PACKAGE_ID, package_version());
     crate::component_declaration::authored_base_digests(&wamn_fixture_package::overlay_root())
         .expect("the overlay manifest authors its base digest")[base.as_str()]
-    .to_string()
 }
 
 fn packages() -> [PackageInput; 2] {
@@ -80,7 +79,9 @@ fn packages() -> [PackageInput; 2] {
     ]
 }
 
-fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, ReleaseComponents) {
+fn admit_components(
+    inputs: &[PackageInput],
+) -> (BTreeMap<String, wamn_digest::Digest>, ReleaseComponents) {
     let engine = wamn_engine::build_engine(&[]).expect("build the production admission engine");
     let mut digests = BTreeMap::new();
     let mut release_components = ReleaseComponents::default();
@@ -117,7 +118,7 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
                     "wamn:node".to_owned(),
                     "wamn:postgres".to_owned(),
                 ]),
-                base_digests: base_digests.values().map(ToString::to_string).collect(),
+                base_digests: base_digests.values().copied().collect(),
             },
         )
         .unwrap_or_else(|error| panic!("admit {}@{} component: {error}", input.id, input.version));
@@ -125,10 +126,7 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
             facts.connections.is_empty(),
             "the POC application components declare no portable store aliases"
         );
-        digests.insert(
-            input.id.to_owned(),
-            facts.component.component_digest.clone(),
-        );
+        digests.insert(input.id.to_owned(), facts.component.component_digest);
         release_components
             .insert(facts.component, facts.connections)
             .expect("each package names its component once");
@@ -250,7 +248,7 @@ fn base_and_overlay_project_admitted_routes() {
     );
     for component in &first.manifest.components {
         assert_eq!(
-            component.descriptor.component_digest.as_str(),
+            component.descriptor.component_digest,
             admitted_digests[component.package_id.as_str()]
         );
     }

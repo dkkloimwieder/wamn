@@ -239,7 +239,7 @@ fn require_guest(repository: &Path, name: &str, file: &Path, crate_manifest: &Pa
         let expected = text.split_whitespace().next().unwrap_or_default();
         let actual = bytes_sha256(&bytes);
         ensure!(
-            actual.strip_prefix("sha256:") == Some(expected),
+            actual == format!("sha256:{expected}").parse::<wamn_digest::Digest>()?,
             "built guest {name} is {actual} but {} pins sha256:{expected}. If the change is intended, write the new digest to the pin.",
             pin.display()
         );
@@ -301,7 +301,7 @@ fn component_file(
     output: &Path,
     build_record: &BuildRecord,
     name: &str,
-) -> Result<(PathBuf, String)> {
+) -> Result<(PathBuf, wamn_digest::Digest)> {
     let entry = build_record
         .outputs
         .components

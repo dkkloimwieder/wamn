@@ -112,10 +112,7 @@ pub(in super::super) fn resolve_route_methods(
             "method".to_owned(),
             serde_json::Value::String(method.to_owned()),
         );
-        attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
-            wamn_digest::canonical_json_sha256(&attachment.definition),
-        )
-        .expect("the shared canonicalizer emits a valid definition hash");
+        attachment.definition_hash = wamn_digest::canonical_json_sha256(&attachment.definition);
     }
     Ok(resolved)
 }

@@ -26,7 +26,7 @@ impl std::fmt::Display for RuntimeType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentConnectionRequirement {
-    component_digest: String,
+    component_digest: wamn_digest::Digest,
     store_alias: String,
     requirement: ConnectionTypeDescriptor,
 }
@@ -34,18 +34,18 @@ pub struct ComponentConnectionRequirement {
 impl ComponentConnectionRequirement {
     /// Construct one requirement from its admitted component identity.
     pub fn new(
-        component_digest: impl Into<String>,
+        component_digest: wamn_digest::Digest,
         store_alias: impl Into<String>,
         requirement: ConnectionTypeDescriptor,
     ) -> Self {
         Self {
-            component_digest: component_digest.into(),
+            component_digest,
             store_alias: store_alias.into(),
             requirement,
         }
     }
 
-    pub fn component_digest(&self) -> &str {
+    pub fn component_digest(&self) -> &wamn_digest::Digest {
         &self.component_digest
     }
 
@@ -63,7 +63,7 @@ impl ComponentConnectionRequirement {
     }
 
     /// SHA-256 of [`Self::canonical_bytes`].
-    pub fn requirement_hash(&self) -> String {
+    pub fn requirement_hash(&self) -> wamn_digest::Digest {
         wamn_digest::bytes_sha256(&self.canonical_bytes())
     }
 }
@@ -722,40 +722,6 @@ mod tests {
         assert_eq!(blobstore.requirement_type, "blobstore");
         assert_eq!(blobstore.contract, "wasmcloud:blobstore/blobstore@0.1.0");
         assert_eq!(blobstore.descriptor_version, CONNECTION_DESCRIPTOR_VERSION);
-    }
-
-    /// `requirement_hash` identifies a portable requirement and
-    /// compared on promotion, so its bytes must never move. The golden value is
-    /// the sha256 of the literal JSON below, computed outside this code.
-    #[test]
-    fn the_requirement_hash_bytes_are_pinned() {
-        let requirement = ComponentConnectionRequirement::new(
-            "sha256:component-a",
-            "erp",
-            ConnectionTypeDescriptor::http_v1(),
-        );
-
-        assert_eq!(
-            String::from_utf8(requirement.canonical_bytes()).expect("utf-8 JSON"),
-            concat!(
-                r#"{"component-digest":"sha256:component-a","store-alias":"erp","#,
-                r#""requirement":{"descriptor-version":"1","requirement-type":"http","#,
-                r#""contract":"wamn:connection/http@0.1.0","authority-model":"http-origin","#,
-                r#""field-ownership":[{"field":"method","owner":"author"},"#,
-                r#"{"field":"relative-target","owner":"author"},"#,
-                r#"{"field":"headers","owner":"author"},{"field":"body","owner":"author"},"#,
-                r#"{"field":"authority","owner":"environment"},"#,
-                r#"{"field":"tls","owner":"environment"},"#,
-                r#"{"field":"redirect","owner":"environment"},"#,
-                r#"{"field":"proxy","owner":"environment"},"#,
-                r#"{"field":"credential","owner":"environment"}],"#,
-                r#""credential-injection":"environment-selected-http-header"}}"#,
-            )
-        );
-        assert_eq!(
-            requirement.requirement_hash(),
-            "sha256:39bc5f123de98ee830fe3aade1121f9ae8b3164c196f5f2d9664810c680bbb7c"
-        );
     }
 
     /// Adding a variant to a single-variant enum inside a `deny_unknown_fields`

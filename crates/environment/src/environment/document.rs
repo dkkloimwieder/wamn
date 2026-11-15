@@ -90,10 +90,10 @@ pub async fn write_revocation_configuration(
 /// A request to change the release of one application.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ReleaseChange<'a> {
-    Deploy(&'a str),
+    Deploy(&'a wamn_digest::Digest),
     Configure,
     Stop,
-    Rollback(Option<&'a str>),
+    Rollback(Option<&'a wamn_digest::Digest>),
 }
 
 /// Read protected configuration as the provisioning component.
@@ -176,7 +176,7 @@ impl EnvironmentDocument {
                         ApplicationConfiguration {
                             release: match &application.current {
                                 DeclaredRelease::None => None,
-                                DeclaredRelease::Digest(digest) => Some(digest.clone()),
+                                DeclaredRelease::Digest(digest) => Some(*digest),
                             },
                             hostname: application.hostname.clone(),
                             revocation_seconds: application.revocation_seconds,
@@ -507,15 +507,6 @@ mod tests {
                     .client
                     .as_mut()
                     .unwrap()
-                    .web = "latest".into()
-            },
-            |c: &mut configuration::EnvironmentConfiguration| {
-                c.applications
-                    .get_mut("wms")
-                    .unwrap()
-                    .client
-                    .as_mut()
-                    .unwrap()
                     .package
                     .clear()
             },
@@ -554,14 +545,6 @@ mod tests {
                 transaction.rollback().await?;
             }
         }
-        let mut transaction =
-            crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-        assert!(
-            configuration::write_selection(&mut transaction, &triple, "wms", Some("latest"), None)
-                .await
-                .is_err()
-        );
-        transaction.rollback().await?;
         // SQL exercises constraints that the Rust input types cannot express.
         for &statement in wamn_registry::test_util::invalid_configuration_sql() {
             let mut transaction =

@@ -82,7 +82,7 @@ async fn credential(
     sqlx::query(
         "INSERT INTO identity.renewal_credentials (token_hash,login_id) VALUES ($1,$2::text::uuid)",
     )
-    .bind(&digest)
+    .bind(digest)
     .bind(&login.id)
     .execute(&mut **tx)
     .await
@@ -135,7 +135,7 @@ async fn lookup(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     issuer: &str,
     audience: &str,
-    digest: &[u8],
+    digest: &wamn_digest::Digest,
 ) -> Result<Option<(Login, bool, bool)>, IdentityError> {
     let Some(row) = sqlx::query("SELECT l.principal_id::text FROM identity.renewal_credentials c JOIN identity.password_logins l ON l.id=c.login_id \
          WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3").bind(digest).bind(issuer).bind(audience).fetch_optional(&mut **tx).await.map_err(|error| database(&error))? else { return Ok(None) };
@@ -250,7 +250,7 @@ pub async fn rotate_login(
     sqlx::query(
         "UPDATE identity.renewal_credentials SET consumed_at=clock_timestamp() WHERE token_hash=$1",
     )
-    .bind(&digest)
+    .bind(digest)
     .execute(&mut **tx)
     .await
     .map(|result| result.rows_affected())

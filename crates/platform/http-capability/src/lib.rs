@@ -331,18 +331,18 @@ impl ConnectionHttp {
                 instance: connection.to_string().into(),
             },
             package: invocation.package_id.clone().into(),
-            component_digest: invocation.component_digest.clone().into(),
+            component_digest: invocation.component_digest,
             requirement: request.requirement.clone().into(),
             binding_hash: snapshot
                 .validation_hash
-                .as_deref()
+                .as_ref()
                 .ok_or(ConnectionError::Unbound)?
-                .into(),
+                .to_owned(),
             definition_hash: snapshot
                 .definition_hash
-                .as_deref()
+                .as_ref()
                 .ok_or(ConnectionError::CredentialUnavailable)?
-                .into(),
+                .to_owned(),
             generation,
         };
         let configuration = facts
@@ -1149,8 +1149,10 @@ mod tests {
         socket.local_addr().expect("interface address").ip()
     }
 
-    fn digest(byte: char) -> String {
+    fn digest(byte: char) -> wamn_digest::Digest {
         format!("sha256:{}", byte.to_string().repeat(64))
+            .parse()
+            .unwrap()
     }
 
     fn invocation() -> ConnectionInvocation {
@@ -1225,11 +1227,8 @@ mod tests {
     }
 
     /// The hash of the fixture wiring's graph, the one the manifest carries.
-    fn fixture_wiring_hash() -> String {
-        wamn_catalog::fixture_graph("orders", 3)
-            .wiring_hash()
-            .as_str()
-            .to_owned()
+    fn fixture_wiring_hash() -> wamn_digest::Digest {
+        wamn_catalog::fixture_graph("orders", 3).wiring_hash()
     }
 
     fn snapshot() -> ConnectionEffectSnapshot {
@@ -1276,16 +1275,16 @@ mod tests {
         let mut admitted = invocation();
         let binding = CandidateConnectionBinding {
             read_only: snapshot.read_only,
-            component_digest: admitted.component_digest.clone(),
+            component_digest: admitted.component_digest,
             store_alias: "erp".into(),
-            requirement_hash: snapshot.requirement_hash.clone().unwrap(),
+            requirement_hash: snapshot.requirement_hash.unwrap(),
             instance_id: snapshot.instance_id.clone().unwrap(),
             instance_revision: snapshot.instance_revision.unwrap(),
             requirement_type: snapshot.requirement_type.clone().unwrap(),
             contract: snapshot.contract.clone().unwrap(),
-            validation_hash: snapshot.validation_hash.clone().unwrap(),
+            validation_hash: snapshot.validation_hash.unwrap(),
             generation: snapshot.generation.unwrap(),
-            definition_hash: snapshot.definition_hash.clone().unwrap(),
+            definition_hash: snapshot.definition_hash.unwrap(),
             credential_set_handle: snapshot.credential_handle.clone(),
         };
         admitted.closure = ConnectionExecutionClosure::Candidate {
@@ -1344,7 +1343,7 @@ mod tests {
                             .interface_version
                             .clone()
                             .expect("interface version"),
-                        invocation.component_digest.clone(),
+                        invocation.component_digest,
                     );
                     descriptor.operations = BTreeMap::from([(
                         snapshot.operation.expect("operation"),

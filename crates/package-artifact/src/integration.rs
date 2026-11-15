@@ -7,7 +7,7 @@ use oci_client::manifest::OciImageManifest;
 use serde::Deserialize;
 use wamn_catalog::RuntimeType;
 
-use crate::{PackageRegistry, Repository, bytes_sha256, ensure_digest, registry_pull};
+use crate::{PackageRegistry, Repository, bytes_sha256, registry_pull};
 
 /// OCI artifact type for one integration.
 pub const ARTIFACT_TYPE: &str = "application/vnd.wamn.integration.v1";
@@ -21,7 +21,8 @@ pub const WASM_TYPE: &str = "application/wasm";
 struct IntegrationConfig {
     code: String,
     runtime_type: RuntimeType,
-    source_digest: String,
+    #[serde(rename = "source_digest")]
+    _source_digest: wamn_digest::Digest,
 }
 
 /// Pull exact component bytes for the named integration and full artifact digest.
@@ -29,8 +30,11 @@ struct IntegrationConfig {
 /// # Errors
 ///
 /// Refuses absent artifacts, another integration, and altered manifests or blobs.
-pub async fn pull(registry: &PackageRegistry, code: &str, digest: &str) -> anyhow::Result<Vec<u8>> {
-    ensure_digest(digest)?;
+pub async fn pull(
+    registry: &PackageRegistry,
+    code: &str,
+    digest: &wamn_digest::Digest,
+) -> anyhow::Result<Vec<u8>> {
     let repository = Repository::open(registry, digest)?;
     pull_from(&repository, code, digest).await
 }
@@ -39,11 +43,10 @@ pub async fn pull(registry: &PackageRegistry, code: &str, digest: &str) -> anyho
 pub async fn pull_from(
     repository: &Repository,
     code: &str,
-    digest: &str,
+    digest: &wamn_digest::Digest,
 ) -> anyhow::Result<Vec<u8>> {
-    ensure_digest(digest)?;
     ensure!(
-        repository.reference.digest() == Some(digest),
+        repository.reference.digest() == Some(digest.to_string().as_str()),
         "integration repository is not pinned to the requested digest"
     );
     let (bytes, _) = repository
@@ -67,7 +70,7 @@ pub async fn pull_from(
     )
     .await?;
     ensure!(
-        bytes_sha256(&config) == manifest.config.digest
+        bytes_sha256(&config) == manifest.config.digest.parse::<wamn_digest::Digest>()?
             && usize::try_from(manifest.config.size) == Ok(config.len()),
         "integration configuration differs from its descriptor"
     );
@@ -77,7 +80,7 @@ pub async fn pull_from(
             && matches!(config.runtime_type, RuntimeType::Wasm | RuntimeType::Native),
         "integration artifact does not belong to integration {code}"
     );
-    ensure_digest(&config.source_digest)?;
+
     let descriptor = &manifest.layers[0];
     let component = registry_pull::blob(
         &repository.client,
@@ -87,7 +90,7 @@ pub async fn pull_from(
     )
     .await?;
     ensure!(
-        bytes_sha256(&component) == descriptor.digest
+        bytes_sha256(&component) == descriptor.digest.parse::<wamn_digest::Digest>()?
             && usize::try_from(descriptor.size) == Ok(component.len()),
         "integration component differs from its descriptor"
     );
@@ -104,7 +107,7 @@ mod tests {
         let mut config = serde_json::json!({
             "code": "modbus",
             "runtime_type": "wasm",
-            "source_digest": format!("sha256:{}", "a".repeat(64)),
+            "source_digest": (format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
         });
         let parsed: IntegrationConfig = serde_json::from_value(config.clone()).unwrap();
         assert_eq!(parsed.runtime_type, RuntimeType::Wasm);

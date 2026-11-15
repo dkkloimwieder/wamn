@@ -170,17 +170,19 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     )))
     .execute(&mut worker)
     .await?;
-    let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     let input = serde_json::json!({"order": 7});
     let nodes = serde_json::json!({"read": digest});
     let run = RunAdmission {
         project_env_key: "t1",
         application: "cat",
-        manifest_digest: digest,
+        manifest_digest: &digest,
         environment: "prod",
         workflow_id: "workflow",
         workflow_version: 1,
-        wiring_hash: digest,
+        wiring_hash: &digest,
         execution_principal_id: &actor,
         execution_role: "admin",
         trigger: RunTrigger::Manual,
@@ -224,7 +226,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
             &invalid,
             "prod",
             30000,
-            Some(digest),
+            Some(&digest),
         )
         .await
         .unwrap_err();
@@ -259,7 +261,11 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
             &applications,
             "prod",
             30000,
-            Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            Some(
+                &"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap()
+            )
         )
         .await?,
         LeaseTurn::Leased(ProductionLeaseResult::Empty)
@@ -277,16 +283,13 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         &applications,
         "prod",
         30000,
-        Some(digest),
+        Some(&digest),
     )
     .await?
     else {
         panic!("run was not leased");
     };
-    assert_eq!(
-        workflow.node_digests.get("read").map(String::as_str),
-        Some(digest)
-    );
+    assert_eq!(workflow.node_digests.get("read").copied(), Some(digest));
     tx.commit().await?;
 
     // Expiry clears the abandoned state and advances its generation and attempts.
@@ -307,7 +310,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         &applications,
         "prod",
         30000,
-        Some(digest),
+        Some(&digest),
     )
     .await?
     else {
@@ -426,15 +429,11 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
             .await?;
         tx.rollback().await?;
     }
-    for (id, version, hash) in [
-        ("", 1, digest),
-        ("workflow", 0, digest),
-        ("workflow", 1, "malformed"),
-    ] {
+    for (id, version, hash) in [("", 1, digest), ("workflow", 0, digest)] {
         let invalid = RunAdmission {
             workflow_id: id,
             workflow_version: version,
-            wiring_hash: hash,
+            wiring_hash: &hash,
             idempotency_key: "invalid-workflow",
             ..aborted
         };

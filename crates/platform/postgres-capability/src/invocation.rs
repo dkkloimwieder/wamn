@@ -202,31 +202,22 @@ pub fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::Result<
             !position.package_id.is_empty()
                 && !position.wiring_id.is_empty()
                 && position.wiring_version > 0
-                && wamn_catalog::DefinitionHash::parse(&position.wiring_hash).is_ok()
                 && !position.node_id.is_empty()
         }
     };
     anyhow::ensure!(
-        !invocation.package_id.is_empty()
-            && entry_valid
-            && wamn_catalog::ArtifactHash::parse(invocation.component_digest.as_str()).is_ok(),
+        !invocation.package_id.is_empty() && entry_valid,
         "connection-http-invocation-invalid"
     );
     if let ConnectionExecutionClosure::Candidate {
-        manifest_digest,
         environment,
-        wiring_hash,
         component,
         interface_version,
         ..
     } = &invocation.closure
     {
         anyhow::ensure!(
-            !manifest_digest.is_empty()
-                && !environment.is_empty()
-                && !component.is_empty()
-                && !interface_version.is_empty()
-                && wamn_catalog::DefinitionHash::parse(wiring_hash).is_ok(),
+            !environment.is_empty() && !component.is_empty() && !interface_version.is_empty(),
             "connection-http-candidate-closure-invalid"
         );
     }

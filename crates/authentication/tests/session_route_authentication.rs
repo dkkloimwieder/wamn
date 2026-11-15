@@ -14,7 +14,6 @@ use wamn_broker::auth_changes::AuthDrops;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 
 use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
@@ -219,7 +218,7 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
         "components": [{"package-id": "session_test",
-            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": operations, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []}}],
+            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": (format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(), "operations": operations, "imports": [], "imports-fingerprint": wamn_digest::canonical_json_sha256(&serde_json::json!([])), "effects": [], "connections": []}}],
         "routes": [
             {"package-id": "session_test", "component": "purchase", "operation": READ, "type": "get"},
             {"package-id": "session_test", "component": "purchase", "operation": WRITE, "type": "create"}
@@ -487,7 +486,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     let before = statements(&mut admin, &generation).await?;
     let csrf = "fixture-csrf-token";
     let mut carried = first.clone();
-    carried["csrf"] = json!(hex::encode(Sha256::digest(csrf.as_bytes())));
+    carried["csrf"] = json!(wamn_digest::bytes_sha256(csrf.as_bytes()));
     let cookie = format!(
         "theme=dark; __Host-wamn-session={}",
         signed(&header(), &carried)

@@ -182,10 +182,10 @@ async fn a_role_schedule_run_is_admitted_once_per_due_and_runs_as_the_workflow_u
         ("nightly".to_owned(), 1)
     );
     assert_eq!(
-        row.get::<String, _>(4),
-        workflow("nightly").wiring_hash().as_str()
+        row.get::<wamn_digest::Digest, _>(4),
+        workflow("nightly").wiring_hash()
     );
-    assert_eq!(row.get::<String, _>(5), fixture.digest);
+    assert_eq!(row.get::<wamn_digest::Digest, _>(5), fixture.digest);
     {
         let observed = &(serde_json::from_str::<Value>(&row.get::<String, _>(6)).unwrap());
         assert_eq!(
@@ -542,8 +542,8 @@ async fn applications_schedule_independently_across_upgrade_and_rollback(pool: s
                 .unwrap();
                 assert_eq!(stored.get::<String, _>(0), row.application);
                 assert_eq!(
-                    stored.get::<String, _>(1),
-                    loaded.release().manifest_digest.as_str()
+                    stored.get::<wamn_digest::Digest, _>(1),
+                    loaded.release().manifest_digest
                 );
             }
         }

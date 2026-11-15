@@ -70,7 +70,10 @@ async fn operations_refuse_unrelated_project_authority_before_execution() -> any
             "environment.configure" => value["document"] = json!({}),
             "application.deploy" => {
                 value["application"] = "billing_app".into();
-                value["release"] = format!("sha256:{}", "a".repeat(64)).into();
+                value["release"] = (format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap()
+                    .into();
             }
             "application.rollback" | "application.stop" | "schema.apply" | "schema.diff" => {
                 value["application"] = "billing_app".into()

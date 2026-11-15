@@ -30,7 +30,7 @@ webClients: {}
 # Host to pinned web artifact digest.
 webDigests: {}
 # The control release pins the platform UI artifact by manifest digest.
-platformUi: ""
+platformUi: null
 # Organization whose platform UI configuration the edge serves.
 org: ""
 # The application's HTTP role: `{name: http, entry: ..., config: {}}`.

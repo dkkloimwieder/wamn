@@ -38,7 +38,7 @@ pub struct BuildDependency {
     pub version: String,
     /// The digest of the base's canonical `wamn.json`, until a package
     /// artifact digest replaces it.
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
 }
 
 /// The generator and toolchain identity.
@@ -55,10 +55,10 @@ pub struct BuildGenerator {
 #[serde(deny_unknown_fields)]
 pub struct BuildOutputs {
     /// The digest of the canonical `wamn.json`, hashed once.
-    pub manifest: String,
+    pub manifest: wamn_digest::Digest,
     /// The `sha256:` digest of each output file, by its path relative to the
     /// package's build output directory. `build.json` is not one of them.
-    pub files: BTreeMap<String, String>,
+    pub files: BTreeMap<String, wamn_digest::Digest>,
     /// The package's components. Empty until the build compiles them.
     pub components: Vec<BuildComponent>,
 }
@@ -69,7 +69,7 @@ pub struct BuildOutputs {
 pub struct BuildComponent {
     pub name: String,
     pub path: String,
-    pub sha256: String,
+    pub sha256: wamn_digest::Digest,
 }
 
 impl BuildRecord {

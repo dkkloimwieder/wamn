@@ -26,11 +26,11 @@ impl RunTrigger {
 pub struct RunAdmission<'a> {
     pub project_env_key: &'a str,
     pub application: &'a str,
-    pub manifest_digest: &'a str,
+    pub manifest_digest: &'a wamn_digest::Digest,
     pub environment: &'a str,
     pub workflow_id: &'a str,
     pub workflow_version: i32,
-    pub wiring_hash: &'a str,
+    pub wiring_hash: &'a wamn_digest::Digest,
     pub execution_principal_id: &'a str,
     pub execution_role: &'a str,
     pub trigger: RunTrigger,
@@ -167,7 +167,7 @@ pub async fn workflow_version(
     application: &str,
     workflow: &str,
     version: i32,
-) -> Result<Option<(String, String)>, sqlx::Error> {
+) -> Result<Option<(String, wamn_digest::Digest)>, sqlx::Error> {
     sqlx::query(WORKFLOW_VERSION_SQL)
         .bind(project_env_key)
         .bind(environment)

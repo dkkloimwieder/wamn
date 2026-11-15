@@ -18,7 +18,6 @@
 //! counter, whose values are mappings that never change.
 
 use serde::Serialize;
-use sha2::{Digest as _, Sha256};
 use sqlx::{Row as _, Statement as _};
 use wamn_number_pattern::Policy;
 
@@ -212,10 +211,11 @@ async fn set_in_transaction(
         .await
         .map_err(|error| with_source("begin the set's transaction", error.into()))?
         .with_known_result(serde_json::json!({ "value": set.value }).to_string());
-    let request =
-        Sha256::digest(serde_json::to_vec(set).expect("a counter set serializes to JSON")).to_vec();
+    let request = wamn_digest::bytes_sha256(
+        &serde_json::to_vec(set).expect("a counter set serializes to JSON"),
+    );
     let begun = match transaction
-        .begin_opaque(operation, request_id, request)
+        .begin_opaque(operation, request_id, request.as_bytes().to_vec())
         .await
     {
         Ok(begun) => begun,

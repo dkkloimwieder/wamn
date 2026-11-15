@@ -28,9 +28,9 @@ use wash_runtime::plugin::wasi_logging::TracingLogger;
 // and insertion or eviction cannot invalidate another digest's bytes. Every
 // load still authorizes and verifies the bytes before using the shared cell.
 pub(super) type ManifestCache =
-    Arc<std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::OnceCell<Arc<[u8]>>>>>>;
+    Arc<std::sync::Mutex<BTreeMap<wamn_digest::Digest, Arc<tokio::sync::OnceCell<Arc<[u8]>>>>>>;
 
-type ReleaseKey = (String, String);
+type ReleaseKey = (String, wamn_digest::Digest);
 
 pub(super) struct Resources {
     pub engine: Arc<Engine>,
@@ -68,7 +68,7 @@ pub(super) struct ResidentRelease {
 
 struct Selection {
     host: String,
-    digest: String,
+    digest: Option<wamn_digest::Digest>,
     release: watch::Sender<Option<Arc<LoadedRelease>>>,
 }
 
@@ -116,7 +116,7 @@ impl Releases {
             annotations.get("wamn.project_env_key") == Some(&self.resources.target.project_env_key),
             "workload belongs to another project deployment"
         );
-        self.load(application, digest).await
+        self.load(application, &digest.parse()?).await
     }
 
     pub fn files(
@@ -138,12 +138,21 @@ impl Releases {
             .read()
             .map_err(|_| StatePoisoned("resident releases"))?;
         let resident = resident
-            .get(&(application.clone(), selection.digest.clone()))
+            .get(&(
+                application.clone(),
+                selection
+                    .digest
+                    .context("application has no current release")?,
+            ))
             .context("selected file release is not resident")?;
         Ok(Some(Arc::clone(&resident.files)))
     }
 
-    async fn load(&self, application: &str, digest: &str) -> anyhow::Result<Arc<ResidentRelease>> {
+    async fn load(
+        &self,
+        application: &str,
+        digest: &wamn_digest::Digest,
+    ) -> anyhow::Result<Arc<ResidentRelease>> {
         let key = (application.to_owned(), digest.to_owned());
         let loading = {
             let mut loading = self
@@ -176,7 +185,7 @@ impl Releases {
         .await?;
         let (manifest, _) = ServingManifest::from_canonical_bytes(&authorized)?;
         anyhow::ensure!(
-            manifest.digest().as_str() == digest,
+            manifest.digest() == *digest,
             "release catalog digest mismatch"
         );
         let bytes = cached
@@ -198,7 +207,11 @@ impl Releases {
         )]);
         let target = ReleaseTarget::new(&r.target.project_env_key, &r.target.environment)
             .with_applications(applications);
-        let release = Arc::new(LoadedRelease::load_canonical_bytes(&bytes, digest, target)?);
+        let release = Arc::new(LoadedRelease::load_canonical_bytes(
+            &bytes,
+            &digest.to_string(),
+            target,
+        )?);
         let operations = Arc::new(OperationHost::new(
             Arc::clone(&r.engine),
             Arc::clone(&r.postgres),
@@ -283,7 +296,7 @@ impl Releases {
         Ok(resident)
     }
 
-    async fn selected(&self) -> anyhow::Result<BTreeMap<String, (String, String)>> {
+    async fn selected(&self) -> anyhow::Result<BTreeMap<String, (wamn_digest::Digest, String)>> {
         if self.paused.load(std::sync::atomic::Ordering::Acquire) {
             return Ok(BTreeMap::new());
         }
@@ -317,7 +330,7 @@ impl Releases {
             {
                 continue;
             }
-            let projection = (|| -> anyhow::Result<(String, String)> {
+            let projection = (|| -> anyhow::Result<(wamn_digest::Digest, String)> {
                 let json = map["data"]["release.json"]
                     .as_str()
                     .context("release projection is absent")?;
@@ -337,7 +350,7 @@ impl Releases {
                 let host = projection["host"]
                     .as_str()
                     .context("release projection has no host")?;
-                Ok((digest.to_owned(), host.to_owned()))
+                Ok((digest.parse()?, host.to_owned()))
             })();
             match projection {
                 Ok(projection) => {
@@ -378,7 +391,7 @@ impl Releases {
         };
         let mut needed: BTreeMap<ReleaseKey, Vec<String>> = selected
             .iter()
-            .map(|(application, (digest, _))| ((application.clone(), digest.clone()), Vec::new()))
+            .map(|(application, (digest, _))| ((application.clone(), *digest), Vec::new()))
             .collect();
         for (application, digest, run) in pins {
             needed.entry((application, digest)).or_default().push(run);
@@ -392,7 +405,7 @@ impl Releases {
                 if !selected.contains_key(application) {
                     selection.release.send_replace(None);
                     selection.host.clear();
-                    selection.digest.clear();
+                    selection.digest = None;
                 }
             }
             for (application, (digest, host)) in &selected {
@@ -401,7 +414,7 @@ impl Releases {
                         application.clone(),
                         Selection {
                             host: host.clone(),
-                            digest: digest.clone(),
+                            digest: Some(*digest),
                             release: watch::channel(None).0,
                         },
                     );
@@ -409,10 +422,10 @@ impl Releases {
                 let selection = selections
                     .get_mut(application)
                     .expect("selection was inserted");
-                if selection.digest != *digest {
+                if selection.digest != Some(*digest) {
                     selection.release.send_replace(None);
                 }
-                selection.digest.clone_from(digest);
+                selection.digest = Some(*digest);
                 selection.host.clone_from(host);
             }
         }
@@ -460,32 +473,36 @@ impl Releases {
                     key.clone(),
                     wamn_kubernetes::environment_state::ReleaseResidency {
                         application: key.0.clone(),
-                        manifest_digest: key.1.clone(),
+                        manifest_digest: key.1,
                         loaded: true,
                         runs: Vec::new(),
                     },
                 )
             })
             .collect();
-        for (application, selection) in self
+        for (application, _, digest) in self
             .selections
             .read()
             .map_err(|_| StatePoisoned("release selections"))?
             .iter()
-            .filter(|(_, selection)| !selection.digest.is_empty())
+            .filter_map(|(application, selection)| {
+                selection
+                    .digest
+                    .map(|digest| (application, selection, digest))
+            })
         {
             releases
-                .entry((application.clone(), selection.digest.clone()))
+                .entry((application.clone(), digest))
                 .or_insert_with(|| wamn_kubernetes::environment_state::ReleaseResidency {
                     application: application.clone(),
-                    manifest_digest: selection.digest.clone(),
+                    manifest_digest: digest,
                     loaded: false,
                     runs: Vec::new(),
                 });
         }
         for (application, digest, run) in pins {
             releases
-                .entry((application.clone(), digest.clone()))
+                .entry((application.clone(), digest))
                 .or_insert_with(|| wamn_kubernetes::environment_state::ReleaseResidency {
                     application,
                     manifest_digest: digest,
@@ -525,7 +542,7 @@ impl Releases {
                     match result {
                         Ok(resident) => {
                             let selections = self.selections.read().map_err(|_| StatePoisoned("release selections"))?;
-                            if let Some(selection) = selections.get(&key.0).filter(|selection| selection.digest == key.1) {
+                            if let Some(selection) = selections.get(&key.0).filter(|selection| selection.digest == Some(key.1)) {
                                 selection.release.send_replace(Some(Arc::clone(&resident.operations.release)));
                             }
                         }
@@ -548,7 +565,7 @@ impl Releases {
                     for key in needed.keys() {
                         let loaded = self.resident.read().map_err(|_| StatePoisoned("resident releases"))?.get(key).map(Arc::clone);
                         if let Some(resident) = loaded {
-                            if let Some(selection) = self.selections.read().map_err(|_| StatePoisoned("release selections"))?.get(&key.0).filter(|selection| selection.digest == key.1) {
+                            if let Some(selection) = self.selections.read().map_err(|_| StatePoisoned("release selections"))?.get(&key.0).filter(|selection| selection.digest == Some(key.1)) {
                                 selection.release.send_replace(Some(Arc::clone(&resident.operations.release)));
                             }
                         } else if preparing.insert(key.clone()) {

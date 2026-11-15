@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use wamn_build::{BuildRequest, build_package};
 
 use anyhow::{Context as _, ensure};
-use wamn_catalog::{ManifestDigest, PackageCoordinate};
+use wamn_catalog::PackageCoordinate;
 use wamn_compiler::manifest::PackageManifest;
 use wamn_compiler::{
     build::{default_output_root, package_output},
@@ -31,7 +31,7 @@ pub async fn publish_from_env(
     document: &EnvironmentDocument,
     root: &Path,
     database_url: &str,
-) -> anyhow::Result<(String, ManifestDigest)> {
+) -> anyhow::Result<(String, wamn_digest::Digest)> {
     publish_source_from_env(document, build(document, root, database_url, false).await?).await
 }
 
@@ -40,7 +40,7 @@ pub async fn publish_development_from_env(
     document: &EnvironmentDocument,
     root: &Path,
     database_url: &str,
-) -> anyhow::Result<(String, ManifestDigest)> {
+) -> anyhow::Result<(String, wamn_digest::Digest)> {
     publish_source_from_env(document, build(document, root, database_url, true).await?).await
 }
 
@@ -49,7 +49,7 @@ pub async fn publish_development_from_env(
 pub async fn publish_built_from_env(
     document: &EnvironmentDocument,
     root: &Path,
-) -> anyhow::Result<(String, ManifestDigest)> {
+) -> anyhow::Result<(String, wamn_digest::Digest)> {
     let (application, roots) = sources(document, root)?;
     let packages = roots
         .iter()
@@ -75,7 +75,7 @@ pub async fn publish_built_from_env(
 async fn publish_source_from_env(
     document: &EnvironmentDocument,
     source: SourceBuild,
-) -> anyhow::Result<(String, ManifestDigest)> {
+) -> anyhow::Result<(String, wamn_digest::Digest)> {
     let variable = |name: &str| {
         std::env::var(name).with_context(|| format!("set {name} for source publication"))
     };
@@ -189,7 +189,7 @@ pub fn build_inputs(root: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {
     Ok(inputs)
 }
 
-fn content_digest(root: &Path) -> anyhow::Result<String> {
+fn content_digest(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
     let workspace = wamn_compiler::package_workspace(root);
     let repository = workspace
         .parent()
@@ -217,7 +217,7 @@ fn content_digest(root: &Path) -> anyhow::Result<String> {
 fn hash_inputs(
     repository: &Path,
     path: &Path,
-    files: &mut BTreeMap<String, String>,
+    files: &mut BTreeMap<String, wamn_digest::Digest>,
 ) -> anyhow::Result<()> {
     let metadata = std::fs::symlink_metadata(path)?;
     ensure!(
@@ -252,7 +252,7 @@ async fn publish_built(
     registry: PackageRegistry,
     component_artifact_base: &str,
     release_artifact_base: &str,
-) -> anyhow::Result<(String, ManifestDigest)> {
+) -> anyhow::Result<(String, wamn_digest::Digest)> {
     let SourceBuild {
         application,
         roots,

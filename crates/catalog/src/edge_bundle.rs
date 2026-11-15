@@ -27,10 +27,10 @@ pub const BUNDLE_FORMAT: u32 = 1;
 #[serde(deny_unknown_fields)]
 pub struct EdgeBundle {
     pub format: u32,
-    pub manifest: String,
-    pub components: String,
-    pub grants: String,
-    pub ingress: String,
+    pub manifest: wamn_digest::Digest,
+    pub components: wamn_digest::Digest,
+    pub grants: wamn_digest::Digest,
+    pub ingress: wamn_digest::Digest,
 }
 
 /// `grants.json`: the permissions of each role on the box.

@@ -58,7 +58,7 @@ pub struct ConnectionFact {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseBinding {
-    pub component_digest: String,
+    pub component_digest: wamn_digest::Digest,
     pub package_id: String,
     pub name: String,
     pub connection_id: uuid::Uuid,
@@ -82,12 +82,12 @@ impl ReleaseFact {
     /// The binding of `name` for one component of one package.
     pub fn binding(
         &self,
-        component_digest: &str,
+        component_digest: &wamn_digest::Digest,
         package_id: &str,
         name: &str,
     ) -> Option<&ReleaseBinding> {
         self.bindings.iter().find(|binding| {
-            binding.component_digest == component_digest
+            binding.component_digest == *component_digest
                 && binding.package_id == package_id
                 && binding.name == name
         })
@@ -154,7 +154,12 @@ impl ConnectionMemory {
     }
 
     #[cfg(any(test, feature = "test-util"))]
-    pub fn seed_release(&self, project_env_key: &str, digest: &str, fact: ReleaseFact) {
+    pub fn seed_release(
+        &self,
+        project_env_key: &str,
+        digest: &wamn_digest::Digest,
+        fact: ReleaseFact,
+    ) {
         self.memory
             .seed(release_key(project_env_key, digest), Answer::Release(fact));
     }
@@ -203,7 +208,7 @@ impl ConnectionMemory {
     pub fn release(
         &self,
         project_env_key: &str,
-        manifest_digest: &str,
+        manifest_digest: &wamn_digest::Digest,
     ) -> Result<ReleaseFact, Ticket> {
         let key = release_key(project_env_key, manifest_digest);
         match self.memory.answer(&key) {
@@ -216,7 +221,7 @@ impl ConnectionMemory {
     pub async fn keep_release(
         &self,
         project_env_key: &str,
-        manifest_digest: &str,
+        manifest_digest: &wamn_digest::Digest,
         ticket: Ticket,
         fact: ReleaseFact,
     ) {
@@ -352,12 +357,23 @@ mod tests {
         let id = uuid::Uuid::new_v4();
         let ticket = memory.connection("t", &id).unwrap_err();
         memory.keep_connection("t", &id, ticket, fact(1)).await;
-        let ticket = memory.release("t", "sha256:00").unwrap_err();
+        let ticket = memory
+            .release("t", &wamn_digest::bytes_sha256(b"release"))
+            .unwrap_err();
         memory
-            .keep_release("t", "sha256:00", ticket, ReleaseFact::default())
+            .keep_release(
+                "t",
+                &wamn_digest::bytes_sha256(b"release"),
+                ticket,
+                ReleaseFact::default(),
+            )
             .await;
         assert!(memory.connection("t", &id).is_err());
-        assert!(memory.release("t", "sha256:00").is_err());
+        assert!(
+            memory
+                .release("t", &wamn_digest::bytes_sha256(b"release"))
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -394,11 +410,15 @@ mod tests {
         let (other, _) = watched(&client, Some("u")).await;
         let (control, _) = watched(&client, None).await;
         let id = uuid::Uuid::new_v4();
-        let digest = format!("sha256:{}", "ab".repeat(32));
+        let digest = (format!("sha256:{}", "ab".repeat(32)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap();
         let release = ReleaseFact {
             versions: BTreeMap::from([(id, 1)]),
             bindings: vec![ReleaseBinding {
-                component_digest: format!("sha256:{}", "cd".repeat(32)),
+                component_digest: (format!("sha256:{}", "cd".repeat(32)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 package_id: "shop".into(),
                 name: "erp".into(),
                 connection_id: id,

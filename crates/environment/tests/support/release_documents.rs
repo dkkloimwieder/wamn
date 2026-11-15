@@ -13,9 +13,9 @@ use serde_json::{Value, json};
 pub const PACKAGE: &str = "edge_device";
 /// The fixture release A: the fixture package, no http attachment, no
 /// registration, a component no host pulls. `@VERSION@` is the package version.
-pub const MANIFEST: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
+pub const MANIFEST: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
 /// The second fixture release, B: the same package, another component digest.
-pub const MANIFEST_B: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
+pub const MANIFEST_B: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[],"effects":[],"imports":[],"imports-fingerprint":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
 /// The third fixture release, H: the same package with one http attachment,
 /// served with no authentication, so its environments render the http role.
 /// Its one component, `null` here, is the admitted `device` component as
@@ -60,7 +60,7 @@ pub fn release(
             })
             .component;
         value["components"][0] =
-            serde_json::to_value(wamn_catalog::ServingComponent::project(&fact, Vec::new())?)?;
+            serde_json::to_value(wamn_catalog::ServingComponent::project(&fact, Vec::new()))?;
     }
     let bytes = wamn_digest::canonical_json_bytes(&value);
     wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
@@ -125,7 +125,11 @@ pub fn fixture_host_group(document: &EnvironmentDocument, local: &str) -> Value 
     group
 }
 
-pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> EnvironmentDocument {
+pub fn fixture_document(
+    env: &str,
+    route_host: &str,
+    digest: &wamn_digest::Digest,
+) -> EnvironmentDocument {
     EnvironmentDocument {
         schema: environment::document::Schema::default(),
         integrations: [(
@@ -418,7 +422,7 @@ pub mod http {
         for (descriptor, fact) in components.into_iter().zip(&facts) {
             manifest
                 .components
-                .insert(ServingComponent::project(fact, descriptor.connections)?);
+                .insert(ServingComponent::project(fact, descriptor.connections));
         }
         let bytes = manifest.canonical_bytes();
         ServingManifest::from_canonical_bytes(&bytes)?;
@@ -452,7 +456,11 @@ pub mod http {
             "stringData": data,
         }))
     }
-    pub fn bindings_match(rows: &Value, document: &EnvironmentDocument, digest: &str) -> bool {
+    pub fn bindings_match(
+        rows: &Value,
+        document: &EnvironmentDocument,
+        digest: &wamn_digest::Digest,
+    ) -> bool {
         rows["versions"]
             .as_array()
             .is_some_and(|rows| rows.iter().all(|row| row["version"] == 1))
@@ -467,7 +475,7 @@ pub mod http {
                         .collect();
                     bindings.len() == if *handle == "upstream" { 2 } else { 1 }
                         && bindings.iter().all(|row| {
-                            row["manifest_digest"] == digest
+                            row["manifest_digest"] == serde_json::json!(digest)
                                 && row["package_id"] == "http_fixture"
                                 && row["mode"] == "write"
                                 && row["integration_name"]
@@ -508,7 +516,7 @@ pub mod workflow {
         pub target: &'a wamn_registry::Triple,
         pub project_env_key: &'a str,
         /// The release the environment serves.
-        pub digest: &'a str,
+        pub digest: &'a wamn_digest::Digest,
         /// The applications the environment declares, as the serving Helm
         /// revision keeps them.
         pub applications: &'a wamn_catalog::EnvironmentApplications,
@@ -752,7 +760,7 @@ pub mod workflow {
             )
             .map_err(|error| anyhow::anyhow!("{error:?}"))?
             .into_iter()
-            .map(|(node, component)| (node, Value::String(component.component_digest)))
+            .map(|(node, component)| (node, Value::String(component.component_digest.to_string())))
             .collect();
         let admitted = postgres
             .executor_write("default", environment.project_env_key, async |connection| {

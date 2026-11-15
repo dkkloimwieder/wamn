@@ -13,7 +13,7 @@ test = false
 [dependencies]
 wamn-kubernetes.workspace = true
 sqlx = { workspace = true, features = ["sqlite"] }
-wamn-digest.workspace = true
+wamn-digest = { workspace = true, features = ["sqlx"] }
 # The edge links the engine without cloud capability plugins.
 wamn-engine = { workspace = true }
 # Local routes verify sessions over a key file, and grants name role slugs.

@@ -92,7 +92,7 @@ pub async fn workflow_host(
     wamn_environment::environment::stage::write_release(
         database.as_str(),
         PROJECT_ENV_KEY,
-        digest.as_str(),
+        &digest,
         manifest,
         &wamn_control_provision::PlatformComponent::Provisioning
             .principal_id()
@@ -218,7 +218,7 @@ pub async fn schedule_run(
             trigger: WorkflowTrigger::Schedule("* * * * *"),
             execution: WorkflowExecution::Role(role),
             created_by: ENABLER,
-            manifest_digest: digest.as_str(),
+            manifest_digest: &digest,
         },
     )
     .await?;
@@ -235,7 +235,7 @@ pub async fn schedule_run(
             version: document.version,
         },
         ENABLER,
-        digest.as_str(),
+        &digest,
         &declared,
         None,
     )
@@ -645,7 +645,9 @@ pub async fn invoke(
                         InvocationEntry::Wiring(WiringPosition {
                             configuration: Default::default(),
                             package_id: "rest_connector".into(),
-                            wiring_hash: format!("sha256:{}", "a".repeat(64)),
+                            wiring_hash: (format!("sha256:{}", "a".repeat(64)))
+                                .parse::<wamn_digest::Digest>()
+                                .unwrap(),
                             wiring_id: "rest_item".into(),
                             wiring_version: 1,
                             node_id: if finishing { "finish" } else { "record" }.into(),

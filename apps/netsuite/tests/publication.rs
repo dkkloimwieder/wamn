@@ -35,10 +35,7 @@ fn fixture() -> Fixture {
         &connector,
         "netsuite",
         None,
-        BTreeSet::from([
-            base.component_digest().into(),
-            destination.component_digest().into(),
-        ]),
+        BTreeSet::from([*base.component_digest(), *destination.component_digest()]),
     );
     let admissions = vec![
         support::admit(

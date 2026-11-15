@@ -24,11 +24,9 @@ pub fn connection_key(project_env_key: &str, id: &uuid::Uuid) -> String {
 /// The key of the connection map of the release `manifest_digest` in
 /// `project_env_key`. The key carries the hex part of the digest only, because a key
 /// token holds no `:`.
-pub fn release_key(project_env_key: &str, manifest_digest: &str) -> String {
-    let hex = manifest_digest
-        .strip_prefix("sha256:")
-        .unwrap_or(manifest_digest);
-    wamn_registry::name::nats_subject(&[project_env_key, "release", hex])
+pub fn release_key(project_env_key: &str, manifest_digest: &wamn_digest::Digest) -> String {
+    let hex = manifest_digest.hex();
+    wamn_registry::name::nats_subject(&[project_env_key, "release", &hex])
 }
 
 /// The key of the map from integration name to connection id of `project_env_key`.
@@ -47,7 +45,7 @@ pub enum ConnectionChange {
     /// The connection map of one release.
     Release {
         project_env_key: String,
-        manifest_digest: String,
+        manifest_digest: wamn_digest::Digest,
     },
     /// The map from integration name to connection id of an environment.
     Connections(String),
@@ -68,7 +66,7 @@ impl ConnectionDrops {
         });
     }
 
-    pub fn release(&mut self, project_env_key: &str, manifest_digest: &str) {
+    pub fn release(&mut self, project_env_key: &str, manifest_digest: &wamn_digest::Digest) {
         self.0.insert(ConnectionChange::Release {
             project_env_key: project_env_key.to_owned(),
             manifest_digest: manifest_digest.to_owned(),

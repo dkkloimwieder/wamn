@@ -49,7 +49,7 @@ async fn admit_session<T>(
 ) -> Result<(wamn_identity_protocol::PrincipalId, T), AuthRejection> {
     let session = verifier.verify(token).await.map_err(|_| unauthorized())?;
     if let Some((headers, requires_csrf)) = cookie_headers {
-        require_csrf(requires_csrf, session.claims().csrf.as_deref(), headers)?;
+        require_csrf(requires_csrf, session.claims().csrf.as_ref(), headers)?;
     }
     let permissions = permissions(session.claims()).await?;
     let active = tokio::time::timeout(std::time::Duration::from_secs(5), live(session.claims()))
@@ -183,14 +183,9 @@ impl PlatformRouteAuthenticator {
             .value
             .strip_prefix("sha256=")
             .ok_or_else(signature_unauthorized)?;
-        if signature.len() != 64
-            || !signature
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(signature_unauthorized());
-        }
-        let signature = hex::decode(signature).map_err(|_| signature_unauthorized())?;
+        let signature = format!("sha256:{signature}")
+            .parse::<wamn_digest::Digest>()
+            .map_err(|_| signature_unauthorized())?;
         let name = facts
             .reader()
             .connection_name(credential)
@@ -222,7 +217,7 @@ impl PlatformRouteAuthenticator {
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.hmac.secret.as_bytes())
             .map_err(|_| signature_unauthorized())?;
         mac.update(body);
-        mac.verify_slice(&signature)
+        mac.verify_slice(signature.as_bytes())
             .map_err(|_| signature_unauthorized())?;
         Ok(fact.service_principal_id)
     }

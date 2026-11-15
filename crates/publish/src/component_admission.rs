@@ -114,7 +114,7 @@ pub struct AdmitComponentRequest {
     /// The component digest of each base the package pins: the authored
     /// `base_dependencies` digests, with a base this run built layered over
     /// its pin for a disposable target.
-    pub base_digests: BTreeSet<String>,
+    pub base_digests: BTreeSet<wamn_digest::Digest>,
 }
 
 /// Exact saved-byte admission reused by later publication.
@@ -180,7 +180,7 @@ impl ComponentAdmission {
     }
 
     /// SHA-256 identity derived from the exact admitted bytes.
-    pub fn component_digest(&self) -> &str {
+    pub fn component_digest(&self) -> &wamn_digest::Digest {
         &self.component.component_digest
     }
 }
@@ -445,9 +445,13 @@ mod tests {
                     parameters: Vec::new(),
                 },
             )]),
-            component_digest: format!("sha256:{}", "e".repeat(64)),
+            component_digest: (format!("sha256:{}", "e".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             imports: Vec::new(),
-            imports_fingerprint: format!("sha256:{}", "f".repeat(64)),
+            imports_fingerprint: (format!("sha256:{}", "f".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             effects: Vec::new(),
         };
         let expected =
@@ -555,9 +559,13 @@ mod tests {
                     parameters: Vec::new(),
                 },
             )]),
-            component_digest: format!("sha256:{}", "a".repeat(64)),
+            component_digest: (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             imports: Vec::new(),
-            imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            imports_fingerprint: (format!("sha256:{}", "b".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             effects: Vec::new(),
         }
     }

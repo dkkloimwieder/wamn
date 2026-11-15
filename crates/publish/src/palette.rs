@@ -21,13 +21,7 @@ pub fn read(route_guest: &Path, project_env_key: &str) -> anyhow::Result<Vec<Pal
     palette
         .into_values()
         .map(|PalettePin { descriptor, .. }| {
-            let file = directory.join(format!(
-                "{}.wasm",
-                descriptor
-                    .component_digest
-                    .strip_prefix("sha256:")
-                    .expect("palette digest validated")
-            ));
+            let file = directory.join(format!("{}.wasm", descriptor.component_digest.hex()));
             let bytes = std::fs::read(&file)
                 .with_context(|| format!("read platform component {}", file.display()))?;
             anyhow::ensure!(

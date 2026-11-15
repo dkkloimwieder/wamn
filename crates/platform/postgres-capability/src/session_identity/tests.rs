@@ -2,39 +2,42 @@ use super::super::SqlValue;
 use super::super::pool::ResolvedCredential;
 use super::*;
 use std::collections::BTreeSet;
-use wamn_catalog::ManifestDigest;
 
 use wamn_capability_authority::connection::{ConnectionExecutionClosure, ConnectionOrigin};
 
-fn candidate_binding(component: &str, alias: &str) -> serde_json::Value {
+fn candidate_binding(component: u8, alias: &str) -> serde_json::Value {
     serde_json::json!({
         "read-only": false,
-        "component-digest": component,
+        "component-digest": wamn_digest::Digest::from([component; 32]),
         "store-alias": alias,
-        "requirement-hash": "sha256:req",
+        "requirement-hash": wamn_digest::bytes_sha256(b"requirement"),
         "instance-id": "orders",
         "instance-revision": 3,
         "requirement-type": "http",
         "contract": "wamn:connection/http@0.1.0",
-        "validation-hash": "sha256:validation",
+        "validation-hash": wamn_digest::bytes_sha256(b"validation"),
         "generation": 7,
-        "definition-hash": "sha256:definition",
+        "definition-hash": wamn_digest::bytes_sha256(b"definition"),
         "credential-set-handle": "orders-7"
     })
 }
 
 #[test]
 fn candidate_binding_world_requires_complete_canonical_unique_rows() {
-    let first = candidate_binding("sha256:a", "primary");
-    let second = candidate_binding("sha256:b", "primary");
+    let first = candidate_binding(0, "primary");
+    let second = candidate_binding(1, "primary");
     let world = CandidateBindingWorld::from_json(serde_json::json!([first, second]))
         .expect("ordered complete world");
-    assert!(world.binding("sha256:a", "primary").is_some());
-    let mut missing_mode = candidate_binding("sha256:a", "primary");
+    assert!(
+        world
+            .binding(&wamn_digest::Digest::from([0; 32]), "primary")
+            .is_some()
+    );
+    let mut missing_mode = candidate_binding(0, "primary");
     missing_mode.as_object_mut().unwrap().remove("read-only");
     assert!(CandidateBindingWorld::from_json(serde_json::json!([missing_mode])).is_err());
     assert!(CandidateBindingWorld::from_json(serde_json::json!([second, first])).is_err());
-    let mut incomplete = candidate_binding("sha256:a", "primary");
+    let mut incomplete = candidate_binding(0, "primary");
     incomplete
         .as_object_mut()
         .expect("fixture object")
@@ -199,29 +202,8 @@ fn a_serving_host_refuses_an_invalid_declared_project() {
 // The identity-time record must match `runs_release_record_check` exactly, or a
 // identity that would otherwise succeed dies on a CHECK inside the lease grant.
 // The hand-rolled shape test this used to exercise is retired: the invariant
-// now rides `ManifestDigest`, so what is pinned here is that the TYPE admits
+// now rides `wamn_digest::Digest`, so what is pinned here is that the TYPE admits
 // exactly what the run-plane CHECK admits. Same coupling, one owner.
-#[test]
-fn manifest_digest_shape_matches_the_run_plane_check() {
-    assert!(ManifestDigest::parse(format!("sha256:{}", "0".repeat(64))).is_ok());
-    assert!(ManifestDigest::parse(format!("sha256:{}b", "af9".repeat(21))).is_ok());
-    for rejected in [
-        String::new(),
-        "sha256:".to_string(),
-        "deadbeef".to_string(),
-        format!("sha256:{}", "a".repeat(63)),
-        format!("sha256:{}", "a".repeat(65)),
-        format!("sha256:{}", "A".repeat(64)),
-        format!("sha256:{}", "g".repeat(64)),
-        format!("SHA256:{}", "a".repeat(64)),
-    ] {
-        assert!(
-            ManifestDigest::parse(rejected.clone()).is_err(),
-            "accepted {rejected:?}"
-        );
-    }
-}
-
 // wamn-cjv.2 — the in-band identity/role mutation guard.
 #[test]
 fn validate_identity_rejects_malformed_identities() {
@@ -345,7 +327,9 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
     ConnectionInvocation {
         origin: ConnectionOrigin {
             package_id: "package_a".to_string(),
-            component_digest: format!("sha256:{}", "a".repeat(64)),
+            component_digest: format!("sha256:{}", "a".repeat(64))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             component: "receiver".to_string(),
             interface_version: "0.1.0".to_string(),
             operation: "platform-fixture:widget/update@1.0.0".to_string(),
@@ -354,7 +338,9 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
             wamn_capability_authority::connection::WiringPosition {
                 configuration: Default::default(),
                 package_id: "package_a".to_string(),
-                wiring_hash: format!("sha256:{}", "a".repeat(64)),
+                wiring_hash: format!("sha256:{}", "a".repeat(64))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 wiring_id: "orders".to_string(),
                 wiring_version: 3,
                 node_id: node_id.to_string(),
@@ -362,7 +348,9 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
             },
         ),
         package_id: "package_a".to_string(),
-        component_digest: format!("sha256:{}", "a".repeat(64)),
+        component_digest: format!("sha256:{}", "a".repeat(64))
+            .parse::<wamn_digest::Digest>()
+            .unwrap(),
         component: "receiver".to_string(),
         operation: "platform-fixture:widget/update@1.0.0".to_string(),
         closure: ConnectionExecutionClosure::Released,
@@ -1010,15 +998,15 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
             }),
         },
         origin_package_id: "catalog",
-        origin_component_digest: "digest",
+        origin_component_digest: &wamn_digest::bytes_sha256(b"component"),
         origin_component: "component",
         origin_interface_version: "0.1.0",
         origin_operation: "operation",
         package_id: "catalog",
         operation: "operation",
-        manifest_digest: "sha256:release",
+        manifest_digest: &wamn_digest::bytes_sha256(b"release"),
         environment: "dev",
-        component_digest: "digest",
+        component_digest: &wamn_digest::bytes_sha256(b"component"),
         store_alias: "manager",
         candidate_binding: None,
     };
@@ -1099,15 +1087,15 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
             }),
         },
         origin_package_id: "catalog",
-        origin_component_digest: "digest",
+        origin_component_digest: &wamn_digest::bytes_sha256(b"component"),
         origin_component: "component",
         origin_interface_version: "0.1.0",
         origin_operation: "operation",
         package_id: "catalog",
         operation: "operation",
-        manifest_digest: "sha256:release",
+        manifest_digest: &wamn_digest::bytes_sha256(b"release"),
         environment: "dev",
-        component_digest: "digest",
+        component_digest: &wamn_digest::bytes_sha256(b"component"),
         store_alias: "manager",
         candidate_binding: None,
     };

@@ -90,7 +90,7 @@ fn read_metadata(tar: &[u8]) -> anyhow::Result<()> {
 /// Refuses invalid artifacts, failed transfers, or conflicting bucket objects.
 pub async fn upload(
     registry: &PackageRegistry,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     bucket: &str,
 ) -> Result<UploadedClient, WebArtifactError> {
     async {
@@ -118,7 +118,7 @@ pub async fn upload(
 /// Refuses invalid artifacts before writing, or conflicting existing objects.
 pub async fn upload_to_store(
     registry: &PackageRegistry,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     prefix: &str,
     store: &dyn ObjectStore,
 ) -> anyhow::Result<(String, bool)> {
@@ -134,7 +134,7 @@ pub async fn upload_to_store(
     } else {
         format!("{base}/")
     };
-    let root = format!("{base}platform-ui/sha256-{}", &digest[7..]);
+    let root = format!("{base}platform-ui/sha256-{}", digest.hex());
     match store.head(&format!("{root}/index.html").into()).await {
         Ok(_) => return Ok((root, false)),
         Err(object_store::Error::NotFound { .. }) => {}
@@ -175,18 +175,23 @@ mod tests {
         let packed = pack(&first.join("dist"), "1.2.3").unwrap();
         let other = pack(&second.join("dist"), "1.2.3").unwrap();
         assert_eq!(
-            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(other.digest.to_string()).unwrap()
+            (packed.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (other.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
         );
         std::fs::write(second.join("dist/index.html"), "changed").unwrap();
         assert_ne!(
-            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap(),
-            wamn_catalog::ArtifactHash::parse(
-                pack(&second.join("dist"), "1.2.3")
-                    .unwrap()
-                    .digest
-                    .to_string()
-            )
+            (packed.digest.to_string())
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            (pack(&second.join("dist"), "1.2.3")
+                .unwrap()
+                .digest
+                .to_string())
+            .parse::<wamn_digest::Digest>()
             .unwrap()
         );
         std::fs::write(second.join("dist/config.json"), "org data").unwrap();
@@ -200,19 +205,18 @@ mod tests {
         let packed = pack(&scratch.path().join("dist"), "1.2.3").unwrap();
         let application = super::super::pack_web_artifact(scratch.path()).unwrap();
         for (responses, digest) in [
-            (vec![(404, Vec::new())], packed.digest.as_str()),
+            (vec![(404, Vec::new())], &packed.digest),
             (
                 vec![(200, packed.manifest.clone())],
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                &"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
             ),
             (
                 vec![(200, packed.manifest.clone()), (200, b"corrupt".to_vec())],
-                packed.digest.as_str(),
+                &packed.digest,
             ),
-            (
-                vec![(200, application.manifest)],
-                application.digest.as_str(),
-            ),
+            (vec![(200, application.manifest)], &application.digest),
         ] {
             let server = Server::start(responses).await;
             let store = InMemory::new();
@@ -244,7 +248,7 @@ mod tests {
             ])
             .await;
             let store = InMemory::new();
-            let root = format!("platform-ui/{}", packed.digest.replace(':', "-"));
+            let root = format!("platform-ui/{}", format!("sha256-{}", packed.digest.hex()));
             let files = web_dist_files(&packed.tar).unwrap();
             let (asset, bytes) = files
                 .iter()

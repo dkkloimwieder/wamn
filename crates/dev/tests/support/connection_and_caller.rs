@@ -12,7 +12,10 @@ use wamn_environment::environment::document::EnvironmentDocument;
 
 use super::{Journey, observer};
 
-pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Result<()> {
+pub(super) async fn exercise(
+    journey: &Journey<'_>,
+    release: &wamn_digest::Digest,
+) -> anyhow::Result<()> {
     journey
         .apply(
             "connection-environment",
@@ -26,7 +29,14 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         .apply(
             "connection-schema",
             journey
-                .command(&["schema", "apply", "alpha", "--release", release, "--env"])
+                .command(&[
+                    "schema",
+                    "apply",
+                    "alpha",
+                    "--release",
+                    &release.to_string(),
+                    "--env",
+                ])
                 .arg(&journey.file),
         )
         .await?;

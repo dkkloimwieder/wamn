@@ -318,11 +318,11 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
                 PROJECT_ENV_KEY,
                 &wamn_events::admission::ManualRunAdmission {
                     package_id: PACKAGE_ID,
-                    manifest_digest: POD_MANIFEST_DIGEST,
+                    manifest_digest: &POD_MANIFEST_DIGEST.parse().unwrap(),
                     environment: ENVIRONMENT,
                     workflow_id: WIRING_ID,
                     workflow_version: WIRING_VERSION,
-                    wiring_hash: EMPTY_HASH,
+                    wiring_hash: &EMPTY_HASH.parse().unwrap(),
                     execution_principal_id: &actor,
                     execution_role: "workflow",
                     invoked_by_user_id: &actor,

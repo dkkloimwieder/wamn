@@ -15,7 +15,6 @@ use hyper::{
 };
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use sqlx::PgConnection as Client;
 use tokio::sync::Semaphore;
 use wamn_broker::auth_changes::AuthDrops;
@@ -358,14 +357,14 @@ async fn handle(
             {
                 // A failed or uncertain send must never report delivery success.
                 // Consume only this invitation; earlier operator invitations stay valid.
-                let hash = Sha256::digest(invitation.secret().as_bytes()).to_vec();
+                let hash = wamn_digest::bytes_sha256(invitation.secret().as_bytes());
                 if let Ok(mut tx) = database.client.begin().await {
                     let _ = sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','identity','wamn:provisioning')")
                         .bind(actor.to_string().as_str())
                         .execute(&mut *tx)
                         .await
                         .map(|result| result.rows_affected());
-                    if sqlx::query("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE token_hash = $1 AND consumed_at IS NULL").bind(&hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
+                    if sqlx::query("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE token_hash = $1 AND consumed_at IS NULL").bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
                 }
                 return unavailable();
             }
@@ -447,7 +446,10 @@ async fn handle(
                 return session::unauthorized();
             }
             let email = email.trim().to_lowercase();
-            let bucket = format!("login:{}", hex::encode(Sha256::digest(email.as_bytes())));
+            let bucket = format!(
+                "login:{}",
+                wamn_digest::bytes_sha256(email.as_bytes()).hex()
+            );
             match admit(&mut database.client, &[(&bucket, 5)], &inner.issuer).await {
                 Ok(true) => (),
                 Ok(false) => return throttled(),
@@ -622,7 +624,10 @@ async fn handle(
                 return invalid();
             }
             let email = email.trim().to_lowercase();
-            let bucket = format!("recovery:{}", hex::encode(Sha256::digest(email.as_bytes())));
+            let bucket = format!(
+                "recovery:{}",
+                wamn_digest::bytes_sha256(email.as_bytes()).hex()
+            );
             match admit(&mut database.client, &[(&bucket, 5)], &inner.issuer).await {
                 Ok(true) => (),
                 Ok(false) => return throttled(),
@@ -692,10 +697,10 @@ async fn handle(
                     .await
                     .is_err()
                 {
-                    let hash = Sha256::digest(token.secret().as_bytes()).to_vec();
+                    let hash = wamn_digest::bytes_sha256(token.secret().as_bytes());
                     if let Ok(mut tx) = database.client.begin().await
                         && sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','identity','wamn:provisioning')").bind(actor.to_string().as_str()).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok()
-                        && sqlx::query("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL").bind(&hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
+                        && sqlx::query("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL").bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
                 }
                 response(StatusCode::ACCEPTED, "application/json", Vec::new())
             };
@@ -852,7 +857,7 @@ async fn finish_session(
                 return unavailable();
             }
             let csrf = hex::encode(bytes);
-            claims.csrf = Some(hex::encode(Sha256::digest(csrf.as_bytes())));
+            claims.csrf = Some(wamn_digest::bytes_sha256(csrf.as_bytes()));
             Some(csrf)
         }
     };

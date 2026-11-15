@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use wamn_catalog::AdmittedComponent;
 
-use wamn_catalog::component_digest_tag;
 use wamn_digest::bytes_sha256;
 
 /// A source that returns only verified component bytes.
@@ -40,7 +39,7 @@ pub trait ArtifactSource: Send + Sync {
 #[derive(Debug)]
 pub struct VerifiedEntry {
     pub bytes: Vec<u8>,
-    pub digest: String,
+    pub digest: wamn_digest::Digest,
 }
 
 /// Stable classification of a refused component artifact pull.
@@ -159,7 +158,7 @@ impl ArtifactSource for LocalComponentSource {
         &self,
         component: &AdmittedComponent,
     ) -> Result<Vec<u8>, ComponentArtifactFetchError> {
-        let path = local_component_path(&self.directory, &component.component_digest)?;
+        let path = local_component_path(&self.directory, &component.component_digest);
         let named = path.display().to_string();
         let bytes = tokio::fs::read(&path).await.map_err(|_| {
             ComponentArtifactFetchError::unavailable(&named, "component-artifact-body-unavailable")
@@ -190,7 +189,10 @@ impl ArtifactSource for LocalComponentSource {
                 .and_then(|stem| stem.to_str())
                 .ok_or_else(ComponentArtifactFetchError::invalid_reference)?
         );
-        if path != local_component_path(&self.directory, &digest)? {
+        let digest = digest
+            .parse::<wamn_digest::Digest>()
+            .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
+        if path != local_component_path(&self.directory, &digest) {
             return Err(ComponentArtifactFetchError::invalid_reference());
         }
         let bytes = tokio::fs::read(path).await.map_err(|_| {
@@ -210,7 +212,7 @@ impl ArtifactSource for LocalComponentSource {
 pub fn verify_component_body(
     bytes: &[u8],
     descriptor_size: i64,
-    expected_digest: &str,
+    expected_digest: &wamn_digest::Digest,
     reference: &str,
 ) -> Result<(), ComponentArtifactFetchError> {
     if i64::try_from(bytes.len()).unwrap_or(i64::MAX) != descriptor_size {
@@ -219,7 +221,7 @@ pub fn verify_component_body(
             "component-artifact-body-size-mismatch",
         ));
     }
-    if bytes_sha256(bytes) != expected_digest {
+    if bytes_sha256(bytes) != *expected_digest {
         return Err(ComponentArtifactFetchError::mismatched(
             reference,
             "component-artifact-body-digest-mismatch",
@@ -251,13 +253,9 @@ pub fn verify_config_body(
 }
 
 /// Exact local filename for an admitted digest, without path interpretation.
-pub fn local_component_path(
-    directory: &Path,
-    digest: &str,
-) -> Result<PathBuf, ComponentArtifactFetchError> {
-    let tag = component_digest_tag(digest)
-        .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
-    Ok(directory.join(format!("{tag}.wasm")))
+pub fn local_component_path(directory: &Path, digest: &wamn_digest::Digest) -> PathBuf {
+    let tag = digest.hex();
+    directory.join(format!("{tag}.wasm"))
 }
 
 #[cfg(test)]
@@ -312,7 +310,7 @@ mod tests {
         std::fs::create_dir(&root).expect("create owned local artifact fixture");
         let bytes = b"admitted-local-component";
         let component = admitted(bytes);
-        let path = local_component_path(&root, &component.component_digest).unwrap();
+        let path = local_component_path(&root, &component.component_digest);
         std::fs::write(&path, bytes).unwrap();
         let source = LocalComponentSource::new(root.clone());
         assert_eq!(source.pull_verified(&component).await.unwrap(), bytes);
@@ -334,16 +332,6 @@ mod tests {
                 .error_type(),
             ComponentArtifactFetchErrorType::Unavailable
         );
-        let mut invalid = component;
-        invalid.component_digest = "sha256:../../outside".to_owned();
-        assert_eq!(
-            source
-                .pull_verified(&invalid)
-                .await
-                .unwrap_err()
-                .error_type(),
-            ComponentArtifactFetchErrorType::InvalidReference
-        );
         std::fs::remove_dir(root).unwrap();
     }
 
@@ -353,15 +341,12 @@ mod tests {
         std::fs::create_dir(&root).expect("create owned local entry fixture");
         let bytes = b"composed-local-entry";
         let digest = bytes_sha256(bytes);
-        let path = local_component_path(&root, &digest).unwrap();
+        let path = local_component_path(&root, &digest);
         std::fs::write(&path, bytes).unwrap();
         let source = LocalComponentSource::new(root.clone());
         let reference = format!("file:{}", path.display());
         let entry = source.pull_entry(&reference).await.unwrap();
-        assert_eq!(
-            (entry.bytes.as_slice(), entry.digest.as_str()),
-            (&bytes[..], &*digest)
-        );
+        assert_eq!(entry.digest, digest);
         std::fs::write(&path, b"changed-local-entry").unwrap();
         assert_eq!(
             source
@@ -371,7 +356,7 @@ mod tests {
                 .error_type(),
             ComponentArtifactFetchErrorType::Mismatched
         );
-        let outside = format!("file:/elsewhere/{}.wasm", &digest["sha256:".len()..]);
+        let outside = format!("file:/elsewhere/{}.wasm", digest.hex());
         assert_eq!(
             source.pull_entry(&outside).await.unwrap_err().error_type(),
             ComponentArtifactFetchErrorType::InvalidReference

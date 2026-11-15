@@ -80,7 +80,7 @@ fn fact() -> AdmittedComponent {
         )]),
         component_digest: bytes_sha256(BODY),
         imports: Vec::new(),
-        imports_fingerprint: String::new(),
+        imports_fingerprint: wamn_digest::canonical_json_sha256(&serde_json::json!([])),
         effects: Vec::new(),
     }
 }
@@ -107,7 +107,7 @@ impl Bundle {
     }
 
     /// Write the files into a new directory and return it with the bundle digest.
-    fn write(&self) -> (PathBuf, String) {
+    fn write(&self) -> (PathBuf, wamn_digest::Digest) {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let directory = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "edge-release-{}-{}",
@@ -128,7 +128,7 @@ impl Bundle {
         write(&directory, GRANTS_FILE_NAME, &self.grants);
         write(&directory, INGRESS_FILE_NAME, &self.ingress);
         let tag = bytes_sha256(BODY);
-        let tag = tag.strip_prefix("sha256:").expect("digest prefix");
+        let tag = tag.hex();
         write(&directory, &format!("{tag}.wasm"), &self.body);
         write(&directory, BUNDLE_FILE_NAME, &bundle);
         (directory, bytes_sha256(&bundle))
@@ -152,7 +152,7 @@ fn target() -> ReleaseTarget {
     )
 }
 
-async fn refusal(directory: &Path, digest: &str) -> EdgeReleaseErrorType {
+async fn refusal(directory: &Path, digest: &wamn_digest::Digest) -> EdgeReleaseErrorType {
     EdgeRelease::load(directory, digest, target())
         .await
         .expect_err("the bundle is refused")
@@ -165,7 +165,7 @@ async fn a_pinned_bundle_loads_and_grants_permissions_by_role() {
     let release = EdgeRelease::load(&directory, &digest, target())
         .await
         .expect("load");
-    assert_eq!(release.bundle_digest(), digest);
+    assert_eq!(release.bundle_digest(), &digest);
     assert_eq!(
         release.release().release().manifest_digest,
         release.release().manifest().digest()
@@ -203,7 +203,7 @@ async fn a_changed_file_does_not_match_its_pin() {
         );
     }
     let tag = bytes_sha256(BODY);
-    let tag = tag.strip_prefix("sha256:").expect("digest prefix");
+    let tag = tag.hex();
     write(&directory, &format!("{tag}.wasm"), b"other component bytes");
     assert_eq!(
         refusal(&directory, &digest).await,

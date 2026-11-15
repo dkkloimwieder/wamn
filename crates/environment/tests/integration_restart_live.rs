@@ -355,7 +355,9 @@ fn loaded_release(
                     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
                         "reader",
                         "0.1.0",
-                        format!("sha256:{}", byte.repeat(64)),
+                        format!("sha256:{}", byte.repeat(64))
+                            .parse::<wamn_digest::Digest>()
+                            .unwrap(),
                     );
                     descriptor.operations = BTreeMap::from([(
                         "wamn:node/handler@0.1.0".into(),
@@ -443,7 +445,7 @@ async fn apply(
         source.commit().await?;
         let release = loaded_release(document, application)?;
         let project_env_key = "acme--dev--one";
-        let digest = release.release().manifest_digest.as_str();
+        let digest = &release.release().manifest_digest;
         wamn_environment::environment::stage::write_release(
             project_url,
             project_env_key,
@@ -597,8 +599,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
                 application.clone(),
                 loaded_release(&document, application)?
                     .release()
-                    .manifest_digest
-                    .to_string(),
+                    .manifest_digest,
             ))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
@@ -697,7 +698,12 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
             RegistryCredentialSource::Fixed(read_registry_credentials(&auth, &registry.address)?),
         )
         .await?;
-        integrations.imports(&format!("sha256:{}", byte.repeat(64)), package)
+        integrations.imports(
+            &format!("sha256:{}", byte.repeat(64))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            package,
+        )
     };
     let reader = imports(&document, "reader", "modbus_reader", "a").await?;
     let observer = imports(&document, "observer", "observer_fixture", "b").await?;
@@ -728,7 +734,9 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         Some(sibling.as_str())
     );
     // A missing new digest refuses its first call before the old instance runs.
-    let absent = format!("sha256:{}", "f".repeat(64));
+    let absent = (format!("sha256:{}", "f".repeat(64)))
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     let mut control = connect(database.as_str()).await?;
     let parameters: serde_json::Value = sqlx::query("SELECT parameter_schema FROM registry.integration_type_version WHERE integration_type='modbus' AND version=2").fetch_one(&mut control)
         .await?
@@ -767,7 +775,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     assert_eq!(application.read().await?.unwrap().payload, "4660");
     let before_generation = reader.store_id("registers").await?.unwrap();
     // The engine counts compiles by the digest of the component bytes.
-    let code = |built: &integration::BuiltIntegration| -> anyhow::Result<String> {
+    let code = |built: &integration::BuiltIntegration| -> anyhow::Result<wamn_digest::Digest> {
         Ok(wamn_digest::bytes_sha256(&std::fs::read(
             built.directory.join("integration.wasm"),
         )?))

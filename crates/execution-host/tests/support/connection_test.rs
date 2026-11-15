@@ -16,7 +16,7 @@ mod local_registry;
 const SECRET: &str = "candidate-private-api-key";
 
 #[derive(Debug, Default)]
-struct HealthStatus(tokio::sync::Mutex<Option<String>>);
+struct HealthStatus(tokio::sync::Mutex<Option<wamn_digest::Digest>>);
 
 #[async_trait::async_trait]
 impl wamn_execution_host::environment_status::StatusSource for HealthStatus {
@@ -307,7 +307,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         .push_blob(
             &native_repository.reference,
             native_config.clone(),
-            &wamn_digest::bytes_sha256(&native_config),
+            &wamn_digest::bytes_sha256(&native_config).to_string(),
         )
         .await?;
     native_repository
@@ -339,7 +339,11 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     sqlx::query(
         "SELECT registry.publish_integration('modbus',3,$1,$2,'wamn:modbus/client@1.0.0',$3,$4)",
     )
-    .bind(&format!("sha256:{}", "f".repeat(64)))
+    .bind(
+        &(format!("sha256:{}", "f".repeat(64)))
+            .parse::<wamn_digest::Digest>()
+            .unwrap(),
+    )
     .bind(&schema)
     .bind(&vec![
         "wamn:modbus/read@1.0.0",
@@ -385,7 +389,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     .await
     .unwrap();
     let canonical = b"{}".as_slice();
-    let digest: String = sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&canonical).fetch_one(&mut billing).await?.get(0);
+    let digest: wamn_digest::Digest = sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&canonical).fetch_one(&mut billing).await?.get(0);
     sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,2)").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&digest).bind(&connection["id"].as_str().unwrap()).execute(&mut billing).await.map(|result| result.rows_affected())?;
     *live.0.lock().await = Some(digest);
     let before = counts(&mut admin).await?;

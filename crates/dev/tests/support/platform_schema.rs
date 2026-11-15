@@ -231,7 +231,10 @@ async fn database_effect(
     Ok(())
 }
 
-pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Result<()> {
+pub(super) async fn exercise(
+    journey: &Journey<'_>,
+    release: &wamn_digest::Digest,
+) -> anyhow::Result<()> {
     let selected = inputs(journey.run)?;
     let chart = selected.directory();
     let mut document = EnvironmentDocument::compile(&journey.file)?;

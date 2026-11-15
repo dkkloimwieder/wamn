@@ -29,8 +29,8 @@ const ENVIRONMENT: &str = "prod";
 const WIRING_ID: &str = "wiring-a";
 const WIRING_VERSION: i32 = 1;
 
-fn digest(fill: &str) -> String {
-    format!("sha256:{}", fill.repeat(64))
+fn digest(fill: &str) -> wamn_digest::Digest {
+    format!("sha256:{}", fill.repeat(64)).parse().unwrap()
 }
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
@@ -274,10 +274,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
     plugin.set_runner(COMPONENT, COMPONENT)?;
     // A production host carries its release digest and leases only the runs
     // pinned to it (docs/architecture/execution.md#environment-workflows).
-    plugin.set_release_identity(
-        COMPONENT,
-        ReleaseIdentity::for_test(wamn_catalog::ManifestDigest::parse(&manifest_digest)?),
-    )?;
+    plugin.set_release_identity(COMPONENT, ReleaseIdentity::for_test(manifest_digest))?;
     assert_eq!(
         wamn_connections::production_lease::ProductionLeases::new(&plugin)
             .renew(COMPONENT, "absent", 1, 30_000)

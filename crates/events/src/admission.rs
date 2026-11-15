@@ -14,11 +14,11 @@ pub struct ManualRunAdmission<'a> {
     /// package id.
     pub package_id: &'a str,
     /// The release the host serves, as its manifest digest.
-    pub manifest_digest: &'a str,
+    pub manifest_digest: &'a wamn_digest::Digest,
     pub environment: &'a str,
     pub workflow_id: &'a str,
     pub workflow_version: i32,
-    pub wiring_hash: &'a str,
+    pub wiring_hash: &'a wamn_digest::Digest,
     pub execution_principal_id: &'a str,
     pub execution_role: &'a str,
     /// The session or PAT user that started the run.
@@ -67,7 +67,7 @@ pub async fn admit_manual_run(
 pub struct EnabledWorkflow {
     pub version: i32,
     pub graph: WiringDocument,
-    pub wiring_hash: String,
+    pub wiring_hash: wamn_digest::Digest,
     /// `role` or `invoker`.
     pub execution_type: String,
     /// The active role of a `role` workflow.

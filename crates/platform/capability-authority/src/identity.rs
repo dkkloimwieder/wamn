@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 use serde::Deserialize;
 use std::sync::Arc;
-use wamn_catalog::ManifestDigest;
+
 use wamn_engine::release_manifest::LoadedRelease;
 
 /// The release a pod carries — the manifest digest derived from the verified
@@ -22,25 +22,25 @@ pub struct ReleaseIdentity {
     /// `sha256:<64 lowercase hex>` shape the run plane's
     /// `runs_release_record_check` admits is carried by the type, so there is no
     /// hand-rolled shape test on this path.
-    manifest_digest: ManifestDigest,
+    manifest_digest: wamn_digest::Digest,
 }
 
 impl ReleaseIdentity {
     /// The identity of the release a pod loaded.
     pub fn from_loaded(release: &LoadedRelease) -> Self {
         Self {
-            manifest_digest: release.release().manifest_digest.clone(),
+            manifest_digest: release.release().manifest_digest,
         }
     }
 
     /// An identity with no loaded release, for tests whose rows name it.
     #[cfg(feature = "test-util")]
-    pub fn for_test(manifest_digest: ManifestDigest) -> Self {
+    pub fn for_test(manifest_digest: wamn_digest::Digest) -> Self {
         Self { manifest_digest }
     }
 
     /// `runs.manifest_digest`.
-    pub fn manifest_digest(&self) -> &ManifestDigest {
+    pub fn manifest_digest(&self) -> &wamn_digest::Digest {
         &self.manifest_digest
     }
 }
@@ -106,16 +106,16 @@ pub struct WiringLookup<'a> {
 pub struct ConnectionEffectLookup<'a> {
     pub entry: ConnectionEntryLookup<'a>,
     pub origin_package_id: &'a str,
-    pub origin_component_digest: &'a str,
+    pub origin_component_digest: &'a wamn_digest::Digest,
     pub origin_component: &'a str,
     pub origin_interface_version: &'a str,
     pub origin_operation: &'a str,
     pub package_id: &'a str,
     pub operation: &'a str,
     /// The release the effect runs under, as its manifest digest.
-    pub manifest_digest: &'a str,
+    pub manifest_digest: &'a wamn_digest::Digest,
     pub environment: &'a str,
-    pub component_digest: &'a str,
+    pub component_digest: &'a wamn_digest::Digest,
     pub store_alias: &'a str,
     pub candidate_binding: Option<&'a CandidateConnectionBinding>,
 }
@@ -125,32 +125,28 @@ pub struct ConnectionEffectLookup<'a> {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CandidateConnectionBinding {
     pub read_only: bool,
-    pub component_digest: String,
+    pub component_digest: wamn_digest::Digest,
     pub store_alias: String,
-    pub requirement_hash: String,
+    pub requirement_hash: wamn_digest::Digest,
     pub instance_id: String,
     pub instance_revision: i64,
     pub requirement_type: String,
     pub contract: String,
-    pub validation_hash: String,
+    pub validation_hash: wamn_digest::Digest,
     pub generation: i64,
-    pub definition_hash: String,
+    pub definition_hash: wamn_digest::Digest,
     /// None for a `gcs` blobstore, which signs with the host pod's service account.
     pub credential_set_handle: Option<String>,
 }
 
 impl CandidateConnectionBinding {
     fn is_complete(&self) -> bool {
-        !self.component_digest.is_empty()
-            && !self.store_alias.is_empty()
-            && !self.requirement_hash.is_empty()
+        !self.store_alias.is_empty()
             && !self.instance_id.is_empty()
             && self.instance_revision >= 0
             && !self.requirement_type.is_empty()
             && !self.contract.is_empty()
-            && !self.validation_hash.is_empty()
             && self.generation > 0
-            && !self.definition_hash.is_empty()
             && self
                 .credential_set_handle
                 .as_deref()
@@ -159,17 +155,17 @@ impl CandidateConnectionBinding {
 
     pub fn matches_snapshot(&self, snapshot: &ConnectionEffectSnapshot) -> bool {
         snapshot.read_only == self.read_only
-            && snapshot.requirement_hash.as_deref() == Some(self.requirement_hash.as_str())
+            && snapshot.requirement_hash.as_ref() == Some(&self.requirement_hash)
             && snapshot.instance_id.as_deref() == Some(self.instance_id.as_str())
             && snapshot
                 .instance_revision
                 .is_some_and(|revision| revision >= self.instance_revision)
             && snapshot.requirement_type.as_deref() == Some(self.requirement_type.as_str())
             && snapshot.contract.as_deref() == Some(self.contract.as_str())
-            && snapshot.validation_hash.as_deref() == Some(self.validation_hash.as_str())
+            && snapshot.validation_hash.as_ref() == Some(&self.validation_hash)
             && snapshot.pinned_generation == Some(self.generation)
             && snapshot.generation == Some(self.generation)
-            && snapshot.definition_hash.as_deref() == Some(self.definition_hash.as_str())
+            && snapshot.definition_hash.as_ref() == Some(&self.definition_hash)
             && snapshot.credential_handle == self.credential_set_handle
     }
 }
@@ -201,11 +197,11 @@ impl CandidateBindingWorld {
     /// Find the one frozen binding selected by a component store alias.
     pub fn binding(
         &self,
-        component_digest: &str,
+        component_digest: &wamn_digest::Digest,
         store_alias: &str,
     ) -> Option<&CandidateConnectionBinding> {
         self.0.iter().find(|binding| {
-            binding.component_digest == component_digest && binding.store_alias == store_alias
+            binding.component_digest == *component_digest && binding.store_alias == store_alias
         })
     }
 }
@@ -220,18 +216,18 @@ pub struct ConnectionEffectSnapshot {
     pub connection_name: Option<String>,
     pub read_only: bool,
     /// `None` for a route, which has no wiring.
-    pub wiring_hash: Option<String>,
+    pub wiring_hash: Option<wamn_digest::Digest>,
     pub component: Option<String>,
     pub interface_version: Option<String>,
     pub operation: Option<String>,
     pub registered_operation: Option<String>,
     pub requirement_json: Option<serde_json::Value>,
-    pub requirement_hash: Option<String>,
+    pub requirement_hash: Option<wamn_digest::Digest>,
     pub node_permitted: bool,
     pub binding_active: bool,
     pub binding_valid: bool,
     pub instance_id: Option<String>,
-    pub validation_hash: Option<String>,
+    pub validation_hash: Option<wamn_digest::Digest>,
     pub requirement_type: Option<String>,
     pub contract: Option<String>,
     pub instance_enabled: bool,
@@ -241,6 +237,6 @@ pub struct ConnectionEffectSnapshot {
     pub instance_revision: Option<i64>,
     pub generation: Option<i64>,
     pub definition: Option<serde_json::Value>,
-    pub definition_hash: Option<String>,
+    pub definition_hash: Option<wamn_digest::Digest>,
     pub credential_handle: Option<String>,
 }

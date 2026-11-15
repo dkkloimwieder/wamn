@@ -357,8 +357,8 @@ pub fn service_resource(stem: &str, org: &str, project: &str, env: &str) -> Stri
     format!("{stem}-{}", project_env_key(org, project, env))
 }
 /// A login name derived from its credential identity.
-pub fn credential_login(prefix: &str, digest: &str) -> String {
-    format!("{prefix}_{digest}")
+pub fn credential_login(prefix: &str, identity_hash: &str) -> String {
+    format!("{prefix}_{identity_hash}")
 }
 /// The audience of one project database instance.
 pub fn project_audience(org: &str, project: &str, env: &str, instance: &str) -> String {

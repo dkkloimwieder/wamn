@@ -30,10 +30,10 @@ pub(super) fn require_write_interfaces(
 pub(super) fn require_published_manifest(
     built: &BuiltIntegration,
     manifest: &[u8],
-    digest: &str,
+    digest: &wamn_digest::Digest,
 ) -> anyhow::Result<()> {
     ensure!(
-        manifest == built.manifest && digest == built.digest,
+        manifest == built.manifest && *digest == built.digest,
         "published integration manifest differs from its build"
     );
     Ok(())

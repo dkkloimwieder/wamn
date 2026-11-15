@@ -539,7 +539,7 @@ async fn unbound_identity_writes_refuse(client: &mut sqlx::PgConnection) {
                (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
              VALUES ('{PRINCIPAL}', 'service', '{}', '{}', 'unbound', now() + interval '1 hour')",
             "0".repeat(16),
-            "0".repeat(64),
+            wamn_digest::Digest::from([0; 32]),
         ),
         "UPDATE identity.principals SET display_name = 'Unbound'".to_owned(),
     ] {

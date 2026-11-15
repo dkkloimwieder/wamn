@@ -11,7 +11,7 @@ test-util = []
 [dependencies]
 anyhow.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
-wamn-digest.workspace = true
+wamn-digest = { workspace = true, features = ["sqlx"] }
 hex.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

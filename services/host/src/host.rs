@@ -215,7 +215,7 @@ pub struct HostArgs {
         env = "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS",
         value_delimiter = ','
     )]
-    pub trusted_warm_component_digest: Vec<String>,
+    pub trusted_warm_component_digest: Vec<wamn_digest::Digest>,
 
     /// Native instances retained per eligible component, independent of admission limits.
     #[arg(long, env = "WAMN_COMPONENT_POOL_SIZE", default_value_t = 1)]
@@ -1887,11 +1887,12 @@ host:
         use std::collections::{BTreeMap, BTreeSet};
         use wamn_catalog::{
             AdmittedComponentOperation, AttachmentTarget, AttachmentType, ComponentDescriptor,
-            DefinitionHash, OperationType, PackageCoordinate, ServingAttachment, ServingComponent,
-            ServingRelease, ServingRoute,
+            OperationType, PackageCoordinate, ServingAttachment, ServingComponent, ServingRelease,
+            ServingRoute,
         };
 
-        let mut descriptor = ComponentDescriptor::named("http-request", "0.1", RELEASE_DIGEST);
+        let mut descriptor =
+            ComponentDescriptor::named("http-request", "0.1", RELEASE_DIGEST.parse().unwrap());
         descriptor.connections = connections;
         ServingManifest::new(
             ServingRelease {
@@ -1934,7 +1935,7 @@ host:
                         component: "http-request".into(),
                         operation: "request".into(),
                     },
-                    definition_hash: DefinitionHash::parse(RELEASE_DIGEST).unwrap(),
+                    definition_hash: (RELEASE_DIGEST).parse::<wamn_digest::Digest>().unwrap(),
                     definition: serde_json::json!({
                         "id": "orders",
                         "type": "http",

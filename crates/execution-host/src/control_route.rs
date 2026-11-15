@@ -227,7 +227,7 @@ struct EnvironmentRequest {
 struct ReleaseRequest {
     project: String,
     env: String,
-    digest: String,
+    digest: wamn_digest::Digest,
 }
 
 #[derive(Deserialize)]
@@ -1199,7 +1199,7 @@ const RELEASE_SQL: &str =
 /// release. `admin` holds every operation of the release. It writes nothing.
 async fn release_profile(
     url: &str,
-    digest: &str,
+    digest: &wamn_digest::Digest,
     caller: &PrincipalId,
 ) -> anyhow::Result<
     Option<(

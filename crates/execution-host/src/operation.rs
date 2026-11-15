@@ -511,14 +511,14 @@ pub fn component_invocation(
     ConnectionInvocation {
         origin: ConnectionOrigin {
             package_id: component.target.package_id.clone(),
-            component_digest: component.component_digest.clone(),
+            component_digest: component.component_digest,
             component: component.component.clone(),
             interface_version: component.interface_version.clone(),
             operation: operation.to_owned(),
         },
         entry,
         package_id: component.target.package_id.clone(),
-        component_digest: component.component_digest.clone(),
+        component_digest: component.component_digest,
         // The admitted component name, read off the catalog fact this
         // call resolved to. The per-request pooled target is an instance
         // id and names no component a reader can look up, so an effect

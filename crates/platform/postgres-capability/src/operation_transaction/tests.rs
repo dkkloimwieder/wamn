@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::oneshot;
-use wamn_catalog::ManifestDigest;
+
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
 use wash_runtime::host::HostRef;
@@ -32,7 +32,9 @@ fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
     ConnectionInvocation {
         origin: ConnectionOrigin {
             package_id: "overlay".into(),
-            component_digest: format!("sha256:{}", "a".repeat(64)),
+            component_digest: format!("sha256:{}", "a".repeat(64))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
             component: "overlay".into(),
             interface_version: "0.1.0".into(),
             operation: OWNER_OPERATION.into(),
@@ -41,7 +43,9 @@ fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
             wamn_capability_authority::connection::WiringPosition {
                 configuration: Default::default(),
                 package_id: "overlay".into(),
-                wiring_hash: format!("sha256:{}", "a".repeat(64)),
+                wiring_hash: format!("sha256:{}", "a".repeat(64))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
                 wiring_id: "widget".into(),
                 wiring_version: 1,
                 node_id: "record".into(),
@@ -49,7 +53,9 @@ fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
             },
         ),
         package_id: package_id.into(),
-        component_digest: format!("sha256:{}", "b".repeat(64)),
+        component_digest: format!("sha256:{}", "b".repeat(64))
+            .parse::<wamn_digest::Digest>()
+            .unwrap(),
         component: package_id.into(),
         operation: operation.into(),
         closure: ConnectionExecutionClosure::Released,
@@ -190,7 +196,9 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool:
         })
         .expect("live postgres plugin"),
     );
-    let release = ManifestDigest::parse(format!("sha256:{}", "c".repeat(64))).unwrap();
+    let release = (format!("sha256:{}", "c".repeat(64)))
+        .parse::<wamn_digest::Digest>()
+        .unwrap();
     postgres
         .bind_session_identity(
             OPERATION_OWNER,

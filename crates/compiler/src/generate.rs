@@ -1202,7 +1202,7 @@ mod tests {
             "package": {"id": "overlay", "version": "1.0.0"},
             "required_platform_policy_contract": {"id": "overlay_access", "state": "satisfied"},
             "base_dependencies": {"base": {
-                "package": "base", "version": "1.0.0", "digest": format!("sha256:{}", "a".repeat(64)),
+                "package": "base", "version": "1.0.0", "digest": (format!("sha256:{}", "a".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
                 "operations": ["record.get"]
             }},
             "models": {"record": {

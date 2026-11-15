@@ -31,7 +31,7 @@ impl Repository {
     }
 
     /// Delete an immutable manifest digest. The caller must protect all of its tag references.
-    pub async fn delete_manifest(&self, digest: &str) -> anyhow::Result<()> {
+    pub async fn delete_manifest(&self, digest: &wamn_digest::Digest) -> anyhow::Result<()> {
         self.source
             .delete_manifest(&self.reference, &self.auth, digest)
             .await
