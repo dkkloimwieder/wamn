@@ -110,6 +110,9 @@ async fn provision_project(project: &mut Client, project_url: &str) {
     wamn_environment::platform_migrations::install_project(project)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut *project).await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run")).to_string(),
     ))

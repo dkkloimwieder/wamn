@@ -34,7 +34,15 @@ async fn user(client: &mut Client) -> PrincipalId {
     .id()
 }
 async fn create(client: &mut Client, user: &PrincipalId) -> Renewal {
-    let mut tx = client.begin().await.unwrap();
+    let mut tx = wamn_test_postgres::transaction(
+        client,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "wamn:provisioning",
+    )
+    .await
+    .unwrap();
     let issued = login::create_login(&mut tx, user, ISSUER, AUDIENCE)
         .await
         .unwrap()
@@ -43,7 +51,15 @@ async fn create(client: &mut Client, user: &PrincipalId) -> Renewal {
     issued
 }
 async fn rotate(client: &mut Client, secret: &str) -> Option<Renewal> {
-    let mut tx = client.begin().await.unwrap();
+    let mut tx = wamn_test_postgres::transaction(
+        client,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "wamn:provisioning",
+    )
+    .await
+    .unwrap();
     let result = login::rotate_login(&mut tx, ISSUER, AUDIENCE, secret, &mut AuthDrops::default())
         .await
         .unwrap();
@@ -79,7 +95,15 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
         .unwrap()
         .get(0);
     assert_eq!(hash, Sha256::digest(first.secret()).to_vec());
-    let mut tx = issuer.begin().await.unwrap();
+    let mut tx = wamn_test_postgres::transaction(
+        &mut issuer,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "wamn:provisioning",
+    )
+    .await
+    .unwrap();
     assert!(
         login::rotate_login(
             &mut tx,
@@ -105,7 +129,15 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
         .is_none()
     );
     tx.commit().await.unwrap();
-    let mut tx = issuer.begin().await.unwrap();
+    let mut tx = wamn_test_postgres::transaction(
+        &mut issuer,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "wamn:provisioning",
+    )
+    .await
+    .unwrap();
     let rolled_back = login::rotate_login(
         &mut tx,
         ISSUER,
@@ -160,7 +192,15 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
             .as_deref(),
         Some("42501")
     );
-    let mut tx = issuer.begin().await.unwrap();
+    let mut tx = wamn_test_postgres::transaction(
+        &mut issuer,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "wamn:provisioning",
+    )
+    .await
+    .unwrap();
     assert_eq!(login::prune_expired(&mut tx, ISSUER).await.unwrap(), 0);
     tx.commit().await.unwrap();
 }
@@ -189,7 +229,15 @@ async fn inactivity_absolute_expiry_and_bounded_cleanup(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let mut issuer = connect(db.as_str(), "wamn_identity_issuer").await;
-    let mut tx = issuer.begin().await.unwrap();
+    let mut tx = wamn_test_postgres::transaction(
+        &mut issuer,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "wamn:provisioning",
+    )
+    .await
+    .unwrap();
     assert_eq!(
         login::prune_expired(&mut tx, "https://other.invalid")
             .await

@@ -110,7 +110,31 @@ impl Fixture {
             project,
             "dev",
         ));
-        Arc::new(PlatformRouteAuthenticator::new(postgres, [facts], None))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::grant_identity_reader_surface_sql(),
+        ))
+        .execute(&mut self.credentials.admin)
+        .await
+        .unwrap();
+        let identity_reader = sqlx::postgres::PgPoolOptions::new()
+            .after_connect(|connection, _| {
+                Box::pin(async move {
+                    sqlx::query("SET ROLE wamn_identity_reader")
+                        .execute(connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect_lazy_with(
+                wamn_postgres::connect_options(self.credentials.database.as_str())
+                    .await
+                    .unwrap(),
+            );
+        Arc::new(PlatformRouteAuthenticator::new(
+            postgres,
+            [facts],
+            Some((identity_reader, std::collections::HashMap::new())),
+        ))
     }
 
     async fn plugin(&mut self, secret: &str, project: &str) -> FlowHttpRouting {

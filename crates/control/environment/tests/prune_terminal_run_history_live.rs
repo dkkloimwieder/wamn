@@ -118,9 +118,18 @@ async fn seed_run(
     status: &str,
     age_days: i64,
 ) {
+    let mut transaction = wamn_test_postgres::transaction(
+        admin,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        "admin:run-retention-fixture",
+    )
+    .await
+    .unwrap();
     sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {SCHEMA}.runs (project_env_key, run_id, wiring_id, wiring_version, wiring_hash, package_id, manifest_digest, environment, status, input_json, created_at, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) VALUES ($1, $2, 'fixture-wiring', 1, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', '{PACKAGE_ID}', '{RELEASE_DIGEST}', 'test', $3, jsonb_build_object('payload', $1::text), now() - ($4::bigint * interval '1 day'), 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{{}}')"
-            ))).bind(&project_env_key).bind(&run_id).bind(&status).bind(&age_days).execute(&mut *admin).await.map(|result| result.rows_affected())
+            ))).bind(&project_env_key).bind(&run_id).bind(&status).bind(&age_days).execute(&mut *transaction).await.map(|result| result.rows_affected())
         .expect("seed a run");
     sqlx::query(sqlx::AssertSqlSafe(
         (&format!("INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ($1, $2)"))
@@ -128,10 +137,11 @@ async fn seed_run(
     ))
     .bind(&project_env_key)
     .bind(&run_id)
-    .execute(&mut *admin)
+    .execute(&mut *transaction)
     .await
     .map(|result| result.rows_affected())
     .expect("seed a queue row");
+    transaction.commit().await.unwrap();
 }
 
 /// The `project/run` keys of `relation`, in order.
@@ -214,12 +224,21 @@ async fn assert_authority(credential: &mut Client) {
     }
 
     // The grant bounds who may delete, and the trigger bounds what.
+    let mut transaction = wamn_test_postgres::transaction(
+        credential,
+        &wamn_control_provision::PlatformComponent::AuditRetention
+            .principal_id()
+            .to_string(),
+        "wamn:audit-retention",
+    )
+    .await
+    .unwrap();
     let error = sqlx::query(sqlx::AssertSqlSafe(
         (&format!("DELETE FROM {SCHEMA}.runs WHERE project_env_key = $1 AND status = 'running'"))
             .to_string(),
     ))
     .bind(&PROJECT_ENV_KEY)
-    .execute(&mut *credential)
+    .execute(&mut *transaction)
     .await
     .map(|result| result.rows_affected())
     .expect_err("the trigger refuses a raw non-terminal delete");
@@ -231,6 +250,7 @@ async fn assert_authority(credential: &mut Client) {
         Some("55000"),
         "the refusal of the raw non-terminal delete: {error:?}"
     );
+    transaction.rollback().await.unwrap();
 
     let stray: i64 = sqlx::query(
         "SELECT count(*) FROM pg_catalog.pg_class c \
@@ -240,6 +260,7 @@ async fn assert_authority(credential: &mut Client) {
               WHERE c.relkind IN ('r','p') \
                 AND n.nspname NOT IN ('pg_catalog','information_schema') \
                 AND c.relname <> 'runs' \
+                AND NOT (c.oid='platform.tx_identity'::regclass AND p='INSERT') \
                 AND pg_catalog.has_table_privilege('wamn_run_retention', c.oid, p)",
     )
     .fetch_one(&mut *credential)
@@ -251,12 +272,21 @@ async fn assert_authority(credential: &mut Client) {
         "the run retention role holds privileges outside runs"
     );
 
+    let mut transaction = wamn_test_postgres::transaction(
+        credential,
+        &wamn_control_provision::PlatformComponent::AuditRetention
+            .principal_id()
+            .to_string(),
+        "wamn:audit-retention",
+    )
+    .await
+    .unwrap();
     // The residual: the platform arm still shows the other project's three columns.
     let foreign: i64 = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT count(*) FROM {SCHEMA}.runs WHERE project_env_key = $1"
     )))
     .bind(&OTHER_PROJECT_ENV_KEY)
-    .fetch_one(&mut *credential)
+    .fetch_one(&mut *transaction)
     .await
     .expect("read the other project's rows under the platform arm")
     .get(0);
@@ -264,6 +294,7 @@ async fn assert_authority(credential: &mut Client) {
         foreign > 0,
         "the platform arm no longer exposes the other project's predicate columns"
     );
+    transaction.rollback().await.unwrap();
 }
 
 #[sqlx::test(migrations = false)]

@@ -374,9 +374,13 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         .unwrap();
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "SET ROLE \"{administration}\"; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{live_platform_principal}'::text::uuid,'','fixture','admin:seed-pat-drop-fixture');"
+        "BEGIN; SET LOCAL ROLE \"{administration}\"; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{live_platform_principal}'::text::uuid,'','fixture','admin:seed-pat-drop-fixture');"
     ))).execute(&mut project_admin).await.map(drop).unwrap();
     sqlx::query("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'service', 'pat-drop@example.test')").bind(&principal.id().to_string().as_str()).execute(&mut project_admin).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut project_admin)
+        .await
+        .unwrap();
     let mut http_url = url::Url::parse(project.as_str()).unwrap();
     http_url.set_username(&http).unwrap();
     http_url.set_password(Some("pat-drop")).unwrap();
@@ -388,7 +392,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         statement_timeout_ms: 5_000,
     };
     let projects = StaticCredentialProvider::projects_from_json(
-        &serde_json::json!({"project": {"credentials": {
+        &serde_json::json!({"host-project": {"credentials": {
             (AuthorityClass::CallableHttp.as_str()): http_url.as_str(),
         }}})
         .to_string(),
@@ -425,7 +429,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         );
     let authentication = PlatformRouteAuthenticator::for_test(
         Arc::clone(&pg),
-        "project",
+        "acme--dev--host-project",
         Some(identity_reader),
         None,
     );

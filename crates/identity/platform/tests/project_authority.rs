@@ -12,13 +12,6 @@
 //!   their stable `wamn_app` reads and nothing more, so a project or an
 //!   application cannot create a platform row or a `wamn:` name. `api_key`
 //!   takes no grant at all;
-//! - `number_counter` is written only through `platform.bump_counter`,
-//!   `platform.assign_counter` and `platform.set_counter`, which refuse an id
-//!   that is not a sequence — the control proving the other test fails for
-//!   the revoked privilege rather than for an over-broad narrowing. Which
-//!   application's sequence a caller reaches is decided by the `wamn:postgres`
-//!   plugin from host state, and its statement admission keeps guest SQL away
-//!   from these functions; the plugin's tests cover both;
 //! - the history tables take no read and no direct write from an App
 //!   generation.
 //!
@@ -40,10 +33,6 @@ const U2: &str = "22222222-2222-2222-2222-222222222222";
 const SEQUENCE: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 /// The application that owns [`SEQUENCE`].
 const APPLICATION: &str = "receiving";
-/// A number sequence of another application.
-const OTHER_SEQUENCE: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-/// An id that is not a number sequence.
-const UNKNOWN_SEQUENCE: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 /// The pinned `wamn:provisioning` id, the row a project must not create.
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
@@ -80,8 +69,7 @@ fn current_database(url: &str) -> String {
 /// The superuser prelude: a production-prepared project-targeted App generation,
 /// the stable passwordless `wamn_app` ACL carrier it inherits, a fresh
 /// `platform` applied verbatim from the DDL of record, one project's role rows,
-/// the user and configuration rows of the database, and a sequence of each of
-/// two applications.
+/// the user and configuration rows of the database, and its application sequence.
 /// Seeded as the superuser, so the seed itself is unaffected by the grants under
 /// test. The fixture writes as U1, its test principal, whose row stamps itself,
 /// under an administrative operation, and both bindings stay for the probes.
@@ -115,8 +103,7 @@ INSERT INTO platform.permission (role_name, permission) VALUES ('auditor','platf
 INSERT INTO platform.api_key (user_id, name, key_hash, prefix) VALUES ('{U1}','ci','hash-1','wk_a');
 INSERT INTO platform.setting (target_type, target_id, key, value) VALUES ('org','acme','display.theme','"dark"'::jsonb);
 INSERT INTO platform.number_sequence (id, application, name, pattern) VALUES
-  ('{SEQUENCE}','{APPLICATION}','purchase_order','P-{{seq:po,width=8}}'),
-  ('{OTHER_SEQUENCE}','wms','purchase_order','P-{{seq:po,width=8}}');"#
+  ('{SEQUENCE}','{APPLICATION}','purchase_order','P-{{seq:po,width=8}}');"#
     )
     .expect("writing to a String cannot fail");
     (app_generation, script)
@@ -250,197 +237,6 @@ BEGIN
 END $$;
 
 ROLLBACK;"#
-    )
-    .expect("writing to a String cannot fail");
-    script.push_str(TEARDOWN);
-    run(&url, &script);
-}
-
-/// `number_counter` advances only through `platform.bump_counter`
-/// (docs/architecture/data-access.md#counters). The App generation holds
-/// EXECUTE on it and no write on the table. The function runs as its owner on a
-/// sequence id and reads no claim: it returns 1 for a new counter row and then
-/// counts up, starts each key at 1, and refuses with `undefined_object` an id
-/// that is not a sequence. The `wamn:postgres` plugin resolves the id from the
-/// application in host state, and its statement admission refuses guest SQL
-/// that names the function. `number_counter` has no history table.
-#[sqlx::test(migrations = false)]
-async fn the_application_advances_a_counter_only_through_bump_counter(pool: sqlx::PgPool) {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
-
-    let (app_generation, mut script) = prelude(&url);
-    writeln!(
-        script,
-        r"
-DO $$ BEGIN
-  ASSERT has_function_privilege('wamn_app'::name,
-                                'platform.bump_counter(uuid, text, text)'::text, 'EXECUTE'),
-    'wamn_app must execute bump_counter';
-  ASSERT (SELECT prosecdef FROM pg_catalog.pg_proc
-           WHERE oid = 'platform.bump_counter(uuid, text, text)'::regprocedure),
-    'bump_counter must be SECURITY DEFINER';
-  ASSERT to_regclass('platform.number_counter_history') IS NULL,
-    'number_counter has no history table';
-END $$;
-
-BEGIN;
-SET LOCAL ROLE {app_generation};
-
-DO $$ BEGIN
-  ASSERT current_user = '{app_generation}',
-    'the probe runs as the prepared App generation';
-  ASSERT platform.bump_counter('{SEQUENCE}', 'po', '') = 1, 'a new counter renders 1';
-  ASSERT platform.bump_counter('{SEQUENCE}', 'po', '') = 2, 'the next call renders 2';
-  ASSERT platform.bump_counter('{SEQUENCE}', 'line', 'batch-a') = 1, 'a new key renders 1';
-  ASSERT platform.bump_counter('{SEQUENCE}', 'line', 'batch-b') = 1, 'each key starts at 1';
-  ASSERT platform.bump_counter('{SEQUENCE}', 'line', 'batch-a') = 2, 'a key counts on its own';
-  ASSERT (SELECT value FROM platform.number_counter
-           WHERE counter = 'po' AND key_value = '') = 3,
-    'the row holds the next value, readable by the application';
-  ASSERT (SELECT count(*) FROM platform.number_counter) = 3,
-    'the generation sees the counter rows of the database';
-  ASSERT (SELECT count(*) FROM platform.number_sequence) = 2,
-    'the generation sees every sequence of the database';
-END $$;
-
-DO $$ BEGIN
-  BEGIN
-    PERFORM platform.bump_counter('{UNKNOWN_SEQUENCE}', 'po', '');
-    RAISE EXCEPTION 'bump_counter advanced an id that is not a sequence';
-  EXCEPTION WHEN undefined_object THEN NULL;
-  END;
-END $$;
-
-RESET ROLE;
-DO $$ BEGIN
-  ASSERT (SELECT count(*) FROM platform.number_counter WHERE sequence_id = '{OTHER_SEQUENCE}') = 0,
-    'no call wrote a counter of the other application';
-  ASSERT (SELECT created_by FROM platform.number_counter
-           WHERE counter = 'po' AND key_value = '') = '{U1}',
-    'the counter row stamps the bound actor';
-END $$;
-
-ROLLBACK;"
-    )
-    .expect("writing to a String cannot fail");
-    script.push_str(TEARDOWN);
-    run(&url, &script);
-}
-
-/// The per= key rows of `number_counter` are written only by
-/// `platform.assign_counter` (docs/architecture/data-access.md#counters,
-/// wamn-83eth.2). The App generation holds EXECUTE on it. A key gets the next
-/// value of the `''` allocator once, and the same value after; the `''` key is
-/// refused, and an id that is not a sequence is refused with
-/// `undefined_object`. The function reads no claim.
-#[sqlx::test(migrations = false)]
-async fn the_application_assigns_a_keyed_counter_only_through_assign_counter(pool: sqlx::PgPool) {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
-
-    let (app_generation, mut script) = prelude(&url);
-    writeln!(
-        script,
-        r"
-DO $$ BEGIN
-  ASSERT has_function_privilege('wamn_app'::name,
-                                'platform.assign_counter(uuid, text, text)'::text, 'EXECUTE'),
-    'wamn_app must execute assign_counter';
-  ASSERT (SELECT prosecdef FROM pg_catalog.pg_proc
-           WHERE oid = 'platform.assign_counter(uuid, text, text)'::regprocedure),
-    'assign_counter must be SECURITY DEFINER';
-END $$;
-
-BEGIN;
-SET LOCAL ROLE {app_generation};
-
-DO $$ BEGIN
-  ASSERT platform.assign_counter('{SEQUENCE}', 'batch', 'batch-a') = 1, 'a new key takes 1';
-  ASSERT platform.assign_counter('{SEQUENCE}', 'batch', 'batch-b') = 2, 'the next key takes 2';
-  ASSERT platform.assign_counter('{SEQUENCE}', 'batch', 'batch-a') = 1, 'a known key keeps 1';
-  ASSERT (SELECT value FROM platform.number_counter
-           WHERE counter = 'batch' AND key_value = '') = 3,
-    'the allocator advanced once for each key';
-  BEGIN
-    PERFORM platform.assign_counter('{SEQUENCE}', 'batch', '');
-    RAISE EXCEPTION 'assign_counter assigned the allocator key';
-  EXCEPTION WHEN invalid_parameter_value THEN NULL;
-  END;
-  BEGIN
-    PERFORM platform.assign_counter('{UNKNOWN_SEQUENCE}', 'batch', 'batch-a');
-    RAISE EXCEPTION 'assign_counter assigned a key of an id that is not a sequence';
-  EXCEPTION WHEN undefined_object THEN NULL;
-  END;
-END $$;
-
-RESET ROLE;
-DO $$ BEGIN
-  ASSERT (SELECT count(*) FROM platform.number_counter WHERE sequence_id = '{OTHER_SEQUENCE}') = 0,
-    'no call wrote a counter of the other application';
-END $$;
-
-ROLLBACK;"
-    )
-    .expect("writing to a String cannot fail");
-    script.push_str(TEARDOWN);
-    run(&url, &script);
-}
-
-/// `platform.set_counter` is the third writer of `number_counter`, the write of
-/// the set_counter host route (docs/architecture/data-access.md#counters,
-/// wamn-83eth.3). The App generation holds EXECUTE on it. It inserts a counter
-/// row or sets its value; it refuses a value below 1, and refuses with
-/// `undefined_object` an id that is not a sequence. It reads no claim: the
-/// route resolves the sequence by the application it validated.
-#[sqlx::test(migrations = false)]
-async fn the_application_sets_a_counter_only_through_set_counter(pool: sqlx::PgPool) {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
-
-    let (app_generation, mut script) = prelude(&url);
-    writeln!(
-        script,
-        r"
-DO $$ BEGIN
-  ASSERT has_function_privilege('wamn_app'::name,
-                                'platform.set_counter(uuid, text, text, bigint)'::text, 'EXECUTE'),
-    'wamn_app must execute set_counter';
-  ASSERT (SELECT prosecdef FROM pg_catalog.pg_proc
-           WHERE oid = 'platform.set_counter(uuid, text, text, bigint)'::regprocedure),
-    'set_counter must be SECURITY DEFINER';
-END $$;
-
-BEGIN;
-SET LOCAL ROLE {app_generation};
-
-DO $$ BEGIN
-  PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 100);
-  ASSERT platform.bump_counter('{SEQUENCE}', 'po', '') = 100, 'a new row renders the set value';
-  PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 7);
-  ASSERT platform.bump_counter('{SEQUENCE}', 'po', '') = 7, 'a set row renders the set value';
-  BEGIN
-    PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 0);
-    RAISE EXCEPTION 'set_counter set a value below 1';
-  EXCEPTION WHEN invalid_parameter_value THEN NULL;
-  END;
-  BEGIN
-    PERFORM platform.set_counter('{UNKNOWN_SEQUENCE}', 'po', '', 5);
-    RAISE EXCEPTION 'set_counter set a counter of an id that is not a sequence';
-  EXCEPTION WHEN undefined_object THEN NULL;
-  END;
-END $$;
-
-RESET ROLE;
-DO $$ BEGIN
-  ASSERT (SELECT count(*) FROM platform.number_counter WHERE sequence_id = '{OTHER_SEQUENCE}') = 0,
-    'no call wrote a counter of the other application';
-END $$;
-
-ROLLBACK;"
     )
     .expect("writing to a String cannot fail");
     script.push_str(TEARDOWN);

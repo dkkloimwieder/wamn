@@ -40,6 +40,14 @@ DO $app$ BEGIN
   END IF;
 END $app$;
 
+DO $query$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_query') THEN
+    CREATE ROLE wamn_query NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+      NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+END $query$;
+
 -- Stable host-only ACL role for run-history retention (`wamn-0h0g.12.69`). Its
 -- targeted logins, their CONNECT and their Secret are provisioned
 -- separately; this local fixture needs only the NOLOGIN grant carrier, so

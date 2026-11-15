@@ -38,11 +38,12 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     .await
     .map(drop)
     .expect("the registry owner role");
-    sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+    wamn_control_provision::test_database::system_schema(database.as_str()).await;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
         .execute(&mut db)
         .await
-        .map(drop)
-        .expect("install the system schema");
+        .unwrap();
     sqlx::raw_sql("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture');")
         .execute(&mut db)
         .await

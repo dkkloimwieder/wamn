@@ -201,6 +201,9 @@ async fn operator_pat_issuance_over_https() {
     targeted.set_fragment(None);
     let targeted = targeted.to_string();
 
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut system).await.unwrap();
     // The fixture is platform setup, so it writes as wamn:provisioning.
     let user = create_user(
         &mut system,
@@ -427,10 +430,18 @@ async fn operator_pat_issuance_over_https() {
             .expect_redacted("principal disable test")
             .is_none()
     );
+    let expiry_principal = create_service(
+        &mut system,
+        "pat-expiry",
+        "Expiry fixture",
+        &mut AuthDrops::default(),
+    )
+    .await
+    .expect_redacted("expiry service fixture");
     let expired_pat = success(
         &authorized,
         &process.endpoint,
-        user.id(),
+        expiry_principal.id(),
         "expiry control",
         &mut system,
     )

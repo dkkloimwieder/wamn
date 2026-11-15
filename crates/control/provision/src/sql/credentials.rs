@@ -4,7 +4,11 @@ use super::{WorkloadRoleFamily, escape_identifier, escape_literal, stable_surfac
 
 /// Idempotently create or harden one stable workload ACL role as NOLOGIN.
 pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
-    ensure_acl_role_sql(family.acl_role())
+    if family == WorkloadRoleFamily::App {
+        super::ensure_app_acl_role_sql()
+    } else {
+        ensure_acl_role_sql(family.acl_role())
+    }
 }
 
 pub(crate) fn ensure_acl_role_sql(role: &str) -> String {

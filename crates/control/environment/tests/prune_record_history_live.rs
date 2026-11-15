@@ -134,12 +134,15 @@ async fn age_history(client: &mut Client) {
 }
 
 #[sqlx::test(migrations = false)]
-async fn write_log_retention_removes_old_successes_and_keeps_uncertain_claims(pool: sqlx::PgPool) {
+async fn write_log_retention_expires_completed_and_uncertain_claims_after_thirty_days(
+    pool: sqlx::PgPool,
+) {
     let _lock = wamn_test_postgres::lock();
     let (_database, mut client, _) = fixture(&pool).await;
     sqlx::raw_sql("INSERT INTO platform.write_log (operation, idempotency_key, request, result, created_at) VALUES \
              ('set', 'old-success', 'request', '{\"value\":7}', now() - interval '31 days'), \
              ('set', 'old-uncertain', 'request', NULL, now() - interval '60 days'), \
+             ('set', 'recent-uncertain', 'request', NULL, now() - interval '29 days'), \
              ('set', 'recent-success', 'request', '{\"value\":8}', now() - interval '29 days'); \
              DROP TRIGGER wamn_record_history_log ON inventory.widget;").execute(&mut client).await.map(drop)
         .unwrap();
@@ -179,7 +182,7 @@ async fn write_log_retention_removes_old_successes_and_keeps_uncertain_claims(po
             .iter()
             .map(|row| row.get(0))
             .collect();
-    assert_eq!(keys, ["old-uncertain", "recent-success"]);
+    assert_eq!(keys, ["recent-success", "recent-uncertain"]);
     let index: bool = sqlx::query(
         "SELECT EXISTS (SELECT FROM pg_index i \
                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \

@@ -103,6 +103,18 @@ fn query(url: &str, sql: &str) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
+fn bound_query(url: &str, statement: &str) -> String {
+    query(
+        url,
+        &format!(
+            "BEGIN; {} {statement}; COMMIT",
+            wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            )
+        ),
+    )
+}
+
 fn rows(url: &str, sql: &str) -> Vec<String> {
     query(url, sql)
         .lines()
@@ -307,7 +319,16 @@ fn build() -> Fixture {
     for artifact in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
         apply(&db_url, "apply a schema artifact", artifact);
     }
-    apply(&db_url, "seed two projects", SEED);
+    apply(
+        &db_url,
+        "seed two projects",
+        &format!(
+            "BEGIN; {} {SEED} COMMIT;",
+            wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            )
+        ),
+    );
     apply(
         &db_url,
         "create the logged fixture relations",
@@ -476,7 +497,7 @@ fn a_platform_family_without_project_env_key_context_reads_exactly_what_its_gran
          derive a project key, this arm is measuring a guest"
     );
     assert_eq!(
-        query(&as_executor, "SELECT count(*) FROM wamn_run.runs")
+        bound_query(&as_executor, "SELECT count(*) FROM wamn_run.runs")
             .parse::<u64>()
             .unwrap(),
         2,
@@ -504,7 +525,7 @@ fn the_project_env_key_targeted_platform_member_reads_nothing_outside_its_grants
     // else. The project predicate it keeps in its own statements is what
     // re-narrows it, and that is not a database-enforced boundary.
     assert_eq!(
-        query(&as_retention, "SELECT count(*) FROM wamn_run.runs")
+        bound_query(&as_retention, "SELECT count(*) FROM wamn_run.runs")
             .parse::<u64>()
             .unwrap(),
         2,
@@ -585,7 +606,7 @@ fn the_guest_family_reads_its_own_project_env_key_and_only_its_own() {
     let login = generation(WorkloadRoleFamily::App);
     let as_guest = login_url(&fixture.admin, &login);
     assert_eq!(
-        query(
+        bound_query(
             &as_guest,
             &format!(
                 "SELECT count(*)::text || ' ' || \
@@ -603,7 +624,7 @@ fn the_guest_family_reads_its_own_project_env_key_and_only_its_own() {
     // A settable identity must not move it. The minimum keys on `current_user`, and
     // this shows that the retired `app.project_env_key` path is inert for the guest.
     assert_eq!(
-        query(
+        bound_query(
             &as_guest,
             &format!(
                 "BEGIN; SET LOCAL app.project_env_key = '{PROJECT_ENV_KEY_B}'; \

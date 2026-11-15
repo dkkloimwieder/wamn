@@ -73,9 +73,20 @@ pub async fn sign_session_token(
     validation_started_at: i64,
 ) -> Result<IssuedSessionToken, IdentityError> {
     let mut transaction = client.begin().await.map_err(key_database_error)?;
-    let token =
-        sign_session_token_in_transaction(&mut transaction, claims, validation_started_at, None)
-            .await?;
+    let token = match sign_session_token_in_transaction(
+        &mut transaction,
+        claims,
+        validation_started_at,
+        None,
+    )
+    .await
+    {
+        Ok(token) => token,
+        Err(error) => {
+            transaction.rollback().await.map_err(key_database_error)?;
+            return Err(error);
+        }
+    };
     transaction.commit().await.map_err(key_database_error)?;
     if unix_seconds()? >= token.claims.exp {
         return Err(refused());

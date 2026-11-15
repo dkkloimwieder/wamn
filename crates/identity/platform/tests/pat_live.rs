@@ -5,7 +5,7 @@ use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 use wamn_broker::auth_changes::AuthDrops;
 
-use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql};
+use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_identity_protocol::PAT_TOKEN_PREFIX;
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::{
@@ -38,11 +38,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     .await
     .map(drop)
     .expect("prepare empty platform schemas");
-    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .expect("apply the system schema composition");
+    wamn_control_provision::test_database::system_schema(&url).await;
     let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
 
     // Issuance binds wamn:provisioning in its own transaction.
@@ -190,9 +186,10 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     platform_principal_cannot_hold_a_token(&mut client, &provisioning).await;
     token_rows_refuse_malformed_values(&mut client, user.id(), &prefix).await;
 
+    let mut setup = provisioning_transaction(&mut client).await;
     // An elapsed expiry refuses without any revocation. The stamp trigger keeps
     // created_at, so the fixture moves expires_at to just after it.
-    let expired = issue_pat(&mut client, user.id(), "expiring", TTL)
+    let expired = issue_pat(&mut *setup, user.id(), "expiring", TTL)
         .await
         .expect("issue expiring token");
     sqlx::query(
@@ -201,18 +198,20 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
              WHERE token_prefix = $1",
     )
     .bind(&expired.record().prefix())
-    .execute(&mut client)
+    .execute(&mut *setup)
     .await
     .map(|result| result.rows_affected())
     .expect("expire the expiring token");
+    setup.commit().await.unwrap();
+    let mut setup = provisioning_transaction(&mut client).await;
     assert!(
-        authenticate_pat(&mut client, expired.token())
+        authenticate_pat(&mut *setup, expired.token())
             .await
             .expect("reject expired token")
             .is_none()
     );
     assert!(
-        authenticate_pat(&mut client, revocable.token())
+        authenticate_pat(&mut *setup, revocable.token())
             .await
             .expect("reject revoked token")
             .is_none()
@@ -222,12 +221,12 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
              WHERE token_prefix = $1",
     )
     .bind(&revocable.record().prefix())
-    .execute(&mut client)
+    .execute(&mut *setup)
     .await
     .map(|result| result.rows_affected())
     .expect("backdate the revocation");
     let backdated = revoke_pat(
-        &mut client,
+        &mut *setup,
         revocable.record().prefix(),
         &mut AuthDrops::default(),
     )
@@ -236,7 +235,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     assert_ne!(backdated.revoked_at(), revoked.revoked_at());
     assert_eq!(
         revoke_pat(
-            &mut client,
+            &mut *setup,
             revocable.record().prefix(),
             &mut AuthDrops::default()
         )
@@ -246,7 +245,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
         backdated.revoked_at()
     );
     assert_eq!(
-        revoke_pat(&mut client, &"0".repeat(16), &mut AuthDrops::default())
+        revoke_pat(&mut *setup, &"0".repeat(16), &mut AuthDrops::default())
             .await
             .expect_err("unknown prefix must not revoke")
             .error_type(),
@@ -255,17 +254,17 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
 
     // Service principals get tokens through the same trusted-context path.
     let service = create_service(
-        &mut client,
+        &mut *setup,
         "agent-ci",
         "CI Agent",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("create service principal");
-    let service_token = issue_pat(&mut client, service.id(), "ci", TTL)
+    let service_token = issue_pat(&mut *setup, service.id(), "ci", TTL)
         .await
         .expect("issue service token");
-    let service_authenticated = authenticate_pat(&mut client, service_token.token())
+    let service_authenticated = authenticate_pat(&mut *setup, service_token.token())
         .await
         .expect("authenticate service token")
         .expect("a valid service token must authenticate");
@@ -275,7 +274,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     );
 
     // Listing returns the stored metadata, newest first, and no token material.
-    let listed = list_pats(&mut client, user.id())
+    let listed = list_pats(&mut *setup, user.id())
         .await
         .expect("list user tokens");
     assert_eq!(
@@ -289,22 +288,24 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     assert!(!format!("{listed:?}").contains(&token));
 
     // Disabling the principal refuses live tokens and further issuance.
-    disable_principal(&mut client, user.id(), &mut AuthDrops::default())
+    disable_principal(&mut *setup, user.id(), &mut AuthDrops::default())
         .await
         .expect("disable user");
     assert!(
-        authenticate_pat(&mut client, &token)
+        authenticate_pat(&mut *setup, &token)
             .await
             .expect("reject token of a disabled principal")
             .is_none()
     );
     assert_eq!(
-        issue_pat(&mut client, user.id(), "after-disable", TTL)
+        issue_pat(&mut *setup, user.id(), "after-disable", TTL)
             .await
             .expect_err("disabled principals must not gain tokens")
             .error_type(),
         IdentityErrorType::NotFound
     );
+
+    setup.commit().await.unwrap();
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("DROP SCHEMA identity CASCADE; \
@@ -382,6 +383,10 @@ async fn platform_principal_cannot_hold_a_token(client: &mut Client, provisionin
         ("user", "23514"),
         ("service", "23503"),
     ] {
+        let mut transaction =
+            wamn_test_postgres::transaction(client, provisioning, "admin:pat-fixture")
+                .await
+                .unwrap();
         let error = sqlx::query(
             "INSERT INTO identity.pats \
                    (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
@@ -391,7 +396,7 @@ async fn platform_principal_cannot_hold_a_token(client: &mut Client, provisionin
         .bind(&type_)
         .bind(&"e".repeat(16))
         .bind(&"e".repeat(64))
-        .execute(&mut *client)
+        .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())
         .expect_err("direct SQL must not bind a token to the platform principal");
@@ -403,6 +408,7 @@ async fn platform_principal_cannot_hold_a_token(client: &mut Client, provisionin
             Some(code),
             "{type_}"
         );
+        transaction.rollback().await.unwrap();
     }
 }
 
@@ -460,6 +466,7 @@ async fn token_rows_refuse_malformed_values(
             "23514",
         ),
     ] {
+        let mut transaction = provisioning_transaction(client).await;
         let error = sqlx::query(sqlx::AssertSqlSafe(
             (&format!(
                 "INSERT INTO identity.pats \
@@ -471,7 +478,7 @@ async fn token_rows_refuse_malformed_values(
         .bind(&principal.to_string().as_str())
         .bind(&token_prefix)
         .bind(&token_hash)
-        .execute(&mut *client)
+        .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())
         .expect_err("a malformed token row must refuse");
@@ -483,10 +490,12 @@ async fn token_rows_refuse_malformed_values(
             Some(code),
             "{case}"
         );
+        transaction.rollback().await.unwrap();
     }
+    let mut transaction = provisioning_transaction(client).await;
     let error = sqlx::query("DELETE FROM identity.principals WHERE id = $1::text::uuid")
         .bind(&principal.to_string().as_str())
-        .execute(&mut *client)
+        .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())
         .expect_err("a principal that holds a token must not be deleted");
@@ -497,6 +506,7 @@ async fn token_rows_refuse_malformed_values(
             .as_deref(),
         Some("23001")
     );
+    transaction.rollback().await.unwrap();
 }
 
 fn flip_last_hex_digit(token: &str) -> String {

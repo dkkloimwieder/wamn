@@ -14,7 +14,7 @@ use wamn_environment::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 const SCHEMA: &str = "record_retention";
 const PACKAGE_ID: &str = "record_retention_fixture";
 const PROJECT_ENV_KEY: &str = "record-retention-t--dev--fixture";
-const OTHER_PROJECT_ENV_KEY: &str = "record-retention-other";
+const OTHER_PROJECT_ENV_KEY: &str = "record-retention-other--dev--fixture";
 const GENERATION_PASSWORD: &str = "record-retention-test-generation";
 /// The test principal that the fixture writes bind.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f2";
@@ -121,19 +121,23 @@ fn write_package(root: &Path) {
     });
     let migration = RELATIONS
         .iter()
-        .map(|(table, _)| {
+        .map(|(table, retention)| {
             format!(
                 "CREATE TABLE {SCHEMA}.{table} (\n    \
                      id uuid CONSTRAINT {table}_id_pkey PRIMARY KEY,\n    \
-                     note text NOT NULL\n);"
+                     note text NOT NULL\n); \
+                 SELECT wamn_history.create_history_table('{SCHEMA}', '{table}', false); \
+                 CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE \
+                     ON {SCHEMA}.{table} FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('{retention}');"
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
     let _ = std::fs::remove_dir_all(root);
     std::fs::create_dir_all(root.join("migrations")).expect("create the fixture package");
+    std::fs::create_dir_all(root.join("generated")).expect("create the generated package output");
     std::fs::write(
-        root.join("wamn.json"),
+        root.join("generated/wamn.json"),
         serde_json::to_vec_pretty(&manifest).expect("serialize the fixture manifest"),
     )
     .expect("write the fixture manifest");
@@ -701,11 +705,6 @@ async fn history_table_creation_waits_for_a_running_prune(pool: sqlx::PgPool) {
         .await
         .map(drop)
         .unwrap();
-    let prune_pid: i32 = sqlx::query("SELECT pg_backend_pid()")
-        .fetch_one(&mut pruning)
-        .await
-        .unwrap()
-        .get(0);
     let prune =
         tokio::spawn(
             async move { wamn_environment::prune_record_history::prune(&mut pruning).await },
@@ -717,9 +716,14 @@ async fn history_table_creation_waits_for_a_running_prune(pool: sqlx::PgPool) {
         .query_pairs_mut()
         .append_pair("application_name", "history_lock_apply");
     let applying_package = package.clone();
-    let applying =
+    let mut applying =
         tokio::spawn(async move { apply(applying_url.as_str(), &applying_package).await });
-    wait_for_blocker(&mut admin, "history_lock_apply", prune_pid).await;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(200), &mut applying)
+            .await
+            .is_err(),
+        "package application must wait for retention"
+    );
     held.commit().await.expect("allow pruning to finish");
     let (pruned, applied) = tokio::time::timeout(std::time::Duration::from_secs(15), async {
         tokio::join!(prune, applying)

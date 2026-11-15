@@ -37,6 +37,14 @@ DO $audit_retention$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $audit_retention$;
 
+DO $query_role$ BEGIN
+    PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_query') THEN
+        CREATE ROLE wamn_query NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+            NOINHERIT NOREPLICATION NOBYPASSRLS;
+    END IF;
+END $query_role$;
+
 GRANT USAGE ON SCHEMA catalog TO wamn_app;
 
 -- GENERATED authority-derivation bootstrap. The database name is embedded so

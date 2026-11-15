@@ -114,9 +114,15 @@ impl FileHost {
         minio: files::Minio,
         definition: Value,
     ) -> anyhow::Result<Self> {
-        let mut registry = files::registry(ORG, PROJECT, definition).await?;
+        let mut registry = files::registry(ORG, PROJECT, definition)
+            .await
+            .context("prepare file registry")?;
         let (mut host, postgres, administration_url) =
-            application_fixture::application_host_with_release(name, Arc::clone(&release)).await?;
+            application_fixture::application_host_with_release(name, Arc::clone(&release))
+                .await
+                .context("prepare file application")?;
+        sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+            .bind(&host.first).execute(&mut host.admin).await?;
         let mut writer = application_fixture::connect(&administration_url).await?;
         sqlx::raw_sql("BEGIN")
             .execute(&mut writer)
@@ -133,6 +139,10 @@ impl FileHost {
             sqlx::query("INSERT INTO platform.integration(id,integration_type,name,status) VALUES ($1::text::uuid,$2,$3,$4)").bind(row.get::<String, _>(1)).bind(row.get::<String, _>(2)).bind(row.get::<String, _>(3)).bind(row.get::<String, _>(4)).execute(&mut writer).await.map(|result| result.rows_affected())?;
             sqlx::query("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES ($1::text::uuid,$2::text::uuid,$3,$4)").bind(row.get::<String, _>(0)).bind(row.get::<String, _>(1)).bind(row.get::<String, _>(2)).bind(row.get::<String, _>(5)).execute(&mut writer).await.map(|result| result.rows_affected())?;
         }
+        sqlx::raw_sql("COMMIT")
+            .execute(&mut writer)
+            .await
+            .expect("commit fixture transaction");
         sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&release.manifest().canonical_bytes()).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
         let component = release
             .manifest()
@@ -149,10 +159,6 @@ impl FileHost {
             sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
             sqlx::query("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&alias).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
         }
-        sqlx::raw_sql("COMMIT")
-            .execute(&mut writer)
-            .await
-            .expect("commit fixture transaction");
         let credentials = Arc::new(
             ConnectionCredentials::from_database(registry.reader.clone(), ORG).with_store(Arc::<
                 wamn_test_infrastructure::credentials::MemoryStore,
@@ -1190,40 +1196,6 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
             .await?
             .0,
         403
-    );
-    Ok(())
-}
-
-#[test]
-fn package_signed_read_admits_the_real_node_abi_and_manifest_owned_authority() -> anyhow::Result<()>
-{
-    let package = signed_read::signed_read_fixture(PROJECT_ENV_KEY)?;
-    let serving = package
-        .release
-        .manifest()
-        .components
-        .first()
-        .context("released file component")?;
-    assert!(
-        serving.descriptor.connections.iter().any(|connection| {
-            connection.store_alias.name() == Some("files")
-                && connection.requirement_type == wamn_catalog::ComponentConnectionType::Blobstore
-        }),
-        "the release carries the admitted file binding"
-    );
-    let operation = &package.component.operations[signed_read::OPERATION];
-    let reads =
-        wamn_catalog::signed_file_reads(operation)?.context("package signed read metadata")?;
-    assert_eq!(reads.fields.len(), 1);
-    assert_eq!(reads.fields[0].path, "document");
-    assert_eq!(
-        reads.fields[0].read.lifetime_seconds()?,
-        signed_read::LIFETIME
-    );
-    assert!(!reads.fields[0].nullable);
-    assert_eq!(
-        operation.registered_operation.as_deref(),
-        Some(signed_read::OPERATION)
     );
     Ok(())
 }

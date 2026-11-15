@@ -1308,11 +1308,7 @@ mod tests {
         let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
         sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$").execute(&mut client).await.map(drop).unwrap();
-        sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
-            .execute(&mut client)
-            .await
-            .map(drop)
-            .unwrap();
+        wamn_control_provision::test_database::system_schema(database.as_str()).await;
         for buckets in [
             vec![("global", 10)],
             vec![("source:test", 5), ("account:test", 5)],

@@ -29,7 +29,7 @@
 -- installs deploy/sql/record-history.sql first. The SYSTEM_SCHEMA_SQL
 -- composition in wamn-control-provision carries it. That file grants to
 -- wamn_db_owner, so an applier that runs as wamn_system creates that role
--- first. Every write to these relations binds app.user_id: the identity issuer
+-- first. Every write to these relations binds a transaction principal: the identity issuer
 -- and wamn-ctl bind wamn:provisioning, and test fixtures bind a principal.
 --
 -- THE GENERIC DEPLOYMENT MODEL (D18, wamn-8df.3;
@@ -74,6 +74,10 @@
 -- Distinct schemas keep each control-plane subsystem namespaced.
 -- Owned by the `wamn_system` role the T1 cluster bootstraps (wamn-q3n.2).
 -- ---------------------------------------------------------------------------
+INSERT INTO platform.login_principal(login, principal_id)
+VALUES ('wamn_system', '770df186-ac15-579e-b46b-c297cae2011b')
+ON CONFLICT (login) DO NOTHING;
+
 CREATE SCHEMA registry AUTHORIZATION wamn_system;
 CREATE SCHEMA provisioning AUTHORIZATION wamn_system;
 CREATE SCHEMA identity AUTHORIZATION wamn_system;
@@ -197,7 +201,7 @@ CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON registry.meta
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
--- The deployment metadata seed binds the platform actor in its transaction.
+-- The deployment metadata seed uses the schema owner's login principal.
 DO $meta$ BEGIN
   INSERT INTO registry.meta DEFAULT VALUES;
 END $meta$;

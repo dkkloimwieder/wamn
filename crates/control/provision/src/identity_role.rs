@@ -18,7 +18,7 @@ pub const IDENTITY_ISSUER_PAT_INSERT_COLUMNS: [&str; 6] = [
     "expires_at",
 ];
 /// Fresh exchange inputs and non-secret metadata returned by PAT issuance.
-pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 10] = [
+pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 11] = [
     (
         "identity",
         "principals",
@@ -57,6 +57,7 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 10] = [
         &["principal_id", "org", "project", "role"],
     ),
     ("registry", "orgs", &["id"]),
+    ("registry", "projects", &["org", "id"]),
     ("registry", "environments", &["org", "env", "status"]),
     ("identity", "org_roles", &["principal_id", "org", "role"]),
     (

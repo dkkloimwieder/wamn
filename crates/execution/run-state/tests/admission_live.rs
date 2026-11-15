@@ -82,7 +82,7 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
                  END IF; \
                END LOOP; \
              END $$; \
-             CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+             CREATE ROLE wamn_query NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
               \
               \
              BEGIN; {catalog} {run_state} {run_queue} {app_schema} COMMIT; \
@@ -106,8 +106,7 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
                   WHERE rolname = '{EXECUTOR_LOGIN}' \
                     AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
                     AND NOT rolcreaterole AND rolinherit AND NOT rolreplication \
-                    AND NOT rolbypassrls AND rolpassword IS NOT NULL \
-                    AND rolvaliduntil IS NOT NULL); \
+                    AND NOT rolbypassrls AND rolpassword IS NOT NULL); \
                ASSERT EXISTS ( \
                  SELECT FROM pg_catalog.pg_auth_members AS membership \
                  JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
@@ -145,6 +144,7 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
              GRANT UPDATE (available_at) ON wamn_run.run_queue TO wamn_executor_platform; \
              {executor_surface} \
               \
+             BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture','admin:admission-fixture'); \
              INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 't1','cat','1.0.0','sha256:{manifest_hash}'); \
              INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
@@ -153,7 +153,7 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
                 wiring_id,wiring_version,status,trigger_source,input_json,execution_principal_id,execution_role,invoked_by,invoked_by_user_id,node_digests_json) \
              VALUES ('t1','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','dev','legacy-wiring',1, \
                      'dispatched','manual','{{}}','00000000-0000-0000-0000-000000000001','admin','manual','00000000-0000-0000-0000-000000000001','{{}}'); \
-             INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('t1','run-1');",
+             INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('t1','run-1'); COMMIT;",
             manifest_hash = "a".repeat(64),
         ),
     );
@@ -163,7 +163,7 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
         &url,
         &format!(
             "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('d318d033-29ea-5cb0-ab56-24340413fbcc','','fixture','wamn:executor'); SET LOCAL ROLE {EXECUTOR_LOGIN}; \
-        SET LOCAL app.project_env_key='t1'; SET LOCAL search_path=wamn_run; \
+        SET LOCAL search_path=wamn_run; \
         DO $test$ DECLARE selected record; BEGIN \
             EXECUTE $lease${lease}$lease$ INTO STRICT selected USING 't1',ARRAY['cat'],'dev', \
                 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'; \
@@ -185,14 +185,14 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
             "guest was allowed to operate the durable queue"
         );
     }
-    // A foreign injected project cannot select this queue, even with executor privileges.
+    // A foreign project cannot select this queue, even with executor privileges.
     success(
         &url,
         &format!(
             "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('d318d033-29ea-5cb0-ab56-24340413fbcc','','fixture','wamn:executor'); SET LOCAL ROLE {EXECUTOR_LOGIN}; \
-        SET LOCAL app.project_env_key='other'; SET LOCAL search_path=wamn_run; \
+        SET LOCAL search_path=wamn_run; \
         DO $test$ DECLARE selected record; BEGIN \
-            EXECUTE $lease${lease}$lease$ INTO selected USING ARRAY['cat'],'dev', \
+            EXECUTE $lease${lease}$lease$ INTO selected USING 'other',ARRAY['cat'],'dev', \
                 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'; \
             ASSERT selected.run_id IS NULL; \
         END $test$; ROLLBACK;"

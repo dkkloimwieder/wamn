@@ -4,7 +4,6 @@ use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use wamn_control_provision::SYSTEM_SCHEMA_SQL;
 use wamn_identity_protocol::keys::PublicSessionKey;
 use wamn_identity_protocol::test_util::{Audience, verify};
 use wamn_identity_protocol::token::SessionClaims;
@@ -292,11 +291,7 @@ async fn prepare_database(url: &str) -> (String, Client) {
     .await
     .map(drop)
     .expect("prepare empty platform schemas");
-    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
-        .execute(&mut admin)
-        .await
-        .map(drop)
-        .expect("apply production system schema");
+    wamn_control_provision::test_database::system_schema(url).await;
     (url.to_owned(), admin)
 }
 

@@ -164,12 +164,7 @@ async fn verify_retention_identity(
 /// exact affected count without mutating. Returns the number of `runs` rows
 /// removed.
 ///
-/// No `app.project_env_key` identity is injected any more. That GUC keyed the RETIRED minimum;
-/// `wamn-0h0g.22.6` re-keyed `runs` onto `current_user`, and the one thing the
-/// identity still did here was supply a predicate that silently matched nothing
-/// when it was absent. The `run_queue` cascade does not need it: measured, a
-/// referential-integrity trigger consults neither the deleter's grants nor that
-/// relation's own `app.project_env_key` policy.
+/// Bind the retention component before reading or deleting protected rows.
 pub async fn prune(
     client: &mut sqlx::PgConnection,
     schema: &str,
@@ -177,31 +172,42 @@ pub async fn prune(
     retention_days: u32,
     apply: bool,
 ) -> anyhow::Result<u64> {
-    // Bound as a parameter (set_config), never interpolated into SQL.
-    // Session-level (`false`) so the transaction below inherits it.
-    sqlx::query("SELECT set_config('search_path', $1, false)")
+    let mut transaction = client
+        .begin()
+        .await
+        .context("begin run history retention")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::AuditRetention,
+        ),
+    ))
+    .execute(&mut *transaction)
+    .await
+    .context("bind retention principal")?;
+    sqlx::query("SELECT set_config('search_path', $1, true)")
         .bind(schema)
-        .execute(&mut *client)
+        .execute(&mut *transaction)
         .await
-        .map(|result| result.rows_affected())
-        .context("set search_path")?;
-
+        .context("set run history schema")?;
+    let count = wamn_run_state::persistence::prune_terminal_runs(
+        &mut transaction,
+        project_env_key,
+        retention_days,
+    )
+    .await
+    .context("prune terminal runs")?;
     if apply {
-        wamn_run_state::persistence::prune_terminal_runs(client, project_env_key, retention_days)
+        transaction
+            .commit()
             .await
-            .context("prune terminal runs")
+            .context("commit run history retention")?;
     } else {
-        let mut tx = client.begin().await.context("begin dry-run transaction")?;
-        let count = wamn_run_state::persistence::prune_terminal_runs(
-            &mut tx,
-            project_env_key,
-            retention_days,
-        )
-        .await
-        .context("prune terminal runs (dry-run)")?;
-        tx.rollback().await.context("roll back dry-run")?;
-        Ok(count)
+        transaction
+            .rollback()
+            .await
+            .context("roll back run history preview")?;
     }
+    Ok(count)
 }
 
 #[cfg(test)]

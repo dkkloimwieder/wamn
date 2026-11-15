@@ -124,6 +124,9 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
     .execute(&mut admin)
     .await?;
     wamn_environment::platform_migrations::install_project(&mut admin).await?;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(PlatformComponent::Provisioning.principal_id())
+        .execute(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("automation.invalid")?).to_string(),
     ))

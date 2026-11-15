@@ -3,7 +3,6 @@
 //! Administration is inherited from explicit grants. Invalid targets are refused.
 
 use sqlx::Row as _;
-use wamn_control_provision::SYSTEM_SCHEMA_SQL;
 use wamn_platform_identity::{
     IdentityErrorType, create_or_reuse_user,
     org::{activate_org_membership, grant_org_admin, grant_project_admin},
@@ -48,11 +47,12 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
     .await
     .map(drop)
     .expect("prepare empty platform schemas");
-    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
+    wamn_control_provision::test_database::system_schema(test_database.as_str()).await;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
         .execute(&mut client)
         .await
-        .map(drop)
-        .expect("apply the system schema composition");
+        .unwrap();
     sqlx::raw_sql(SEED_SQL)
         .execute(&mut client)
         .await

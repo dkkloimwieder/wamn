@@ -268,24 +268,21 @@ impl HostRouteDelivery {
                 Ok(json!({ "admin": held.admin, "permissions": permissions }))
             }
             (HostHandler::ControlMine, HostRouteHandlers::Control { control, org, .. }) => {
-                let org_admin =
-                    is_org_admin(&mut *control.acquire().await?, &principal, org).await?;
+                let mut transaction =
+                    wamn_platform_identity::transaction::read_pool(control, &principal.to_string())
+                        .await?;
+                let org_admin = is_org_admin(&mut transaction, &principal, org).await?;
                 let page =
                     control_page(payload, attachment, &principal, org, None, Order::Project)?;
                 let projects = if org_admin {
-                    org_projects_page(
-                        &mut *control.acquire().await?,
-                        org,
-                        page.after(0),
-                        page.read_limit(),
-                    )
-                    .await?
-                    .into_iter()
-                    .map(|entry| entry.name)
-                    .collect()
+                    org_projects_page(&mut transaction, org, page.after(0), page.read_limit())
+                        .await?
+                        .into_iter()
+                        .map(|entry| entry.name)
+                        .collect()
                 } else {
                     control_projects_page(
-                        &mut *control.acquire().await?,
+                        &mut transaction,
                         &principal,
                         org,
                         page.after(0),
@@ -301,7 +298,7 @@ impl HostRouteDelivery {
                 for project in projects {
                     let project_admin = org_admin
                         || wamn_platform_identity::control::is_project_admin(
-                            &mut *control.acquire().await?,
+                            &mut transaction,
                             &principal,
                             org,
                             project.as_str().expect("project name"),
@@ -312,6 +309,7 @@ impl HostRouteDelivery {
                 }
                 answer["projects"] = Value::Array(rows);
                 answer["org_admin"] = json!(org_admin);
+                transaction.commit().await?;
                 Ok(answer)
             }
             (

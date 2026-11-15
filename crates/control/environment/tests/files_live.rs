@@ -98,11 +98,15 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     .execute(&mut fixture.guest)
     .await
     .map(|result| result.rows_affected())?;
+    let mut writer =
+        wamn_test_postgres::transaction(&mut fixture.writer, files::CALLER, "admin:file-fixture")
+            .await?;
     sqlx::query("UPDATE platform.connection SET status='disabled' WHERE id=$1::text::uuid")
         .bind(&files::CONNECTION)
-        .execute(&mut fixture.writer)
+        .execute(&mut *writer)
         .await
         .map(|result| result.rows_affected())?;
+    writer.commit().await?;
     let row = sqlx::query(
         "SELECT c.status,f.connection_id::text FROM file_fixture.document d \
          JOIN platform.file f ON f.id=d.file_id JOIN platform.connection c ON c.id=f.connection_id",
@@ -111,9 +115,12 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     .await?;
     assert_eq!(row.get::<String, _>(0), "disabled");
     assert_eq!(row.get::<String, _>(1), files::CONNECTION);
+    let mut writer =
+        wamn_test_postgres::transaction(&mut fixture.writer, files::CALLER, "admin:file-fixture")
+            .await?;
     let error = sqlx::query("DELETE FROM platform.file WHERE id=$1::text::uuid")
         .bind(&files::FILE)
-        .execute(&mut fixture.writer)
+        .execute(&mut *writer)
         .await
         .map(|result| result.rows_affected())
         .unwrap_err();
@@ -124,6 +131,7 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
             .as_deref(),
         Some("23503")
     );
+    writer.rollback().await?;
     sqlx::query("DELETE FROM file_fixture.document")
         .execute(&mut fixture.guest)
         .await
@@ -135,14 +143,18 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
             .get::<i64, _>(0),
         1
     );
+    let mut writer =
+        wamn_test_postgres::transaction(&mut fixture.writer, files::CALLER, "admin:file-fixture")
+            .await?;
     assert_eq!(
         sqlx::query("DELETE FROM platform.file WHERE id=$1::text::uuid")
             .bind(&files::FILE)
-            .execute(&mut fixture.writer)
+            .execute(&mut *writer)
             .await
             .map(|result| result.rows_affected())?,
         1
     );
+    writer.commit().await?;
     // The migration owner needs no lasting platform privileges to keep the FK.
     let privilege = sqlx::query(
         "SELECT has_table_privilege(current_user, \
@@ -363,15 +375,19 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
             response.text().await?
         );
     }
+    let mut transaction =
+        wamn_test_postgres::transaction(&mut metadata.writer, files::CALLER, "admin:file-fixture")
+            .await?;
     sqlx::query("UPDATE platform.file SET size=$1,sha256=$2 WHERE id=$3::text::uuid")
         .bind(&i64::try_from(b"aged fixture bytes".len())?)
         .bind(&hex::encode(
             ring::digest::digest(&ring::digest::SHA256, b"aged fixture bytes").as_ref(),
         ))
         .bind(&files::FILE)
-        .execute(&mut metadata.writer)
+        .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())?;
+    transaction.commit().await?;
     let row = sqlx::query("SELECT created_at FROM platform.file WHERE id=$1::text::uuid")
         .bind(&files::FILE)
         .fetch_one(&mut metadata.guest)

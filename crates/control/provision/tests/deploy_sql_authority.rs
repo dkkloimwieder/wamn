@@ -616,7 +616,10 @@ fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
     let (_database, admin) = shared_server();
 
     reset(&admin);
-    apply(&admin, POSTGRES_INIT);
+    apply(
+        &admin,
+        &format!("{} CREATE DATABASE wamn;", sql::ensure_app_acl_role_sql()),
+    );
     apply(
         &admin,
         &format!("CREATE ROLE {CATALOG_INSTALLER} LOGIN SUPERUSER PASSWORD '{PASSWORD}';\n"),

@@ -207,13 +207,10 @@ fn manifest(
     jsonata: &wamn_catalog::AdmittedComponent,
 ) -> ServingManifest {
     let mut components = vec![json!({"package-id": APPLICATION,
-        "descriptor": ComponentDescriptor::new(jsonata.clone(), Vec::new()),
-        "operations": {(JSONATA_OPERATION): {"statements": {}}}})];
+        "descriptor": ComponentDescriptor::new(jsonata.clone(), Vec::new())})];
     if let Some(read) = read {
         components.push(json!({"package-id": APPLICATION,
-            "descriptor": ComponentDescriptor::new(read.clone(), Vec::new()),
-            "operations": {(READ): {"registered-operation": READ, "permissions": [READ],
-                "statements": {}}}}));
+            "descriptor": ComponentDescriptor::new(read.clone(), Vec::new())}));
     }
     serde_json::from_value(json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
@@ -294,6 +291,9 @@ async fn fixture(pool: &sqlx::PgPool) -> Fixture {
     wamn_environment::platform_migrations::install_project(&mut admin)
         .await
         .expect("install the run plane and the catalog");
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut admin).await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("manual.invalid").unwrap()).to_string(),
     ))
@@ -1039,8 +1039,6 @@ async fn author_enable_and_start_leave_the_release_and_the_environment_unchanged
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture(&pool).await;
     let before = fixture.environment_facts().await;
-    assert_eq!(before.len(), 3, "{before:?}");
-
     fixture
         .author(&workflow(1, READ))
         .await

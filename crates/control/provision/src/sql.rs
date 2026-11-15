@@ -50,8 +50,7 @@ use crate::workload_role::{
 pub(crate) use postgres_protocol::escape::escape_identifier;
 use postgres_protocol::escape::escape_literal;
 
-/// Idempotently create or harden the shared, cluster-global [`APP_ROLE`] as a
-/// stable NOLOGIN ACL role.
+/// Create the two SQL privilege roles before installing project schemas.
 ///
 /// Guest sessions authenticate as targeted [`WorkloadRoleFamily::App`]
 /// generations and inherit this role's grants. The stable role therefore
@@ -62,7 +61,11 @@ use postgres_protocol::escape::escape_literal;
 /// [`drain_app_role_sessions_sql`]. That boundary prevents a new shared-role
 /// login from racing the drain while `NOLOGIN` is still uncommitted.
 pub fn ensure_app_acl_role_sql() -> String {
-    ensure_acl_role_sql(APP_ROLE)
+    format!(
+        "{} {}",
+        ensure_acl_role_sql(APP_ROLE),
+        ensure_acl_role_sql("wamn_query")
+    )
 }
 
 /// Catalog relations read by callable-HTTP connection authorization.

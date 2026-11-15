@@ -37,3 +37,9 @@ GRANT SELECT, INSERT ON registry.environments TO wamn_apply;
 GRANT UPDATE (disposable, target_id, policy_name) ON registry.environments TO wamn_apply;
 
 GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_apply;
+
+DO $$ BEGIN
+    IF to_regclass('registry._sqlx_migrations') IS NOT NULL THEN
+        GRANT SELECT ON registry._sqlx_migrations TO wamn_apply;
+    END IF;
+END $$;

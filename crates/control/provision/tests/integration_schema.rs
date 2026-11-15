@@ -14,8 +14,10 @@ async fn run(database: url::Url, assertions: &str) {
             ),
             "SET ROLE wamn_system",
             wamn_control_provision::SYSTEM_SCHEMA_SQL,
+            "BEGIN",
             include_str!("integration_schema/fixture.sql"),
             assertions,
+            "COMMIT",
         ];
         let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
         for batch in batches {

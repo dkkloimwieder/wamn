@@ -84,11 +84,19 @@ pub(super) async fn install(
         .execute(&mut *admin)
         .await
         .map(drop)?;
+    for sql in [
+        include_str!("../../../../../deploy/sql/run-state.sql"),
+        include_str!("../../../../../deploy/sql/run-queue.sql"),
+    ] {
+        sqlx::raw_sql(sql).execute(&mut *admin).await?;
+    }
     let admitter = generation(WorkloadRoleFamily::HttpAdmitter, database)?;
     let administration = generation(WorkloadRoleFamily::Administration, database)?;
+    let executor = generation(WorkloadRoleFamily::ExecutorPlatform, database)?;
     for (family, role) in [
         (WorkloadRoleFamily::HttpAdmitter, &admitter),
         (WorkloadRoleFamily::Administration, &administration),
+        (WorkloadRoleFamily::ExecutorPlatform, &executor),
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&wamn_control_provision::test_database::login_sql(family, database, role, PASSWORD))
@@ -200,9 +208,18 @@ pub(super) fn credentials(
         wait_timeout_ms: 2000,
         statement_timeout_ms: 5000,
     };
+    let mut executor = url::Url::parse(admitter)?;
+    let role = generation(
+        WorkloadRoleFamily::ExecutorPlatform,
+        executor.path().trim_start_matches('/'),
+    )?;
+    executor
+        .set_username(&role)
+        .map_err(|()| anyhow::anyhow!("fixture executor login"))?;
     let mut classes = json!({
         (AuthorityClass::CallableHttp.as_str()): admitter,
         (AuthorityClass::Administration.as_str()): administration,
+        (AuthorityClass::ExecutorPlatform.as_str()): executor.as_str(),
     });
     if let Some(guest) = guest {
         classes[AuthorityClass::GuestSql.as_str()] = json!(guest);

@@ -346,7 +346,7 @@ async fn platform_initialization_runs_sqlx_once_and_explicit_apply_advances_it(p
     assert!(owns);
 }
 
-// Enumerate the actual catalog and data rather than pinning a relation roster.
+// Enumerate catalog and durable rows. W38 records each native call in tx_identity.
 async fn snapshot(client: &mut sqlx::PgConnection) -> serde_json::Value {
     let catalog: serde_json::Value = sqlx::query(r"
         WITH schemas AS (SELECT * FROM pg_namespace WHERE nspname !~ '^pg_' AND nspname <> 'information_schema')
@@ -367,6 +367,7 @@ async fn snapshot(client: &mut sqlx::PgConnection) -> serde_json::Value {
         SELECT format('%I.%I', n.nspname, c.relname)
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+          AND c.oid <> COALESCE(to_regclass('platform.tx_identity'), 0)
         ORDER BY 1
     ")
         .to_string(),
@@ -417,21 +418,24 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         SystemState::Absent
     );
 
-    // Fail the final apply grant after both schema batches and baseline insertion.
+    // Refuse a table revoke after the control relations exist.
     // This is a server-side SQL failure, not a replacement bootstrap or validator.
-    sqlx::raw_sql(r"
+    sqlx::raw_sql(
+        r"
         CREATE FUNCTION public.reject_final_grant() RETURNS event_trigger LANGUAGE plpgsql AS $$
-        DECLARE granted boolean;
         BEGIN
-          IF to_regclass('identity.principals') IS NOT NULL
-             AND EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_apply') THEN
-            EXECUTE 'SELECT has_column_privilege(''wamn_apply'', ''identity.org_memberships'', ''status'', ''UPDATE'')' INTO granted;
-            IF granted THEN PERFORM 1 / 0; END IF;
+          IF to_regclass('wamn_authority.author_login_projects') IS NOT NULL THEN
+            PERFORM 1 / 0;
           END IF;
         END $$;
-        CREATE EVENT TRIGGER reject_final_grant ON ddl_command_end WHEN TAG IN ('GRANT')
+        CREATE EVENT TRIGGER reject_final_grant ON ddl_command_end WHEN TAG IN ('REVOKE')
           EXECUTE FUNCTION public.reject_final_grant();
-    ").execute(&mut client).await.map(drop).unwrap();
+    ",
+    )
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
     let before = snapshot(&mut client).await;
     let failure = install_control_store(&mut client).await.unwrap_err();
     assert_eq!(

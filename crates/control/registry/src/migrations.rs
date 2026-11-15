@@ -12,14 +12,3 @@ pub async fn history_exists(connection: &mut sqlx::PgConnection) -> Result<bool,
         .fetch_one(connection)
         .await
 }
-
-/// Let the apply login inspect system migrations.
-///
-/// # Errors
-/// Returns database errors.
-pub async fn grant_history_read(connection: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
-    sqlx::raw_sql("GRANT SELECT ON registry._sqlx_migrations TO wamn_apply")
-        .execute(connection)
-        .await?;
-    Ok(())
-}

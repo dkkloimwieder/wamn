@@ -1678,16 +1678,18 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sq
     );
     let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
-    let pg = Arc::new(
-        WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(guest_url)),
-            guest_pool_max_size: 1,
-            platform_pool_max_size: 1,
-            wait_timeout_ms: 2_000,
-            statement_timeout_ms: 5_000,
-        })
-        .expect("the plugin builds from the guest generation's url"),
-    );
+    let mut pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+    })
+    .expect("the plugin builds from the guest generation's url");
+    pg.auth = Arc::new(wamn_capability_authority::auth_cache::AuthCache::with_ttl(
+        std::time::Duration::from_secs(3600),
+    ));
+    let pg = Arc::new(pg);
     let (_nats, client) = wamn_capability_authority::auth_cache::test_util::nats().await;
     wamn_capability_authority::auth_cache::test_util::watched(
         &client,
@@ -1706,12 +1708,16 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears(pool: sq
         .expect("the provisioned principal binds");
 
     let mut admin = connect_raw(admin_url).await;
+    let mut removal = wamn_test_postgres::transaction(&mut admin, LIVE_PRINCIPAL, "admin:fixture")
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM platform.\"user\" WHERE id = $1::text::uuid")
         .bind(&LIVE_PRINCIPAL)
-        .execute(&mut admin)
+        .execute(&mut *removal)
         .await
         .map(|result| result.rows_affected())
         .expect("remove the user row after issuance");
+    removal.commit().await.unwrap();
     assert_eq!(
         pg.user_id_for(scope),
         Some(LIVE_PRINCIPAL.to_string()),

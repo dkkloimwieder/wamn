@@ -69,7 +69,14 @@ pub(crate) async fn resolve_cluster_on(
     org: &str,
     env: &str,
 ) -> anyhow::Result<String> {
-    let row = wamn_registry::deployment::org_placement(client, org)
+    let mut transaction = wamn_platform_identity::transaction::read_connection(
+        client,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+    )
+    .await?;
+    let row = wamn_registry::deployment::org_placement(&mut transaction, org)
         .await
         .context("read org placement")?
         .with_context(|| {
@@ -93,12 +100,15 @@ pub(crate) async fn resolve_cluster_on(
     // The env must name a policy in the ORG's own set (8df.4 — its recovery
     // domain drives the derivation); a pooled org ignores the policy but the env
     // must still resolve.
-    let policy = read_env_policy(client, org, env).await?.with_context(|| {
-        format!(
-            "env {env:?} names none of org {org:?}'s env policies — provision-org stamps them \
+    let policy = read_env_policy(&mut transaction, org, env)
+        .await?
+        .with_context(|| {
+            format!(
+                "env {env:?} names none of org {org:?}'s env policies — provision-org stamps them \
              from a template; customize/add rows in registry.env_policies"
-        )
-    })?;
+            )
+        })?;
+    transaction.commit().await?;
     Ok(cluster_of(&org_obj, &policy).name)
 }
 
@@ -111,8 +121,15 @@ pub async fn read_project_env_instance(
         .await
         .context("system db connect")?;
 
+    let mut transaction = wamn_platform_identity::transaction::read_connection(
+        &mut client,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+    )
+    .await?;
     let result = async {
-        let stored = wamn_registry::deployment::instance_suffix(&mut client, triple)
+        let stored = wamn_registry::deployment::instance_suffix(&mut transaction, triple)
             .await
             .context("read project deployment")?
             .with_context(|| format!("project-env {triple} is not recorded"))?;
@@ -121,6 +138,7 @@ pub async fn read_project_env_instance(
         Ok(stored)
     }
     .await;
+    transaction.commit().await?;
     drop(client);
     result
 }
@@ -132,13 +150,21 @@ pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyho
         .await
         .context("system db connect")?;
 
+    let mut transaction = wamn_platform_identity::transaction::read_connection(
+        &mut client,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+    )
+    .await?;
     let result = async {
-        wamn_registry::deployment::project_policy(&mut client, triple)
+        wamn_registry::deployment::project_policy(&mut transaction, triple)
             .await
             .context("read the project deployment policy")?
             .with_context(|| format!("project-env {triple} is not recorded"))
     }
     .await;
+    transaction.commit().await?;
     drop(client);
     result
 }

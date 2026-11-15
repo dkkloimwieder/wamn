@@ -42,6 +42,9 @@ async fn bound_transaction(
     connection: &mut sqlx::PgConnection,
 ) -> anyhow::Result<sqlx::Transaction<'_, sqlx::Postgres>> {
     let mut tx = connection.begin().await?;
+    sqlx::query("SET LOCAL search_path TO wamn_run")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture','wamn:executor')")
         .bind(wamn_identity_protocol::PlatformComponent::Executor.principal_id()).execute(&mut *tx).await?;
     Ok(tx)
@@ -145,11 +148,13 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              {catalog} {run_state} {run_queue} {app_schema} \
+             INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'770df186-ac15-579e-b46b-c297cae2011b'); \
+             BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture','admin:fixture'); \
              INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( 't1','cat','1.0.0', \
                'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
              INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
-             GRANT wamn_platform TO wamn_executor_platform \
+             COMMIT; GRANT wamn_platform TO wamn_executor_platform \
                WITH INHERIT TRUE, SET FALSE, ADMIN FALSE; \
              {executor_generation}"
         ),
@@ -589,10 +594,22 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     sqlx::query("UPDATE wamn_run.runs SET created_at = created_at - interval '31 days'")
         .execute(&mut admin)
         .await?;
+    let mut retention = wamn_test_postgres::transaction(
+        &mut admin,
+        &wamn_identity_protocol::PlatformComponent::AuditRetention
+            .principal_id()
+            .to_string(),
+        "admin:prune-run-history",
+    )
+    .await?;
+    sqlx::query("SET LOCAL search_path TO wamn_run")
+        .execute(&mut *retention)
+        .await?;
     assert_eq!(
-        persistence::prune_terminal_runs(&mut admin, "t1", 30).await?,
+        persistence::prune_terminal_runs(&mut retention, "t1", 30).await?,
         2
     );
+    retention.commit().await?;
     let retained: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM wamn_run.runs WHERE run_id=$1)")
         .bind(&lineage_id)
         .fetch_one(&mut admin)

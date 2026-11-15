@@ -49,18 +49,28 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
     let statement = include_bytes!("query/read_file_id.sql");
     std::fs::create_dir_all(package.join("query"))?;
     std::fs::write(package.join("query/read_file_id.sql"), statement)?;
+    let authored = [wamn_compiler::AuthoredSql::new(
+        "query/read_file_id.sql",
+        statement,
+    )];
+    let manifest =
+        wamn_compiler::derive_manifest(&catalog, super::files::PACKAGE.as_bytes(), &authored, &[])?;
+    std::fs::create_dir_all(package.join("generated"))?;
     let generated = wamn_compiler::generate(&wamn_compiler::GenerationInput::new(
         &catalog,
-        super::files::PACKAGE.as_bytes(),
-        &[wamn_compiler::AuthoredSql::new(
-            "query/read_file_id.sql",
-            statement,
-        )],
+        &manifest,
+        &authored,
         &wamn_compiler::StatementTransactionality::from_paths(BTreeMap::from([(
             "query/read_file_id.sql".into(),
             false,
         )])),
     ))?;
+    let mut manifest = wamn_compiler::manifest::PackageManifest::from_slice(&manifest)?;
+    manifest.compiled_operations = generated.operations().clone();
+    std::fs::write(
+        package.join("generated/wamn.json"),
+        serde_json::to_vec(&manifest)?,
+    )?;
     for file in generated.files() {
         if file.path().starts_with("generated/") {
             let path = package.join(file.path());

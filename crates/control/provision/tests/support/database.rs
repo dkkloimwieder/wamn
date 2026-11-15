@@ -95,12 +95,12 @@ pub async fn package_migration_input(
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {role} LOGIN PASSWORD 'migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT CONNECT ON DATABASE {} TO {role}; GRANT {role} TO wamn_db_owner WITH INHERIT TRUE, SET TRUE",
         postgres_protocol::escape::escape_literal(&login), postgres_protocol::escape::escape_identifier(database))))
         .execute(&mut admin).await?;
-    let protected: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT FROM pg_event_trigger WHERE evtname='wamn_migration_privileges')",
+    let install_privileges: bool = sqlx::query_scalar(
+        "SELECT to_regnamespace('platform') IS NOT NULL AND NOT EXISTS(SELECT FROM pg_event_trigger WHERE evtname='wamn_migration_privileges')",
     )
     .fetch_one(&mut admin)
     .await?;
-    if !protected {
+    if install_privileges {
         sqlx::raw_sql(crate::MIGRATION_PRIVILEGES_SQL)
             .execute(&mut admin)
             .await?;
@@ -255,7 +255,7 @@ pub async fn platform_migration_input(
             .await?;
     if identity_exists {
         sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-            .bind(&role.name).bind(crate::PlatformComponent::Provisioning.principal_id())
+            .bind(&role.name).bind(crate::PlatformComponent::ApplyPackage.principal_id())
             .execute(&mut admin).await?;
     }
     let mut url = url::Url::parse(input)?;

@@ -44,7 +44,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     let database = postgres.create_database(name).await?;
     let mut observer = connect(database.url()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS; \
+        ("CREATE ROLE wamn_query NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS; \
          \
          CREATE SCHEMA wamn_run")
             .to_string(),
@@ -339,9 +339,24 @@ pub async fn registry(
         .map(drop)?;
     }
     sqlx::raw_sql("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud')").execute(&mut owner).await.map(drop)?;
-    sqlx::raw_sql("CREATE ROLE file_fixture_control LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
-         GRANT wamn_control TO file_fixture_control").execute(&mut bootstrap).await.map(drop)?;
-    let mut control = connect(&login(database.url(), "file_fixture_control")?).await?;
+    let control_login = workload_login(
+        WorkloadRoleFamily::Control,
+        WorkloadRoleIdentity::Org {
+            org,
+            database: "file_registry",
+        },
+    )?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::test_database::login_sql(
+            WorkloadRoleFamily::Control,
+            "file_registry",
+            &control_login,
+            "file-fixture-only",
+        ),
+    ))
+    .execute(&mut bootstrap)
+    .await?;
+    let mut control = connect(&login(database.url(), &control_login)?).await?;
     let mut clients = Vec::new();
     for (target_project, mapped) in [(project, true), ("unmapped", false), ("unenabled", true)] {
         let role = system_reader_login(
@@ -612,7 +627,7 @@ pub async fn age_metadata(fixture: &mut Fixture) -> anyhow::Result<()> {
     );
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("BEGIN; ALTER TABLE platform.file DISABLE TRIGGER wamn_record_history_stamp; \
+        ("BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('a0000000-0000-4000-8000-0000000000c4','','fixture','admin:file-fixture'); ALTER TABLE platform.file DISABLE TRIGGER wamn_record_history_stamp; \
          UPDATE platform.file SET created_at=now()-interval '31 days'; \
          ALTER TABLE platform.file ENABLE TRIGGER wamn_record_history_stamp; COMMIT")
             .to_string(),

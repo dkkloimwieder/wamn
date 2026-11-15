@@ -217,14 +217,25 @@ async fn wait_for_blocked_issuer(system: &mut Client, issuer_role: &str) {
 }
 
 async fn seed_user(client: &mut Client, principal: &Principal, role: &str) {
-    sqlx::query("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2) ON CONFLICT (id) DO UPDATE SET status='active'").bind(&principal.id().to_string().as_str()).bind(&format!("{}@fixture.invalid", principal.id())).execute(&mut *client).await.map(|result| result.rows_affected()).expect_redacted("project user fixture");
+    let mut transaction = wamn_test_postgres::transaction(
+        client,
+        FIXTURE_PRINCIPAL,
+        "admin:session-exchange-fixture",
+    )
+    .await
+    .expect_redacted("begin project user fixture");
+    sqlx::query("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2) ON CONFLICT (id) DO UPDATE SET status='active'").bind(&principal.id().to_string().as_str()).bind(&format!("{}@fixture.invalid", principal.id())).execute(&mut *transaction).await.map(|result| result.rows_affected()).expect_redacted("project user fixture");
     sqlx::query("INSERT INTO platform.role (name) VALUES ($1) ON CONFLICT DO NOTHING")
         .bind(&role)
-        .execute(&mut *client)
+        .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())
         .expect_redacted("project role fixture");
-    sqlx::query("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2) ON CONFLICT DO NOTHING").bind(&principal.id().to_string().as_str()).bind(&role).execute(&mut *client).await.map(|result| result.rows_affected()).expect_redacted("exact project/principal role fixture");
+    sqlx::query("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2) ON CONFLICT DO NOTHING").bind(&principal.id().to_string().as_str()).bind(&role).execute(&mut *transaction).await.map(|result| result.rows_affected()).expect_redacted("exact project/principal role fixture");
+    transaction
+        .commit()
+        .await
+        .expect_redacted("commit project user fixture");
 }
 
 async fn grant(system: &mut Client, principal: &Principal, org: &str, env: &str) {
@@ -310,6 +321,9 @@ async fn setup(raw: &str) -> Fixture {
         .await
         .map(drop)
         .expect_redacted("schema prerequisite roles");
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut system.client).await.unwrap();
     // The system fixture is platform setup, so it writes as wamn:provisioning.
     for name in &databases {
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(

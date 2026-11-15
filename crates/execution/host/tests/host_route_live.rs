@@ -816,6 +816,9 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
         .fetch_one(&mut admin)
         .await?
         .get(0);
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut admin).await.unwrap();
     let audience = wamn_platform_identity::control::control_audience(ORG)?;
     let principal = claims()["sub"]
         .as_str()

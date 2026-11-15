@@ -59,6 +59,10 @@ pub async fn apply_target(
         ),
     };
     let login = database.require_login(client).await?;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(&login)
+        .bind(wamn_control_provision::PlatformComponent::ApplyPackage.principal_id())
+        .execute(&mut *client).await?;
     let key = crate::migrations::lock_session(client, lock, &[]).await?;
     let result = async {
         let table = format!("{schema}._sqlx_migrations");
@@ -68,9 +72,6 @@ pub async fn apply_target(
         )))
         .execute(&mut *client)
         .await?;
-        if database == MigrationDatabase::System {
-            wamn_registry::migrations::grant_history_read(client).await?;
-        }
         let migrator = Migrator::with_migrations(sources.to_vec());
         crate::migrations::run(client, migrator, table).await
     }
@@ -92,6 +93,14 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
     if present {
         return Ok(false);
     }
+    sqlx::raw_sql(wamn_control_provision::sql::ensure_db_owner_role_sql())
+        .execute(&mut *client)
+        .await?;
+    sqlx::raw_sql(
+        "DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $$",
+    )
+    .execute(&mut *client)
+    .await?;
     for family in [
         wamn_control_provision::WorkloadRoleFamily::Retention,
         wamn_control_provision::WorkloadRoleFamily::AuditRetention,
@@ -134,8 +143,16 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
         anyhow::Ok(())
     }
     .await;
+    if result.is_err() {
+        sqlx::raw_sql("ROLLBACK").execute(&mut *client).await?;
+    }
     sqlx::raw_sql("RESET ROLE").execute(&mut *client).await?;
     result?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::grant_dynamic_sql_surface_sql(),
+    ))
+    .execute(&mut *client)
+    .await?;
     sqlx::raw_sql(wamn_control_provision::MIGRATION_PRIVILEGES_SQL)
         .execute(client)
         .await?;

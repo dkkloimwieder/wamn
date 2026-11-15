@@ -33,6 +33,9 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
     ))
     .execute(&mut *connection)
     .await?;
+    sqlx::raw_sql(include_str!("../../../../deploy/sql/record-history.sql"))
+        .execute(&mut *connection)
+        .await?;
     let missing = admin_write(&mut connection).await.unwrap_err();
     let missing = missing.as_database_error().unwrap();
     assert_eq!(missing.code().as_deref(), Some("55000"));

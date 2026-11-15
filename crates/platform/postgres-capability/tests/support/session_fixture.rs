@@ -216,22 +216,24 @@ pub(super) async fn install_authority(
     principals: &[&str],
 ) -> anyhow::Result<()> {
     let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
-    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:seed-session-authority',false)")
-        .bind(actor.to_string()).execute(&mut *client).await?;
+    let mut transaction =
+        wamn_test_postgres::transaction(client, &actor.to_string(), "admin:seed-session-authority")
+            .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::test_database::seed_org_project_env_sql(ORG, project, environment),
     ))
-    .execute(&mut *client)
+    .execute(&mut *transaction)
     .await?;
     for principal in principals {
         sqlx::query("INSERT INTO identity.principals (id,type,subject,email,display_name) VALUES ($1::text::uuid,'user',$1,$1||'@example.test',$1)")
-            .bind(principal).execute(&mut *client).await?;
+            .bind(principal).execute(&mut *transaction).await?;
         sqlx::query("INSERT INTO identity.org_memberships (principal_id,org,status) VALUES ($1::text::uuid,$2,'active')")
-            .bind(principal).bind(ORG).execute(&mut *client).await?;
+            .bind(principal).bind(ORG).execute(&mut *transaction).await?;
         sqlx::query("INSERT INTO identity.project_env_memberships (principal_id,org,project,env) VALUES ($1::text::uuid,$2,$3,$4)")
-            .bind(principal).bind(ORG).bind(project).bind(environment).execute(&mut *client).await?;
+            .bind(principal).bind(ORG).bind(project).bind(environment).execute(&mut *transaction).await?;
         sqlx::query("INSERT INTO identity.password_logins (id,principal_id,issuer,audience,authenticated_at,expires_at,renewal_expires_at) VALUES ($1::text::uuid,$1::text::uuid,$2,$3,now(),now()+interval '8 hours',now()+interval '30 minutes')")
-            .bind(principal).bind(ISSUER).bind(audience).execute(&mut *client).await?;
+            .bind(principal).bind(ISSUER).bind(audience).execute(&mut *transaction).await?;
     }
+    transaction.commit().await?;
     Ok(())
 }

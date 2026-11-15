@@ -22,7 +22,7 @@ use wamn_postgres_capability::{ClassCredentials, WamnPostgres, WamnPostgresConfi
 const GENERATION: &str = "wamn_exec_platform_surface_live";
 const GENERATION_PASSWORD: &str = "executor-surface-test-password";
 
-const PROJECT_ENV_KEY: &str = "t1";
+const PROJECT_ENV_KEY: &str = "executor-surface--prod--cat";
 const PACKAGE_ID: &str = "cat";
 const PACKAGE_VERSION: &str = "1.0.0";
 const ENVIRONMENT: &str = "prod";
@@ -101,7 +101,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
                  END IF; \
                END LOOP; \
              END $$; \
-             CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+             CREATE ROLE wamn_query NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
               \
               \
              BEGIN; {catalog_ddl} {run_state_ddl} {run_queue_ddl} {app_schema} COMMIT;"
@@ -153,8 +153,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
                   WHERE rolname = '{GENERATION}' \
                     AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
                     AND NOT rolcreaterole AND rolinherit AND NOT rolreplication \
-                    AND NOT rolbypassrls AND rolpassword IS NOT NULL \
-                    AND rolvaliduntil IS NOT NULL), \
+                    AND NOT rolbypassrls AND rolpassword IS NOT NULL), \
                  'the surface principal must be a minted, non-bypassing generation'; \
                ASSERT EXISTS ( \
                  SELECT FROM pg_catalog.pg_auth_members AS membership \
@@ -190,7 +189,8 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
         r#"{{"components":[{{"descriptor":{{"component":"entity","component-digest":"{component_digest}","connections":[{{"requirement-type":"http","store-alias":"a-store"}}],"effects":[],"imports":[],"imports-fingerprint":"{imports_fingerprint}","interface-version":"0.1","operations":{{"create":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}}},"package-id":"{PACKAGE_ID}"}}],"release":{{"packages":[{{"package-id":"{PACKAGE_ID}","package-version":"{PACKAGE_VERSION}"}}]}}}}"#,
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( '{PROJECT_ENV_KEY}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
+            "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture','admin:plan-supply-fixture'); \
+             INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( '{PROJECT_ENV_KEY}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
              INSERT INTO catalog.releases \
                (project_env_key,manifest_digest,canonical_bytes) \
              SELECT '{PROJECT_ENV_KEY}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
@@ -206,7 +206,7 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
              INSERT INTO catalog.connection_binding (project_env_key,manifest_digest,component_digest,package_id,name,connection_id) \
              SELECT '{PROJECT_ENV_KEY}',manifest_digest,'{component_digest}','{PACKAGE_ID}','a-store','00000000-0000-4000-8000-000000000012' FROM catalog.releases; \
              INSERT INTO wamn_run.runs (project_env_key, run_id, wiring_hash, package_id, manifest_digest, environment, wiring_id, wiring_version, status, input_json, trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) SELECT '{PROJECT_ENV_KEY}', 'run-1', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', '{PACKAGE_ID}', manifest_digest, '{ENVIRONMENT}', '{WIRING_ID}', {WIRING_VERSION}, 'dispatched', '{{}}', 'manual', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{{}}' FROM catalog.releases; \
-             INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('{PROJECT_ENV_KEY}','run-1');",
+             INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('{PROJECT_ENV_KEY}','run-1'); COMMIT;",
         ))).execute(&mut admin).await.map(drop)
         .context("seed the plan-supply fixture")?;
 

@@ -124,11 +124,12 @@ async fn recover_and_close_record_each_capture_gap() {
 
     // The registry, owned by wamn_system as the verbs expect.
     let mut system = connect(&system_url).await;
-    sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+    wamn_control_provision::test_database::system_schema(&system_url).await;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
         .execute(&mut system)
         .await
-        .map(drop)
-        .expect("install the system schema");
+        .unwrap();
     sqlx::raw_sql("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture');")
         .execute(&mut system)
         .await

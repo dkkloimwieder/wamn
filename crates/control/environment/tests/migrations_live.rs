@@ -25,6 +25,11 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
     let mut admin = wamn_postgres::connect(database.as_str()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+    ))
+    .execute(&mut admin)
+    .await?;
     sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
         .execute(&mut admin)
         .await?;
@@ -115,7 +120,8 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
         migrations::run(&mut admin, migrator(&sources), table.clone()).await?,
         0
     );
-    let changed = [source(10, "SELECT 1"), sources[1].clone()];
+    let mut changed = sources.clone();
+    changed[0] = source(10, "SELECT 1");
     let error = migrations::run(&mut admin, migrator(&changed), table.clone())
         .await
         .unwrap_err();
@@ -186,10 +192,15 @@ async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
     let mut admin = wamn_postgres::connect(database.as_str()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+    ))
+    .execute(&mut admin)
+    .await?;
     sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
         .execute(&mut admin)
         .await?;
-    sqlx::raw_sql("CREATE SCHEMA platform")
+    sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS platform")
         .execute(&mut admin)
         .await?;
     sqlx::raw_sql(include_str!(

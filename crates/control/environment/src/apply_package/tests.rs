@@ -71,7 +71,11 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
 
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    crate::platform_migrations::install_project(
+        &mut wamn_postgres::connect(database.as_str()).await.unwrap(),
+    )
+    .await
+    .unwrap();
     {
         let batches: &[&str] = &[
             &wamn_control_provision::sql::install_platform_extensions_sql(),
@@ -99,12 +103,6 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
                 .unwrap();
         }
     }
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::MIGRATION_PRIVILEGES_SQL,
-    ))
-    .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
-    .await
-    .unwrap();
     let database_name = wamn_postgres::identity(database.as_str()).unwrap().1;
     let login =
         wamn_control_provision::migration::login("apply-drops--dev--fixture", &database_name)

@@ -4,7 +4,7 @@ use sqlx::Row as _;
 use std::time::Duration;
 use wamn_broker::auth_changes::AuthDrops;
 
-use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
+use wamn_control_provision::PlatformComponent;
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::{
     IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
@@ -36,11 +36,7 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     .await
     .map(drop)
     .expect("prepare empty platform schemas");
-    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .expect("apply the system schema composition");
+    wamn_control_provision::test_database::system_schema(&url).await;
     identity_relations_carry_stamps(&mut client).await;
     let provisioning = provisioning_principal_is_seeded(&mut client).await;
     unbound_identity_writes_refuse(&mut client).await;

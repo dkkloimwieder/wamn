@@ -1,6 +1,5 @@
 //! Keyset queries against an owned, disposable PostgreSQL server.
 
-use wamn_control_provision::SYSTEM_SCHEMA_SQL;
 use wamn_platform_identity::{control, create_or_reuse_user, org};
 
 #[tokio::test]
@@ -15,11 +14,10 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         .await
         .map(drop)
         .unwrap();
-    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .unwrap();
+    wamn_control_provision::test_database::system_schema(database.url()).await;
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut client).await.unwrap();
     sqlx::raw_sql("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES
            ('acme', 'pooled', 'wamn-pg'), ('other', 'pooled', 'wamn-pg');
          INSERT INTO registry.projects (org, id) VALUES
@@ -38,9 +36,17 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         org::activate_org_membership(&mut client, &principal, "acme")
             .await
             .unwrap();
-        org::grant_project_admin(&mut client, &principal, "acme", "a")
+        for environment in ["a", "b", "c"] {
+            wamn_platform_identity::grant_project_env_membership(
+                &mut client,
+                &principal,
+                "acme",
+                "a",
+                environment,
+            )
             .await
             .unwrap();
+        }
         principals.push(principal);
     }
     let caller = &principals[0];
@@ -50,7 +56,7 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     org::grant_project_admin(&mut client, caller, "other", "a")
         .await
         .unwrap();
-    for project in ["b", "c"] {
+    for project in ["a", "b", "c"] {
         org::grant_project_admin(&mut client, caller, "acme", project)
             .await
             .unwrap();
@@ -135,7 +141,7 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         .unwrap(),
         users[2..]
     );
-    // project-admin made every user a member of every environment; b@ leaves `b`.
+    // Explicit memberships cover the fixture environments; b@ leaves `b`.
     sqlx::query(
         "DELETE FROM identity.project_env_memberships \
              WHERE principal_id = $1::text::uuid AND env = 'b'",

@@ -194,6 +194,9 @@ pub async fn fixture(pool: &sqlx::PgPool) -> Fixture {
     wamn_environment::platform_migrations::install_project(&mut admin)
         .await
         .expect("install the run plane and the catalog");
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut admin).await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::platform_principals_sql("schedule.invalid").unwrap()).to_string(),
     ))
@@ -241,9 +244,7 @@ pub async fn fixture(pool: &sqlx::PgPool) -> Fixture {
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": APPLICATION, "package-version": "1.0.0"}]},
         "components": [{"package-id": APPLICATION,
-            "descriptor": ComponentDescriptor::new(read.clone(), Vec::new()),
-            "operations": {(READ): {"registered-operation": READ, "permissions": [READ],
-                "statements": {}}}}],
+            "descriptor": ComponentDescriptor::new(read.clone(), Vec::new())}],
         "routes": [], "attachments": {},
     }))
     .expect("the fixture release is valid");

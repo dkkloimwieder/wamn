@@ -881,11 +881,13 @@ The actor is the `platform."user"` id of the executing principal, never the cred
 The [execution page](execution.md#native-dispatch) lists the principal that the host binds for each type of delivery.
 A writer outside the host inserts its caller into `platform.tx_identity` in its own transaction.
 Migrations insert no identity row. Their platform login uses the protected `platform.login_principal` lookup.
-The migration and build verification logins map to `ApplyPackage`. `wamn_db_owner` maps to `Provisioning`.
+The migration and build verification logins map to `ApplyPackage`. `wamn_db_owner` and the control owner `wamn_system` map to `Provisioning`.
+An arbitrary installer login receives no fallback identity.
 The platform owner owns this lookup. Application logins have no privileges on it.
 Provisioning binds `wamn:provisioning`.
 apply-package binds `wamn:apply-package` for package writes and operation grants.
 The retention task binds `wamn:audit-retention`.
+Run history retention also binds this actor before reading or deleting runs. It commits a prune and rolls back a preview.
 The identity row of a platform component also sets `operation` to the same `wamn:<component>` name.
 Administrative SQL must bind the operator's user row, and test fixtures must bind a provisioned test principal.
 Administrative SQL and test fixtures also bind `(wamn_authority.current_identity()).operation` as `admin:<kebab-purpose>`, including a transaction that only deletes rows.

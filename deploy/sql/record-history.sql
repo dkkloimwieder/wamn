@@ -67,9 +67,7 @@ CREATE TABLE IF NOT EXISTS platform.login_principal (
 ALTER TABLE platform.login_principal OWNER TO CURRENT_USER;
 REVOKE ALL ON platform.login_principal FROM PUBLIC;
 INSERT INTO platform.login_principal(login, principal_id)
-SELECT DISTINCT login::name, principal_id::uuid FROM (VALUES (current_user, '770df186-ac15-579e-b46b-c297cae2011b'),
-       (session_user, '770df186-ac15-579e-b46b-c297cae2011b'),
-       ('wamn_db_owner', '770df186-ac15-579e-b46b-c297cae2011b')) AS binding(login, principal_id)
+VALUES ('wamn_db_owner', '770df186-ac15-579e-b46b-c297cae2011b')
 ON CONFLICT (login) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION wamn_authority.current_identity()
@@ -107,15 +105,6 @@ RETURNS text LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
 $$;
 REVOKE ALL ON FUNCTION wamn_authority.current_principal_id(),
     wamn_authority.current_role(), wamn_authority.current_application() FROM PUBLIC;
-
-DO $query_role$ BEGIN
-    IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN
-        PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_query') THEN
-            CREATE ROLE wamn_query NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS;
-        END IF;
-    END IF;
-END $query_role$;
 
 -- Existing writer roles can bind their own transaction. None can read the table.
 DO $identity_grants$

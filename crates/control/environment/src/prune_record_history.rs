@@ -21,8 +21,8 @@
 //! cutoff. So the verb removes a prefix of the history of a row, never an
 //! interior entry. It advances the pruning watermark in the same transaction.
 //! The daily schedule sets the retention precision.
-//! The final transaction also expires successful write-log claims after 30 days.
-//! Claims with a null result remain, regardless of age.
+//! The final transaction also expires write-log claims after 30 days, including
+//! claims with an unknown outcome.
 
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
@@ -189,7 +189,7 @@ pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
                     .execute(&mut *transaction)
                     .await
                     .map(|result| result.rows_affected())
-                    .context("prune successful write log claims older than 30 days")?;
+                    .context("prune write log claims older than 30 days")?;
             }
             transaction
                 .commit()

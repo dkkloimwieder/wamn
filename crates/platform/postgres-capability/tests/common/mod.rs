@@ -10,7 +10,7 @@ use wamn_connections::production_lease::ProductionLeaseResult;
 use wamn_identity_protocol::AuthorityClass;
 use wamn_postgres_capability::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 
-pub const PROJECT_ENV_KEY: &str = "lease-live";
+pub const PROJECT_ENV_KEY: &str = "lease-live-org--test--lease-live-project";
 pub const COMPONENT: &str = "lease-live-runner";
 pub const PACKAGE_ID: &str = "cat_main";
 pub const ENVIRONMENT: &str = "test";
@@ -47,6 +47,9 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../../../deploy/sql/run-queue.sq
 /// Apply the run plane of record on the project base grants, with the two releases
 /// the pods mount.
 pub async fn install_schema(client: &mut Client) -> anyhow::Result<()> {
+    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        .bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut *client).await?;
     sqlx::raw_sql(RUN_STATE_SQL)
         .execute(&mut *client)
         .await

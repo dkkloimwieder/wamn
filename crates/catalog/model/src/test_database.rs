@@ -4,7 +4,7 @@
 /// attributes that provisioning gives them, when they are absent.
 const PROJECT_ROLES_SQL: &str = "DO $roles$ DECLARE role_name text; BEGIN \
        PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-       FOREACH role_name IN ARRAY ARRAY['wamn_app'] LOOP \
+       FOREACH role_name IN ARRAY ARRAY['wamn_app', 'wamn_query'] LOOP \
          IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
            EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                            NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \

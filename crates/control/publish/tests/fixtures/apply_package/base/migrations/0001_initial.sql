@@ -101,3 +101,16 @@ CREATE TABLE inventory.rack_line (
         REFERENCES inventory.dock (id),
     CONSTRAINT rack_line_quantity_check CHECK (quantity > 0)
 );
+
+SELECT wamn_history.create_history_table('inventory', 'panel', false);
+CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON inventory.panel
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON inventory.panel
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
+
+SELECT wamn_history.create_history_table('inventory', 'panel_line', false);
+CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON inventory.panel_line
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D');
+
+CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON inventory.rack
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by');
