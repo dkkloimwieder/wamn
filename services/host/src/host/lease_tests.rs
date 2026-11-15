@@ -5,7 +5,6 @@ use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_connections::connection_memory::{self, ConnectionMemory};
 
 use super::*;
-use sqlx::Row as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_capability_authority::auth_cache::test_util::{nats, until};
@@ -74,7 +73,6 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
     let database = wamn_test_postgres::url(&pool);
-    let mut admin = wamn_postgres::connect(database.as_str()).await?;
 
     let (_nats, client) = nats().await;
     let connection = "00000000-0000-4000-8000-000000000001".parse()?;
@@ -90,12 +88,11 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host(
         target_type: "cloud".into(),
     };
     let (a, leases_a) = facts(&client, database.as_str(), &fact).await?;
-    let call_a = a
-        .exclusive_call(connection)
-        .await?
-        .context("host A needs an exclusive call")?;
-    let key = format!("resource:{target}:tcp:device:502");
-    let pid: i32 = sqlx::query("SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1").bind(&key).fetch_one(&mut admin).await?.get(0);
+    let call_a = Arc::new(
+        a.exclusive_call(connection)
+            .await?
+            .context("host A needs an exclusive call")?,
+    );
 
     let (b, leases_b) = facts(&client, database.as_str(), &fact).await?;
     let probes_b = ProbeState::default();
@@ -106,14 +103,14 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host(
         let _ = probe_stopped.await;
     }));
     probes_b.started();
-    let pending = tokio::spawn(async move { b.exclusive_call(connection).await });
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let waiting: bool = sqlx::query("SELECT EXISTS(SELECT FROM pg_locks WHERE locktype='advisory' AND NOT granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1)").bind(&key).fetch_one(&mut admin).await?.get(0);
-            if waiting { return Ok::<_, anyhow::Error>(()); }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await??;
+    let first_call = Arc::downgrade(&call_a);
+    let mut next_call = Box::pin(async move {
+        let call = b.exclusive_call(connection).await?;
+        anyhow::ensure!(first_call.upgrade().is_none(), "exclusive calls overlap");
+        anyhow::Ok(call)
+    });
+    assert!(futures_util::poll!(next_call.as_mut()).is_pending());
+    let pending = tokio::spawn(next_call);
     ready(address).await?;
     assert!(!pending.is_finished());
 
@@ -168,24 +165,9 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host(
     assert!(call_b.held());
     assert!(native_stopped.load(Ordering::SeqCst));
     ready(address).await?;
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if !sqlx::query("SELECT EXISTS(SELECT FROM pg_stat_activity WHERE pid=$1)")
-                .bind(&pid)
-                .fetch_one(&mut admin)
-                .await?
-                .get::<bool, _>(0)
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await??;
     drop(call_b);
     leases_b.shutdown().await;
     let _ = stop_probe.send(());
     probe.await?;
-    drop(admin);
     Ok(())
 }

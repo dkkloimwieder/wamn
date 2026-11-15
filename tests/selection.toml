@@ -33,10 +33,6 @@ packages = ["wamn-environment"]
 features = ["ops"]
 
 [[preparation]]
-packages = ["wamn-execution-host"]
-features = ["test-util"]
-
-[[preparation]]
 id = "nats"
 outputs = {WAMN_NATIVE_C_NATS_BIN = "nats-server"}
 aliases = {WAMN_HOST_LIVE_NATS_SERVER_BIN = "WAMN_NATIVE_C_NATS_BIN"}

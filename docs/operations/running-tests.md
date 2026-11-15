@@ -222,6 +222,7 @@ The typed call test also needs Docker, the `registry:2` image, and the generated
 It tests replacement connection Y after disabling X, plus two hosts sharing X for the 30-second refusal.
 The rollout test drives two host owners in one process through the host shutdown function and a real SIGTERM.
 It serves the native `/readyz` endpoint while the second host waits for its lease.
+It checks that the second holder acquires only after the first holder releases its call.
 Run these tests with the build environment in [building](building.md):
 
 ```bash

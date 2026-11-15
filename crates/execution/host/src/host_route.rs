@@ -89,8 +89,6 @@ impl fmt::Debug for HostRouteHandlers {
 /// Serves the host routes of a loaded release.
 pub struct HostRouteDelivery {
     release: Arc<LoadedRelease>,
-    #[cfg(feature = "test-util")]
-    projection_pause: Option<Arc<crate::control_route::ProjectionPause>>,
     registry_token_metadata: bool,
     operation_jobs: Option<wamn_kubernetes::kubernetes_api::KubernetesApi>,
     worker: Option<wamn_kubernetes::job::Worker>,
@@ -122,8 +120,6 @@ impl HostRouteDelivery {
             worker: None,
             execution: None,
             registry_token_metadata: false,
-            #[cfg(feature = "test-util")]
-            projection_pause: None,
             files: None,
             connection_health: None,
             oauth: None,
@@ -146,15 +142,6 @@ impl HostRouteDelivery {
             .host_routes
             .iter()
             .flat_map(|set| set.attachments())
-    }
-
-    #[cfg(feature = "test-util")]
-    pub fn with_projection_pause(
-        mut self,
-        pause: Arc<crate::control_route::ProjectionPause>,
-    ) -> Self {
-        self.projection_pause = Some(pause);
-        self
     }
 
     /// Use the process-owned artifact and transport resources for candidate tests.
@@ -367,8 +354,6 @@ impl HostRouteDelivery {
                 },
             ) => {
                 ControlRoutes {
-                    #[cfg(feature = "test-util")]
-                    projection_pause: self.projection_pause.as_deref(),
                     control,
                     writer,
                     identity: identity.as_ref(),
