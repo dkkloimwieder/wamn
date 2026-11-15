@@ -113,7 +113,7 @@ fn select_port(config: &serde_json::Value, payload: &str) -> Result<Option<Strin
 }
 
 /// The default output port.
-use wamn_catalog::MAIN_PORT;
+const MAIN_PORT: &str = "main";
 /// The alternate output port.
 const REQUEST_ELEMENTS_PORT: &str = "items";
 

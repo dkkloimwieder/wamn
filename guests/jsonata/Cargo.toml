@@ -6,7 +6,6 @@ edition.workspace = true
 description = "Palette node evaluating one JSONata expression, its configuration, on its input."
 
 [dependencies]
-wamn-catalog.workspace = true
 wamn-jsonata.workspace = true
 serde_json = { workspace = true }
 wit-bindgen = { workspace = true }
