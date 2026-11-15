@@ -22,13 +22,13 @@ use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHt
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_sql::{AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
 
-#[path = "support/session_fixture.rs"]
+#[path = "../../authentication/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
-    reason = "The shared fixture also provides verifier-only fetch barriers."
+    reason = "Authentication tests also use this issuer fixture."
 )]
 mod session_fixture;
-use session_fixture::{AUDIENCE, ORG, Server, claims, header, signed};
+use session_fixture::{AUDIENCE, ISSUER, ORG, Reply, Server, claims, header, signed};
 
 const PROJECT: &str = "project";
 const PROJECT_ENV_KEY: &str = "org-a--dev--project";
@@ -374,14 +374,25 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
 
     let mut server = Server::start().await;
     let (verifier, token_clock, key_clock) = server.verifier();
-    session_fixture::install_authority(
-        &mut admin,
-        PROJECT,
-        "dev",
-        AUDIENCE,
-        &[claims()["sub"].as_str().unwrap(), SECOND_PRINCIPAL],
-    )
+    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    let mut transaction =
+        wamn_test_postgres::transaction(&mut admin, &actor, "admin:seed-session-authority").await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::test_database::seed_org_project_env_sql(ORG, PROJECT, "dev"),
+    ))
+    .execute(&mut *transaction)
     .await?;
+    for principal in [claims()["sub"].as_str().unwrap(), SECOND_PRINCIPAL] {
+        sqlx::query("INSERT INTO identity.principals (id,type,subject,email,display_name) VALUES ($1::text::uuid,'user',$1,$1||'@example.test',$1)")
+            .bind(principal).execute(&mut *transaction).await?;
+        sqlx::query("INSERT INTO identity.org_memberships (principal_id,org,status) VALUES ($1::text::uuid,$2,'active')")
+            .bind(principal).bind(ORG).execute(&mut *transaction).await?;
+        sqlx::query("INSERT INTO identity.project_env_memberships (principal_id,org,project,env) VALUES ($1::text::uuid,$2,$3,$4)")
+            .bind(principal).bind(ORG).bind(PROJECT).bind("dev").execute(&mut *transaction).await?;
+        sqlx::query("INSERT INTO identity.password_logins (id,principal_id,issuer,audience,authenticated_at,expires_at,renewal_expires_at) VALUES ($1::text::uuid,$1::text::uuid,$2,$3,now(),now()+interval '8 hours',now()+interval '30 minutes')")
+            .bind(principal).bind(ISSUER).bind(AUDIENCE).execute(&mut *transaction).await?;
+    }
+    transaction.commit().await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&sql::grant_identity_reader_surface_sql()).to_string(),
     ))
@@ -842,7 +853,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
 
     let before = statements(&mut admin, &generation).await?;
     key_clock.advance(Duration::from_secs(300));
-    server.remove_keys();
+    server.queue(Reply::keys(&[]));
     assert_eq!(
         route
             .authenticate_authorization_for_test(ATTACHMENT, Some(&authorization))

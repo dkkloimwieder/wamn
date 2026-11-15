@@ -5425,14 +5425,12 @@ dependencies = [
  "wamn-authority",
  "wamn-catalog",
  "wamn-connections",
- "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
  "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-registry",
- "wamn-test-postgres",
 ]
 
 [[package]]

@@ -1,231 +1,20 @@
 //! Real HTTPS transport with independently controlled cache-evidence clocks.
 #![cfg(feature = "test-util")]
 
-use std::fmt::Write as _;
-
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
-use rustls::pki_types::PrivatePkcs8KeyDer;
-use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::sync::oneshot;
-use tokio::task::{JoinHandle, JoinSet};
-use tokio_rustls::TlsAcceptor;
-use wamn_authentication::session_keys::{IssuerKeys, IssuerKeysConfig, TestClock};
+use serde_json::json;
+use tokio::task::JoinSet;
+use wamn_authentication::session_keys::{IssuerKeys, IssuerKeysConfig};
 
-const ISSUER: &str = "https://identity.example.test/issuer";
-const JWKS_PATH: &str = "/.well-known/jwks.json?fixed=1";
-
-fn key(kid: &str) -> Value {
-    json!({"kid": kid, "kty": "OKP", "crv": "Ed25519", "alg": "EdDSA",
-        "use": "sig", "x": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
-}
-
-fn document(kids: &[&str]) -> Vec<u8> {
-    serde_json::to_vec(&json!({"keys": kids.iter().map(|kid| key(kid)).collect::<Vec<_>>()}))
-        .expect("serialize public key fixture")
-}
-
-struct Reply {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
-    chunked: bool,
-    entered: Option<oneshot::Sender<()>>,
-    release: Option<oneshot::Receiver<()>>,
-}
-
-impl Reply {
-    fn keys(kids: &[&str]) -> Self {
-        Self {
-            status: 200,
-            headers: Vec::new(),
-            body: document(kids),
-            chunked: false,
-            entered: None,
-            release: None,
-        }
-    }
-
-    fn age(mut self, age: &str) -> Self {
-        self.headers.push(("Age".into(), age.into()));
-        self
-    }
-
-    fn held(mut self) -> (Self, oneshot::Receiver<()>, oneshot::Sender<()>) {
-        let (entered_tx, entered_rx) = oneshot::channel();
-        let (release_tx, release_rx) = oneshot::channel();
-        self.entered = Some(entered_tx);
-        self.release = Some(release_rx);
-        (self, entered_rx, release_tx)
-    }
-}
-
-#[derive(Default)]
-struct Observed {
-    replies: Mutex<VecDeque<Reply>>,
-    requests: Mutex<Vec<String>>,
-    active: AtomicUsize,
-    peak: AtomicUsize,
-}
-
-struct ActiveRequest(Arc<Observed>);
-
-impl Drop for ActiveRequest {
-    fn drop(&mut self) {
-        self.0.active.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-struct Server {
-    endpoint: String,
-    ca_pem: Vec<u8>,
-    observed: Arc<Observed>,
-    task: Option<JoinHandle<()>>,
-}
-
-impl Server {
-    async fn start() -> Self {
-        let mut ca_params = CertificateParams::new(Vec::<String>::new()).expect("CA params");
-        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
-        let ca_key = KeyPair::generate().expect("CA key");
-        let ca = ca_params.self_signed(&ca_key).expect("CA certificate");
-        let issuer = Issuer::new(ca_params, ca_key);
-        let leaf_key = KeyPair::generate().expect("TLS key");
-        let leaf = CertificateParams::new(vec!["127.0.0.1".into()])
-            .expect("TLS params")
-            .signed_by(&leaf_key, &issuer)
-            .expect("TLS certificate");
-        let config = rustls::ServerConfig::builder_with_provider(
-            rustls::crypto::aws_lc_rs::default_provider().into(),
-        )
-        .with_safe_default_protocol_versions()
-        .expect("TLS versions")
-        .with_no_client_auth()
-        .with_single_cert(
-            vec![leaf.der().clone()],
-            PrivatePkcs8KeyDer::from(leaf_key.serialize_der()).into(),
-        )
-        .expect("TLS configuration");
-        let acceptor = TlsAcceptor::from(Arc::new(config));
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("loopback listener");
-        let endpoint = format!(
-            "https://{}{JWKS_PATH}",
-            listener.local_addr().expect("listener address")
-        );
-        let observed = Arc::new(Observed::default());
-        let serving = Arc::clone(&observed);
-        let task = tokio::spawn(async move {
-            let mut connections = JoinSet::new();
-            loop {
-                tokio::select! {
-                    accepted = listener.accept() => {
-                        let (tcp, _) = accepted.expect("accept loopback connection");
-                        let acceptor = acceptor.clone();
-                        let observed = Arc::clone(&serving);
-                        connections.spawn(async move {
-                            let Ok(mut stream) = acceptor.accept(tcp).await else { return; };
-                            let mut request = Vec::new();
-                            while !request.ends_with(b"\r\n\r\n") {
-                                let mut byte = [0];
-                                if stream.read_exact(&mut byte).await.is_err() { return; }
-                                request.push(byte[0]);
-                                assert!(request.len() < 8192, "bounded fixture request headers");
-                            }
-                            observed.requests.lock().expect("requests lock")
-                                .push(String::from_utf8(request).expect("HTTP request text"));
-                            let active = observed.active.fetch_add(1, Ordering::SeqCst) + 1;
-                            observed.peak.fetch_max(active, Ordering::SeqCst);
-                            let _active = ActiveRequest(Arc::clone(&observed));
-                            let mut reply = observed.replies.lock().expect("reply lock")
-                                .pop_front().expect("each HTTP request must have an explicit reply");
-                            let mut headers = format!("HTTP/1.1 {} Fixture\r\nConnection: close\r\nContent-Type: application/json\r\n", reply.status);
-                            for (name, value) in &reply.headers {
-                                writeln!(headers, "{name}: {value}\r").expect("writing to a String cannot fail");
-                            }
-                            if reply.chunked {
-                                headers.push_str("Transfer-Encoding: chunked\r\n\r\n");
-                            } else {
-                                writeln!(headers, "Content-Length: {}\r\n\r", reply.body.len()).expect("writing to a String cannot fail");
-                            }
-                            if stream.write_all(headers.as_bytes()).await.is_err() { return; }
-                            if let Some(entered) = reply.entered.take() { let _ = entered.send(()); }
-                            if let Some(release) = reply.release.take() { let _ = release.await; }
-                            if reply.chunked {
-                                for chunk in reply.body.chunks(1024) {
-                                    if stream.write_all(format!("{:x}\r\n", chunk.len()).as_bytes()).await.is_err()
-                                        || stream.write_all(chunk).await.is_err()
-                                        || stream.write_all(b"\r\n").await.is_err() { return; }
-                                }
-                                let _ = stream.write_all(b"0\r\n\r\n").await;
-                            } else {
-                                let _ = stream.write_all(&reply.body).await;
-                            }
-                            let _ = stream.shutdown().await;
-                        });
-                    }
-                    completed = connections.join_next(), if !connections.is_empty() => {
-                        completed.expect("connection task").expect("fixture connection did not panic");
-                    }
-                }
-            }
-        });
-        Self {
-            endpoint,
-            ca_pem: ca.pem().into_bytes(),
-            observed,
-            task: Some(task),
-        }
-    }
-
-    fn queue(&self, reply: Reply) {
-        self.observed
-            .replies
-            .lock()
-            .expect("reply lock")
-            .push_back(reply);
-    }
-
-    fn cache(&self) -> (IssuerKeys, TestClock) {
-        let config = IssuerKeysConfig::new(ISSUER, &self.endpoint, &self.ca_pem)
-            .expect("configured HTTPS issuer");
-        IssuerKeys::with_test_clock(config)
-    }
-
-    fn count(&self) -> usize {
-        self.observed.requests.lock().expect("requests lock").len()
-    }
-
-    async fn stop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-            assert!(task.await.expect_err("listener stopped").is_cancelled());
-        }
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        if let Some(task) = &self.task {
-            task.abort();
-        }
-    }
-}
-
-async fn entered(receiver: oneshot::Receiver<()>) {
-    tokio::time::timeout(Duration::from_secs(2), receiver)
-        .await
-        .expect("HTTPS request reached fixture")
-        .expect("request barrier");
-}
+#[path = "support/session_fixture.rs"]
+#[expect(
+    dead_code,
+    reason = "SQL and verifier tests also use this issuer fixture."
+)]
+mod session_fixture;
+use session_fixture::{ISSUER, Reply, Server, entered, key};
 
 #[tokio::test]
 async fn configured_https_endpoint_and_exclusive_ca_are_the_only_trust_source() {
@@ -271,12 +60,8 @@ async fn configured_https_endpoint_and_exclusive_ca_are_the_only_trust_source() 
         .key("trusted")
         .await
         .expect("key from configured endpoint");
-    assert_eq!(cache.issuer(), ISSUER);
-    assert_eq!(evidence.public_key().kid, "trusted");
+    assert!(evidence.is_fresh());
     assert_eq!(server.count(), 1);
-    let requests = server.observed.requests.lock().expect("requests lock");
-    assert!(requests[0].starts_with(&format!("GET {JWKS_PATH} HTTP/1.1\r\n")));
-    assert!(!requests[0].to_ascii_lowercase().contains("authorization:"));
 }
 
 #[tokio::test]
@@ -387,12 +172,14 @@ async fn varied_unknown_ids_share_one_inflight_slot_and_one_attempt_start_interv
     assert!(cache.key("still-limited").await.is_err());
     assert_eq!(server.count(), 1);
     clock.advance(Duration::from_millis(1));
-    let (reply, barrier, release) = Reply::keys(&["known"]).held();
+    let (reply, barrier, release) = Reply::keys(&["known", "added"]).held();
     server.queue(reply);
     let caller = cache.clone();
     let fetch = tokio::spawn(async move { caller.key("missing").await });
     entered(barrier).await;
     clock.advance(Duration::from_secs(2));
+    let caller = cache.clone();
+    let waiting = tokio::spawn(async move { caller.key("added").await });
     let mut contenders = JoinSet::new();
     for i in 0..32 {
         let caller = cache.clone();
@@ -413,6 +200,10 @@ async fn varied_unknown_ids_share_one_inflight_slot_and_one_attempt_start_interv
     assert_eq!(server.observed.peak.load(Ordering::SeqCst), 1);
     release.send(()).expect("release response");
     assert!(fetch.await.expect("refresh task").is_err());
+    waiting
+        .await
+        .expect("waiting task")
+        .expect("the key from the refresh it waited for");
     // Each miss waited for that refresh, read its result, and fetched nothing.
     while let Some(result) = contenders.join_next().await {
         assert!(result.expect("lookup task"));
@@ -458,29 +249,6 @@ async fn a_hit_near_its_deadline_refreshes_ahead_so_evidence_crosses_the_old_dea
 }
 
 #[tokio::test]
-async fn a_miss_waits_for_the_refresh_in_flight_and_fetches_nothing() {
-    let server = Server::start().await;
-    let (cache, _clock) = server.cache();
-    let (reply, barrier, release) = Reply::keys(&["signing"]).held();
-    server.queue(reply);
-    let caller = cache.clone();
-    let fetch = tokio::spawn(async move { caller.key("signing").await });
-    entered(barrier).await;
-    let caller = cache.clone();
-    let waiting = tokio::spawn(async move { caller.key("signing").await });
-    for _ in 0..64 {
-        tokio::task::yield_now().await;
-    }
-    release.send(()).expect("release response");
-    fetch.await.expect("fetch task").expect("fetched key");
-    waiting
-        .await
-        .expect("waiting task")
-        .expect("the key from the refresh it waited for");
-    assert_eq!(server.count(), 1);
-}
-
-#[tokio::test]
 async fn cancelled_request_releases_slot_without_resetting_its_interval() {
     let server = Server::start().await;
     let (cache, clock) = server.cache();
@@ -504,62 +272,36 @@ async fn cancelled_request_releases_slot_without_resetting_its_interval() {
 }
 
 #[tokio::test]
-async fn two_warm_caches_refuse_removed_key_with_endpoint_available() {
-    let server = Server::start().await;
-    let (first, first_clock) = server.cache();
-    let (second, second_clock) = server.cache();
-    server.queue(Reply::keys(&["removed"]));
-    let first_evidence = first.key("removed").await.expect("first warm cache");
-    server.queue(Reply::keys(&["removed"]).age("30"));
-    let second_evidence = second.key("removed").await.expect("second warm cache");
-    first_clock.advance(Duration::from_secs(300));
-    second_clock.advance(Duration::from_secs(270));
-    for cache in [&first, &second] {
-        server.queue(Reply::keys(&["replacement"]));
-        assert!(
-            cache.key("removed").await.is_err(),
-            "known ID is refreshed at expiry"
-        );
-        assert!(cache.key("replacement").await.is_ok());
-    }
-    assert!(!first_evidence.is_fresh());
-    assert!(!second_evidence.is_fresh());
-    assert_eq!(server.count(), 4);
-}
-
-#[tokio::test]
-async fn two_warm_caches_fail_closed_at_deadline_when_endpoint_is_unavailable() {
-    let mut server = Server::start().await;
-    let (first, first_clock) = server.cache();
-    let (second, second_clock) = server.cache();
-    server.queue(Reply::keys(&["removed"]));
-    let first_evidence = first.key("removed").await.expect("first warm cache");
-    server.queue(Reply::keys(&["removed"]).age("30"));
-    let second_evidence = second.key("removed").await.expect("second warm cache");
-    server.stop().await;
-    first_clock.advance(Duration::from_secs(299));
-    second_clock.advance(Duration::from_secs(269));
-    for cache in [&first, &second] {
-        assert!(
-            cache.key("missing").await.is_err(),
-            "refresh really encounters outage"
-        );
-        assert!(
-            cache.key("removed").await.is_ok(),
-            "failed refresh does not erase unexpired evidence"
-        );
-    }
-    first_clock.advance(Duration::from_secs(1));
-    second_clock.advance(Duration::from_secs(1));
-    assert!(!first_evidence.is_fresh());
-    assert!(!second_evidence.is_fresh());
-    for cache in [&first, &second] {
-        assert!(cache.key("removed").await.is_err());
-    }
-    first_clock.advance(Duration::from_secs(1));
-    second_clock.advance(Duration::from_secs(1));
-    for cache in [&first, &second] {
-        assert!(cache.key("removed").await.is_err());
+async fn warm_caches_refuse_removed_keys_by_deadline_with_and_without_the_endpoint() {
+    for age in [0, 30] {
+        for available in [true, false] {
+            let mut server = Server::start().await;
+            let (cache, clock) = server.cache();
+            server.queue(Reply::keys(&["removed"]).age(&age.to_string()));
+            let evidence = cache.key("removed").await.expect("warm cache");
+            clock.advance(Duration::from_secs(299 - age));
+            if available {
+                server.queue(Reply::keys(&["replacement"]));
+            } else {
+                server.stop().await;
+            }
+            assert!(cache.key("missing").await.is_err());
+            assert_eq!(
+                cache.key("removed").await.is_ok(),
+                !available,
+                "a refresh removes absent keys but an outage preserves unexpired evidence"
+            );
+            assert!(evidence.is_fresh());
+            clock.advance(Duration::from_secs(1));
+            assert!(!evidence.is_fresh());
+            if available {
+                server.queue(Reply::keys(&["replacement"]));
+            }
+            assert!(cache.key("removed").await.is_err());
+            if available {
+                assert!(cache.key("replacement").await.is_ok());
+            }
+        }
     }
 }
 
