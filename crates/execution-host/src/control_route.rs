@@ -26,9 +26,8 @@
 //! writes the environments first and commits the system rows last, and an
 //! activation commits the system rows first.
 //!
-//! `project.create` writes a project of the org with no environment, and
-//! `project-admin` in it for each `org-admin` of the org
-//! (docs/architecture/execution.md#host-run-routes).
+//! `project.create` writes a project of the org with no environment and no
+//! copied administrator grants (docs/architecture/execution.md#host-run-routes).
 //!
 //! `environment.status` reads the runtime through the host-selected
 //! [`crate::environment_status::StatusSource`] and writes nothing. Optional

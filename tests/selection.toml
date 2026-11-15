@@ -84,6 +84,11 @@ id = "control-binaries"
 commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-ctl", "--bin", "wamn", "--bin", "wamn-ctl"]]
 
 [[preparation]]
+id = "http-request"
+outputs = {WAMN_HTTP_REUSE_COMPONENT_WASM = "{target}/wasm32-wasip2/release/http_request.wasm"}
+commands = [["cargo", "xtask", "build-component", "guests/http-request/Cargo.toml"]]
+
+[[preparation]]
 id = "http-route"
 outputs = {WAMN_FLOW_HTTP_COMPONENT = "{target}/wasm32-wasip2/release/http_route.wasm"}
 aliases = {WAMN_DEV_ENV_FLOW_HTTP_COMPONENT = "WAMN_FLOW_HTTP_COMPONENT"}

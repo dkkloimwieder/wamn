@@ -332,6 +332,9 @@ The native host and private provisioning fixtures no longer supply their prerequ
 The publish composition, edge bundle, release digest, and control-client cases use the same prepared HTTP guest.
 Their test declarations select the edge component and application recipes.
 The release publication case starts a private registry.
+The HTTP connection reuse case selects the `http-request` preparation.
+It builds the guest through the shared component builder and supplies `WAMN_HTTP_REUSE_COMPONENT_WASM`.
+Set `WAMN_HTTP_REUSE_ARTIFACT_BASE` to a disposable OCI repository before running that case.
 The control-client cases also need the installed web dependencies.
 
 The edge route, device and forward tests run in the workspace run.
