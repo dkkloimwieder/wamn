@@ -142,9 +142,9 @@ fn main() -> Result<()> {
 fn repository_root() -> Result<PathBuf> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
-        .nth(3)
+        .nth(2)
         .map(Path::to_path_buf)
-        .context("the generator crate sits three directories below the repository root")
+        .context("the generator crate sits two directories below the repository root")
 }
 
 fn tsc_version() -> Result<String> {

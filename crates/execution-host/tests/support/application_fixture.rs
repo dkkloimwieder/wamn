@@ -3,7 +3,7 @@
 //! and a host that serves it to session callers
 //! (docs/architecture/execution.md#host-run-routes).
 //!
-//! `host_route_live` and `crates/execution/host/tests`'s `control_client_live` include
+//! `host_route_live` and `crates/execution-host/tests`'s `control_client_live` include
 //! it beside the shared session fixture, as `session_fixture`.
 
 use sqlx::PgConnection as Client;
@@ -80,13 +80,13 @@ pub(super) async fn install(
         .execute(&mut *admin)
         .await
         .map(drop)?;
-    sqlx::raw_sql(include_str!("../../../../../deploy/sql/app-schema.sql"))
+    sqlx::raw_sql(include_str!("../../../../deploy/sql/app-schema.sql"))
         .execute(&mut *admin)
         .await
         .map(drop)?;
     for sql in [
-        include_str!("../../../../../deploy/sql/run-state.sql"),
-        include_str!("../../../../../deploy/sql/run-queue.sql"),
+        include_str!("../../../../deploy/sql/run-state.sql"),
+        include_str!("../../../../deploy/sql/run-queue.sql"),
     ] {
         sqlx::raw_sql(sql).execute(&mut *admin).await?;
     }

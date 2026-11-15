@@ -22,7 +22,7 @@ use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_package_artifact::http_client::HttpClient;
 
-#[path = "../../../platform/postgres-capability/tests/support/session_fixture.rs"]
+#[path = "../../platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also provides verifier-only fetch barriers."

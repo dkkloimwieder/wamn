@@ -20,8 +20,7 @@ const BUILD_OUTPUT: &str = "target/wamn";
 ///   it lies directly below a `target/wamn` directory. A manifest in the build
 ///   output names its own directory as its package root.
 /// - otherwise `<workspace>/target/wamn/<name>`, where `<name>` is the package
-///   directory's name. Both top-level applications and nested platform packages
-///   use the application workspace. The name equals the package id.
+///   directory's name. Applications use one workspace. The name equals the package id.
 #[must_use]
 pub fn output_root(package_root: &Path) -> PathBuf {
     let unpacked = package_root.join("generated");
@@ -42,7 +41,7 @@ pub fn output_root(package_root: &Path) -> PathBuf {
     }
 }
 
-/// The application workspace for a top-level or nested platform package.
+/// The workspace that contains an application package.
 pub fn package_workspace(package_root: &Path) -> PathBuf {
     if package_root.file_name().is_none() {
         if let Ok(canonical) = package_root.canonicalize()
@@ -52,24 +51,12 @@ pub fn package_workspace(package_root: &Path) -> PathBuf {
         }
         return package_root.join("..");
     }
-    let parent = package_root.parent().unwrap_or(Path::new(""));
-    if parent.file_name().is_some_and(|name| name == "platform") {
-        parent.parent().unwrap_or(Path::new("")).to_owned()
-    } else {
-        parent.to_owned()
-    }
+    package_root.parent().unwrap_or(Path::new("")).to_owned()
 }
 
-/// Resolve a base package in the two supported application locations.
+/// Resolve a base package beside its application consumer.
 pub(crate) fn dependency_root(package_root: &Path, package: &str) -> PathBuf {
-    let workspace = package_workspace(package_root);
-    let top = workspace.join(package);
-    let nested = workspace.join("platform").join(package);
-    if !top.is_dir() && nested.is_dir() {
-        nested
-    } else {
-        top
-    }
+    package_workspace(package_root).join(package)
 }
 
 /// The build output root of the host route clients in the repository at
@@ -119,27 +106,6 @@ mod tests {
         assert_eq!(
             output_root(Path::new("/repository/apps/target/wamn/wamn_wms")),
             Path::new("/repository/apps/target/wamn/wamn_wms")
-        );
-    }
-
-    #[test]
-    fn nested_platform_packages_share_the_application_workspace() {
-        let root = Path::new("/repository/apps/platform/wamn_integration");
-        assert_eq!(
-            super::package_workspace(root),
-            Path::new("/repository/apps")
-        );
-        assert_eq!(
-            output_root(root),
-            Path::new("/repository/apps/target/wamn/wamn_integration")
-        );
-        assert_eq!(
-            crate::build::default_output_root(root),
-            Path::new("/repository/apps/target/wamn")
-        );
-        assert_eq!(
-            super::package_workspace(Path::new("/repository/apps/rest_connector")),
-            Path::new("/repository/apps")
         );
     }
 

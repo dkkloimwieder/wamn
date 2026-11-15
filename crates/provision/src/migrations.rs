@@ -9,8 +9,8 @@ pub enum MigrationDatabase {
     Project,
 }
 
-pub static SYSTEM: Migrator = sqlx::migrate!("../../../deploy/sql/migrations/system");
-pub static PROJECT: Migrator = sqlx::migrate!("../../../deploy/sql/migrations/project");
+pub static SYSTEM: Migrator = sqlx::migrate!("../../deploy/sql/migrations/system");
+pub static PROJECT: Migrator = sqlx::migrate!("../../deploy/sql/migrations/project");
 
 /// Borrow the selected immutable image migrations.
 pub fn embedded(target: MigrationDatabase) -> &'static Migrator {

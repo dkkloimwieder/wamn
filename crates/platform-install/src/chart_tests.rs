@@ -6,7 +6,7 @@ use std::path::Path;
 
 #[test]
 fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for mode in [
         identity::Mode::Foundation,
         identity::Mode::Session {
@@ -32,7 +32,7 @@ fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
     ] {
         let foundation = matches!(mode, identity::Mode::Foundation);
         let entry = identity::chart_input(&identity::ChartInput {
-            chart: &repository.join("deploy/platform/identity"),
+            chart: &repository.join("deploy/charts/identity"),
             name: "fixture-identity",
             namespace: "fixture-identity",
             image: "wamn-identity:fixture",
@@ -97,7 +97,7 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
         edge,
     };
 
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
     for provider in [Provider::Kind, Provider::Gcp] {
         document.provider = provider;
@@ -107,13 +107,13 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
             String::new()
         };
         let entry = edge::chart_input(
-            &repository.join("deploy/platform/edge"),
+            &repository.join("deploy/charts/edge"),
             "registry.invalid/edge@sha256:fixture",
             &document,
         )?;
         let objects = wamn_kubernetes::helm::template(&entry)?;
         let certificate_entry = crate::environment::entry(
-            &repository.join("deploy/platform/installation"),
+            &repository.join("deploy/charts/installation"),
             "platform",
             "wamn",
             json!({"org":document.org,"registry":document.registry,"edgeDnsNames":["*.example.com"]}),
@@ -215,11 +215,11 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
 {
     use crate::platform::operations;
     let document = wamn_registry::Triple::new("acme", "dev", "billing");
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let cluster = "database-owner";
     let database = "recorded-environment-database";
     let entry = crate::environment::entry(
-        &repository.join("deploy/platform/environment"),
+        &repository.join("deploy/charts/environment"),
         &document.org,
         "fixture",
         operations::values(&document, cluster, database)?,
@@ -403,9 +403,9 @@ fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() ->
         "application-login".into(),
     );
     values["managedRoles"] = json!({cluster: [role]});
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut entry = crate::environment::entry(
-        &repository.join("deploy/platform/org"),
+        &repository.join("deploy/charts/org"),
         &org.id,
         "org-acme",
         values,
@@ -481,7 +481,7 @@ fn recovery_refuses_the_source_shared_clusters_and_missing_policies() -> anyhow:
     assert!(
         crate::org::recovery_values(&pooled, &prod, &template.policies, "restored", None).is_err()
     );
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut values = crate::org::values(&org, &template.policies)?;
     let mut recovery =
         crate::org::recovery_values(&org, &prod, &template.policies, "restored", None)?;
@@ -490,7 +490,7 @@ fn recovery_refuses_the_source_shared_clusters_and_missing_policies() -> anyhow:
         .unwrap()
         .append(recovery["clusters"].as_array_mut().unwrap());
     let entry = crate::environment::entry(
-        &repository.join("deploy/platform/org"),
+        &repository.join("deploy/charts/org"),
         &org.id,
         "recovery",
         values,
@@ -510,9 +510,9 @@ fn recovery_refuses_the_source_shared_clusters_and_missing_policies() -> anyhow:
 
 #[test]
 fn non_gcp_ingress_has_a_default_class_and_ports_reachable_from_kind() -> anyhow::Result<()> {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let entry = crate::environment::entry(
-        &repository.join("deploy/infra/chart"),
+        &repository.join("deploy/charts/infrastructure"),
         "platform",
         "wamn-infrastructure",
         json!({"traefik":{"enabled":true}}),
@@ -552,7 +552,7 @@ fn non_gcp_ingress_has_a_default_class_and_ports_reachable_from_kind() -> anyhow
 
 #[test]
 fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()> {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let coordinates = [("a", "b-c", "d"), ("a", "b", "c-d")];
     let accounts = coordinates
         .map(|(org, _project, env)| wamn_registry::name::environment_service_account(org, env));
@@ -562,7 +562,7 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
     assert_ne!(secrets[0], secrets[1]);
     for index in 0..coordinates.len() {
         let entry = crate::environment::entry(
-            &repository.join("deploy/platform/environment"),
+            &repository.join("deploy/charts/environment"),
             coordinates[index].0,
             &accounts[index],
             json!({"credentialAccess":{"account":accounts[index],"secrets":[secrets[index]]}}),
@@ -605,7 +605,7 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
 #[tokio::test]
 async fn installation_preserves_broker_mounts_and_gcp_telemetry() -> anyhow::Result<()> {
     use crate::platform::{artifact_plan, document::ClusterDocument, installation};
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let prepared = artifact_plan::test_util::prepared_chart(&repository)?;
     let chart = artifact_plan::select(&prepared.0)?;
     let document = ClusterDocument::compile(&repository.join("deploy/gcp/cluster.k"))?;

@@ -33,7 +33,7 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
     ))
     .execute(&mut *connection)
     .await?;
-    sqlx::raw_sql(include_str!("../../../../deploy/sql/record-history.sql"))
+    sqlx::raw_sql(include_str!("../../../deploy/sql/record-history.sql"))
         .execute(&mut *connection)
         .await?;
     let missing = admin_write(&mut connection).await.unwrap_err();
@@ -42,7 +42,7 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
 
     for batch in [
         wamn_catalog::CATALOG_SCHEMA_SQL,
-        include_str!("../../../../deploy/sql/app-schema.sql"),
+        include_str!("../../../deploy/sql/app-schema.sql"),
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(batch))
             .execute(&mut *connection)

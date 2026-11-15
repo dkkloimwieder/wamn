@@ -16,8 +16,8 @@ mod bindings {
     wit_bindgen::generate!({
         world: "wamn:http-request/http-request@0.1.0",
         path: [
-            "../../../../wit/wamn-connection",
-            "../../../../wit/wamn-node",
+            "../../wit/wamn-connection",
+            "../../wit/wamn-node",
             "wit",
         ],
         generate_all,

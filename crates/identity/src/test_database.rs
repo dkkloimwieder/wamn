@@ -1,6 +1,6 @@
 //! Project system schema setup for tests.
 
-const APP_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 
 /// Install the project catalog and platform schema on a supplied database.
 pub async fn project_platform(database: &str) {

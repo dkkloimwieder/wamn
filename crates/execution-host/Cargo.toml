@@ -58,7 +58,7 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
 wamn-platform-identity = { workspace = true, features = ["test-util"] }
-wamn-identity = { path = "../../../services/identity" }
+wamn-identity = { path = "../../services/identity" }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 chrono = { workspace = true, features = ["std", "clock"] }
 wamn-test-application = { workspace = true }

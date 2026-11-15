@@ -364,7 +364,7 @@ The query returns one result row per root key, and the key of a result row is th
 A query that can return two rows for one root key, or a row without a root key, cannot carry a feed.
 
 For an authored read, the root is the model of its `lists` declaration.
-[`manifest.rs`](../../crates/schema/generator/src/manifest.rs), `ListDeclaration`, already names that model and the key field.
+[`manifest.rs`](../../crates/compiler/src/manifest.rs), `ListDeclaration`, already names that model and the key field.
 The key field must be the root's id, and a feed needs one key field.
 An authored feeding read selects from one view, as [Read set and linking columns](#read-set-and-linking-columns) states.
 
@@ -387,7 +387,7 @@ The query feed keeps that contract and changes three facts:
 One `changes` call runs one statement, so every step reads one snapshot.
 The statement has three steps.
 
-1. It finds the affected root keys. For every table that the query reads, it takes the history entries in the cursor window. The window, paging, and visibility rules are the rules of the current feed in [`sql.rs`](../../crates/schema/generator/src/sql.rs), `changes`.
+1. It finds the affected root keys. For every table that the query reads, it takes the history entries in the cursor window. The window, paging, and visibility rules are the rules of the current feed in [`sql.rs`](../../crates/compiler/src/sql.rs), `changes`.
 2. It maps each entry to root keys. A root table entry maps through its `row_key`. A joined table entry maps through the view's linking column for that table. A deleted joined row, or an update that changes a foreign key, also maps through the foreign key in its history `before` image.
 3. It runs the query's own statement again, restricted to `root.id = any($affected)`. A returned key is an upsert. An affected key that the statement does not return is a deletion.
 
@@ -453,8 +453,8 @@ Bead `wamn-3phv6` plans this rule in `@wfe/sync`, and wamn does not edit that pa
 The host needs, for each feeding query, the tables that it reads and how each table links to the root.
 
 A generated list read reads one table, the model's table, with no join.
-[`sql.rs`](../../crates/schema/generator/src/sql.rs), `query`, writes `FROM <table> AS model` and nothing else.
-[`manifest.rs`](../../crates/schema/generator/src/manifest.rs), `ModelDeclaration::feed_revision`, has the model.
+[`sql.rs`](../../crates/compiler/src/sql.rs), `query`, writes `FROM <table> AS model` and nothing else.
+[`manifest.rs`](../../crates/compiler/src/manifest.rs), `ModelDeclaration::feed_revision`, has the model.
 Its read set is the root table, and it has no links.
 
 An authored feeding read selects from one authored view, with its own filters.
@@ -468,7 +468,7 @@ An authored feeding read that names any relation other than one view refuses, na
 
 The restricted run wraps an authored statement as `SELECT * FROM (<statement>) AS result WHERE result.<key> = any($n)`.
 The build refuses a feed on an authored statement that groups, uses window functions, or carries `LIMIT`, because the wrapper changes their result.
-[`sql_lex.rs`](../../crates/catalog/model/src/sql_lex.rs), `groups_or_windows`, already detects the first two.
+[`sql_lex.rs`](../../crates/catalog/src/sql_lex.rs), `groups_or_windows`, already detects the first two.
 
 | Rule | Invariant | Test |
 | --- | --- | --- |
@@ -508,17 +508,17 @@ wamn has no query-version `moved` read, because unchanged changes cost a 304.
 The optional generic `Feed.moved` member stays part of the package surface.
 The bench's offline wrapper uses it only to suppress network reads while offline.
 
-[`http-route/src/entry.rs`](../../apps/platform/ingress/http-route/src/entry.rs), `changes_etag`, derives a weak ETag from the returned cursor and route release.
-[`http-route/src/lib.rs`](../../apps/platform/ingress/http-route/src/lib.rs), `feed_cache_control`, preserves the list's cache target and adds `no-cache`.
+[`http-route/src/entry.rs`](../../guests/http-route/src/entry.rs), `changes_etag`, derives a weak ETag from the returned cursor and route release.
+[`http-route/src/lib.rs`](../../guests/http-route/src/lib.rs), `feed_cache_control`, preserves the list's cache target and adds `no-cache`.
 A matching ETag produces 304.
 The read's route supplies authentication and authorization for both result variants.
 
-[`data_access.rs`](../../crates/schema/generator/src/data_access.rs), `FEED_HISTORY_COLUMNS`, limits feed SELECT grants to `transaction_id`, `row_key`, `type`, and `before`.
+[`data_access.rs`](../../crates/compiler/src/data_access.rs), `FEED_HISTORY_COLUMNS`, limits feed SELECT grants to `transaction_id`, `row_key`, `type`, and `before`.
 `derive_data_access_overlay_for_manifest` emits those grants for the history table of every table that a feeding query reads.
 [`record-history.sql`](../../deploy/sql/record-history.sql), `wamn_history.create_history_table`, adds an index on `transaction_id`.
 Each linking column needs an index on its base column, because the key mapping looks up root rows by it.
 
-[`client_ts_sync.ts`](../../crates/schema/generator/src/client_ts_sync.ts) emits `packagingFeed`, which reads every list page up to its cap.
+[`client_ts_sync.ts`](../../crates/compiler/src/client_ts_sync.ts) emits `packagingFeed`, which reads every list page up to its cap.
 It keeps the first page's feed cursor, which covers changes between page reads.
 It reports `complete: false` when the cap stops a fill with more pages available.
 The default `RECORD_CAP` is 1000.
@@ -583,12 +583,12 @@ It runs in 0.08 to 0.09 ms for 10 keys, and in 2.8 to 3.2 ms for a page of 100 k
 
 A collection covers one query, generated shape digest, and canonical argument set.
 [`names.ts`](../../web/runtime/src/sync/names.ts), `collectionKey`, encodes those three values.
-[`client_ts_sync.ts`](../../crates/schema/generator/src/client_ts_sync.ts) emits `canonicalJson` and `packagingKey`, which make equal argument sets share a key.
+[`client_ts_sync.ts`](../../crates/compiler/src/client_ts_sync.ts) emits `canonicalJson` and `packagingKey`, which make equal argument sets share a key.
 Rows use the root key as their collection key.
 
-[`client_ts.rs`](../../crates/schema/generator/src/client_ts.rs), `shape_digest`, hashes generated row names, contract types, nested fields, and nullability in stable order.
+[`client_ts.rs`](../../crates/compiler/src/client_ts.rs), `shape_digest`, hashes generated row names, contract types, nested fields, and nullability in stable order.
 `emit_model` exports each model's `*_SHAPE_DIGEST`.
-[`materialize.rs`](../../crates/schema/generator/src/materialize.rs), `GENERATOR_ID`, is `wamn-compiler/0.1.10` for this emission.
+[`materialize.rs`](../../crates/compiler/src/materialize.rs), `GENERATOR_ID`, is `wamn-compiler/0.1.10` for this emission.
 
 [`persistence.ts`](../../web/runtime/src/sync/persistence.ts), `rowsPersistence`, deletes saved entries with unknown shape digests before its first storage operation.
 It also deletes malformed keys.
@@ -773,7 +773,7 @@ The probe runs before replay, on an online event, and every 15 seconds while the
 `close` aborts sends and preserves their entries as pending.
 
 [`send.ts`](../../web/runtime/src/sync/send.ts), `createSend`, forwards the entry's `AbortSignal` to the generated binding.
-[`client_ts.rs`](../../crates/schema/generator/src/client_ts.rs), `emit_operation`, forwards it through `transport.invoke`.
+[`client_ts.rs`](../../crates/compiler/src/client_ts.rs), `emit_operation`, forwards it through `transport.invoke`.
 [`transport.ts`](../../web/runtime/src/transport.ts), `createTransport`, passes it to fetch.
 
 ### Reply mapping
@@ -869,7 +869,7 @@ Replay runs while the application is open without a Background Sync dependency.
 Take-offline exists in sync-bench as a test of the mechanism.
 It does not promise full offline coverage for generated applications.
 [`packaging-offline.ts`](../../web/sync-bench/src/packaging-offline.ts), `packagingOffline`, saves the selected packaging target and the whole location reference model.
-[`client_ts_sync.ts`](../../crates/schema/generator/src/client_ts_sync.ts) emits `locationFeed`, which reads every reference page in groups of 100.
+[`client_ts_sync.ts`](../../crates/compiler/src/client_ts_sync.ts) emits `locationFeed`, which reads every reference page in groups of 100.
 
 The action refuses an incomplete set.
 `collectionBytes` measures serialized rows, cursor, key, and timestamp before IndexedDB overhead.
@@ -994,7 +994,7 @@ Unknown digests cause row cleanup without touching the outbox.
 A refusal panel can present stored arguments for correction under the current binding.
 
 `HEAD /api/health` returns 204 without authentication.
-[`http-route/src/lib.rs`](../../apps/platform/ingress/http-route/src/lib.rs), `try_handle`, answers before route lookup and authentication.
+[`http-route/src/lib.rs`](../../guests/http-route/src/lib.rs), `try_handle`, answers before route lookup and authentication.
 `HttpResponse::cache_headers` supplies `no-store` for this response.
 
 ## Generator and bindings

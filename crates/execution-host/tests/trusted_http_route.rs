@@ -378,10 +378,8 @@ async fn build_with_credentials(
 /// The shipped guest declaration, rendered for this package fixture.
 /// Catalog wiring compatibility owns validation of node parameters and ports.
 fn declaration() -> anyhow::Result<ComponentDeclaration> {
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
-    let template = PathBuf::from(format!(
-        "{root}/apps/platform/no-std/http-request/declaration.json.in"
-    ));
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let template = PathBuf::from(format!("{root}/guests/http-request/declaration.json.in"));
     let target =
         wamn_catalog::ComponentPackageCoordinate::new(PROJECT_ENV_KEY, PACKAGE, PACKAGE_VERSION)?;
     let document = wamn_publish::component_declaration::render_palette_declaration(
@@ -546,7 +544,7 @@ async fn seed_with_client(
 ) -> anyhow::Result<ClassCredentials> {
     // The complete catalog bootstrap includes its own transaction and applies
     // only to a fresh database. Submit that complete string as one batch.
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let schema = wamn_catalog::CATALOG_SCHEMA_SQL;
     let app_schema = std::fs::read_to_string(format!("{root}/deploy/sql/app-schema.sql"))
         .context("read the application authorization DDL")?;

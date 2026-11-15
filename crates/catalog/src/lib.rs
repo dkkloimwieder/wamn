@@ -96,11 +96,11 @@ use serde::{Deserialize, Serialize};
 
 /// Complete catalog bootstrap for a fresh project database, including its transaction.
 pub const CATALOG_SCHEMA_SQL: &str = concat!(
-    include_str!("../../../../deploy/sql/catalog-schema-prefix.sql"),
-    include_str!("../../../../deploy/sql/reject-immutable-row-change.sql"),
-    include_str!("../../../../deploy/sql/record-history.sql"),
-    include_str!("../../../../deploy/sql/record-history-app-grants.sql"),
-    include_str!("../../../../deploy/sql/catalog-schema.sql"),
+    include_str!("../../../deploy/sql/catalog-schema-prefix.sql"),
+    include_str!("../../../deploy/sql/reject-immutable-row-change.sql"),
+    include_str!("../../../deploy/sql/record-history.sql"),
+    include_str!("../../../deploy/sql/record-history-app-grants.sql"),
+    include_str!("../../../deploy/sql/catalog-schema.sql"),
 );
 
 const HASH_PREFIX: &str = "sha256:";

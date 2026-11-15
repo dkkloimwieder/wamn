@@ -12,8 +12,8 @@ async fn fresh_run_history_stamps_rows(pool: sqlx::PgPool) {
         let batches: &[&str] = &[
             &wamn_control_provision::sql::ensure_app_acl_role_sql(),
             wamn_catalog::CATALOG_SCHEMA_SQL,
-            include_str!("../../../../deploy/sql/run-state.sql"),
-            include_str!("../../../../deploy/sql/run-queue.sql"),
+            include_str!("../../../deploy/sql/run-state.sql"),
+            include_str!("../../../deploy/sql/run-queue.sql"),
         ];
         let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
         for batch in batches {
@@ -94,9 +94,9 @@ async fn principal_rows_and_transaction_bindings_execute(pool: sqlx::PgPool) -> 
     for batch in [
         wamn_control_provision::sql::ensure_app_acl_role_sql().as_str(),
         wamn_catalog::CATALOG_SCHEMA_SQL,
-        include_str!("../../../../deploy/sql/run-state.sql"),
-        include_str!("../../../../deploy/sql/run-queue.sql"),
-        include_str!("../../../../deploy/sql/app-schema.sql"),
+        include_str!("../../../deploy/sql/run-state.sql"),
+        include_str!("../../../deploy/sql/run-queue.sql"),
+        include_str!("../../../deploy/sql/app-schema.sql"),
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(batch))
             .execute(&mut *connection)

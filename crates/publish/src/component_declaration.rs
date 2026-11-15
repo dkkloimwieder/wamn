@@ -226,13 +226,13 @@ mod tests {
     /// A configured palette connection requires a binding selection.
     #[test]
     fn a_palette_declaration_requires_a_binding_selection() {
-        let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform");
+        let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests");
         let target = wamn_catalog::ComponentPackageCoordinate {
             project_env_key: "org-a".to_owned(),
             package_id: "wamn_wms".to_owned(),
             package_version: "1.0.0".to_owned(),
         };
-        let template = palette.join("execution/blob-put/declaration.json.in");
+        let template = palette.join("blob-put/declaration.json.in");
         let refusal = render_palette_declaration(&template, &target, None)
             .expect_err("an unnamed store alias is refused");
         assert_eq!(

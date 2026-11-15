@@ -25,7 +25,7 @@ fn fixture() -> Fixture {
     static ADMISSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _admission = ADMISSION.lock().unwrap();
     let repository = support::repository();
-    let integration = repository.join("apps/platform/wamn_integration");
+    let integration = repository.join("apps/wamn_integration");
     let consumer = repository.join("apps/rest_consumer_fixture");
     let connector = repository.join("apps/netsuite");
     let roots = vec![integration.clone(), consumer.clone(), connector.clone()];
@@ -44,7 +44,7 @@ fn fixture() -> Fixture {
         support::admit(
             &connector,
             "http-request",
-            Some("apps/platform/no-std/http-request/declaration.json.in"),
+            Some("guests/http-request/declaration.json.in"),
             BTreeSet::new(),
         ),
         base,
@@ -53,13 +53,13 @@ fn fixture() -> Fixture {
         support::admit(
             &connector,
             "http-page",
-            Some("apps/platform/no-std/http-page/declaration.json.in"),
+            Some("guests/http-page/declaration.json.in"),
             BTreeSet::new(),
         ),
         support::admit(
             &connector,
             "jsonata",
-            Some("apps/platform/execution/jsonata/declaration.json.in"),
+            Some("guests/jsonata/declaration.json.in"),
             BTreeSet::new(),
         ),
     ];

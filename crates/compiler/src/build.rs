@@ -39,9 +39,9 @@ use crate::materialize::{
 };
 use wamn_digest::bytes_sha256;
 
-const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
+const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS_SQL: &str =
-    include_str!("../../../../deploy/sql/record-history-app-grants.sql");
+    include_str!("../../../deploy/sql/record-history-app-grants.sql");
 
 /// One package build.
 #[derive(Debug, Clone)]

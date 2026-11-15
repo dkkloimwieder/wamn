@@ -5,7 +5,7 @@ mod operation {
     use super::contract;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../target/wamn/wamn_integration/wit/log_append_operation.rs"
+        "/../../target/wamn/wamn_integration/wit/log_append_operation.rs"
     ));
 }
 #[expect(
@@ -15,7 +15,7 @@ mod operation {
 mod sql {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../target/wamn/wamn_integration/wamn/log_append.rs"
+        "/../../target/wamn/wamn_integration/wamn/log_append.rs"
     ));
 }
 

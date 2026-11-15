@@ -1,4 +1,5 @@
 [package]
+workspace = "../../apps"
 name = "transform"
 version.workspace = true
 edition.workspace = true

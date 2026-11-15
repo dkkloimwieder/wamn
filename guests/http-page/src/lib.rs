@@ -14,8 +14,8 @@ mod bindings {
     wit_bindgen::generate!({
         world: "wamn:http-page/http-page@0.1.0",
         path: [
-            "../../../../wit/wamn-connection",
-            "../../../../wit/wamn-node",
+            "../../wit/wamn-connection",
+            "../../wit/wamn-node",
             "wit",
         ],
         generate_all,

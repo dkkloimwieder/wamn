@@ -57,13 +57,13 @@ pub use workload_role::{
 /// applier that runs as `wamn_system` runs [`sql::ensure_db_owner_role_sql`]
 /// before it.
 pub const SYSTEM_SCHEMA_SQL: &str = concat!(
-    include_str!("../../../../deploy/sql/record-history.sql"),
-    include_str!("../../../../deploy/sql/system-schema.sql"),
+    include_str!("../../../deploy/sql/record-history.sql"),
+    include_str!("../../../deploy/sql/system-schema.sql"),
 );
 
 /// Targeted connection-reader authority for control database logins.
 pub const CONTROL_PORTABLE_STORE_SQL: &str =
-    include_str!("../../../../deploy/sql/control-portable-store.sql");
+    include_str!("../../../deploy/sql/control-portable-store.sql");
 
 /// The declarations applied to a fresh control database, in order.
 pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABLE_STORE_SQL];
@@ -76,7 +76,7 @@ pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABL
 /// `deploy/sql/record-history.sql` first. `CATALOG_SCHEMA_SQL` carries that
 /// file, so an applier that applied the catalog schema already holds it
 /// (`wamn-0h0g.9.15`).
-pub const APP_SCHEMA_SQL: &str = concat!(include_str!("../../../../deploy/sql/app-schema.sql"),);
+pub const APP_SCHEMA_SQL: &str = concat!(include_str!("../../../deploy/sql/app-schema.sql"),);
 
 mod placement;
 mod template;
@@ -88,4 +88,4 @@ pub use template::Template;
 
 /// Project event trigger installed by the authenticated administrator during initialization.
 pub const MIGRATION_PRIVILEGES_SQL: &str =
-    include_str!("../../../../deploy/sql/migration-privileges.sql");
+    include_str!("../../../deploy/sql/migration-privileges.sql");

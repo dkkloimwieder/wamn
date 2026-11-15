@@ -14,7 +14,7 @@ serde_json.workspace = true
 wit-bindgen.workspace = true
 
 [dev-dependencies]
-jsonata-expression = { path = "../../platform/execution/jsonata" }
+jsonata-expression = { path = "../../../guests/jsonata" }
 
 [lib]
 crate-type = ["cdylib"]

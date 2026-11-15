@@ -7,9 +7,9 @@
 wit_bindgen::generate!({
     world: "wamn-integration:component/wamn-integration@0.1.0",
     path: [
-        "../../../../wit/wamn-node",
-        "../../../../wit/wamn-postgres-0.4",
-        "../../../target/wamn/wamn_integration/wit",
+        "../../../wit/wamn-node",
+        "../../../wit/wamn-postgres-0.4",
+        "../../target/wamn/wamn_integration/wit",
         "wit",
     ],
     generate_all,

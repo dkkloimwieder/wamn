@@ -902,7 +902,7 @@ mod tests {
         tables: &str,
     ) -> sqlx::pool::PoolConnection<sqlx::Postgres> {
         let mut connection = pool.acquire().await.unwrap();
-        sqlx::raw_sql(include_str!("../../../../deploy/sql/record-history.sql"))
+        sqlx::raw_sql(include_str!("../../../deploy/sql/record-history.sql"))
             .execute(&mut *connection)
             .await
             .unwrap();

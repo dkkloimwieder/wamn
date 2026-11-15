@@ -123,7 +123,7 @@ pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<V
         "1".repeat(64)
     );
     let chart = release_chart::stamp(
-        &wamn_fixture_package::repository_root().join("deploy/platform/release"),
+        &wamn_fixture_package::repository_root().join("deploy/charts/release"),
         &ImageSet {
             host: image.clone(),
             http: image.clone(),
@@ -444,7 +444,7 @@ pub fn credential_secrets(triple: &wamn_registry::Triple, namespace: &str) -> Ve
     objects
 }
 
-/// Operator prerequisites from `test-support/infrastructure/platform.rs`:
+/// Operator prerequisites from `test-support/resources/platform.rs`:
 /// its CA and its runtime client certificate Secrets exist before a case release.
 pub fn operator_prerequisites(namespace: &str) -> Vec<Value> {
     [

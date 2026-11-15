@@ -191,7 +191,7 @@ Build the base packages before this package:
 
 ```sh
 TMPDIR=/var/tmp RUSTC_WRAPPER='' target/debug/wamn build \
-  apps/platform/wamn_integration apps/rest_consumer_fixture apps/netsuite
+  apps/wamn_integration apps/rest_consumer_fixture apps/netsuite
 ```
 
 Use the repository's native target directory for the mapping tests:
@@ -249,7 +249,7 @@ The case does not call a RESTlet. The fixture unit tests cover the RESTlet echo 
 
 The test needs the platform images and stamped chart described in `environment_apply_kind.rs`.
 Build `edge_device`, `wamn_integration`, `rest_consumer_fixture`, `rest_connector` and `netsuite`, plus the debug CLI and CDC reader, before the run.
-The fixture image builds the named `http-fixture` binary in `test-support/infrastructure` from the repository root.
+The fixture image builds the named `http-fixture` binary in `test-support/resources` from the repository root.
 
 The case uses two SuiteQL pages, with a limit of two and `hasMore: false` on the second page.
 It seeds four consumer rows and advances the private, inactive CDC slot past those seed writes before starting the reader.

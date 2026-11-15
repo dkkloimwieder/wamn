@@ -14,7 +14,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
     let repository = support::repository();
-    let integration = repository.join("apps/platform/wamn_integration");
+    let integration = repository.join("apps/wamn_integration");
     let consumer = repository.join("apps/rest_consumer_fixture");
     let connector = repository.join("apps/rest_connector");
     let roots = vec![integration.clone(), consumer.clone(), connector.clone()];
@@ -36,13 +36,13 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
         support::admit(
             &connector,
             "http-page",
-            Some("apps/platform/no-std/http-page/declaration.json.in"),
+            Some("guests/http-page/declaration.json.in"),
             BTreeSet::new(),
         ),
         support::admit(
             &connector,
             "jsonata",
-            Some("apps/platform/execution/jsonata/declaration.json.in"),
+            Some("guests/jsonata/declaration.json.in"),
             BTreeSet::new(),
         ),
     ];

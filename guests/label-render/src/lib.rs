@@ -50,7 +50,7 @@ mod template;
 mod bindings {
     wit_bindgen::generate!({
         world: "wamn:label-render/label-render@0.1.0",
-        path: ["../../../../wit/wamn-node", "wit"],
+        path: ["../../wit/wamn-node", "wit"],
         generate_all,
     });
 }

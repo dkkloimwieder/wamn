@@ -82,8 +82,8 @@ impl BuildRecord {
 
 /// Derive compiler identity from the package, toolchain and dependency lock.
 pub fn generator() -> Result<BuildGenerator> {
-    let toolchain: toml::Value = toml::from_str(include_str!("../../../../rust-toolchain.toml"))?;
-    let lock: toml::Value = toml::from_str(include_str!("../../../../Cargo.lock"))?;
+    let toolchain: toml::Value = toml::from_str(include_str!("../../../rust-toolchain.toml"))?;
+    let lock: toml::Value = toml::from_str(include_str!("../../../Cargo.lock"))?;
     let sqlx = lock["package"]
         .as_array()
         .context("Cargo.lock has no packages")?

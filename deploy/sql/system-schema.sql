@@ -1,5 +1,5 @@
 -- The T1 control-plane REGISTRY storage schema (wamn-q3n.3). The tables that
--- PERSIST the identity/placement model defined by crates/control/registry — orgs,
+-- PERSIST the identity/placement model defined by crates/registry — orgs,
 -- environments, projects, and the provisioned (org, env, project) databases.
 --
 -- This is the schema that fills the EMPTY wamn_system DB the T1 cluster
@@ -38,9 +38,9 @@
 -- `registry.env_policies` row IN ITS ORG's set (referential integrity — the
 -- composite FK below — replaces the old `env IN ('dev','canary','prod')`
 -- CHECK), and an org carries a minimal placement (`pooled` | `dedicated`) from
--- which clusters derive (crates/control/registry cluster_of). Policies are
+-- which clusters derive (crates/registry cluster_of). Policies are
 -- PER-ORG rows stamped from a named Template preset (`trials` / `standard` /
--- `dedicated` — the Tier successor, crates/control/registry Template) at
+-- `dedicated` — the Tier successor, crates/registry Template) at
 -- provision-org time; there is NO platform-global policy seed — an org
 -- instantiates a template and then customizes its own rows per-env.
 --
@@ -59,7 +59,7 @@
 --       run state, payloads, or per-project application users. The live-apply
 --       condition asserts the exact table set.
 --   (4) dev ≠ prod recovery domain — under D18 this is enforced by the DERIVATION
---       plus crates/control/registry validate(), not a per-org DB CHECK: two
+--       plus crates/registry validate(), not a per-org DB CHECK: two
 --       own-domain envs (dev, prod) derive distinct clusters (<org>-dev vs
 --       <org>-prod) by construction, so they never collapse; `canary` collapsing
 --       onto prod is an INTENTIONAL `recovery-domain: {shared-with: prod}` policy,
@@ -208,7 +208,7 @@ END $meta$;
 
 -- ---------------------------------------------------------------------------
 -- Orgs — the unit of isolation and billing. Carries only the id and a minimal
--- D18 PLACEMENT (crates/control/registry Placement): `placement_type` is `pooled`
+-- D18 PLACEMENT (crates/registry Placement): `placement_type` is `pooled`
 -- (every env shares `pool_cluster`, the T3-style pool) or `dedicated` (the org
 -- owns one cluster per recovery domain, `<org>-<owner(env)>`, DERIVED by
 -- cluster_of — not stored). The retired `tier` / `prod_cluster` / `canary_cluster`
@@ -217,7 +217,7 @@ END $meta$;
 -- Structural CHECKs: `pooled ⟺ pool_cluster present` (a pooled org names its
 -- shared pool; a dedicated org's clusters are derived, so pool is NULL) plus a
 -- defensive charset/length backstop (cjv.20) on `id` and `pool_cluster` mirroring
--- crates/control/registry validate() (report_id_issues / report_name_issues) — `id` must be a
+-- crates/registry validate() (report_id_issues / report_name_issues) — `id` must be a
 -- lowercase slug `[a-z0-9-]` (start/end alnum, NO consecutive hyphens — wamn-R27,
 -- since `--` is the `wamn-db-<org>--<project>--<env>` component separator, so a
 -- `--` run would let two triples collide onto one name), ≤ 40 bytes, and not under
@@ -264,7 +264,7 @@ GRANT EXECUTE ON FUNCTION registry.control_org() TO PUBLIC;
 
 -- ---------------------------------------------------------------------------
 -- Env policies (D18, wamn-8df.3; ORG-OWNED by wamn-8df.4) — each org's own
--- environment configurations (crates/control/registry EnvPolicy, keyed per org as
+-- environment configurations (crates/registry EnvPolicy, keyed per org as
 -- OrgEnvPolicy). The `name` IS the env slug: a project-env's `env` both
 -- identifies it in the triple and (via the composite FK below) resolves its
 -- policy in ITS ORG's set. `recovery_domain` is `jsonb` (`"own"` |

@@ -1,7 +1,6 @@
 /target
 /evidence
 /apps/target
-/apps/platform/no-std/target
 .git
 .dolt
 .beads

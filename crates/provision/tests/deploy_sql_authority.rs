@@ -33,14 +33,14 @@ use wamn_control_provision::workload_role::{
 };
 use wamn_record_history::{HistoryRow, RowState, state_at};
 
-const POSTGRES_INIT: &str = include_str!("../../../../deploy/sql/postgres-init.sql");
+const POSTGRES_INIT: &str = include_str!("../../../deploy/sql/postgres-init.sql");
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
-const RUN_QUEUE: &str = include_str!("../../../../deploy/sql/run-queue.sql");
-const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
+const RUN_STATE: &str = include_str!("../../../deploy/sql/run-state.sql");
+const RUN_QUEUE: &str = include_str!("../../../deploy/sql/run-queue.sql");
+const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
+const RECORD_HISTORY: &str = include_str!("../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS: &str =
-    include_str!("../../../../deploy/sql/record-history-app-grants.sql");
+    include_str!("../../../deploy/sql/record-history-app-grants.sql");
 
 /// The role this file's live arm mints as its control probe. Named here so
 /// `reset` can drop it: roles are CLUSTER-wide, and the arm's whole point is

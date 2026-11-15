@@ -14,11 +14,11 @@ use wamn_control_provision::workload_role::{
 };
 use wamn_control_provision::{CONTROL_PORTABLE_STORE_SQL, SYSTEM_SCHEMA_SQL};
 
-const POSTGRES_INIT: &str = include_str!("../../../../deploy/sql/postgres-init.sql");
+const POSTGRES_INIT: &str = include_str!("../../../deploy/sql/postgres-init.sql");
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
-const RUN_QUEUE: &str = include_str!("../../../../deploy/sql/run-queue.sql");
-const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+const RUN_STATE: &str = include_str!("../../../deploy/sql/run-state.sql");
+const RUN_QUEUE: &str = include_str!("../../../deploy/sql/run-queue.sql");
+const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
 
 /// The database `deploy/sql/postgres-init.sql` creates. Also the target every
 /// generation login's digest is taken over, so it cannot be chosen freely.
@@ -52,7 +52,7 @@ const PROBE_PASSWORD: &str = "w68-matrix-probe";
 fn psql(url: &str, script: &str) -> (bool, String, String) {
     let script = script.replace(
         "\\ir record-history.sql",
-        include_str!("../../../../deploy/sql/record-history.sql"),
+        include_str!("../../../deploy/sql/record-history.sql"),
     );
     let mut child = Command::new("psql")
         .arg(url)

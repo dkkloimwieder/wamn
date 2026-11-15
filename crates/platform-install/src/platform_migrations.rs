@@ -134,10 +134,10 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
         sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
             .execute(&mut *client)
             .await?;
-        sqlx::raw_sql(include_str!("../../../../deploy/sql/run-state.sql"))
+        sqlx::raw_sql(include_str!("../../../deploy/sql/run-state.sql"))
             .execute(&mut *client)
             .await?;
-        sqlx::raw_sql(include_str!("../../../../deploy/sql/run-queue.sql"))
+        sqlx::raw_sql(include_str!("../../../deploy/sql/run-queue.sql"))
             .execute(&mut *client)
             .await?;
         anyhow::Ok(())

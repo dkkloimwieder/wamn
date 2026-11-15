@@ -51,7 +51,7 @@ async fn file_reference_is_introspected_and_other_platform_keys_are_refused(pool
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (include_str!(
-            "../../../control/environment/tests/support/file_package/migrations/0001_documents.sql"
+            "../../environment/tests/support/file_package/migrations/0001_documents.sql"
         ))
         .to_string(),
     ))

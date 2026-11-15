@@ -12,7 +12,7 @@ pub fn behavior(releases: &[(&str, ClientContractIr)]) -> Result<()> {
         let output = Command::new("pnpm")
             .current_dir(repository.join("web/runtime"))
             .args(["exec", "vitest", "run", "--config"])
-            .arg(repository.join("crates/schema/generator/tests/client_ts_behavior.config.mjs"))
+            .arg(repository.join("crates/compiler/tests/client_ts_behavior.config.mjs"))
             .env("WAMN_CLIENT_TS_TEST_ROOT", root)
             .output()
             .context("run emitted client behavior tests")?;
@@ -161,7 +161,7 @@ fn integer_ids(fields: &mut [FieldIr], ty: &str) {
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
-        .nth(3)
+        .nth(2)
         .unwrap()
         .to_path_buf()
 }

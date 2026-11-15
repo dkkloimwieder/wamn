@@ -77,7 +77,7 @@ fn compile(
 fn repository_root() -> Result<PathBuf> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
-        .nth(3)
+        .nth(2)
         .map(Path::to_path_buf)
-        .context("the generator sits three directories below the repository root")
+        .context("the generator sits two directories below the repository root")
 }

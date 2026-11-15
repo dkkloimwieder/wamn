@@ -18,7 +18,7 @@ use crate::component_admission::{ComponentAdmissionErrorType, validate_integrati
 #[cfg(feature = "wasm_component_model_implements")]
 mod node_bindings {
     wash_runtime::wasmtime::component::bindgen!({
-        path: "../../../wit/wamn-node",
+        path: "../../wit/wamn-node",
         world: "node",
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -30,11 +30,11 @@ fn guest(world: &str, wat: &str, labels: &[String]) -> anyhow::Result<Vec<u8>> {
     resolve.push_str("sockets.wit", include_str!("sockets.wit"))?;
     resolve.push_str(
         "integration.wit",
-        include_str!("../../../../../wit/wamn-integration/package.wit"),
+        include_str!("../../../../wit/wamn-integration/package.wit"),
     )?;
     resolve.push_str(
         "node.wit",
-        include_str!("../../../../../wit/wamn-node/package.wit"),
+        include_str!("../../../../wit/wamn-node/package.wit"),
     )?;
     let mut imports = String::new();
     for name in labels {

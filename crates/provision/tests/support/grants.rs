@@ -34,8 +34,8 @@ pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture
                 &sql::ensure_app_acl_role_sql(),
                 sql::ensure_db_owner_role_sql(),
                 wamn_catalog::CATALOG_SCHEMA_SQL,
-                include_str!("../../../../../deploy/sql/run-state.sql"),
-                include_str!("../../../../../deploy/sql/run-queue.sql"),
+                include_str!("../../../../deploy/sql/run-state.sql"),
+                include_str!("../../../../deploy/sql/run-queue.sql"),
                 wamn_control_provision::APP_SCHEMA_SQL,
             ] {
                 execute(&mut admin, batch).await;

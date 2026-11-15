@@ -17,8 +17,7 @@ fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .and_then(Path::parent)
-        .expect("platform-install lives three levels below the repository")
+        .expect("platform-install lives two levels below the repository")
         .to_path_buf()
 }
 
@@ -55,7 +54,7 @@ impl Drop for RenderDirectory {
 fn render_chart(root: &Path, release: &str, values: &[&str]) -> Vec<Value> {
     let metadata: Value = serde_yaml::from_str(&read_repository_file(
         root,
-        "deploy/platform/environment/Chart.yaml",
+        "deploy/charts/environment/Chart.yaml",
     ))
     .expect("release chart metadata");
     let version = metadata["dependencies"]
@@ -65,7 +64,7 @@ fn render_chart(root: &Path, release: &str, values: &[&str]) -> Vec<Value> {
         .find(|dependency| dependency["name"] == "runtime-operator")
         .and_then(|dependency| dependency["version"].as_str())
         .expect("the release chart selects the operator version");
-    let chart = format!("deploy/platform/environment/charts/runtime-operator-{version}.tgz");
+    let chart = format!("deploy/charts/environment/charts/runtime-operator-{version}.tgz");
     let mut helm = Command::new("helm");
     helm.current_dir(root)
         .args(["template", release, &chart, "--namespace", "platform"]);

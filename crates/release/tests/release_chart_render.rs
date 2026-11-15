@@ -1,4 +1,4 @@
-//! Renders `deploy/platform/release` with `helm template` and tests what an
+//! Renders `deploy/charts/release` with `helm template` and tests what an
 //! environment's Helm release holds
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
@@ -19,7 +19,7 @@ const WEB_DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const NAMESPACE: &str = "wamn-system";
 
 fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 struct Scratch(PathBuf);
@@ -57,7 +57,7 @@ fn image_set_fixture() -> ImageSet {
 /// Stamp a copy of the chart with its committed subchart archive.
 fn stamped_chart(scratch: &Scratch) -> PathBuf {
     let chart = stamp(
-        &repository_root().join("deploy/platform/release"),
+        &repository_root().join("deploy/charts/release"),
         &image_set_fixture(),
         &scratch.0.join("chart"),
     )
@@ -254,7 +254,7 @@ fn an_unstamped_chart_does_not_render() {
     let chart = scratch.0.join("chart");
     let status = Command::new("cp")
         .args(["-r"])
-        .arg(repository_root().join("deploy/platform/release"))
+        .arg(repository_root().join("deploy/charts/release"))
         .arg(&chart)
         .status()
         .expect("copy the chart");

@@ -217,7 +217,7 @@ async fn control_operations_gke() -> anyhow::Result<()> {
 
 fn inputs() -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
+        .join("../..")
         .canonicalize()?;
     let binary = std::env::current_exe()?
         .parent()

@@ -9,7 +9,7 @@ pub fn ensure_apply_role_sql() -> &'static str {
 }
 
 /// Exact privileges used by the apply phases on the system database.
-pub const APPLY_GRANTS_SQL: &str = include_str!("../../../../deploy/sql/apply-grants.sql");
+pub const APPLY_GRANTS_SQL: &str = include_str!("../../../deploy/sql/apply-grants.sql");
 
 #[cfg(test)]
 mod tests {

@@ -15,7 +15,7 @@ mod native_files {
         let mut postgres = wamn_test_postgres::start(&[])?;
         let database = postgres.create_database("file_http_role").await?;
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../..")
+            .join("../..")
             .canonicalize()?;
         let work =
             std::env::temp_dir().join(format!("file-http-role-proof-{}", std::process::id()));

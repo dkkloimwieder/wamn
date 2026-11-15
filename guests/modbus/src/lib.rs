@@ -9,7 +9,7 @@
 )]
 mod component {
     wit_bindgen::generate!({
-        path: ["../../../../wit/wamn-integration", "wit"],
+        path: ["../../wit/wamn-integration", "wit"],
         world: "wamn:modbus/client@1.0.0",
         generate_all,
     });

@@ -34,13 +34,13 @@
 
 wash_runtime::wasmtime::component::bindgen!({
     path: [
-        "../../../wit/wamn-connection",
-        "../../../wit/wamn-flow-http-routing",
-        "../../../wit/wamn-postgres-0.4",
-        "../../../wit/wamn-node",
-        "../../../wit/wamn-operation-0.1",
-        "../../../wit/wasmcloud-blobstore",
-        "../capability-authority/wit",
+        "../../wit/wamn-connection",
+        "../../wit/wamn-flow-http-routing",
+        "../../wit/wamn-postgres-0.4",
+        "../../wit/wamn-node",
+        "../../wit/wamn-operation-0.1",
+        "../../wit/wasmcloud-blobstore",
+        "../platform/capability-authority/wit",
     ],
     world: "wamn:host/blobstore-plugin@0.1.0",
     imports: { default: async | trappable | tracing },

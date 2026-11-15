@@ -55,7 +55,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::url(&pool);
     let url = test_database.as_str().to_owned();
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
     let app_schema = wamn_control_provision::APP_SCHEMA_SQL;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
@@ -69,7 +69,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     // role cannot make the leg pass through ambient authority.
     //
     // `wamn_executor_platform` block mirrors `ensure_workload_acl_role_sql` in
-    // crates/control/provision/src/sql.rs. Both carry the production attributes exactly:
+    // crates/provision/src/sql.rs. Both carry the production attributes exactly:
     // NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS.
     // ANY CHANGE TO EITHER PRODUCTION ATTRIBUTE SET UPDATES THIS BLOCK IN THE SAME COMMIT.
     // The mirrored surface is the attribute list and nothing else. The `pg_roles`

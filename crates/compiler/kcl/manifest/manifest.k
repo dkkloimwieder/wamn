@@ -3,7 +3,7 @@ The schema module of a package manifest (docs/plan/manifest-authoring.md).
 
 A package's wamn.k imports this module, and the generator compiles wamn.k to
 generated/wamn.json. Each schema lists its keys in the order of the manifest
-reader, crates/schema/generator/src/manifest.rs. A default here is an authoring default: it fills a value that the
+reader, crates/compiler/src/manifest.rs. A default here is an authoring default: it fills a value that the
 author did not write, and the compiled JSON states it. An author who sets an
 optional key to None leaves the key out of the compiled JSON.
 

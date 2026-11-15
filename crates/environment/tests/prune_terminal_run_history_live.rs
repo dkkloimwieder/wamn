@@ -8,8 +8,8 @@ use wamn_control_provision::{
     APP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login,
 };
 
-const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
-const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
+const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
+const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const SCHEMA: &str = "wamn_run";
 const PROJECT_ENV_KEY: &str = "run-retention-t--dev--fixture";
 /// A second project with history of its own. Without it the cross-project

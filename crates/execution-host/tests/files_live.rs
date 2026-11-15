@@ -37,19 +37,19 @@ use wasmtime_wasi_http::WasiBody;
 mod application_fixture;
 #[path = "support/file_delete_proxy.rs"]
 mod file_delete_proxy;
-#[path = "../../../control/environment/tests/support/files.rs"]
+#[path = "../../environment/tests/support/files.rs"]
 #[expect(
     dead_code,
     reason = "The shared file fixture also supports schema and registry tests."
 )]
 mod files;
-#[path = "../../../platform/postgres-capability/tests/support/session_fixture.rs"]
+#[path = "../../platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared session fixture also supports verifier barriers."
 )]
 mod session_fixture;
-#[path = "../../../control/environment/tests/support/file_package/signed_read.rs"]
+#[path = "../../environment/tests/support/file_package/signed_read.rs"]
 mod signed_read;
 use application_fixture::{ApplicationHost, MEMBER, PROJECT, PROJECT_ENV_KEY, READ};
 use session_fixture::{ORG, claims, header, signed};

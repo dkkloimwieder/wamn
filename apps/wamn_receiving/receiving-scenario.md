@@ -78,7 +78,7 @@ A stale `purchase_order.update` returns `concurrency_conflict` without changing 
 
 ## Client behavior
 
-It folds the rows with [`wamn-record-history`](../platform/data/record-history/src/lib.rs) and shows the order at the selected entry as present, absent, or unavailable.
+It folds the rows with [`wamn-record-history`](../../crates/record-history/src/lib.rs) and shows the order at the selected entry as present, absent, or unavailable.
 If the fold refuses the rows, the panel shows the refusal.
 
 A confirmed refusal keeps the draft available for correction.

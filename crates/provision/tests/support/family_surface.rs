@@ -10,9 +10,9 @@ use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_login};
 
 pub const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-pub const RUN_STATE: &str = include_str!("../../../../../deploy/sql/run-state.sql");
-pub const RUN_QUEUE: &str = include_str!("../../../../../deploy/sql/run-queue.sql");
-pub const APP_SCHEMA: &str = include_str!("../../../../../deploy/sql/app-schema.sql");
+pub const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
+pub const RUN_QUEUE: &str = include_str!("../../../../deploy/sql/run-queue.sql");
+pub const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 
 pub const ORG: &str = "acme";
 pub const PROJECT: &str = "billing";

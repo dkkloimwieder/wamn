@@ -22,7 +22,7 @@ use wamn_platform_identity::org::{MemberGrants, invite_member};
 
 use http_body_util::BodyExt as _;
 
-#[path = "../../../platform/postgres-capability/tests/support/session_fixture.rs"]
+#[path = "../../platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also serves verifier lifecycle tests."
@@ -90,10 +90,10 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
 /// Run one test file of `apps/platform_ui` with `pnpm`, and require that both
 /// of its cases pass.
 async fn vitest(file: &str, env: &[(&str, String)]) -> anyhow::Result<()> {
-    let platform_ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform_ui");
+    let platform_ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/platform_ui");
     // `pnpm exec` runs no package script, so the clients are written here.
     wamn_compiler::materialize_host_route_client(&wamn_compiler::host_route_client_output_root(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
     ))?;
     let output = tokio::process::Command::new("pnpm")
         .current_dir(&platform_ui)

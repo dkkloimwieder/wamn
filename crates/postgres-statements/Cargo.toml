@@ -1,4 +1,5 @@
 [package]
+workspace = "../../apps"
 name = "wamn-postgres-statements"
 version.workspace = true
 edition.workspace = true
@@ -6,7 +7,7 @@ description = "Operation SQL access and guest document numbering"
 license = "Apache-2.0"
 
 [dependencies]
-wamn-number-pattern = { path = "../../../../crates/platform/number-pattern" }
+wamn-number-pattern = { path = "../number-pattern" }
 wit-bindgen = { workspace = true }
 
 [lints]

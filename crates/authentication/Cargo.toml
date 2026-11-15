@@ -43,7 +43,7 @@ wamn-postgres-capability = { workspace = true }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 base64 = { workspace = true }
 ring = { workspace = true }
-http-route = { path = "../../../apps/platform/ingress/http-route" }
+http-route = { path = "../../guests/http-route" }
 hyper = { workspace = true, features = ["server"] }
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

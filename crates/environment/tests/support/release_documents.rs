@@ -215,9 +215,9 @@ pub fn environment_releases() -> anyhow::Result<[Vec<u8>; 4]> {
         .context("the device component")?
         .descriptor;
     let components = [
-        include_str!("../../../../../apps/platform/no-std/transform/declaration.json.in"),
-        include_str!("../../../../../apps/platform/no-std/http-request/declaration.json.in"),
-        include_str!("../../../../../apps/platform/no-std/http-page/declaration.json.in"),
+        include_str!("../../../../guests/transform/declaration.json.in"),
+        include_str!("../../../../guests/http-request/declaration.json.in"),
+        include_str!("../../../../guests/http-page/declaration.json.in"),
     ]
     .into_iter()
     .map(|template| {
@@ -285,9 +285,8 @@ pub mod http {
         name: &str,
         bytes: &[u8],
     ) -> anyhow::Result<wamn_catalog::AdmittedComponentFacts> {
-        let template = std::fs::read_to_string(
-            repository.join(format!("apps/platform/no-std/{name}/declaration.json.in")),
-        )?;
+        let template =
+            std::fs::read_to_string(repository.join(format!("guests/{name}/declaration.json.in")))?;
         let declaration = serde_json::from_value(declaration(
             &template
                 .replace(

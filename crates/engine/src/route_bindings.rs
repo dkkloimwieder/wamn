@@ -5,10 +5,10 @@
 
 wash_runtime::wasmtime::component::bindgen!({
     path: [
-        "../../../wit/wamn-flow-http-routing",
-        "../../../wit/wamn-postgres-0.4",
-        "../../../wit/wamn-node",
-        "../../../wit/wamn-operation-0.1",
+        "../../wit/wamn-flow-http-routing",
+        "../../wit/wamn-postgres-0.4",
+        "../../wit/wamn-node",
+        "../../wit/wamn-operation-0.1",
         "wit",
     ],
     world: "wamn:engine/route-plugins@0.1.0",

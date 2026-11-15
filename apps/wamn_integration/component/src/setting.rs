@@ -6,26 +6,26 @@ mod read_operation {
     use super::read_contract as contract;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../target/wamn/wamn_integration/wit/setting_read_operation.rs"
+        "/../../target/wamn/wamn_integration/wit/setting_read_operation.rs"
     ));
 }
 mod write_operation {
     use super::write_contract as contract;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../target/wamn/wamn_integration/wit/setting_write_operation.rs"
+        "/../../target/wamn/wamn_integration/wit/setting_write_operation.rs"
     ));
 }
 mod read_sql {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../target/wamn/wamn_integration/wamn/setting_read.rs"
+        "/../../target/wamn/wamn_integration/wamn/setting_read.rs"
     ));
 }
 mod write_sql {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../target/wamn/wamn_integration/wamn/setting_write.rs"
+        "/../../target/wamn/wamn_integration/wamn/setting_write.rs"
     ));
 }
 

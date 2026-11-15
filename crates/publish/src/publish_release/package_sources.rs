@@ -315,7 +315,7 @@ mod tests {
 
     fn app(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../apps")
+            .join("../../apps")
             .join(name)
     }
 

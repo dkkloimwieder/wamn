@@ -39,7 +39,7 @@ The manifest does not declare views, for these reasons:
 - Qualification already compares a package's migrations with its predecessor's.
 - A manifest declaration needs a second DDL path and a rule for its order against migrations.
 
-[`migration_policy.rs`](../../crates/schema/introspection/src/migration_policy.rs), `validate_statement`, admits these statements:
+[`migration_policy.rs`](../../crates/schema-introspection/src/migration_policy.rs), `validate_statement`, admits these statements:
 
 - `CREATE VIEW` and `CREATE OR REPLACE VIEW` with a schema-qualified name in a configured schema.
 - `DROP VIEW` with a schema-qualified name in a configured schema, without `CASCADE`.
@@ -73,7 +73,7 @@ The application role gets `SELECT` on the view columns that its operations read,
 With invoker rights, the application role needs `SELECT` on every base table too, so the view narrows nothing.
 
 The data access derivation grants view columns the same way that it grants table columns today.
-[`data_access.rs`](../../crates/schema/generator/src/data_access.rs), `derive_data_access_overlay_for_manifest`, writes those grants from the operations' derived reads.
+[`data_access.rs`](../../crates/compiler/src/data_access.rs), `derive_data_access_overlay_for_manifest`, writes those grants from the operations' derived reads.
 So a grant still comes from an operation, and the role to operation rows stay the only permission surface.
 
 Owner rights bypass row-level security on the base tables for the view owner.
@@ -91,10 +91,10 @@ The build refuses a view over a table that enables it.
 ## Catalog and types
 
 The catalog reader models views, with their columns, column types, and base tables.
-[`postgres.rs`](../../crates/schema/introspection/src/postgres.rs) refuses relation `v` with `UnsupportedView` today.
+[`postgres.rs`](../../crates/schema-introspection/src/postgres.rs) refuses relation `v` with `UnsupportedView` today.
 Only authored views lift that refusal.
 `UnsupportedMaterializedView` stays.
-[`ir.rs`](../../crates/schema/introspection/src/ir.rs), `CatalogIr`, gains a view list beside `tables`.
+[`ir.rs`](../../crates/schema-introspection/src/ir.rs), `CatalogIr`, gains a view list beside `tables`.
 
 The generated row type of a projection over a view comes from the view's columns.
 Each field takes the column's type.
@@ -139,10 +139,10 @@ Qualification makes sure of three facts:
 ## Effect profile
 
 A statement that reads a view reports the view and each base table of the view.
-[`profile.rs`](../../crates/catalog/model/src/profile.rs), `RelationProfile`, gains the view's base tables from `pg_depend`.
+[`profile.rs`](../../crates/catalog/src/profile.rs), `RelationProfile`, gains the view's base tables from `pg_depend`.
 So role review still sees every table that an operation reaches.
 
-Today [`sql_lex.rs`](../../crates/catalog/model/src/sql_lex.rs), `physical_select_relations`, keeps only names in the catalog's table map.
+Today [`sql_lex.rs`](../../crates/catalog/src/sql_lex.rs), `physical_select_relations`, keeps only names in the catalog's table map.
 A view in authored SQL therefore yields no relation access at all.
 This is the first implementation item, bead `wamn-p0q0g`.
 `physical_select_relations` resolves a view to the tables that it depends on, from `pg_depend`.

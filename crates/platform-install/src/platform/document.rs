@@ -325,14 +325,14 @@ mod tests {
 
     #[test]
     fn the_committed_cluster_compiles_to_the_runbook_values() {
-        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/gcp/cluster.k");
+        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/gcp/cluster.k");
         let compiled = ClusterDocument::compile(&file).expect("the committed document compiles");
         assert_eq!(serde_json::to_value(compiled).unwrap(), document());
     }
 
     #[test]
     fn the_committed_kind_cluster_compiles_without_gcp_inputs() {
-        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/kind/cluster.k");
+        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/kind/cluster.k");
         let compiled =
             ClusterDocument::compile(&file).expect("the committed type document compiles");
         assert_eq!(compiled.provider, Provider::Kind);

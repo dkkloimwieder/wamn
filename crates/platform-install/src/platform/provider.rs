@@ -453,7 +453,7 @@ fn registry_hosts(registry: &LocalRegistry) -> String {
 
 pub(crate) fn kind_configuration(directory: &Path) -> anyhow::Result<Value> {
     let mut configuration: Value =
-        serde_yaml::from_str(include_str!("../../../../../deploy/infra/kind-config.yaml"))?;
+        serde_yaml::from_str(include_str!("../../../../deploy/infra/kind-config.yaml"))?;
     configuration["containerdConfigPatches"] = json!([
         "[plugins.\"io.containerd.grpc.v1.cri\".registry]\n  config_path = \"/etc/containerd/certs.d\"\n"
     ]);

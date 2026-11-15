@@ -78,14 +78,14 @@ async fn connect(url: &str) -> anyhow::Result<sqlx::PgConnection> {
 }
 
 fn fixture(root: &Path) -> anyhow::Result<()> {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for file in [
         "rust-toolchain.toml",
-        "apps/platform/no-std/modbus/Cargo.toml",
-        "apps/platform/no-std/modbus/src/lib.rs",
-        "apps/platform/no-std/modbus/wit/world.wit",
-        "apps/platform/no-std/modbus/wit/deps/io.wit",
-        "apps/platform/no-std/modbus/wit/deps/sockets.wit",
+        "guests/modbus/Cargo.toml",
+        "guests/modbus/src/lib.rs",
+        "guests/modbus/wit/world.wit",
+        "guests/modbus/wit/deps/io.wit",
+        "guests/modbus/wit/deps/sockets.wit",
         "wit/wamn-integration/package.wit",
     ] {
         let target = root.join(file);
@@ -103,7 +103,7 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
             .context("guest workspace members end")?
         + 1;
     let mut workspace = workspace;
-    workspace.replace_range(start..end, "members = [\"platform/no-std/modbus\"]");
+    workspace.replace_range(start..end, "members = [\"../guests/modbus\"]");
     std::fs::write(root.join("apps/Cargo.toml"), workspace)?;
     std::fs::copy(
         repository.join("apps/Cargo.lock"),
@@ -171,7 +171,7 @@ struct Application {
 
 impl Application {
     async fn load(reader: Arc<IntegrationImports>) -> anyhow::Result<Self> {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let package = repository.join("apps/modbus_reader");
 
         let bytes = std::fs::read(
@@ -542,9 +542,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     };
     let first = integration::build(scratch.path(), "modbus").await?;
     integration::publish(&first, &configuration, database.as_str(), &integration::Publication {version:2, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into(),write_interfaces:vec!["wamn:modbus/write@1.0.0".into()]}).await?;
-    let source_path = scratch
-        .path()
-        .join("apps/platform/no-std/modbus/src/lib.rs");
+    let source_path = scratch.path().join("guests/modbus/src/lib.rs");
     let source_bytes = std::fs::read_to_string(&source_path)?;
     std::fs::write(
         &source_path,

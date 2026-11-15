@@ -121,7 +121,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         .execute(&mut admin)
         .await
         .map(drop)?;
-    sqlx::raw_sql(include_str!("../../../../deploy/sql/app-schema.sql"))
+    sqlx::raw_sql(include_str!("../../../deploy/sql/app-schema.sql"))
         .execute(&mut admin)
         .await
         .map(drop)?;

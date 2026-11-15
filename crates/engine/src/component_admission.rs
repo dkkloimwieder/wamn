@@ -631,7 +631,7 @@ mod tests {
         ),
         (
             "wamn-integration.wit",
-            include_str!("../../../../wit/wamn-integration/package.wit"),
+            include_str!("../../../wit/wamn-integration/package.wit"),
         ),
         (
             "wasi-clocks.wit",
@@ -709,7 +709,7 @@ mod tests {
         resolve
             .push_str(
                 "wamn-node.wit",
-                include_str!("../../../../wit/wamn-node/package.wit"),
+                include_str!("../../../wit/wamn-node/package.wit"),
             )
             .expect("the live node WIT parses");
         for (name, wit) in DEPENDENCY_WITS {
@@ -968,7 +968,7 @@ mod tests {
             resolve
                 .push_str(
                     "node.wit",
-                    include_str!("../../../../wit/wamn-node/package.wit"),
+                    include_str!("../../../wit/wamn-node/package.wit"),
                 )
                 .unwrap();
             let package = resolve

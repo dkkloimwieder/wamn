@@ -22,7 +22,7 @@ pub fn prepared_chart(repository: &Path) -> anyhow::Result<Chart> {
     )));
     let digest = "a".repeat(64);
     release_chart::stamp(
-        &repository.join("deploy/platform/release"),
+        &repository.join("deploy/charts/release"),
         &ImageSet {
             host: format!("localhost:5001/host:host-build@sha256:{digest}"),
             http: format!("registry.example/components/http@sha256:{digest}"),

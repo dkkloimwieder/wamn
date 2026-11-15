@@ -4,7 +4,7 @@
 mod bindings {
     wit_bindgen::generate!({
         world: "wamn:postgres-statements/numbering-refusal-test@0.3.0",
-        path: ["../../../../wit/wamn-postgres-0.4", "wit"],
+        path: ["../../wit/wamn-postgres-0.4", "wit"],
         generate_all,
     });
 }

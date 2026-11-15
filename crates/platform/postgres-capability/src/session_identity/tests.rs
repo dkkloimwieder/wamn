@@ -715,7 +715,7 @@ async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
 /// deliberately does not link. The minimum is not this fixture's subject: the
 /// RESTRICTIVE per-role and per-user layer is, and that is a different identity
 /// class item 2 leaves alone. The production minimum is shown live by
-/// `crates/control/provision/tests/deploy_sql_authority.rs` and the static
+/// `crates/provision/tests/deploy_sql_authority.rs` and the static
 /// `deploy/sql/app-schema.sql` contract.
 ///
 /// The 3.2 project_env_key minimum plus the row-ownership rule documented by

@@ -154,7 +154,7 @@ pub fn build_inputs(root: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {
     let repository = workspace.parent().context("package workspace parent")?;
     let mut inputs = [
         root.to_owned(),
-        workspace.join("platform"),
+        repository.join("guests"),
         repository.join("wit"),
         repository.join("crates/platform/capability-authority/wit/deps"),
         workspace.join("Cargo.toml"),

@@ -1,4 +1,5 @@
 [package]
+workspace = "../../apps"
 name = "http-page"
 version.workspace = true
 edition.workspace = true

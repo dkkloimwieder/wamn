@@ -27,7 +27,7 @@ pub const SCHEMA: &str = "inventory";
 #[must_use]
 pub fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
+        .join("../../..")
         .canonicalize()
         .expect("the fixture crate sits inside the repository")
 }

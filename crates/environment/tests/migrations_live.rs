@@ -203,11 +203,9 @@ async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic
     sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS platform")
         .execute(&mut admin)
         .await?;
-    sqlx::raw_sql(include_str!(
-        "../../../../deploy/sql/migration-privileges.sql"
-    ))
-    .execute(&mut admin)
-    .await?;
+    sqlx::raw_sql(include_str!("../../../deploy/sql/migration-privileges.sql"))
+        .execute(&mut admin)
+        .await?;
     let database_name = wamn_postgres::identity(database.as_str())?.1;
     let login = migration::login("fixture--dev--one", &database_name)?;
     let role = postgres_protocol::escape::escape_identifier(&login);

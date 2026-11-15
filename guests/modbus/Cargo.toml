@@ -1,4 +1,5 @@
 [package]
+workspace = "../../apps"
 name = "wamn-modbus"
 version.workspace = true
 edition.workspace = true

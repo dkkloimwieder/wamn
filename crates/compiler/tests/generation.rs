@@ -877,8 +877,7 @@ fn compile_inventory_item_component(package: &GeneratedPackage, export_tests: &s
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .and_then(Path::parent)
-        .expect("the generator sits three levels below the repository root");
+        .expect("the generator sits two levels below the repository root");
     let target =
         std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
     let scratch = target.join("generator-fixtures/typed-crud-contracts");
@@ -915,7 +914,7 @@ fn compile_inventory_item_component(package: &GeneratedPackage, export_tests: &s
         .unwrap_or_else(|error| panic!("write {target}: {error}"));
     }
 
-    let platform = root.join("apps/platform");
+    let libraries = root.join("crates");
     std::fs::write(
         scratch.join("Cargo.toml"),
         format!(
@@ -926,9 +925,9 @@ fn compile_inventory_item_component(package: &GeneratedPackage, export_tests: &s
              wamn-postgres-statements = {{ path = \"{}\" }}\n\
              wamn-data-access = {{ path = \"{}\" }}\n\
              \n[lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n",
-            root.join("crates/platform/scalar").display(),
-            platform.join("data/postgres-statements").display(),
-            platform.join("data/access").display(),
+            root.join("crates/scalar").display(),
+            libraries.join("postgres-statements").display(),
+            libraries.join("data-access").display(),
         ),
     )
     .expect("write fixture manifest");

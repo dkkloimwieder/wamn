@@ -9,7 +9,7 @@
 mod bindings {
     wit_bindgen::generate!({
         world: "wamn:transform/transform@0.1.0",
-        path: ["../../../../wit/wamn-node", "wit"],
+        path: ["../../wit/wamn-node", "wit"],
         generate_all,
     });
 }

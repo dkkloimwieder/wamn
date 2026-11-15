@@ -6,7 +6,7 @@ use std::path::Path;
 
 /// Render the platform collector chart with GCP configuration and test environment values.
 pub fn deployed_collector(repository: &Path) -> anyhow::Result<Vec<Value>> {
-    let chart = repository.join("deploy/platform/installation");
+    let chart = repository.join("deploy/charts/installation");
     let mut values: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values-gcp.yaml"))?)?;
     values["org"] = "fixture".into();
     values["registry"] = "registry.invalid".into();

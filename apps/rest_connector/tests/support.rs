@@ -10,7 +10,7 @@ use wamn_publish::component_admission::{
 use wamn_publish::component_declaration::{render_package_declaration, render_palette_declaration};
 
 pub fn repository() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 pub fn manifest(package: &Path) -> Value {

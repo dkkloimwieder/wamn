@@ -421,12 +421,12 @@ pub fn collector(root: &Path, output: &Path) -> anyhow::Result<()> {
         &root.join("deploy/kind/cluster.k"),
     )?;
     let mut values: Value = serde_yaml::from_slice(&std::fs::read(
-        root.join("deploy/platform/installation/values-gcp.yaml"),
+        root.join("deploy/charts/installation/values-gcp.yaml"),
     )?)?;
     values["org"] = document.org.into();
     values["registry"] = document.registry.into();
     let entry = wamn_platform_install::environment::entry(
-        &root.join("deploy/platform/installation"),
+        &root.join("deploy/charts/installation"),
         "platform",
         "wamn",
         values,

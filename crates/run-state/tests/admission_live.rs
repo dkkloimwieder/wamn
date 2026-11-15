@@ -44,7 +44,7 @@ async fn surviving_authority_matrix_live(pool: sqlx::PgPool) {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::url(&pool);
     let url = test_database.as_str().to_owned();
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
     let app_schema = wamn_control_provision::APP_SCHEMA_SQL;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))

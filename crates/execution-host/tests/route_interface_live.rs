@@ -13,7 +13,7 @@
 
 use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeMap;
-#[path = "../../../../services/ctl/src/read_query.rs"]
+#[path = "../../../services/ctl/src/read_query.rs"]
 mod read_query;
 
 use anyhow::Context as _;

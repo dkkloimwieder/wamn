@@ -55,7 +55,7 @@ pub struct RenderedHostValues {
 /// The host subchart defaults of the current release chart.
 pub fn host_defaults() -> anyhow::Result<String> {
     let chart: Value = serde_yaml::from_str(include_str!(
-        "../../../../../deploy/platform/environment/values.yaml"
+        "../../../../deploy/charts/environment/values.yaml"
     ))?;
     let mut host = chart["runtime-operator"].clone();
     host["global"] = chart["global"].clone();

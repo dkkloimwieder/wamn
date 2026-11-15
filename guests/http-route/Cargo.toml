@@ -1,4 +1,5 @@
 [package]
+workspace = "../../apps"
 name = "http-route"
 version.workspace = true
 edition.workspace = true

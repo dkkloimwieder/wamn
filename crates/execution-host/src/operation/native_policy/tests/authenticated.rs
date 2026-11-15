@@ -29,7 +29,7 @@ use super::invoke_native;
 use super::trace::TraceCapture;
 use super::{CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, ROOT};
 
-#[path = "../../../../../../platform/postgres-capability/tests/support/session_fixture.rs"]
+#[path = "../../../../../platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared issuer fixture also serves cache-expiry tests."
@@ -103,7 +103,7 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../deploy/sql/app-schema.sql"
+            "/../../deploy/sql/app-schema.sql"
         )))
         .to_string(),
     ))

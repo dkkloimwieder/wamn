@@ -21,9 +21,9 @@ async fn dedicated_session_reader_columns_execute_on_postgres(
         let batches: &[&str] = &[
             &wamn_control_provision::sql::ensure_app_acl_role_sql(),
             wamn_catalog::CATALOG_SCHEMA_SQL,
-            include_str!("../../../../deploy/sql/run-state.sql"),
-            include_str!("../../../../deploy/sql/run-queue.sql"),
-            include_str!("../../../../deploy/sql/app-schema.sql"),
+            include_str!("../../../deploy/sql/run-state.sql"),
+            include_str!("../../../deploy/sql/run-queue.sql"),
+            include_str!("../../../deploy/sql/app-schema.sql"),
             &wamn_control_provision::test_database::login_sql(
                 family,
                 database.path().trim_start_matches('/'),

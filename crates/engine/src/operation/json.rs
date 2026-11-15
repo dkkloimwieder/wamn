@@ -447,7 +447,7 @@ mod tests {
         resolve
             .push_str(
                 "node.wit",
-                include_str!("../../../../../wit/wamn-node/package.wit"),
+                include_str!("../../../../wit/wamn-node/package.wit"),
             )
             .expect("shared node types");
         let package = resolve.push_str("conversion.wit", &format!("package converter:tests; interface conversion {{ {definition} convert: func(input: input); }} world fixture {{ import conversion; }}")).expect("parse conversion contract");

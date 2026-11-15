@@ -25,7 +25,7 @@ use wamn_postgres_capability::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
 
-#[path = "../../postgres-capability/tests/support/session_fixture.rs"]
+#[path = "../../platform/postgres-capability/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
     reason = "The shared fixture also provides verifier-only fetch barriers."
@@ -88,7 +88,7 @@ async fn install(
         .execute(&mut *admin)
         .await
         .map(drop)?;
-    sqlx::raw_sql(include_str!("../../../../deploy/sql/app-schema.sql"))
+    sqlx::raw_sql(include_str!("../../../deploy/sql/app-schema.sql"))
         .execute(&mut *admin)
         .await
         .map(drop)?;
@@ -331,7 +331,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         .execute(&mut other_admin)
         .await
         .map(drop)?;
-    sqlx::raw_sql(include_str!("../../../../deploy/sql/app-schema.sql"))
+    sqlx::raw_sql(include_str!("../../../deploy/sql/app-schema.sql"))
         .execute(&mut other_admin)
         .await
         .map(drop)?;

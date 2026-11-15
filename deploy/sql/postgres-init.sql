@@ -20,7 +20,7 @@
 -- against a cluster that already carries the role failed the WHOLE FILE at its
 -- first statement with `role "wamn_app" already exists` — measured. Nothing
 -- downstream of line 18 ran, which is why
--- `crates/control/provision/tests/deploy_sql_authority.rs` reads 4 passed / 1
+-- `crates/provision/tests/deploy_sql_authority.rs` reads 4 passed / 1
 -- failed under parallel test threads and 5/0 single-threaded.
 --
 -- EXCEPTION-guarded and advisory-locked, not bare `IF NOT EXISTS`: two appliers

@@ -10,7 +10,7 @@ use wamn_dev::dev::edge_bundle::{EdgeTarget, write_package};
 use wamn_digest::bytes_sha256;
 
 fn repository() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 #[test]

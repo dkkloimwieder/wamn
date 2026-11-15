@@ -4,7 +4,7 @@ use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
-    include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
+    include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
 const STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 
 fn psql(url: &str, script: &str) -> std::process::Output {
@@ -71,7 +71,7 @@ fn reset_and_apply(url: &str, before_store: &str) {
          END $database$;\n\
          SET ROLE wamn_system;\n",
     );
-    script.push_str(include_str!("../../../../deploy/sql/record-history.sql"));
+    script.push_str(include_str!("../../../deploy/sql/record-history.sql"));
     script.push_str(STORE_SQL);
     script.push_str("\nRESET ROLE;\n");
     psql_ok(url, "apply the control portable store", &script);

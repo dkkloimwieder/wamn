@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
-# Application guests live in their package homes. Shared guest code and test
-# fixtures live under platform/.
+# Application guests, platform guests, shared libraries and fixtures retain
+# one guest workspace, independently of their source directory.
 members = [
-    "platform/no-std/http-page",
-    "platform/no-std/http-request",
-    "platform/no-std/label-render",
-    "platform/no-std/modbus",
-    "platform/no-std/transform",
+    "../guests/http-page",
+    "../guests/http-request",
+    "../guests/label-render",
+    "../guests/modbus",
+    "../guests/transform",
     "modbus_reader/component",
     "client_acme_receiving/component",
     "edge_device/component",
@@ -16,17 +16,17 @@ members = [
     "rest_connector/component",
     "netsuite/component",
     "rest_consumer_fixture/component",
-    "platform/wamn_integration/component",
+    "wamn_integration/component",
     "platform_fixture_overlay/component",
     "wamn_receiving/component",
     "wamn_wms/component",
-    "platform/ingress/http-route",
-    "platform/execution/blob-put",
-    "platform/execution/jsonata",
-    "platform/data/access",
-    "platform/data/postgres-statements",
-    "platform/data/record-history",
-    "platform/fixtures/connection-http-standard",
+    "../guests/http-route",
+    "../guests/blob-put",
+    "../guests/jsonata",
+    "../crates/data-access",
+    "../crates/postgres-statements",
+    "../crates/record-history",
+    "../test-support/fixtures/guests/connection-http-standard",
 ]
 exclude = [
     "wamn_receiving/tests",
@@ -95,10 +95,10 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-wamn-registry = { path = "../crates/control/registry", version = "0.1.0" }
-wamn-digest = { path = "../crates/platform/digest", version = "0.1.0" }
-wamn-scalar = { path = "../crates/platform/scalar", version = "0.1.0" }
-wamn-catalog = { path = "../crates/catalog/model", version = "0.1.0" }
+wamn-registry = { path = "../crates/registry", version = "0.1.0" }
+wamn-digest = { path = "../crates/digest", version = "0.1.0" }
+wamn-scalar = { path = "../crates/scalar", version = "0.1.0" }
+wamn-catalog = { path = "../crates/catalog", version = "0.1.0" }
 # Inherited by the four relocated guest-consumed rlibs, pinned exactly as the
 # root workspace pins them so a crate resolves identically from either side.
 url = "2"
@@ -115,10 +115,10 @@ serde_json = "1"
 wit-bindgen = { version = "0.62.0", default-features = false, features = ["async", "macros", "realloc"] }
 
 # Guest-owned path identities are independent of the native workspace contract.
-wamn-event-wire = { path = "../crates/events/wire", version = "0.1.0" }
-wamn-data-access = { path = "platform/data/access", version = "0.1.0" }
-wamn-postgres-statements = { path = "platform/data/postgres-statements", version = "0.1.0" }
-wamn-record-history = { path = "platform/data/record-history", version = "0.1.0" }
+wamn-event-wire = { path = "../crates/event-wire", version = "0.1.0" }
+wamn-data-access = { path = "../crates/data-access", version = "0.1.0" }
+wamn-postgres-statements = { path = "../crates/postgres-statements", version = "0.1.0" }
+wamn-record-history = { path = "../crates/record-history", version = "0.1.0" }
 
 [profile.release]
 opt-level = "s"

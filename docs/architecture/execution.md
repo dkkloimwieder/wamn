@@ -15,7 +15,7 @@ The engine owns HTTP authentication and the generated `wamn:operation` binding.
 The separate HTTP component reads released route data through `wasi:config` and calls typed application exports through that binding.
 The cloud implements the operation boundary over PostgreSQL. The edge implements it over its own SQLx SQLite store.
 `RouteAuthenticator` reads the credential of a protected route.
-The cloud uses [`PlatformRouteAuthenticator`](../../crates/platform/authentication/src/route_authentication.rs), and the edge uses its local session verifier.
+The cloud uses [`PlatformRouteAuthenticator`](../../crates/authentication/src/route_authentication.rs), and the edge uses its local session verifier.
 Publish decides authorization, and the runtime trusts the loaded release.
 An application's components compose at build into one component, so a call inside an application reaches no host.
 The host begins a transaction for an operation whose admitted operation declares one, whatever SQL it holds. The required permission is the entry's own operation, and nothing derives into it.
@@ -31,7 +31,7 @@ The control host and an edge box read no status.
 The [status routes](#host-run-routes) of the control host write the row.
 
 An attachment with auth policy `none` or `signature` has no principal, so it cannot write.
-If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release publish](../../crates/control/publish/src/publish_release/components.rs) refuses it.
+If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release publish](../../crates/publish/src/publish_release/components.rs) refuses it.
 
 An authored attachment selects signature authentication with `{"modes":["signature"],"header":"X-Signature","credential":"<handle>"}` in its `auth-policy`.
 The host resolves the handle under its own project through `WamnCredentials`.
@@ -54,7 +54,7 @@ Each top-level member is one parameter, and its value is the compact JSON text o
 The client encoder sorts parameter names and uses one escaping format so its requests share cache entries.
 The parser accepts any parameter order and valid escaping, and parses each value as JSON.
 The router refuses malformed JSON and targets longer than 8 KiB with HTTP 400 and `invalid-target`.
-The [CLI encoder](../../services/ctl/src/read_query.rs) writes the query. The [HTTP parser](../../apps/platform/ingress/http-route/src/read_query.rs) reads it.
+The [CLI encoder](../../services/ctl/src/read_query.rs) writes the query. The [HTTP parser](../../crates/catalog/src/read_query.rs) reads it.
 
 The host derives the `Cache-Control` value of each read route from its operation type and auth policy when it serves the route, and the router only writes it.
 A `get` sends `no-cache`, and a `query` or `projection` sends `max-age=10, stale-while-revalidate=60`.
@@ -62,7 +62,7 @@ A `query` with its feed part (the [change feed](#change-feed)) sends `no-cache`.
 Each is `private`, unless the auth policy of the route is `none`, and then it is `public`.
 A successful read also sends `Vary: Authorization, Cookie`.
 Every other response sends `Cache-Control: no-store`: a write, any status other than 200, and any request that carries `x-wamn-csrf`.
-[`read_cache_control`](../../crates/platform/engine/src/flow_http_routing.rs) owns the values.
+[`read_cache_control`](../../crates/engine/src/flow_http_routing.rs) owns the values.
 
 ## Signed file results
 
@@ -88,9 +88,9 @@ The guest interface stays unchanged.
 
 A host-run route is a route that the host answers with a fixed handler instead of a component.
 It keeps the route table, the credentials, the CSRF treatment and the operation grant of any route.
-The fixed route sets live in [`wamn_catalog::host_route`](../../crates/catalog/model/src/host_route.rs) and are built with the platform.
+The fixed route sets live in [`wamn_catalog::host_route`](../../crates/catalog/src/host_route.rs) and are built with the platform.
 A serving manifest names the sets it serves in `host-routes`, and it leaves the member out when the list is empty.
-The control contract authors its package id `wamn_control`, its version and its route prefixes in [`host_route/wamn.json`](../../crates/catalog/model/src/host_route/wamn.json).
+The control contract authors its package id `wamn_control`, its version and its route prefixes in [`host_route/wamn.json`](../../crates/catalog/src/host_route/wamn.json).
 A host route derives its sealed operation id, its path and its attachment id from that file, as generation does for a package operation.
 For example, `permission.mine` is `wamn-control:permission/mine@0.9.0`, at `/wamn_control/permission/mine`, with the attachment id `wamn-control-permission-mine-http`.
 
@@ -102,7 +102,7 @@ Native ingress serves the control routes directly. Control loads no HTTP guest.
 Control roots have no release record.
 Publish refuses an authored attachment under `/wamn_control/`.
 
-[`HostRouteDelivery`](../../crates/execution/host/src/host_route.rs) serves the host routes of the loaded release.
+[`HostRouteDelivery`](../../crates/execution-host/src/host_route.rs) serves the host routes of the loaded release.
 It refuses an attachment outside the native platform endpoints.
 The caller must match the attachment, and the route makes sure of its operation grant as any route does.
 A route of authority `Admin` passes only `admin`.
@@ -170,11 +170,11 @@ The host carries no single release digest. Application Helm histories remain ind
 An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
 A role or permission write first takes the project lock that `wamn-ctl` and release reconciliation take.
-The writes are the functions of [`wamn_platform_identity::application`](../../crates/identity/platform/src/application.rs), which the role verbs of `wamn-ctl` also call.
+The writes are the functions of [`wamn_platform_identity::application`](../../crates/identity/src/application.rs), which the role verbs of `wamn-ctl` also call.
 `user_role.revoke` reads current inherited administration through the host’s identity reader. It derives the answer from the org, environment and project grants.
 `permission.grant` writes one permission row. A row the serving release does not serve grants nothing.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `user_not_found` or `admin_covered`.
-The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/model/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `apps/target/wamn/wamn_control/client-ts`, which Git does not hold ([building](../operations/building.md#host-route-clients)).
+The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `apps/target/wamn/wamn_control/client-ts`, which Git does not hold ([building](../operations/building.md#host-route-clients)).
 The administration screens in the [platform UI](../../apps/platform_ui/README.md) call these routes through that client and write no database directly.
 The role screen reads operations from `permission.list`, and the user screen reads roles from `user.list` and permissions from `permission.list`.
 The control lists `project.list`, `user.list`, `environment.list`, `member.list`, and `control.mine` accept optional `limit` and `cursor` members.
@@ -200,7 +200,7 @@ Every other org route needs a current `org-admin` row of the caller in the token
 A project route needs that row, or a current `project-admin` row of the caller in the project that the request names.
 A write runs in one transaction on a second `control` login, which holds one write at a time.
 The transaction inserts the caller and sealed operation id into `platform.tx_identity`, then checks the role again.
-The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/platform/src/org.rs), which platform installation also calls.
+The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/src/org.rs), which platform installation also calls.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
 Native control reads that login from the installed public connection projection, one file per `<project>--<env>`, at each write. Its component configuration selects `administration_dir`; passwords stay in the owning role Secrets.
@@ -214,7 +214,7 @@ The four status routes need `org-admin`, and they write `registry.environments.s
 Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
-`user.invite` calls identity `POST /users` and `POST /invitations` with the configured identity operator certificate, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
+`user.invite` calls identity `POST /users` and `POST /invitations` with the configured identity operator certificate, through [`wamn-identity-client`](../../crates/identity-client/src/lib.rs).
 It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
 The host refuses an email or a display name that the identity rules refuse before it calls identity, and answers `user_refused` when identity refuses the user.
 The control set also serves `application.deploy`, `application.rollback`, `application.stop`, `release.retain`, `schema.diff`, `schema.apply`, `schema.reset`, and `operation.status`.
@@ -227,7 +227,7 @@ The service submits Jobs through the shared runner and keeps no operation histor
 The protected `WAMN_DEPLOY_ACTOR` input carries the authenticated principal to the worker.
 [Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential target, deadlines, and result bounds.
 
-The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/model/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `apps/target/wamn/wamn_control/control/client-ts`.
+The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `apps/target/wamn/wamn_control/control/client-ts`.
 The control set has its own client because both sets serve `user.list`.
 
 The native control service has no application release or guest connection.
@@ -282,7 +282,7 @@ The entry writes the page as one JSON body.
 The entry bounds a page by the declared contract maximum, usually 100, and by the platform ceiling.
 The generated typed export validates the remaining input.
 The memory of a read is bounded by the statement's declared limit and the platform ceiling.
-The test `a_read_of_100000_rows_refuses_at_the_ceiling` in [`route_interface_live`](../../crates/execution/host/tests/route_interface_live.rs) shows the refusal.
+The test `a_read_of_100000_rows_refuses_at_the_ceiling` in [`route_interface_live`](../../crates/execution-host/tests/route_interface_live.rs) shows the refusal.
 The route component invokes the application through the host converter.
 The typed query returns its page. The host retains the read's WAL position for a list ETag.
 Platform endpoints use native handlers. Workflows and edge calls use the shared operation entry.
@@ -321,7 +321,7 @@ The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
 For an unexpected property, the pointer names that property.
 An unparseable payload carries the root pointer `""`.
 A platform cause, such as a missing or uncompiled schema, gives a body with no `data`.
-The [route validator](../../crates/platform/engine/src/flow_http_routing.rs) and the [HTTP route adapter](../../apps/platform/ingress/http-route/src/lib.rs) own this response.
+The [route validator](../../crates/engine/src/flow_http_routing.rs) and the [HTTP route adapter](../../guests/http-route/src/lib.rs) own this response.
 
 An unknown hostname returns the native 404 response.
 An explicit hostname in the release returns 503 while its route binding is absent.
@@ -329,7 +329,7 @@ The adapter adds no `Retry-After` header and leaves application responses unchan
 A selected route whose native dispatch handle disappears still returns 404.
 Wildcard expansion, operator aliases, and readiness based on route bindings remain absent.
 
-The [expected-host adapter](../../crates/platform/engine/src/expected_router.rs) owns this narrow response distinction.
+The [expected-host adapter](../../crates/engine/src/expected_router.rs) owns this narrow response distinction.
 Service readiness does not establish route-aware traffic removal.
 The native route controller can reach Pods directly, so a readiness change alone does not remove every rebind outage.
 
@@ -420,12 +420,12 @@ Wasmtime leaves async stack zeroing disabled, so its async stack residency value
 Native epochs bound guest execution. Duration metering does not grant instruction fuel.
 All cleanup paths retain their resource bounds and return failures to their owner.
 
-The [engine operation module](../../crates/platform/engine/src/operation.rs) runs one component export through native dispatch with `invoke_operation`.
+The [engine operation module](../../crates/engine/src/operation.rs) runs one component export through native dispatch with `invoke_operation`.
 It owns the deadline, workload loading, and invocation state.
 It reaches the host through two traits: `ApplicationHost` gives the loaded application, and `InvocationPolicy` grants and revokes the authority of each call.
-The [host operation module](../../crates/execution/host/src/operation.rs) implements both traits and owns authority.
-The [driver](../../crates/execution/workflow/src/router_driver.rs) in `wamn-workflow` walks a wiring graph and calls the operation module for each node.
-The [route path](../../crates/execution/host/src/route.rs) calls it once for a route target and never enters the driver.
+The [host operation module](../../crates/execution-host/src/operation.rs) implements both traits and owns authority.
+The [driver](../../crates/workflow/src/router_driver.rs) in `wamn-workflow` walks a wiring graph and calls the operation module for each node.
+The [route path](../../crates/execution-host/src/application_route.rs) calls it once for a route target and never enters the driver.
 A route reports a retryable or rate-limited error as the failure that a wiring reports after its last attempt.
 The caller decides whether to send a new request.
 
@@ -447,7 +447,7 @@ Guest context stays a plain attribute.
 The host's native logging callback enters the invocation span stored in the active scope before it emits each record.
 The record retains signing authority through commit and replay.
 Cancellation or shutdown revokes the record. Normal completion releases it after result signing.
-The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` drives delivery.
+The [queue](../../crates/workflow/src/queue.rs) in `wamn-workflow` drives delivery.
 `wamn-run-state` owns admission, leases, settlement and pruning as functions over an authorized connection.
 `WamnPostgres` authorizes the connection and commits or rolls back each transaction.
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
@@ -585,7 +585,7 @@ A missing permission refuses that command.
 
 Missed or refused ticks produce a log entry without catch-up, and host shutdown cancels the task.
 
-The [JSONata node](../../apps/platform/execution/jsonata/src/lib.rs) is a palette node compiled to wasm.
+The [JSONata node](../../guests/jsonata/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.
 The result leaves on port `main`, or on port `items`, whose schema is the item array that `label-render` takes.
 The node is a std guest: it imports `wasi:random` at the version that Rust std links, and the build preserves that import.
@@ -667,7 +667,7 @@ Every layer exposes an interface and depends only on layers below it: base platf
 
 Park acts on the queue row only. The run status stays `dispatched`, so the retired run-level `parked` status does not come back. A park inside a walk needs a saved walk and is part of approvals, which are out of target.
 
-The node is a std guest at `apps/platform/execution/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its one parameter, `expression`, holds the JSONata text. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
+The node is a std guest at `guests/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its one parameter, `expression`, holds the JSONata text. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
 
 The `shape` node turns the row event into the item array that `label-render` takes, with `packaging_id` and `location_id`, and the label key `{packaging_id}/{row_version}`. Epic 25 (`docs/history/wms-inventory-spec.md`) moved the trigger from the movement insert to the packaging update. One move therefore stores one label, and a redelivered event overwrites it. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
 
@@ -783,7 +783,7 @@ A host without the bucket keeps no fact either, and reads every request from Pos
 
 Every function that writes one of these facts takes an [`AuthDrops`](../../crates/broker/src/auth_changes.rs) and records the change in it.
 Its caller deletes the keys of the list after the commit. `wamn-broker::Publisher` publishes both authorization and connection changes through one client.
-[`auth_drops_live`](../../crates/identity/platform/tests/auth_drops_live.rs) runs each writer once and makes sure of the drop it records.
+[`auth_drops_live`](../../crates/identity/tests/auth_drops_live.rs) runs each writer once and makes sure of the drop it records.
 A change of a user row or a user role deletes the key of the principal.
 A change of a role, a permission or the environment status deletes every key of the project.
 A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal delete the identity key of the principal.
@@ -822,8 +822,8 @@ Age bounds limit delayed admission without promising that identity remains uncha
 
 Authentication deadlines bound new admission and do not cancel work already accepted.
 
-The [session token owner](../../crates/identity/protocol/src/token.rs) defines the token and time rules.
-The [session verifier](../../crates/identity/protocol/src/verifier.rs) takes its keys from a key source: the issuer over HTTPS in the cloud, or a key file on the edge.
+The [session token owner](../../crates/identity-protocol/src/token.rs) defines the token and time rules.
+The [session verifier](../../crates/identity-protocol/src/verifier.rs) takes its keys from a key source: the issuer over HTTPS in the cloud, or a key file on the edge.
 The browser client holds no token. `@wamn/web-runtime` signs in with the cookie carrier and renews on load and before expiry.
 Password sessions have no PAT fallback. Renewal happens only when an application request needs a new access token.
 A local credential refusal occurs before HTTP submission and records a refused operation, not an unknown server outcome.
@@ -852,7 +852,7 @@ Inbound signature authentication resolves the credential name through the enviro
 The active connection fact supplies the credential id and service principal.
 The host resolves the secret under that credential id.
 
-The [engine](../../crates/platform/engine/src/integration.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
+The [engine](../../crates/engine/src/integration.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
 The [dispatch](../../crates/platform/integrations/src/lib.rs) links an instance per (connection id, generation, credential id) from that compiled component.
 Typed integration imports use labels, the connection names that code declares.
 The host resolves each label by its component digest, package, and name.
@@ -982,7 +982,7 @@ An integration delete deletes no key, because it refuses while the integration h
 An integration disable or enable deletes the key of each of its connections, in every environment of the project.
 An `environment::apply` deletes the release key of each release whose connection rows changed.
 An `env delete` deletes every key of the environment.
-[`connection_drops_live`](../../crates/identity/platform/tests/connection_drops_live.rs) runs each administration writer once and makes sure of the keys it deletes.
+[`connection_drops_live`](../../crates/identity/tests/connection_drops_live.rs) runs each administration writer once and makes sure of the keys it deletes.
 
 ### Control sessions
 
@@ -1062,10 +1062,10 @@ For a PAT caller, current roles are read per request, so grant and revoke both t
 
 ## Password enrollment foundation
 
-The [identity library](../../crates/identity/platform/src/password.rs) supports password storage, invitation enrollment, and password authentication.
+The [identity library](../../crates/identity/src/password.rs) supports password storage, invitation enrollment, and password authentication.
 The identity service exposes password HTTP endpoints. Receiving supports hidden terminal enrollment and password login.
 
-The [login storage library](../../crates/identity/platform/src/password_login.rs) supplies database primitives for renewal and revocation.
+The [login storage library](../../crates/identity/src/password_login.rs) supplies database primitives for renewal and revocation.
 The HTTP service and terminal use these primitives for renewal and server-side logout.
 Each login binds one user, issuer, and exact environment audience.
 Its authentication time and eight-hour absolute deadline remain fixed.
@@ -1230,21 +1230,21 @@ Replicas serialize rotation with an issuer lock. Restarting a replica does not r
 An issuer without an active key requires explicit activation, including after removal of a compromised key.
 The previous public key stays available for the longest token lifetime plus clock tolerance after its signing cutoff.
 
-The [key cache](../../crates/platform/authentication/src/session_keys.rs) and [key owner](../../crates/identity/platform/src/session_keys.rs) define these bounds.
+The [key cache](../../crates/authentication/src/session_keys.rs) and [key owner](../../crates/identity/src/session_keys.rs) define these bounds.
 
 ## Operator clients
 
-Generated screens use the [client contract](../../crates/schema/generator/src/client_ir.rs), derived from admitted declarations.
+Generated screens use the [client contract](../../crates/compiler/src/client_ir.rs), derived from admitted declarations.
 Operation types come from the manifest.
 Record links come from declared relations, keys, and compatible reads.
 The generator never guesses a record from a field name ending in `_id`.
 
-The [screen plan](../../crates/schema/generator/src/client_plan.rs) holds the screen rules that every UI target applies.
+The [screen plan](../../crates/compiler/src/client_plan.rs) holds the screen rules that every UI target applies.
 It gives each callable operation one role: table, detail, form, delete, or none with a reason.
 It also states the columns, the operator inputs, the row source, the paging, and the screens that one row opens.
 It carries interaction meaning only, so no layout, styling, or framework concept enters it.
 
-A package can also generate [TypeScript bindings](../../crates/schema/generator/src/client_ts.rs) for a browser.
+A package can also generate [TypeScript bindings](../../crates/compiler/src/client_ts.rs) for a browser.
 It opts in with a `client_package` name in its manifest, and a package that declares none generates no TypeScript. Nothing is published to a registry, and the name is what a workspace imports.
 The bindings carry a request type, a result type, the published route and one function for each public operation.
 A private event handler is absent, and an operation the release does not publish carries its types without a function.
@@ -1285,7 +1285,7 @@ A generated detail, a table, an edit cell, the record text in a table's referenc
 Each reads again only after a write that touches them, so an unchanged read costs one 304 and an untouched read costs nothing.
 A form's own record read does not read again, because the form sends the revision that it read when it opened.
 
-A package that generates TypeScript also generates [wfe descriptions](../../crates/schema/generator/src/client_component.rs) for its supported screen roles.
+A package that generates TypeScript also generates [wfe descriptions](../../crates/compiler/src/client_component.rs) for its supported screen roles.
 Descriptions contain presentation data for tables, details, forms, and deletes.
 The [Receiving web application](../../apps/wamn_receiving/web/README.md) binds those descriptions to requests, validation, reference selectors, and navigation.
 The generated TypeScript bindings continue to use the browser runtime.
@@ -1473,7 +1473,7 @@ Authored reads do not support feeds yet.
 The feed is the `query` operation with its feed part, `feed: { cursor, limit }`, on the same GET route, so it has the list's grant and no permission row of its own.
 Its value is `{ rows, next_cursor, complete }`. Each row carries `id`, `row_version` and `deleted`, and a row that is not deleted carries `data`.
 The page of such a `query` also carries `cursor`, which starts the feed at the page's snapshot.
-The cursor is opaque: the URL-safe base64 of the model name and a snapshot xmin, which [`feed.rs`](../../apps/platform/data/access/src/feed.rs) encodes.
+The cursor is opaque: the URL-safe base64 of the model name and a snapshot xmin, which [`feed.rs`](../../crates/data-access/src/feed.rs) encodes.
 The statement reads entries from the cursor transaction and uses one snapshot for xmin, xmax, and transaction visibility.
 It reads rows below xmin first, then fills remaining page space with visible rows below xmax.
 Rows follow transaction and id order, with one change per id.

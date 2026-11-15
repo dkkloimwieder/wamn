@@ -1,4 +1,5 @@
 [package]
+workspace = "../../../../apps"
 name = "connection-http-standard"
 version.workspace = true
 edition.workspace = true

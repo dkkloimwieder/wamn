@@ -18,7 +18,7 @@ pub async fn build_fixture(
         build::BuildRequest,
         build_record::{BUILD_RECORD_FILE, BuildComponent},
     };
-    let source = repository.join("crates/control/environment/tests/support/file_package");
+    let source = repository.join("crates/environment/tests/support/file_package");
     let package = work.join("file-package/file_fixture");
     std::fs::create_dir_all(&package)?;
     std::fs::copy(source.join("kind.wamn.k.in"), package.join("wamn.k"))?;
@@ -38,7 +38,7 @@ pub async fn build_fixture(
     let mut resolve = wit_parser::Resolve::new();
     resolve.push_str(
         "node.wit",
-        include_str!("../../../../../wit/wamn-node/package.wit"),
+        include_str!("../../../../wit/wamn-node/package.wit"),
     )?;
     let (wit_package, _) = resolve.push_dir(output.join("wit"))?;
     let world = resolve.select_world(&[wit_package], Some("generated"))?;

@@ -331,7 +331,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
     // The platform credential owner emits the registry Secret before applications install.
     let scratch = ScratchRoot::create()?;
     let cluster = wamn_environment::platform::document::ClusterDocument::compile(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/kind/cluster.k"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/kind/cluster.k"),
     )?;
     let auth_file = scratch.path().join("registry.json");
     std::fs::write(

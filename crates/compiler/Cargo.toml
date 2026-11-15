@@ -29,7 +29,7 @@ wamn-number-pattern = { workspace = true }
 wit-parser = { workspace = true }
 
 [dev-dependencies]
-wamn-postgres-statements = { path = "../../../apps/platform/data/postgres-statements" }
+wamn-postgres-statements = { path = "../postgres-statements" }
 uuid.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 syn = { workspace = true, features = ["full"] }

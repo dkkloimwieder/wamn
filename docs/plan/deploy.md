@@ -7,8 +7,8 @@ Section 9 records the retained run evidence. The epic closed without a final GKE
 
 The command definitions live in [services/ctl](../../services/ctl/src/bin/wamn.rs).
 [Application commands](../../services/ctl/src/application_verbs.rs), [schema commands](../../services/ctl/src/schema_verbs.rs), and [platform commands](../../services/ctl/src/platform_verbs.rs) call their control owners.
-[Environment operations](../../crates/control/environment/src/environment/mod.rs) and [SQL operations](../../crates/control/environment/src/environment/operation.rs) implement the deployment boundary.
-[Control routes](../../crates/execution/host/src/control_route/operation_job.rs) authorize and create the Jobs.
+[Environment operations](../../crates/environment/src/environment/mod.rs) and [SQL operations](../../crates/environment/src/environment/operation.rs) implement the deployment boundary.
+[Control routes](../../crates/execution-host/src/control_route/operation_job.rs) authorize and create the Jobs.
 
 ## 1. Primary decision: remove WAMN's deployment controller
 

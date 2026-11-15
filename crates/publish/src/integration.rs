@@ -61,17 +61,31 @@ fn source_files(
 fn source_digest(root: &Path) -> anyhow::Result<String> {
     let mut files = BTreeMap::new();
     source_files(root, root, &mut files)?;
-    if let Some(workspace) = root
-        .ancestors()
-        .skip(1)
-        .find(|path| path.join("Cargo.toml").is_file())
-    {
-        for name in ["Cargo.toml", "Cargo.lock"] {
-            files.insert(
-                format!("workspace/{name}"),
-                bytes_sha256(&std::fs::read(workspace.join(name))?),
-            );
-        }
+    let output = std::process::Command::new("cargo")
+        .args([
+            "locate-project",
+            "--workspace",
+            "--message-format",
+            "plain",
+            "--manifest-path",
+        ])
+        .arg(root.join("Cargo.toml"))
+        .output()
+        .context("resolve integration workspace")?;
+    ensure!(
+        output.status.success(),
+        "resolve integration workspace: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manifest = PathBuf::from(std::str::from_utf8(&output.stdout)?.trim());
+    let workspace = manifest
+        .parent()
+        .context("integration workspace directory")?;
+    for name in ["Cargo.toml", "Cargo.lock"] {
+        files.insert(
+            format!("workspace/{name}"),
+            bytes_sha256(&std::fs::read(workspace.join(name))?),
+        );
     }
     Ok(bytes_sha256(&wamn_digest::canonical_json_bytes(&json!(
         files
@@ -86,7 +100,7 @@ fn source_digest(root: &Path) -> anyhow::Result<String> {
 pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegration> {
     require_code(code)?;
     let repository = repository.canonicalize()?;
-    let guest = repository.join("apps/platform/no-std").join(code);
+    let guest = repository.join("guests").join(code);
     let source = if guest.join("Cargo.toml").is_file() {
         guest
     } else {

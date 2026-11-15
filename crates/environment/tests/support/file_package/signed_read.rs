@@ -80,7 +80,7 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
     }
     let declaration = wamn_publish::component_declaration::render_palette_declaration(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-            "../../control/environment/tests/support/file_package/publication/components/signed-read.json.in",
+            "../environment/tests/support/file_package/publication/components/signed-read.json.in",
         ),
         &wamn_catalog::ComponentPackageCoordinate {
             project_env_key: project_env_key.into(),

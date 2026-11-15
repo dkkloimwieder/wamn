@@ -9,7 +9,7 @@ async fn catalog_stamps_require_an_actor_and_preserve_creation(pool: sqlx::PgPoo
         wamn_control_provision::platform_principals_sql("example.invalid").unwrap()
     );
     let mut batches = vec![
-        include_str!("../../../../deploy/sql/app-schema.sql"),
+        include_str!("../../../deploy/sql/app-schema.sql"),
         &principals,
     ];
     batches.extend(

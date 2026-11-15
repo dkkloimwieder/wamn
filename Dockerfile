@@ -24,8 +24,9 @@ FROM toolchain AS root-source
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY wit ./wit
-# Native packages use shared guest libraries under apps/platform.
+# Both workspaces consume guest libraries and binding sources.
 COPY apps ./apps
+COPY guests ./guests
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests

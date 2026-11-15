@@ -647,7 +647,7 @@ pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "regist
 ///
 /// `SELECT_PAT_BY_PREFIX_SQL` joins `pats` to `principals`; `SELECT_PROJECT_ROLES_SQL`
 /// reads `project_roles`; user routes require `project_env_memberships`
-/// (all in `crates/identity/platform/src/lib.rs`).
+/// (all in `crates/identity/src/lib.rs`).
 /// PostgreSQL tests privileges on every relation a statement references, so all
 /// relations are required, including password login revocation state.
 pub const IDENTITY_READER_RELATIONS: [&str; 5] = [

@@ -237,14 +237,14 @@ pub const ENVIRONMENT_SHARED_LOCK_SQL: &str =
 pub const ENVIRONMENT_DISPOSABLE: &str =
     "SELECT disposable FROM registry.environments WHERE org=$1 AND env=$2";
 
-/// crates/execution/host/src/credential_cleanup.rs::collect registry statement.
+/// crates/execution-host/src/credential_cleanup.rs::collect registry statement.
 pub const EXECUTION_HOST_SRC_CREDENTIAL_CLEANUP_COLLECT: &str =
     "SELECT store,ref,version FROM registry.retired_connection_credential($1)";
 
-/// crates/execution/host/src/file_route.rs::generations registry statement.
+/// crates/execution-host/src/file_route.rs::generations registry statement.
 pub const EXECUTION_HOST_SRC_FILE_ROUTE_GENERATIONS: &str = "SELECT connection_id::text, connection_name, generation, parameters FROM registry.read_file_connection($1,$2,$3)";
 
-/// crates/execution/host/src/control_route/integration.rs::integration_administration_in registry statement.
+/// crates/execution-host/src/control_route/integration.rs::integration_administration_in registry statement.
 pub const EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND project=$2 \
              AND ($3::text IS NULL OR env=$3) ORDER BY env";
 
@@ -252,11 +252,11 @@ pub const EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATIO
 pub const PLATFORM_RUNTIME_SRC_OAUTH_TOKEN_LOCK: &str =
     "SELECT registry.lock_oauth_connection($1,$2,$3,$4)";
 
-/// crates/identity/platform/src/application.rs::project_authority registry statement.
+/// crates/identity/src/application.rs::project_authority registry statement.
 pub const IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY: &str =
     "SELECT platform_domain FROM registry.meta";
 
-/// crates/identity/platform/src/control.rs::CONTROL_ORGS_SQL registry statement.
+/// crates/identity/src/control.rs::CONTROL_ORGS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
     JOIN identity.principals p ON p.id = $1::text::uuid \
     WHERE p.type = 'user' AND p.status = 'active' \
@@ -269,13 +269,13 @@ pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_ORGS_SQL: &str = "SELECT o.id FR
     AND ($4::text IS NULL OR o.id = $4) AND ($5::text IS NULL OR o.id > $5) \
     ORDER BY o.id LIMIT $6";
 
-/// crates/identity/platform/src/control.rs::ORG_PROJECTS_SQL registry statement.
+/// crates/identity/src/control.rs::ORG_PROJECTS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONTROL_ORG_PROJECTS_SQL: &str = "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM registry.environment_projects e JOIN registry.environments v USING (org,env) \
     WHERE e.org = p.org AND e.project = p.id AND v.status = 'active') \
     THEN 'active' ELSE 'inactive' END FROM registry.projects p WHERE p.org = $1 \
     AND ($2::text IS NULL OR p.id > $2) ORDER BY p.id LIMIT $3";
 
-/// crates/identity/platform/src/control.rs::CONTROL_PROJECTS_SQL registry statement.
+/// crates/identity/src/control.rs::CONTROL_PROJECTS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_PROJECTS_SQL: &str = "SELECT r.id FROM registry.projects r \
     JOIN identity.principals p ON p.id=$1::text::uuid \
     WHERE r.org=$2 AND p.type='user' AND p.status='active' \
@@ -285,7 +285,7 @@ pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_PROJECTS_SQL: &str = "SELECT r.i
       OR EXISTS (SELECT FROM identity.environment_roles a JOIN registry.environment_projects e USING (org,env) WHERE a.principal_id=p.id AND a.org=$2 AND e.project=r.id)) \
     AND ($4::text IS NULL OR r.id>$4) ORDER BY r.id LIMIT $5";
 
-/// crates/identity/platform/src/org.rs::PROJECT_MEMBERS_SQL registry statement.
+/// crates/identity/src/org.rs::PROJECT_MEMBERS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_MEMBERS_SQL: &str = "SELECT p.id::text,p.email,p.display_name, \
     EXISTS (SELECT FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$1 AND r.role=$4), \
     identity.is_project_admin(p.id,$1,$8,$2) AND $3='project-admin', \
@@ -296,56 +296,56 @@ pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_MEMBERS_SQL: &str = "SELECT p.id::te
       AND ($8::text IS NULL OR e.env=$8) AND identity.has_project_access(p.id,$1,e.env,$2)) \
     AND ($5::text IS NULL OR (p.email,p.id)>($5,$6::text::uuid)) ORDER BY p.email,p.id LIMIT $7";
 
-/// crates/identity/platform/src/org.rs::PROJECT_ENVS_SQL registry statement.
+/// crates/identity/src/org.rs::PROJECT_ENVS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_ENVS_SQL: &str = "SELECT env, status FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org = $1 AND project = $2 \
     AND ($3::text IS NULL OR env > $3) ORDER BY env LIMIT $4";
 
-/// crates/identity/platform/src/org.rs::ENVIRONMENT_STATUS_SQL registry statement.
+/// crates/identity/src/org.rs::ENVIRONMENT_STATUS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_ENVIRONMENT_STATUS_SQL: &str = "UPDATE registry.environments SET status = $4 \
     WHERE org = $1 AND env = ANY($3) AND EXISTS (SELECT FROM registry.environment_projects p WHERE p.org=$1 AND p.env=registry.environments.env AND p.project=$2)";
 
-/// crates/identity/platform/src/org.rs::ORG_ENVIRONMENTS_SQL registry statement.
+/// crates/identity/src/org.rs::ORG_ENVIRONMENTS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_ORG_ENVIRONMENTS_SQL: &str = "SELECT project, env FROM registry.environment_projects \
     WHERE org = $1 AND ($2::text IS NULL OR project = $2) ORDER BY project, env";
 
-/// crates/identity/platform/src/org.rs::CREATE_PROJECT_SQL registry statement.
+/// crates/identity/src/org.rs::CREATE_PROJECT_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_CREATE_PROJECT_SQL: &str =
     "INSERT INTO registry.projects (org, id) VALUES ($1, $2) ON CONFLICT (org, id) DO NOTHING";
 
-/// crates/identity/platform/src/org.rs::ENV_IN_PROJECT_SQL registry statement.
+/// crates/identity/src/org.rs::ENV_IN_PROJECT_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_ENV_IN_PROJECT_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.environment_projects \
     WHERE org = $1 AND project = $2 AND env = $3)";
 
-/// crates/identity/platform/src/org.rs::PROJECT_IN_ORG_SQL registry statement.
+/// crates/identity/src/org.rs::PROJECT_IN_ORG_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_IN_ORG_SQL: &str =
     "SELECT EXISTS (SELECT 1 FROM registry.projects WHERE org = $1 AND id = $2)";
 
-/// crates/identity/platform/src/connections/administration.rs::configure registry statement.
+/// crates/identity/src/connections/administration.rs::configure registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE: &str =
     "SELECT registry.configure_connection($1,$2,$3::text::jsonb)::text";
 
-/// crates/identity/platform/src/connections/administration.rs::configure registry statement.
+/// crates/identity/src/connections/administration.rs::configure registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_2: &str =
     "SELECT registry.configure_integration_type($1,$2,$3::text::jsonb)::text";
 
-/// crates/identity/platform/src/connections/administration.rs::configure registry statement.
+/// crates/identity/src/connections/administration.rs::configure registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_3: &str =
     "SELECT registry.configure_integration($1,$2,$3::text::jsonb)::text";
 
-/// crates/identity/platform/src/connections/administration.rs::configure registry statement.
+/// crates/identity/src/connections/administration.rs::configure registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_4: &str =
     "SELECT registry.configure_external_system($1,$2,$3::text::jsonb)::text";
 
-/// crates/control/dev/src/pat_secrets_tests.rs::auth_drops_mint_pat_records_the_committed_project_role_drop registry statement.
+/// crates/dev/src/pat_secrets_tests.rs::auth_drops_mint_pat_records_the_committed_project_role_drop registry statement.
 pub const CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMMITTED_PROJECT_ROLE_DROP: &str = "INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('org', 'pooled', 'test'); INSERT INTO registry.projects (org, id) VALUES ('org', 'project')";
 
-/// crates/control/dev/src/dev/target_database.rs::recorded_disposable registry statement.
+/// crates/dev/src/dev/target_database.rs::recorded_disposable registry statement.
 pub const CONTROL_DEV_SRC_DEV_TARGET_DATABASE_RECORDED_DISPOSABLE: &str = "SELECT disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org=$1 AND project=$2 AND env=$3";
 
-/// crates/control/provision/src/sql.rs::control_surface_grants_sql registry statement.
+/// crates/provision/src/sql.rs::control_surface_grants_sql registry statement.
 pub const CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL: &str = " GRANT EXECUTE ON FUNCTION registry.control_org(), identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_control;";
 
-/// crates/control/provision/src/sql.rs::control_surface_grants_sql registry statement.
+/// crates/provision/src/sql.rs::control_surface_grants_sql registry statement.
 pub fn control_provision_src_sql_control_surface_grants_sql_2(
     role: &str,
     signature: &str,
@@ -355,54 +355,54 @@ pub fn control_provision_src_sql_control_surface_grants_sql_2(
     )
 }
 
-/// crates/control/provision/src/sql.rs::grant_connection_reader_surface_sql registry statement.
+/// crates/provision/src/sql.rs::grant_connection_reader_surface_sql registry statement.
 pub fn control_provision_src_sql_grant_connection_reader_surface_sql(role: &str) -> String {
     format!(
         " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lock_oauth_connection(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_generation(text,text,text,uuid,bigint), registry.read_connection_secret(text,text,text,uuid), registry.read_env_connections(text,text,text), registry.read_integration_version(text,integer) TO {role};"
     )
 }
 
-/// crates/control/environment/src/provision_system.rs::set_platform_domain registry statement.
+/// crates/environment/src/provision_system.rs::set_platform_domain registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN: &str =
     "UPDATE registry.meta SET platform_domain = $1 WHERE platform_domain IS DISTINCT FROM $1";
 
-/// crates/control/environment/src/provision_project_env/registry.rs::do_record_project_env registry statement.
+/// crates/environment/src/provision_project_env/registry.rs::do_record_project_env registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV: &str =
     "SELECT id::text FROM registry.target WHERE name = $1";
 
-/// crates/control/environment/src/provision_project_env/registry.rs::read_project_env_policy registry statement.
+/// crates/environment/src/provision_project_env/registry.rs::read_project_env_policy registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_READ_PROJECT_ENV_POLICY: &str = "SELECT policy_name FROM registry.environment_projects JOIN registry.environments USING (org,env) \
                   WHERE org = $1 AND project = $2 AND env = $3";
 
-/// crates/control/environment/src/environment/analyse.rs::replica_refusals registry statement.
+/// crates/environment/src/environment/analyse.rs::replica_refusals registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_REPLICA_REFUSALS: &str =
     "SELECT type = 'cloud' FROM registry.target WHERE name = $1";
 
-/// crates/control/environment/src/environment/analyse.rs::read_row registry statement.
+/// crates/environment/src/environment/analyse.rs::read_row registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, policy_name, disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";
 
-/// crates/control/environment/src/environment/analyse.rs::read_policy registry statement.
+/// crates/environment/src/environment/analyse.rs::read_policy registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_POLICY: &str = "SELECT readiness_budget_seconds, drain_bound_seconds \
                FROM registry.env_policies WHERE org = $1 AND name = $2";
 
-/// crates/control/environment/src/environment/status.rs::stranded_runs registry statement.
+/// crates/environment/src/environment/status.rs::stranded_runs registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_STATUS_STRANDED_RUNS: &str =
     "SELECT 1 FROM registry.environment_projects WHERE org = $1 AND project = $2 AND env = $3";
 
-/// crates/control/environment/src/environment/delete.rs::delete_locked registry statement.
+/// crates/environment/src/environment/delete.rs::delete_locked registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED: &str = "SELECT instance_suffix, policy_name FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";
 
-/// crates/control/environment/src/environment/bindings.rs::analyse registry statement.
+/// crates/environment/src/environment/bindings.rs::analyse registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_BINDINGS_ANALYSE: &str =
     "SELECT * FROM registry.resolve_environment_connection($1,$2,$3,$4,$5,$6)";
 
-/// crates/control/environment/src/environment/delete/rows.rs::delete_registry_rows registry statement.
+/// crates/environment/src/environment/delete/rows.rs::delete_registry_rows registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS: &str =
     "DELETE FROM registry.environment_projects WHERE org = $1 AND project = $2 AND env = $3";
 
-/// crates/control/publish/src/integration.rs::publish registry statement.
+/// crates/publish/src/integration.rs::publish registry statement.
 pub const CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH: &str =
     "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5,$6,$7)";
 

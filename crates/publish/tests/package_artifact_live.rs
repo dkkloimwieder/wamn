@@ -28,7 +28,7 @@ mod local_registry;
 use local_registry::LocalRegistry;
 
 fn apps() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps")
 }
 
 /// A running registry and its inputs.

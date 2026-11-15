@@ -3,7 +3,7 @@
 //!
 //! # Why this is load-bearing and not hypothetical
 //!
-//! `deploy/platform/executor.yaml` and the release chart (`deploy/platform/release`)
+//! `deploy/platform/executor.yaml` and the release chart (`deploy/charts/release`)
 //! inject a credentialed `WAMN_PG_URL` into the HOST PROCESS environment via
 //! `secretKeyRef`. If the runtime handed a guest the process environment, a
 //! component would read the platform's database credential directly. So the
@@ -12,8 +12,8 @@
 //! # This is the minimum, not the whole story
 //!
 //! Project admission separately DENIES `wasi:cli/environment` to project code —
-//! the closed allowlist in `crates/platform/component-policy`, reached from
-//! `crates/control/publish/src/component_admission.rs` through `validate_component_admission`.
+//! the closed allowlist in `crates/component-policy`, reached from
+//! `crates/publish/src/component_admission.rs` through `validate_component_admission`.
 //! That is the first door. This test tests the guarantee that holds for a guest
 //! which imports the interface ANYWAY: defence in depth, measured rather than
 //! asserted.
@@ -28,10 +28,10 @@
 //! mutant that leaked the environment WITHOUT using the word `inherit_env`.
 //! Running a guest answers the question the scan only approximated.
 //!
-//! # Why the guest is WAT and not a `apps/platform/fixtures` crate
+//! # Why the guest is WAT and not a `test-support/fixtures/guests` crate
 //!
 //! `executor_plugin_no_trap_live.rs` records the reason and it applies here
-//! unchanged: a guest compiled from `apps/platform/fixtures/` makes this test depend
+//! unchanged: a guest compiled from `test-support/fixtures/guests/` makes this test depend
 //! on a `wasm32-wasip2` build of a SEPARATE WORKSPACE, and a test that silently
 //! skips when that artifact is missing is exactly the vacuous pass this file
 //! exists to prevent. An in-process guest uses component-model WAT

@@ -66,12 +66,12 @@ fn kcl_binary() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os(KCL_ENV) {
         return Ok(PathBuf::from(path));
     }
-    let pins: toml::Value = toml::from_str(include_str!("../../../../mise.toml"))?;
+    let pins: toml::Value = toml::from_str(include_str!("../../../mise.toml"))?;
     let version = pins["tools"]["http:kcl"]["version"]
         .as_str()
         .context("KCL version is absent")?;
     let local = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../.tools/kcl")
+        .join("../../.tools/kcl")
         .join(version)
         .join("kcl");
     Ok(if local.is_file() {

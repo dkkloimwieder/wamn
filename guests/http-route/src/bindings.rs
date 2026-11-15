@@ -1,12 +1,12 @@
 wit_bindgen::generate!({
     world: "wamn:flow-http/flow-http@0.1.0",
     path: [
-        "../../../../wit/wamn-flow-http-routing",
-        "../../../../wit/wamn-postgres-0.4",
-        "../../../../wit/wamn-node",
-        "../../../../wit/wamn-operation-0.1",
-        "../../../../wit/wasi-clocks",
-        "../../../../wit/wasi-config",
+        "../../wit/wamn-flow-http-routing",
+        "../../wit/wamn-postgres-0.4",
+        "../../wit/wamn-node",
+        "../../wit/wamn-operation-0.1",
+        "../../wit/wasi-clocks",
+        "../../wit/wasi-config",
         "wit",
     ],
     generate_all,

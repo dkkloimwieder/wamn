@@ -1,5 +1,5 @@
 // Run after `cargo run -p wamn-compiler --example emit_client_ts` and `pnpm install`.
-// From web/sync-bench: pnpm exec vitest run --config ../../crates/schema/generator/tests/client_ts_sync.config.mjs
+// From web/sync-bench: pnpm exec vitest run --config ../../crates/compiler/tests/client_ts_sync.config.mjs
 import "fake-indexeddb/auto";
 import { expect, it, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
@@ -13,24 +13,24 @@ import {
   COUNTER_DELETE_ROUTE,
   COUNTER_UPDATE_ROUTE,
   type CounterRow,
-} from "../../../../web/sync-bench/src/generated/sync_fixture/counter.js";
+} from "../../../web/sync-bench/src/generated/sync_fixture/counter.js";
 import {
   widgetFeed,
   widgetCollection,
   widgetKey,
   type WidgetQueryRow,
-} from "../../../../web/sync-bench/src/generated/sync_fixture/widget.js";
+} from "../../../web/sync-bench/src/generated/sync_fixture/widget.js";
 import {
   screenCollection,
   screenFeed,
   screenKey,
   FEED_LINE_SCREEN_ROUTE,
-} from "../../../../web/sync-bench/src/generated/sync_fixture/feed_line.js";
+} from "../../../web/sync-bench/src/generated/sync_fixture/feed_line.js";
 import {
   screenCollection as lineCollection,
   screenFeed as lineFeed,
-} from "../../../../web/sync-bench/src/generated/sync_line_key/feed_line.js";
-import type { Int64, JsonValue, Transport, WireRequest } from "../../../../web/runtime/src/index.js";
+} from "../../../web/sync-bench/src/generated/sync_line_key/feed_line.js";
+import type { Int64, JsonValue, Transport, WireRequest } from "../../../web/runtime/src/index.js";
 
 const id = "00000000-0000-7000-8000-000000000001";
 const wire = {

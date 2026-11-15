@@ -9,7 +9,7 @@ pub(in crate::environment) fn host_group(mut group: Mapping) -> anyhow::Result<M
             .as_mapping_mut()
             .context("host resources are not a mapping")?;
         let mut defaults: Value = serde_yaml::from_str(include_str!(
-            "../../../../../../deploy/platform/environment/values.yaml"
+            "../../../../../deploy/charts/environment/values.yaml"
         ))?;
         let Value::Mapping(defaults) =
             std::mem::take(&mut defaults["runtime-operator"]["runtime"]["resources"])

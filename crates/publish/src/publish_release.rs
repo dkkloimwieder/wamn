@@ -308,7 +308,7 @@ pub fn compose_application(
 ) -> anyhow::Result<ComposedApplication> {
     let digest = format!(
         "sha256:{}",
-        include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
+        include_str!("../../../guests/http-route/http_route.wasm.sha256")
             .split_whitespace()
             .next()
             .expect("route pin exists")

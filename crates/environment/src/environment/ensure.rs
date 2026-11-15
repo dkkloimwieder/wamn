@@ -1177,7 +1177,7 @@ mod tests {
     fn shared_host_reapply_keeps_only_its_named_host_image() -> anyhow::Result<()> {
         use serde_json::json;
         let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
         let fresh = environment_host_values(&document, 70, 1, 120, None, false, None)?;
         let mut installed = fresh.clone();

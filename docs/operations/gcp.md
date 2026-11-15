@@ -397,7 +397,7 @@ gcloud compute disks list --project wamn-dev --format="table(name,sizeGb,users.b
 ```
 
 The disks of the volumes of `wamn-pg-1`, `data-wamn-nats-0`, and `otel-collector-queue` stay after the delete.
-The collector's [volume claim](../../deploy/platform/installation/values-gcp.yaml) requests `1Gi`.
+The collector's [volume claim](../../deploy/charts/installation/values-gcp.yaml) requests `1Gi`.
 Delete each one by name, one command for each disk:
 
 ```bash
@@ -630,7 +630,7 @@ Two verbs write the row with the control credential:
 
 - A lost slot is not recoverable. A new slot starts at the current WAL position, and the WAL between the old confirmed position and that point is removed. The rows written in that interval produce no events.
 
-- The reader never creates a slot. Environment provisioning creates it with `create_failover_slot_sql` (`crates/control/provision/src/sql/cdc.rs`).
+- The reader never creates a slot. Environment provisioning creates it with `create_failover_slot_sql` (`crates/provision/src/sql/cdc.rs`).
 
 - No automatic re-slot. No component creates a slot again without an operator.
 

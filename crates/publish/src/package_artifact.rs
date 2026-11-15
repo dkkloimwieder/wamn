@@ -1110,7 +1110,7 @@ mod tests {
 
     fn receiving_manifest() -> Vec<u8> {
         std::fs::read(wamn_compiler::package_manifest_path(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving"),
         ))
         .unwrap()
     }

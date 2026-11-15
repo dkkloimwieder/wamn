@@ -208,7 +208,7 @@ manifest.Package {{
 "#
             ),
         )?;
-        let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let palettes: &[(&str, &str)] = if name == "label_fixture" {
             &[("execution", "blob-put")]
         } else {
@@ -225,8 +225,7 @@ manifest.Package {{
             std::fs::create_dir_all(&target)?;
             let template = std::fs::read_to_string(
                 repository
-                    .join("apps/platform")
-                    .join(area)
+                    .join("guests")
                     .join(palette)
                     .join("declaration.json.in"),
             )?;
@@ -267,7 +266,7 @@ manifest.Package {{
         let mut resolve = wit_parser::Resolve::new();
         resolve.push_str(
             "node.wit",
-            include_str!("../../../../../wit/wamn-node/package.wit"),
+            include_str!("../../../../wit/wamn-node/package.wit"),
         )?;
         let (wit_package, _) = resolve.push_dir(output.join("wit"))?;
         let world = resolve.select_world(&[wit_package], Some("generated"))?;

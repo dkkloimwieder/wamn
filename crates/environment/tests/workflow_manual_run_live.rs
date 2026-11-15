@@ -86,8 +86,7 @@ const ROWS: &str = r#"{"rows":[{"id":"o-1","total":1250,"status":"open"},{"id":"
 const SHAPE: &str = r#"[rows.{"order": id, "open": status = "open", "total": total}]"#;
 
 /// The declaration template of the jsonata node, as publish renders it.
-const JSONATA_DECLARATION: &str =
-    include_str!("../../../../apps/platform/execution/jsonata/declaration.json.in");
+const JSONATA_DECLARATION: &str = include_str!("../../../guests/jsonata/declaration.json.in");
 
 const NODE_TYPES: &str = r#"
       (import "wamn:node/types@0.1.0" (instance $node

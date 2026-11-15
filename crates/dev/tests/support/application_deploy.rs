@@ -1,7 +1,7 @@
 //! Application deployment uses product commands; Kubernetes and SQL are observers.
 
 use sqlx::{Connection as _, Row as _};
-#[path = "../../../../../services/ctl/src/read_query.rs"]
+#[path = "../../../../services/ctl/src/read_query.rs"]
 mod read_query;
 
 use std::collections::BTreeMap;

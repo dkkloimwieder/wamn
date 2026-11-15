@@ -354,12 +354,12 @@ pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
     let platform = chart.join("platform");
     std::fs::create_dir_all(&platform)?;
     for (name, source) in [
-        ("infra", "deploy/infra/chart"),
-        ("installation", "deploy/platform/installation"),
-        ("identity", "deploy/platform/identity"),
-        ("edge", "deploy/platform/edge"),
-        ("org", "deploy/platform/org"),
-        ("environment", "deploy/platform/environment"),
+        ("infra", "deploy/charts/infrastructure"),
+        ("installation", "deploy/charts/installation"),
+        ("identity", "deploy/charts/identity"),
+        ("edge", "deploy/charts/edge"),
+        ("org", "deploy/charts/org"),
+        ("environment", "deploy/charts/environment"),
     ] {
         copy_package_output(&repository.join(source), &platform.join(name))?;
     }
@@ -380,7 +380,7 @@ pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
     for source in ["identity", "edge", "release"] {
         let output = std::process::Command::new("helm")
             .arg("package")
-            .arg(repository.join("deploy/platform").join(source))
+            .arg(repository.join("deploy/charts").join(source))
             .arg("--destination")
             .arg(platform.join("installation/charts"))
             .output()
@@ -423,7 +423,7 @@ mod tests {
     use super::test_util::Chart;
 
     fn prepared_chart() -> Chart {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         super::test_util::prepared_chart(&repository).unwrap()
     }
 
@@ -466,7 +466,7 @@ mod tests {
         let unavailable_default = json!({"platform":{"chart":default.0.join("missing")}});
         let recorded = json!({"platform":{"chart":own.0}});
         let legacy = json!({});
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
         for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
             for (operator, installed, expected) in [

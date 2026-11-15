@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 fn main() {
-    let source = "../../../wit/wamn-node";
+    let source = "../../wit/wamn-node";
     println!("cargo:rerun-if-changed={source}");
     let mut resolve = wit_parser::Resolve::new();
     let (package, _) = resolve.push_dir(source).expect("read node contract");
