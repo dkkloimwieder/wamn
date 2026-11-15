@@ -246,8 +246,8 @@ Severity: medium
 Effort: M  
 Area: Dockerfile; deploy/platform/identity; deploy/gcp/cdc-reader.yaml  
 Evidence: `Dockerfile:182`, `Dockerfile:189`, `Dockerfile:196`, `deploy/platform/identity/templates/deployment.yaml:29`, `deploy/gcp/cdc-reader.yaml:40`, `deploy/platform/scenario-worker.yaml:144`  
-Problem: Shipping image stages declare no `USER`, and standalone identity, CDC, and scenario-worker manifests provide no non-root execution requirement. These services therefore default to container root unless an external admission policy changes them. A native service compromise gains unnecessary filesystem privileges and container capabilities.  
-Proposal: Set an unprivileged numeric image user and require non-root execution in the standalone deployments. Drop capabilities, disable privilege escalation, and provide only the writable mounts each service needs.  
+Problem: Shipping image stages declare no `USER`, and standalone identity, CDC, and scenario-worker manifests provide no non-root execution requirement. These services therefore default to container root unless an external admission policy changes them. A native service compromise gains unnecessary filesystem privileges and Linux privileges.
+Proposal: Set an unprivileged numeric image user and require non-root execution in the standalone deployments. Drop Linux privileges, disable privilege escalation, and provide only the writable mounts each service needs.
 Deletes: Implicit root execution and unrestricted writable container filesystems.  
 Risk: UID changes affect private certificate files and writable directories. Deployment smoke tests must start each service with its real Secret mounts under the restricted identity.
 
@@ -282,7 +282,7 @@ All five questions were answered on 2026-10-31.
 
 This review used source inspection and the shared measurements. No files changed, and no builds or tests ran. Tests named below are proposed validation.
 
-Application component admission refuses direct sockets, filesystem, and WASI HTTP imports. Granted platform capabilities still permit network effects through host bindings (`crates/platform/component-policy/src/lib.rs:181`, `crates/platform/component-policy/src/lib.rs:382`). Connector stores enforce an exact network authority independently of the application engine (`crates/platform/engine/src/connector.rs:138`, `crates/platform/engine/src/connector.rs:275`). Application workloads declare no filesystem volumes (`crates/platform/engine/src/operation/native_workload.rs:390`).
+Application component admission refuses direct sockets, filesystem, and WASI HTTP imports. Granted platform imports still permit network effects through host bindings (`crates/platform/component-policy/src/lib.rs:181`, `crates/platform/component-policy/src/lib.rs:382`). Connector stores enforce an exact network authority independently of the application engine (`crates/platform/engine/src/connector.rs:138`, `crates/platform/engine/src/connector.rs:275`). Application workloads declare no filesystem volumes (`crates/platform/engine/src/operation/native_workload.rs:390`).
 
 Execution uses deadlines bounded to 1–30,000 ms and native epoch interruption. WAMN grants no instruction fuel. Each linear memory has a 256 MiB ceiling, but aggregate guest memory uses count mode. A separate sampled process guard remains active (`crates/platform/engine/src/router_delivery.rs:475`, `docs/architecture/execution.md:371`).
 

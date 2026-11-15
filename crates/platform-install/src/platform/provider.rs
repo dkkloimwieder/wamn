@@ -676,15 +676,15 @@ mod tests {
         let hosts: toml::Value = toml::from_str(&registry_hosts(&registry)).unwrap();
         let endpoint = format!("http://{}:{}", registry.container, registry.port);
         assert_eq!(hosts["server"].as_str(), Some(endpoint.as_str()));
-        let capabilities = hosts["host"][&endpoint]["capabilities"].as_array().unwrap();
-        assert_eq!(capabilities.len(), 2);
+        let operations = hosts["host"][&endpoint]["capabilities"].as_array().unwrap();
+        assert_eq!(operations.len(), 2);
         assert!(
-            capabilities
+            operations
                 .iter()
                 .any(|value| value.as_str() == Some("pull"))
         );
         assert!(
-            capabilities
+            operations
                 .iter()
                 .any(|value| value.as_str() == Some("resolve"))
         );

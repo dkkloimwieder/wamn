@@ -49,7 +49,7 @@ Each library has one concern. Package names remain independent of directory name
 | `crates/broker` | `wamn-broker`: NATS connections, streams, and shared memory buckets |
 | `crates/event-wire` | `wamn-event-wire`: event records and stable event identity |
 | `crates/events` | `wamn-events`: event admission, capture configuration, and reader lifecycle |
-| `crates/component-policy` | `wamn-component-policy`: import admission and capability declarations |
+| `crates/component-policy` | `wamn-component-policy`: import admission and platform import declarations |
 | `crates/component-composer` | `wamn-component-composer`: overlay and base composition |
 | `crates/engine` | `wamn-engine`: native loading, dispatch, and the invocation scope registry |
 | `crates/execution-host` | `wamn-execution-host`: invocation authority, platform routes, and release readiness |
@@ -140,10 +140,10 @@ The watcher stops after its current deployment finishes. The deployed release st
 ## Execution and authority
 
 A route invokes one component export. A workflow traverses its graph and invokes each selected node through the same host boundary.
-The engine dispatches Wasm. The host supplies invocation authority. The capabilities authorize access to external resources.
+The engine dispatches Wasm. The host supplies invocation authority. The host services authorize access to external resources.
 A component digest shares code only. It grants no access to another project or environment.
 [Execution](execution.md) defines routing, authentication, queues, and service lifecycle.
-[Capabilities](capabilities.md) defines imports, bindings, credentials, and external effects.
+[Platform services](platform-services.md) defines imports, bindings, credentials, and external effects.
 [Data access](data-access.md) defines SQL, transactions, migrations, and record history.
 [Edge](edge.md) defines local operation storage and device status.
 

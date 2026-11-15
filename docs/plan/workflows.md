@@ -61,7 +61,7 @@ The effect writer with `output_json`, effect keys, the uncertain rule, resume an
 
 ### Later
 
-| Capability | Direction |
+| Host service | Direction |
 | --- | --- |
 | Attached trigger (R4) | epic 4, after the effect writer. Trigger row `after = <operation>`, `wait = <bound>`. The entry runs the workflow after the operation commits, in-process, under a run row and a lease; `respond` is the response; on timeout the entry releases the lease and the queue resumes from logged outcomes. The approval and external-validation uses need this. |
 | Node publication | epic 4. digest-addressed nodes published without a consuming application, pinned per `(name, major)` to an exact semver in `environment.k`; the wiring node reference gains the node's major (today the join is on the WIT interface version, which every node shares — verify); the semver bump rule enforced at publish from the declaration hash; a host missing an import refuses until the platform version that has it is applied. |

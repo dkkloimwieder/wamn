@@ -55,7 +55,7 @@ pub const STATEMENTS_INTERFACE: &str = "wamn:postgres/statements@0.4.0";
 /// An import named for its interface (`wamn:postgres/statements@0.4.0`) is an
 /// instance of that interface. A labelled import (`sql-0`) names its interface
 /// in its `(implements ..)` annotation, so two instances of one interface are
-/// one capability, admitted by the same row.
+/// covered by the same platform import row.
 pub fn instance_type<'a>(name: &'a str, implements: Option<&'a str>) -> &'a str {
     implements.unwrap_or(name)
 }
@@ -100,7 +100,7 @@ fn integration_import(name: &str) -> bool {
         ("wasi:sockets" | "wasi:io" | "wasi:clocks" | "wasi:random", Some(version)) => {
             admits_version(WASI_VERSION, version)
         }
-        ("wasi:cli", _) => capability_row(name).is_some(),
+        ("wasi:cli", _) => platform_import_row(name).is_some(),
         _ => name == "wamn:integration/bound@0.1.0",
     }
 }
@@ -113,7 +113,7 @@ fn admits_version(row_version: &str, version: &str) -> bool {
     row_version == version
 }
 
-/// Whether importing a capability reaches outside the host.
+/// Whether a platform import reaches outside the host.
 ///
 /// Posture is package-grain and **declared**, never inferred from a namespace.
 /// A mixed-posture package would trigger a split ruling; none exists.
@@ -126,9 +126,9 @@ pub enum Posture {
     Effect,
 }
 
-/// One admitted capability, keyed on exact `namespace:package` and version.
+/// One admitted import, keyed on exact `namespace:package` and version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CapabilityRow {
+pub struct PlatformImportRow {
     /// Exact WIT `namespace:package`.
     pub package: &'static str,
     /// Exact package version.
@@ -137,7 +137,7 @@ pub struct CapabilityRow {
     pub posture: Posture,
 }
 
-/// The closed capability registry: the complete set of packages a project
+/// The closed platform import registry: the complete set of packages a project
 /// component may import, each with its declared posture.
 ///
 /// This replaces two implicit classifiers — a `wamn:`-prefix shape test and a
@@ -160,7 +160,7 @@ pub struct CapabilityRow {
 ///
 /// Rows record what the host **offers**, not what a guest currently imports.
 /// `wasi:logging` is host-implemented by wash-runtime with zero
-/// importers today: a registry keyed on imports would drop a live capability
+/// importers today: a registry keyed on imports would drop an offered interface
 /// the moment its last importer churned, then refuse the next guest to want it.
 ///
 /// # Two provenance classes
@@ -168,68 +168,68 @@ pub struct CapabilityRow {
 /// The `wamn:*` rows and `wasi:logging` carry versions we author. Standard
 /// WASI imports come from the Rust toolchain. Their rows admit the host's
 /// supported version without rewriting the component bytes.
-pub const CAPABILITY_REGISTRY: [CapabilityRow; 12] = [
+pub const PLATFORM_IMPORT_REGISTRY: [PlatformImportRow; 12] = [
     // Versions we author.
-    CapabilityRow {
+    PlatformImportRow {
         package: "wamn:modbus",
         version: "1.0.0",
         posture: Posture::Effect,
     },
-    CapabilityRow {
+    PlatformImportRow {
         package: "wamn:integration",
         version: "0.1.0",
         posture: Posture::Effect,
     },
-    CapabilityRow {
+    PlatformImportRow {
         package: "wamn:node",
         version: "0.1.0",
         posture: Posture::Ambient,
     },
-    CapabilityRow {
+    PlatformImportRow {
         package: "wamn:postgres",
         version: "0.1.0",
         posture: Posture::Effect,
     },
     // 0.4.0 is 0.3.0 without the participant calls of `statements`. 0.3.0
     // added `statements.run-stream` and `statements.operation-transaction`.
-    CapabilityRow {
+    PlatformImportRow {
         package: "wamn:postgres",
         version: "0.4.0",
         posture: Posture::Effect,
     },
-    CapabilityRow {
+    PlatformImportRow {
         package: "wamn:connection",
         version: "0.1.0",
         posture: Posture::Effect,
     },
-    CapabilityRow {
+    PlatformImportRow {
         package: "wasmcloud:blobstore",
         version: "0.1.0",
         posture: Posture::Effect,
     },
-    CapabilityRow {
+    PlatformImportRow {
         package: "wasi:logging",
         version: "0.1.0-draft",
         posture: Posture::Ambient,
     },
     // Standard WASI version families. See the provenance note
     // above.
-    CapabilityRow {
+    PlatformImportRow {
         package: "wasi:io",
         version: WASI_VERSION,
         posture: Posture::Ambient,
     },
-    CapabilityRow {
+    PlatformImportRow {
         package: "wasi:clocks",
         version: WASI_VERSION,
         posture: Posture::Ambient,
     },
-    CapabilityRow {
+    PlatformImportRow {
         package: "wasi:cli",
         version: WASI_VERSION,
         posture: Posture::Ambient,
     },
-    CapabilityRow {
+    PlatformImportRow {
         package: "wasi:random",
         version: WASI_VERSION,
         posture: Posture::Ambient,
@@ -266,33 +266,35 @@ fn is_denied_to_applications(import_name: &str) -> bool {
 ///
 /// `None` means refuse: either the package is unregistered, or no row of it
 /// admits the version, or the import carries no version at all.
-pub fn capability_row(import_name: &str) -> Option<&'static CapabilityRow> {
+pub fn platform_import_row(import_name: &str) -> Option<&'static PlatformImportRow> {
     let package = import_pkg(import_name);
     let version = import_version(import_name)?;
     if package == "wasi:cli" && !AMBIENT_CLI_INTERFACES.contains(&import_name.rsplit_once('@')?.0) {
         return None;
     }
-    CAPABILITY_REGISTRY
+    PLATFORM_IMPORT_REGISTRY
         .iter()
         .find(|row| row.package == package && admits_version(row.version, version))
 }
 
-/// Whether this import's PACKAGE is a registered capability, at any version.
+/// Whether this import's package is registered, at any version.
 ///
 /// Distinct from [`import_posture`], which matches package AND version. Some
 /// callers need to know what TYPE of thing an import is — a platform
-/// capability versus a cross-package application call — and that type does not
+/// import versus a cross-package application call — and that type does not
 /// change with the version. A `wasi:clocks` import at an unregistered version
-/// is still a platform capability; it is admission's job to refuse the
+/// is still a platform import; it is admission's job to refuse the
 /// version, not this classifier's job to reclassify it as an application call.
 pub fn is_registered_package(import_name: &str) -> bool {
     let package = import_pkg(import_name);
-    CAPABILITY_REGISTRY.iter().any(|row| row.package == package)
+    PLATFORM_IMPORT_REGISTRY
+        .iter()
+        .any(|row| row.package == package)
 }
 
 /// The declared posture of one full import name, or `None` if unregistered.
 pub fn import_posture(import_name: &str) -> Option<Posture> {
-    capability_row(import_name).map(|row| row.posture)
+    platform_import_row(import_name).map(|row| row.posture)
 }
 
 /// The exact version of a full import name.
@@ -311,7 +313,7 @@ pub fn import_version(import_name: &str) -> Option<&str> {
 /// Stable classification for a refused project import list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectImportErrorType {
-    InvalidPlatformCapability,
+    InvalidPlatformImport,
     UnadmittedImport,
 }
 
@@ -338,9 +340,9 @@ impl ProjectImportError {
 impl std::fmt::Display for ProjectImportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.type_ {
-            ProjectImportErrorType::InvalidPlatformCapability => write!(
+            ProjectImportErrorType::InvalidPlatformImport => write!(
                 formatter,
-                "component {:?} was given invalid platform capability package(s) {:?}",
+                "component {:?} was given invalid platform import package(s) {:?}",
                 self.component, self.imports
             ),
             ProjectImportErrorType::UnadmittedImport => write!(
@@ -358,7 +360,7 @@ impl std::error::Error for ProjectImportError {}
 ///
 /// `admitted_platform_packages` is the caller's per-component grant: exact
 /// unversioned package names, each of which must appear in
-/// [`CAPABILITY_REGISTRY`]. An import is accepted when it matches a registry
+/// [`PLATFORM_IMPORT_REGISTRY`]. An import is accepted when it matches a registry
 /// row on package AND version, and — if that row is [`Posture::Effect`] — when
 /// its package is also in the grant. Ambient rows need no grant. An interface
 /// in [`APPLICATION_DENIED_INTERFACES`] is refused even with its grant.
@@ -373,7 +375,7 @@ pub fn analyze_project(
     let invalid_registry: Vec<_> = admitted_platform_packages
         .iter()
         .filter(|package| {
-            !CAPABILITY_REGISTRY
+            !PLATFORM_IMPORT_REGISTRY
                 .iter()
                 .any(|row| row.package == *package)
         })
@@ -381,7 +383,7 @@ pub fn analyze_project(
         .collect();
     if !invalid_registry.is_empty() {
         return Err(ProjectImportError {
-            type_: ProjectImportErrorType::InvalidPlatformCapability,
+            type_: ProjectImportErrorType::InvalidPlatformImport,
             component: label.into(),
             imports: invalid_registry.into_boxed_slice(),
         });
@@ -609,7 +611,7 @@ mod tests {
     /// The whole registered vocabulary at its REGISTERED versions passes.
     ///
     /// These versions are load-bearing, not decoration: an authored version
-    /// one off is refused. See the provenance note on [`CAPABILITY_REGISTRY`].
+    /// one off is refused. See the provenance note on [`PLATFORM_IMPORT_REGISTRY`].
     #[test]
     fn project_policy_is_exact_and_has_no_namespace_wildcard() {
         let admitted = BTreeSet::from(["wamn:postgres".to_string()]);
@@ -632,7 +634,7 @@ mod tests {
         assert!(analyze_project(&ambient, &BTreeSet::new(), "project-node").is_ok());
         for version in ["0.2.9", "0.2.13", "0.2.4294967296", "0.2.12-rc.1"] {
             let import = format!("wasi:io/streams@{version}");
-            assert!(capability_row(&import).is_none());
+            assert!(platform_import_row(&import).is_none());
             assert!(!integration_import(&import));
         }
         assert!(integration_import("wasi:io/streams@0.2.12"));
@@ -706,7 +708,7 @@ mod tests {
     /// one package carry two postures and make the lookup order-dependent.
     #[test]
     fn registry_keys_are_unique() {
-        let mut keys: Vec<(&str, &str)> = CAPABILITY_REGISTRY
+        let mut keys: Vec<(&str, &str)> = PLATFORM_IMPORT_REGISTRY
             .iter()
             .map(|row| (row.package, row.version))
             .collect();
@@ -714,9 +716,9 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), total, "duplicate registry key");
-        for row in &CAPABILITY_REGISTRY {
+        for row in &PLATFORM_IMPORT_REGISTRY {
             assert!(
-                CAPABILITY_REGISTRY
+                PLATFORM_IMPORT_REGISTRY
                     .iter()
                     .filter(|other| other.package == row.package)
                     .all(|other| other.posture == row.posture),
@@ -757,7 +759,7 @@ mod tests {
             .expect_err("the platform registry must contain exact package names");
             assert_eq!(
                 error.error_type(),
-                ProjectImportErrorType::InvalidPlatformCapability
+                ProjectImportErrorType::InvalidPlatformImport
             );
         }
     }
@@ -777,7 +779,7 @@ mod tests {
 
         let unlabelled = ComponentImports::new([instance_type("sql-0", None).to_string()]);
         let error = analyze_project(&unlabelled, &granted, "project-node")
-            .expect_err("a label with no interface names no capability");
+            .expect_err("a label without an interface identifies no platform import");
         assert_eq!(error.imports(), ["sql-0"]);
     }
 

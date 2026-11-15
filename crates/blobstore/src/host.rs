@@ -29,7 +29,7 @@
 //!   no container creation time, and `container-metadata` requires one.
 //!   Fabricating a `0` would be a timestamp a guest could act on, which is the
 //!   fabricated-evidence rule at data grain. This one returns if `object_store`
-//!   grows the capability; no policy decision is involved.
+//!   adds this operation; no policy decision is involved.
 //!
 //! `create-container` and `delete-container` are neither: they are refused
 //! because the environment owns the container, which is the ordinary operation

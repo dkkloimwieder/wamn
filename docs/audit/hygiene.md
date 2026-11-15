@@ -484,7 +484,7 @@ docs/
     overview.md
     execution.md
     data-access.md
-    capabilities.md
+    platform-services.md
     components.md
     naming.md
     native-alignment.md

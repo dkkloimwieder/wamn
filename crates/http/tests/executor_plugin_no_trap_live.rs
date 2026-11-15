@@ -96,10 +96,10 @@ const RET_OK_ERR: u32 = 768;
 const RET_ERR_ALIGN4: u32 = RET_OK_ERR + 4;
 
 /// Stand a real component up against a real store carrying `plugins`, link the
-/// plugin capability under test, drive the guest's `drive` export, and return
+/// plugin host service under test, drive the guest's `drive` export, and return
 /// the guest call's outcome beside the verdict trail the guest recorded.
 ///
-/// The plugins are registered through `Ctx::with_plugins` and the capability is
+/// The plugins are registered through `Ctx::with_plugins` and the host service is
 /// linked by hand with the plugin module's own `add_to_linker`. That is exactly
 /// what `crates/execution-host/src/lib.rs` does for all four: `with_plugins`
 /// makes `ActiveCtx::try_get_plugin` resolve, and the hand link installs the
@@ -117,7 +117,7 @@ async fn drive_guest(
 
     let trail: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
     let mut linker: Linker<SharedCtx> = Linker::new(raw);
-    link(&mut linker).expect("plugin capability links into the guest world");
+    link(&mut linker).expect("plugin host service links into the guest world");
     linker
         .root()
         .func_wrap("verdict", {
@@ -146,7 +146,7 @@ async fn drive_guest(
     let instance = linker
         .instantiate_async(&mut store, &component)
         .await
-        .expect("guest instantiates against the plugin capability");
+        .expect("guest instantiates against the plugin host service");
     let drive = instance
         .get_typed_func::<(), ()>(&mut store, "drive")
         .expect("guest exports drive");

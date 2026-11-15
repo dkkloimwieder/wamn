@@ -134,7 +134,7 @@ pub struct IdentityService {
 struct Inner {
     issuer: String,
     key_rotation: Duration,
-    // Every held connection opens again with this capability after Postgres
+    // Every held connection opens again with this connection string after Postgres
     // closes it, for example when the server restarts.
     connection: String,
     passwords: Option<password::State>,

@@ -10,7 +10,7 @@ It does not establish permissions, business behavior, rollback, or locking.
 The complete generated and authored application SQL corpus must match the SQL used during execution.
 The [compiler](../../crates/compiler/src/describe.rs) describes the exact authored and generated SQL files with SQLx.
 A successful description does not mean that the application command executed.
-Guest tests must cross the real capability and transaction paths when those paths are the subject.
+Guest tests must cross the real host service and transaction paths when those paths are the subject.
 
 ## Authority and observations
 

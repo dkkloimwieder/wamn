@@ -155,7 +155,7 @@ pub fn remote_trace_context(
 
 pub use wamn_engine::invocation_trace::{InvocationSite, invocation_span};
 
-/// The process capabilities that one released application runs on.
+/// The process services that one released application runs on.
 ///
 /// The process builds one host. The route path calls it directly, and the
 /// router driver runs each wiring node on the same host, so both call into the
@@ -227,7 +227,7 @@ impl fmt::Debug for OperationHost {
     }
 }
 
-/// The process-owned facts of an [`OperationHost`], outside its capabilities.
+/// The process-owned facts of an [`OperationHost`], outside its services.
 #[derive(Debug, Clone)]
 pub struct OperationHostConfig {
     pub project: String,
@@ -237,10 +237,10 @@ pub struct OperationHostConfig {
 }
 
 impl OperationHost {
-    /// Bind one release to the process-owned capabilities.
+    /// Bind one release to the process-owned services.
     #[expect(
         clippy::too_many_arguments,
-        reason = "each host-owned capability is an independent production dependency"
+        reason = "each host-owned host service is an independent production dependency"
     )]
     /// Hosts of one project share its blobstore plugin across releases.
     /// Every host in the same process must receive the same HTTP transport.

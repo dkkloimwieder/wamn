@@ -452,7 +452,7 @@ This map combines B3’s complete inventory with B1-3’s artifact boundary and 
 | `wamn-cdc-reader`, `wamn-client`, `wamn-test-postgres` | Retain separate replication, native client, and private PostgreSQL lifetime owners. |
 | `wamn-test-support`, `wamn-test` | Combine test support, infrastructure, and fixture-package. Combine test/tool packages into explicit targets, with application sources kept beside their apps. |
 | `receiving`, `wms`, `client-acme-receiving`, `device`, `samples`, `modbus-reader`, `netsuite`, `rest-connector`, `rest-consumer-fixture`, `wamn-integration`, `fixture`, `fixture-overlay` | Retain application component identities. Fold the five application data crates into their owning components. |
-| `http-route`, `materializer`, `blob-put`, `jsonata-expression`, `wamn-command-fixtures`, `connection-http-standard`, `sqlx-command`, `std-virtualization-probe` | Retain capability-specific artifacts. Combine busyloop and sockprobe package ownership. Fold the SQLx driver into its fixture. |
+| `http-route`, `materializer`, `blob-put`, `jsonata-expression`, `wamn-command-fixtures`, `connection-http-standard`, `sqlx-command`, `std-virtualization-probe` | Retain service-specific artifacts. Combine busyloop and sockprobe package ownership. Fold the SQLx driver into its fixture. |
 | `http-page`, `http-request`, `label-render`, `transform`, `wamn-modbus` | Retain the isolated `no_std` workspace. Fold label-template into label-render and move Modbus into this workspace. |
 | `pg_walstream` | Retain the vendor dependency until its required upstream API exists. |
 

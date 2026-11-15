@@ -58,7 +58,7 @@ Refusals remain visible and do not block other records.
 Within a record, a refusal holds later entries except those marked `append_only`.
 
 Chrome on PCs and tablets supplies the supported browser environment.
-Missing browser capabilities follow the degradation rules below.
+Missing browser features follow the degradation rules below.
 The frontend sends operations and reads rows without learning backend execution behavior.
 
 ## Architecture
@@ -884,14 +884,14 @@ A missing local set shows “needs a connection”.
 
 ### Degradation
 
-| Missing capability | Behavior |
+| Missing feature | Behavior |
 | --- | --- |
 | Service worker | The open page works. `shellStatus` reports the worker unavailable. |
 | Persistent storage grant | The page reports storage unprotected. Take-offline remains available if quota permits. |
 | IndexedDB | Collection load failures permit network fills. Durable outbox recording fails rather than asserting that a write is saved. |
 | Storage estimate | Take-offline refuses because it cannot establish headroom. |
 | Web Locks | Replay runs without the lock and relies on host deduplication. |
-| Another browser | Capability results control behavior, not the browser name. |
+| Another browser | Feature results control behavior, not the browser name. |
 
 ## Session and authorization
 

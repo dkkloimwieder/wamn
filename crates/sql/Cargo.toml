@@ -1,6 +1,6 @@
 [package]
 name = "wamn-sql"
-description = "PostgreSQL host capability and authorized transaction transport."
+description = "PostgreSQL host service and authorized transaction transport."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

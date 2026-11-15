@@ -4,9 +4,9 @@
 //! Cargo metadata and WIT package declarations under one repository root.
 
 mod authored_manifests;
-mod capability_registry;
 mod dependencies;
 mod generated_clients;
+mod platform_import_registry;
 mod version_identity;
 
 use std::path::Path;
@@ -18,7 +18,7 @@ pub fn diagnostics(root: &Path) -> Vec<String> {
     generated_clients::report_problems(root, &mut problems);
     version_identity::report_problems(root, &mut problems);
     dependencies::report_problems(root, &mut problems);
-    capability_registry::report_problems(root, &mut problems);
+    platform_import_registry::report_problems(root, &mut problems);
     problems.0
 }
 

@@ -183,7 +183,7 @@ oci-client = { version = "=0.17.0", default-features = false, features = ["rustl
 # carries regular files with a fixed owner, mode and mtime only.
 tar = { version = "0.4", default-features = false }
 tempfile = "3"
-# The S3 client for the blobstore capability. Chosen by the phase-1c spike
+# The S3 client for the blobstore host service. Chosen by the phase-1c spike
 # (wamn-15ny.4) and ratified: it is the ONLY candidate that resolves to a
 # single rustls, and that single version is 0.23 — the workspace pin. aws-sdk-s3
 # and rust-s3 each drag a second TLS stack into a host already running 0.23,

@@ -314,7 +314,7 @@ Effort: L
 Area: Cargo.toml, apps/Cargo.toml, crates, services  
 Evidence: `tools/repo-lint-dependencies:7`, `tools/repo-lint-dependencies:32`, `tools/repo-lint-dependencies:118`, `services/cdc-reader/Cargo.toml:3`, `services/host/Cargo.toml:14`; measurements.md section 2, control, runtime, engine, and generator rows.  
 Problem: The current package count mixes useful isolation with small implementation packages. A blanket merge loses enforced boundaries around the engine, edge, and workflow. Conversely, a package with one consumer or no enforced boundary is a manifest with no purpose.  
-Proposal: Adopt the following complete map. Dependencies below are allowed direct repository dependencies in production. External libraries remain subject to the existing capability restrictions. Tests use the separate permissions stated for T17 and T18.
+Proposal: Adopt the following complete map. Dependencies below are allowed direct repository dependencies in production. External libraries remain subject to the existing import restrictions. Tests use the separate permissions stated for T17 and T18.
 
 T01. `wamn-contract`: Pure catalog, authoring, registry, component-policy, event, execution, history, naming, and SQL vocabulary. It absorbs `wamn-catalog`, `wamn-authoring-model`, `wamn-control-registry`, `wamn-component-policy`, `wamn-number-pattern`, pure `wamn-project-state`, `wamn-pg-core`, `wamn-execution-contract`, `wamn-event-wire`, `wamn-event-reg`, `wamn-materializer`, and `wamn-record-history`. It also receives the manifest and schema types from B3-1. Allowed repository dependencies: none. Place it under `apps/platform/` so guests remain within their workspace. Move schema baselines into test support and bootstrap SQL into provisioning.
 
@@ -330,7 +330,7 @@ T06. `wamn-provision`: Pure provisioning, grants, package migration plans, and r
 
 T07. `wamn-identity`: Identity persistence, credentials, identity HTTP client, and identity service binary. It combines `wamn-platform-identity`, `wamn-credential-store`, `wamn-identity-client`, and the existing identity service. Allowed repository dependencies: T01, T03, T06.
 
-T08. `wamn-runtime`: Capability adapters, route execution authority, and delivery bridge. It combines `wamn-runtime` and `wamn-execution-host`. `wamn-package-artifact` stays its own package (B1-3 ruling, README). The merge waits for A5, and the A5 import boundary decides what the merged crate is. Allowed repository dependencies: T01, T03, T04, T05, T06, T07, package-artifact.
+T08. `wamn-runtime`: Host service adapters, route execution authority, and delivery bridge. It combines `wamn-runtime` and `wamn-execution-host`. `wamn-package-artifact` stays its own package (B1-3 ruling, README). The merge waits for A5, and the A5 import boundary decides what the merged crate is. Allowed repository dependencies: T01, T03, T04, T05, T06, T07, package-artifact.
 
 T09. `wamn-workflow`: Wiring walk, lowering, durable queue, and workflow operations. It absorbs `wamn-router` as a private algorithm module. Allowed repository dependencies: T01, T04, T05, T08.
 
@@ -362,7 +362,7 @@ T22. `device`: Device-frame application component. Allowed repository dependenci
 
 T23. `samples`: Sample ingestion component and private data modules. Allowed repository dependencies: T01, T02.
 
-T24. `modbus-reader`: Application adapter for the bound Modbus capability. Allowed repository dependencies: none.
+T24. `modbus-reader`: Application adapter for the bound Modbus host service. Allowed repository dependencies: none.
 
 T25. `netsuite`: NetSuite application component. Allowed repository dependencies: none. Integration-base access remains component composition.
 
@@ -386,7 +386,7 @@ T34. `jsonata-expression`: Sandboxed expression component. Allowed repository de
 
 T35. `wamn-command-fixture`: Separate `busyloop` and `sockprobe` binary targets. Allowed repository dependencies: none. Preserve their artifact names and separate command worlds.
 
-T36. `connection-http-standard`: Minimal HTTP capability fixture. Allowed repository dependencies: none.
+T36. `connection-http-standard`: Minimal HTTP host service fixture. Allowed repository dependencies: none.
 
 T37. `sqlx-command`: SQLx transport fixture, with the former `wamn-postgres-sqlx` driver as private modules. Allowed repository dependencies: none.
 
@@ -400,7 +400,7 @@ T41. `label-render`: Label component and private template renderer. It absorbs `
 
 T42. `transform`: Transform palette component. Allowed repository dependencies: none.
 
-T43. `wamn-modbus`: Modbus capability implementation, moved inside the `no_std` workspace. Allowed repository dependencies: none.
+T43. `wamn-modbus`: Modbus host service implementation, moved inside the `no_std` workspace. Allowed repository dependencies: none.
 
 T44. `pg_walstream`: Existing patched vendor dependency. Retain its source and independent dependency identity. Allowed repository dependencies: none.
 
@@ -450,7 +450,7 @@ Effort: M
 Area: apps/*/data, apps/platform/data, apps/platform/no-std  
 Evidence: `apps/wamn_receiving/data/src/lib.rs:17`, `apps/wamn_wms/data/src/lib.rs:26`, `apps/platform_fixture_overlay/component/src/lib.rs:8`, `apps/platform/fixtures/sqlx-command/Cargo.toml:11`, `apps/platform/no-std/label-render/src/lib.rs:44`.  
 Problem: Five applications place their typed data implementation in a separate package from the component that owns it. The overlay fixture already includes generated data directly in its component. SQLx has one repository consumer, while label rendering separates its pure helper despite the current guest already disabling its panic runtime for native tests.  
-Proposal: Move the five data crates into private modules of Receiving, WMS, Acme, Samples, and the platform fixture. Merge shared data helpers with typed statements in T02. Move the SQLx driver into `sqlx-command`, and template rendering into `label-render`. Keep the HTTP, JSONata, blob, and other component artifacts separate because they represent different admitted capabilities.  
+Proposal: Move the five data crates into private modules of Receiving, WMS, Acme, Samples, and the platform fixture. Merge shared data helpers with typed statements in T02. Move the SQLx driver into `sqlx-command`, and template rendering into `label-render`. Keep the HTTP, JSONata, blob, and other component artifacts separate because they represent different admitted platform imports.
 Deletes: Five application data manifests, the PostgreSQL SQLx library manifest, the label-template manifest, and the separate data-access manifest. Remove emitter references to the retired Rust crate names.  
 Risk: Module paths, generated imports, transaction ownership, and guest imports can drift. Existing behavior evidence includes `sqlx_command_commits_rolls_back_and_obeys_current_user_rls` at `crates/platform/runtime/tests/sqlx_transaction_live.rs:264`. Preserve the label vectors at `apps/platform/no-std/label-template/tests/golden.rs:56`. Receiving and WMS retain their local business suites, whose shared runtime owner is documented at `docs/operations/running-tests.md:172`. The Receiving build test at `tests/conformance/tests/package_build.rs:63` also establishes component recording and virtualization.
 

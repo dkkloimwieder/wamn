@@ -2,7 +2,7 @@
 
 `wamn_integration` is a base package in `apps/wamn_integration`.
 An integration application composes its component with an exact version and component digest.
-The package uses the existing PostgreSQL capability and generated operation interfaces.
+The package uses the existing PostgreSQL host service and generated operation interfaces.
 Its build output is `apps/target/wamn/wamn_integration`.
 
 The `wamn_integration` SQL schema owns `setting` and `log`.

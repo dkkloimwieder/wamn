@@ -109,7 +109,7 @@ pub struct AdmitComponentRequest {
     pub component_bytes: PathBuf,
     /// Package-owned component declaration to bind to the bytes.
     pub declaration: PathBuf,
-    /// Closed platform-capability set granted to these exact bytes.
+    /// Closed platform import set granted to these exact bytes.
     pub admitted_platform_packages: Vec<String>,
     /// The component digest of each base the package pins: the authored
     /// `base_dependencies` digests, with a base this run built layered over

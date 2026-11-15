@@ -39,17 +39,17 @@ These choices make no general performance assertion.
 | --- | --- | --- |
 | [`wamn:postgres`](data-access.md) | Commands need one exclusive session through admitted SQL and transaction finalization. | Native availability alone does not authorize a second database path. |
 | Ambient WASI CLI | Keep process arguments, environment and standard streams out of application and integration guests. | Native store construction must supply an empty CLI context. |
-| [Import admission](capabilities.md#import-admission) | Publication refuses unsupported authority before distribution. | Preserve the project contract when considering any native replacement. |
+| [Import admission](platform-services.md#import-admission) | Publication refuses unsupported authority before distribution. | Preserve the project contract when considering any native replacement. |
 | [Immutable wiring releases](overview.md#release-identity) | Project-owned declarations need admission, rollback identity, and exact provenance. | Reconsider when native links supply equivalent project and per-link authorization. |
 | [Invocation authority](execution.md#native-dispatch) | Deployment-trusted code can reuse native instances. Host authority remains per invocation. Guest data and task cleanup depend on reviewed component correctness. | Native dispatch owns store boundaries, overflow, and retirement. Unreviewed units remain fresh. |
 | [`wamn build`](../operations/building.md#native-programs-and-app-components) | Per-guest builds preserve digest identity and admission integration. | Native build and OCI publication must supply the same declared selection and admission requirements. |
 | Operator Event permissions | Chart `2.11.0` lacks the modern `events.k8s.io` permission in watched namespaces. | Remove the targeted `create,patch` Role only when the pinned chart grants it. |
 | [Memory and egress enforcement](execution.md#native-dispatch) | The host and environment chart enforce guest memory and raw-socket egress. Each linear memory has a 256 MiB ceiling. The shared guest budget derives from the container limit. | W28 uses the pinned wash runtime without a fork. Existing flags still accept count for observation. |
-| [Object storage](capabilities.md#object-storage) | Binding ownership requires bucket and prefix confinement plus complete-body writes. | Adopt stable `wasi:blobstore` when upstream supplies the required binding behavior by default. |
+| [Object storage](platform-services.md#object-storage) | Binding ownership requires bucket and prefix confinement plus complete-body writes. | Adopt stable `wasi:blobstore` when upstream supplies the required binding behavior by default. |
 | Platform extensions | Extension installation changes the whole database and needs administrator authority. | A package-targeted mechanism must prevent effects on neighboring packages. |
-| [HTTP transport](capabilities.md#outbound-http) | Native connector access does not preserve pinned peers and the required client identity and limits. | Public native APIs must preserve peer pinning, credential generations, aggregate bounds, and exact outcomes. |
+| [HTTP transport](platform-services.md#outbound-http) | Native connector access does not preserve pinned peers and the required client identity and limits. | Public native APIs must preserve peer pinning, credential generations, aggregate bounds, and exact outcomes. |
 | OCI certificate loading | WAMN artifact layouts need their own clients, targeted insecure-registry policy, and transport timeouts. | A public native certificate accessor or client constructor must preserve those artifact contracts. |
-| [Registry credentials](capabilities.md#registry-credentials) | Server credentials require an explicit path, exact registry authority, and a narrow credential shape. | Native code must accept that path without global environment changes or broader credential forms. |
+| [Registry credentials](platform-services.md#registry-credentials) | Server credentials require an explicit path, exact registry authority, and a narrow credential shape. | Native code must accept that path without global environment changes or broader credential forms. |
 | [Expected-host routing](execution.md#routing-and-availability) | A released hostname without a binding needs a temporary-unavailability response. | Native routing must preserve the same distinction without rewriting application responses. |
 
 Any reuse change must include its resource rules and runtime implementation together.
@@ -78,7 +78,7 @@ A fault-time liveness delay remains. Supervised restarts do not remove it.
 The [lifecycle contract](execution.md#process-lifecycle) covers the combined host shutdown path and its connection retirement limit.
 
 Project raw-socket admission is refused.
-The [HTTP capability](capabilities.md#outbound-http) has a separate policy owner.
+The [HTTP host service](platform-services.md#outbound-http) has a separate policy owner.
 A change to its external address-enforcement boundary requires its own security decision.
 
 ## PostgreSQL replication dependency

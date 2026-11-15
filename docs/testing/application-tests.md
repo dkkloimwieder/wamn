@@ -1,7 +1,7 @@
 # Application tests
 
 An application owns its fixtures, expected results, business assertions, and native test crate.
-Selected public commands need tests through the real guest, capability, transaction, and authenticated route boundaries.
+Selected public commands need tests through the real guest, host service, transaction, and authenticated route boundaries.
 Private operations use their actual caller or ingress.
 See [database tests](database-tests.md) for state and authority observations.
 

@@ -93,7 +93,7 @@ struct NativeCall<P: InvocationPolicy> {
     instantiate: tracing::Span,
 }
 
-/// Restore the native identity after the request's capability scope is revoked.
+/// Restore the native identity after the request's invocation scope is revoked.
 struct ActiveScope<'a> {
     accessor: &'a Accessor<SharedCtx>,
     component_id: Arc<str>,

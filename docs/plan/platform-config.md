@@ -80,7 +80,7 @@ environment = {
 - `targets`: the target types a package may run on, `cloud` by default. A package with models is `cloud` only; env apply refuses a package not allowed on its environment's target type.
 - `relations`: platform tables the package reads. A relation is read-only by construction; a write statement, command claim or history trigger against it is a build refusal.
 See [sequence declarations](../architecture/data-access.md#numbering).
-- `connectors` in `environment.k`: the digest of each connector the application's connections need; `host` for a `form = host` capability. Apply refuses a connection whose integration has no pin. A bump is an edit to this line and an apply, the same as a package bump.
+- `connectors` in `environment.k`: the digest of each connector the application's connections need; `host` for a `form = host` host service. Apply refuses a connection whose integration has no pin. A bump is an edit to this line and an apply, the same as a package bump.
 - A `wamn` connection's external system is the peer environment; its `parameters` carry `project/environment/application`. The connection adds transport and exchange only.
 See [sequence declarations](../architecture/data-access.md#numbering).
 
@@ -154,8 +154,8 @@ A connection has one transport and one exchange shape. Two connections between t
 The environment pins the connector digest. A connector is its own artifact and a dependency of the application; a bump is an edit to one `environment.k` line and an apply — never a connection row, a platform image or a release. This is the target: today every connector is native code compiled into the host binary and a connector change is a platform release. The runtime work that makes a connector loadable is the first assumption below; nothing in this section is filed before it is verified.
 
 - `integration` is the catalog: one row per connector code, its `form`, and the digests published for it. `connection` carries no digest.
-- `form = host | wasm | native`. `host`: compiled into the host and versioned with it — the capabilities every application uses (postgres, nats, http, blobstore, logging) and, on a local target, the raw hardware the box exposes (serial, gpio). `wasm`: a component admitted under a connector class, pulled by digest like an application. `native`: a process beside the host serving the same connector interface over a local socket, for a vendor binary that has no other form.
-- One connector interface for `wasm` and `native`; connection, binding and target tables never know the form. A `host` capability is pinned as `host` and carries the host's digest.
+- `form = host | wasm | native`. `host`: compiled into the host and versioned with it — the host services every application uses (postgres, nats, http, blobstore, logging) and, on a local target, the raw hardware the box exposes (serial, gpio). `wasm`: a component admitted under a connector class, pulled by digest like an application. `native`: a process beside the host serving the same connector interface over a local socket, for a vendor binary that has no other form.
+- One connector interface for `wasm` and `native`; connection, binding and target tables never know the form. A `host` host service is pinned as `host` and carries the host's digest.
 - Pinning per environment is the one rule for every form, the same rule packages follow; per org was rejected because it forbids a canary.
 - A bump restarts the connector inside the application: bound operations see a read gap and queued writes for the restart. A `native` restart cannot take the host down.
 
@@ -362,7 +362,7 @@ Owner rulings of 2026-10-25 on the C3 scoping questions. They replace the text b
 13. An exclusive medium allows one binding per target, readers included, because a physical port has one owner.
 14. See [integration and connection schema](integration-schema.md).
 15. C3 creates only the target identity. `target_application` and the target's platform connection are `wamn-ztxg2`.
-16. C3 builds inbound authentication only for the principals of external connections. The `wamn` connection records, peer external identity, inbound authentication, and request and event capability belong to `wamn-ym204`. The platform catalog gains a `wamn` type and version when that implementation is available.
+16. C3 builds inbound authentication only for the principals of external connections. The `wamn` connection records, peer external identity, inbound authentication, and request and event host service belong to `wamn-ym204`. The platform catalog gains a `wamn` type and version when that implementation is available.
 18. The final kind test is the REST connection from `rest_connector` to `rest_consumer_fixture` in the WMS dev document.
 
 Owner rulings made while C3 was built:

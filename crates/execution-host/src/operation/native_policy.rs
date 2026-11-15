@@ -28,7 +28,7 @@ mod logging;
 
 pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 
-/// Capabilities bound by the host invocation policy.
+/// Host services bound by the host invocation policy.
 pub(super) struct NativePolicyResources {
     pub(super) files: Option<Arc<crate::file_route::FileRoutes>>,
     pub(super) integrations: Option<Arc<wamn_integrations::Integrations>>,
@@ -625,7 +625,7 @@ impl HostPlugin for NativePolicy {
 
     fn world(&self) -> WitWorld {
         let mut imports = self.resources.postgres.world().imports;
-        // Shared node ABI types carry no callable capability. Native resolution
+        // Shared node ABI types carry no callable interface. Native resolution
         // still requires a plugin to account for this admitted structural import.
         imports.insert(WitInterface::from("wamn:node/types@0.1.0"));
         imports.extend(self.resources.logging.world().imports);

@@ -1,4 +1,4 @@
-//! The WAMN blobstore capability.
+//! The WAMN blobstore host service.
 //!
 //! WAMN is the single runtime owner of `wasmcloud:blobstore@0.1.0`. Upstream's
 //! `wasi_blobstore` providers are prior-art source only and are never

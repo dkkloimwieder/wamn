@@ -13,7 +13,7 @@ use wash_runtime::wit::WitWorld;
 use crate::invocation_trace::InvocationTrace;
 use crate::release_manifest::LoadedRelease;
 
-/// Host-owned authority exposes its release without coupling capability types.
+/// Host-owned authority exposes its release without coupling service types.
 pub trait InvocationAuthority: Any + Send + Sync {
     fn release(&self) -> Option<Arc<LoadedRelease>>;
 }
@@ -85,7 +85,7 @@ impl Default for InvocationExecution {
     }
 }
 
-/// One registry shared by the host capability readers.
+/// One registry shared by the host service readers.
 #[derive(Default)]
 pub struct InvocationScopes {
     records: RwLock<HashMap<String, Record>>,
@@ -98,7 +98,7 @@ impl std::fmt::Debug for InvocationScopes {
 }
 
 impl InvocationScopes {
-    /// Read authority without exposing its capability-specific type to the engine.
+    /// Read authority without exposing its service-specific type to the engine.
     pub fn read<T: 'static, R>(&self, scope: &str, read: impl FnOnce(&T) -> R) -> Option<R> {
         let records = self
             .records
@@ -196,7 +196,7 @@ impl InvocationScopes {
         self.enter(scope, ReleaseScope::default(), trace)
     }
 
-    /// Bind a release for a workload that supplies no other capability authority.
+    /// Bind a release for a workload that supplies no other service authority.
     pub fn bind_release(&self, scope: &str, release: Arc<LoadedRelease>) {
         self.update::<ReleaseScope, _>(scope, |record| record.0 = Some(release));
     }

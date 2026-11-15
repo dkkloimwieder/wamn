@@ -1,4 +1,4 @@
-//! Typed edge sample accessors over the frozen `wamn:postgres` capability.
+//! Typed edge sample accessors over the frozen `wamn:postgres` host service.
 //!
 //! Runtime access uses the generated statement accessors of the package, and
 //! this crate authors no SQL. The generated operation `sample.get` is

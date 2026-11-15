@@ -622,7 +622,7 @@ impl ServingManifest {
             .collect()
     }
 
-    /// Whether this operation returns short-lived file capabilities.
+    /// Whether this operation returns short-lived signed file reads.
     pub fn signs_file_results(&self, package: &str, component: &str, operation: &str) -> bool {
         self.components
             .iter()

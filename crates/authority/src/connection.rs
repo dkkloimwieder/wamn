@@ -24,7 +24,7 @@ pub use bindings::wamn::connection::http::ConnectionError;
 /// and `operation` is the node operation the router driver called on it. Both
 /// come from the driver, never from the guest. They are here because
 /// `component_digest` is a manifest key and no reader looks a component up by
-/// it, and because the capability method an effect span records says which host
+/// it, and because the host service method an effect span records says which host
 /// function ran, not which node operation raised it (`wamn-b2m6.7`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionInvocation {
@@ -151,13 +151,13 @@ pub enum ConnectionExecutionClosure {
     },
 }
 
-/// A package release for host capability fixtures that execute no released component.
+/// A package release for host service fixtures that execute no released component.
 #[cfg(any(test, feature = "test-util"))]
 pub fn test_release(project_env_key: &wamn_registry::ProjectEnvKey) -> Arc<LoadedRelease> {
     let manifest = ServingManifest::new(
         wamn_catalog::ServingRelease {
             packages: [
-                wamn_catalog::PackageCoordinate::new("capability_fixture", "1.0.0")
+                wamn_catalog::PackageCoordinate::new("host_service_fixture", "1.0.0")
                     .expect("fixture package coordinate"),
             ]
             .into(),
@@ -166,17 +166,17 @@ pub fn test_release(project_env_key: &wamn_registry::ProjectEnvKey) -> Arc<Loade
         Default::default(),
         Default::default(),
     )
-    .expect("capability fixture manifest");
+    .expect("host service fixture manifest");
     Arc::new(
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
-            "capability fixture",
+            "host service fixture",
             wamn_engine::release_manifest::ReleaseTarget::new(
                 project_env_key.clone(),
                 "dev".parse().expect("valid fixture coordinate"),
             ),
         )
-        .expect("capability fixture release"),
+        .expect("host service fixture release"),
     )
 }
 
@@ -229,12 +229,12 @@ pub fn released_invocation_application<'a>(
 
 /// Require the executing operation to be reachable from the attested wiring root.
 ///
-/// Shared with the blobstore capability rather than reimplemented there: two
+/// Shared with the blobstore host service rather than reimplemented there: two
 /// spellings of "does this component belong to this release" could disagree,
 /// and the one that was wrong would authorize an effect.
 /// The snapshot entry for one bound invocation: its route, or its wiring node.
 ///
-/// Shared with the blobstore capability for the reason
+/// Shared with the blobstore host service for the reason
 /// [`authorize_release_closure`] gives.
 pub fn entry_lookup(
     invocation: &ConnectionInvocation,
@@ -330,7 +330,7 @@ fn released_operation_reachable(
 /// Require the snapshot to carry the wiring hash, component and interface
 /// version frozen at candidate admission, and to equal the frozen binding row.
 ///
-/// Shared with the blobstore capability for the reason
+/// Shared with the blobstore host service for the reason
 /// [`authorize_release_closure`] gives. Two spellings of the candidate rule can
 /// disagree, and the wrong one authorizes an effect.
 pub fn authorize_candidate_closure(
@@ -362,7 +362,7 @@ pub fn authorize_candidate_closure(
     Ok(())
 }
 
-/// Require an active binding, the admitted generation and the selected capability's contract.
+/// Require an active binding, the admitted generation and the selected service's contract.
 pub fn authorize_snapshot(
     snapshot: &ConnectionEffectSnapshot,
     descriptor: &ConnectionTypeDescriptor,

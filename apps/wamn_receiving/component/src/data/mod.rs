@@ -1,4 +1,4 @@
-//! Typed Receiving accessors over the frozen `wamn:postgres` capability.
+//! Typed Receiving accessors over the frozen `wamn:postgres` host service.
 //!
 //! Runtime access uses content-addressed [`wamn_postgres_statements`] accessors and the generated
 //! Wamn projections. The conformance verifier consumes native sibling

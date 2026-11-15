@@ -110,7 +110,7 @@ pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 
 /// Link dynamic reads and SQL in the host operation transaction.
 /// The host path calls this from [`HostPlugin::on_workload_item_bind`]; the
-/// `pgbench` harness calls it to link the capability into a hand-built store.
+/// `pgbench` harness calls it to link the host service into a hand-built store.
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
     statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)

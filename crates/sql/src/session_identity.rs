@@ -1362,7 +1362,7 @@ pub(crate) fn validate_identity(identity: &SessionIdentity) -> anyhow::Result<()
 
 #[cfg(feature = "test-util")]
 impl WamnPostgres {
-    /// Supply isolated auth memory for capability boundary fixtures.
+    /// Supply isolated auth memory for host service boundary fixtures.
     pub fn with_auth_cache_for_test(
         mut self,
         auth: Arc<wamn_authority::auth_cache::AuthCache>,

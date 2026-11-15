@@ -702,7 +702,7 @@ impl PackageManifest {
             if name == "postgres" {
                 return Err(ManifestError::new(
                     ManifestErrorType::InvalidConnection,
-                    "postgres is a host capability, not a connection binding",
+                    "postgres is a host service, not a connection binding",
                 ));
             }
         }

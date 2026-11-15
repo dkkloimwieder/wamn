@@ -1,10 +1,10 @@
-//! Standard WASI imports must belong to the admitted capability families.
+//! Standard WASI imports must belong to the admitted import families.
 
 use super::Problems;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use wamn_component_policy::CAPABILITY_REGISTRY;
+use wamn_component_policy::PLATFORM_IMPORT_REGISTRY;
 
 fn vendored_wasi_packages(root: &Path) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
@@ -64,7 +64,10 @@ pub(super) fn report_problems(root: &Path, problems: &mut Problems) {
     problems.require(!vendored.is_empty(), || {
         "no vendored WASI packages found".to_owned()
     });
-    let registered: BTreeSet<&str> = CAPABILITY_REGISTRY.iter().map(|row| row.package).collect();
+    let registered: BTreeSet<&str> = PLATFORM_IMPORT_REGISTRY
+        .iter()
+        .map(|row| row.package)
+        .collect();
 
     for package in &vendored {
         problems.require(

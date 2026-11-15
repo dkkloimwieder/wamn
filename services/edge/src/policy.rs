@@ -1,7 +1,7 @@
 //! The per-call authority of the edge application.
 //!
 //! An edge application imports `wamn:node/types` only, so a call needs no
-//! capability binding. Activation tests the deadline, that the operation is
+//! invocation binding. Activation tests the deadline, that the operation is
 //! admitted and released, and the released-operation grant under the caller.
 
 use std::collections::{BTreeMap, HashSet};
@@ -119,7 +119,7 @@ impl EdgePolicy {
 
 impl InvocationPolicy for EdgePolicy {
     type Facts = EdgeFacts;
-    /// No capability is bound, so nothing is revoked.
+    /// No invocation authority is bound, so nothing is revoked.
     type Authority = ();
     fn activate(
         &self,

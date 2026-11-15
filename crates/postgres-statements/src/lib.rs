@@ -47,7 +47,7 @@ pub struct Json(pub String);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Uuid(pub String);
 
-/// Stable classification of a statement-capability failure.
+/// Stable classification of a statement interface failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StatementErrorType {
     SerializationFailure,
@@ -62,7 +62,7 @@ pub enum StatementErrorType {
     InvalidResult,
 }
 
-/// Contextual failure returned by the statement capability or row decoder.
+/// Contextual failure returned by the statement interface or row decoder.
 #[derive(Debug)]
 pub struct StatementError {
     type_: StatementErrorType,

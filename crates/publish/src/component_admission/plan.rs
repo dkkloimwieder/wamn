@@ -143,7 +143,7 @@ pub(super) fn host_transaction_exports(
 ///
 /// ABSENT FROM THE MANIFEST DOES NOT MEAN UNEXAMINED. The palette node's
 /// identity and posture are governed on the same push: its imports pass the
-/// project allowlist and the capability registry's posture
+/// project allowlist and the platform import registry's posture
 /// (`wamn_component_policy::analyze_project`), and its declared exports are
 /// validated against the component bytes (`wamn_engine::component_admission`)
 /// before this function runs. This branch only
