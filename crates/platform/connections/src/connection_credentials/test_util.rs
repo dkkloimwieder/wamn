@@ -138,7 +138,7 @@ impl Fixture {
                 wamn_control_provision::test_database::login_sql(
                     wamn_control_provision::WorkloadRoleFamily::ConnectionReader,
                     self.database.path().trim_start_matches('/'),
-                    &role,
+                    &role.parse().unwrap(),
                     "fixture-password"
                 )
             ))

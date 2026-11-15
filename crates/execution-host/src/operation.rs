@@ -548,12 +548,13 @@ impl NodeAcquisition {
     /// The `app.user_id` of this acquisition: the caller principal, or the
     /// platform principal of a callerless delivery. An anonymous attachment
     /// has neither.
-    fn executing_principal(&self, caller: Option<&AuthenticatedCaller>) -> Option<String> {
+    fn executing_principal(
+        &self,
+        caller: Option<&AuthenticatedCaller>,
+    ) -> Option<wamn_identity_protocol::PrincipalId> {
         match caller {
             Some(caller) => Some(caller.principal_id().to_owned()),
-            None => self
-                .platform
-                .map(|component| component.principal_id().to_string()),
+            None => self.platform.map(PlatformComponent::principal_id),
         }
     }
 

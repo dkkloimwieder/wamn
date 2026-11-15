@@ -39,7 +39,7 @@ pub enum ProductionLeaseResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionWorkflow {
     pub wiring_hash: wamn_digest::Digest,
-    pub execution_principal_id: String,
+    pub execution_principal_id: wamn_identity_protocol::PrincipalId,
     pub execution_role: String,
     pub node_digests: std::collections::BTreeMap<String, wamn_digest::Digest>,
     pub causation: Option<wamn_event_wire::Causation>,

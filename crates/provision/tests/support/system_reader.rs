@@ -9,7 +9,7 @@ pub const PROJECT: &str = "widgets";
 pub const ENV: &str = "dev";
 pub const READER_PW: &str = "wamn_system_reader_pw";
 
-pub fn generation_role(reader: SystemReader, database: &str) -> String {
+pub fn generation_role(reader: SystemReader, database: &str) -> wamn_identity_protocol::LoginName {
     system_reader_login(reader, ORG, PROJECT, ENV, database)
 }
 
@@ -22,7 +22,7 @@ pub fn generation_role(reader: SystemReader, database: &str) -> String {
 pub fn reset_roles(admin_url: &str, database: &str) {
     let mut roles = Vec::new();
     for reader in SystemReader::ALL {
-        roles.push(generation_role(reader, database));
+        roles.push(generation_role(reader, database).to_string());
         roles.push(reader.family().acl_role().to_owned());
     }
     let mut script = String::new();

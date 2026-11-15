@@ -109,7 +109,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     assert_eq!(active, 0, "bootstrap left active issuer authority");
     // Every provisioning write stamps wamn:provisioning: the service principals
     // and roles from wamn-ctl, and the tokens from wamn-identity.
-    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    let provisioning = PlatformComponent::Provisioning.principal_id();
     let stamped: bool = sqlx::query(sqlx::AssertSqlSafe(
         ("SELECT (SELECT bool_and(created_by = $1::text::uuid AND updated_by = $1::text::uuid) \
                      FROM identity.principals) \

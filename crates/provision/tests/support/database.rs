@@ -91,9 +91,9 @@ pub async fn package_migration_input(
     let key = wamn_registry::project_env_key(org, project, environment);
     let login = crate::migration::login(&key, database)?;
     let mut admin = wamn_postgres::connect(input).await?;
-    let role = postgres_protocol::escape::escape_identifier(&login);
+    let role = postgres_protocol::escape::escape_identifier(login.as_str());
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {role} LOGIN PASSWORD 'migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT CONNECT ON DATABASE {} TO {role}; GRANT {role} TO wamn_db_owner WITH INHERIT TRUE, SET TRUE",
-        postgres_protocol::escape::escape_literal(&login), postgres_protocol::escape::escape_identifier(database))))
+        postgres_protocol::escape::escape_literal(login.as_str()), postgres_protocol::escape::escape_identifier(database))))
         .execute(&mut admin).await?;
     let install_privileges: bool = sqlx::query_scalar(
         "SELECT to_regnamespace('platform') IS NOT NULL AND NOT EXISTS(SELECT FROM pg_event_trigger WHERE evtname='wamn_migration_privileges')",
@@ -106,7 +106,7 @@ pub async fn package_migration_input(
             .await?;
     }
     let mut url = url::Url::parse(input)?;
-    url.set_username(&login)
+    url.set_username(login.as_str())
         .map_err(|()| anyhow::anyhow!("fixture login"))?;
     url.set_password(Some("migration-fixture"))
         .map_err(|()| anyhow::anyhow!("fixture password"))?;
@@ -171,16 +171,16 @@ mod tests {
 pub fn login_sql(
     family: crate::WorkloadRoleFamily,
     database: &str,
-    role: &str,
+    role: &wamn_identity_protocol::LoginName,
     password: &str,
 ) -> String {
     use postgres_protocol::escape::{escape_identifier, escape_literal};
     format!(
         "{} CREATE ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; {}; {} {}",
         crate::sql::ensure_workload_acl_role_sql(family),
-        escape_identifier(role),
+        escape_identifier(role.as_str()),
         escape_literal(password),
-        membership_sql(family, role, true),
+        membership_sql(family, role.as_str(), true),
         sql::platform_group_membership_sql(family),
         crate::sql::grant_workload_login_sql(family, database, role)
     )
@@ -205,10 +205,10 @@ pub fn issuer_login_sql(issuer: &str, password: &str) -> anyhow::Result<String> 
     Ok(format!(
         "{} CREATE ROLE {} LOGIN INHERIT PASSWORD {}; GRANT wamn_identity_issuer TO {} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; GRANT CONNECT ON DATABASE wamn_system TO {};",
         crate::identity_role::grant_identity_issuer_surface_sql(),
-        escape_identifier(&role),
+        escape_identifier(role.as_str()),
         escape_literal(password),
-        escape_identifier(&role),
-        escape_identifier(&role)
+        escape_identifier(role.as_str()),
+        escape_identifier(role.as_str())
     ))
 }
 
@@ -234,7 +234,7 @@ pub async fn platform_migration_input(
         .get_database()
         .ok_or_else(|| anyhow::anyhow!("fixture database is absent"))?;
     let role = scope.managed_role(database);
-    let name = postgres_protocol::escape::escape_identifier(&role.name);
+    let name = postgres_protocol::escape::escape_identifier(role.name.as_str());
     let mut admin = wamn_postgres::connect(input).await?;
     match scope {
         crate::migrations::MigrationDatabase::System => {
@@ -248,7 +248,7 @@ pub async fn platform_migration_input(
     }
     // CNPG grants this membership with SET permission, which ownership transfers require.
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {name} LOGIN PASSWORD 'platform-migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT {} TO {name} WITH INHERIT TRUE, SET TRUE; GRANT CONNECT ON DATABASE {} TO {name}",
-        postgres_protocol::escape::escape_literal(&role.name), scope.owner_role(), postgres_protocol::escape::escape_identifier(database))))
+        postgres_protocol::escape::escape_literal(role.name.as_str()), scope.owner_role(), postgres_protocol::escape::escape_identifier(database))))
         .execute(&mut admin).await?;
     let identity_exists: bool =
         sqlx::query_scalar("SELECT to_regclass('platform.login_principal') IS NOT NULL")
@@ -260,7 +260,7 @@ pub async fn platform_migration_input(
             .execute(&mut admin).await?;
     }
     let mut url = url::Url::parse(input)?;
-    url.set_username(&role.name)
+    url.set_username(role.name.as_str())
         .map_err(|()| anyhow::anyhow!("fixture login"))?;
     url.set_password(Some("platform-migration-fixture"))
         .map_err(|()| anyhow::anyhow!("fixture password"))?;

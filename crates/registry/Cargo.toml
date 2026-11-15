@@ -9,6 +9,7 @@ license.workspace = true
 test-util = []
 
 [dependencies]
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 anyhow.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 wamn-digest = { workspace = true, features = ["sqlx"] }

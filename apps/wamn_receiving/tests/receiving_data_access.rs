@@ -615,7 +615,7 @@ mod tests {
         let update = async |mut writer: Client, supplier: Uuid| -> Result<UpdateResult> {
             let mut transaction = wamn_test_postgres::transaction(
                 &mut writer,
-                &FIXTURE_PRINCIPAL.to_string(),
+                &FIXTURE_PRINCIPAL.into(),
                 FIXTURE_OPERATION,
             )
             .await?;
@@ -1005,13 +1005,10 @@ mod tests {
 
     async fn execute_create_inspection(client: &mut Client, receipt_id: Uuid) -> Result<bool> {
         sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
-        let mut transaction = wamn_test_postgres::transaction(
-            client,
-            &COMMAND_PRINCIPAL.to_string(),
-            FIXTURE_OPERATION,
-        )
-        .await
-        .context("begin exact create_inspection transaction")?;
+        let mut transaction =
+            wamn_test_postgres::transaction(client, &COMMAND_PRINCIPAL.into(), FIXTURE_OPERATION)
+                .await
+                .context("begin exact create_inspection transaction")?;
         let inserted = sqlx::query(OVERLAY_INSERT_INSPECTION_SQL)
             .bind(&receipt_id)
             .fetch_optional(&mut *transaction)
@@ -1340,13 +1337,10 @@ mod tests {
         location_id: Uuid,
     ) -> Result<()> {
         sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
-        let mut transaction = wamn_test_postgres::transaction(
-            client,
-            &FIXTURE_PRINCIPAL.to_string(),
-            FIXTURE_OPERATION,
-        )
-        .await
-        .context("begin location-lock test transaction")?;
+        let mut transaction =
+            wamn_test_postgres::transaction(client, &FIXTURE_PRINCIPAL.into(), FIXTURE_OPERATION)
+                .await
+                .context("begin location-lock test transaction")?;
         let line = json!([{
             "purchase_order_line_id": purchase_order_line_id.hyphenated().to_string(),
             "quantity": "1.0",
@@ -1495,13 +1489,10 @@ mod tests {
         command: &ReceiptCommand,
     ) -> Result<std::result::Result<ReceiptCommandResult, DomainRefusal>> {
         sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
-        let mut transaction = wamn_test_postgres::transaction(
-            client,
-            &COMMAND_PRINCIPAL.to_string(),
-            FIXTURE_OPERATION,
-        )
-        .await
-        .context("begin exact record_receipt transaction")?;
+        let mut transaction =
+            wamn_test_postgres::transaction(client, &COMMAND_PRINCIPAL.into(), FIXTURE_OPERATION)
+                .await
+                .context("begin exact record_receipt transaction")?;
         let outcome = match execute_record_receipt_in(&mut transaction, command).await {
             Ok(result) => {
                 transaction

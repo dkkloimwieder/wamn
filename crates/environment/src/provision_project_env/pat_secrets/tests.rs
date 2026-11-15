@@ -54,7 +54,11 @@ async fn auth_drops_create_service_records_the_created_identity(pool: sqlx::PgPo
     assert_eq!(principal.id().to_string().as_str(), PRINCIPAL);
     tx.commit().await.unwrap();
     let mut expected = AuthDrops::default();
-    expected.identity(PRINCIPAL);
+    expected.identity(
+        &PRINCIPAL
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+    );
     assert_eq!(drops, expected);
     assert!(
         resolve_subject(&mut client, PrincipalType::Service, "new-service")
@@ -100,7 +104,11 @@ async fn auth_drops_assign_project_role_records_the_changed_identity(pool: sqlx:
     .unwrap();
     tx.commit().await.unwrap();
     let mut expected = AuthDrops::default();
-    expected.identity(PRINCIPAL);
+    expected.identity(
+        &PRINCIPAL
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+    );
     assert_eq!(drops, expected);
     assert_eq!(
         wamn_platform_identity::project_roles(&mut client, principal.id(), "org", "project")
@@ -125,7 +133,11 @@ async fn auth_drops_resolve_or_create_service_returns_only_the_created_identity(
             .await
             .unwrap();
     let mut expected = AuthDrops::default();
-    expected.identity(PRINCIPAL);
+    expected.identity(
+        &PRINCIPAL
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+    );
     assert_eq!(drops, expected);
     assert_eq!(principal.id().to_string().as_str(), PRINCIPAL);
     let mut reader = system_client(system.as_str()).await;

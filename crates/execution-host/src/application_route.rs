@@ -99,7 +99,7 @@ struct CounterSetRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UserRoleRequest {
-    user_id: String,
+    user_id: wamn_identity_protocol::PrincipalId,
     role: String,
 }
 
@@ -227,7 +227,7 @@ impl ApplicationRoutes<'_> {
             workflow.execution_type.as_str(),
             workflow.execution_role.as_deref(),
         ) {
-            ("role", Some(role)) => (workflow_user_id().to_string(), role.to_owned()),
+            ("role", Some(role)) => (workflow_user_id(), role.to_owned()),
             ("invoker", None) => {
                 let role = caller
                     .active_role()
@@ -325,7 +325,7 @@ impl ApplicationRoutes<'_> {
                 self.run(attachment, principal, false, async |client| {
                     let mut listed = Vec::new();
                     for user in application_users(client).await? {
-                        let id: PrincipalId = user.id.parse()?;
+                        let id: PrincipalId = user.id;
                         let covered = is_project_admin(
                             &mut *identity.acquire().await?,
                             &id,
@@ -423,9 +423,8 @@ impl ApplicationRoutes<'_> {
             }
             HostHandler::UserRoleGrant => {
                 let request: UserRoleRequest = parse(payload)?;
-                let user: PrincipalId = request.user_id.parse()?;
-                let user_text = user.to_string();
-                let user_id = user_text.as_str();
+                let user: PrincipalId = request.user_id;
+                let user_id = &user;
                 self.run(attachment, principal, true, async |client| {
                     let granted = mutate_grant(
                         client,
@@ -445,9 +444,8 @@ impl ApplicationRoutes<'_> {
             }
             HostHandler::UserRoleRevoke => {
                 let request: UserRoleRequest = parse(payload)?;
-                let user: PrincipalId = request.user_id.parse()?;
-                let user_text = user.to_string();
-                let user_id = user_text.as_str();
+                let user: PrincipalId = request.user_id;
+                let user_id = &user;
                 self.run(attachment, principal, true, async |client| {
                     let revoked = mutate_grant(
                         client,
@@ -496,7 +494,7 @@ impl ApplicationRoutes<'_> {
             self.postgres,
             self.project,
             self.release.target().project_env_key.as_str(),
-            principal.to_string().as_str(),
+            principal,
             &attachment.operation,
             request_id.unwrap_or_default(),
             &set,

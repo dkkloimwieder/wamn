@@ -449,9 +449,7 @@ async fn recover_and_close_record_each_capture_gap() {
     wamn_events::capture_gap::require_resynchronized(&system_url, &triple)
         .await
         .unwrap();
-    let actor = wamn_control_provision::PlatformComponent::Provisioning
-        .principal_id()
-        .to_string();
+    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
     wamn_test_infrastructure::record_history::assert_stamp(
         &mut system,
         "registry.capture_gap",

@@ -225,7 +225,7 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
             "a",
             None,
             Some(&members[1].email),
-            Some("00000000-0000-0000-0000-000000000000"),
+            Some(&"00000000-0000-0000-0000-000000000000".parse().unwrap()),
             Some(2)
         )
         .await

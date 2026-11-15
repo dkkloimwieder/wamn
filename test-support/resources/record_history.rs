@@ -9,11 +9,11 @@ pub async fn assert_stamp(
     client: &mut sqlx::PgConnection,
     relation: &str,
     predicate: &str,
-    created_by: &str,
-    updated_by: &str,
+    created_by: &wamn_identity_protocol::PrincipalId,
+    updated_by: &wamn_identity_protocol::PrincipalId,
 ) {
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT created_by::text, updated_by::text, \
+        "SELECT created_by, updated_by, \
                  isfinite(created_at) AND isfinite(updated_at) \
                    AND created_at <= updated_at AND updated_at <= clock_timestamp() \
                  FROM {relation} WHERE {predicate}"
@@ -24,12 +24,12 @@ pub async fn assert_stamp(
     assert!(!rows.is_empty(), "{relation}: no stamped rows");
     for row in rows {
         assert_eq!(
-            row.get::<String, _>(0),
+            &row.get::<wamn_identity_protocol::PrincipalId, _>(0),
             created_by,
             "{relation}: created_by"
         );
         assert_eq!(
-            row.get::<String, _>(1),
+            &row.get::<wamn_identity_protocol::PrincipalId, _>(1),
             updated_by,
             "{relation}: updated_by"
         );

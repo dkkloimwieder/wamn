@@ -96,7 +96,7 @@ async fn issue_pat_secret(
         triple,
         namespace,
         purpose,
-        principal.id().to_string().as_str(),
+        principal.id(),
         &issued.token,
         &issued.token_prefix,
         &issued.expires_at,

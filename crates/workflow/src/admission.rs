@@ -135,7 +135,7 @@ pub async fn admit_schedule_run(
             let Ok(nodes) = node_digests(release, application, &graph, &hash) else {
                 return Ok(ScheduleRunAdmitted::NotServed);
             };
-            let principal = workflow_user_id().to_string();
+            let principal = workflow_user_id();
             let role = role.as_deref().unwrap_or(ADMIN_ROLE);
             Ok(
                 match admission::admit_run(

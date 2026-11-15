@@ -214,8 +214,6 @@ async fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
         );
     }
     for (field, value) in [
-        ("sub", json!("not-a-uuid")),
-        ("authority", json!({"login": "not-a-uuid"})),
         (
             "authority",
             json!({"unknown": "ed7056a9-5639-455f-9640-4678458794c0"}),

@@ -19,7 +19,7 @@ pub enum AuthChange {
     /// The user row or the user roles of `principal` in `project_env_key`.
     Principal {
         project_env_key: String,
-        principal: String,
+        principal: wamn_identity_protocol::PrincipalId,
     },
     /// A role or a permission of `project_env_key`, which every principal holding the
     /// role reads, or the environment status of `project_env_key`.
@@ -27,7 +27,7 @@ pub enum AuthChange {
     /// A PAT, a login, a membership or the status of `principal`. These are
     /// facts of the organization, so they change the principal in every
     /// project.
-    Identity(String),
+    Identity(wamn_identity_protocol::PrincipalId),
 }
 
 /// The changes of one transaction, published after its commit.
@@ -36,7 +36,11 @@ pub enum AuthChange {
 pub struct AuthDrops(BTreeSet<AuthChange>);
 
 impl AuthDrops {
-    pub fn principal(&mut self, project_env_key: &str, principal: &str) {
+    pub fn principal(
+        &mut self,
+        project_env_key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) {
         self.0.insert(AuthChange::Principal {
             project_env_key: project_env_key.to_owned(),
             principal: principal.to_owned(),
@@ -48,7 +52,7 @@ impl AuthDrops {
             .insert(AuthChange::ProjectEnvKey(project_env_key.to_owned()));
     }
 
-    pub fn identity(&mut self, principal: &str) {
+    pub fn identity(&mut self, principal: &wamn_identity_protocol::PrincipalId) {
         self.0.insert(AuthChange::Identity(principal.to_owned()));
     }
 
@@ -72,8 +76,11 @@ pub const BUCKET: &str = "wamn-auth";
 
 /// The key of the grants of `principal` in the environment named `project_env_key`.
 /// This shared cache key stays targeted after the table project columns leave.
-pub fn principal_key(project_env_key: &str, principal: &str) -> String {
-    wamn_registry::name::nats_subject(&[project_env_key, principal])
+pub fn principal_key(
+    project_env_key: &str,
+    principal: &wamn_identity_protocol::PrincipalId,
+) -> String {
+    format!("{project_env_key}.{principal}")
 }
 
 /// The key of the environment status of `project_env_key`. A principal id is a UUID,
@@ -87,8 +94,8 @@ pub fn project_env_key(project_env_key: &str) -> String {
 pub const IDENTITY_TOKEN: &str = "=identity";
 
 /// The key a change of an identity fact of `principal` deletes.
-pub fn identity_key(principal: &str) -> String {
-    wamn_registry::name::nats_subject(&[IDENTITY_TOKEN, principal])
+pub fn identity_key(principal: &wamn_identity_protocol::PrincipalId) -> String {
+    format!("{IDENTITY_TOKEN}.{principal}")
 }
 
 /// Open the bucket. Identity makes it ([`crate::kv_memory::create_buckets`]).

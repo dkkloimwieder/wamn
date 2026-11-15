@@ -79,6 +79,19 @@ Every project and deployment derives the same id, so no configuration carries it
 The id of the `workflow` user is `uuid5(WAMN_NAMESPACE, "workflow")`.
 [`wamn-identity-protocol`](../../crates/identity-protocol/src/platform.rs) defines the namespace, the component list, and the derivation.
 
+## Principal IDs and database logins
+
+`wamn-identity-protocol` owns `PrincipalId` and `LoginName`.
+A principal ID uses lowercase UUID text with hyphens on HTTP and WIT interfaces.
+The parser refuses uppercase text and other UUID spellings.
+Rust carries the UUID inside `PrincipalId`. SQLx reads and writes it as PostgreSQL `uuid`.
+This includes PAT principals, workflow actors, and `platform.tx_identity.principal_id`.
+
+`LoginName` preserves the exact PostgreSQL login name.
+A name contains 1 to 63 bytes and no NUL byte.
+Rust carries this type through credential configuration and login derivation.
+SQLx reads and writes it as text. `platform.login_principal` keeps its login-to-principal mapping.
+
 ## Environment names
 
 `wamn_registry::name` owns resource names, database names, NATS users, event subjects, and host status labels.

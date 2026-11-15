@@ -25,7 +25,7 @@ const REGISTERED_ORG_SQL: &str = wamn_registry::sql::IDENTITY_SRC_SESSION_REGIST
 const CURRENT_TARGET_SQL: &str = wamn_registry::sql::IDENTITY_SRC_SESSION_CURRENT_TARGET_SQL;
 const ENVIRONMENT_ROLES_SQL: &str = "SELECT r.role_name FROM platform.\"user\" u \
     JOIN platform.user_role r ON r.user_id = u.id \
-    WHERE u.id = $1::text::uuid AND u.status = 'active' \
+    WHERE u.id = $1 AND u.status = 'active' \
     ORDER BY r.role_name";
 
 #[derive(Debug)]
@@ -178,12 +178,10 @@ pub(super) async fn authorized_roles(
     let target = &configured.binding;
     let triple = target.triple();
     let mut database = inner.database().await.map_err(|_| failed())?;
-    let mut transaction = wamn_platform_identity::transaction::read_connection(
-        &mut database.client,
-        &principal.id().to_string(),
-    )
-    .await
-    .map_err(|_| failed())?;
+    let mut transaction =
+        wamn_platform_identity::transaction::read_connection(&mut database.client, principal.id())
+            .await
+            .map_err(|_| failed())?;
     if !has_project_env_membership(
         &mut transaction,
         principal.id(),
@@ -235,12 +233,12 @@ pub(super) async fn authorized_roles(
     };
     let mut transaction = wamn_platform_identity::transaction::read_connection(
         &mut roles_database.client,
-        &principal.id().to_string(),
+        principal.id(),
     )
     .await
     .map_err(|_| failed())?;
     let rows = sqlx::query(ENVIRONMENT_ROLES_SQL)
-        .bind(principal.id().to_string().as_str())
+        .bind(principal.id())
         .fetch_all(&mut *transaction)
         .await
         .map_err(|_| failed())?;

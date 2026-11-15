@@ -39,7 +39,7 @@ wamn-connections = { workspace = true }
 wamn-digest = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-identity-protocol = { workspace = true }
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-package-artifact = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-postgres = { workspace = true }

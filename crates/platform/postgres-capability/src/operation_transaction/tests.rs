@@ -204,7 +204,7 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool:
             OPERATION_OWNER,
             &SessionIdentity {
                 project_env_key: PROJECT_ENV_KEY.into(),
-                user_id: Some(LIVE_PRINCIPAL.into()),
+                user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
                 operation: Some(OWNER_OPERATION.into()),
                 ..SessionIdentity::default()
             },

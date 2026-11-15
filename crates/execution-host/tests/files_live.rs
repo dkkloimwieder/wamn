@@ -364,7 +364,7 @@ impl FileHost {
         )?;
         Ok(AuthenticatedCaller::new(
             "file-operation",
-            MEMBER,
+            MEMBER.parse().unwrap(),
             CredentialType::Session,
             false,
             [wamn_catalog::sealed_operation_reference(READ).to_owned()].into(),

@@ -54,7 +54,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 async fn install(
     admin: &mut Client,
     database: &str,
-    generation: &str,
+    generation: &wamn_identity_protocol::LoginName,
     admin_url: &str,
 ) -> anyhow::Result<()> {
     let version: i32 = sqlx::query("SHOW server_version_num")
@@ -266,7 +266,10 @@ async fn accepted(route: &FlowHttpRouting, body: &Value) -> AuthenticatedCaller 
         .expect("host-owned caller")
 }
 
-async fn statements(admin: &mut Client, generation: &str) -> anyhow::Result<BTreeMap<String, i64>> {
+async fn statements(
+    admin: &mut Client,
+    generation: &wamn_identity_protocol::LoginName,
+) -> anyhow::Result<BTreeMap<String, i64>> {
     sqlx::query("SELECT query, calls::bigint FROM pg_stat_statements \
          WHERE userid = (SELECT oid FROM pg_roles WHERE rolname = $1) \
          AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) ORDER BY query").bind(&generation).fetch_all(&mut *admin).await?.into_iter().map(|row| Ok((row.try_get(0)?, row.try_get(1)?))).collect()
@@ -340,7 +343,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     sqlx::query("INSERT INTO platform.permission (role_name, permission) VALUES ('purchase-reader', regexp_replace($1, '@[^@]*$', ''))").bind(&OTHER_PROJECT_ENV_KEY).execute(&mut other_admin).await.map(|result| result.rows_affected())?;
 
     let mut url = url::Url::parse(admin_url)?;
-    url.set_username(&generation)
+    url.set_username(generation.as_str())
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
     url.set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("set fixture password"))?;
@@ -353,8 +356,14 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     )
     .fetch_one(&mut authorizeded)
     .await?;
-    assert_eq!(identity.get::<String, _>(0), generation);
-    assert_eq!(identity.get::<String, _>(1), generation);
+    assert_eq!(
+        identity.get::<wamn_identity_protocol::LoginName, _>(0),
+        generation
+    );
+    assert_eq!(
+        identity.get::<wamn_identity_protocol::LoginName, _>(1),
+        generation
+    );
     assert!(!identity.get::<bool, _>(2) && !identity.get::<bool, _>(3));
     assert!(identity.get::<bool, _>(4));
     assert!(
@@ -413,7 +422,14 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     accepted(&route, &first).await;
     let before = statements(&mut admin, &generation).await?;
     let admitted = accepted(&route, &first).await;
-    assert_eq!(admitted.principal_id(), first["sub"].as_str().unwrap());
+    assert_eq!(
+        admitted.principal_id(),
+        &first["sub"]
+            .as_str()
+            .unwrap()
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap()
+    );
     assert_eq!(admitted.credential_type(), CredentialType::Session);
     assert_eq!(admitted.clone().credential_type(), CredentialType::Session);
     assert!(admitted.permits(READ) && admitted.permits(WRITE));
@@ -422,7 +438,12 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         "same role name cannot cross the environment database"
     );
     let other = accepted(&route, &second).await;
-    assert_eq!(other.principal_id(), SECOND_PRINCIPAL);
+    assert_eq!(
+        other.principal_id(),
+        &SECOND_PRINCIPAL
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap()
+    );
     assert!(other.permits(READ) && !other.permits(WRITE));
     assert_eq!(
         accepted(&mixed, &first).await.credential_type(),
@@ -496,7 +517,14 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         .await
         .expect("a cookie with its CSRF header is admitted")
         .expect("host-owned caller");
-    assert_eq!(by_cookie.principal_id(), first["sub"].as_str().unwrap());
+    assert_eq!(
+        by_cookie.principal_id(),
+        &first["sub"]
+            .as_str()
+            .unwrap()
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap()
+    );
     assert_eq!(by_cookie.credential_type(), CredentialType::Session);
     assert!(by_cookie.permits(READ) && by_cookie.permits(WRITE));
     assert_eq!(

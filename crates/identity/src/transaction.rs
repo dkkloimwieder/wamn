@@ -3,7 +3,7 @@
 /// Read a protected platform record under its caller on a pooled connection.
 pub async fn read_pool(
     pool: &sqlx::PgPool,
-    principal: &str,
+    principal: &wamn_identity_protocol::PrincipalId,
 ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
     read(
         pool.begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
@@ -16,7 +16,7 @@ pub async fn read_pool(
 /// Read a protected platform record under its caller on a dedicated connection.
 pub async fn read_connection<'connection>(
     connection: &'connection mut sqlx::PgConnection,
-    principal: &str,
+    principal: &wamn_identity_protocol::PrincipalId,
 ) -> Result<sqlx::Transaction<'connection, sqlx::Postgres>, sqlx::Error> {
     use sqlx::Connection as _;
     read(
@@ -30,9 +30,9 @@ pub async fn read_connection<'connection>(
 
 async fn read<'connection>(
     mut transaction: sqlx::Transaction<'connection, sqlx::Postgres>,
-    principal: &str,
+    principal: &wamn_identity_protocol::PrincipalId,
 ) -> Result<sqlx::Transaction<'connection, sqlx::Postgres>, sqlx::Error> {
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','','admin:authority-read')")
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','','admin:authority-read')")
         .bind(principal).execute(&mut *transaction).await?;
     sqlx::query("SET TRANSACTION READ ONLY")
         .execute(&mut *transaction)

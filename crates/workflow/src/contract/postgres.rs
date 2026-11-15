@@ -57,8 +57,8 @@ impl PostgresWorkflows {
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<(), WorkflowError> {
         let executor = PlatformComponent::Executor;
-        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','', $2)")
-            .bind(executor.principal_id().to_string()).bind(executor.principal_name())
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','', $2)")
+            .bind(executor.principal_id()).bind(executor.principal_name())
             .execute(&mut **transaction).await
             .map_err(|error| WorkflowError::storage("bind the transaction principal", error))?;
         sqlx::query("SELECT set_config('search_path', $1, true)")

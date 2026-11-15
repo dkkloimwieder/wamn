@@ -50,7 +50,7 @@ pub async fn reset_database(
     wamn_control_provision::migration::require_login(&mut migration, &project_env_key).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "DROP OWNED BY {}",
-        postgres_protocol::escape::escape_identifier(&login)
+        postgres_protocol::escape::escape_identifier(login.as_str())
     )))
     .execute(&mut migration)
     .await?;
@@ -71,7 +71,7 @@ pub async fn reset_database(
     sqlx::raw_sql("TRUNCATE platform.write_log")
         .execute(&mut *tx)
         .await?;
-    let role = postgres_protocol::escape::escape_identifier(&login);
+    let role = postgres_protocol::escape::escape_identifier(login.as_str());
     let database = postgres_protocol::escape::escape_identifier(&database);
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "GRANT CONNECT ON DATABASE {database} TO {role}; {}",
@@ -285,9 +285,7 @@ async fn resume_users(
         .values;
     ensure::provision_environment_host(platform, &control, document).await?;
     // Restore every selected release before readers or hosts can admit work.
-    let actor = wamn_identity_protocol::PlatformComponent::Provisioning
-        .principal_id()
-        .to_string();
+    let actor = wamn_identity_protocol::PlatformComponent::Provisioning.principal_id();
     let mut applications = Vec::new();
     for (application, selection) in &document.applications {
         if matches!(

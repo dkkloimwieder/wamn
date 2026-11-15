@@ -168,16 +168,16 @@ pub async fn materialize_application_principals(
         );
         let written = sqlx::query(
             "INSERT INTO platform.\"user\" (id, type, email, display_name) \
-             VALUES ($1::text::uuid, 'service', $2, $3) ON CONFLICT (id) DO NOTHING",
+             VALUES ($1, 'service', $2, $3) ON CONFLICT (id) DO NOTHING",
         )
-        .bind(principal.id().to_string().as_str())
+        .bind(principal.id())
         .bind(format!("{subject}@{domain}"))
         .bind(&subject)
         .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())?;
         if written != 0 {
-            drops.principal(project_env_key, principal.id().to_string().as_str());
+            drops.principal(project_env_key, principal.id());
         }
         let role = format!("application-{}", package.package.id.replace('_', "-"));
         wamn_platform_identity::application::create_role(
@@ -234,14 +234,22 @@ pub async fn write_runtime_grants(
             principal.status() == wamn_platform_identity::PrincipalStatus::Active,
             "application principal {subject} is disabled"
         );
-        let active: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1::text::uuid AND type='service' AND status='active')").bind(principal.id().to_string().as_str()).fetch_one(&mut **transaction).await?.get(0);
+        let active: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1 AND type='service' AND status='active')").bind(principal.id()).fetch_one(&mut **transaction).await?.get(0);
         ensure!(
             active,
             "application principal {subject} is absent or inactive in the project; run env initialize"
         );
         let role = format!("application-{}", package.package.id.replace('_', "-"));
-        let owned: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$3::text::uuid) \
-             AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2::text::uuid)").bind(&role).bind(principal.id().to_string().as_str()).bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id().to_string()).fetch_one(&mut **transaction).await?.get(0);
+        let owned: bool = sqlx::query(
+            "SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$3) \
+             AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2)",
+        )
+        .bind(&role)
+        .bind(principal.id())
+        .bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id())
+        .fetch_one(&mut **transaction)
+        .await?
+        .get(0);
         ensure!(
             owned,
             "application role {role} is missing, authored, or shared; run env initialize or resolve its ownership"
@@ -268,7 +276,7 @@ pub async fn write_runtime_grants(
             project_env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::UserRole {
-                user_id: principal.id().to_string().as_str(),
+                user_id: principal.id(),
                 role: &role,
                 grant: true,
             },
@@ -368,7 +376,7 @@ pub async fn write_release(
     project_env_key: &str,
     digest: &wamn_digest::Digest,
     manifest: &wamn_catalog::ServingManifest,
-    actor: &str,
+    actor: &wamn_identity_protocol::PrincipalId,
 ) -> anyhow::Result<()> {
     let bytes = manifest.canonical_bytes();
     ensure!(
@@ -382,7 +390,7 @@ pub async fn write_release(
         .await
         .context("begin the release cache write")?;
     sqlx::query(
-        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','','wamn:provisioning')",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','','wamn:provisioning')",
     )
     .bind(actor)
     .execute(&mut *transaction)
@@ -456,16 +464,10 @@ mod tests {
             host_routes: BTreeSet::new(),
         };
         let digest = manifest.digest();
-        let publisher = uuid::Uuid::new_v4();
-        super::write_release(
-            database.as_str(),
-            "history",
-            &digest,
-            &manifest,
-            &publisher.to_string(),
-        )
-        .await
-        .unwrap();
+        let publisher: wamn_identity_protocol::PrincipalId = uuid::Uuid::new_v4().into();
+        super::write_release(database.as_str(), "history", &digest, &manifest, &publisher)
+            .await
+            .unwrap();
         let mut client = super::super::analyse::connect_project(database.as_str())
             .await
             .unwrap();
@@ -480,8 +482,8 @@ mod tests {
             .await
             .unwrap();
             (
-                row.get::<uuid::Uuid, _>(0),
-                row.get::<uuid::Uuid, _>(1),
+                row.get::<wamn_identity_protocol::PrincipalId, _>(0),
+                row.get::<wamn_identity_protocol::PrincipalId, _>(1),
                 row.get::<String, _>(2),
                 row.get::<String, _>(3),
             )
@@ -494,7 +496,7 @@ mod tests {
             "history",
             &digest,
             &manifest,
-            &uuid::Uuid::new_v4().to_string(),
+            &uuid::Uuid::new_v4().into(),
         )
         .await
         .unwrap();

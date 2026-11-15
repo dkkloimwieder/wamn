@@ -14,7 +14,7 @@ pub use routes::Routes;
 
 pub struct Application {
     pub routes: Routes,
-    pub caller: String,
+    pub caller: wamn_identity_protocol::PrincipalId,
     document: EnvironmentDocument,
     scratch: ScratchRoot,
 }
@@ -123,7 +123,7 @@ impl Application {
         let caller = caller["principal_id"]
             .as_str()
             .context("caller principal")?
-            .to_owned();
+            .parse()?;
         std::fs::remove_file(secret)?;
         let routes = Routes {
             endpoint: format!(

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
     reason = "the CloudNativePG role schema defines these independent privilege booleans"
 )]
 pub struct ManagedRole {
-    pub name: String,
+    pub name: wamn_identity_protocol::LoginName,
     pub ensure: String,
     pub login: bool,
     pub superuser: bool,
@@ -31,7 +31,11 @@ pub struct PasswordSecret {
 }
 
 /// Declare a restricted login that inherits its one function's privileges.
-pub fn managed_role(name: String, acl_role: &str, secret: String) -> ManagedRole {
+pub fn managed_role(
+    name: wamn_identity_protocol::LoginName,
+    acl_role: &str,
+    secret: String,
+) -> ManagedRole {
     ManagedRole {
         name,
         ensure: "present".into(),
@@ -48,7 +52,10 @@ pub fn managed_role(name: String, acl_role: &str, secret: String) -> ManagedRole
 }
 
 /// Declare the existing capture login without database writer privileges.
-pub fn managed_replication_role(name: String, secret: String) -> ManagedRole {
+pub fn managed_replication_role(
+    name: wamn_identity_protocol::LoginName,
+    secret: String,
+) -> ManagedRole {
     let mut role = managed_role(name, "", secret);
     role.in_roles = vec!["pg_checkpoint".into()];
     role.inherit = false;

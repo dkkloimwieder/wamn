@@ -222,7 +222,7 @@ pub(super) fn resource_entry(
         .transpose()?;
     let config = json!({"org":org,"http_addr":"0.0.0.0:80","public_origin":format!("{scheme}://{}",document.route_hosts.control),
         "database":connection(login,wamn_control_provision::org_workload_secret_name(WorkloadRoleFamily::Control,org)),
-        "apply_database":connection("wamn_apply".into(),"wamn-apply".into()),
+        "apply_database":connection("wamn_apply".parse::<wamn_identity_protocol::LoginName>()?,"wamn-apply".into()),
         "session_issuer":super::identity::issuer(org),"session_jwks_ca":"/etc/identity-ca/ca.crt",
         "administration_dir":"/etc/wamn/control-administration","worker":{"image":chart.image("control")?,"configuration":configuration,"service_account":wamn_registry::name::operation(org)},
         "chart":chart.reference(),"release_artifact_base":format!("{registry}/wamn/releases"),"package_artifact_base":format!("{registry}/wamn/packages"),"component_artifact_base":format!("{registry}/wamn/components"),"integration_artifact_base":format!("{registry}/wamn/integrations"),

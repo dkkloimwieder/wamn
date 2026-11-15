@@ -361,7 +361,7 @@ pub(crate) async fn bind_apply_package_principal(
 async fn ensure_model_schemas(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     plan: &wamn_catalog::package_schema::PackageMetadata,
-    login: &str,
+    login: &wamn_identity_protocol::LoginName,
 ) -> anyhow::Result<()> {
     let schemas = plan
         .models
@@ -373,7 +373,7 @@ async fn ensure_model_schemas(
                 .map(|relation| relation.schema.as_str()),
         )
         .collect::<BTreeSet<_>>();
-    let role = postgres_protocol::escape::escape_identifier(login);
+    let role = postgres_protocol::escape::escape_identifier(login.as_str());
     for schema in schemas {
         let schema = wamn_postgres::schema::BareSchemaName::new(schema)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION wamn_db_owner; GRANT USAGE, CREATE ON SCHEMA {} TO {role}", schema.quoted(), schema.quoted())))

@@ -141,9 +141,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             PROJECT_ENV_KEY,
             &digest,
             &manifest,
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         )
         .await?;
         materialize_application_principals(
@@ -158,7 +156,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     }
     // The workflow user is the other service row
     // (docs/architecture/execution.md#environment-workflows).
-    let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
+    let workflow_user = wamn_identity_protocol::workflow_user_id();
     let row = sqlx::query(
         "SELECT count(*), min(id::text) FROM platform.\"user\" \
              WHERE type='service' AND id::text <> $1",

@@ -258,7 +258,7 @@ pub const IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY: &str =
 
 /// crates/identity/src/control.rs::CONTROL_ORGS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
-    JOIN identity.principals p ON p.id = $1::text::uuid \
+    JOIN identity.principals p ON p.id = $1 \
     WHERE p.type = 'user' AND p.status = 'active' \
     AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=o.id AND m.status='active') \
     AND (EXISTS (SELECT 1 FROM identity.project_roles r \
@@ -277,7 +277,7 @@ pub const IDENTITY_PLATFORM_SRC_CONTROL_ORG_PROJECTS_SQL: &str = "SELECT p.id, C
 
 /// crates/identity/src/control.rs::CONTROL_PROJECTS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_PROJECTS_SQL: &str = "SELECT r.id FROM registry.projects r \
-    JOIN identity.principals p ON p.id=$1::text::uuid \
+    JOIN identity.principals p ON p.id=$1 \
     WHERE r.org=$2 AND p.type='user' AND p.status='active' \
     AND EXISTS (SELECT FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active') \
     AND (EXISTS (SELECT FROM identity.project_roles a WHERE a.principal_id=p.id AND a.org=$2 AND a.project=r.id AND a.role=$3) \
@@ -286,7 +286,7 @@ pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_PROJECTS_SQL: &str = "SELECT r.i
     AND ($4::text IS NULL OR r.id>$4) ORDER BY r.id LIMIT $5";
 
 /// crates/identity/src/org.rs::PROJECT_MEMBERS_SQL registry statement.
-pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_MEMBERS_SQL: &str = "SELECT p.id::text,p.email,p.display_name, \
+pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_MEMBERS_SQL: &str = "SELECT p.id,p.email,p.display_name, \
     EXISTS (SELECT FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$1 AND r.role=$4), \
     identity.is_project_admin(p.id,$1,$8,$2) AND $3='project-admin', \
     ARRAY(SELECT e.env FROM registry.environment_projects e WHERE e.org=$1 AND e.project=$2 \
@@ -294,7 +294,7 @@ pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_MEMBERS_SQL: &str = "SELECT p.id::te
     FROM identity.principals p WHERE p.type='user' \
     AND EXISTS (SELECT FROM registry.environment_projects e WHERE e.org=$1 AND e.project=$2 \
       AND ($8::text IS NULL OR e.env=$8) AND identity.has_project_access(p.id,$1,e.env,$2)) \
-    AND ($5::text IS NULL OR (p.email,p.id)>($5,$6::text::uuid)) ORDER BY p.email,p.id LIMIT $7";
+    AND ($5::text IS NULL OR (p.email,p.id)>($5,$6)) ORDER BY p.email,p.id LIMIT $7";
 
 /// crates/identity/src/org.rs::PROJECT_ENVS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_ENVS_SQL: &str = "SELECT env, status FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org = $1 AND project = $2 \

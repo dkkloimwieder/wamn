@@ -30,7 +30,7 @@ impl MigrationDatabase {
     }
 
     /// One bounded migration login for this database and platform scope.
-    pub fn login(self, database: &str) -> String {
+    pub fn login(self, database: &str) -> wamn_identity_protocol::LoginName {
         let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([
             "platform-migration",
             self.owner_role(),
@@ -42,7 +42,7 @@ impl MigrationDatabase {
     /// One native basic-auth Secret for the managed login.
     pub fn managed_role(self, database: &str) -> crate::connection::ManagedRole {
         let login = self.login(database);
-        let secret = login.replace('_', "-");
+        let secret = login.as_str().replace('_', "-");
         crate::connection::managed_role(login, self.owner_role(), secret)
     }
 
@@ -63,16 +63,21 @@ impl MigrationDatabase {
     pub async fn require_login(
         self,
         connection: &mut sqlx::PgConnection,
-    ) -> anyhow::Result<String> {
-        let (session, current, database, restricted, member): (String, String, String, bool, bool) =
-            sqlx::query_as(
-                "SELECT session_user::text, current_user::text, current_database()::text, \
+    ) -> anyhow::Result<wamn_identity_protocol::LoginName> {
+        let (session, current, database, restricted, member): (
+            wamn_identity_protocol::LoginName,
+            wamn_identity_protocol::LoginName,
+            String,
+            bool,
+            bool,
+        ) = sqlx::query_as(
+            "SELECT session_user::text, current_user::text, current_database()::text, \
              NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls), \
              pg_has_role(session_user,$1,'USAGE') FROM pg_roles WHERE rolname=session_user",
-            )
-            .bind(self.owner_role())
-            .fetch_one(connection)
-            .await?;
+        )
+        .bind(self.owner_role())
+        .fetch_one(connection)
+        .await?;
         anyhow::ensure!(
             session == self.login(&database) && current == session && restricted && member,
             "platform migrations require their direct restricted managed login"

@@ -55,8 +55,8 @@ impl wamn_execution_host::ControlExecution for Execution {
                 }
                 let request: Request = serde_json::from_str(payload)?;
                 let mut connection = wamn_postgres::connect(&self.system_database).await?;
-                let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.pats t JOIN identity.principals p ON p.id=t.principal_id WHERE t.token_prefix=$1 AND (p.id=$2::text::uuid OR EXISTS(SELECT FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$3) OR (p.type='service' AND starts_with(p.subject,'api.'||$3||'.'))))")
-                    .bind(&request.token_prefix).bind(caller.to_string()).bind(&self.org).fetch_one(&mut connection).await?;
+                let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.pats t JOIN identity.principals p ON p.id=t.principal_id WHERE t.token_prefix=$1 AND (p.id=$2 OR EXISTS(SELECT FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$3) OR (p.type='service' AND starts_with(p.subject,'api.'||$3||'.'))))")
+                    .bind(&request.token_prefix).bind(caller).bind(&self.org).fetch_one(&mut connection).await?;
                 anyhow::ensure!(
                     allowed,
                     "PAT does not belong to the authenticated org authority"
@@ -110,7 +110,8 @@ impl wamn_execution_host::ControlExecution for Execution {
                     &request.project,
                     &request.env,
                     &instance,
-                );
+                )
+                .parse()?;
                 database.credentials.name = wamn_control_provision::project_env_cdc_secret_name(
                     &self.org,
                     &request.project,

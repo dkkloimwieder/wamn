@@ -77,7 +77,7 @@ async fn runtime_credentials(database: &url::Url) -> ClassCredentials {
         .await
         .unwrap();
         let mut url = database.clone();
-        url.set_username(&login).unwrap();
+        url.set_username(login.as_str()).unwrap();
         url.set_password(Some("binding-fixture")).unwrap();
         credentials = credentials.with_class(class, url.to_string());
     }
@@ -305,7 +305,9 @@ impl Authority {
         }
     }
     async fn reader(&mut self) -> ConnectionCredentials {
-        let role = format!("reader_{}", uuid::Uuid::new_v4().simple());
+        let role = format!("reader_{}", uuid::Uuid::new_v4().simple())
+            .parse::<wamn_identity_protocol::LoginName>()
+            .unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&format!(
                 "RESET ROLE; BEGIN; {} {}",
@@ -344,7 +346,7 @@ impl Authority {
             .map(drop)
             .unwrap();
         let mut url = url::Url::parse(self.database.as_str()).unwrap();
-        url.set_username(&role).unwrap();
+        url.set_username(role.as_str()).unwrap();
         url.set_password(Some("fixture-password")).unwrap();
         ConnectionCredentials::from_database(
             wamn_postgres::pool(url.as_str(), 4).await.unwrap(),
@@ -438,7 +440,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         Vec::new(),
     )
     .unwrap();
-    sqlx::query("INSERT INTO catalog.workflows (project_env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).bind(&PACKAGE).bind(&serde_json::to_string(&document).unwrap()).bind(&&document.wiring_hash()).bind(&wamn_identity_protocol::workflow_user_id().to_string()).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO catalog.workflows (project_env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).bind(&PACKAGE).bind(&serde_json::to_string(&document).unwrap()).bind(&&document.wiring_hash()).bind(&wamn_identity_protocol::workflow_user_id()).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
     let components = provision_project_components_for_http_manifest();
     let manifest = wamn_catalog::ServingManifest::new(
         wamn_catalog::ServingRelease {

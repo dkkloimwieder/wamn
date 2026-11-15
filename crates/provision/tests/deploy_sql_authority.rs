@@ -146,7 +146,7 @@ fn reset(admin_url: &str) {
         // run's `CREATE ROLE` rather than masking anything, but the condition is
         // supposed to be re-runnable against a surviving cluster.
         CATALOG_INSTALLER,
-        &record_history_guest(),
+        record_history_guest().as_str(),
     ] {
         apply(
             admin_url,
@@ -360,7 +360,7 @@ fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
 
 /// The production guest identity the record-history cases write as, composed
 /// by the real mint. A member of `wamn_app` and nothing else.
-fn record_history_guest() -> String {
+fn record_history_guest() -> wamn_identity_protocol::LoginName {
     workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
@@ -382,7 +382,7 @@ const OPERATOR: &str = "00000000-0000-4000-8000-0000000000e0";
 /// apply-package does. `wamn_db_owner` owns the tables and creates the
 /// triggers, so the fixture itself exercises the schema USAGE and function
 /// EXECUTE grants. Returns the project database URL and the guest role.
-fn record_history_fixture(admin: &str) -> (String, String) {
+fn record_history_fixture(admin: &str) -> (String, wamn_identity_protocol::LoginName) {
     reset(admin);
     apply(admin, POSTGRES_INIT);
     let base = admin.rsplit_once('/').expect("url names a database").0;
@@ -422,7 +422,7 @@ fn record_history_fixture(admin: &str) -> (String, String) {
 
 /// Run `body` as the guest in one transaction with `app.user_id` bound to
 /// `actor`, the way the host identity transaction binds it.
-fn as_guest(db_url: &str, guest: &str, actor: &str, body: &str) {
+fn as_guest(db_url: &str, guest: &wamn_identity_protocol::LoginName, actor: &str, body: &str) {
     apply(
         db_url,
         &format!(
@@ -658,7 +658,7 @@ const REPAIR_OPERATION: &str = "admin:repair-grades";
 /// stamp trigger and a column that an overlay migration adds. `projected` has a
 /// project history table. `keyless` has no primary key. The guest holds only
 /// INSERT on each history table.
-fn record_history_log_fixture(admin: &str) -> (String, String) {
+fn record_history_log_fixture(admin: &str) -> (String, wamn_identity_protocol::LoginName) {
     let (db_url, guest) = record_history_fixture(admin);
     apply(&db_url, RECORD_HISTORY);
     apply(
@@ -700,7 +700,12 @@ fn record_history_log_fixture(admin: &str) -> (String, String) {
 /// the host identity transaction binds them. The session time zone is not UTC,
 /// so an image that matches a later `wamn_history.row_image` read shows that
 /// the image does not depend on the session time zone.
-fn logged_guest_transaction(guest: &str, actor: &str, operation: &str, body: &str) -> String {
+fn logged_guest_transaction(
+    guest: &wamn_identity_protocol::LoginName,
+    actor: &str,
+    operation: &str,
+    body: &str,
+) -> String {
     format!(
         "BEGIN;\n\
          SET LOCAL ROLE \"{guest}\";\n\
@@ -1742,7 +1747,11 @@ const HISTORY_MAKER_NEXT: &str = "00000000-0000-4000-8000-000000000502";
 
 /// Run `sql` as the guest under the fixture schema and return its rows, with
 /// the unit separator between fields and the record separator between rows.
-fn guest_rows(db_url: &str, guest: &str, sql: &str) -> Vec<Vec<String>> {
+fn guest_rows(
+    db_url: &str,
+    guest: &wamn_identity_protocol::LoginName,
+    sql: &str,
+) -> Vec<Vec<String>> {
     let out = Command::new("psql")
         .arg(db_url)
         .args([
@@ -1776,7 +1785,11 @@ fn guest_rows(db_url: &str, guest: &str, sql: &str) -> Vec<Vec<String>> {
 }
 
 /// Every page of the fixture history read of `item`, two entries a page.
-fn history_pages(db_url: &str, guest: &str, item: &str) -> Vec<Vec<String>> {
+fn history_pages(
+    db_url: &str,
+    guest: &wamn_identity_protocol::LoginName,
+    item: &str,
+) -> Vec<Vec<String>> {
     let read = WIDGET_HISTORY_READ;
     let mut rows: Vec<Vec<String>> = Vec::new();
     loop {

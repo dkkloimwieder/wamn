@@ -41,39 +41,38 @@ use wamn_broker::auth_changes::AuthDrops;
 
 const INSERT_USER_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
-    RETURNING id::text, type, subject, display_name, status";
+    RETURNING id, type, subject, display_name, status";
 /// The user insert of [`create_or_reuse_user`]. An existing email or subject
 /// skips it.
 const INSERT_USER_IF_ABSENT_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
     ON CONFLICT DO NOTHING";
-const SELECT_USER_BY_EMAIL_SQL: &str = "SELECT p.id::text, p.status, EXISTS (\
+const SELECT_USER_BY_EMAIL_SQL: &str = "SELECT p.id, p.status, EXISTS (\
     SELECT 1 FROM identity.password_credentials c WHERE c.principal_id = p.id) \
     FROM identity.principals p WHERE p.type = 'user' AND p.email = $1";
 const INSERT_SERVICE_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, display_name) VALUES ('service', $1, $2) \
-    RETURNING id::text, type, subject, display_name, status";
-const SELECT_PRINCIPAL_BY_ID_SQL: &str = "SELECT id::text, type, subject, \
-    display_name, status FROM identity.principals WHERE id = $1::text::uuid";
-const SELECT_PRINCIPAL_BY_SUBJECT_SQL: &str = "SELECT id::text, type, subject, \
+    RETURNING id, type, subject, display_name, status";
+const SELECT_PRINCIPAL_BY_ID_SQL: &str = "SELECT id, type, subject, \
+    display_name, status FROM identity.principals WHERE id = $1";
+const SELECT_PRINCIPAL_BY_SUBJECT_SQL: &str = "SELECT id, type, subject, \
     display_name, status FROM identity.principals \
     WHERE type = $1 AND subject = $2";
 const DISABLE_PRINCIPAL_SQL: &str = "UPDATE identity.principals \
     SET status = 'disabled', disabled_at = COALESCE(disabled_at, now()) \
-    WHERE id = $1::text::uuid \
-    RETURNING id::text, type, subject, display_name, status";
+    WHERE id = $1 \
+    RETURNING id, type, subject, display_name, status";
 const ASSIGN_PROJECT_ROLE_SQL: &str = "INSERT INTO identity.project_roles \
-    (principal_id, org, project, role) VALUES ($1::text::uuid, $2, $3, $4) \
+    (principal_id, org, project, role) VALUES ($1, $2, $3, $4) \
     ON CONFLICT DO NOTHING";
 const SELECT_PROJECT_ROLES_SQL: &str = "SELECT role FROM identity.project_roles \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 ORDER BY role";
+    WHERE principal_id = $1 AND org = $2 AND project = $3 ORDER BY role";
 const GRANT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "INSERT INTO identity.project_env_memberships \
-    (principal_id, org, project, env) VALUES ($1::text::uuid, $2, $3, $4) \
+    (principal_id, org, project, env) VALUES ($1, $2, $3, $4) \
     ON CONFLICT DO NOTHING";
-const SELECT_PROJECT_ENV_MEMBERSHIP_SQL: &str =
-    "SELECT identity.has_project_access($1::text::uuid,$2,$4,$3)";
+const SELECT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "SELECT identity.has_project_access($1,$2,$4,$3)";
 const REVOKE_PROJECT_ENV_MEMBERSHIP_SQL: &str = "DELETE FROM identity.project_env_memberships \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4";
+    WHERE principal_id = $1 AND org = $2 AND project = $3 AND env = $4";
 // Every stored token instant crosses this API as second-resolution RFC 3339 UTC
 // text rendered by PostgreSQL, so the crate needs no calendar dependency and a
 // later transport can put the value straight on the wire.
@@ -81,18 +80,18 @@ const INSERT_PAT_SQL: &str = "INSERT INTO identity.pats \
     (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
     SELECT p.id, p.type, $2, $3, $4, now() + ($5::bigint * interval '1 second') \
     FROM identity.principals p \
-    WHERE p.id = $1::text::uuid AND p.status = 'active' AND p.type = 'service' \
+    WHERE p.id = $1 AND p.status = 'active' AND p.type = 'service' \
     RETURNING id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
-const SELECT_PAT_BY_PREFIX_SQL: &str = "SELECT p.id::text, p.type, p.subject, \
+const SELECT_PAT_BY_PREFIX_SQL: &str = "SELECT p.id, p.type, p.subject, \
     p.display_name, p.status, identity.pats.token_hash, \
     (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id, identity.pats.expires_at AS pat_expires_at \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
     WHERE identity.pats.token_prefix = $1";
-const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.type, p.subject, \
+const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id, p.type, p.subject, \
     p.display_name, p.status, identity.pats.token_hash, \
     (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id, identity.pats.expires_at AS pat_expires_at \
     FROM identity.pats JOIN identity.principals p \
@@ -102,7 +101,7 @@ const SELECT_PATS_SQL: &str = "SELECT id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
-    FROM identity.pats WHERE principal_id = $1::text::uuid \
+    FROM identity.pats WHERE principal_id = $1 \
     ORDER BY created_at DESC, id";
 const REVOKE_PAT_SQL: &str = "UPDATE identity.pats \
     SET revoked_at = COALESCE(revoked_at, now()) WHERE token_prefix = $1 \
@@ -110,7 +109,7 @@ const REVOKE_PAT_SQL: &str = "UPDATE identity.pats \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-        principal_id::text";
+        principal_id";
 
 /// Maximum accepted principal-subject length.
 pub const MAX_SUBJECT_LEN: usize = 254;
@@ -573,10 +572,7 @@ pub async fn create_or_reuse_user(
                 "the subject of this email belongs to another principal",
             )
         })?;
-    let principal_id: PrincipalId = row
-        .try_get::<String, _>(0)
-        .map_err(|error| database_error(&error))?
-        .parse()?;
+    let principal_id: PrincipalId = row.try_get(0).map_err(|error| database_error(&error))?;
     let status: String = row.try_get(1).map_err(|error| database_error(&error))?;
     if status != "active" {
         return Err(IdentityError::new(
@@ -607,7 +603,7 @@ pub async fn create_service(
         .await
         .map_err(|error| database_error(&error))?;
     let principal = decode_principal(&row)?;
-    drops.identity(principal.id().to_string().as_str());
+    drops.identity(principal.id());
     Ok(principal)
 }
 
@@ -617,7 +613,7 @@ pub async fn resolve_principal(
     id: &PrincipalId,
 ) -> Result<Option<Principal>, IdentityError> {
     sqlx::query(SELECT_PRINCIPAL_BY_ID_SQL)
-        .bind(id.to_string().as_str())
+        .bind(id)
         .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -652,14 +648,14 @@ pub async fn disable_principal(
     drops: &mut AuthDrops,
 ) -> Result<Principal, IdentityError> {
     let row = sqlx::query(DISABLE_PRINCIPAL_SQL)
-        .bind(id.to_string().as_str())
+        .bind(id)
         .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
             IdentityError::new(IdentityErrorType::NotFound, "principal does not exist")
         })?;
-    drops.identity(id.to_string().as_str());
+    drops.identity(id);
     decode_principal(&row)
 }
 
@@ -680,7 +676,7 @@ pub async fn issue_pat(
     let prefix = token.lookup();
     let token_hash = token.digest();
     let row = sqlx::query(INSERT_PAT_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(prefix)
         .bind(token_hash)
         .bind(&label)
@@ -780,7 +776,7 @@ pub async fn revoke_pat(
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| IdentityError::new(IdentityErrorType::NotFound, "token does not exist"))?;
-    let principal: String = row.try_get(6).map_err(|error| database_error(&error))?;
+    let principal: PrincipalId = row.try_get(6).map_err(|error| database_error(&error))?;
     drops.identity(&principal);
     decode_pat(&row)
 }
@@ -792,7 +788,7 @@ pub async fn list_pats(
     principal_id: &PrincipalId,
 ) -> Result<Vec<PatRecord>, IdentityError> {
     let rows = sqlx::query(SELECT_PATS_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?;
@@ -809,7 +805,14 @@ pub async fn assign_project_role(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = require_target_segment("org", org)?;
-    let service: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1::text::uuid AND type='service')").bind(principal_id.to_string().as_str()).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
+    let service: bool = sqlx::query(
+        "SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1 AND type='service')",
+    )
+    .bind(principal_id)
+    .fetch_one(&mut *client)
+    .await
+    .map_err(|error| database_error(&error))?
+    .get(0);
     if !service {
         org::active_member(client, principal_id, &org).await?;
     }
@@ -817,7 +820,7 @@ pub async fn assign_project_role(
     let project = require_target_segment("project", project)?;
     let role = role.parse::<RoleName>()?.to_string();
     let written = sqlx::query(ASSIGN_PROJECT_ROLE_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(&org)
         .bind(&project)
         .bind(&role)
@@ -826,7 +829,7 @@ pub async fn assign_project_role(
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     if written > 0 {
-        drops.identity(principal_id.to_string().as_str());
+        drops.identity(principal_id);
     }
     Ok(())
 }
@@ -841,7 +844,7 @@ pub async fn project_roles(
     let org = require_target_segment("org", org)?;
     let project = require_target_segment("project", project)?;
     let rows = sqlx::query(SELECT_PROJECT_ROLES_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(&org)
         .bind(&project)
         .fetch_all(&mut *client)
@@ -874,7 +877,7 @@ pub async fn grant_project_env_membership(
     let project = require_target_segment("project", project)?;
     let env = require_target_segment("env", env)?;
     sqlx::query(GRANT_PROJECT_ENV_MEMBERSHIP_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(&org)
         .bind(&project)
         .bind(&env)
@@ -900,7 +903,7 @@ pub async fn has_project_env_membership(
     let project = require_target_segment("project", project)?;
     let env = require_target_segment("env", env)?;
     sqlx::query(SELECT_PROJECT_ENV_MEMBERSHIP_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(&org)
         .bind(&project)
         .bind(&env)
@@ -925,7 +928,7 @@ pub async fn revoke_project_env_membership(
     let project = require_target_segment("project", project)?;
     let env = require_target_segment("env", env)?;
     let removed = sqlx::query(REVOKE_PROJECT_ENV_MEMBERSHIP_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(&org)
         .bind(&project)
         .bind(&env)
@@ -933,7 +936,7 @@ pub async fn revoke_project_env_membership(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.identity(principal_id.to_string().as_str());
+    drops.identity(principal_id);
     Ok(removed != 0)
 }
 
@@ -955,13 +958,13 @@ pub async fn authenticate_route_pat(
 }
 
 fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
-    let id: String = row.try_get(0).map_err(|error| database_error(&error))?;
+    let id: PrincipalId = row.try_get(0).map_err(|error| database_error(&error))?;
     let type_: String = row.try_get(1).map_err(|error| database_error(&error))?;
     let subject: String = row.try_get(2).map_err(|error| database_error(&error))?;
     let display_name: String = row.try_get(3).map_err(|error| database_error(&error))?;
     let status: String = row.try_get(4).map_err(|error| database_error(&error))?;
     Ok(Principal {
-        id: id.parse()?,
+        id,
         type_: PrincipalType::parse(&type_)?,
         subject: subject.into(),
         display_name: display_name.into(),

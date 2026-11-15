@@ -16,7 +16,7 @@ fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
                     host: "dedicated-rw.fixture-identity.svc".into(),
                     port: 5432,
                     database: "environment".into(),
-                    username: "reader".into(),
+                    username: "reader".parse().unwrap(),
                     credentials: wamn_postgres::SecretRef {
                         namespace: "fixture-identity".into(),
                         name: "reader-credential".into(),
@@ -398,7 +398,7 @@ fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() ->
     let mut values = crate::org::values(&org, &template.policies)?;
     let cluster = values["clusters"][0]["name"].as_str().unwrap().to_owned();
     let role = wamn_control_provision::connection::managed_role(
-        "application".into(),
+        "application".parse()?,
         "wamn_app",
         "application-login".into(),
     );

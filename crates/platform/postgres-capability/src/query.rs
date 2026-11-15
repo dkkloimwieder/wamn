@@ -85,7 +85,7 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
                         schema.as_deref(),
                         runner.as_deref(),
                         role.as_deref(),
-                        user.as_deref(),
+                        user.as_ref(),
                         operation.as_deref(),
                         application.as_deref(),
                         None,

@@ -10,7 +10,7 @@ struct ExecutorIdentity<'a> {
     project_env_key: &'a str,
     schema: Option<&'a str>,
     runner: Option<&'a str>,
-    user: Option<&'a str>,
+    user: Option<&'a wamn_identity_protocol::PrincipalId>,
     operation: Option<&'a str>,
     application: Option<&'a str>,
 }
@@ -49,7 +49,7 @@ impl WamnPostgres {
     where
         E: From<ProductionLeaseError>,
     {
-        let executor = PlatformComponent::Executor.principal_id().to_string();
+        let executor = PlatformComponent::Executor.principal_id();
         let operation = PlatformComponent::Executor.principal_name();
         self.executor_transaction(
             project,
@@ -125,10 +125,8 @@ impl WamnPostgres {
         let mut connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
         let principal = identity
             .user
-            .map(std::borrow::Cow::Borrowed)
-            .unwrap_or_else(|| {
-                std::borrow::Cow::Owned(PlatformComponent::Executor.principal_id().to_string())
-            });
+            .copied()
+            .unwrap_or_else(|| PlatformComponent::Executor.principal_id());
         self.begin_with_identity(
             connection.connection(),
             AuthorityClass::ExecutorPlatform,
@@ -137,7 +135,7 @@ impl WamnPostgres {
             identity.schema,
             identity.runner,
             None,
-            Some(principal.as_ref()),
+            Some(&principal),
             Some(identity.operation.unwrap_or("wamn:executor")),
             identity.application,
             None,
@@ -210,7 +208,7 @@ impl wamn_connections::production_lease::ExecutorDatabase for WamnPostgres {
                 project_env_key: &project_env_key,
                 schema: schema.as_deref(),
                 runner: runner.as_deref(),
-                user: user.as_deref(),
+                user: user.as_ref(),
                 operation: operation.as_deref(),
                 application: application.as_deref(),
             },

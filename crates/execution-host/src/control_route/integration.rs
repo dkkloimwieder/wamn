@@ -97,13 +97,8 @@ impl ControlRoutes<'_> {
                 &mut connection_drops,
             )
             .await?;
-            let caller = caller
-                .to_string()
-                .as_str()
-                .parse::<uuid::Uuid>()
-                .map_err(|error| Refusal::Failed(error.into()))?;
             let url = oauth
-                .authorize(&mut transaction, &context, caller)
+                .authorize(&mut transaction, &context, *caller)
                 .await
                 .map_err(|error| Refusal::Failed(error.into()))?;
             transaction.commit().await?;
@@ -205,9 +200,9 @@ impl ControlRoutes<'_> {
         for client in &mut clients {
             let mut target = client.begin().await?;
             sqlx::query(
-                "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','',$2)",
+                "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)",
             )
-            .bind(caller.to_string().as_str())
+            .bind(caller)
             .bind(&attachment.operation)
             .execute(&mut *target)
             .await
@@ -242,7 +237,7 @@ impl ControlRoutes<'_> {
             .await?
         };
         if let Some(principal) = result["principal_id"].as_str() {
-            drops.identity(principal);
+            drops.identity(&principal.parse::<PrincipalId>()?);
         }
         let credentials = result
             .as_object_mut()

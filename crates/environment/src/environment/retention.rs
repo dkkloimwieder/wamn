@@ -163,9 +163,7 @@ pub async fn retire_runtime_grants(
                 );
         }
     }
-    let actor = wamn_identity_protocol::PlatformComponent::Provisioning
-        .principal_id()
-        .to_string();
+    let actor = wamn_identity_protocol::PlatformComponent::Provisioning.principal_id();
     for (package, permissions) in removed {
         let role = format!("application-{}", package.replace('_', "-"));
         let subject = wamn_platform_identity::application_subject(project_env_key, &package)?;
@@ -176,8 +174,16 @@ pub async fn retire_runtime_grants(
         )
         .await?
         .context("application principal ownership is unknown; retain old facts")?;
-        let owned: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$2::text::uuid) \
-             AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$3::text::uuid)").bind(&role).bind(&actor).bind(principal.id().to_string().as_str()).fetch_one(&mut **tx).await?.get(0);
+        let owned: bool = sqlx::query(
+            "SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$2) \
+             AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$3)",
+        )
+        .bind(&role)
+        .bind(actor)
+        .bind(principal.id())
+        .fetch_one(&mut **tx)
+        .await?
+        .get(0);
         ensure!(
             owned,
             "application role {role} has uncertain ownership; retain old facts"
@@ -189,7 +195,7 @@ pub async fn retire_runtime_grants(
             {
                 continue;
             }
-            let generated: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.permission WHERE role_name=$1 AND permission=$2 AND created_by=$3::text::uuid AND updated_by=$3::text::uuid)").bind(&role).bind(&permission).bind(&actor).fetch_one(&mut **tx).await?.get(0);
+            let generated: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.permission WHERE role_name=$1 AND permission=$2 AND created_by=$3 AND updated_by=$3)").bind(&role).bind(&permission).bind(actor).fetch_one(&mut **tx).await?.get(0);
             if generated {
                 wamn_platform_identity::application::mutate_grant(
                     tx,

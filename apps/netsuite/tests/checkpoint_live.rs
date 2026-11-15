@@ -154,7 +154,7 @@ pub async fn invoke(
         .workflow_node_caller(
             "test",
             PROJECT_ENV_KEY,
-            &wamn_identity_protocol::workflow_user_id().to_string(),
+            &wamn_identity_protocol::workflow_user_id(),
             "netsuite-pull-without-record",
         )
         .await?

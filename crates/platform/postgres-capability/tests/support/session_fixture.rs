@@ -217,8 +217,7 @@ pub(super) async fn install_authority(
 ) -> anyhow::Result<()> {
     let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
     let mut transaction =
-        wamn_test_postgres::transaction(client, &actor.to_string(), "admin:seed-session-authority")
-            .await?;
+        wamn_test_postgres::transaction(client, &actor, "admin:seed-session-authority").await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::test_database::seed_org_project_env_sql(ORG, project, environment),
     ))

@@ -255,7 +255,7 @@ pub(super) async fn prepare_statement_transaction(
         schema.as_deref(),
         runner.as_deref(),
         role.as_deref(),
-        user_id.as_deref(),
+        user_id.as_ref(),
         operation.as_deref(),
         application.as_deref(),
         None,

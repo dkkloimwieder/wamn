@@ -26,7 +26,7 @@ impl std::fmt::Debug for IdentityIssuerRequest {
 
 #[derive(Debug)]
 pub struct IdentityIssuerOutcome {
-    pub role: String,
+    pub role: wamn_identity_protocol::LoginName,
     pub configuration: wamn_postgres::ConnectionConfig,
 }
 
@@ -90,7 +90,7 @@ pub async fn provision_identity_issuer(
     let statement = format!(
         "GRANT CONNECT ON DATABASE {} TO {}",
         postgres_protocol::escape::escape_identifier(&database),
-        postgres_protocol::escape::escape_identifier(&role)
+        postgres_protocol::escape::escape_identifier(role.as_str())
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
         .execute(&mut connection)

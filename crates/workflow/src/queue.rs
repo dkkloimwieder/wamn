@@ -96,7 +96,7 @@ impl QueueService {
                     schema: Some("wamn_run".to_owned()),
                     runner: Some(config.runner),
                     role: None,
-                    user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
+                    user_id: Some(PlatformComponent::Executor.principal_id()),
                     operation: Some(PlatformComponent::Executor.principal_name().clone()),
                     // The queue serves every application of the release.
                     application: None,

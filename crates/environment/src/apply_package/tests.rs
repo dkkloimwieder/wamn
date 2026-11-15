@@ -109,7 +109,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
             .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE ROLE {login} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'migration-test'; GRANT {login} TO authdrops_apply WITH INHERIT TRUE, SET TRUE"))).execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     let mut migration_url = url::Url::parse(database.as_str()).unwrap();
-    migration_url.set_username(&login).unwrap();
+    migration_url.set_username(login.as_str()).unwrap();
     migration_url.set_password(Some("migration-test")).unwrap();
     let mut owner_url = url::Url::parse(database.as_str()).unwrap();
     owner_url.set_username("authdrops_apply").unwrap();
@@ -118,12 +118,19 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
     let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(3600)));
     let changes = watched(&nats, Some("apply-drops--dev--fixture"), Arc::clone(&cache)).await;
     let ticket = cache
-        .grants("apply-drops--dev--fixture", "principal")
+        .grants(
+            "apply-drops--dev--fixture",
+            &"principal"
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
+        )
         .unwrap_err();
     cache
         .keep_grants(
             "apply-drops--dev--fixture",
-            "principal",
+            &"principal"
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             ticket,
             PrincipalGrants {
                 user: false,
@@ -133,7 +140,12 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
         .await;
     assert!(
         cache
-            .grants("apply-drops--dev--fixture", "principal")
+            .grants(
+                "apply-drops--dev--fixture",
+                &"principal"
+                    .parse::<wamn_identity_protocol::PrincipalId>()
+                    .unwrap()
+            )
             .is_ok()
     );
     let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
@@ -152,7 +164,12 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
     .unwrap();
     until("package apply publishes the admin role drop", || {
         cache
-            .grants("apply-drops--dev--fixture", "principal")
+            .grants(
+                "apply-drops--dev--fixture",
+                &"principal"
+                    .parse::<wamn_identity_protocol::PrincipalId>()
+                    .unwrap(),
+            )
             .is_err()
     })
     .await;

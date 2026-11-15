@@ -34,11 +34,7 @@ const ISSUER: &str = "https://identity.example.invalid";
 const AUDIENCE: &str = "acme:billing:dev:a1b2c3d4";
 
 fn actor() -> PrincipalId {
-    PlatformComponent::Provisioning
-        .principal_id()
-        .to_string()
-        .parse()
-        .unwrap()
+    PlatformComponent::Provisioning.principal_id()
 }
 
 async fn connect(url: &str, role: Option<&str>) -> Client {
@@ -68,7 +64,7 @@ async fn login(
 }
 
 fn identity(principal: &PrincipalId) -> Vec<AuthChange> {
-    vec![AuthChange::Identity(principal.to_string())]
+    vec![AuthChange::Identity(*principal)]
 }
 
 fn changes(drops: &AuthDrops) -> Vec<AuthChange> {
@@ -287,7 +283,7 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     let principal = |id: &PrincipalId| {
         vec![AuthChange::Principal {
             project_env_key: "t1".to_owned(),
-            principal: id.to_string(),
+            principal: *id,
         }]
     };
     let project_env_key = vec![AuthChange::ProjectEnvKey("t1".to_owned())];
@@ -363,7 +359,7 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
         "t1",
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
-            user_id: bob.to_string().as_str(),
+            user_id: &bob,
             role: "clerk",
             grant: true,
         },
@@ -379,7 +375,7 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
         "t1",
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
-            user_id: bob.to_string().as_str(),
+            user_id: &bob,
             role: "clerk",
             grant: false,
         },
@@ -510,7 +506,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx:
                     "t1",
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::UserRole {
-                        user_id: bob.to_string().as_str(),
+                        user_id: &bob,
                         role: "clerk",
                         grant: true,
                     },
@@ -525,7 +521,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys(pool: sqlx:
                     "t1",
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::UserRole {
-                        user_id: bob.to_string().as_str(),
+                        user_id: &bob,
                         role: "clerk",
                         grant: false,
                     },

@@ -38,7 +38,7 @@ pub async fn remove_roles(
     context: &str,
     namespace: &str,
     cluster: &str,
-    names: &[String],
+    names: &[wamn_identity_protocol::LoginName],
 ) -> anyhow::Result<()> {
     refresh(
         registry_input,
@@ -55,8 +55,8 @@ pub async fn remove_roles(
         cluster,
         format!("{cluster}-rw.{namespace}.svc.cluster.local"),
         5432,
-        "postgres".into(),
-        "wamn_apply".into(),
+        "postgres".parse()?,
+        "wamn_apply".parse()?,
         "wamn-apply".into(),
     );
     let mut connection = wamn_postgres::connect(&observer.to_json()?).await?;
@@ -85,7 +85,7 @@ async fn refresh(
     namespace: &str,
     cluster: &str,
     required: Option<&ManagedRole>,
-    removing: &[String],
+    removing: &[wamn_identity_protocol::LoginName],
 ) -> anyhow::Result<()> {
     with_chart_lock(registry_input, namespace, async {
         let mut declarations = crate::roles::registered(registry_input, namespace).await?;
@@ -209,7 +209,7 @@ pub fn configuration(
     host: String,
     port: u16,
     database: String,
-    username: String,
+    username: wamn_identity_protocol::LoginName,
     secret: String,
 ) -> ConnectionConfig {
     ConnectionConfig {
@@ -228,7 +228,10 @@ pub fn configuration(
     }
 }
 
-pub async fn wait_role(connection: &mut sqlx::PgConnection, username: &str) -> anyhow::Result<()> {
+pub async fn wait_role(
+    connection: &mut sqlx::PgConnection,
+    username: &wamn_identity_protocol::LoginName,
+) -> anyhow::Result<()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
     loop {
         let present: bool = sqlx::query_scalar(
@@ -343,7 +346,7 @@ pub async fn provision_platform_migration(
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "GRANT CONNECT ON DATABASE {} TO {}",
         postgres_protocol::escape::escape_identifier(&config.database),
-        postgres_protocol::escape::escape_identifier(&role.name)
+        postgres_protocol::escape::escape_identifier(role.name.as_str())
     )))
     .execute(&mut admin)
     .await?;

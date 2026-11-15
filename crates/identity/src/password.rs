@@ -314,14 +314,12 @@ async fn bind_actor(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     actor: &PrincipalId,
 ) -> Result<(), PasswordError> {
-    sqlx::query(
-        "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1::text::uuid,'','')",
-    )
-    .bind(actor.to_string().as_str())
-    .execute(&mut **tx)
-    .await
-    .map(|result| result.rows_affected())
-    .map_err(|source| database(&source))?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')")
+        .bind(actor)
+        .execute(&mut **tx)
+        .await
+        .map(|result| result.rows_affected())
+        .map_err(|source| database(&source))?;
     Ok(())
 }
 /// Lock the principal, and return the cause and its reason when it cannot
@@ -331,15 +329,22 @@ async fn lock_account(
     principal: &PrincipalId,
     enrolled: bool,
 ) -> Result<Option<(RefusalCause, Option<&'static str>)>, PasswordError> {
-    let row = sqlx::query("SELECT identity.lock_password_principal($1::text::uuid)")
-        .bind(principal.to_string().as_str())
+    let row = sqlx::query("SELECT identity.lock_password_principal($1)")
+        .bind(principal)
         .fetch_optional(&mut **tx)
         .await
         .map_err(|source| database(&source))?;
     if !row.is_some_and(|row| row.get::<bool, _>(0)) {
         return Ok(Some((RefusalCause::NoSuchAccount, None)));
     }
-    let has_password = sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1::text::uuid)").bind(principal.to_string().as_str()).fetch_one(&mut **tx).await.map_err(|source| database(&source))?.get::<bool, _>(0);
+    let has_password = sqlx::query(
+        "SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1)",
+    )
+    .bind(principal)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|source| database(&source))?
+    .get::<bool, _>(0);
     Ok(match (enrolled, has_password) {
         (false, true) => Some((RefusalCause::AlreadyEnrolled, None)),
         (true, false) => Some((RefusalCause::NoSuchAccount, Some("no-password"))),
@@ -397,13 +402,12 @@ async fn issue_token(
         return Err(refused_because("invitation refused", cause, reason));
     }
     if let Some(email) = expected_email {
-        let current: String =
-            sqlx::query("SELECT email FROM identity.principals WHERE id=$1::text::uuid")
-                .bind(principal.to_string().as_str())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|source| database(&source))?
-                .get(0);
+        let current: String = sqlx::query("SELECT email FROM identity.principals WHERE id=$1")
+            .bind(principal)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|source| database(&source))?
+            .get(0);
         if current != email {
             return Err(refused_because(
                 "recovery address changed",
@@ -412,7 +416,7 @@ async fn issue_token(
             ));
         }
     }
-    let expires_at: String = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')").bind(hash).bind(principal.to_string().as_str()).bind(purpose).bind(lifetime).fetch_one(&mut *tx).await.map_err(|source| database(&source))?.get(0);
+    let expires_at: String = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')").bind(hash).bind(principal).bind(purpose).bind(lifetime).fetch_one(&mut *tx).await.map_err(|source| database(&source))?.get(0);
     tx.commit().await.map_err(|source| database(&source))?;
     Ok(Invitation { secret, expires_at })
 }
@@ -423,7 +427,7 @@ async fn usable_token(
     hash: &wamn_digest::Digest,
     purpose: &str,
 ) -> Result<Option<RefusalCause>, PasswordError> {
-    let row = sqlx::query("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3").bind(hash).bind(principal.to_string().as_str()).bind(purpose).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
+    let row = sqlx::query("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2 AND t.purpose = $3").bind(hash).bind(principal).bind(purpose).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         return Ok(Some(RefusalCause::UnknownSecret));
     };
@@ -482,7 +486,7 @@ pub async fn reset_password(
 ) -> Result<(), PasswordError> {
     establish_password(client, work, principal, secret, password, RESET_PURPOSE).await?;
     // The reset revoked every login of the principal (store_password).
-    drops.identity(principal.to_string().as_str());
+    drops.identity(principal);
     Ok(())
 }
 
@@ -533,15 +537,23 @@ async fn store_password(
         return Err(refused("invitation refused", cause));
     }
     if purpose == RESET_PURPOSE {
-        sqlx::query("UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1::text::uuid").bind(principal.to_string().as_str()).bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
+        sqlx::query(
+            "UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1",
+        )
+        .bind(principal)
+        .bind(hash)
+        .execute(&mut *tx)
+        .await
+        .map(|result| result.rows_affected())
+        .map_err(|source| database(&source))?;
         // reset_password records the drop of this revoke after the commit.
         crate::password_login::revoke_all(&mut tx, principal, &mut AuthDrops::default())
             .await
             .map_err(|source| infrastructure("reset revocation failed", source))?;
     } else {
-        sqlx::query("INSERT INTO identity.password_credentials (principal_id, password_hash) VALUES ($1::text::uuid, $2)").bind(principal.to_string().as_str()).bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
+        sqlx::query("INSERT INTO identity.password_credentials (principal_id, password_hash) VALUES ($1, $2)").bind(principal).bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
     }
-    sqlx::query("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE principal_id = $1::text::uuid AND consumed_at IS NULL").bind(principal.to_string().as_str()).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
+    sqlx::query("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE principal_id = $1 AND consumed_at IS NULL").bind(principal).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
     tx.commit().await.map_err(|source| database(&source))
 }
 
@@ -555,7 +567,7 @@ pub async fn authenticate_password(
     email: &str,
     password: Password,
 ) -> Result<Option<AuthenticatedPrincipal>, PasswordError> {
-    let row = sqlx::query("SELECT p.id::text, p.type, p.subject, p.display_name, p.status, c.password_hash FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'user'").bind(email).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
+    let row = sqlx::query("SELECT p.id, p.type, p.subject, p.display_name, p.status, c.password_hash FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'user'").bind(email).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         work.hash(password).await?;
         return Ok(None);

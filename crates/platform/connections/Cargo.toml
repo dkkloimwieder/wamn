@@ -9,6 +9,7 @@ license.workspace = true
 test-util = ["wamn-registry/test-util", "dep:wamn-test-infrastructure", "wamn-kubernetes/test-util", "wamn-control-provision/test-util", "wamn-catalog/test-util", "wamn-capability-authority/test-util", ]
 
 [dependencies]
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-run-state.workspace = true
 wamn-test-infrastructure = { workspace = true, optional = true }
 anyhow = { workspace = true }

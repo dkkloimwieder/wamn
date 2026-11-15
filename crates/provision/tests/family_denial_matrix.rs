@@ -148,9 +148,9 @@ fn sqlstate(url: &str, statement: &str) -> Option<String> {
 
 /// The admin URL with its userinfo replaced by one role's login, pointed at the
 /// project database.
-fn login_url(admin_url: &str, role: &str) -> String {
+fn login_url(admin_url: &str, role: &wamn_identity_protocol::LoginName) -> String {
     let mut url = Url::parse(admin_url).expect("the test server URL is a URL");
-    url.set_username(role).expect("set the probe role");
+    url.set_username(role.as_str()).expect("set the probe role");
     url.set_password(Some(PROBE_PASSWORD))
         .expect("set password");
     url.set_path(DATABASE);
@@ -179,7 +179,7 @@ struct Fixture {
 }
 
 /// The deterministic generation name the real mint would issue for one family.
-fn generation(family: WorkloadRoleFamily) -> String {
+fn generation(family: WorkloadRoleFamily) -> wamn_identity_protocol::LoginName {
     let target = match family.identity_type() {
         WorkloadRoleIdentityType::ProjectEnvKey => WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY_A,
@@ -216,7 +216,7 @@ fn families() -> impl Iterator<Item = WorkloadRoleFamily> {
 
 fn managed_roles() -> Vec<String> {
     let mut roles: Vec<String> = families()
-        .flat_map(|family| [family.acl_role().to_owned(), generation(family)])
+        .flat_map(|family| [family.acl_role().to_owned(), generation(family).to_string()])
         .collect();
     // The probe comes BEFORE the group it inherits: a role still named by a
     // `pg_auth_members` row cannot be dropped.
@@ -740,7 +740,7 @@ fn no_control_policy_passes_every_row() {
 fn the_identity_reader_cannot_read_private_membership_fields() {
     let mut target = Url::parse(&fixture().control_url).unwrap();
     target
-        .set_username(&generation(WorkloadRoleFamily::IdentityReader))
+        .set_username(generation(WorkloadRoleFamily::IdentityReader).as_str())
         .unwrap();
     target.set_password(Some(PROBE_PASSWORD)).unwrap();
     assert!(

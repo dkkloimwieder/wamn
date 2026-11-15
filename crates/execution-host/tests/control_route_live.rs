@@ -62,7 +62,9 @@ async fn identity_server(admin: &mut Client, admin_url: &str) -> anyhow::Result<
     .await?;
     let mut connection = url::Url::parse(admin_url)?;
     connection
-        .set_username(&wamn_control_provision::identity_role::identity_issuer_login(&endpoint)?)
+        .set_username(
+            wamn_control_provision::identity_role::identity_issuer_login(&endpoint)?.as_str(),
+        )
         .map_err(|()| anyhow::anyhow!("issuer username"))?;
     connection
         .set_password(Some(password))
@@ -121,7 +123,7 @@ async fn call(
             },
             Some(AuthenticatedCaller::new(
                 id,
-                caller,
+                caller.parse().unwrap(),
                 CredentialType::Session,
                 false,
                 HashSet::new(),
@@ -558,7 +560,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     let (logins, _billing, _shop) = environments(&mut admin, admin_url, "project").await?;
 
     // An org admin, a project admin of billing and a plain member.
-    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    let provisioning = PlatformComponent::Provisioning.principal_id();
     let mut ids = Vec::new();
     for (email, name, grants) in [
         (
@@ -707,7 +709,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             (
                 "member".to_owned(),
                 "active".to_owned(),
-                Some(provisioning.to_owned())
+                Some(provisioning.to_string())
             )
         ]
     );
@@ -731,7 +733,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     for (returned, expected) in returned_members.iter().zip(&expected_members) {
         assert_eq!(
             returned["principal_id"].as_str(),
-            Some(expected.principal_id.as_str())
+            Some(expected.principal_id.to_string().as_str())
         );
         assert_eq!(returned["email"].as_str(), Some(expected.email.as_str()));
         assert_eq!(
@@ -777,7 +779,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     for (returned, expected) in returned_page.iter().zip(expected_page) {
         assert_eq!(
             returned["principal_id"].as_str(),
-            Some(expected.principal_id.as_str())
+            Some(expected.principal_id.to_string().as_str())
         );
         assert_eq!(returned["email"].as_str(), Some(expected.email.as_str()));
         assert_eq!(
@@ -863,7 +865,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             (
                 "member".to_owned(),
                 "active".to_owned(),
-                Some(provisioning.to_owned())
+                Some(provisioning.to_string())
             ),
             (
                 "project".to_owned(),
@@ -890,7 +892,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         [(
             "member".to_owned(),
             "active".to_owned(),
-            Some(provisioning.to_owned())
+            Some(provisioning.to_string())
         )]
     );
 

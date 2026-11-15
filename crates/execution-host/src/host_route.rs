@@ -241,9 +241,7 @@ impl HostRouteDelivery {
                     None => Refusal::Failed(error.into()),
                 });
         }
-        let principal: PrincipalId = caller.principal_id().parse().map_err(
-            |error: wamn_identity_protocol::ParseIdentityError| Refusal::Failed(error.into()),
-        )?;
+        let principal = caller.principal_id();
         match (attachment.route.handler, &self.handlers) {
             (
                 HostHandler::PermissionMine,
@@ -255,7 +253,7 @@ impl HostRouteDelivery {
                     .held_operation_grants(
                         project,
                         &self.release.target().project_env_key,
-                        &principal,
+                        principal,
                         &attachment.operation,
                     )
                     .await
@@ -269,11 +267,9 @@ impl HostRouteDelivery {
             }
             (HostHandler::ControlMine, HostRouteHandlers::Control { control, org, .. }) => {
                 let mut transaction =
-                    wamn_platform_identity::transaction::read_pool(control, &principal.to_string())
-                        .await?;
-                let org_admin = is_org_admin(&mut transaction, &principal, org).await?;
-                let page =
-                    control_page(payload, attachment, &principal, org, None, Order::Project)?;
+                    wamn_platform_identity::transaction::read_pool(control, principal).await?;
+                let org_admin = is_org_admin(&mut transaction, principal, org).await?;
+                let page = control_page(payload, attachment, principal, org, None, Order::Project)?;
                 let projects = if org_admin {
                     org_projects_page(&mut transaction, org, page.after(0), page.read_limit())
                         .await?
@@ -283,7 +279,7 @@ impl HostRouteDelivery {
                 } else {
                     control_projects_page(
                         &mut transaction,
-                        &principal,
+                        principal,
                         org,
                         page.after(0),
                         page.read_limit(),
@@ -299,7 +295,7 @@ impl HostRouteDelivery {
                     let project_admin = org_admin
                         || wamn_platform_identity::control::is_project_admin(
                             &mut transaction,
-                            &principal,
+                            principal,
                             org,
                             project.as_str().expect("project name"),
                             None,
@@ -351,7 +347,7 @@ impl HostRouteDelivery {
                         .as_ref()
                         .map(|(client, org)| (client, org.as_str())),
                 }
-                .handle(attachment, &principal, request_id, payload)
+                .handle(attachment, principal, request_id, payload)
                 .await
             }
             (
@@ -383,7 +379,7 @@ impl HostRouteDelivery {
                     connection_health: self.connection_health.as_deref(),
                     oauth: self.oauth.as_deref(),
                 }
-                .handle(attachment, &principal, payload)
+                .handle(attachment, principal, payload)
                 .await
             }
         }

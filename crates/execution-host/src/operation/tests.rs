@@ -28,7 +28,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
             schema: Some("app".to_owned()),
             runner: Some("executor-a".to_owned()),
             role: Some("operator".to_owned()),
-            user_id: Some("user-a".to_owned()),
+            user_id: Some("00000000-0000-4000-8000-000000000001".parse().unwrap()),
             operation: None,
             application: None,
             release: Some(ReleaseIdentity::for_test(
@@ -73,14 +73,11 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
         ..acquisition
     };
     // A callerless call binds its platform principal.
-    let platform_user = PlatformComponent::ApplyPackage.principal_id().to_string();
-    assert_eq!(
-        original.executing_principal(None).as_deref(),
-        Some(platform_user.as_str())
-    );
+    let platform_user = PlatformComponent::ApplyPackage.principal_id();
+    assert_eq!(original.executing_principal(None), Some(platform_user));
     assert_eq!(
         executor.executing_principal(None),
-        Some(PlatformComponent::Executor.principal_id().to_string())
+        Some(PlatformComponent::Executor.principal_id())
     );
     // The call binds the token of the operation that it executes and the
     // declared application that its policy names.

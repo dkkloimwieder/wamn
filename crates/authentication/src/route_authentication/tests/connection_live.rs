@@ -87,7 +87,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind("770df186-ac15-579e-b46b-c297cae2011b").execute(&mut project).await.unwrap();
     let mut reader = url::Url::parse(database.as_str()).unwrap();
-    reader.set_username(&role).unwrap();
+    reader.set_username(role.as_str()).unwrap();
     reader.set_password(Some("fixture-password")).unwrap();
     let base = WamnPostgresConfig {
         credentials: None,
@@ -160,7 +160,12 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(caller.principal_id(), principal);
+    assert_eq!(
+        caller.principal_id(),
+        &principal
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap()
+    );
     assert_eq!(caller.credential_type(), CredentialType::Connection);
     assert!(!caller.admin());
     assert!(caller.active_role().is_none());
@@ -227,7 +232,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(api.principal_id(), service.id().to_string());
+    assert_eq!(api.principal_id(), service.id());
     assert!(!api.admin());
     assert!(api.permits("fixture:item/read@1.0.0"));
     assert!(!api.permits("fixture:item/write@1.0.0"));
@@ -384,7 +389,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         .await
         .unwrap();
     let mut http_url = url::Url::parse(project.as_str()).unwrap();
-    http_url.set_username(&http).unwrap();
+    http_url.set_username(http.as_str()).unwrap();
     http_url.set_password(Some("pat-drop")).unwrap();
     let config = WamnPostgresConfig {
         credentials: None,
@@ -448,7 +453,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     let request = || route.authenticate_authorization_for_test("orders", Some(&authorization));
     let cached_at = std::time::Instant::now();
     let caller = request().await.unwrap().unwrap();
-    assert_eq!(caller.principal_id(), principal.id().to_string().as_str());
+    assert_eq!(caller.principal_id(), principal.id());
     assert!(pg.auth_cache().pat(issued.token()).is_some());
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     revoke_pat(&mut admin, issued.record().prefix(), &mut drops)

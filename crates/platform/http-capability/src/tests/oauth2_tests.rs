@@ -407,7 +407,9 @@ impl Fixture {
                 "oauth2_{}_{}",
                 database.path().trim_start_matches('/'),
                 project.replace('-', "_")
-            );
+            )
+            .parse::<wamn_identity_protocol::LoginName>()
+            .unwrap();
             sqlx::raw_sql(sqlx::AssertSqlSafe(
                 (&wamn_control_provision::test_database::login_sql(
                     wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
@@ -422,7 +424,7 @@ impl Fixture {
             .map(drop)
             .unwrap();
             let mut authority = url::Url::parse(database.as_str()).unwrap();
-            authority.set_username(&role).unwrap();
+            authority.set_username(role.as_str()).unwrap();
             authority
                 .set_password(Some("oauth2-test-password"))
                 .unwrap();
@@ -430,7 +432,9 @@ impl Fixture {
             let guest_role = format!(
                 "wamn_app_{}",
                 wamn_identity_protocol::app_identity_hash(&project_env_key, &mut database_name)
-            );
+            )
+            .parse::<wamn_identity_protocol::LoginName>()
+            .unwrap();
             sqlx::raw_sql(sqlx::AssertSqlSafe(
                 wamn_control_provision::test_database::login_sql(
                     wamn_control_provision::WorkloadRoleFamily::App,
@@ -443,8 +447,10 @@ impl Fixture {
             .await
             .unwrap();
             let mut guest = authority.clone();
-            guest.set_username(&guest_role).unwrap();
-            let executor_role = format!("oauth2_executor_{}", uuid::Uuid::new_v4().simple());
+            guest.set_username(guest_role.as_str()).unwrap();
+            let executor_role = format!("oauth2_executor_{}", uuid::Uuid::new_v4().simple())
+                .parse::<wamn_identity_protocol::LoginName>()
+                .unwrap();
             sqlx::raw_sql(sqlx::AssertSqlSafe(
                 wamn_control_provision::test_database::login_sql(
                     wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform,
@@ -457,7 +463,7 @@ impl Fixture {
             .await
             .unwrap();
             let mut executor = authority.clone();
-            executor.set_username(&executor_role).unwrap();
+            executor.set_username(executor_role.as_str()).unwrap();
             projects.insert(
                 project.to_owned(),
                 ProjectConfig {
@@ -499,9 +505,7 @@ impl Fixture {
         postgres
             .set_user_id(
                 &scope,
-                &wamn_control_provision::PlatformComponent::Executor
-                    .principal_id()
-                    .to_string(),
+                &wamn_control_provision::PlatformComponent::Executor.principal_id(),
             )
             .unwrap();
         postgres.bind_invocation(&scope, invocation).unwrap();
@@ -545,9 +549,7 @@ impl Fixture {
             .postgres
             .set_user_id(
                 &scope,
-                &wamn_control_provision::PlatformComponent::Executor
-                    .principal_id()
-                    .to_string(),
+                &wamn_control_provision::PlatformComponent::Executor.principal_id(),
             )
             .unwrap();
         first
@@ -643,9 +645,7 @@ impl Fixture {
             .postgres
             .set_user_id(
                 &plugin.scope,
-                &wamn_control_provision::PlatformComponent::Executor
-                    .principal_id()
-                    .to_string(),
+                &wamn_control_provision::PlatformComponent::Executor.principal_id(),
             )
             .unwrap();
     }
@@ -664,9 +664,7 @@ impl Fixture {
             .postgres
             .set_user_id(
                 &plugin.scope,
-                &wamn_control_provision::PlatformComponent::Executor
-                    .principal_id()
-                    .to_string(),
+                &wamn_control_provision::PlatformComponent::Executor.principal_id(),
             )
             .unwrap();
         plugin

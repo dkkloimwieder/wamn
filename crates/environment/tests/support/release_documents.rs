@@ -639,7 +639,7 @@ pub mod workflow {
             .context("workflow.start attachment")?;
         let caller = wamn_engine::flow_http_routing::AuthenticatedCaller::new(
             attachment.clone(),
-            ENABLER,
+            ENABLER.parse().unwrap(),
             wamn_engine::flow_http_routing::CredentialType::Session,
             held.admin,
             held.references.iter().cloned().collect(),
@@ -774,10 +774,11 @@ pub mod workflow {
                         workflow_id,
                         workflow_version: workflow.version,
                         wiring_hash: &workflow.wiring_hash,
-                        execution_principal_id: &wamn_identity_protocol::workflow_user_id()
-                            .to_string(),
+                        execution_principal_id: &wamn_identity_protocol::workflow_user_id(),
                         execution_role: role,
-                        invoked_by_user_id: ENABLER,
+                        invoked_by_user_id: &ENABLER
+                            .parse::<wamn_identity_protocol::PrincipalId>()
+                            .unwrap(),
                         node_digests: &Value::Object(node_digests),
                         idempotency_key: &format!("manual:{ENABLER}:{workflow_id}:{key}"),
                         input,
@@ -867,8 +868,8 @@ pub mod workflow {
         ] {
             async {
                 let mut tx = project.begin().await?;
-                let user_id: String =
-                    sqlx::query("SELECT id::text FROM platform.\"user\" WHERE email=$1")
+                let user_id: wamn_identity_protocol::PrincipalId =
+                    sqlx::query("SELECT id FROM platform.\"user\" WHERE email=$1")
                         .bind(&user)
                         .fetch_one(&mut *tx)
                         .await?
@@ -903,7 +904,9 @@ pub mod workflow {
                 document,
                 trigger,
                 execution: WorkflowExecution::Role(role),
-                created_by: ENABLER,
+                created_by: &ENABLER
+                    .parse::<wamn_identity_protocol::PrincipalId>()
+                    .unwrap(),
                 manifest_digest: environment.digest,
             },
         )
@@ -913,7 +916,9 @@ pub mod workflow {
             environment.target,
             &mut project,
             &environment.version(application, &document.wiring_id),
-            ENABLER,
+            &ENABLER
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             environment.digest,
             environment.applications,
             events,

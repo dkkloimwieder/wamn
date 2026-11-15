@@ -35,9 +35,7 @@ async fn user(client: &mut Client) -> PrincipalId {
 async fn create(client: &mut Client, user: &PrincipalId) -> Renewal {
     let mut tx = wamn_test_postgres::transaction(
         client,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await
@@ -52,9 +50,7 @@ async fn create(client: &mut Client, user: &PrincipalId) -> Renewal {
 async fn rotate(client: &mut Client, secret: &str) -> Option<Renewal> {
     let mut tx = wamn_test_postgres::transaction(
         client,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await
@@ -97,9 +93,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
     assert_eq!(hash, wamn_digest::bytes_sha256(first.secret().as_bytes()));
     let mut tx = wamn_test_postgres::transaction(
         &mut issuer,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await
@@ -131,9 +125,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
     tx.commit().await.unwrap();
     let mut tx = wamn_test_postgres::transaction(
         &mut issuer,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await
@@ -194,9 +186,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
     );
     let mut tx = wamn_test_postgres::transaction(
         &mut issuer,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await
@@ -231,9 +221,7 @@ async fn inactivity_absolute_expiry_and_bounded_cleanup(pool: sqlx::PgPool) {
     let mut issuer = connect(db.as_str(), "wamn_identity_issuer").await;
     let mut tx = wamn_test_postgres::transaction(
         &mut issuer,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await

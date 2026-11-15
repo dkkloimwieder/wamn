@@ -5491,6 +5491,7 @@ dependencies = [
  "wamn-digest",
  "wamn-event-wire",
  "wamn-events-capability",
+ "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-registry",
  "wamn-test-infrastructure",
@@ -5713,6 +5714,7 @@ dependencies = [
  "wamn-connections",
  "wamn-control-provision",
  "wamn-digest",
+ "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-package-artifact",
  "wamn-platform-identity",
@@ -6063,6 +6065,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-event-wire",
+ "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-postgres",
  "wamn-registry",
@@ -6358,6 +6361,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "sqlx",
  "subtle",
  "tokio",
  "uuid",
@@ -6546,6 +6550,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "url",
+ "wamn-identity-protocol",
  "wamn-kubernetes",
 ]
 
@@ -6734,6 +6739,7 @@ dependencies = [
  "tokio",
  "uuid",
  "wamn-digest",
+ "wamn-identity-protocol",
 ]
 
 [[package]]
@@ -6819,6 +6825,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-environment",
+ "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-package-artifact",
  "wamn-postgres",
@@ -6852,6 +6859,7 @@ dependencies = [
  "wamn-compiler",
  "wamn-control-provision",
  "wamn-digest",
+ "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-platform-identity",
  "wamn-postgres",
@@ -6871,6 +6879,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "url",
+ "wamn-identity-protocol",
  "wamn-postgres",
 ]
 

@@ -172,7 +172,7 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
         .expect("commit fixture transaction");
     let mut authorized_url = url::Url::parse(admin_url)?;
     authorized_url
-        .set_username(&generation)
+        .set_username(generation.as_str())
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
     authorized_url
         .set_password(Some(PASSWORD))
@@ -186,7 +186,10 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
     )
     .fetch_one(&mut authorized)
     .await?;
-    assert_eq!(identity.get::<String, _>(0), generation);
+    assert_eq!(
+        identity.get::<wamn_identity_protocol::LoginName, _>(0),
+        generation
+    );
     assert!(!identity.get::<bool, _>(1) && !identity.get::<bool, _>(2));
     assert!(identity.get::<bool, _>(3));
     assert!(
@@ -353,7 +356,11 @@ async fn authenticated_as(
         .expect("verified caller");
     assert_eq!(
         caller.principal_id(),
-        body["sub"].as_str().expect("signed principal")
+        &body["sub"]
+            .as_str()
+            .expect("signed principal")
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap()
     );
     assert_eq!(caller.credential_type(), CredentialType::Session);
     assert!(caller.permits(ROOT));
@@ -415,7 +422,7 @@ async fn assert_case(caller: &AuthenticatedCaller, postgres: Arc<WamnPostgres>) 
         let identity = event.identity.expect("host identity");
         assert_eq!(identity.project_env_key, PROJECT_ENV_KEY);
         assert_eq!(
-            identity.user_id.as_deref(),
+            identity.user_id.as_ref(),
             Some(caller.principal_id()),
             "the entry binds the caller principal"
         );
@@ -1057,7 +1064,7 @@ async fn warm_postgres_with_pool(
         .await
         .expect("commit fixture transaction");
     let mut url = url::Url::parse(admin_url)?;
-    url.set_username(&role)
+    url.set_username(role.as_str())
         .map_err(|()| anyhow::anyhow!("guest username"))?;
     url.set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("guest password"))?;
@@ -1072,7 +1079,7 @@ async fn warm_postgres_with_pool(
     )?;
     let mut http_url = url.clone();
     http_url
-        .set_username(&http_role)
+        .set_username(http_role.as_str())
         .map_err(|()| anyhow::anyhow!("HTTP reader username"))?;
     let guest_credential = if let Some(path) = credential_file {
         std::fs::write(path, url.as_str())?;
@@ -1146,9 +1153,14 @@ async fn pat_caller(
     )
     .await?;
     let mut admin = connect(admin_url).await?;
-    let mut transaction =
-        wamn_test_postgres::transaction(&mut admin, FIXTURE_PRINCIPAL, "admin:warm-pat-test")
-            .await?;
+    let mut transaction = wamn_test_postgres::transaction(
+        &mut admin,
+        &FIXTURE_PRINCIPAL
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
+        "admin:warm-pat-test",
+    )
+    .await?;
     sqlx::query("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'service','warm-pat@example.invalid')").bind(&principal.id().to_string().as_str()).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
     sqlx::query(
         "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'native-child')",
@@ -1181,7 +1193,7 @@ async fn pat_caller(
     .map(drop)?;
     let mut reader_url = url::Url::parse(system_database.as_str())?;
     reader_url
-        .set_username(&reader_role)
+        .set_username(reader_role.as_str())
         .map_err(|()| anyhow::anyhow!("identity reader username"))?;
     reader_url
         .set_password(Some(PASSWORD))

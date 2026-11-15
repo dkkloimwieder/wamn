@@ -39,7 +39,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     .map(drop)
     .expect("prepare empty platform schemas");
     wamn_control_provision::test_database::system_schema(&url).await;
-    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    let provisioning = PlatformComponent::Provisioning.principal_id();
 
     // Issuance binds wamn:provisioning in its own transaction.
     let mut transaction = provisioning_transaction(&mut client).await;
@@ -339,15 +339,15 @@ async fn provisioning_transaction(client: &mut Client) -> sqlx::Transaction<'_, 
 
 struct PatStamps {
     created_at: String,
-    created_by: String,
+    created_by: PrincipalId,
     updated_at: String,
-    updated_by: String,
+    updated_by: PrincipalId,
     updated_after_created: bool,
 }
 
 async fn pat_stamps(client: &mut Client, prefix: &str) -> PatStamps {
     let row = sqlx::query(
-        "SELECT created_at::text, created_by::text, updated_at::text, updated_by::text, \
+        "SELECT created_at::text, created_by, updated_at::text, updated_by, \
                     updated_at > created_at \
              FROM identity.pats WHERE token_prefix = $1",
     )
@@ -366,10 +366,8 @@ async fn pat_stamps(client: &mut Client, prefix: &str) -> PatStamps {
 
 /// The pats foreign key carries the principal type, so no token names the
 /// platform principal, through the library or through direct SQL.
-async fn platform_principal_cannot_hold_a_token(client: &mut Client, provisioning: &str) {
-    let principal: PrincipalId = provisioning
-        .parse()
-        .expect("a derived id is a principal id");
+async fn platform_principal_cannot_hold_a_token(client: &mut Client, provisioning: &PrincipalId) {
+    let principal = provisioning;
     assert_eq!(
         issue_pat(client, &principal, "platform", TTL)
             .await

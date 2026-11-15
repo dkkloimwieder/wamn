@@ -109,8 +109,8 @@ pub(super) async fn run(
             .session_identity(target)
             .unwrap()
             .user_id
-            .as_deref(),
-        Some(super::SERVICE)
+            .as_ref(),
+        Some(&super::SERVICE.parse().unwrap())
     );
     assert!(execution.postgres.scopes.trace(target).is_some());
     let before = sqlx::query("SELECT r.status,q.lease_generation FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1").bind(&run).fetch_one(&mut *admin)

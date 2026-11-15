@@ -25,24 +25,24 @@ const ORG_PROJECTS_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONTROL
 
 const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     JOIN identity.principals p ON p.id = r.principal_id \
-    WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.role = $3 \
+    WHERE r.principal_id = $1 AND r.org = $2 AND r.role = $3 \
     AND p.type = 'user' AND p.status = 'active' \
     AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'))";
 
 const PROJECT_ADMIN_SQL: &str =
-    "SELECT identity.is_project_admin($1::text::uuid,$2,$5,$3) AND $4='project-admin'";
+    "SELECT identity.is_project_admin($1,$2,$5,$3) AND $4='project-admin'";
 
 const CONTROL_ORGS_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_ORGS_SQL;
 
 const CONTROL_SESSION_ACTIVE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.principals p \
-    WHERE p.id = $1::text::uuid AND p.type = 'user' AND p.status = 'active' \
+    WHERE p.id = $1 AND p.type = 'user' AND p.status = 'active' \
     AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active') \
     AND (EXISTS (SELECT 1 FROM identity.project_roles r \
     WHERE r.principal_id = p.id AND r.org = $2 AND r.role = $3) \
     OR EXISTS (SELECT 1 FROM identity.org_roles r \
     WHERE r.principal_id = p.id AND r.org = $2 AND r.role = $7) \
     OR EXISTS (SELECT 1 FROM identity.environment_roles r WHERE r.principal_id=p.id AND r.org=$2)) \
-    AND EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id = $4::text::uuid \
+    AND EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id = $4 \
     AND l.principal_id = p.id AND l.issuer = $5 AND l.audience = $6 AND l.revoked_at IS NULL \
     AND l.expires_at > clock_timestamp() AND l.renewal_expires_at > clock_timestamp()))";
 
@@ -98,7 +98,7 @@ pub async fn control_projects_page(
         return Err(invalid_org());
     }
     Ok(sqlx::query(CONTROL_PROJECTS_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(org)
         .bind(PROJECT_ADMIN_ROLE)
         .bind(after)
@@ -121,7 +121,7 @@ pub async fn is_org_admin(
         return Err(invalid_org());
     }
     sqlx::query(ORG_ADMIN_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(org)
         .bind(ORG_ADMIN_ROLE)
         .fetch_one(&mut *client)
@@ -145,7 +145,7 @@ pub async fn is_project_admin(
     }
     let project = crate::require_target_segment("project", project)?;
     sqlx::query(PROJECT_ADMIN_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(org)
         .bind(&project)
         .bind(PROJECT_ADMIN_ROLE)
@@ -217,7 +217,7 @@ pub async fn control_orgs_page(
     limit: Option<i64>,
 ) -> Result<Vec<String>, IdentityError> {
     Ok(sqlx::query(CONTROL_ORGS_SQL)
-        .bind(principal_id.to_string().as_str())
+        .bind(principal_id)
         .bind(PROJECT_ADMIN_ROLE)
         .bind(ORG_ADMIN_ROLE)
         .bind(org)
@@ -246,10 +246,10 @@ pub async fn control_session_is_active(
         return Ok(false);
     }
     sqlx::query(CONTROL_SESSION_ACTIVE_SQL)
-        .bind(claims.sub.to_string())
+        .bind(claims.sub)
         .bind(&claims.org)
         .bind(PROJECT_ADMIN_ROLE)
-        .bind(login.to_string())
+        .bind(login)
         .bind(&claims.iss)
         .bind(&claims.aud)
         .bind(ORG_ADMIN_ROLE)

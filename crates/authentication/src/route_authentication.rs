@@ -171,7 +171,7 @@ impl PlatformRouteAuthenticator {
         credential: &str,
         headers: &[Header],
         body: &[u8],
-    ) -> Result<uuid::Uuid, AuthRejection> {
+    ) -> Result<wamn_identity_protocol::PrincipalId, AuthRejection> {
         let mut values = headers
             .iter()
             .filter(|value| value.name.eq_ignore_ascii_case(header));
@@ -268,12 +268,10 @@ impl PlatformRouteAuthenticator {
                     return Ok(true);
                 }
                 let ticket = cache.identity_ticket();
-                let mut transaction = wamn_platform_identity::transaction::read_pool(
-                    identity_reader,
-                    &claims.sub.to_string(),
-                )
-                .await
-                .map_err(|_| authentication_unavailable())?;
+                let mut transaction =
+                    wamn_platform_identity::transaction::read_pool(identity_reader, &claims.sub)
+                        .await
+                        .map_err(|_| authentication_unavailable())?;
                 let active = wamn_platform_identity::session_token::session_is_active(
                     &mut transaction,
                     claims,
@@ -294,12 +292,7 @@ impl PlatformRouteAuthenticator {
                                 .checked_add(std::time::Duration::from_secs(seconds))
                         })
                         .ok_or_else(unauthorized)?;
-                    cache.keep_session_active(
-                        ticket,
-                        token,
-                        claims.sub.to_string().as_str(),
-                        deadline,
-                    );
+                    cache.keep_session_active(ticket, token, &claims.sub, deadline);
                 }
                 Ok(active)
             },
@@ -308,7 +301,7 @@ impl PlatformRouteAuthenticator {
         let active_role = permissions.active_role();
         Ok(AuthenticatedCaller::new(
             attachment_id,
-            principal.to_string().as_str(),
+            principal,
             CredentialType::Session,
             permissions.admin,
             permissions.references.into_iter().collect(),
@@ -354,10 +347,6 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     request.body,
                 )
                 .await?;
-            let id = principal.to_string();
-            let principal = id
-                .parse::<wamn_identity_protocol::PrincipalId>()
-                .map_err(|_| signature_unauthorized())?;
             let grants = self
                 .postgres
                 .principal_grants(project, &request.target.project_env_key, &principal)
@@ -373,7 +362,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .map_err(|_| authentication_unavailable())?;
             return Ok(Some(AuthenticatedCaller::new(
                 request.attachment_id,
-                id,
+                principal,
                 CredentialType::Connection,
                 permissions.admin,
                 permissions.references.into_iter().collect(),
@@ -417,9 +406,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 let ticket = cache.identity_ticket();
                 let mut transaction = wamn_platform_identity::transaction::read_pool(
                     identity_reader,
-                    &wamn_identity_protocol::PlatformComponent::Provisioning
-                        .principal_id()
-                        .to_string(),
+                    &wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
                 )
                 .await
                 .map_err(|_| authentication_unavailable())?;
@@ -459,8 +446,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         .map_err(|_| authentication_unavailable())?;
                     if !active.is_some_and(|fact| {
                         fact.status == ConnectionStatus::Active
-                            && fact.service_principal_id.to_string()
-                                == principal.id().to_string().as_str()
+                            && fact.service_principal_id == *principal.id()
                     }) {
                         return Err(unauthorized());
                     }
@@ -483,7 +469,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             let active_role = permissions.pat_role();
             Ok(Some(AuthenticatedCaller::new(
                 attachment_id,
-                principal.id().to_string().as_str(),
+                *principal.id(),
                 CredentialType::Pat,
                 permissions.admin,
                 permissions.references.into_iter().collect(),
@@ -550,12 +536,10 @@ impl ControlRouteAuthenticator {
             csrf.map(|required| (headers, required)),
             async |_| Ok(()),
             async |claims| {
-                let mut transaction = wamn_platform_identity::transaction::read_pool(
-                    &self.control,
-                    &claims.sub.to_string(),
-                )
-                .await
-                .map_err(|_| authentication_unavailable())?;
+                let mut transaction =
+                    wamn_platform_identity::transaction::read_pool(&self.control, &claims.sub)
+                        .await
+                        .map_err(|_| authentication_unavailable())?;
                 let active = wamn_platform_identity::control::control_session_is_active(
                     &mut transaction,
                     claims,
@@ -575,7 +559,7 @@ impl ControlRouteAuthenticator {
         .await?;
         Ok(Some(AuthenticatedCaller::new(
             attachment_id,
-            principal.to_string().as_str(),
+            principal,
             CredentialType::Session,
             false,
             std::collections::HashSet::new(),
@@ -672,20 +656,21 @@ pub(crate) mod tests {
             ("b".to_owned(), BTreeSet::from(["app:order/put".to_owned()])),
             (ADMIN_ROLE.to_owned(), BTreeSet::new()),
         ]);
-        let caller = role_caller("principal", "a", &held).expect("the principal holds a");
+        let principal = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+        let caller = role_caller(&principal, "a", &held).expect("the principal holds a");
         assert!(caller.permits("app:order/get@1.0.0"));
         assert!(!caller.permits("app:order/put@1.0.0"));
         assert!(!caller.admin());
         assert_eq!(caller.active_role(), Some("a"));
 
-        let admin = role_caller("principal", ADMIN_ROLE, &held).expect("the principal holds admin");
+        let admin = role_caller(&principal, ADMIN_ROLE, &held).expect("the principal holds admin");
         assert!(admin.admin());
         assert!(admin.permits("app:order/put@1.0.0"));
 
-        assert!(role_caller("principal", "c", &held).is_none());
+        assert!(role_caller(&principal, "c", &held).is_none());
         let without_admin =
             BTreeMap::from([("a".to_owned(), BTreeSet::from(["app:order/get".to_owned()]))]);
-        assert!(role_caller("principal", ADMIN_ROLE, &without_admin).is_none());
+        assert!(role_caller(&principal, ADMIN_ROLE, &without_admin).is_none());
     }
 }
 

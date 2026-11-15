@@ -39,7 +39,7 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
         let mut client = wamn_postgres::connect(&project_url).await?;
 
         super::bind_fixture_principal(&mut client).await?;
-        let mut fixture_write = wamn_test_postgres::transaction(&mut client, "00000000-0000-4000-8000-0000000000f1", "admin:seed-receiving-test-fixture").await?;
+        let mut fixture_write = wamn_test_postgres::transaction(&mut client, &"00000000-0000-4000-8000-0000000000f1".parse::<wamn_identity_protocol::PrincipalId>().unwrap(), "admin:seed-receiving-test-fixture").await?;
         seed_acme_orders(&mut *fixture_write).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(("UPDATE receiving.purchase_order SET status = 'complete', row_version = row_version + 1
                 WHERE id = '00000000-0000-0000-0000-000000000721';

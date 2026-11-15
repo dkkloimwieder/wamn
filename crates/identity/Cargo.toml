@@ -28,7 +28,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 # The token profile and its verification.
-wamn-identity-protocol = { workspace = true }
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 # The application role names of a project database.
 wamn-catalog = { workspace = true }
 

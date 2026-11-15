@@ -60,7 +60,7 @@ impl RouteAuthenticator for EdgeAuthenticator {
         }
         Ok(Some(AuthenticatedCaller::new(
             request.attachment_id,
-            claims.sub.to_string().as_str(),
+            claims.sub,
             CredentialType::Session,
             false,
             self.release

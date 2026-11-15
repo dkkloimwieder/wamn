@@ -22,8 +22,8 @@ pub fn insert_run_sql() -> String {
         wiring_id, wiring_version, wiring_hash, execution_principal_id, execution_role, \
         trigger_source, invoked_by, invoked_by_user_id, node_digests_json, idempotency_key, \
         input_json, status, event_source_run_id, event_root_run_id, event_depth) \
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::uuid, $9, $10, $11, \
-            $12::text::uuid, $13::text::jsonb, $14, $15::text::jsonb, '{dispatched}', $16, $17, $18) \
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
+            $12, $13::text::jsonb, $14, $15::text::jsonb, '{dispatched}', $16, $17, $18) \
         ON CONFLICT (project_env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
         RETURNING run_id",
         dispatched = RunStatus::Dispatched.as_sql()

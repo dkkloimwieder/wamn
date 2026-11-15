@@ -451,9 +451,7 @@ async fn apply(
             project_env_key,
             digest,
             release.manifest(),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         )
         .await?;
         let mut tx = project.begin().await?;

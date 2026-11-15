@@ -52,7 +52,7 @@ async fn provision(admin: &mut Client) {
         .expect("seed the releases");
 }
 
-async fn drop_generation_role(admin: &mut Client, role: &str) {
+async fn drop_generation_role(admin: &mut Client, role: &wamn_identity_protocol::LoginName) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "DO $run_retention$ BEGIN \
@@ -73,7 +73,7 @@ async fn drop_generation_role(admin: &mut Client, role: &str) {
 /// Mint the generation through the production builders: the prepare builder
 /// for the login and the platform group builder for the `wamn_platform` edge.
 /// Without that edge, FORCE RLS on `runs` gives the generation zero rows.
-async fn mint(admin: &mut Client, database: &str, role: &str) {
+async fn mint(admin: &mut Client, database: &str, role: &wamn_identity_protocol::LoginName) {
     drop_generation_role(admin, role).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::login_sql(
@@ -120,9 +120,7 @@ async fn seed_run(
 ) {
     let mut transaction = wamn_test_postgres::transaction(
         admin,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         "admin:run-retention-fixture",
     )
     .await
@@ -186,9 +184,9 @@ async fn assert_refused(url: &str, project_env_key: &str, label: &str) {
 }
 
 /// Re-point a connection URL at another role, keeping host, port, and database.
-fn replace_role(url: &str, role: &str, password: &str) -> String {
+fn replace_role(url: &str, role: &wamn_identity_protocol::LoginName, password: &str) -> String {
     let mut input = url::Url::parse(url).expect("parse fixture input");
-    input.set_username(role).unwrap();
+    input.set_username(role.as_str()).unwrap();
     input.set_password(Some(password)).unwrap();
     input.into()
 }
@@ -226,9 +224,7 @@ async fn assert_authority(credential: &mut Client) {
     // The grant bounds who may delete, and the trigger bounds what.
     let mut transaction = wamn_test_postgres::transaction(
         credential,
-        &wamn_control_provision::PlatformComponent::AuditRetention
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::AuditRetention.principal_id(),
         "wamn:audit-retention",
     )
     .await
@@ -274,9 +270,7 @@ async fn assert_authority(credential: &mut Client) {
 
     let mut transaction = wamn_test_postgres::transaction(
         credential,
-        &wamn_control_provision::PlatformComponent::AuditRetention
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::AuditRetention.principal_id(),
         "wamn:audit-retention",
     )
     .await
@@ -345,7 +339,7 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key(
     .await
     .map(drop)
     .expect("let the shared wamn_app role log in");
-    let app_url = replace_role(&url, APP_ROLE, APP_PASSWORD);
+    let app_url = replace_role(&url, &APP_ROLE.parse().unwrap(), APP_PASSWORD);
 
     // The refusals run first, against the populated store.
     assert_refused(

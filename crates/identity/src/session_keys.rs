@@ -278,18 +278,12 @@ pub(crate) async fn sign_message(
 async fn bind_provisioning(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(), IdentityError> {
-    sqlx::query(
-        "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1::text::uuid,'','')",
-    )
-    .bind(
-        wamn_identity_protocol::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
-    )
-    .execute(&mut **transaction)
-    .await
-    .map(|result| result.rows_affected())
-    .map_err(key_database_error)?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')")
+        .bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id())
+        .execute(&mut **transaction)
+        .await
+        .map(|result| result.rows_affected())
+        .map_err(key_database_error)?;
     Ok(())
 }
 

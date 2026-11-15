@@ -214,7 +214,7 @@ impl ControlRoutes<'_> {
             operation,
             &request,
             self.org,
-            caller.to_string().as_str(),
+            caller,
             &coordinate,
             &database,
             image,
@@ -283,7 +283,7 @@ fn manifest(
     operation: Operation,
     request: &Request,
     org: &str,
-    actor: &str,
+    actor: &PrincipalId,
     coordinate: &str,
     database: &str,
     image: &str,
@@ -357,7 +357,7 @@ fn manifest(
     container["resources"] =
         json!({"requests":{"cpu":"100m","memory":"256Mi"},"limits":{"cpu":"2","memory":"2Gi"}});
     wamn_kubernetes::job::registry(&mut job, metadata);
-    wamn_kubernetes::job::environment(&mut job, &[("WAMN_DEPLOY_ACTOR", actor)]);
+    wamn_kubernetes::job::environment(&mut job, &[("WAMN_DEPLOY_ACTOR", &actor.to_string())]);
     job
 }
 
@@ -399,7 +399,7 @@ mod tests {
                 operation,
                 &request,
                 "acme",
-                "actor",
+                &"00000000-0000-4000-8000-000000000001".parse().unwrap(),
                 &coordinate,
                 "project-database",
                 "image",

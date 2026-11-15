@@ -134,7 +134,7 @@ impl TrustedHttpRoute {
                 wiring_hash: self.wiring_hash,
                 node_digests: BTreeMap::from([(NODE_ID.to_owned(), self.component_digest)]),
                 identity: wamn_workflow::WorkflowIdentity {
-                    principal_id: wamn_identity_protocol::workflow_user_id().to_string(),
+                    principal_id: wamn_identity_protocol::workflow_user_id(),
                     role: "admin".to_owned(),
                 },
                 causation: None,
@@ -212,7 +212,9 @@ async fn credential_fixture(
         .execute(&mut admin)
         .await
         .map(drop)?;
-    let role = format!("trusted_http_{}", uuid::Uuid::new_v4().simple());
+    let role = format!("trusted_http_{}", uuid::Uuid::new_v4().simple())
+        .parse::<wamn_identity_protocol::LoginName>()
+        .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::ConnectionReader,
@@ -578,7 +580,7 @@ async fn seed_with_client(
         .execute(&mut *client)
         .await
         .map(drop)?;
-    sqlx::query("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING").bind(wamn_identity_protocol::workflow_user_id().to_string()).execute(&mut *client).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING").bind(wamn_identity_protocol::workflow_user_id()).execute(&mut *client).await.map(|result| result.rows_affected())?;
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
     let wiring_hash = document.wiring_hash();
@@ -639,7 +641,7 @@ async fn seed_with_client(
     .bind(wiring_version)
     .bind(&graph_json)
     .bind(&wiring_hash)
-    .bind(wamn_identity_protocol::workflow_user_id().to_string())
+    .bind(wamn_identity_protocol::workflow_user_id())
     .execute(&mut *client)
     .await
     .map(|result| result.rows_affected())
@@ -752,15 +754,18 @@ async fn seed_additional_wirings(
         let version = i32::try_from(document.version)?;
         let wiring_hash = document.wiring_hash();
         sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, \
-             version, graph_json, wiring_hash, trigger, execution_type, created_by) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'manual', 'invoker', $8::text::uuid)").bind(PROJECT_ENV_KEY).bind(ENVIRONMENT).bind(PACKAGE).bind(&document.wiring_id).bind(version).bind(&serde_json::to_string(document)?).bind(&wiring_hash).bind(wamn_identity_protocol::workflow_user_id().to_string()).execute(&mut *client).await.map(|result| result.rows_affected())
+             version, graph_json, wiring_hash, trigger, execution_type, created_by) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'manual', 'invoker', $8::text::uuid)").bind(PROJECT_ENV_KEY).bind(ENVIRONMENT).bind(PACKAGE).bind(&document.wiring_id).bind(version).bind(&serde_json::to_string(document)?).bind(&wiring_hash).bind(wamn_identity_protocol::workflow_user_id()).execute(&mut *client).await.map(|result| result.rows_affected())
             .context("seed the additional immutable wiring")?;
     }
     Ok(())
 }
 
-fn generation_url(admin_url: &str, role: &str) -> anyhow::Result<String> {
+fn generation_url(
+    admin_url: &str,
+    role: &wamn_identity_protocol::LoginName,
+) -> anyhow::Result<String> {
     let mut url = url::Url::parse(admin_url).context("parse the disposable admin URL")?;
-    url.set_username(role)
+    url.set_username(role.as_str())
         .map_err(|()| anyhow::anyhow!("set the production generation username"))?;
     url.set_password(Some(GENERATION_PASSWORD))
         .map_err(|()| anyhow::anyhow!("set the production generation password"))?;

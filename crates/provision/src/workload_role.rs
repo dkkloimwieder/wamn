@@ -466,7 +466,7 @@ pub fn workload_role_identity_hash(
 pub fn workload_login(
     family: WorkloadRoleFamily,
     identity: WorkloadRoleIdentity<'_>,
-) -> Result<String, WorkloadRoleIdentityError> {
+) -> Result<wamn_identity_protocol::LoginName, WorkloadRoleIdentityError> {
     Ok(wamn_registry::name::credential_login(
         family.login_prefix(),
         &workload_role_identity_hash(family, identity)?,

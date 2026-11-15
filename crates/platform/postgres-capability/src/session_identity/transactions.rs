@@ -42,7 +42,7 @@ pub(in super::super) async fn finish_transaction(
 /// Return the xid expression without reading a column: the login has INSERT only.
 pub(super) const IDENTITY_SQL: &str = "INSERT INTO platform.tx_identity \
     (xid, principal_id, role, application, operation, runner) \
-    VALUES (pg_current_xact_id(), $1::text::uuid, $2, $3, $4, $5) RETURNING pg_current_xact_id()::text";
+    VALUES (pg_current_xact_id(), $1, $2, $3, $4, $5) RETURNING pg_current_xact_id()::text";
 
 /// Open a host write transaction before inserting its caller.
 const BEGIN_READ_COMMITTED: &str = "BEGIN ISOLATION LEVEL READ COMMITTED";
@@ -55,6 +55,7 @@ const BEGIN_READ_SNAPSHOT: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ";
 pub(in super::super) struct BoundIdentity {
     begin: &'static str,
     pub(in super::super) causation: Option<(String, String)>,
+    principal: wamn_identity_protocol::PrincipalId,
     params: Vec<Option<String>>,
     schema: Option<String>,
     statement_timeout_ms: u32,
@@ -72,7 +73,7 @@ impl BoundIdentity {
                 .execute(&mut *conn)
                 .await
                 .map_err(|e| map_pg_error(&e))?;
-            let mut query = sqlx::query_scalar::<_, String>(IDENTITY_SQL);
+            let mut query = sqlx::query_scalar::<_, String>(IDENTITY_SQL).bind(self.principal);
             for value in &self.params {
                 query = query.bind(value);
             }
@@ -114,7 +115,7 @@ impl WamnPostgres {
         schema: Option<&str>,
         runner: Option<&str>,
         role: Option<&str>,
-        user_id: Option<&str>,
+        user_id: Option<&wamn_identity_protocol::PrincipalId>,
         operation: Option<&str>,
         application: Option<&str>,
         run: Option<&Causation>,
@@ -148,7 +149,7 @@ impl WamnPostgres {
         schema: Option<&str>,
         runner: Option<&str>,
         role: Option<&str>,
-        user_id: Option<&str>,
+        user_id: Option<&wamn_identity_protocol::PrincipalId>,
         operation: Option<&str>,
         application: Option<&str>,
         run: Option<&Causation>,
@@ -161,7 +162,6 @@ impl WamnPostgres {
             schema,
             runner,
             role,
-            user_id,
             operation,
             application,
         )?;
@@ -169,7 +169,6 @@ impl WamnPostgres {
             PgError::QueryError(("55000".to_owned(), "actor-required".to_owned()))
         })?;
         let params = vec![
-            Some(principal.to_owned()),
             Some(role.unwrap_or_default().to_owned()),
             Some(application.unwrap_or_default().to_owned()),
             operation.map(str::to_owned),
@@ -189,6 +188,7 @@ impl WamnPostgres {
         Ok(BoundIdentity {
             begin,
             causation,
+            principal: *principal,
             params,
             schema: schema.map(str::to_owned),
             statement_timeout_ms,

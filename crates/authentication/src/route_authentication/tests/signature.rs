@@ -397,7 +397,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
         .memory
         .connection(PROJECT_ENV_KEY, &connection)
         .unwrap();
-    assert_eq!(old.service_principal_id.to_string(), caller.principal_id());
+    assert_eq!(&old.service_principal_id, caller.principal_id());
 
     // A repeated request needs neither Postgres connection reads nor the store.
     sqlx::raw_sql("REVOKE EXECUTE ON FUNCTION registry.read_env_connections(text,text,text), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_secret(text,text,text,uuid) FROM wamn_conn_reader").execute(&mut fixture.credentials.admin).await.map(drop).unwrap();
@@ -473,7 +473,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(caller.principal_id(), new.service_principal_id.to_string());
+    assert_eq!(caller.principal_id(), &new.service_principal_id);
 }
 
 #[tokio::test]
@@ -537,7 +537,9 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
                 .unwrap()
                 .unwrap()
                 .principal_id(),
-            principal
+            &principal
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap()
         );
     }
     for disable in [

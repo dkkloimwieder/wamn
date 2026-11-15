@@ -102,7 +102,7 @@ impl Authorization {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         context: &Value,
-        caller: uuid::Uuid,
+        caller: wamn_identity_protocol::PrincipalId,
     ) -> Result<String, Error> {
         let connection = context["id"]
             .as_str()

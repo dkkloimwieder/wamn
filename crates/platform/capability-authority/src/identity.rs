@@ -73,7 +73,7 @@ pub struct SessionIdentity {
     /// `app.user_id` — the executing principal's `users.id`, which the
     /// record-history triggers stamp. A transactional statement with none is
     /// refused.
-    pub user_id: Option<String>,
+    pub user_id: Option<wamn_identity_protocol::PrincipalId>,
     /// `app.operation`: the executing operation token, or `wamn:<component>`
     /// for a platform component outside a registered operation.
     pub operation: Option<String>,

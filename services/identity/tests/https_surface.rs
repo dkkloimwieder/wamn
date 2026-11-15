@@ -88,7 +88,7 @@ async fn identity_https_has_only_public_jwks_and_health() {
     let role = identity_issuer_login(ISSUER).expect("targeted role");
     let existing: bool =
         sqlx::query("SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = ANY($1::text[]))")
-            .bind(&vec![role.clone(), IDENTITY_ISSUER_ROLE.to_owned()])
+            .bind(&vec![role.clone(), IDENTITY_ISSUER_ROLE.parse().unwrap()])
             .fetch_one(&mut admin)
             .await
             .expect("fixture role absence")
@@ -148,7 +148,9 @@ async fn identity_https_has_only_public_jwks_and_health() {
     .map(drop)
     .expect("provision narrow identity credential");
     let mut targeted = url::Url::parse(admin_url).expect("fixture URL shape");
-    targeted.set_username(&role).expect("targeted login");
+    targeted
+        .set_username(role.as_str())
+        .expect("targeted login");
     targeted
         .set_password(Some(PASSWORD))
         .expect("fixture password");
@@ -370,7 +372,7 @@ async fn identity_https_has_only_public_jwks_and_health() {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "DROP OWNED BY {role}; DROP ROLE {role}; DROP OWNED BY {stable}; DROP ROLE {stable};",
-            role = escape_identifier(&role),
+            role = escape_identifier(role.as_str()),
             stable = escape_identifier(IDENTITY_ISSUER_ROLE)
         ))
             .to_string(),

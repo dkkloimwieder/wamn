@@ -429,7 +429,7 @@ impl CredentialProvider for StaticCredentialProvider {
             let (role, database) = wamn_postgres::identity(&resolved.database_url)?;
             let key = app_identity_hash(project_env_key, &database);
             anyhow::ensure!(
-                role == format!("{}_{key}", class.acl_role()),
+                role == wamn_registry::name::credential_login(class.acl_role(), &key),
                 "the credential for project {project:?} authenticates as {role:?}, which \
                  does not carry the project key for the requested project; refusing rather \
                  than reading another project's rows"
@@ -447,14 +447,14 @@ impl CredentialProvider for StaticCredentialProvider {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct PoolKey {
     project: Box<str>,
-    login: Box<str>,
+    login: wamn_identity_protocol::LoginName,
 }
 
 impl PoolKey {
-    pub(super) fn new(project: &str, login: String) -> Self {
+    pub(super) fn new(project: &str, login: wamn_identity_protocol::LoginName) -> Self {
         Self {
             project: project.into(),
-            login: login.into_boxed_str(),
+            login,
         }
     }
 }

@@ -482,9 +482,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             &b.digest(),
             &b,
             &[b_package.clone(), base_package.clone()],
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         )
         .await
         .is_err()
@@ -568,9 +566,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &old_a.digest(),
         &old_a,
         &old_packages,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     expand::prepare(
@@ -580,9 +576,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &b.digest(),
         &b,
         &[b_package, base_package.clone()],
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     for (target_type, target_id, seconds) in [
@@ -684,9 +678,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &new_a.digest(),
         &new_a,
         &candidate_packages,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     expand::prepare(
@@ -696,9 +688,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &new_a.digest(),
         &new_a,
         &candidate_packages,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
 
@@ -761,7 +751,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         PROJECT_ENV_KEY,
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
-            user_id: b_user.id().to_string().as_str(),
+            user_id: &b_user
+                .id()
+                .to_string()
+                .as_str()
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             role: "application-a",
             grant: true,
         },
@@ -777,9 +772,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             &failed_release.digest(),
             &failed_release,
             &failed_packages,
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
         )
         .await
         .is_err()
@@ -901,7 +894,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
                 PROJECT_ENV_KEY,
                 wamn_platform_identity::application::GrantAuthority::Provisioning,
                 wamn_platform_identity::application::GrantChange::UserRole {
-                    user_id: b_user.id().to_string().as_str(),
+                    user_id: &b_user
+                        .id()
+                        .to_string()
+                        .as_str()
+                        .parse::<wamn_identity_protocol::PrincipalId>()
+                        .unwrap(),
                     role: "application-a",
                     grant: false,
                 },
@@ -994,9 +992,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &old_a.digest(),
         &old_a,
         &old_packages,
-        &wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string(),
+        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     assert!(

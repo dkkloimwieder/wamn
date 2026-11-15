@@ -11,7 +11,7 @@ pub async fn expand(
     platform: &Platform,
     document: &EnvironmentDocument,
     analysis: &Analysis,
-    actor: &str,
+    actor: &wamn_identity_protocol::PrincipalId,
 ) -> anyhow::Result<()> {
     let Some(release) = &analysis.authorities.release else {
         return Ok(());
@@ -46,7 +46,7 @@ pub async fn prepare(
     digest: &wamn_digest::Digest,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[wamn_compiler::manifest::PackageManifest],
-    actor: &str,
+    actor: &wamn_identity_protocol::PrincipalId,
 ) -> anyhow::Result<()> {
     let mut selected = super::analyse::select_application(document, Some(application))?;
     let selection = selected
@@ -90,7 +90,7 @@ pub(super) async fn prepare_at(
     manifest: &wamn_catalog::ServingManifest,
     packages: &[wamn_compiler::manifest::PackageManifest],
     project_url: &str,
-    actor: &str,
+    actor: &wamn_identity_protocol::PrincipalId,
 ) -> anyhow::Result<()> {
     let document = super::analyse::select_application(document, Some(application))?;
     let document = &document;

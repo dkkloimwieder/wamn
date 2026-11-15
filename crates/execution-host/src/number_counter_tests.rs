@@ -52,7 +52,8 @@ impl Live {
         .await
         .expect("mint the administration generation");
         let mut url = url::Url::parse(database.as_str()).expect("parse the test url");
-        url.set_username(&generation).expect("set the username");
+        url.set_username(generation.as_str())
+            .expect("set the username");
         url.set_password(Some(ADMINISTRATION_PASSWORD))
             .expect("set the password");
         let administration = connect(url.as_str()).await;
@@ -117,7 +118,9 @@ impl Live {
             &self.plugin,
             wamn_postgres_capability::DEFAULT_PROJECT,
             PROJECT_ENV_KEY,
-            LIVE_PRINCIPAL,
+            &LIVE_PRINCIPAL
+                .parse::<wamn_identity_protocol::PrincipalId>()
+                .unwrap(),
             SET_OPERATION,
             request_id,
             &CounterSet {
@@ -202,7 +205,7 @@ async fn live_guest_url(admin_url: &str, project_env_key: &str) -> String {
     .execute(&mut connect(admin_url).await)
     .await
     .unwrap();
-    url.set_username(&login).unwrap();
+    url.set_username(login.as_str()).unwrap();
     url.set_password(Some("counter-test")).unwrap();
     url.to_string()
 }
@@ -232,7 +235,9 @@ async fn live_set_counter_is_logged_by_its_request_id(pool: sqlx::PgPool) {
     );
     let mut transaction = wamn_test_postgres::transaction(
         &mut live.observation,
-        LIVE_PRINCIPAL,
+        &LIVE_PRINCIPAL
+            .parse::<wamn_identity_protocol::PrincipalId>()
+            .unwrap(),
         "admin:counter-observe",
     )
     .await

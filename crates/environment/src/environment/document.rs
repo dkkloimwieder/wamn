@@ -101,9 +101,7 @@ pub(super) async fn read_configuration(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> Result<Option<wamn_registry::configuration::EnvironmentConfiguration>, sqlx::Error> {
-    let principal = wamn_control_provision::PlatformComponent::Provisioning
-        .principal_id()
-        .to_string();
+    let principal = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
     let mut transaction =
         wamn_platform_identity::transaction::read_connection(connection, &principal).await?;
     let configuration = wamn_registry::configuration::read(&mut transaction, triple).await?;
