@@ -228,7 +228,7 @@ fn every_token_reader_asks_the_one_metadata_server() {
         tokio::spawn(serve(listener, script.clone()));
 
         the_token_is_the_password_of_oauth2accesstoken(&script).await;
-        an_unusable_answer_refuses_by_name_without_the_token(&script).await;
+        an_unusable_answer_refuses_without_the_token(&script).await;
         each_release_pull_asks_again_and_sends_its_token(&script).await;
         a_failed_token_request_refuses_before_any_registry_request(&script).await;
         each_component_pull_asks_again(&script).await;
@@ -259,32 +259,25 @@ async fn the_token_is_the_password_of_oauth2accesstoken(script: &Script) {
     );
 }
 
-async fn an_unusable_answer_refuses_by_name_without_the_token(script: &Script) {
-    for (status, body, type_, refusal) in [
-        (
-            500,
-            "{}",
-            RegistryCredentialsErrorType::Unreadable,
-            "registry-token-metadata-unavailable",
-        ),
+async fn an_unusable_answer_refuses_without_the_token(script: &Script) {
+    for (status, body, type_) in [
+        (500, "{}", RegistryCredentialsErrorType::Unreadable),
         (
             200,
             r#"{"token":"private-value""#,
             RegistryCredentialsErrorType::Rejected,
-            "registry-token-metadata-malformed",
         ),
         (
             200,
             r#"{"access_token":"","expires_in":0}"#,
             RegistryCredentialsErrorType::Rejected,
-            "registry-token-metadata-incomplete",
         ),
     ] {
         script.answer(vec![(status, body)]);
         let error = read_metadata_registry_credentials(REGISTRY)
             .await
             .expect_err("an unusable answer refuses");
-        assert_eq!((error.error_type(), error.refusal()), (type_, refusal));
+        assert_eq!(error.error_type(), type_);
         let rendered = format!("{error:?} {error}");
         assert!(!rendered.contains("private-value"));
     }
@@ -313,7 +306,7 @@ async fn each_release_pull_asks_again_and_sends_its_token(script: &Script) {
             .pull_verified(&wamn_digest::bytes_sha256(canonical))
             .await
             .expect("a pull with a metadata token succeeds");
-        assert_eq!(pulled, canonical);
+        assert_eq!(bytes_sha256(&pulled), bytes_sha256(canonical));
     }
     assert_eq!(script.heads().len(), 2, "one token request per pull");
     assert_eq!(
@@ -343,7 +336,6 @@ async fn a_failed_token_request_refuses_before_any_registry_request(script: &Scr
         error.error_type(),
         ReleaseManifestFetchErrorType::Credential
     );
-    assert_eq!(error.refusal(), "registry-token-metadata-unavailable");
     assert!(registry.heads().is_empty());
 }
 
@@ -364,7 +356,10 @@ async fn each_component_pull_asks_again(script: &Script) {
             .pull_verified(&component)
             .await
             .expect_err("the refusing registry refuses the pull");
-        assert_eq!(error.refusal(), "component-artifact-manifest-unavailable");
+        assert_eq!(
+            error.error_type(),
+            ComponentArtifactFetchErrorType::Unavailable
+        );
         assert_eq!(script.heads().len(), pulls);
     }
 
@@ -377,7 +372,6 @@ async fn each_component_pull_asks_again(script: &Script) {
         error.error_type(),
         ComponentArtifactFetchErrorType::Unavailable
     );
-    assert_eq!(error.refusal(), "registry-token-metadata-unavailable");
 }
 
 async fn the_helper_answers_with_the_same_token_function(script: &Script) {

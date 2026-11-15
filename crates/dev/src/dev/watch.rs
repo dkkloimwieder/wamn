@@ -774,21 +774,6 @@ mod tests {
         assert!(status.success(), "fixture Git command failed: {args:?}");
     }
 
-    fn collect_batch(
-        first: DevInvalidation,
-        source: &mut FilesystemInvalidationSource,
-    ) -> Vec<DevInvalidation> {
-        let mut events = vec![first];
-        while let Some(event) = source.try_next().expect("drain filesystem events") {
-            events.push(event);
-        }
-        events
-    }
-
-    fn has_rerun(events: &[DevInvalidation]) -> bool {
-        events.contains(&DevInvalidation::Rerun)
-    }
-
     #[tokio::test]
     async fn a_watch_failure_retries_the_next_edit_and_shutdown_waits_for_the_active_pass()
     -> anyhow::Result<()> {
@@ -826,129 +811,113 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn application_source_edits_rerun_without_additional_component_roots() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let root = repository.package();
-        let inputs = ["component/src/lib.rs", "data/src/lib.rs", "web/src/main.ts"];
-        for input in inputs {
-            let path = root.join(input);
-            fs::create_dir_all(path.parent().unwrap())
-                .expect("create application source directory");
-            fs::write(path, "source").expect("write application source");
-        }
-        let outputs = [
-            "generated/components/application.wasm",
-            "web/dist/index.html",
-            "web/node_modules/module/index.js",
-        ];
-        for output in outputs {
-            let path = root.join(output);
-            fs::create_dir_all(path.parent().unwrap())
-                .expect("create application output directory");
-            fs::write(path, "output").expect("write application output");
-        }
-        let git = GitSource::discover(&repository.root)
-            .await
-            .expect("discover application repository");
-        let mut source = FilesystemInvalidationSource::new([root.clone()], [], git)
-            .await
-            .expect("watch application inputs");
-        for input in inputs {
-            fs::write(root.join(input), "edited").expect("edit application source");
+    async fn filesystem_events_rerun_for_source_and_ignore_output() {
+        for explicit_component in [false, true] {
+            let repository = TempRepository::new();
+            repository.write_fixture();
+            let root = repository.package();
+            let mut inputs = vec![
+                root.join("component/src/lib.rs"),
+                root.join("data/src/lib.rs"),
+                root.join("web/src/main.ts"),
+                root.join("query/widget_list.sql"),
+            ];
+            if explicit_component {
+                inputs.push(repository.component().join("src/lib.rs"));
+            }
+            for input in &inputs {
+                fs::create_dir_all(input.parent().unwrap()).expect("create source directory");
+                fs::write(input, "source").expect("write source");
+            }
+            let outputs = [
+                "generated/components/application.wasm",
+                "web/dist/index.html",
+                "web/node_modules/module/index.js",
+            ];
+            for output in outputs {
+                let path = root.join(output);
+                fs::create_dir_all(path.parent().unwrap()).expect("create output directory");
+                fs::write(path, "output").expect("write output");
+            }
+            let git = GitSource::discover(&repository.root)
+                .await
+                .expect("source repository");
+            let components = explicit_component.then(|| repository.component());
+            let mut source = FilesystemInvalidationSource::new([root.clone()], components, git)
+                .await
+                .expect("watch source inputs");
+            for input in inputs {
+                fs::write(&input, "edited").expect("edit source");
+                assert!(
+                    next_batch(&mut source)
+                        .await
+                        .contains(&DevInvalidation::Rerun),
+                    "{input:?} must start a rebuild"
+                );
+            }
+            for output in outputs {
+                fs::write(root.join(output), "rebuilt").expect("rewrite output");
+            }
             assert!(
-                has_rerun(&next_batch(&mut source).await),
-                "{input} must start a rebuild"
+                tokio::time::timeout(Duration::from_millis(500), source.next())
+                    .await
+                    .is_err(),
+                "generated output must remain unwatched"
             );
         }
-        for output in outputs {
-            fs::write(root.join(output), "rebuilt").expect("rewrite application output");
-        }
-        assert!(
-            tokio::time::timeout(Duration::from_millis(500), source.next())
+    }
+
+    #[tokio::test]
+    async fn configuration_files_are_observed_with_existing_or_absent_parents() {
+        for parent_exists in [true, false] {
+            let repository = TempRepository::new();
+            repository.write_fixture();
+            let git = GitSource::discover(&repository.root)
                 .await
-                .is_err(),
-            "generated application output must remain unwatched"
-        );
-    }
-
-    #[tokio::test]
-    async fn configuration_files_do_not_recursively_watch_their_parents() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let git = GitSource::discover(&repository.root)
-            .await
-            .expect("discover source repository");
-        let mut source = FilesystemInvalidationSource::new(
-            [repository.package()],
-            [repository.component()],
-            git,
-        )
-        .await
-        .expect("construct the package and component watch");
-        // Nothing builds natively, so the root Cargo files are not inputs.
-
-        let configuration = TempRepository::new();
-        let privilege = configuration.root.join("privileges.sql");
-        fs::write(&privilege, "SELECT 1;\n").expect("write external configuration");
-        fs::create_dir_all(configuration.root.join("unrelated/nested"))
-            .expect("create unrelated configuration siblings");
-        source
-            .replace_configuration_files([privilege.clone()])
-            .expect("watch the explicit external configuration file");
-        let replacement = configuration.root.join("replacement.sql");
-        fs::write(&replacement, "SELECT 2;\n").expect("write replacement configuration");
-        fs::rename(&replacement, &privilege).expect("replace configured file atomically");
-        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("configuration replacement arrived")
-            .expect("read configuration replacement")
-            .expect("watch remains open");
-        assert!(has_rerun(&collect_batch(first, &mut source)));
-        fs::remove_file(&privilege).expect("remove configured file");
-        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("configuration removal arrived")
-            .expect("read configuration removal")
-            .expect("watch remains open");
-        assert!(has_rerun(&collect_batch(first, &mut source)));
-    }
-
-    #[tokio::test]
-    async fn an_absent_configuration_parent_is_watched_when_created() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let config = repository.root.join(".cargo/config.toml");
-        let git = GitSource::discover(&repository.root)
-            .await
-            .expect("discover source repository");
-        let mut source = FilesystemInvalidationSource::new(
-            [repository.package()],
-            [repository.component()],
-            git,
-        )
-        .await
-        .expect("watch the package and component roots");
-        source
-            .replace_configuration_files([config.clone()])
-            .expect("watch an absent exact configuration file");
-        fs::create_dir(config.parent().expect("configuration parent"))
-            .expect("create Cargo directory");
-        fs::write(&config, "[build]\njobs = 1\n")
-            .expect("create Cargo configuration before reading events");
-        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("Cargo directory event arrived")
-            .expect("read directory event")
-            .expect("watch remains open");
-        assert!(has_rerun(&collect_batch(first, &mut source)));
-        fs::write(&config, "[build]\njobs = 2\n").expect("edit Cargo configuration");
-        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("configuration event arrived")
-            .expect("read configuration event")
-            .expect("watch remains open");
-        assert!(has_rerun(&collect_batch(first, &mut source)));
+                .expect("source repository");
+            let mut source = FilesystemInvalidationSource::new([repository.package()], [], git)
+                .await
+                .expect("watch package inputs");
+            let configuration = TempRepository::new();
+            let parent = configuration.root.join("local");
+            let file = parent.join("privileges.sql");
+            if parent_exists {
+                fs::create_dir(&parent).expect("create configuration parent");
+                fs::write(&file, "SELECT 1").expect("write configuration");
+            }
+            source
+                .replace_configuration_files([file.clone()])
+                .expect("watch exact configuration file");
+            if !parent_exists {
+                fs::create_dir(&parent).expect("create configuration parent");
+                fs::write(&file, "SELECT 1").expect("write configuration");
+                assert!(
+                    next_batch(&mut source)
+                        .await
+                        .contains(&DevInvalidation::Rerun)
+                );
+            }
+            fs::write(&file, "SELECT 2").expect("edit configuration");
+            assert!(
+                next_batch(&mut source)
+                    .await
+                    .contains(&DevInvalidation::Rerun)
+            );
+            let replacement = parent.join("replacement.sql");
+            fs::write(&replacement, "SELECT 3").expect("write replacement");
+            fs::rename(replacement, &file).expect("replace configuration atomically");
+            assert!(
+                next_batch(&mut source)
+                    .await
+                    .contains(&DevInvalidation::Rerun)
+            );
+            fs::remove_file(file).expect("remove configuration");
+            assert!(
+                next_batch(&mut source)
+                    .await
+                    .contains(&DevInvalidation::Rerun)
+            );
+        }
     }
 
     async fn next_batch(source: &mut FilesystemInvalidationSource) -> Vec<DevInvalidation> {
@@ -957,7 +926,11 @@ mod tests {
             .expect("an event arrives")
             .expect("read the event")
             .expect("the source stays open");
-        collect_batch(first, source)
+        let mut events = vec![first];
+        while let Some(event) = source.try_next().expect("drain filesystem events") {
+            events.push(event);
+        }
+        events
     }
 
     #[tokio::test]
@@ -986,25 +959,23 @@ mod tests {
             .await
             .expect("refresh dependency closure");
         fs::write(input, "pub fn changed() {}\n").expect("edit new dependency");
-        assert!(has_rerun(&next_batch(&mut source).await));
-    }
-
-    #[tokio::test]
-    async fn git_snapshot_refuses_an_initial_repository() {
-        let repository = TempRepository::new();
-        let source = GitSource::discover(&repository.root)
-            .await
-            .expect("discover initial repository");
-        let error = source.snapshot().await.unwrap_err();
-        assert_eq!(
-            error.error_type(),
-            super::git_source::GitSourceErrorType::Inspect
+        assert!(
+            next_batch(&mut source)
+                .await
+                .contains(&DevInvalidation::Rerun)
         );
     }
 
     #[tokio::test]
     async fn git_snapshot_covers_the_whole_worktree_and_excludes_ignored_files() {
         let repository = TempRepository::new();
+        let initial = GitSource::discover(&repository.root)
+            .await
+            .expect("initial repository");
+        assert_eq!(
+            initial.snapshot().await.unwrap_err().error_type(),
+            GitSourceErrorType::Inspect
+        );
         repository.write_fixture();
         let source = GitSource::discover(repository.package())
             .await
@@ -1034,110 +1005,71 @@ mod tests {
         fs::remove_file(untracked).expect("remove untracked file");
     }
 
-    /// The build writes inside a component build root, so a watch that
-    /// descended into that output invalidated on its own artifacts and reran
-    /// with no edit until it was stopped (wamn-10yt.55). Both orders matter:
-    /// the output root can already exist when the session starts, and the
-    /// first build of a fresh worktree creates it mid-session.
     #[tokio::test]
-    async fn ignored_build_output_inside_a_component_root_never_reruns_the_loop() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let output = repository.component().join("ignored");
-        fs::create_dir(&output).expect("create the pre-existing build output root");
-        let git_source = GitSource::discover(&repository.root)
-            .await
-            .expect("discover source repository");
-        let mut source = FilesystemInvalidationSource::new(
-            [repository.package()],
-            [repository.component()],
-            git_source,
-        )
-        .await
-        .expect("construct filesystem invalidation source");
-
-        fs::create_dir(output.join("wasm32-wasip2")).expect("create the build target directory");
-        fs::write(output.join("wasm32-wasip2/guest.wasm"), "artifact")
-            .expect("write a build artifact");
-        assert!(
-            tokio::time::timeout(Duration::from_millis(500), source.next())
-                .await
-                .is_err(),
-            "an output root that existed at construction is never watched at all"
-        );
-
-        // Recreated mid-session the root is seen once, through its watched
-        // parent, and must still classify as nothing to rerun.
-        fs::remove_dir_all(&output).expect("remove the build output root");
-        fs::create_dir(&output).expect("recreate the build output root");
-        fs::write(output.join("guest.wasm"), "artifact").expect("write a rebuilt artifact");
-        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("build output event arrived")
-            .expect("read build output event")
-            .expect("source remains open");
-        assert!(
-            collect_batch(first, &mut source)
-                .iter()
-                .all(|event| *event == DevInvalidation::Ignore),
-            "a rebuilt output root must not invalidate the loop that wrote it"
-        );
-        assert!(
-            tokio::time::timeout(Duration::from_millis(500), source.next())
-                .await
-                .is_err(),
-            "the recreated output root must be pruned again, not rewatched"
-        );
-    }
-
-    #[tokio::test]
-    async fn first_build_outputs_in_overlapping_component_roots_do_not_rerun() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let components = repository.root.join("components");
-        let no_std = components.join("no-std");
-        fs::create_dir_all(no_std.join("guest/src")).expect("create nested component workspace");
-        fs::write(
-            repository.root.join(".gitignore"),
-            "ignored\n/components/target\n/components/no-std/target\n",
-        )
-        .expect("ignore both declared component output directories");
-        let outputs = [components.join("target"), no_std.join("target")];
-        let git = GitSource::discover(&repository.root)
-            .await
-            .expect("discover first-build fixture");
-        let mut source =
-            FilesystemInvalidationSource::new([repository.package()], [components, no_std], git)
-                .await
-                .expect("watch overlapping component roots");
-
-        for output in &outputs {
-            // Cargo first creates a temporary sibling, then renames it into
-            // target. The origin no longer exists when its events are read.
-            let staging = output.with_file_name("targetbpz54B");
-            fs::create_dir_all(staging.join("wasm32-wasip2/release"))
-                .expect("the first Build creates its staging tree");
+    async fn ignored_build_outputs_never_rerun_overlapping_component_roots() {
+        for preexisting in [false, true] {
+            let repository = TempRepository::new();
+            repository.write_fixture();
+            let components = repository.root.join("components");
+            let no_std = components.join("no-std");
+            fs::create_dir_all(no_std.join("guest/src")).expect("create nested workspace");
             fs::write(
-                staging.join("wasm32-wasip2/release/guest.wasm"),
-                "built artifact",
+                repository.root.join(".gitignore"),
+                "ignored\n/components/target\n/components/no-std/target\n",
             )
-            .expect("write the first component artifact");
-            fs::write(staging.join(".cargo-lock"), "").expect("write build lock");
-            fs::rename(staging, output).expect("publish the first ignored target directory");
+            .expect("ignore build output");
+            let outputs = [components.join("target"), no_std.join("target")];
+            if preexisting {
+                for output in &outputs {
+                    fs::create_dir(output).expect("create output directory");
+                }
+            }
+            let git = GitSource::discover(&repository.root)
+                .await
+                .expect("source repository");
+            let mut source = FilesystemInvalidationSource::new(
+                [repository.package()],
+                [components, no_std],
+                git,
+            )
+            .await
+            .expect("watch overlapping roots");
+            if preexisting {
+                for output in &outputs {
+                    fs::write(output.join("guest.wasm"), "artifact").expect("write build output");
+                }
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(500), source.next())
+                        .await
+                        .is_err(),
+                    "existing build output must remain unwatched"
+                );
+                for output in &outputs {
+                    fs::remove_dir_all(output).expect("remove build output");
+                }
+            }
+            for output in &outputs {
+                // Cargo can rename its staging tree before the watcher drains it.
+                let staging = output.with_file_name("targetbpz54B");
+                fs::create_dir_all(staging.join("wasm32-wasip2/debug"))
+                    .expect("create build output");
+                fs::write(staging.join("wasm32-wasip2/debug/guest.wasm"), "artifact")
+                    .expect("write build artifact");
+                fs::rename(staging, output).expect("publish ignored output");
+            }
+            assert!(
+                next_batch(&mut source)
+                    .await
+                    .iter()
+                    .all(|event| *event == DevInvalidation::Ignore)
+            );
+            assert!(
+                tokio::time::timeout(Duration::from_millis(500), source.next())
+                    .await
+                    .is_err(),
+                "recreated build output must remain unwatched"
+            );
         }
-        assert!(
-            next_batch(&mut source)
-                .await
-                .iter()
-                .all(|event| *event == DevInvalidation::Ignore),
-            "first-ever ignored outputs must leave the activation alive"
-        );
-        assert!(
-            tokio::time::timeout(Duration::from_millis(500), source.next())
-                .await
-                .is_err(),
-            "registration must not create a later feedback event"
-        );
     }
 
     #[tokio::test]
@@ -1170,7 +1102,9 @@ mod tests {
         fs::rename(&authored, repository.component().join("ignored"))
             .expect("move watched source into ignored output");
         assert!(
-            has_rerun(&next_batch(&mut source).await),
+            next_batch(&mut source)
+                .await
+                .contains(&DevInvalidation::Rerun),
             "a watched source moved into output still disappeared from the build"
         );
 
@@ -1180,14 +1114,18 @@ mod tests {
         )
         .expect("move watched source into watched but ignored generated output");
         assert!(
-            has_rerun(&next_batch(&mut source).await),
+            next_batch(&mut source)
+                .await
+                .contains(&DevInvalidation::Rerun),
             "registering the moved inode must not erase its previous source ownership"
         );
 
         fs::remove_file(repository.component().join("src/lib.rs"))
             .expect("delete another tracked source");
         assert!(
-            has_rerun(&next_batch(&mut source).await),
+            next_batch(&mut source)
+                .await
+                .contains(&DevInvalidation::Rerun),
             "ordinary source deletion must still invalidate"
         );
 
@@ -1196,57 +1134,10 @@ mod tests {
         fs::write(new_source.join("lib.rs"), "pub fn new_source() {}")
             .expect("write new source with no move into ignored output");
         assert!(
-            has_rerun(&next_batch(&mut source).await),
+            next_batch(&mut source)
+                .await
+                .contains(&DevInvalidation::Rerun),
             "a target prefix alone must never hide authored source"
         );
-    }
-
-    #[tokio::test]
-    async fn filesystem_events_map_owned_inputs_and_ignore_generated_outputs() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let git_source = GitSource::discover(&repository.root)
-            .await
-            .expect("discover source repository");
-        let mut source = FilesystemInvalidationSource::new(
-            [repository.package()],
-            [repository.component()],
-            git_source,
-        )
-        .await
-        .expect("construct filesystem invalidation source");
-
-        fs::write(repository.package().join("generated/wamn.rs"), "generated")
-            .expect("write generated output");
-        assert!(
-            tokio::time::timeout(Duration::from_millis(500), source.next())
-                .await
-                .is_err(),
-            "generated output must remain unwatched"
-        );
-
-        fs::write(
-            repository.package().join("query/widget_list.sql"),
-            "SELECT 2",
-        )
-        .expect("edit authored SQL");
-        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("authored SQL event arrived")
-            .expect("read authored SQL event")
-            .expect("source remains open");
-        assert!(has_rerun(&collect_batch(first, &mut source)));
-
-        fs::write(
-            repository.component().join("src/lib.rs"),
-            "pub fn next() {}",
-        )
-        .expect("edit component source");
-        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("component event arrived")
-            .expect("read component event")
-            .expect("source remains open");
-        assert!(has_rerun(&collect_batch(first, &mut source)));
     }
 }

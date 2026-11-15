@@ -5640,7 +5640,6 @@ dependencies = [
  "wamn-package-artifact",
  "wash-runtime",
  "wasmtime",
- "wasmtime-wasi",
  "wat",
 ]
 

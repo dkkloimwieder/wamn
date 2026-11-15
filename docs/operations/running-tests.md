@@ -677,16 +677,15 @@ Select each test by its exact name in the `platform_apply_kind` Cargo target:
 | Test | Coverage | Platform |
 | --- | --- | --- |
 | `control_operations_kind` | Authenticated Job credentials, cross-project denial without a Job, two-application selection isolation, rollback, schema mutation and artifact worker | Creates one fresh kind cluster; bounded to 45 minutes |
-| `platform_install_recovery_kind` | Interrupt platform installation after its first Kubernetes write, retry, status, and owner sign-in | Creates one fresh kind cluster |
 | `application_recovery_kind` | Interrupted explicit provisioning and code installation, replacement recovery, canonical reapply, retained data, and application isolation | Attaches to an existing disposable kind platform |
 | `platform_upgrade_kind` | Independent control and identity updates, one application host update, code reapply, earlier runtime selection, and retained data | Attaches to an existing disposable kind platform |
 | `platform_schema_kind` | One system file and one selected project file through SQL Jobs, unchanged application rows and releases, and second-environment isolation | Attaches to an existing disposable kind platform |
 | `same_name_reset_kind` | Two initial application releases, data, published schema-change reset, interrupted same-name CNPG reset, reconnection, durable refusal, and environment isolation | Attaches to an existing disposable kind platform |
-| `platform_apply_kind` | Fresh-platform acceptance: normal and interrupted installation, plus application recovery and reset bodies on the normal platform | Creates two fresh kind clusters |
+| `platform_apply_kind` | Normal and interrupted platform installation, retry, status, repair, and owner sign-in | Creates two fresh kind clusters |
 
 The focused application and schema tests never install or rebuild the platform.
 Each focused application invocation creates a unique project, hostnames, and package versions.
-The aggregate journey prepares each immutable artifact once and reuses it across its focused bodies.
+The control operations journey prepares each immutable artifact once.
 Each body starts with an absent environment and installs only its required initial releases.
 The reset body installs no earlier code versions.
 Artifact preparation uses the product build and publication operation before the focused bodies run.
@@ -718,12 +717,12 @@ These tests provide no GCP coverage.
 
 
 All tests require Docker, kind, Helm, kubectl, OpenSSL, and a prepared KCL compiler selected by `WAMN_KCL`.
-Focused application bodies and fresh-platform acceptance also require `script` for product deletion confirmation.
+Focused application bodies require `script` for product deletion confirmation.
 Build the native `wamn` and `wamn-ctl` binaries beside the test executable in `$CARGO_TARGET_DIR/debug`.
 Use prepared artifacts from [local platform production](building.md#local-platform-artifacts).
 Keep the complete prepared chart directory and its pinned images unchanged after installation.
 Artifact preparation builds authored scratch packages from `apps/platform_fixture` through product commands.
-Focused application bodies and aggregate acceptance also require these publication inputs:
+Focused application bodies also require these publication inputs:
 
 - Set `DATABASE_URL` to a separate disposable PostgreSQL 18 server with permission to create and drop databases.
 - Set `WAMN_FLOW_HTTP_COMPONENT` to the raw pinned `http_route.wasm`.
@@ -741,7 +740,7 @@ It then signs in through `/password/session` for the control audience.
 Later runs observe the stored password credential and skip enrollment without reading or consuming another invitation.
 They obtain the same password from the caller's `WAMN_TEST_OWNER_PASSWORD` and sign in again.
 Tests never print or persist this password and create no saved-step file.
-Fresh-platform tests generate one password in memory and reuse it across their focused bodies.
+Each fresh-platform installation generates one password in memory and reuses it after repair.
 
 Install once with the product command from a shell with the prepared chart and publication inputs:
 
@@ -784,7 +783,7 @@ WAMN_TEST_CLUSTER=/var/tmp/wamn-kind-dep3/cluster.k \
 ```
 
 Select `same_name_reset_kind` in the same command for reset and CDC tests.
-Run fresh-platform acceptance with the prepared chart selected by `WAMN_RELEASE_CHART`:
+Run normal and interrupted platform installation with the prepared chart selected by `WAMN_RELEASE_CHART`:
 
 ```bash
 cargo test --locked --offline -p wamn-dev --test platform_apply_kind platform_apply_kind -- --ignored --exact --nocapture
@@ -932,7 +931,7 @@ The native installation sequence test is removed with the private development pr
 ### Environment deployment coverage
 
 The focused tests above split the DEP2-13 application journey by contract.
-Fresh-platform acceptance calls those same bodies and keeps platform recovery separate from schema tests.
+The fresh-platform test covers installation and repair. The focused cases cover application recovery and reset.
 DEP2-09 already removed `environment_reapply.rs`, its synthetic chart, and its direct Helm write and interruption helpers.
 The old connector, file, drain, deletion, and schedule combinations have no replacement in this epic.
 Product rendering, file fixture, and database tests remain at their existing tiers.

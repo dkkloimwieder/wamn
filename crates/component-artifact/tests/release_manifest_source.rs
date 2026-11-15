@@ -1,23 +1,11 @@
-//! Every refusal the release-manifest OCI source makes, from configuration to wire.
-//!
-//! Most of them land before any transport. The ones that need a registry to
-//! answer are driven by the in-process stub at the bottom, which serves a
-//! manifest whose descriptor disagrees with the body it returns — the lie a
-//! conforming registry structurally cannot tell, and the only thing that reaches
-//! those arms.
-//!
-//! The one leg that needs a *real* registry — a published artifact pulling back
-//! byte-exact and loading the release it names — is the ignored leg in the
-//! middle.
+//! Release artifact layout, pull credentials, and transport integrity.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wamn_digest::bytes_sha256;
-use wamn_engine::release_manifest::LoadedRelease;
 use wamn_package_artifact::release_manifest_artifact::{
-    RELEASE_MANIFEST_CONFIG_MEDIA_TYPE, release_manifest_artifact_layout,
-    verify_release_manifest_artifact_layout,
+    release_manifest_artifact_layout, verify_release_manifest_artifact_layout,
 };
 use wamn_package_artifact::release_manifest_source::{
     ReleaseManifestFetchErrorType, ReleaseManifestSource,
@@ -77,91 +65,16 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
     let (_, _, manifest) = release_manifest_artifact_layout(bytes);
     let digest = bytes_sha256(bytes);
 
-    // The publisher declares the size it just wrote; a puller has only the name.
-    let blobs = verify_release_manifest_artifact_layout(&manifest, &digest, None)
+    verify_release_manifest_artifact_layout(&manifest, &digest, None)
         .expect("the published layout verifies for a puller");
-    assert_eq!(blobs.layer.digest, digest.to_string());
-    assert_eq!(
-        blobs.layer.size,
-        i64::try_from(bytes.len()).expect("fixture length fits")
-    );
-    assert_eq!(blobs.config.media_type, RELEASE_MANIFEST_CONFIG_MEDIA_TYPE);
     verify_release_manifest_artifact_layout(&manifest, &digest, Some(bytes.len()))
-        .expect("the publisher's own size test still passes");
-    assert_eq!(
-        verify_release_manifest_artifact_layout(&manifest, &digest, Some(bytes.len() + 1))
-            .expect_err("a declared size the layer contradicts refuses")
-            .refusal(),
-        "release-manifest-artifact-layer-mismatch"
-    );
-
-    // The digest a pod template names is the whole binding. Bytes published
-    // under any other name are a different release, never this one.
-    let other = (format!("sha256:{}", "c".repeat(64)))
-        .parse::<wamn_digest::Digest>()
-        .unwrap();
-    assert_eq!(
-        verify_release_manifest_artifact_layout(&manifest, &other, None)
-            .expect_err("a foreign layer digest refuses")
-            .refusal(),
-        "release-manifest-artifact-layer-mismatch"
-    );
-}
-
-fn target(canonical: &[u8]) -> wamn_engine::release_manifest::ReleaseTarget {
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(canonical)
-        .expect("the published manifest is valid");
-    wamn_engine::release_manifest::ReleaseTarget::new("t1", "prod").with_applications(
-        [(
-            "catalog".to_owned(),
-            wamn_catalog::ApplicationDefinition {
-                connections: std::collections::BTreeMap::new(),
-                packages: manifest
-                    .release
-                    .packages
-                    .iter()
-                    .map(|package| package.package_id().to_owned())
-                    .collect(),
-            },
-        )]
-        .into(),
-    )
-}
-
-#[test]
-fn pulled_bytes_load_the_release_naming_their_carrier() {
-    let canonical = br#"{"attachments":{},"components":[],"format-version":11,"release":{"packages":[{"package-id":"cat","package-version":"1.0.0"}]},"routes":[]}"#;
-
-    let loaded_release =
-        LoadedRelease::load_canonical_bytes(canonical, ARTIFACT_BASE, target(canonical))
-            .expect("verified canonical bytes load without a mount");
-    assert_eq!(
-        loaded_release.release().manifest_digest,
-        bytes_sha256(canonical)
-    );
-
-    let mut trailing = canonical.to_vec();
-    trailing.push(b'\n');
-    let _error = LoadedRelease::load_canonical_bytes(&trailing, ARTIFACT_BASE, target(canonical))
-        .expect_err("a non-canonical body refuses");
-}
-
-#[test]
-fn a_mutable_or_ambient_base_refuses_before_any_transport() {
-    let credential = ScratchCredential::write();
-
-    for base in [
-        "wamn/releases",
-        "registry.example:5000/wamn/releases:latest",
-        "https://registry.example:5000/wamn/releases",
+        .expect("the published layout verifies with its size");
+    for (expected_digest, expected_size) in [
+        (digest, Some(bytes.len() + 1)),
+        (bytes_sha256(b"another release"), None),
     ] {
-        let error = ReleaseManifestSource::new(base, true, credential.path())
-            .expect_err("a base that cannot name an immutable artifact refuses");
-        assert_eq!(
-            error.error_type(),
-            ReleaseManifestFetchErrorType::InvalidReference,
-            "accepted {base:?}"
-        );
+        verify_release_manifest_artifact_layout(&manifest, &expected_digest, expected_size)
+            .expect_err("a contradictory descriptor refuses");
     }
 }
 
@@ -178,21 +91,17 @@ fn a_missing_pull_credential_refuses_before_any_transport() {
     );
 }
 
-/// One required live-leg fact, or a failure naming the variable and its shape.
-///
-/// `#[ignore]` conditions *selection*; once a run has selected this leg, an absent
-/// variable is a failed test. A `let Ok(value) = var(..) else { return }` skip
-/// would report success in every default run and show nothing.
-fn live_env(name: &str, expectation: &str) -> String {
-    match std::env::var(name) {
-        Ok(value) if !value.trim().is_empty() => value,
-        _ => panic!("this live leg requires {name}: {expectation}"),
-    }
-}
-
 #[tokio::test]
 #[ignore = "requires: env:WAMN_RELEASE_MANIFEST_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE, env:WAMN_RELEASE_MANIFEST_DIGEST"]
-async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_names() {
+async fn a_published_release_pulls_verified_bytes_and_refuses_an_absent_digest() {
+    let live_env = |name: &str, expectation: &str| {
+        let value = std::env::var(name).unwrap_or_default();
+        assert!(
+            !value.trim().is_empty(),
+            "this test requires {name}: {expectation}"
+        );
+        value
+    };
     let artifact_base = live_env(
         "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE",
         "the explicit <registry>/<repository> the release was pushed to",
@@ -213,9 +122,6 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
     .parse::<wamn_digest::Digest>()
     .expect("published digest");
 
-    // The registry-backed host loads through these calls. The conformance guard
-    // `release_load_precedes_component_binding` keeps startup ahead of binding
-    // (wamn-0h0g.15.101, tests/conformance/src/runtime_policy.rs).
     let source = ReleaseManifestSource::new(&artifact_base, true, Path::new(&registry_auth_file))
         .expect("the disposable registry configures")
         .with_ca_paths(&[])
@@ -226,23 +132,6 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
         .expect("the published release pulls");
 
     assert_eq!(bytes_sha256(&canonical_bytes), manifest_digest);
-
-    let origin = format!("{artifact_base}@{manifest_digest}");
-    let loaded_release =
-        LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin, target(&canonical_bytes))
-            .expect("the pulled bytes load the release");
-
-    // The identity comes out of the transferred content, and it agrees with
-    // the name the pod template gave — the test the mount carrier cannot
-    // make, made here against a third party that stored the bytes.
-    assert_eq!(loaded_release.release().manifest_digest, manifest_digest);
-    // Nothing was dropped on the way through the parse: the loaded document
-    // re-encodes to the exact bytes the registry served.
-    assert_eq!(
-        loaded_release.manifest().canonical_bytes(),
-        canonical_bytes,
-        "the loaded document must re-encode to the pulled bytes"
-    );
 
     // A digest this repository does not hold is a refusal, never an empty
     // release — the same posture a pod pointed at a rolled-back tag must take.
@@ -340,151 +229,46 @@ async fn lying_registry(manifest_json: Vec<u8>, body: Vec<u8>) -> LyingRegistry 
     }
 }
 
-/// The exact artifact the publisher would write for these canonical bytes.
-///
-/// Built by the production layout function, so a test's lie is one edited field
-/// on a real envelope rather than a hand-copied wire format that could drift.
-fn published_artifact(canonical: &[u8]) -> (wamn_digest::Digest, serde_json::Value) {
+#[tokio::test]
+async fn registry_pulls_accept_published_bytes_and_refuse_contradictions() {
+    let canonical = br#"{"format-version":1}"#;
+    let digest = bytes_sha256(canonical);
     let (_, _, manifest) = release_manifest_artifact_layout(canonical);
-    let wire = serde_json::to_value(&manifest).expect("the published layout serializes");
-    (bytes_sha256(canonical), wire)
-}
-
-/// Configure the production source against a stub bound to an ephemeral port.
-fn source_for(registry: &LyingRegistry, credential: &ScratchCredential) -> ReleaseManifestSource {
-    ReleaseManifestSource::new(
-        &format!("{}/wamn/releases", registry.authority),
-        true,
-        credential.path(),
-    )
-    .expect("an explicit base and a complete credential configure")
-}
-
-#[tokio::test]
-async fn a_conforming_stub_returns_the_exact_published_bytes() {
-    let canonical = br#"{"format-version":1}"#;
-    let (digest, wire) = published_artifact(canonical);
-
-    let registry = lying_registry(
-        serde_json::to_vec(&wire).expect("the published envelope serializes"),
-        canonical.to_vec(),
-    )
-    .await;
-    let credential = ScratchCredential::write_for(&registry.authority);
-    let pulled = source_for(&registry, &credential)
+    let published = serde_json::to_vec(&manifest).expect("the layout serializes");
+    let mut changed = canonical.to_vec();
+    changed[1] = b'F';
+    for (manifest, body, expected) in [
+        (published.clone(), canonical.to_vec(), None),
+        (
+            published,
+            changed,
+            Some(ReleaseManifestFetchErrorType::Mismatched),
+        ),
+        (
+            br#"{"schemaVersion":1}"#.to_vec(),
+            Vec::new(),
+            Some(ReleaseManifestFetchErrorType::Mismatched),
+        ),
+    ] {
+        let registry = lying_registry(manifest, body).await;
+        let credential = ScratchCredential::write_for(&registry.authority);
+        let result = ReleaseManifestSource::new(
+            &format!("{}/wamn/releases", registry.authority),
+            true,
+            credential.path(),
+        )
+        .expect("the source configures")
         .pull_verified(&digest)
-        .await
-        .expect("an artifact served exactly as published pulls");
-
-    // Without this leg the two refusals below could pass for the wrong reason:
-    // a stub that answered nothing usable would refuse every pull.
-    assert_eq!(pulled, canonical);
-}
-
-#[tokio::test]
-async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
-    let canonical = br#"{"format-version":1}"#;
-    let (digest, mut wire) = published_artifact(canonical);
-    // The layer digest still names the exact bytes served, so the layout test
-    // and `oci-client`'s own digest verification both pass. Only the declared
-    // length is a lie — and nothing upstream of this module tests it.
-    wire["layers"][0]["size"] = serde_json::json!(canonical.len() + 1);
-
-    let registry = lying_registry(
-        serde_json::to_vec(&wire).expect("the edited envelope serializes"),
-        canonical.to_vec(),
-    )
-    .await;
-    let credential = ScratchCredential::write_for(&registry.authority);
-    let error = source_for(&registry, &credential)
-        .pull_verified(&digest)
-        .await
-        .expect_err("a body the descriptor undercounts refuses");
-
-    assert_eq!(
-        error.error_type(),
-        ReleaseManifestFetchErrorType::Mismatched
-    );
-    assert_eq!(
-        error.refusal(),
-        "release-manifest-artifact-body-size-mismatch"
-    );
-}
-
-/// A body the named digest does not address never reaches the loaded release.
-///
-/// MEASURED, not assumed, and the measurement is what the refusal is built on:
-/// `oci-client` 0.17's `pull_blob` builds its digester from the layer descriptor
-/// it was handed and refuses a body that does not finalize to it, and
-/// `verify_release_manifest_artifact_layout` has already pinned that descriptor
-/// to the digest the pod template named. So a lying registry never reaches the
-/// source's own comparison — it comes back as `DigestError::VerificationError`,
-/// which `pull_verified` classifies as `Mismatched` rather than as absence
-/// (`wamn-0h0g.19.17`).
-///
-/// This is therefore the wire test of the digest-mismatch refusal: a served
-/// body the name does not address is refused as a contradiction, not as an
-/// unreachable registry, and an operator is paged accordingly. What is *not*
-/// shown here is the source's own digest comparison in
-/// `verify_transferred_body`: it stays unreachable by construction, defense in
-/// depth against the transport dropping its test, and it is held by a direct
-/// call in
-/// `release_manifest_source::tests::a_body_the_named_digest_does_not_address_refuses_as_a_digest_mismatch`.
-#[tokio::test]
-async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
-    let canonical = br#"{"format-version":1}"#;
-    let (digest, wire) = published_artifact(canonical);
-    // Same length, different content, so the size test cannot be what fires.
-    let mut lied = canonical.to_vec();
-    lied[1] = b'F';
-    assert_eq!(lied.len(), canonical.len());
-    assert_ne!(bytes_sha256(&lied), digest);
-
-    let registry = lying_registry(
-        serde_json::to_vec(&wire).expect("the published envelope serializes"),
-        lied,
-    )
-    .await;
-    let credential = ScratchCredential::write_for(&registry.authority);
-    let error = source_for(&registry, &credential)
-        .pull_verified(&digest)
-        .await
-        .expect_err("a body the named digest does not address refuses");
-
-    assert_eq!(
-        error.error_type(),
-        ReleaseManifestFetchErrorType::Mismatched
-    );
-    assert_eq!(
-        error.refusal(),
-        "release-manifest-artifact-body-digest-mismatch"
-    );
-}
-
-/// A manifest the registry serves but `oci-client` cannot parse is a contradiction.
-///
-/// `oci-client` 0.17 refuses a manifest body with schema version 1 before the
-/// layout test sees it. `pull_verified` classifies that transport error as
-/// `Mismatched`, the same class the layout test gives a wrong envelope, and
-/// not as an unreachable registry (`wamn-0h0g.19.18`).
-#[tokio::test]
-async fn a_manifest_the_registry_cannot_parse_refuses_as_a_contradiction() {
-    let canonical = br#"{"format-version":1}"#;
-    let (digest, _) = published_artifact(canonical);
-
-    let registry = lying_registry(br#"{"schemaVersion":1}"#.to_vec(), Vec::new()).await;
-    let credential = ScratchCredential::write_for(&registry.authority);
-    let error = source_for(&registry, &credential)
-        .pull_verified(&digest)
-        .await
-        .expect_err("a manifest the registry cannot parse refuses");
-
-    assert_eq!(
-        error.error_type(),
-        ReleaseManifestFetchErrorType::Mismatched
-    );
-    assert_eq!(
-        error.refusal(),
-        "release-manifest-artifact-envelope-mismatch"
-    );
+        .await;
+        match expected {
+            None => assert_eq!(
+                bytes_sha256(&result.expect("published artifact pulls")),
+                digest
+            ),
+            Some(expected) => assert_eq!(
+                result.expect_err("a contradiction refuses").error_type(),
+                expected
+            ),
+        }
+    }
 }

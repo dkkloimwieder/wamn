@@ -41,7 +41,11 @@ enum Case {
 fn isolated(name: &str, case: Case) {
     if std::env::var(CHILD_MARKER).as_deref() != Ok(name) {
         let output = Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", name, "--nocapture"])
+            .args([
+                "--exact",
+                "native_dispatch_obeys_deadlines_and_releases_capacity",
+                "--nocapture",
+            ])
             .env(CHILD_MARKER, name)
             .output()
             .expect("start isolated deadline test");
@@ -77,40 +81,26 @@ fn isolated(name: &str, case: Case) {
 }
 
 #[test]
-fn native_root_start_obeys_enclosing_deadline() {
-    isolated(
-        "native_root_start_obeys_enclosing_deadline",
-        Case::RootStart,
-    );
-}
-
-#[test]
-fn native_linked_start_obeys_enclosing_deadline() {
-    isolated(
-        "native_linked_start_obeys_enclosing_deadline",
-        Case::LinkedStart,
-    );
-}
-
-#[test]
-fn native_export_obeys_enclosing_deadline() {
-    isolated("native_export_obeys_enclosing_deadline", Case::Export);
-}
-
-#[test]
-fn native_dispatch_cancellation_releases_capacity() {
-    isolated(
-        "native_dispatch_cancellation_releases_capacity",
-        Case::Cancellation,
-    );
-}
-
-#[test]
-fn native_call_deadline_bounds_root_start() {
-    isolated(
-        "native_call_deadline_bounds_root_start",
-        Case::NativeDeadline,
-    );
+fn native_dispatch_obeys_deadlines_and_releases_capacity() {
+    let selected = std::env::var(CHILD_MARKER).ok();
+    let cases = [
+        ("root-start", Case::RootStart),
+        ("linked-start", Case::LinkedStart),
+        ("export", Case::Export),
+        ("cancellation", Case::Cancellation),
+        ("native-deadline", Case::NativeDeadline),
+    ];
+    if let Some(selected) = selected {
+        let (_, case) = cases
+            .iter()
+            .find(|(name, _)| *name == selected)
+            .expect("the child selects a dispatch case");
+        isolated(&selected, *case);
+    } else {
+        for (name, case) in cases {
+            isolated(name, case);
+        }
+    }
 }
 
 struct Run {
