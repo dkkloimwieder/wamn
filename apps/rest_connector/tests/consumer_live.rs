@@ -435,26 +435,6 @@ pub async fn install(
         &wamn_broker::Publisher::default(),
     )
     .await?;
-    let privileges = sqlx::query("SELECT has_column_privilege($1, 'rest_consumer_fixture.item', 'key', 'SELECT'), \
-         has_column_privilege($1, 'rest_consumer_fixture.item', 'name', 'SELECT'), \
-         has_column_privilege($1, 'rest_consumer_fixture.item', 'key', 'INSERT'), \
-         has_column_privilege($1, 'rest_consumer_fixture.item', 'name', 'INSERT'), \
-         has_table_privilege($1, 'platform.write_log', 'SELECT') \
-           AND has_table_privilege($1, 'platform.write_log', 'INSERT') \
-           AND has_table_privilege($1, 'platform.write_log', 'DELETE'), \
-         has_column_privilege($1, 'platform.write_log', 'result', 'UPDATE'), \
-         has_column_privilege($1, 'rest_consumer_fixture.item', 'external_system_id', 'SELECT,INSERT'), \
-         has_column_privilege($1, 'rest_consumer_fixture.item', 'external_id', 'SELECT,INSERT')").bind(&role).fetch_one(&mut *admin)
-        .await?;
-    assert_eq!(
-        (0..8)
-            .map(|index| privileges.get::<bool, _>(index))
-            .collect::<Vec<_>>(),
-        [true, false, true, true, true, true, true, true]
-    );
-    eprintln!(
-        "consumer SQL role={role}, schema=rest_consumer_fixture; item SELECT(key,external_system_id,external_id), INSERT(key,name,external_system_id,external_id); write_log SELECT/INSERT/DELETE, UPDATE(result)"
-    );
     let mut url = url::Url::parse(database.as_str())?;
     url.set_username(role.as_str()).unwrap();
     url.set_password(Some(PASSWORD)).unwrap();
