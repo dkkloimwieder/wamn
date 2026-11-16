@@ -1,18 +1,3 @@
-//! The auth facts a committed write changed, and their publication to the
-//! memory of every host (docs/architecture/execution.md#auth-memory).
-//!
-//! Every function of this crate that writes a fact a host keeps takes an
-//! [`AuthDrops`] and records the fact in it. Its caller publishes the list
-//! with [`crate::Publisher::publish`] after the commit, which deletes the keys of
-//! the facts from the NATS KV bucket [`BUCKET`]. Every host watches the
-//! bucket and keeps the values as its memory. The facts are the users
-//! rows, roles, permissions and user roles of an environment, its
-//! status, and the PATs, logins, memberships and status of a principal.
-
-use std::collections::BTreeSet;
-
-use crate::kv_memory::Deletion;
-
 /// One auth fact that a committed write changed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AuthChange {
@@ -31,72 +16,36 @@ pub enum AuthChange {
 }
 
 /// The changes of one transaction, published after its commit.
-#[must_use = "publish the drops with Publisher::publish after the commit"]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AuthDrops(BTreeSet<AuthChange>);
+pub struct AuthDrops {}
 
 impl AuthDrops {
     pub fn principal(
         &mut self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        principal: &wamn_identity_protocol::PrincipalId,
+        _project_env_key: &wamn_registry::ProjectEnvKey,
+        _principal: &wamn_identity_protocol::PrincipalId,
     ) {
-        self.0.insert(AuthChange::Principal {
-            project_env_key: project_env_key.to_owned(),
-            principal: principal.to_owned(),
-        });
     }
 
-    pub fn project_env_key(&mut self, project_env_key: &wamn_registry::ProjectEnvKey) {
-        self.0
-            .insert(AuthChange::ProjectEnvKey(project_env_key.to_owned()));
-    }
+    pub fn project_env_key(&mut self, _project_env_key: &wamn_registry::ProjectEnvKey) {}
 
-    pub fn identity(&mut self, principal: &wamn_identity_protocol::PrincipalId) {
-        self.0.insert(AuthChange::Identity(principal.to_owned()));
-    }
+    pub fn identity(&mut self, _principal: &wamn_identity_protocol::PrincipalId) {}
 
     /// Add the changes of `other`, for a caller that runs several writers in
     /// one transaction.
-    pub fn extend(&mut self, other: AuthDrops) {
-        self.0.extend(other.0);
-    }
+    pub fn extend(&mut self, _other: AuthDrops) {}
 
     pub fn changes(&self) -> impl Iterator<Item = &AuthChange> {
-        self.0.iter()
+        std::iter::empty()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        true
     }
 }
 
 /// The NATS KV bucket of the auth memory, on the scheduler NATS.
 pub const BUCKET: &str = "wamn-auth";
-
-/// The key of the grants of `principal` in the environment named `project_env_key`.
-/// This shared cache key stays targeted after the table project columns leave.
-pub fn principal_key(
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    principal: &wamn_identity_protocol::PrincipalId,
-) -> String {
-    format!("{project_env_key}.{principal}")
-}
-
-/// The key of the environment status of `project_env_key`. A principal id is a UUID,
-/// so it is never `environment`.
-pub fn environment_status_key(project_env_key: &wamn_registry::ProjectEnvKey) -> String {
-    wamn_registry::name::nats_subject(&[project_env_key.as_str(), "environment"])
-}
-
-/// The first token of the key of an identity fact. A project name holds only
-/// `[A-Za-z0-9_-]`, so this token never meets a project key.
-pub const IDENTITY_TOKEN: &str = "=identity";
-
-/// The key a change of an identity fact of `principal` deletes.
-pub fn identity_key(principal: &wamn_identity_protocol::PrincipalId) -> String {
-    format!("{IDENTITY_TOKEN}.{principal}")
-}
 
 /// Open the bucket. Identity makes it ([`crate::kv_memory::create_buckets`]).
 pub async fn auth_bucket(
@@ -105,23 +54,4 @@ pub async fn auth_bucket(
     crate::kv_memory::open_bucket(client, BUCKET).await
 }
 
-impl crate::Changes for AuthDrops {
-    fn into_deletions(self) -> (&'static str, Vec<Deletion>) {
-        (
-            BUCKET,
-            self.0
-                .into_iter()
-                .map(|change| match change {
-                    AuthChange::Principal {
-                        project_env_key,
-                        principal,
-                    } => Deletion::Key(principal_key(&project_env_key, &principal)),
-                    AuthChange::Identity(principal) => Deletion::Key(identity_key(&principal)),
-                    AuthChange::ProjectEnvKey(project_env_key) => {
-                        Deletion::Under(project_env_key.to_string())
-                    }
-                })
-                .collect(),
-        )
-    }
-}
+impl crate::Changes for AuthDrops {}

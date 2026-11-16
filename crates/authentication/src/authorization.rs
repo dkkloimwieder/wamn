@@ -2,7 +2,6 @@
 
 use sqlx::Row as _;
 use std::collections::BTreeSet;
-use std::sync::Arc;
 use wamn_authority::auth_cache::PrincipalGrants;
 
 /// The status row of the environment, which `wamn_app` reads under its
@@ -197,8 +196,6 @@ pub fn held_grants(
 /// Host transport and authorization memory used by route authentication.
 #[async_trait::async_trait]
 pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
-    fn set_hierarchy_reader(&self, key: &wamn_registry::ProjectEnvKey, reader: sqlx::PgPool);
-    fn auth_cache(&self) -> &Arc<wamn_authority::auth_cache::AuthCache>;
     async fn environment_inactive(
         &self,
         project: &wamn_registry::ProjectId,

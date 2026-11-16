@@ -1,15 +1,4 @@
-//! The connection facts a committed write changed, and their deletion from
-//! the memory of every host (docs/architecture/execution.md#connection-memory).
-//!
-//! Every writer of a fact a host keeps records it in a [`ConnectionDrops`]
-//! in its transaction. Its caller deletes the keys with
-//! [`crate::Publisher::publish`] after the commit. The facts are the active
-//! generation, effective status and credential of a connection, the
-//! connection map of a release, and the connection map of an environment.
-
 use std::collections::BTreeSet;
-
-use crate::kv_memory::Deletion;
 
 /// The NATS KV bucket of the connection memory, on the NATS of the auth
 /// memory.
@@ -57,77 +46,31 @@ pub enum ConnectionChange {
 }
 
 /// The changes of one transaction, deleted after its commit.
-#[must_use = "delete the drops with Publisher::publish after the commit"]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConnectionDrops(BTreeSet<ConnectionChange>);
 
 impl ConnectionDrops {
-    pub fn connection(&mut self, project_env_key: &wamn_registry::ProjectEnvKey, id: uuid::Uuid) {
-        self.0.insert(ConnectionChange::Connection {
-            project_env_key: project_env_key.to_owned(),
-            id,
-        });
+    pub fn connection(&mut self, _project_env_key: &wamn_registry::ProjectEnvKey, _id: uuid::Uuid) {
     }
 
     pub fn release(
         &mut self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        manifest_digest: &wamn_digest::Digest,
+        _project_env_key: &wamn_registry::ProjectEnvKey,
+        _manifest_digest: &wamn_digest::Digest,
     ) {
-        self.0.insert(ConnectionChange::Release {
-            project_env_key: project_env_key.to_owned(),
-            manifest_digest: manifest_digest.to_owned(),
-        });
     }
 
-    pub fn connections(&mut self, project_env_key: &wamn_registry::ProjectEnvKey) {
-        self.0
-            .insert(ConnectionChange::Connections(project_env_key.to_owned()));
-    }
+    pub fn connections(&mut self, _project_env_key: &wamn_registry::ProjectEnvKey) {}
 
-    pub fn project_env_key(&mut self, project_env_key: &wamn_registry::ProjectEnvKey) {
-        self.0
-            .insert(ConnectionChange::ProjectEnvKey(project_env_key.to_owned()));
-    }
+    pub fn project_env_key(&mut self, _project_env_key: &wamn_registry::ProjectEnvKey) {}
 
     /// Add the changes of `other`, for a caller that runs several writers in
     /// one transaction.
-    pub fn extend(&mut self, other: ConnectionDrops) {
-        self.0.extend(other.0);
-    }
-
-    pub fn changes(&self) -> impl Iterator<Item = &ConnectionChange> {
-        self.0.iter()
-    }
+    pub fn extend(&mut self, _other: ConnectionDrops) {}
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
 
-impl crate::Changes for ConnectionDrops {
-    fn into_deletions(self) -> (&'static str, Vec<Deletion>) {
-        (
-            BUCKET,
-            self.0
-                .into_iter()
-                .map(|change| match change {
-                    ConnectionChange::Connection {
-                        project_env_key,
-                        id,
-                    } => Deletion::Key(connection_key(&project_env_key, &id)),
-                    ConnectionChange::Release {
-                        project_env_key,
-                        manifest_digest,
-                    } => Deletion::Key(release_key(&project_env_key, &manifest_digest)),
-                    ConnectionChange::Connections(project_env_key) => {
-                        Deletion::Key(connections_key(&project_env_key))
-                    }
-                    ConnectionChange::ProjectEnvKey(project_env_key) => {
-                        Deletion::Under(project_env_key.to_string())
-                    }
-                })
-                .collect(),
-        )
-    }
-}
+impl crate::Changes for ConnectionDrops {}

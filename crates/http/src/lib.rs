@@ -454,8 +454,6 @@ impl ConnectionHttp {
         rejected: Option<&str>,
     ) -> Result<String, ConnectionError> {
         let oauth2_cache = facts.oauth_tokens();
-        let ticket = facts.oauth_ticket(&key.0);
-        let cache_ticket = oauth2_cache.ticket();
         if rejected.is_none()
             && let Some(token) = oauth2_cache.get(key)
         {
@@ -516,11 +514,6 @@ impl ConnectionHttp {
                 ConnectionError::CredentialUnavailable
             }
         })?;
-        if let Some(expires) = available.retain_until {
-            oauth2_cache.put(cache_ticket, *key, available.token.clone(), expires, || {
-                facts.oauth_ticket(&key.0) == ticket
-            });
-        }
         Ok(available.token)
     }
 }

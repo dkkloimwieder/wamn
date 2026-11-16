@@ -72,24 +72,9 @@ mod configuration {
             },
         };
         let control = ["runtime.host.>", "runtime.operator.>", "_INBOX.>"];
-        // Identity connects through the broker, which creates both memory buckets.
-        // Creating a bucket reads the account limits first ($JS.API.INFO).
-        let identity = [
-            "$JS.API.INFO",
-            "$KV.wamn-auth.>",
-            "$KV.wamn-connection.>",
-            "$JS.API.STREAM.INFO.KV_wamn-auth",
-            "$JS.API.STREAM.INFO.KV_wamn-connection",
-            "$JS.API.STREAM.CREATE.KV_wamn-auth",
-            "$JS.API.STREAM.CREATE.KV_wamn-connection",
-            "$JS.API.STREAM.UPDATE.KV_wamn-auth",
-            "$JS.API.STREAM.UPDATE.KV_wamn-connection",
-        ];
         // wamn-ctl and the provisioning Jobs run the same verbs: they manage the
         // event streams and consumers, read the advisories, and delete memory keys.
         let manage = [
-            "$KV.wamn-auth.>",
-            "$KV.wamn-connection.>",
             "$JS.API.STREAM.INFO.>",
             "$JS.API.STREAM.MSG.GET.>",
             "$JS.API.STREAM.CREATE.*",
@@ -101,32 +86,11 @@ mod configuration {
             "$JS.API.CONSUMER.DURABLE.CREATE.>",
             "$JS.API.CONSUMER.DELETE.>",
         ];
-        // A stream name is one subject token, so the grant above names every
-        // stream. Only the identity connection may change memory bucket settings.
-        let manager = |name: &str| {
-            let mut account = user(name, &manage, &["_INBOX.>"]);
-            for operation in ["CREATE", "UPDATE", "DELETE", "PURGE"] {
-                for bucket in ["wamn-auth", "wamn-connection"] {
-                    account
-                        .permissions
-                        .publish
-                        .deny
-                        .push(wamn_registry::name::nats_subject(&[
-                            "$JS",
-                            "API",
-                            "STREAM",
-                            operation,
-                            &wamn_registry::name::nats_token("KV_", bucket, ""),
-                        ]));
-                }
-            }
-            account
-        };
+        let manager = |name: &str| user(name, &manage, &["_INBOX.>"]);
         vec![
             user("wasmcloud-operator", &control, &control),
             user("wasmcloud-runtime", &control, &control),
             user("wasmcloud-data", &[], &[]),
-            user("wamn-identity", &identity, &["_INBOX.>"]),
             manager("wamn-ctl"),
             user(
                 "wamn-cdc-reader",
@@ -202,21 +166,6 @@ mod configuration {
             ]),
             wamn_registry::name::nats_subject(&["$JS", "ACK", (source.name).as_ref(), ">"]),
         ]);
-        for bucket in ["wamn-auth", "wamn-connection"] {
-            publish.extend(memory_subjects(bucket, project_env_key.as_str()));
-        }
-        publish.push(wamn_registry::name::nats_subject(&[
-            "$JS",
-            "API",
-            "CONSUMER",
-            "CREATE",
-            "KV_wamn-auth",
-            "*",
-            "$KV",
-            "wamn-auth",
-            crate::auth_changes::IDENTITY_TOKEN,
-            ">",
-        ]));
         keep_user(
             authorization,
             Account {
@@ -242,45 +191,6 @@ mod configuration {
             &wamn_registry::name::nats_certificate(&project_env_key),
             &user,
         )]
-    }
-
-    /// What a host may do on its own keys of the memory `bucket`: put and delete
-    /// them, read them by key, watch them, and read the bucket's metadata
-    /// (docs/plan/alignment.md R5, A7).
-    fn memory_subjects(bucket: &str, prefix: &str) -> [String; 4] {
-        [
-            wamn_registry::name::nats_subject(&["$KV", bucket, prefix, ">"]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "STREAM",
-                "INFO",
-                &wamn_registry::name::nats_token("KV_", bucket, ""),
-            ]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "DIRECT",
-                "GET",
-                &wamn_registry::name::nats_token("KV_", bucket, ""),
-                "$KV",
-                bucket,
-                prefix,
-                ">",
-            ]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "CONSUMER",
-                "CREATE",
-                &wamn_registry::name::nats_token("KV_", bucket, ""),
-                "*",
-                "$KV",
-                bucket,
-                prefix,
-                ">",
-            ]),
-        ]
     }
 
     /// Put `user` in `authorization`, in place of the entry of the same name.
@@ -317,31 +227,12 @@ mod configuration {
     /// every environment of the org (docs/plan/alignment.md R7).
     pub fn control_user(org: &wamn_registry::OrgId) -> (Account, Value) {
         let user = wamn_registry::control_nats_user(org);
-        let mut publish = Vec::new();
-        for bucket in ["wamn-auth", "wamn-connection"] {
-            publish.extend(memory_subjects(bucket, "*"));
-            publish.push(wamn_registry::name::nats_subject(&["$KV", bucket, ">"]));
-            // The control host watches the whole bucket, with the filter `>`.
-            publish.push(wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "CONSUMER",
-                "CREATE",
-                &wamn_registry::name::nats_token("KV_", bucket, ""),
-                "*",
-                "$KV",
-                bucket,
-                ">",
-            ]));
-        }
-        publish.sort();
-        publish.dedup();
         let account = Account {
             user: user.clone(),
             password: None,
             permissions: Permissions {
                 publish: Subjects {
-                    allow: publish,
+                    allow: Vec::new(),
                     deny: Vec::new(),
                 },
                 subscribe: Subjects {

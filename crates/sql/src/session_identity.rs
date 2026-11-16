@@ -99,7 +99,6 @@ pub struct WamnPostgres {
     /// The auth facts this host keeps
     /// (docs/architecture/execution.md#auth-memory).
     auth: Arc<wamn_authority::auth_cache::AuthCache>,
-    hierarchy_reader: std::sync::RwLock<HashMap<wamn_registry::ProjectEnvKey, sqlx::PgPool>>,
 }
 
 /// The bound principal has no `platform."user"` row in the project_env_key it identity
@@ -215,7 +214,6 @@ impl WamnPostgres {
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
             auth: Arc::default(),
-            hierarchy_reader: std::sync::RwLock::default(),
         }
     }
 
@@ -251,60 +249,7 @@ impl WamnPostgres {
         Ok(())
     }
 
-    /// Bind the host's existing identity reader for inherited authorization.
-    pub fn set_hierarchy_reader(&self, key: &wamn_registry::ProjectEnvKey, reader: sqlx::PgPool) {
-        self.hierarchy_reader
-            .write()
-            .expect("hierarchy reader lock poisoned")
-            .insert(key.to_owned(), reader);
-    }
-
-    async fn inherited_grants(
-        &self,
-        key: &wamn_registry::ProjectEnvKey,
-        principal: &wamn_identity_protocol::PrincipalId,
-        mut grants: wamn_authority::auth_cache::PrincipalGrants,
-    ) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
-        if self.inherits_administration(key, principal).await? {
-            grants.present = true;
-            grants.active = true;
-            grants.user = true;
-            grants
-                .roles
-                .entry(wamn_identity_protocol::ADMIN_ROLE.to_owned())
-                .or_default();
-        }
-        Ok(grants)
-    }
-
-    async fn inherits_administration(
-        &self,
-        key: &wamn_registry::ProjectEnvKey,
-        principal: &wamn_identity_protocol::PrincipalId,
-    ) -> anyhow::Result<bool> {
-        let reader = self
-            .hierarchy_reader
-            .read()
-            .expect("hierarchy reader lock poisoned")
-            .get(key)
-            .cloned();
-        let Some(reader) = reader else {
-            return Ok(false);
-        };
-        let coordinate = wamn_registry::ProjectEnvKey::triple(key);
-        Ok(wamn_platform_identity::control::is_project_admin(
-            &mut *reader.acquire().await?,
-            principal,
-            &coordinate.org,
-            &coordinate.project,
-            Some(&coordinate.env),
-        )
-        .await?)
-    }
-
-    /// The auth facts this host keeps. A message on
-    /// [`replicate`](wamn_authority::auth_cache::replicate) keeps them in step with
-    /// the other hosts.
+    /// The auth facts this host keeps.
     pub fn auth_cache(&self) -> &Arc<wamn_authority::auth_cache::AuthCache> {
         &self.auth
     }
@@ -1074,16 +1019,13 @@ impl WamnPostgres {
         project_env_key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
-        let grants = self
-            .read_principal_grants(
-                project,
-                project_env_key,
-                principal,
-                AuthorityClass::CallableHttp,
-            )
-            .await?;
-        self.inherited_grants(project_env_key, principal, grants)
-            .await
+        self.read_principal_grants(
+            project,
+            project_env_key,
+            principal,
+            AuthorityClass::CallableHttp,
+        )
+        .await
     }
 
     async fn read_principal_grants(
@@ -1093,10 +1035,6 @@ impl WamnPostgres {
         principal: &wamn_identity_protocol::PrincipalId,
         class: AuthorityClass,
     ) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
-        let ticket = match self.auth.grants(project_env_key, principal) {
-            Ok(grants) => return Ok(grants),
-            Err(ticket) => ticket,
-        };
         let (mut connection, _policy) = match class {
             AuthorityClass::GuestSql => self.checkout_guest(project, project_env_key).await?,
             _ => self.checkout_platform(project, class).await?,
@@ -1112,9 +1050,6 @@ impl WamnPostgres {
                 return Err(principal_read_error("read the principal grants", error).into());
             }
         };
-        self.auth
-            .keep_grants(project_env_key, principal, ticket, grants.clone())
-            .await;
         Ok(grants)
     }
 
@@ -1124,26 +1059,17 @@ impl WamnPostgres {
     pub async fn held_operation_grants(
         &self,
         project: &wamn_registry::ProjectId,
-        project_env_key: &wamn_registry::ProjectEnvKey,
+        _project_env_key: &wamn_registry::ProjectEnvKey,
         principal_id: &wamn_identity_protocol::PrincipalId,
         operation: &wamn_catalog::canonical_name::CanonicalName,
     ) -> anyhow::Result<HeldOperationGrants> {
-        let mut held = self
+        let held = self
             .administration_transaction(project, principal_id, operation, async |client| {
                 wamn_authentication::authorization::user_operation_permissions(client, principal_id)
                     .await
                     .context("read held operation grants")
             })
             .await??;
-        if self
-            .inherits_administration(project_env_key, principal_id)
-            .await?
-        {
-            held.admin = true;
-            held.user = true;
-            held.roles
-                .insert(wamn_identity_protocol::ADMIN_ROLE.to_owned());
-        }
         Ok(held)
     }
 
@@ -1157,10 +1083,6 @@ impl WamnPostgres {
         project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<bool> {
-        let ticket = match self.auth.environment_inactive(project_env_key) {
-            Ok(inactive) => return Ok(inactive),
-            Err(ticket) => ticket,
-        };
         let (mut connection, _pool) = self
             .checkout_guest(project, project_env_key)
             .await
@@ -1173,9 +1095,6 @@ impl WamnPostgres {
                     return Err(error).context("read the environment status");
                 }
             };
-        self.auth
-            .keep_environment_inactive(project_env_key, ticket, inactive)
-            .await;
         Ok(inactive)
     }
 
@@ -1237,9 +1156,6 @@ impl WamnPostgres {
                 principal_id,
                 AuthorityClass::GuestSql,
             )
-            .await?;
-        let grants = self
-            .inherited_grants(project_env_key, principal_id, grants)
             .await?;
         Ok(grants
             .active
@@ -1333,14 +1249,6 @@ impl WamnPostgres {
 
 #[async_trait::async_trait]
 impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
-    fn set_hierarchy_reader(&self, key: &wamn_registry::ProjectEnvKey, reader: sqlx::PgPool) {
-        self.set_hierarchy_reader(key, reader);
-    }
-
-    fn auth_cache(&self) -> &Arc<wamn_authority::auth_cache::AuthCache> {
-        self.auth_cache()
-    }
-
     async fn environment_inactive(
         &self,
         project: &wamn_registry::ProjectId,

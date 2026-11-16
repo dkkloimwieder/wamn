@@ -1,33 +1,15 @@
 //! The host's memory of the connection facts of a call
 //! (docs/architecture/execution.md#connection-memory).
 //!
-//! Postgres stays the owner of every fact here. The memory is the local
-//! replica of the NATS KV bucket [`BUCKET`] on the NATS of the auth memory,
-//! under the rules of [`wamn_authority::kv_memory`]. The key
-//! `<project_env_key>.connection.<connection id>` holds the active generation, the
-//! effective status, credential id, service principal id and lease coordinates of a connection. The key
-//! `<project_env_key>.release.<manifest digest hex>` holds the connection map of a
-//! release. The key `<project_env_key>.connections` holds the map from integration
-//! name to connection id of the environment. Every writer of a fact deletes its key after the commit
-//! ([`wamn_broker::connection_changes`]).
-//!
-//! Immutable rows, such as the parameters of a generation or the secret of a
-//! credential, stay in the host under their own ids and never enter the
-//! bucket.
-//!
-//! [`BUCKET`]: wamn_broker::connection_changes::BUCKET
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use wamn_broker::Publisher;
 
-use async_nats::jetstream::kv::Store;
-use wamn_broker::connection_changes::{BUCKET, connection_key, connections_key, release_key};
 use wamn_broker::kv_memory::CONNECTION_MEMORY_TTL;
 
 pub use wamn_authority::kv_memory::Ticket;
-use wamn_authority::kv_memory::{KvMemory, Watched};
 
 /// The effective status of a connection: active only when the integration
 /// and the connection are both active.
@@ -101,18 +83,8 @@ pub struct EnvConnections {
     pub connections: BTreeMap<String, uuid::Uuid>,
 }
 
-/// The value of a key of the bucket.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-enum Answer {
-    Connection(ConnectionFact),
-    Release(ReleaseFact),
-    Connections(EnvConnections),
-}
-
 /// The connection facts one host keeps.
 pub struct ConnectionMemory {
-    memory: KvMemory<Answer>,
     pub oauth_tokens: Arc<crate::oauth_token::Cache>,
     pub resource_leases: Arc<crate::resource_lease::ResourceLeases>,
 }
@@ -127,16 +99,14 @@ impl std::fmt::Debug for ConnectionMemory {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConnectionMemory")
-            .field("ttl", &self.memory.ttl())
             .finish_non_exhaustive()
     }
 }
 
 impl ConnectionMemory {
     /// A memory whose facts live for `ttl`.
-    pub fn with_ttl(ttl: Duration) -> Self {
+    pub fn with_ttl(_ttl: Duration) -> Self {
         Self {
-            memory: KvMemory::new(BUCKET, ttl),
             oauth_tokens: Arc::default(),
             resource_leases: Arc::new(
                 crate::resource_lease::ResourceLeases::new(None).expect("no lease database URL"),
@@ -153,202 +123,41 @@ impl ConnectionMemory {
         self
     }
 
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn seed_release(
-        &self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        digest: &wamn_digest::Digest,
-        fact: ReleaseFact,
-    ) {
-        self.memory
-            .seed(release_key(project_env_key, digest), Answer::Release(fact));
-    }
-
-    pub fn connection_ticket(
-        &self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        id: &uuid::Uuid,
-    ) -> Ticket {
-        self.memory.ticket(&connection_key(project_env_key, id))
-    }
-
     /// Whether the host watches the bucket, and so keeps facts.
     pub fn watched(&self) -> bool {
-        self.memory.bucket().is_some()
+        false
     }
 
     /// The fact of connection `id`, or the ticket of a read of it.
     pub fn connection(
         &self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        id: &uuid::Uuid,
+        _project_env_key: &wamn_registry::ProjectEnvKey,
+        _id: &uuid::Uuid,
     ) -> Result<ConnectionFact, Ticket> {
-        let key = connection_key(project_env_key, id);
-        match self.memory.answer(&key) {
-            Ok(Answer::Connection(fact)) => Ok(fact),
-            Ok(_) => Err(self.memory.ticket(&key)),
-            Err(ticket) => Err(ticket),
-        }
+        Err(Ticket(0))
     }
 
     pub async fn keep_connection(
         &self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        id: &uuid::Uuid,
-        ticket: Ticket,
-        fact: ConnectionFact,
+        _project_env_key: &wamn_registry::ProjectEnvKey,
+        _id: &uuid::Uuid,
+        _ticket: Ticket,
+        _fact: ConnectionFact,
     ) {
-        self.memory
-            .put(
-                connection_key(project_env_key, id),
-                ticket,
-                Answer::Connection(fact),
-            )
-            .await;
-    }
-
-    /// The connection map of the release `manifest_digest`, or the ticket of
-    /// a read of it.
-    pub fn release(
-        &self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        manifest_digest: &wamn_digest::Digest,
-    ) -> Result<ReleaseFact, Ticket> {
-        let key = release_key(project_env_key, manifest_digest);
-        match self.memory.answer(&key) {
-            Ok(Answer::Release(fact)) => Ok(fact),
-            Ok(_) => Err(self.memory.ticket(&key)),
-            Err(ticket) => Err(ticket),
-        }
-    }
-
-    pub async fn keep_release(
-        &self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        manifest_digest: &wamn_digest::Digest,
-        ticket: Ticket,
-        fact: ReleaseFact,
-    ) {
-        self.memory
-            .put(
-                release_key(project_env_key, manifest_digest),
-                ticket,
-                Answer::Release(fact),
-            )
-            .await;
     }
 }
 
-impl ConnectionMemory {
-    /// The connection map of `project_env_key`, or the ticket of a read of it.
-    pub fn connections(
-        &self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-    ) -> Result<EnvConnections, Ticket> {
-        let key = connections_key(project_env_key);
-        match self.memory.answer(&key) {
-            Ok(Answer::Connections(map)) => Ok(map),
-            Ok(_) => Err(self.memory.ticket(&key)),
-            Err(ticket) => Err(ticket),
-        }
-    }
-
-    pub async fn keep_connections(
-        &self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        ticket: Ticket,
-        map: EnvConnections,
-    ) {
-        self.memory
-            .put(
-                connections_key(project_env_key),
-                ticket,
-                Answer::Connections(map),
-            )
-            .await;
-    }
-}
-
-impl Watched for ConnectionMemory {
-    fn set_bucket(&self, bucket: Option<Store>) {
-        self.memory.set_bucket(bucket);
-    }
-
-    fn clear(&self) {
-        self.memory.clear();
-        self.oauth_tokens.clear();
-        self.resource_leases.clear();
-    }
-
-    fn apply(&self, entry: async_nats::jetstream::kv::Entry) {
-        let removed = if matches!(
-            entry.operation,
-            async_nats::jetstream::kv::Operation::Delete
-                | async_nats::jetstream::kv::Operation::Purge
-        ) && let Some((_, id)) = entry.key.rsplit_once(".connection.")
-            && let Ok(id) = uuid::Uuid::parse_str(id)
-        {
-            Some(id)
-        } else {
-            None
-        };
-        self.memory.apply(entry);
-        if let Some(id) = removed {
-            self.oauth_tokens.retain_generation(id, None);
-            self.resource_leases.invalidate(id);
-        }
-    }
-}
-
-/// Watch the bucket into the memory that `holder` holds, and return the
-/// writer of the host's own changes. A host with `project_env_key` watches the keys
-/// of that `project_env_key`. The control host serves every project, so it watches
-/// every key.
 pub fn replicate(
-    client: &async_nats::Client,
-    project_env_key: Option<&wamn_registry::ProjectEnvKey>,
-    holder: Arc<ConnectionMemory>,
+    _client: &async_nats::Client,
+    _project_env_key: Option<&wamn_registry::ProjectEnvKey>,
+    _holder: Arc<ConnectionMemory>,
 ) -> Publisher {
-    let filters = match project_env_key {
-        Some(project_env_key) => vec![wamn_registry::name::nats_subject(&[
-            project_env_key.as_str(),
-            ">",
-        ])],
-        None => vec![">".to_owned()],
-    };
-    wamn_authority::kv_memory::spawn_watch(client, BUCKET, filters, holder);
-    Publisher::new(client.clone())
+    Publisher::default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_authority::auth_cache::test_util::{nats, until};
-    use wamn_broker::connection_changes::ConnectionDrops;
-
-    fn fact(generation: i64) -> ConnectionFact {
-        ConnectionFact {
-            active_generation: generation,
-            status: ConnectionStatus::Active,
-            credential_id: Some(uuid::Uuid::new_v4()),
-            service_principal_id: uuid::Uuid::new_v4().into(),
-            exclusive: false,
-            target_id: uuid::Uuid::new_v4(),
-            resource_key: None,
-            target_type: "cloud".into(),
-        }
-    }
-
-    async fn watched(
-        client: &async_nats::Client,
-        project_env_key: Option<&wamn_registry::ProjectEnvKey>,
-    ) -> (Arc<ConnectionMemory>, Publisher) {
-        let memory = Arc::new(ConnectionMemory::default());
-        let writer = replicate(client, project_env_key, Arc::clone(&memory));
-        until("the watch runs", || memory.watched()).await;
-        (memory, writer)
-    }
-
     #[test]
     fn a_release_version_does_not_require_a_binding() {
         let id = uuid::Uuid::new_v4();
@@ -359,238 +168,5 @@ mod tests {
         assert_eq!(fact.version(&id), Some(7));
         assert_eq!(fact.version(&uuid::Uuid::new_v4()), None);
         assert!(fact.bindings.is_empty());
-    }
-
-    #[tokio::test]
-    async fn a_host_without_the_bucket_keeps_no_fact() {
-        let memory = ConnectionMemory::default();
-        let id = uuid::Uuid::new_v4();
-        let ticket = memory
-            .connection(&"t--dev--project".parse().unwrap(), &id)
-            .unwrap_err();
-        memory
-            .keep_connection(&"t--dev--project".parse().unwrap(), &id, ticket, fact(1))
-            .await;
-        let ticket = memory
-            .release(
-                &"t--dev--project".parse().unwrap(),
-                &wamn_digest::bytes_sha256(b"release"),
-            )
-            .unwrap_err();
-        memory
-            .keep_release(
-                &"t--dev--project".parse().unwrap(),
-                &wamn_digest::bytes_sha256(b"release"),
-                ticket,
-                ReleaseFact::default(),
-            )
-            .await;
-        assert!(
-            memory
-                .connection(&"t--dev--project".parse().unwrap(), &id)
-                .is_err()
-        );
-        assert!(
-            memory
-                .release(
-                    &"t--dev--project".parse().unwrap(),
-                    &wamn_digest::bytes_sha256(b"release")
-                )
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
-    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
-    async fn a_delete_during_a_read_refuses_the_put() {
-        let (_server, client) = nats().await;
-        let (memory, writer) = watched(&client, Some(&"t--dev--project".parse().unwrap())).await;
-        let id = uuid::Uuid::new_v4();
-        let ticket = memory
-            .connection(&"t--dev--project".parse().unwrap(), &id)
-            .unwrap_err();
-        let mut drops = ConnectionDrops::default();
-        drops.connection(&"t--dev--project".parse().unwrap(), id);
-        writer.publish(drops).await;
-        memory
-            .keep_connection(&"t--dev--project".parse().unwrap(), &id, ticket, fact(1))
-            .await;
-        assert!(
-            memory
-                .connection(&"t--dev--project".parse().unwrap(), &id)
-                .is_err()
-        );
-        // A read after the delete keeps its fact.
-        until("the host sees the delete", || {
-            memory
-                .memory
-                .ticket(&connection_key(&"t--dev--project".parse().unwrap(), &id))
-                != ticket
-        })
-        .await;
-        let second = fact(2);
-        let ticket = memory
-            .connection(&"t--dev--project".parse().unwrap(), &id)
-            .unwrap_err();
-        memory
-            .keep_connection(
-                &"t--dev--project".parse().unwrap(),
-                &id,
-                ticket,
-                second.clone(),
-            )
-            .await;
-        assert_eq!(
-            memory.connection(&"t--dev--project".parse().unwrap(), &id),
-            Ok(second)
-        );
-    }
-
-    #[tokio::test]
-    #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
-    async fn facts_reach_the_hosts_of_their_project_env_key_and_every_delete_reaches_them() {
-        let (_server, client) = nats().await;
-        let (a, writer) = watched(&client, Some(&"t--dev--project".parse().unwrap())).await;
-        let (b, _) = watched(&client, Some(&"t--dev--project".parse().unwrap())).await;
-        let (other, _) = watched(&client, Some(&"u--dev--project".parse().unwrap())).await;
-        let (control, _) = watched(&client, None).await;
-        let id = uuid::Uuid::new_v4();
-        let digest = (format!("sha256:{}", "ab".repeat(32)))
-            .parse::<wamn_digest::Digest>()
-            .unwrap();
-        let release = ReleaseFact {
-            versions: BTreeMap::from([(id, 1)]),
-            bindings: vec![ReleaseBinding {
-                component_digest: (format!("sha256:{}", "cd".repeat(32)))
-                    .parse::<wamn_digest::Digest>()
-                    .unwrap(),
-                package_id: "shop".parse().unwrap(),
-                name: "erp".into(),
-                connection_id: id,
-                version: 1,
-            }],
-        };
-        let first = fact(1);
-        let ticket = a
-            .connection(&"t--dev--project".parse().unwrap(), &id)
-            .unwrap_err();
-        a.keep_connection(
-            &"t--dev--project".parse().unwrap(),
-            &id,
-            ticket,
-            first.clone(),
-        )
-        .await;
-        let ticket = a
-            .release(&"t--dev--project".parse().unwrap(), &digest)
-            .unwrap_err();
-        a.keep_release(
-            &"t--dev--project".parse().unwrap(),
-            &digest,
-            ticket,
-            release.clone(),
-        )
-        .await;
-        assert_eq!(
-            a.connection(&"t--dev--project".parse().unwrap(), &id),
-            Ok(first.clone())
-        );
-        until("host b sees the facts", || {
-            b.connection(&"t--dev--project".parse().unwrap(), &id)
-                .is_ok()
-                && b.release(&"t--dev--project".parse().unwrap(), &digest)
-                    .is_ok()
-        })
-        .await;
-        until("the control host sees the facts", || {
-            control
-                .connection(&"t--dev--project".parse().unwrap(), &id)
-                .is_ok()
-        })
-        .await;
-        assert!(
-            other
-                .connection(&"t--dev--project".parse().unwrap(), &id)
-                .is_err()
-        );
-        assert_eq!(
-            b.release(&"t--dev--project".parse().unwrap(), &digest)
-                .unwrap()
-                .binding(
-                    &release.bindings[0].component_digest,
-                    &"shop".parse().unwrap(),
-                    "erp"
-                ),
-            Some(&release.bindings[0])
-        );
-
-        for host in [&a, &b] {
-            host.oauth_tokens.put(
-                host.oauth_tokens.ticket(),
-                (id, 1),
-                "private-access".into(),
-                tokio::time::Instant::now() + Duration::from_hours(1),
-                || true,
-            );
-        }
-        // A connection delete leaves the release map.
-        let mut drops = ConnectionDrops::default();
-        drops.connection(&"t--dev--project".parse().unwrap(), id);
-        writer.publish(drops).await;
-        until("hosts a and b drop the connection", || {
-            a.connection(&"t--dev--project".parse().unwrap(), &id)
-                .is_err()
-                && b.connection(&"t--dev--project".parse().unwrap(), &id)
-                    .is_err()
-                && a.oauth_tokens.is_empty()
-                && b.oauth_tokens.is_empty()
-        })
-        .await;
-        assert!(
-            b.release(&"t--dev--project".parse().unwrap(), &digest)
-                .is_ok()
-        );
-
-        // An environment delete drops every key of the environment.
-        let ticket = a
-            .connection(&"t--dev--project".parse().unwrap(), &id)
-            .unwrap_err();
-        a.keep_connection(
-            &"t--dev--project".parse().unwrap(),
-            &id,
-            ticket,
-            first.clone(),
-        )
-        .await;
-        let ticket = other
-            .connection(&"u--dev--project".parse().unwrap(), &id)
-            .unwrap_err();
-        other
-            .keep_connection(
-                &"u--dev--project".parse().unwrap(),
-                &id,
-                ticket,
-                first.clone(),
-            )
-            .await;
-        until("host b sees the fact again", || {
-            b.connection(&"t--dev--project".parse().unwrap(), &id)
-                .is_ok()
-        })
-        .await;
-        let mut drops = ConnectionDrops::default();
-        drops.project_env_key(&"t--dev--project".parse().unwrap());
-        writer.publish(drops).await;
-        until("host b drops the environment", || {
-            b.connection(&"t--dev--project".parse().unwrap(), &id)
-                .is_err()
-                && b.release(&"t--dev--project".parse().unwrap(), &digest)
-                    .is_err()
-        })
-        .await;
-        assert_eq!(
-            other.connection(&"u--dev--project".parse().unwrap(), &id),
-            Ok(first)
-        );
     }
 }

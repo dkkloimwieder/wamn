@@ -53,9 +53,6 @@ impl ReleaseIdentity {
 /// adding a field here leaves an identity that no acquisition rebinds — which is
 /// exactly the cross-project_env_key leak `wamn-0h0g.17.7` closes.
 ///
-/// `None` means *no identity*, not *keep the previous one*: the base denial policys
-/// (`app.role` = `''`, `app.user_id` = NULL, no `search_path` override) are what
-/// an acquisition that declares nothing must get.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionIdentity {
     /// The target project environment. A session without it is refused by
@@ -66,19 +63,10 @@ pub struct SessionIdentity {
     pub project: Option<wamn_registry::ProjectId>,
     /// `SET LOCAL search_path`. `None` ⇒ the server's own search_path.
     pub schema: Option<String>,
-    /// `app.runner` — the durable-queue lease owner.
     pub runner: Option<String>,
-    /// `app.role` — the caller's `roles.name` for compiled per-role RLS.
     pub role: Option<String>,
-    /// `app.user_id` — the executing principal's `users.id`, which the
-    /// record-history triggers stamp. A transactional statement with none is
-    /// refused.
     pub user_id: Option<wamn_identity_protocol::PrincipalId>,
-    /// `app.operation`: the executing operation token, or `wamn:<component>`
-    /// for a platform component outside a registered operation.
     pub operation: Option<wamn_catalog::canonical_name::CanonicalName>,
-    /// `app.application`: the environment map name of the application that
-    /// holds the operation's package.
     pub application: Option<wamn_catalog::ApplicationName>,
     /// The release digest the binding pod carries.
     pub release: Option<ReleaseIdentity>,

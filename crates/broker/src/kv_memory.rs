@@ -12,16 +12,6 @@ pub const CONNECTION_MEMORY_TTL: Duration = Duration::from_secs(60);
 // Auth facts have different revocation bounds. Bound storage by bytes instead of a shared age.
 const AUTH_MEMORY_BYTES: i64 = 1 << 20;
 
-/// The keys one change deletes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Deletion {
-    /// One key.
-    Key(String),
-    /// Every key whose first token is this one, such as every key of an
-    /// environment.
-    Under(String),
-}
-
 /// Open `bucket`. Only identity creates a bucket ([`create_buckets`]), so a
 /// bucket is absent until identity runs and after a NATS restart.
 pub async fn open_bucket(
@@ -35,13 +25,8 @@ pub async fn open_bucket(
         .with_context(|| format!("open the NATS KV bucket {bucket}"))
 }
 
-/// How often identity makes sure that the buckets exist. The NATS keeps the
-/// buckets in memory, so a restart loses them.
-pub const BUCKET_POLL_INTERVAL: Duration = Duration::from_secs(5);
-
 /// Make each memory bucket, or bring its configuration up to date
-/// (docs/plan/alignment.md R7). Identity calls this on start and every
-/// [`BUCKET_POLL_INTERVAL`].
+/// (docs/plan/alignment.md R7).
 pub async fn create_buckets(client: &async_nats::Client) -> anyhow::Result<()> {
     for bucket in [
         crate::auth_changes::BUCKET,
@@ -50,23 +35,6 @@ pub async fn create_buckets(client: &async_nats::Client) -> anyhow::Result<()> {
         create_bucket(client, bucket).await?;
     }
     Ok(())
-}
-
-/// Make each memory bucket on start, and again every [`BUCKET_POLL_INTERVAL`], for as
-/// long as the task runs.
-pub fn keep_buckets(client: async_nats::Client) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut poll = tokio::time::interval(BUCKET_POLL_INTERVAL);
-        loop {
-            poll.tick().await;
-            if let Err(error) = create_buckets(&client).await {
-                tracing::warn!(
-                    error = format!("{error:#}"),
-                    "the memory buckets were not made; hosts cache nothing until they are"
-                );
-            }
-        }
-    })
 }
 
 async fn create_bucket(
@@ -93,62 +61,4 @@ async fn create_bucket(
         })
         .await
         .with_context(|| format!("make the NATS KV bucket {bucket}"))
-}
-
-/// Delete `deletions` from `bucket` after the commit that made them. A failed
-/// delete is logged, because the commit stands and the TTL bounds it. Each
-/// call opens the bucket, so a writer outlives a restart of the scheduler
-/// NATS.
-pub async fn delete(client: &async_nats::Client, bucket: &str, deletions: Vec<Deletion>) {
-    if deletions.is_empty() {
-        return;
-    }
-    let store = match open_bucket(client, bucket).await {
-        Ok(store) => store,
-        Err(error) => {
-            tracing::warn!(
-                error = format!("{error:#}"),
-                bucket,
-                "the memory changes were not deleted; the TTL bounds them"
-            );
-            return;
-        }
-    };
-    for deletion in deletions {
-        if let Err(error) = delete_one(&store, &deletion).await {
-            tracing::warn!(
-                error = format!("{error:#}"),
-                bucket,
-                ?deletion,
-                "the memory change was not deleted; the TTL bounds it"
-            );
-        }
-    }
-}
-
-async fn delete_one(
-    store: &async_nats::jetstream::kv::Store,
-    deletion: &Deletion,
-) -> anyhow::Result<()> {
-    use futures_util::TryStreamExt as _;
-    let keys = match deletion {
-        Deletion::Key(key) => vec![key.clone()],
-        Deletion::Under(token) => {
-            let mut subjects = store
-                .stream
-                .info_with_subjects(format!("{}{token}.>", store.prefix))
-                .await?;
-            let mut keys = Vec::new();
-            while let Some((subject, _)) = subjects.try_next().await? {
-                if let Some(key) = subject.strip_prefix(&store.prefix) {
-                    keys.push(key.to_owned());
-                }
-            }
-            keys
-        }
-    };
-    for key in keys {
-        store.delete(&key).await?;
-    }
-    Ok(())
 }
