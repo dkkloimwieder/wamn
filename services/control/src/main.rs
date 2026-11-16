@@ -14,8 +14,6 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     #[command(hide = true)]
-    Operation(wamn_control::Operation),
-    #[command(hide = true)]
     Platform { request: String },
 }
 
@@ -41,10 +39,6 @@ async fn main() -> anyhow::Result<()> {
                 "{}",
                 wamn_control::platform::execute(&config, &request).await?
             );
-            Ok(())
-        }
-        Some(Command::Operation(operation)) => {
-            println!("{}", wamn_control::execute(&config, operation).await?);
             Ok(())
         }
     }

@@ -54,25 +54,6 @@ CREATE TRIGGER packages_delete_immutable
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 
-CREATE TABLE catalog.releases (
-    project_env_key         text        NOT NULL CHECK (project_env_key <> ''),
-    manifest_digest text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    canonical_bytes bytea       NOT NULL CHECK (octet_length(canonical_bytes) > 0),
-    recorded_at     timestamptz NOT NULL DEFAULT now(),
-    created_at      timestamptz NOT NULL,
-    created_by      uuid        NOT NULL,
-    updated_at      timestamptz NOT NULL,
-    updated_by      uuid        NOT NULL,
-    CONSTRAINT releases_pkey PRIMARY KEY (project_env_key, manifest_digest),
-    CONSTRAINT releases_exact_hash
-        CHECK (manifest_digest = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
-);
-
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON catalog.releases
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
 -- Connection projections precede the catalog references to them.
 CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION CURRENT_USER;
 
@@ -119,7 +100,6 @@ CREATE TABLE catalog.release_connection (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     PRIMARY KEY (project_env_key, manifest_digest, connection_id),
-    FOREIGN KEY (project_env_key, manifest_digest) REFERENCES catalog.releases (project_env_key, manifest_digest),
     FOREIGN KEY (connection_id) REFERENCES platform.connection (id)
 );
 
@@ -243,7 +223,6 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'packages',
-        'releases',
         'connection_requirement', 'release_connection', 'connection_binding',
         'workflows'
     ] LOOP
@@ -284,7 +263,6 @@ END
 $immutable_facts$;
 
 GRANT SELECT ON catalog.packages,
-    catalog.releases,
     catalog.connection_requirement,
     catalog.release_connection,
     catalog.connection_binding,

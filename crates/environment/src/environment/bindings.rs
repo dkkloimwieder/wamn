@@ -209,7 +209,6 @@ pub async fn write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &wamn_registry::ProjectEnvKey,
     digest: &wamn_digest::Digest,
-    document: &EnvironmentDocument,
     bindings: &[Binding],
     drops: &mut wamn_broker::connection_changes::ConnectionDrops,
 ) -> anyhow::Result<()> {
@@ -223,41 +222,6 @@ pub async fn write(
             binding.connection_id
         );
         changed += sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (project_env_key,manifest_digest,connection_id) DO NOTHING").bind(project_env_key).bind(digest).bind(&binding.connection_id).bind(binding.version).execute(&mut **tx).await.map(|result| result.rows_affected())?;
-    }
-    for row in sqlx::query(
-        "SELECT q.component_digest,q.package_id,q.name,q.interface,q.mode \
-         FROM catalog.connection_requirement q WHERE q.project_env_key=$1 AND EXISTS (\
-         SELECT FROM catalog.releases r CROSS JOIN LATERAL \
-         jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c \
-         WHERE r.project_env_key=$1 AND r.manifest_digest=$2 AND (c->>'package-id'=q.package_id OR (c->>'package-id'=$3 AND EXISTS (SELECT FROM jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb #> '{release,packages}') p WHERE p->>'package-id'=q.package_id))) \
-         AND c->'descriptor'->>'component-digest'=q.component_digest)",
-    )
-    .bind(project_env_key)
-    .bind(digest)
-    .bind(wamn_catalog::PALETTE_PACKAGE_ID)
-    .fetch_all(&mut **tx)
-    .await?
-    {
-        let package: wamn_catalog::PackageName = row.try_get(1)?;
-        let application = document.application_for_package(&package).ok_or_else(|| anyhow::anyhow!("release package {package} has no sole application owner"))?;
-        let name: String = row.get(2);
-        let binding = bindings
-            .iter()
-            .find(|b| &b.application == application && b.alias == name);
-        let binding = binding.ok_or_else(|| anyhow::anyhow!("connection_unbound: {application}.{name}"))?;
-        let required: String = row.get(3);
-        anyhow::ensure!(
-            exports_satisfy(&binding.exports, std::slice::from_ref(&required)),
-            "integration_import_unsatisfied: {application}.{name}"
-        );
-        let mode: String = row.get(4);
-        anyhow::ensure!(
-            mode != "read"
-                || mode_satisfies(ConnectionMode::Read, &required, &binding.write_interfaces),
-            "connection_read_imports_write_interface: {application}.{name}"
-        );
-        let component: String = row.get(0);
-        changed += sqlx::query("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES ($1,$2,$3,$4,$5,$6::text::uuid) ON CONFLICT (project_env_key,manifest_digest,component_digest,package_id,name) DO NOTHING").bind(project_env_key).bind(digest).bind(&component).bind(&package).bind(&name).bind(&binding.connection_id).execute(&mut **tx).await.map(|result| result.rows_affected())?;
     }
     if changed > 0 {
         drops.release(project_env_key, digest);

@@ -22,42 +22,12 @@
 //! finish under the version they pinned.
 
 use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _};
+use sqlx::Connection as _;
 pub(super) mod plan;
 
-use wamn_catalog::WiringDocument;
-use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
 use wamn_registry::Triple;
 
-use crate::author_workflow::{
-    AuthorWorkflowError, AuthorWorkflowErrorType, condition_against_release,
-};
 use wamn_catalog::lifecycle_lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
-
-/// Params `$1` to `$5`: the version's key.
-const SELECT_VERSION_SQL: &str = "\
-SELECT graph_json::text, wiring_hash, execution_role, trigger, source_package, entity, ops, condition FROM catalog.workflows \
- WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
-   AND workflow_id = $4 AND version = $5 \
-   FOR UPDATE";
-
-/// Params: `$1` user id, `$2` the roles that suffice.
-const HOLDS_ROLE_SQL: &str = "\
-SELECT EXISTS (\
-    SELECT 1 FROM platform.user_role \
-     WHERE user_id = $1 AND role_name = ANY($2)\
-    )";
-
-/// Params `$1` to `$5`: the version that stays or becomes enabled.
-const DISABLE_OTHERS_SQL: &str = "\
-UPDATE catalog.workflows SET enabled = false \
- WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
-   AND workflow_id = $4 AND version <> $5 AND enabled";
-
-const ENABLE_SQL: &str = "\
-UPDATE catalog.workflows SET enabled = true, enable_sequence = $6 \
- WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
-   AND workflow_id = $4 AND version = $5";
 
 const DISABLE_SQL: &str = "\
 UPDATE catalog.workflows SET enabled = false \
@@ -77,11 +47,7 @@ pub enum WorkflowLifecycleErrorType {
     ApplyInProgress,
     NotFound,
     /// The graph fails its conditions against the serving release.
-    Condition,
-    RoleNotHeldByEnabler,
-    RoleNotHeldByWorkflowUser,
     Storage,
-    Broker,
 }
 
 impl WorkflowLifecycleErrorType {
@@ -89,11 +55,7 @@ impl WorkflowLifecycleErrorType {
         match self {
             Self::ApplyInProgress => "apply-in-progress",
             Self::NotFound => "not-found",
-            Self::Condition => "condition",
-            Self::RoleNotHeldByEnabler => "role-not-held-by-enabler",
-            Self::RoleNotHeldByWorkflowUser => "role-not-held-by-workflow-user",
             Self::Storage => "storage",
-            Self::Broker => "broker",
         }
     }
 }
@@ -130,17 +92,6 @@ impl WorkflowLifecycleError {
         }
     }
 
-    fn condition(error: AuthorWorkflowError) -> Self {
-        let type_ = match error.error_type() {
-            AuthorWorkflowErrorType::Storage => WorkflowLifecycleErrorType::Storage,
-            _ => WorkflowLifecycleErrorType::Condition,
-        };
-        Self::with_source(
-            type_,
-            "condition the workflow against the serving release",
-            error,
-        )
-    }
 
     /// Stable refusal class for callers that must not match display text.
     pub const fn error_type(&self) -> WorkflowLifecycleErrorType {
@@ -170,51 +121,6 @@ impl std::error::Error for WorkflowLifecycleError {
 
 pub use plan::WorkflowVersion;
 
-/// Enable `workflow` under the lifecycle lock of `triple`, validated against
-/// the release `manifest_digest` the environment serves and the authority of
-/// `enabler` (its `platform."user"` id). The graph conditions within
-/// the packages `declared` names for the workflow's application first.
-///
-/// # Errors
-///
-/// [`WorkflowLifecycleErrorType::ApplyInProgress`] while another verb holds
-/// the lock; otherwise the predicate that refused.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the lifecycle boundary includes the optional event broker"
-)]
-pub async fn enable_workflow(
-    system_url: &str,
-    triple: &Triple,
-    project: &mut Client,
-    workflow: &WorkflowVersion<'_>,
-    enabler: &wamn_identity_protocol::PrincipalId,
-    manifest_digest: &wamn_digest::Digest,
-    declared: &wamn_catalog::EnvironmentApplications,
-    events: Option<&wamn_broker::EventBroker>,
-) -> Result<(), WorkflowLifecycleError> {
-    // Enable adds no declaration condition: an application the environment does
-    // not declare has no package of its own when its conditions are evaluated.
-    let packages = declared
-        .get(workflow.application)
-        .map_or_default(|application| application.packages.clone());
-    under_lock(system_url, triple, async || {
-        let mut transaction = begin(project).await?;
-        enable_in(
-            &mut transaction,
-            workflow,
-            enabler,
-            manifest_digest,
-            &packages,
-            declared,
-            triple,
-            events,
-        )
-        .await?;
-        commit(transaction).await
-    })
-    .await
-}
 
 /// Disable `workflow` under the lifecycle lock of `triple`.
 ///
@@ -301,199 +207,7 @@ async fn commit(
         .map_err(|error| storage("commit the workflow transaction", error))
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the enabling transaction uses the locked environment and broker"
-)]
-async fn enable_in(
-    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    workflow: &WorkflowVersion<'_>,
-    enabler: &wamn_identity_protocol::PrincipalId,
-    manifest_digest: &wamn_digest::Digest,
-    packages: &std::collections::BTreeSet<wamn_catalog::PackageName>,
-    declared: &wamn_catalog::EnvironmentApplications,
-    triple: &Triple,
-    events: Option<&wamn_broker::EventBroker>,
-) -> Result<(), WorkflowLifecycleError> {
-    let version = workflow.version()?;
-    let project_env_key = workflow.project_env_key();
-    let row = sqlx::query(SELECT_VERSION_SQL)
-        .bind(&project_env_key)
-        .bind(workflow.environment)
-        .bind(workflow.application)
-        .bind(workflow.workflow_id)
-        .bind(version)
-        .fetch_optional(&mut **transaction)
-        .await
-        .map_err(|error| storage("read the workflow version", error))?
-        .ok_or_else(|| workflow.not_found())?;
-    let graph_json: String = row.get(0);
-    let stored_hash: wamn_digest::Digest = row.get(1);
-    let execution_role: Option<String> = row.get(2);
-    let trigger: String = row.get(3);
 
-    let graph = serde_json::from_str(&graph_json)
-        .map_err(WorkflowLifecycleError::stored)
-        .and_then(|value| WiringDocument::parse(&value).map_err(WorkflowLifecycleError::stored))?;
-    let hash = condition_against_release(
-        transaction,
-        &workflow.project_env_key(),
-        packages,
-        manifest_digest,
-        &graph,
-    )
-    .await
-    .map_err(WorkflowLifecycleError::condition)?;
-    if hash != stored_hash {
-        return Err(WorkflowLifecycleError::new(
-            WorkflowLifecycleErrorType::Condition,
-            format!(
-                "workflow {:?} version {} stores hash {stored_hash}, and its graph hashes to {}",
-                workflow.workflow_id, workflow.version, hash
-            ),
-        ));
-    }
-
-    // The role a run executes with: the execution role, or `admin` for a
-    // callerless `invoker` (docs/architecture/execution.md#workflows).
-    let assigned = match (execution_role.as_deref(), trigger.as_str()) {
-        (Some(role), _) => Some(role),
-        (None, "schedule" | "event") => Some(ADMIN_ROLE),
-        (None, _) => None,
-    };
-    if let Some(role) = assigned {
-        let sufficient = [role, ADMIN_ROLE];
-        if !holds_role(transaction, enabler, &sufficient).await? {
-            return Err(WorkflowLifecycleError::new(
-                WorkflowLifecycleErrorType::RoleNotHeldByEnabler,
-                format!("the enabler holds neither role {role:?} nor {ADMIN_ROLE:?}"),
-            ));
-        }
-        let workflow_user = workflow_user_id();
-        if !holds_role(transaction, &workflow_user, &[role]).await? {
-            return Err(WorkflowLifecycleError::new(
-                WorkflowLifecycleErrorType::RoleNotHeldByWorkflowUser,
-                format!("the workflow user does not hold role {role:?}"),
-            ));
-        }
-    }
-
-    let enable_sequence = if trigger == "event" {
-        let source_package: wamn_catalog::PackageName =
-            row.try_get(4).map_err(WorkflowLifecycleError::stored)?;
-        let entity: wamn_catalog::canonical_name::CanonicalName =
-            row.try_get(5).map_err(WorkflowLifecycleError::stored)?;
-        let stored_ops: Vec<String> = row.get(6);
-        let ops = serde_json::from_value::<Vec<wamn_catalog::WiringEventOperation>>(
-            serde_json::json!(stored_ops),
-        )
-        .map_err(WorkflowLifecycleError::stored)?;
-        let condition: Option<String> = row.get(7);
-        crate::author_workflow::validate_event_trigger(
-            transaction,
-            declared,
-            crate::author_workflow::WorkflowTrigger::Event {
-                source_package: &source_package,
-                entity: &entity,
-                ops: &ops,
-                condition: condition.as_deref(),
-            },
-        )
-        .await
-        .map_err(WorkflowLifecycleError::condition)?;
-        let events = events.ok_or_else(|| {
-            WorkflowLifecycleError::new(
-                WorkflowLifecycleErrorType::Broker,
-                "the environment has no event broker",
-            )
-        })?;
-        let consumer = wamn_broker::events::application_consumer(
-            triple,
-            workflow.application,
-            &source_package,
-            entity.as_str(),
-        )
-        .map_err(|error| {
-            WorkflowLifecycleError::with_source(
-                WorkflowLifecycleErrorType::Broker,
-                "declare application event consumer",
-                error,
-            )
-        })?;
-        wamn_broker::streams::prepare_application_consumers(&events.nats, triple, &[consumer])
-            .await
-            .map_err(|error| {
-                WorkflowLifecycleError::with_source(
-                    WorkflowLifecycleErrorType::Broker,
-                    "prepare application event consumer",
-                    error,
-                )
-            })?;
-        let tail = wamn_broker::streams::last_published_sequence(&events.nats, triple)
-            .await
-            .map_err(|error| {
-                WorkflowLifecycleError::with_source(
-                    WorkflowLifecycleErrorType::Broker,
-                    "read the environment event stream tail",
-                    error,
-                )
-            })?;
-        Some(i64::try_from(tail).map_err(|error| {
-            WorkflowLifecycleError::with_source(
-                WorkflowLifecycleErrorType::Broker,
-                "the stream sequence exceeds the catalog storage width",
-                error,
-            )
-        })?)
-    } else {
-        None
-    };
-
-    sqlx::query(DISABLE_OTHERS_SQL)
-        .bind(&project_env_key)
-        .bind(workflow.environment)
-        .bind(workflow.application)
-        .bind(workflow.workflow_id)
-        .bind(version)
-        .execute(&mut **transaction)
-        .await
-        .map_err(|error| storage("disable the enabled version", error))?;
-    sqlx::query(ENABLE_SQL)
-        .bind(&project_env_key)
-        .bind(workflow.environment)
-        .bind(workflow.application)
-        .bind(workflow.workflow_id)
-        .bind(version)
-        .bind(enable_sequence)
-        .execute(&mut **transaction)
-        .await
-        .map_err(|error| storage("enable the workflow version", error))?;
-    Ok(())
-}
-
-async fn holds_role(
-    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    user_id: &wamn_identity_protocol::PrincipalId,
-    roles: &[&str],
-) -> Result<bool, WorkflowLifecycleError> {
-    Ok(sqlx::query(HOLDS_ROLE_SQL)
-        .bind(user_id)
-        .bind(roles)
-        .fetch_one(&mut **transaction)
-        .await
-        .map_err(|error| storage("read the role assignments", error))?
-        .get(0))
-}
-
-impl WorkflowLifecycleError {
-    fn stored(error: impl std::error::Error + Send + Sync + 'static) -> Self {
-        Self::with_source(
-            WorkflowLifecycleErrorType::Storage,
-            "the stored graph is not a valid workflow graph",
-            error,
-        )
-    }
-}
 
 fn storage(context: &'static str, error: sqlx::Error) -> WorkflowLifecycleError {
     WorkflowLifecycleError::with_source(WorkflowLifecycleErrorType::Storage, context, error)

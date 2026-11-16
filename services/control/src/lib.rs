@@ -14,7 +14,7 @@ use std::{
 use anyhow::{Context as _, ensure};
 use http_body_util::BodyExt as _;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -36,7 +36,6 @@ pub struct Configuration {
     pub administration_dir: PathBuf,
     pub worker: wamn_kubernetes::job::Worker,
     pub chart: PathBuf,
-    pub release_artifact_base: String,
     pub package_artifact_base: String,
     pub component_artifact_base: String,
     pub integration_artifact_base: String,
@@ -138,13 +137,11 @@ impl Configuration {
             },
             chart: self.chart.clone(),
             chart_download: None,
-            release_artifact_base: self.release_artifact_base.clone(),
             registry_auth_file: self.registry_auth_file.clone(),
             registry_token_metadata: self.registry_token_metadata,
             oci_ca_paths: self.oci_ca_paths.clone(),
             insecure_registry: self.insecure_registry,
             package_artifact_base: Some(self.package_artifact_base.clone()),
-            component_artifact_base: Some(self.component_artifact_base.clone()),
             database_namespace: self.org.to_string(),
             database_host: None,
             database_port: 5432,
@@ -158,101 +155,6 @@ impl Configuration {
             auth_nats: Some(self.nats.connection()),
         })
     }
-}
-
-/// Only the service starts this worker with a server-selected actor and coordinate.
-#[derive(Debug, clap::Args)]
-pub struct Operation {
-    #[arg(value_parser = ["deploy", "rollback", "stop", "diff", "apply", "reset", "retain"])]
-    verb: String,
-    #[arg(long)]
-    org: wamn_registry::OrgId,
-    #[arg(long)]
-    project: wamn_registry::ProjectId,
-    #[arg(long)]
-    env: wamn_registry::EnvName,
-    #[arg(long)]
-    application: Option<wamn_catalog::ApplicationName>,
-    #[arg(long)]
-    release: Option<wamn_digest::Digest>,
-}
-
-/// Execute one authorized operation in its Job, with no nested SQL Job.
-pub async fn execute(config: &Configuration, operation: Operation) -> anyhow::Result<Value> {
-    ensure!(
-        operation.org == config.org,
-        "operation belongs to another org"
-    );
-    let actor = std::env::var("WAMN_DEPLOY_ACTOR")
-        .context("authenticated actor is absent")?
-        .parse()?;
-    let triple = wamn_registry::Triple::new(
-        operation.org.clone(),
-        operation.env.clone(),
-        operation.project.clone(),
-    );
-    let platform = config.platform()?;
-    write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
-    if operation.verb == "retain" {
-        return Ok(
-            json!({"removed":wamn_environment::environment::retention::prune(&platform, &triple).await?}),
-        );
-    }
-    let credentials = if matches!(operation.verb.as_str(), "apply" | "reset") {
-        Some({
-            let instance = wamn_environment::provision_project_env::read_project_env_instance(
-                &platform.system_database_url,
-                &triple,
-            )
-            .await?;
-            let database_name = wamn_control_provision::project_env_database_name(
-                &operation.org,
-                &operation.project,
-                &operation.env,
-                &instance,
-            );
-            let key = wamn_control_provision::control_administration_key(
-                &operation.project,
-                &operation.env,
-            );
-            let database = std::fs::read_to_string(config.administration_dir.join(key))?;
-            ensure!(
-                wamn_postgres::identity(&database)?.1 == database_name,
-                "operation connection differs from the registry database"
-            );
-            wamn_environment::environment::sql::reset::Credentials {
-                owner: wamn_control_provision::migrations::MigrationDatabase::Project
-                    .configuration(&database)?,
-                migration: wamn_control_provision::migration::configuration(
-                    &database,
-                    &operation.org,
-                    &operation.project,
-                    &operation.env,
-                )?,
-                capture: wamn_platform_install::environment::capture_connection(
-                    &platform.system_database_url,
-                    &triple,
-                )
-                .await?,
-            }
-        })
-    } else {
-        None
-    };
-    wamn_environment::environment::operation::execute(
-        &platform,
-        wamn_environment::environment::operation::Request {
-            operation: &operation.verb,
-            org: &operation.org,
-            project: &operation.project,
-            env: &operation.env,
-            application: operation.application.as_ref(),
-            release: operation.release.as_ref(),
-        },
-        &actor,
-        credentials.as_ref(),
-    )
-    .await
 }
 
 fn write_kubeconfig(path: &Path, namespace: &str) -> anyhow::Result<()> {

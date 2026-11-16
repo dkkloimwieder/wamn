@@ -1,5 +1,5 @@
 use super::{
-    Authorities, EnvironmentDocument, EnvironmentRow, Notice, Observation, Platform, Revision,
+    Authorities, EnvironmentDocument, EnvironmentRow, Platform,
     Value,
 };
 
@@ -12,20 +12,6 @@ pub(super) fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option
     })
 }
 
-/// The refusals of the sequences that the packages of one application declare
-/// (docs/architecture/data-access.md#counters): two packages of one application
-/// that declare one sequence name declare one default pattern. This reads only
-/// the declarations, so a `number_sequence` row whose pattern the admin edited
-/// never refuses.
-pub(super) fn sequence_refusals(
-    applications: &wamn_catalog::EnvironmentApplications,
-    packages: &[wamn_compiler::manifest::PackageManifest],
-) -> Vec<String> {
-    match super::super::stage::sequence_defaults(applications, packages) {
-        Ok(_) => Vec::new(),
-        Err(error) => vec![error.to_string()],
-    }
-}
 
 /// The project database URL: the system URL with the environment's database.
 pub(crate) async fn project_url(
@@ -121,61 +107,4 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
         }
     }
     refusals
-}
-
-/// The differences from each authority (§10.1 step 3, the plan).
-pub(super) fn plan(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String> {
-    let mut plan = Vec::new();
-    for (application, definition) in &document.applications {
-        for (name, integration) in &definition.connections {
-            plan.push(format!(
-                "bind {application}.{name} to integration {integration}"
-            ));
-        }
-    }
-    let current = authorities
-        .revision
-        .as_ref()
-        .and_then(Revision::manifest_digest);
-    match (&authorities.release, current) {
-        (Some(release), Some(current)) if release.digest == *current => {
-            plan.push(format!("reapply release {current} with Helm"));
-        }
-        (Some(release), _) => plan.push(format!("stage and roll out release {}", release.digest)),
-        (None, Some(current)) => plan.push(format!("uninstall release {current} and drain")),
-        (None, None) => {}
-    }
-    if plan.is_empty() {
-        plan.push("nothing differs".to_owned());
-    }
-    plan
-}
-
-/// Compare physical SQL identities and optional evidence, never package versions.
-pub(crate) fn notices(
-    document: &EnvironmentDocument,
-    application: &wamn_catalog::ApplicationName,
-    authorities: &Authorities,
-) -> Vec<Notice> {
-    let mut notices = Vec::new();
-    if let Some(report) = authorities
-        .project
-        .as_ref()
-        .and_then(|project| project.schema_report.as_ref())
-        .filter(|report| !report.warnings.is_empty())
-    {
-        notices.push(Notice {
-            application: application.to_owned(),
-            identity: format!(
-                "{}/{}/{}/platform._sqlx_migrations",
-                document.org, document.project, document.env
-            ),
-            observed: Observation::PlatformSchema { report: report.clone() },
-            next_action: format!(
-                "Inspect project SQL with wamn platform schema diff --target project --env FILE --chart DIR for {}/{}/{}",
-                document.org, document.project, document.env
-            ),
-        });
-    }
-    notices
 }

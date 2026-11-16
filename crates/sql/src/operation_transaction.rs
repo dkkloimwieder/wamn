@@ -311,6 +311,3 @@ impl WamnPostgres {
             .flatten()
     }
 }
-
-#[cfg(test)]
-mod tests;

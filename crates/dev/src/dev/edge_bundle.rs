@@ -19,8 +19,7 @@ use wamn_registry::project_env_key;
 use wamn_publish::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_publish::component_declaration::{authored_base_digests, render_package_declaration};
 use wamn_publish::publish_release::{
-    ComposedApplication, PublishReleaseRequest, application_member, assemble_release,
-    compose_application,
+    PublishReleaseRequest, assemble_release,
 };
 
 /// The environment coordinate of the box: the edge configuration's `[target]`.
@@ -88,17 +87,10 @@ pub fn write_package(
         std::slice::from_ref(&admission),
         &[],
     )?;
-    let (member, application_bytes) = application_member(
-        &assembled.published,
-        &[(admission.facts(), admission.bytes())],
-        &request.applications,
-        None,
-    )?;
-    let entry = compose_application(member, application_bytes, &fs::read(ingress)?)?;
     write_bundle(
         &assembled.published.canonical_bytes,
         &assembled.components,
-        &entry,
+        &fs::read(ingress)?,
         |digest| {
             ensure!(
                 digest == admission.component_digest(),
@@ -113,7 +105,7 @@ pub fn write_package(
 fn write_bundle(
     manifest_bytes: &[u8],
     facts: &[AdmittedComponent],
-    entry: &ComposedApplication,
+    entry: &[u8],
     read_component: impl Fn(&wamn_digest::Digest) -> anyhow::Result<Vec<u8>>,
     out: &Path,
 ) -> anyhow::Result<wamn_digest::Digest> {
@@ -153,7 +145,7 @@ fn write_bundle(
         );
         bodies.push(bytes);
     }
-    let ingress_bytes = entry.bytes();
+    let ingress_bytes = entry;
 
     fs::create_dir(out).with_context(|| format!("create {}", out.display()))?;
     for (component, bytes) in facts.iter().zip(bodies) {

@@ -308,10 +308,7 @@ CREATE TABLE wamn_run.runs (
         OR (trigger_source = 'schedule' AND invoked_by = 'schedule' AND invoked_by_user_id IS NULL)
         OR trigger_source = 'event')
     ),
-    PRIMARY KEY (project_env_key, run_id),
-    CONSTRAINT runs_release_fk
-        FOREIGN KEY (project_env_key, manifest_digest)
-        REFERENCES catalog.releases (project_env_key, manifest_digest)
+    PRIMARY KEY (project_env_key, run_id)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
 CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (project_env_key, idempotency_key)

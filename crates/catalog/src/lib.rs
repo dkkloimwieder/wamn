@@ -15,7 +15,6 @@ pub mod local_operation;
 pub mod manifest;
 mod package;
 pub mod package_version;
-pub mod profile;
 pub mod read_query;
 pub mod registered_operation;
 mod route_identity;

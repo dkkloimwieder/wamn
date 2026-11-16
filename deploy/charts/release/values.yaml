@@ -32,7 +32,6 @@ webDigests: {}
 platformUi: null
 # Organization whose platform UI configuration the edge serves.
 org: ""
-# The application's HTTP role: `{name: http, entry: ..., config: {}}`.
 roles: []
 
 # Shared environment host selected by application workloads.

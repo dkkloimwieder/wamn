@@ -34,8 +34,6 @@ pub(super) fn release_values(
     application: &wamn_catalog::ApplicationName,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &wamn_digest::Digest,
-    artifact_base: &str,
-    component_base: &str,
     actor: &str,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let roles = release_chart::roles(manifest, &document.org, &document.project, &document.env);
@@ -61,12 +59,10 @@ pub(super) fn release_values(
         project: document.project.clone(),
         env: document.env.clone(),
         manifest_digest: manifest_digest.to_owned(),
-        artifact_base: artifact_base.to_owned(),
         route_host: selection.hostname.clone(),
         applications,
         roles,
         actor: actor.to_owned(),
-        component_base: component_base.to_owned(),
     })?;
     rendered["webClients"] = serde_yaml::to_value(
         selection

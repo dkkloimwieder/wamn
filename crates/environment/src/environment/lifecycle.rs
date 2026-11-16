@@ -1,7 +1,7 @@
 //! Authenticated environment configuration through installer-owned resources.
 use super::{Platform, document::EnvironmentDocument, ensure as resources};
 use crate::provision_project_env::{self, ProvisionProjectEnvRequest};
-use anyhow::{Context as _, ensure};
+use anyhow::ensure;
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 
 pub async fn configure(
@@ -10,7 +10,6 @@ pub async fn configure(
     application: Option<&wamn_catalog::ApplicationName>,
     disposable: Option<bool>,
     system_owner: &str,
-    actor: &wamn_identity_protocol::PrincipalId,
 ) -> anyhow::Result<()> {
     if let Some(application) = application {
         ensure!(
@@ -143,23 +142,5 @@ pub async fn configure(
         Ok(())
     })
     .await?;
-    if let Some(application) = application {
-        let serving = EnvironmentDocument::read_serving(&platform, &triple).await?;
-        if let super::document::DeclaredRelease::Digest(digest) = &serving
-            .applications
-            .get(application)
-            .context("configured application")?
-            .current
-        {
-            super::apply_selection(
-                &platform,
-                &triple,
-                application,
-                super::document::ReleaseChange::Deploy(digest),
-                Some(actor),
-            )
-            .await?;
-        }
-    }
     Ok(())
 }

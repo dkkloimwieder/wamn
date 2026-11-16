@@ -26,13 +26,8 @@ pub use wamn_http::transport::HttpTransport;
 pub use wamn_identity_protocol::{PlatformComponent, workflow_user_id};
 pub use wamn_registry::Triple;
 pub use wamn_sql::{AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig};
-pub use wamn_workflow::author_workflow::{
-    AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
-    WorkflowTrigger, author_workflow_in_databases,
-};
 pub use wamn_workflow::workflow_lifecycle::{
     WorkflowLifecycleError, WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow,
-    enable_workflow,
 };
 pub use wash_runtime::plugin::wasi_logging::TracingLogger;
 
@@ -263,18 +258,6 @@ pub async fn fixture(pool: &sqlx::PgPool) -> Fixture {
         .expect("the fixture release loads"),
     );
     let digest = release.release().manifest_digest;
-    sqlx::query(
-        "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
-             VALUES ($1, $2, $3)",
-    )
-    .bind(&PROJECT_ENV_KEY)
-    .bind(&digest)
-    .bind(&served.canonical_bytes())
-    .execute(&mut admin)
-    .await
-    .map(|result| result.rows_affected())
-    .expect("install the serving release");
-
     let (postgres, executor_url) = targeted_postgres(&mut admin, &url).await;
     let logging = TracingLogger::default();
     Fixture {
@@ -382,74 +365,8 @@ pub fn declared() -> wamn_catalog::EnvironmentApplications {
 }
 
 impl Fixture {
-    /// Author version 1 of `id` as `wamn-ctl workflow author` does, with a
-    /// green condition report under its hash.
-    pub async fn author(
-        &self,
-        id: &str,
-        trigger: WorkflowTrigger<'_>,
-        execution: WorkflowExecution<'_>,
-    ) -> anyhow::Result<()> {
-        self.author_in(id, trigger, execution, &declared()).await
-    }
 
-    /// [`Self::author`] in an environment that declares `declared`.
-    pub async fn author_in(
-        &self,
-        id: &str,
-        trigger: WorkflowTrigger<'_>,
-        execution: WorkflowExecution<'_>,
-        declared: &wamn_catalog::EnvironmentApplications,
-    ) -> anyhow::Result<()> {
-        let document = workflow(id);
 
-        author_workflow_in_databases(
-            &self.url,
-            &AuthorWorkflowRequest {
-                org: &"schedule-live".parse().unwrap(),
-                project: &"default".parse().unwrap(),
-                environment: &ENVIRONMENT.parse().unwrap(),
-                application: &APP.parse().unwrap(),
-                declared,
-                document: &document,
-                trigger,
-                execution,
-                created_by: &READER
-                    .parse::<wamn_identity_protocol::PrincipalId>()
-                    .unwrap(),
-                manifest_digest: &self.digest,
-            },
-        )
-        .await
-        .map(|_| ())
-    }
-
-    pub async fn enable(&mut self, id: &str, enabler: &str) -> Result<(), WorkflowLifecycleError> {
-        enable_workflow(
-            &self.url,
-            &Triple::new(
-                "acme".parse().unwrap(),
-                ENVIRONMENT.parse().unwrap(),
-                APPLICATION.parse().unwrap(),
-            ),
-            &mut self.admin,
-            &WorkflowVersion {
-                org: &"schedule-live".parse().unwrap(),
-                project: &"default".parse().unwrap(),
-                environment: &ENVIRONMENT.parse().unwrap(),
-                application: &APP.parse().unwrap(),
-                workflow_id: &id.parse().unwrap(),
-                version: 1,
-            },
-            &enabler
-                .parse::<wamn_identity_protocol::PrincipalId>()
-                .unwrap(),
-            &self.digest,
-            &declared(),
-            None,
-        )
-        .await
-    }
 
     pub async fn disable(&mut self, id: &str) -> Result<(), WorkflowLifecycleError> {
         disable_workflow(
@@ -660,6 +577,5 @@ pub async fn release_variant(
         .with_applications([(application.to_owned(), declared().remove(APP).unwrap())].into()),
     )
     .unwrap();
-    sqlx::query("INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest).bind(&manifest.canonical_bytes()).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
     release
 }

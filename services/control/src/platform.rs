@@ -179,9 +179,6 @@ impl Execution {
 
 /// Run a server-authorized update or platform SQL task inside its Job.
 pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Value> {
-    let actor: PrincipalId = std::env::var("WAMN_DEPLOY_ACTOR")
-        .context("authenticated actor is absent")?
-        .parse()?;
     let request: Request = serde_json::from_str(payload)?;
     let platform = config.platform()?;
     crate::write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
@@ -224,7 +221,6 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                 application.as_ref(),
                 disposable,
                 &system,
-                &actor,
             )
             .await?;
             Ok(json!({"configured":true}))

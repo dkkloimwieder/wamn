@@ -403,6 +403,4 @@ pub(crate) use session_identity::validate_identity;
 
 pub mod invocation;
 
-use wamn_authority::identity::{
-    ReleaseIdentity, SessionIdentity,
-};
+use wamn_authority::identity::SessionIdentity;

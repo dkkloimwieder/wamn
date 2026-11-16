@@ -24,8 +24,6 @@ pub mod registry_credentials;
 pub mod registry_pull;
 pub mod registry_source;
 pub mod registry_transport;
-pub mod release_manifest_artifact;
-pub mod release_manifest_source;
 mod repository;
 pub mod tag;
 use tag::OciTag;

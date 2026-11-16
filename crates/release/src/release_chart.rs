@@ -280,7 +280,6 @@ mod tests {
             project: "wms".parse().unwrap(),
             env: "prod".parse().unwrap(),
             manifest_digest: DIGEST.parse().unwrap(),
-            artifact_base: "registry.example/releases".into(),
             route_host: "wms.acme.example".into(),
             applications: [(
                 "wms".parse().unwrap(),
@@ -291,12 +290,10 @@ mod tests {
             )]
             .into(),
             roles: vec![Role {
-                entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
                 name: RoleName::Http,
                 config: Mapping::new(),
             }],
             actor: "ops".into(),
-            component_base: "registry.example/components".into(),
         }
     }
 
@@ -312,10 +309,4 @@ mod tests {
         assert!(values(&input).is_err());
     }
 
-    #[test]
-    fn values_refuse_an_entry_without_a_component_base() {
-        let mut input = input();
-        input.component_base.clear();
-        assert!(values(&input).is_err());
-    }
 }
