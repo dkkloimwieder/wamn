@@ -4,7 +4,6 @@ use sqlx::{Connection as _, Row as _};
 use std::sync::Mutex;
 
 use serde_json::{Value, json};
-use wamn_broker::auth_changes::AuthDrops;
 use wamn_kubernetes::{Store, StoreVersion};
 use wamn_platform_identity::connections::administration;
 
@@ -61,8 +60,6 @@ async fn execute(
         &"acme".parse().unwrap(),
         operation,
         &request.to_string(),
-        &mut AuthDrops::default(),
-        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
         Some(store),
     )
     .await
@@ -356,8 +353,6 @@ async fn jwt_connection_write_enforces_credential_and_auth_schemas(pool: sqlx::P
             &"acme".parse().unwrap(),
             "connection.write",
             &request.to_string(),
-            &mut AuthDrops::default(),
-            &mut wamn_broker::connection_changes::ConnectionDrops::default(),
             Some(&store),
         )
         .await;

@@ -2,7 +2,6 @@
 
 use sqlx::Row as _;
 use std::time::Duration;
-use wamn_broker::auth_changes::AuthDrops;
 
 use wamn_control_provision::PlatformComponent;
 use wamn_identity_protocol::PrincipalId;
@@ -89,23 +88,13 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
 
     one_address_admits_one_user(&mut client).await;
 
-    let service = create_service(
-        &mut client,
-        "agent-ci",
-        "CI Agent",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
-    )
-    .await
-    .expect("create service principal");
+    let service = create_service(&mut client, "agent-ci", "CI Agent")
+        .await
+        .expect("create service principal");
     assert_eq!(service.principal_type(), PrincipalType::Service);
-    let duplicate_service = create_service(
-        &mut client,
-        "agent-ci",
-        "Second CI Agent",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
-    )
-    .await
-    .expect_err("one subject admits one service");
+    let duplicate_service = create_service(&mut client, "agent-ci", "Second CI Agent")
+        .await
+        .expect_err("one subject admits one service");
     assert_eq!(duplicate_service.error_type(), IdentityErrorType::Conflict);
     assert!(
         resolve_subject(&mut client, PrincipalType::Service, "agent-ci")
@@ -120,7 +109,6 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
         &"demo".parse().unwrap(),
         &"widgets".parse().unwrap(),
         "project-author",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("assign author role");
@@ -130,7 +118,6 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
         &"demo".parse().unwrap(),
         &"widgets".parse().unwrap(),
         "project-promoter",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("assign promoter role");
@@ -170,7 +157,7 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     project_environment_membership_round_trip(&mut client, &user, &service).await;
     project_delete_removes_its_roles_and_memberships(&mut client, &user).await;
 
-    let disabled = disable_principal(&mut client, user.id(), &mut AuthDrops::default())
+    let disabled = disable_principal(&mut client, user.id())
         .await
         .expect("disable user");
     assert_eq!(disabled.status(), PrincipalStatus::Disabled);
@@ -243,7 +230,6 @@ async fn project_delete_removes_its_roles_and_memberships(
         &"demo".parse().unwrap(),
         &"inventory".parse().unwrap(),
         "project-author",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("assign a role on the project to delete");
@@ -487,8 +473,7 @@ async fn project_environment_membership_round_trip(
             user.id(),
             &"demo".parse().unwrap(),
             &"widgets".parse().unwrap(),
-            &"dev".parse().unwrap(),
-            &mut AuthDrops::default()
+            &"dev".parse().unwrap()
         )
         .await
         .expect("revoke membership")
@@ -511,8 +496,7 @@ async fn project_environment_membership_round_trip(
             user.id(),
             &"demo".parse().unwrap(),
             &"widgets".parse().unwrap(),
-            &"dev".parse().unwrap(),
-            &mut AuthDrops::default()
+            &"dev".parse().unwrap()
         )
         .await
         .expect("repeat revocation harmlessly")

@@ -186,13 +186,9 @@ async fn delete_locked(
         )
         .await?;
         if !prefix.is_empty() {
-            crate::provision_project_env::revoke_provisioning_pat(
-                admin_url,
-                &prefix.parse()?,
-                &platform.auth_changes().await?,
-            )
-            .await
-            .with_context(|| format!("revoke the PAT of {secret}"))?;
+            crate::provision_project_env::revoke_provisioning_pat(admin_url, &prefix.parse()?)
+                .await
+                .with_context(|| format!("revoke the PAT of {secret}"))?;
             lines.push(format!("revoked the PAT of {secret}"));
         }
     }
@@ -371,11 +367,6 @@ async fn delete_locked(
     if !deleted.is_empty() {
         lines.push(deleted);
     }
-    // Resolve the publisher before the final commit, while retry inputs remain.
-    let changes = platform.auth_changes().await?;
     lines.extend(delete_registry_rows(&mut system, triple).await?);
-    let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
-    drops.project_env_key(&project_env_key);
-    changes.publish(drops).await;
     Ok(lines)
 }

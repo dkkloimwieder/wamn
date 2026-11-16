@@ -10,7 +10,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use wamn_broker::Publisher;
 use wamn_catalog::{HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::native_routes::{
@@ -48,8 +47,6 @@ pub enum HostRouteHandlers {
         /// the covering test of an `admin` revoke. A host without an
         /// authenticated route has none.
         identity: Option<(sqlx::PgPool, wamn_registry::OrgId)>,
-        /// Publishes each role or permission change.
-        changes: Publisher,
     },
     /// The control routes of one org, through its `control` login.
     Control {
@@ -66,8 +63,6 @@ pub enum HostRouteHandlers {
         /// The runtime status source selected by the serving mode.
         status: Arc<dyn crate::environment_status::StatusSource>,
         org: wamn_registry::OrgId,
-        /// Publishes each user row and status change of an environment.
-        changes: Publisher,
     },
 }
 
@@ -313,13 +308,11 @@ impl HostRouteDelivery {
                     postgres,
                     project,
                     identity,
-                    changes,
                 },
             ) => {
                 ApplicationRoutes {
                     postgres,
                     project,
-                    changes,
                     release: &self.release,
                     identity: identity.as_ref().map(|(client, org)| (client, org)),
                 }
@@ -332,13 +325,11 @@ impl HostRouteDelivery {
                     postgres,
                     project,
                     identity,
-                    changes,
                 },
             ) => {
                 ApplicationRoutes {
                     postgres,
                     project,
-                    changes,
                     release: &self.release,
                     identity: identity.as_ref().map(|(client, org)| (client, org)),
                 }
@@ -354,7 +345,6 @@ impl HostRouteDelivery {
                     administration,
                     status,
                     org,
-                    changes,
                 },
             ) => {
                 ControlRoutes {
@@ -368,7 +358,6 @@ impl HostRouteDelivery {
                     execution: self.execution.as_deref(),
                     registry_token_metadata: self.registry_token_metadata,
                     org,
-                    changes,
                     connection_health: self.connection_health.as_deref(),
                     oauth: self.oauth.as_deref(),
                 }

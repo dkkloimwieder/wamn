@@ -170,13 +170,11 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
         .await
         .is_err()
     );
-    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     revoke_environment_admin(
         &mut client,
         &ben,
         &"acme".parse().unwrap(),
         &"dev".parse().unwrap(),
-        &mut drops,
     )
     .await
     .unwrap();
@@ -258,7 +256,7 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
     )
     .await
     .unwrap();
-    revoke_org_admin(&mut client, &ann, &"acme".parse().unwrap(), &mut drops)
+    revoke_org_admin(&mut client, &ann, &"acme".parse().unwrap())
         .await
         .unwrap();
     assert!(

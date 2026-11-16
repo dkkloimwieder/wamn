@@ -359,7 +359,6 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         caller,
         &"acme".parse().unwrap(),
         &"c".parse().unwrap(),
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .unwrap();

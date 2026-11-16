@@ -822,7 +822,6 @@ fn signed_lifetime(requested: Duration) -> Result<Duration, FileError> {
 mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet, HashSet};
-    use wamn_broker::Publisher;
     use wamn_catalog::{
         ApplicationDefinition, ComponentConnection, ComponentDescriptor, HostRouteSet,
         PackageCoordinate, ServingComponent, ServingManifest, ServingRelease,
@@ -957,7 +956,6 @@ mod tests {
                 Arc::clone(&release),
                 Arc::new(ConnectionFacts::new(
                     Arc::new(ConnectionMemory::default()),
-                    Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
                     &postgres,
                     &release.target().project_env_key,

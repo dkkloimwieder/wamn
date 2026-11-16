@@ -2,8 +2,6 @@
 
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
-
-use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{PlatformComponent, test_database};
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::password::{
@@ -176,9 +174,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations(pool
     );
     assert!(rows.iter().any(|r| r.get::<wamn_digest::Digest, _>(0)
         == wamn_digest::bytes_sha256(first.secret().as_bytes())));
-    disable_principal(&mut client, user.id(), &mut AuthDrops::default())
-        .await
-        .unwrap();
+    disable_principal(&mut client, user.id()).await.unwrap();
     assert!(
         authenticate_password(&mut client, &work, "alice@example.invalid", password())
             .await
@@ -227,14 +223,9 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse(pool: sq
         .cause(),
         Some(RefusalCause::Expired)
     );
-    let service = create_service(
-        &mut client,
-        "password-service",
-        "Service",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
-    )
-    .await
-    .unwrap();
+    let service = create_service(&mut client, "password-service", "Service")
+        .await
+        .unwrap();
     assert_eq!(
         issue_invitation(&mut client, &actor(), service.id())
             .await
@@ -406,16 +397,9 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     .await
     .unwrap();
     assert!(
-        reset_password(
-            &mut client,
-            &work,
-            other.id(),
-            first.secret(),
-            password(),
-            &mut AuthDrops::default()
-        )
-        .await
-        .is_err()
+        reset_password(&mut client, &work, other.id(), first.secret(), password())
+            .await
+            .is_err()
     );
     assert!(
         enroll_password(&mut client, &work, user.id(), first.secret(), password())
@@ -423,27 +407,13 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
             .is_err()
     );
     let replacement = || Password::new("the new long replacement password".into()).unwrap();
-    reset_password(
-        &mut client,
-        &work,
-        user.id(),
-        first.secret(),
-        replacement(),
-        &mut AuthDrops::default(),
-    )
-    .await
-    .unwrap();
-    assert!(
-        reset_password(
-            &mut client,
-            &work,
-            user.id(),
-            first.secret(),
-            replacement(),
-            &mut AuthDrops::default()
-        )
+    reset_password(&mut client, &work, user.id(), first.secret(), replacement())
         .await
-        .is_err()
+        .unwrap();
+    assert!(
+        reset_password(&mut client, &work, user.id(), first.secret(), replacement())
+            .await
+            .is_err()
     );
     assert!(
         reset_password(
@@ -451,8 +421,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
             &work,
             user.id(),
             second.secret(),
-            replacement(),
-            &mut AuthDrops::default()
+            replacement()
         )
         .await
         .is_err()
@@ -480,8 +449,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
             &mut tx,
             "https://reset.invalid",
             "widgets",
-            renewal.secret(),
-            &mut AuthDrops::default()
+            renewal.secret()
         )
         .await
         .unwrap()
@@ -514,8 +482,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
             &work,
             user.id(),
             expired.secret(),
-            replacement(),
-            &mut AuthDrops::default()
+            replacement()
         )
         .await
         .is_err()

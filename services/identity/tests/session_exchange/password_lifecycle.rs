@@ -240,7 +240,6 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         &"demo".parse().unwrap(),
         &"widgets".parse().unwrap(),
         &"dev".parse().unwrap(),
-        &mut AuthDrops::default(),
     )
     .await
     .unwrap();
@@ -434,13 +433,9 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     );
     let disabled = login(&https, &fixture).await;
     assert!(self::active(&fixture, &disabled).await);
-    disable_principal(
-        &mut fixture.system.client,
-        user.id(),
-        &mut AuthDrops::default(),
-    )
-    .await
-    .unwrap();
+    disable_principal(&mut fixture.system.client, user.id())
+        .await
+        .unwrap();
     assert!(!self::active(&fixture, &disabled).await);
     assert_eq!(
         request(&https, &fixture, "/password/renew", &disabled)
@@ -518,7 +513,6 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         &"demo".parse().unwrap(),
         &"widgets".parse().unwrap(),
         "project-admin",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect_redacted("project-admin");
@@ -786,7 +780,6 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
             &reset_principal,
             reset_secret.secret(),
             Password::new("a different valid replacement password".into()).unwrap(),
-            &mut AuthDrops::default(),
         )
         .await
     });

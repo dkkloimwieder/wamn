@@ -17,7 +17,6 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection as Client;
 use tokio::sync::Semaphore;
-use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::PlatformComponent;
 use wamn_platform_identity::{
     IdentityErrorType,
@@ -307,7 +306,7 @@ async fn handle(
             let Ok(request) = serde_json::from_slice::<UserRequest>(&bytes) else {
                 return invalid();
             };
-            create_user(&mut database.client, &request, &inner.changes).await
+            create_user(&mut database.client, &request).await
         }
         "/invitations" => {
             let Ok(request) = serde_json::from_slice::<InvitationRequest>(&bytes) else {
@@ -650,20 +649,17 @@ async fn handle(
                         Ok(value) => value,
                         Err(error) => return refusal(&error, &email),
                     };
-                    let mut drops = AuthDrops::default();
                     if let Err(error) = reset_password(
                         &mut database.client,
                         &state.work,
                         &principal,
                         &secret,
                         password,
-                        &mut drops,
                     )
                     .await
                     {
                         return refusal(&error, &email);
                     }
-                    inner.changes.publish(drops).await;
                     let notified = state.mail.password_changed(&email).await.is_ok();
                     return response(StatusCode::OK, "application/json", serde_json::to_vec(&serde_json::json!({"status":"password_reset", "notification": if notified { "accepted_for_delivery" } else { "unavailable" }})).expect("fixed response"));
                 }
@@ -733,14 +729,12 @@ async fn handle(
             let Ok(mut tx) = database.client.begin().await else {
                 return unavailable();
             };
-            let mut drops = AuthDrops::default();
             let Ok(principal) = password_login::authenticate_renewal(
                 &mut tx,
                 &actor,
                 &inner.issuer,
                 &request.aud,
                 &secret,
-                &mut drops,
             )
             .await
             else {
@@ -751,7 +745,6 @@ async fn handle(
                 if tx.commit().await.is_err() {
                     return unavailable();
                 }
-                inner.changes.publish(drops).await;
                 return if parts.uri.path() == "/password/logout" {
                     logged_out(request.carrier)
                 } else {
@@ -760,46 +753,32 @@ async fn handle(
             };
             if parts.uri.path() != "/password/renew" {
                 let result = if parts.uri.path() == "/password/logout-all" {
-                    password_login::revoke_all(&mut tx, principal.principal().id(), &mut drops)
-                        .await
+                    password_login::revoke_all(&mut tx, principal.principal().id()).await
                 } else {
-                    password_login::revoke_login(
-                        &mut tx,
-                        &inner.issuer,
-                        &request.aud,
-                        &secret,
-                        &mut drops,
-                    )
-                    .await
+                    password_login::revoke_login(&mut tx, &inner.issuer, &request.aud, &secret)
+                        .await
                 };
                 if result.is_err() || tx.commit().await.is_err() {
                     return unavailable();
                 }
-                inner.changes.publish(drops).await;
                 return logged_out(request.carrier);
             }
             let Some(target) = session::audience(inner, &request.aud) else {
                 return session::unauthorized();
             };
-            let renewal = match password_login::rotate_login(
-                &mut tx,
-                &inner.issuer,
-                &request.aud,
-                &secret,
-                &mut drops,
-            )
-            .await
-            {
-                Ok(Some(renewal)) => renewal,
-                Ok(None) => {
-                    if tx.commit().await.is_err() {
-                        return unavailable();
+            let renewal =
+                match password_login::rotate_login(&mut tx, &inner.issuer, &request.aud, &secret)
+                    .await
+                {
+                    Ok(Some(renewal)) => renewal,
+                    Ok(None) => {
+                        if tx.commit().await.is_err() {
+                            return unavailable();
+                        }
+                        return session::unauthorized();
                     }
-                    inner.changes.publish(drops).await;
-                    return session::unauthorized();
-                }
-                Err(_) => return unavailable(),
-            };
+                    Err(_) => return unavailable(),
+                };
             let authority = wamn_identity_protocol::token::SessionAuthority::Login(
                 match renewal.login.id.parse() {
                     Ok(id) => id,
@@ -1058,11 +1037,7 @@ fn password_failure(error: &PasswordError) -> Response<Full<Bytes>> {
 }
 /// Create or reuse the user of one email, as `wamn:provisioning`, and reply
 /// with the principal and whether it has a password credential.
-async fn create_user(
-    client: &mut Client,
-    request: &UserRequest,
-    changes: &wamn_broker::Publisher,
-) -> Response<Full<Bytes>> {
+async fn create_user(client: &mut Client, request: &UserRequest) -> Response<Full<Bytes>> {
     let actor = PlatformComponent::Provisioning.principal_id();
     let Ok(mut tx) = client.begin().await else {
         return unavailable();
@@ -1091,9 +1066,6 @@ async fn create_user(
     if tx.commit().await.is_err() {
         return unavailable();
     }
-    let mut drops = AuthDrops::default();
-    drops.identity(&account.principal_id);
-    changes.publish(drops).await;
     let body = UserResponse {
         principal_id: account.principal_id,
         enrolled: account.enrolled,
@@ -1605,13 +1577,9 @@ mod tests {
                 &actor.to_string()
             ]
         );
-        wamn_platform_identity::disable_principal(
-            &mut admin.client,
-            bob.id(),
-            &mut wamn_broker::auth_changes::AuthDrops::default(),
-        )
-        .await
-        .unwrap();
+        wamn_platform_identity::disable_principal(&mut admin.client, bob.id())
+            .await
+            .unwrap();
         let disabled = client
             .post(format!("{endpoint}/users"))
             .json(&json!({"email": "bob@example.invalid", "display_name": "Bob"}))

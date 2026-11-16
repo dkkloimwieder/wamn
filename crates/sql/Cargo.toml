@@ -37,7 +37,6 @@ wamn-scalar = { workspace = true }
 wash-runtime = { workspace = true }
 
 [dev-dependencies]
-wamn-broker = { workspace = true }
 postgres-protocol = { workspace = true }
 hmac.workspace = true
 jsonwebtoken.workspace = true

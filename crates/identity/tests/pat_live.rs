@@ -3,7 +3,6 @@
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
-use wamn_broker::auth_changes::AuthDrops;
 
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_identity_protocol::PAT_TOKEN_PREFIX;
@@ -43,14 +42,9 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
 
     // Issuance binds wamn:provisioning in its own transaction.
     let mut transaction = provisioning_transaction(&mut client).await;
-    let user = create_service(
-        &mut transaction,
-        "author",
-        "Widget Author",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
-    )
-    .await
-    .expect("create service principal");
+    let user = create_service(&mut transaction, "author", "Widget Author")
+        .await
+        .expect("create service principal");
     let issued = issue_pat(&mut transaction, user.id(), " laptop ", TTL)
         .await
         .expect("issue service token from trusted context");
@@ -143,14 +137,10 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
         Some("55000")
     );
     assert_eq!(
-        revoke_pat(
-            &mut client,
-            issued.record().prefix(),
-            &mut AuthDrops::default()
-        )
-        .await
-        .expect_err("the library revocation also needs a bound actor")
-        .error_type(),
+        revoke_pat(&mut client, issued.record().prefix())
+            .await
+            .expect_err("the library revocation also needs a bound actor")
+            .error_type(),
         IdentityErrorType::Database
     );
 
@@ -163,13 +153,9 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     transaction.commit().await.expect("commit the issuance");
     let before = pat_stamps(&mut client, *revocable.record().prefix()).await;
     let mut transaction = provisioning_transaction(&mut client).await;
-    let revoked = revoke_pat(
-        &mut transaction,
-        revocable.record().prefix(),
-        &mut AuthDrops::default(),
-    )
-    .await
-    .expect("revoke token");
+    let revoked = revoke_pat(&mut transaction, revocable.record().prefix())
+        .await
+        .expect("revoke token");
     transaction.commit().await.expect("commit the revocation");
     assert!(revoked.revoked_at().is_some());
     let after = pat_stamps(&mut client, *revocable.record().prefix()).await;
@@ -224,46 +210,29 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     .await
     .map(|result| result.rows_affected())
     .expect("backdate the revocation");
-    let backdated = revoke_pat(
-        &mut *setup,
-        revocable.record().prefix(),
-        &mut AuthDrops::default(),
-    )
-    .await
-    .expect("re-revoke token");
+    let backdated = revoke_pat(&mut *setup, revocable.record().prefix())
+        .await
+        .expect("re-revoke token");
     assert_ne!(backdated.revoked_at(), revoked.revoked_at());
     assert_eq!(
-        revoke_pat(
-            &mut *setup,
-            revocable.record().prefix(),
-            &mut AuthDrops::default()
-        )
-        .await
-        .expect("revoke token again")
-        .revoked_at(),
+        revoke_pat(&mut *setup, revocable.record().prefix())
+            .await
+            .expect("revoke token again")
+            .revoked_at(),
         backdated.revoked_at()
     );
     assert_eq!(
-        revoke_pat(
-            &mut *setup,
-            &"0000000000000000".parse().unwrap(),
-            &mut AuthDrops::default()
-        )
-        .await
-        .expect_err("unknown prefix must not revoke")
-        .error_type(),
+        revoke_pat(&mut *setup, &"0000000000000000".parse().unwrap())
+            .await
+            .expect_err("unknown prefix must not revoke")
+            .error_type(),
         IdentityErrorType::NotFound
     );
 
     // Service principals get tokens through the same trusted-context path.
-    let service = create_service(
-        &mut *setup,
-        "agent-ci",
-        "CI Agent",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
-    )
-    .await
-    .expect("create service principal");
+    let service = create_service(&mut *setup, "agent-ci", "CI Agent")
+        .await
+        .expect("create service principal");
     let service_token = issue_pat(&mut *setup, service.id(), "ci", TTL)
         .await
         .expect("issue service token");
@@ -290,7 +259,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     assert!(!format!("{listed:?}").contains(&token));
 
     // Disabling the principal refuses live tokens and further issuance.
-    disable_principal(&mut *setup, user.id(), &mut AuthDrops::default())
+    disable_principal(&mut *setup, user.id())
         .await
         .expect("disable user");
     assert!(

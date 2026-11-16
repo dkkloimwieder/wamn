@@ -27,9 +27,7 @@ pub async fn materialize_application_principals(
     project_env_key: &wamn_registry::ProjectEnvKey,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
-    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<()> {
-    use wamn_broker::auth_changes::AuthDrops;
     use wamn_identity_protocol::PlatformComponent;
 
     let applications = packages
@@ -61,7 +59,6 @@ pub async fn materialize_application_principals(
     .execute(&mut *transaction)
     .await
     .map(drop)?;
-    let mut drops = AuthDrops::default();
     for package in applications {
         let subject =
             wamn_platform_identity::application_subject(project_env_key, &package.package.id)?;
@@ -69,14 +66,13 @@ pub async fn materialize_application_principals(
             &mut system,
             &subject,
             &subject,
-            changes,
         )
         .await?;
         ensure!(
             principal.status() == wamn_platform_identity::PrincipalStatus::Active,
             "application service principal {subject:?} is disabled"
         );
-        let written = sqlx::query(
+        sqlx::query(
             "INSERT INTO platform.\"user\" (id, type, email, display_name) \
              VALUES ($1, 'service', $2, $3) ON CONFLICT (id) DO NOTHING",
         )
@@ -86,20 +82,11 @@ pub async fn materialize_application_principals(
         .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())?;
-        if written != 0 {
-            drops.principal(project_env_key, principal.id());
-        }
         let role = format!(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
         );
-        wamn_platform_identity::application::create_role(
-            &mut transaction,
-            project_env_key,
-            &role,
-            &mut drops,
-        )
-        .await?;
+        wamn_platform_identity::application::create_role(&mut transaction, &role).await?;
     }
     write_runtime_grants(
         &mut system,
@@ -107,11 +94,9 @@ pub async fn materialize_application_principals(
         project_env_key,
         manifest,
         packages,
-        &mut drops,
     )
     .await?;
     transaction.commit().await?;
-    changes.publish(drops).await;
     Ok(())
 }
 
@@ -123,7 +108,6 @@ pub async fn write_runtime_grants(
     project_env_key: &wamn_registry::ProjectEnvKey,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
-    drops: &mut wamn_broker::auth_changes::AuthDrops,
 ) -> anyhow::Result<()> {
     let mut system = crate::provision_project_env::provisioning_transaction(system).await?;
     let dependency_manifests = packages
@@ -184,7 +168,6 @@ pub async fn write_runtime_grants(
                     reference: &permission,
                     grant: true,
                 },
-                drops,
             )
             .await?;
         }
@@ -197,7 +180,6 @@ pub async fn write_runtime_grants(
                 role: &role,
                 grant: true,
             },
-            drops,
         )
         .await?;
     }
@@ -328,5 +310,4 @@ mod tests {
             .is_err()
         );
     }
-
 }

@@ -8,7 +8,6 @@
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeSet;
-use wamn_broker::auth_changes::AuthDrops;
 
 use wamn_platform_identity::application::{create_role, delete_role};
 
@@ -57,41 +56,12 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     let database = wamn_test_postgres::url(&pool);
     wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
-    let mut drops = AuthDrops::default();
     let project_env_key = "t1--dev--project".parse().unwrap();
 
-    change!(client, |tx| create_role(
-        &mut tx,
-        &project_env_key,
-        "admin",
-        &mut drops
-    ))
-    .unwrap_err();
-    change!(client, |tx| create_role(
-        &mut tx,
-        &project_env_key,
-        "Clerk",
-        &mut drops
-    ))
-    .unwrap_err();
-    assert!(
-        change!(client, |tx| create_role(
-            &mut tx,
-            &project_env_key,
-            "clerk",
-            &mut drops
-        ))
-        .unwrap()
-    );
-    assert!(
-        !change!(client, |tx| create_role(
-            &mut tx,
-            &project_env_key,
-            "clerk",
-            &mut drops
-        ))
-        .unwrap()
-    );
+    change!(client, |tx| create_role(&mut tx, "admin")).unwrap_err();
+    change!(client, |tx| create_role(&mut tx, "Clerk")).unwrap_err();
+    assert!(change!(client, |tx| create_role(&mut tx, "clerk")).unwrap());
+    assert!(!change!(client, |tx| create_role(&mut tx, "clerk")).unwrap());
 
     change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
@@ -103,7 +73,6 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
                 reference: "shop:line/list",
                 grant: true,
             },
-            &mut drops,
         )
     })
     .unwrap_err();
@@ -119,7 +88,6 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
                 reference: "shop:order/delete",
                 grant: true,
             },
-            &mut drops,
         )
     })
     .unwrap();
@@ -135,7 +103,6 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
                 reference: "shop:report/run",
                 grant: true,
             },
-            &mut drops,
         )
     })
     .unwrap();
@@ -150,7 +117,6 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
                 reference: "shop:report/run",
                 grant: true,
             },
-            &mut drops,
         )
     })
     .unwrap();
@@ -165,7 +131,6 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
                 reference: "shop:line/list",
                 grant: true,
             },
-            &mut drops,
         )
     })
     .unwrap();
@@ -185,7 +150,6 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
                 reference: "shop:line/list",
                 grant: false,
             },
-            &mut drops,
         )
     })
     .unwrap();
@@ -203,38 +167,15 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
                 reference: "shop:line/list",
                 grant: false,
             },
-            &mut drops,
         )
     })
     .unwrap_err();
 
-    change!(client, |tx| delete_role(
-        &mut tx,
-        &project_env_key,
-        "admin",
-        &mut drops
-    ))
-    .unwrap_err();
-    assert!(
-        change!(client, |tx| delete_role(
-            &mut tx,
-            &project_env_key,
-            "clerk",
-            &mut drops
-        ))
-        .unwrap()
-    );
+    change!(client, |tx| delete_role(&mut tx, "admin")).unwrap_err();
+    assert!(change!(client, |tx| delete_role(&mut tx, "clerk")).unwrap());
     assert!(
         rows(&mut client).await.is_empty(),
         "the role took its rows with it"
     );
-    assert!(
-        !change!(client, |tx| delete_role(
-            &mut tx,
-            &project_env_key,
-            "clerk",
-            &mut drops
-        ))
-        .unwrap()
-    );
+    assert!(!change!(client, |tx| delete_role(&mut tx, "clerk")).unwrap());
 }

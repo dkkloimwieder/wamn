@@ -24,7 +24,6 @@ wamn-registry = { workspace = true }
 
 [dev-dependencies]
 wamn-digest.workspace = true
-wamn-broker = { workspace = true }
 wamn-postgres.workspace = true
 wamn-test-postgres.workspace = true
 sqlx = { workspace = true, features = ["macros", "migrate"] }

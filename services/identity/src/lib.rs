@@ -47,7 +47,6 @@ pub struct IdentityConfig {
     connection: String,
     targets: BTreeMap<String, SessionTarget>,
     mail: Option<mail::MailConfig>,
-    changes: wamn_broker::Publisher,
 }
 
 impl IdentityConfig {
@@ -71,7 +70,6 @@ impl IdentityConfig {
             connection,
             targets: BTreeMap::new(),
             mail: None,
-            changes: wamn_broker::Publisher::default(),
         })
     }
 
@@ -131,7 +129,6 @@ struct Inner {
     // closes it, for example when the server restarts.
     connection: String,
     passwords: Option<password::State>,
-    changes: wamn_broker::Publisher,
     database: Mutex<Database>,
     // PAT issuance needs a transaction, so it holds its own connection.
     issuance: Mutex<Database>,
@@ -223,7 +220,6 @@ impl IdentityService {
                 key_rotation: config.key_rotation,
                 connection: config.connection,
                 passwords,
-                changes: config.changes,
                 database: Mutex::new(database),
                 issuance,
                 targets: config

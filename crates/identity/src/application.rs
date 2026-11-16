@@ -12,7 +12,6 @@ use std::fmt;
 use wamn_identity_protocol::ADMIN_ROLE;
 
 use crate::{IdentityError, IdentityErrorType, PrincipalId, database_error};
-use wamn_broker::auth_changes::AuthDrops;
 
 /// Whether the project database has its platform rows, which `env apply`
 /// writes first.
@@ -75,9 +74,7 @@ pub async fn require_platform_rows(client: &mut sqlx::PgConnection) -> Result<()
 /// its host reads (docs/architecture/execution.md#routing-and-availability).
 pub async fn write_environment_status(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     status: crate::org::EnvironmentStatus,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     sqlx::query(ENVIRONMENT_STATUS_ROW_SQL)
         .bind(status.as_str())
@@ -85,16 +82,13 @@ pub async fn write_environment_status(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.project_env_key(project_env_key);
     Ok(())
 }
 
 /// Write the user row of `user`, and keep a row that exists.
 pub async fn write_user(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     user: ApplicationUser<'_>,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     sqlx::query(USER_ROW_SQL)
         .bind(user.principal_id)
@@ -104,16 +98,13 @@ pub async fn write_user(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.principal(project_env_key, user.principal_id);
     Ok(())
 }
 
 /// Write the user row of the service principal `service`.
 pub async fn write_service(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     service: ApplicationUser<'_>,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     sqlx::query(SERVICE_ROW_SQL)
         .bind(service.principal_id)
@@ -123,16 +114,13 @@ pub async fn write_service(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.principal(project_env_key, service.principal_id);
     Ok(())
 }
 
 /// Remove the `admin` row of the principal. Its other roles stay.
 pub async fn remove_admin(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     principal_id: &PrincipalId,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     sqlx::query(DROP_USER_ROLE_SQL)
         .bind(principal_id)
@@ -141,7 +129,6 @@ pub async fn remove_admin(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.principal(project_env_key, principal_id);
     Ok(())
 }
 
@@ -149,9 +136,7 @@ pub async fn remove_admin(
 /// rows and its API keys.
 pub async fn remove_user(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     principal_id: &PrincipalId,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     sqlx::query(DROP_USER_ROW_SQL)
         .bind(principal_id)
@@ -159,7 +144,6 @@ pub async fn remove_user(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.principal(project_env_key, principal_id);
     Ok(())
 }
 
@@ -287,9 +271,7 @@ const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     role: &str,
-    drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
     if role == ADMIN_ROLE {
         return Err(AdministrationRefusal::AdminCreated.into());
@@ -309,7 +291,6 @@ pub async fn create_role(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.project_env_key(project_env_key);
     Ok(written == 1)
 }
 
@@ -317,9 +298,7 @@ pub async fn create_role(
 /// delete of an absent role changes nothing.
 pub async fn delete_role(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     role: &str,
-    drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
     if role == ADMIN_ROLE {
         return Err(AdministrationRefusal::AdminDeleted.into());
@@ -330,7 +309,6 @@ pub async fn delete_role(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.project_env_key(project_env_key);
     Ok(removed == 1)
 }
 
@@ -360,10 +338,8 @@ pub async fn require_role(
 /// release serves it or not.
 async fn grant_permission(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     role: &str,
     reference: &str,
-    drops: &mut AuthDrops,
 ) -> Result<PermissionGrantOutcome, AdministrationError> {
     let rows_added = sqlx::query(PERMISSION_SQL)
         .bind(role)
@@ -372,7 +348,6 @@ async fn grant_permission(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.project_env_key(project_env_key);
     Ok(PermissionGrantOutcome { rows_added })
 }
 
@@ -380,10 +355,8 @@ async fn grant_permission(
 /// does not hold refuses.
 async fn revoke_permission(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     role: &str,
     reference: &str,
-    drops: &mut AuthDrops,
 ) -> Result<(), AdministrationError> {
     let removed = sqlx::query(DROP_PERMISSION_SQL)
         .bind(role)
@@ -399,7 +372,6 @@ async fn revoke_permission(
         }
         .into());
     }
-    drops.project_env_key(project_env_key);
     Ok(())
 }
 
@@ -407,10 +379,8 @@ async fn revoke_permission(
 /// changes nothing.
 async fn grant_user_role(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     user_id: &wamn_identity_protocol::PrincipalId,
     role: &str,
-    drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
     let written = sqlx::query(USER_ROLE_SQL)
         .bind(user_id)
@@ -419,7 +389,6 @@ async fn grant_user_role(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.principal(project_env_key, user_id);
     Ok(written == 1)
 }
 
@@ -427,10 +396,8 @@ async fn grant_user_role(
 /// does not hold changes nothing.
 async fn revoke_user_role(
     client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     user_id: &wamn_identity_protocol::PrincipalId,
     role: &str,
-    drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
     let removed = sqlx::query(DROP_USER_ROLE_SQL)
         .bind(user_id)
@@ -439,7 +406,6 @@ async fn revoke_user_role(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.principal(project_env_key, user_id);
     Ok(removed == 1)
 }
 
@@ -544,7 +510,6 @@ pub async fn project_authority(
     target: &mut sqlx::PgConnection,
     coordinate: ApplicationTarget<'_>,
     principal: &PrincipalId,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     crate::org::lock_membership(system, principal, coordinate.org).await?;
     let row = sqlx::query("SELECT p.type, p.status, p.email, p.display_name, p.subject, \
@@ -554,7 +519,7 @@ pub async fn project_authority(
          OR identity.is_project_admin(p.id,$2,$4,$3) \
          FROM identity.principals p WHERE p.id=$1").bind(principal).bind(coordinate.org).bind(coordinate.project).bind(coordinate.env).fetch_optional(&mut **system).await.map_err(|error| database_error(&error))?;
     let Some(row) = row else {
-        return remove_user(target, coordinate.project_env_key, principal, drops).await;
+        return remove_user(target, principal).await;
     };
     let type_: String = row.get(0);
     let active = row.get::<String, _>(1) == "active";
@@ -578,13 +543,11 @@ pub async fn project_authority(
             let email = format!("{}@{domain}", row.get::<String, _>(4));
             write_service(
                 target,
-                coordinate.project_env_key,
                 ApplicationUser {
                     principal_id: principal,
                     email: &email,
                     display_name: &row.get::<String, _>(3),
                 },
-                drops,
             )
             .await?;
         }
@@ -602,14 +565,13 @@ pub async fn project_authority(
                 .await
                 .map(|result| result.rows_affected())
                 .map_err(|error| database_error(&error))?;
-            drops.principal(coordinate.project_env_key, principal);
         } else {
-            remove_admin(target, coordinate.project_env_key, principal, drops).await?;
+            remove_admin(target, principal).await?;
         }
         return Ok(());
     }
     if type_ != "user" || !active || !row.get::<bool, _>(5) || !row.get::<bool, _>(6) {
-        return remove_user(target, coordinate.project_env_key, principal, drops).await;
+        return remove_user(target, principal).await;
     }
     let email: String = row.get(2);
     let display_name: String = row.get(3);
@@ -618,7 +580,7 @@ pub async fn project_authority(
         email: &email,
         display_name: &display_name,
     };
-    write_user(target, coordinate.project_env_key, user, drops).await
+    write_user(target, user).await
 }
 
 /// The explicit environment of one authority projection.
@@ -627,7 +589,6 @@ pub struct ApplicationTarget<'a> {
     pub org: &'a wamn_registry::OrgId,
     pub project: &'a wamn_registry::ProjectId,
     pub env: &'a wamn_registry::EnvName,
-    pub project_env_key: &'a wamn_registry::ProjectEnvKey,
 }
 
 /// The authenticated actor of an authored application grant.
@@ -672,7 +633,6 @@ pub async fn mutate_grant(
     project_env_key: &wamn_registry::ProjectEnvKey,
     authority: GrantAuthority<'_>,
     change: GrantChange<'_>,
-    drops: &mut AuthDrops,
 ) -> Result<GrantOutcome, GrantError> {
     let result: Result<GrantOutcome, AdministrationError> = async {
     let (role, grant) = match change {
@@ -730,9 +690,9 @@ pub async fn mutate_grant(
                 require_user(client, user_id).await?;
             }
             let changed = if grant {
-                grant_user_role(client, project_env_key, user_id, role, drops).await?
+                grant_user_role(client, user_id, role).await?
             } else {
-                revoke_user_role(client, project_env_key, user_id, role, drops).await?
+                revoke_user_role(client, user_id, role).await?
             };
             return Ok(GrantOutcome {
                 changed,
@@ -744,7 +704,7 @@ pub async fn mutate_grant(
             reference,
             grant: true,
         } => {
-            grant_permission(client, project_env_key, role, reference, drops)
+            grant_permission(client, role, reference)
                 .await?
                 .rows_added
         }
@@ -753,7 +713,7 @@ pub async fn mutate_grant(
             reference,
             grant: false,
         } => {
-            revoke_permission(client, project_env_key, role, reference, drops).await?;
+            revoke_permission(client, role, reference).await?;
             return Ok(GrantOutcome {
                 changed: true,
                 rows_added: 0,

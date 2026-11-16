@@ -202,17 +202,14 @@ pub async fn analyse(
     Ok(bindings)
 }
 
-/// Write the release's versions and names after its requirements exist. A
-/// changed row records the memory key of the release in `drops`.
+/// Write the release's versions and names after its requirements exist.
 /// The caller binds the transaction's principal before writing.
 pub async fn write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &wamn_registry::ProjectEnvKey,
     digest: &wamn_digest::Digest,
     bindings: &[Binding],
-    drops: &mut wamn_broker::connection_changes::ConnectionDrops,
 ) -> anyhow::Result<()> {
-    let mut changed = 0;
     for binding in bindings {
         let active = sqlx::query("SELECT 1 FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id \
              WHERE c.id=$1::text::uuid AND c.status='active' AND i.status='active'").bind(&binding.connection_id).fetch_optional(&mut **tx).await?.is_some();
@@ -221,10 +218,7 @@ pub async fn write(
             "connection projection {} is absent or inactive; run env connections",
             binding.connection_id
         );
-        changed += sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (project_env_key,manifest_digest,connection_id) DO NOTHING").bind(project_env_key).bind(digest).bind(&binding.connection_id).bind(binding.version).execute(&mut **tx).await.map(|result| result.rows_affected())?;
-    }
-    if changed > 0 {
-        drops.release(project_env_key, digest);
+        sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (project_env_key,manifest_digest,connection_id) DO NOTHING").bind(project_env_key).bind(digest).bind(&binding.connection_id).bind(binding.version).execute(&mut **tx).await.map(|result| result.rows_affected())?;
     }
     Ok(())
 }

@@ -61,15 +61,13 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         .await
         .map(drop)?;
     let mut logins = Vec::new();
-    for (family, target) in [
-        (
-            WorkloadRoleFamily::App,
-            WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: &"files--dev--project".parse().unwrap(),
-                database: name,
-            },
-        ),
-    ] {
+    for (family, target) in [(
+        WorkloadRoleFamily::App,
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: &"files--dev--project".parse().unwrap(),
+            database: name,
+        },
+    )] {
         let role = workload_login(family, target)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&wamn_control_provision::test_database::login_sql(
@@ -234,8 +232,6 @@ impl Registry {
             &self.org,
             operation,
             &payload.to_string(),
-            &mut wamn_broker::auth_changes::AuthDrops::default(),
-            &mut wamn_broker::connection_changes::ConnectionDrops::default(),
             Some(self.credentials.as_ref()),
         )
         .await?;

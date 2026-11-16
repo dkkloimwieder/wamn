@@ -17,7 +17,6 @@ pub mod write;
 
 use std::path::PathBuf;
 
-
 use wamn_identity_client::PatIssuerConfig;
 use wamn_release_control::release_chart;
 
@@ -57,9 +56,6 @@ pub struct Platform {
     pub pat_issuer: PatIssuerConfig,
     /// The event broker for application capture and entity consumers.
     pub events: Option<wamn_broker::EventBroker>,
-    /// The scheduler NATS the verbs publish their auth changes on.
-    /// A test without hosts sets `None`.
-    pub auth_nats: Option<wamn_broker::nats::PlatformNats>,
 }
 
 impl Platform {
@@ -81,14 +77,5 @@ impl Platform {
             insecure_registry: self.insecure_registry,
             oci_ca_paths: self.oci_ca_paths.clone(),
         })
-    }
-
-
-    /// The publisher of the auth changes of a verb.
-    pub async fn auth_changes(&self) -> anyhow::Result<wamn_broker::Publisher> {
-        match &self.auth_nats {
-            Some(connection) => wamn_broker::Publisher::connect(connection).await,
-            None => Ok(wamn_broker::Publisher::default()),
-        }
     }
 }

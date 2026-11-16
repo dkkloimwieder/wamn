@@ -2,7 +2,6 @@
 
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
-use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{identity_role::grant_identity_issuer_surface_sql, test_database};
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::password_login::{self as login, Renewal};
@@ -55,7 +54,7 @@ async fn rotate(client: &mut Client, secret: &str) -> Option<Renewal> {
     )
     .await
     .unwrap();
-    let result = login::rotate_login(&mut tx, ISSUER, AUDIENCE, secret, &mut AuthDrops::default())
+    let result = login::rotate_login(&mut tx, ISSUER, AUDIENCE, secret)
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -99,28 +98,16 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
     .await
     .unwrap();
     assert!(
-        login::rotate_login(
-            &mut tx,
-            "https://other.invalid",
-            AUDIENCE,
-            first.secret(),
-            &mut AuthDrops::default()
-        )
-        .await
-        .unwrap()
-        .is_none()
+        login::rotate_login(&mut tx, "https://other.invalid", AUDIENCE, first.secret())
+            .await
+            .unwrap()
+            .is_none()
     );
     assert!(
-        login::rotate_login(
-            &mut tx,
-            ISSUER,
-            "other-instance",
-            first.secret(),
-            &mut AuthDrops::default()
-        )
-        .await
-        .unwrap()
-        .is_none()
+        login::rotate_login(&mut tx, ISSUER, "other-instance", first.secret())
+            .await
+            .unwrap()
+            .is_none()
     );
     tx.commit().await.unwrap();
     let mut tx = wamn_test_postgres::transaction(
@@ -130,16 +117,10 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
     )
     .await
     .unwrap();
-    let rolled_back = login::rotate_login(
-        &mut tx,
-        ISSUER,
-        AUDIENCE,
-        first.secret(),
-        &mut AuthDrops::default(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let rolled_back = login::rotate_login(&mut tx, ISSUER, AUDIENCE, first.secret())
+        .await
+        .unwrap()
+        .unwrap();
     tx.rollback().await.unwrap();
     assert!(rotate(&mut issuer, rolled_back.secret()).await.is_none());
     let second = rotate(&mut issuer, first.secret()).await.unwrap();
@@ -274,16 +255,10 @@ async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor(pool: 
     let user = user(&mut first).await;
     let issued = create(&mut first, &user).await;
     let mut tx = first.begin().await.unwrap();
-    let replacement = login::rotate_login(
-        &mut tx,
-        ISSUER,
-        AUDIENCE,
-        issued.secret(),
-        &mut AuthDrops::default(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let replacement = login::rotate_login(&mut tx, ISSUER, AUDIENCE, issued.secret())
+        .await
+        .unwrap()
+        .unwrap();
     let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
         .fetch_one(&mut second)
         .await
@@ -303,27 +278,15 @@ async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor(pool: 
         .unwrap()
         .get(0);
     let mut tx = first.begin().await.unwrap();
-    let replacement = login::rotate_login(
-        &mut tx,
-        ISSUER,
-        AUDIENCE,
-        issued.secret(),
-        &mut AuthDrops::default(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let replacement = login::rotate_login(&mut tx, ISSUER, AUDIENCE, issued.secret())
+        .await
+        .unwrap()
+        .unwrap();
     let racing = tokio::spawn(async move {
         let mut tx = second.begin().await.unwrap();
-        login::revoke_login(
-            &mut tx,
-            ISSUER,
-            AUDIENCE,
-            issued.secret(),
-            &mut AuthDrops::default(),
-        )
-        .await
-        .unwrap();
+        login::revoke_login(&mut tx, ISSUER, AUDIENCE, issued.secret())
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
     });
     wait_blocked(&mut observer, pid).await;
@@ -353,9 +316,7 @@ async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family(pool: s
         .unwrap();
     let principal = user;
     let racing = tokio::spawn(async move {
-        disable_principal(&mut second, &principal, &mut AuthDrops::default())
-            .await
-            .unwrap();
+        disable_principal(&mut second, &principal).await.unwrap();
     });
     wait_blocked(&mut observer, pid).await;
     tx.commit().await.unwrap();
@@ -372,9 +333,7 @@ async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family(pool: s
     assert!(rotate(&mut first, issued.secret()).await.is_none());
     let fresh = create(&mut first, &user).await;
     let mut tx = first.begin().await.unwrap();
-    login::revoke_all(&mut tx, &user, &mut AuthDrops::default())
-        .await
-        .unwrap();
+    login::revoke_all(&mut tx, &user).await.unwrap();
     tx.commit().await.unwrap();
     assert!(rotate(&mut first, fresh.secret()).await.is_none());
 }

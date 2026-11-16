@@ -251,7 +251,6 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
         let release = wamn_authority::connection::test_release(key);
         let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
-            wamn_broker::Publisher::default(),
             Arc::new(wamn_connections::connection_credentials::ConnectionCredentials::empty()),
             &pg,
             key,

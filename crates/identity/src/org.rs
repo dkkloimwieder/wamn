@@ -12,7 +12,6 @@ use sqlx::Row as _;
 use crate::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, control, database_error,
 };
-use wamn_broker::auth_changes::AuthDrops;
 
 /// The org role that holds every project and environment of its org.
 pub const ORG_ADMIN_ROLE: &str = "org-admin";
@@ -148,7 +147,6 @@ pub async fn revoke_member(
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     lock_membership(client, principal_id, org).await?;
     refuse_under_org_admin(client, principal_id, org).await?;
@@ -163,7 +161,7 @@ pub async fn revoke_member(
             ),
         ));
     }
-    crate::revoke_project_env_membership(client, principal_id, org, project, env, drops).await?;
+    crate::revoke_project_env_membership(client, principal_id, org, project, env).await?;
     Ok(())
 }
 
@@ -177,11 +175,9 @@ pub async fn revoke_project_admin(
     principal_id: &PrincipalId,
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     lock_membership(client, principal_id, org).await?;
     refuse_under_org_admin(client, principal_id, org).await?;
-    drops.identity(principal_id);
     sqlx::query(DROP_PROJECT_ADMIN_SQL)
         .bind(principal_id)
         .bind(org)
@@ -348,11 +344,9 @@ pub async fn deactivate_org_membership(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &wamn_registry::OrgId,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     member(client, principal_id, org).await?;
     let principal = principal_id;
-    drops.identity(principal);
     let every: Option<&str> = None;
     sqlx::query(DROP_ENV_MEMBERSHIPS_SQL)
         .bind(principal)
@@ -399,11 +393,9 @@ pub async fn revoke_org_admin(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &wamn_registry::OrgId,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     lock_membership(client, principal_id, org).await?;
     let principal = principal_id;
-    drops.identity(principal);
     sqlx::query(DROP_ORG_ROLES_SQL)
         .bind(principal)
         .bind(org)
@@ -785,7 +777,6 @@ pub async fn revoke_environment_admin(
     principal: &PrincipalId,
     org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     lock_membership(client, principal, org).await?;
     sqlx::query(
@@ -798,6 +789,5 @@ pub async fn revoke_environment_admin(
     .await
     .map(|result| result.rows_affected())
     .map_err(|error| database_error(&error))?;
-    drops.identity(principal);
     Ok(())
 }

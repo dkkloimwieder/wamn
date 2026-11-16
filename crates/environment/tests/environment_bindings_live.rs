@@ -2,7 +2,6 @@
 
 use serde_json::json;
 use sqlx::{Connection as _, Row as _};
-use wamn_broker::auth_changes::AuthDrops;
 use wamn_compiler::manifest::PackageManifest;
 use wamn_environment::environment::{analyse, bindings, document::EnvironmentDocument};
 use wamn_platform_identity::connections::administration;
@@ -217,8 +216,6 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: 
         &"acme".parse().unwrap(),
         "connection.disable",
         &json!({"project":"one","env":"dev","name":"erp"}).to_string(),
-        &mut AuthDrops::default(),
-        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
     )
     .await
     .unwrap();
