@@ -293,8 +293,8 @@ async fn apply(
     .await?;
     let table = wamn_control_provision::migration::history_table(project_env_key, &package_id);
     wamn_control_provision::migration::prepare_history(&mut tx, &table, &login).await?;
+    ensure_model_schemas(&mut tx, &plan, &login).await?;
     tx.commit().await?;
-    ensure_model_schemas(&mut executor, &plan).await?;
     let migrations_applied =
         crate::migrations::run(&mut executor, package.migrations, table).await?;
     let mut tx = migration::begin(client, project_env_key).await?;
@@ -350,6 +350,7 @@ pub(crate) async fn bind_apply_package_principal(
 async fn ensure_model_schemas(
     connection: &mut sqlx::PgConnection,
     plan: &wamn_catalog::package_schema::PackageMetadata,
+    login: &wamn_identity_protocol::LoginName,
 ) -> anyhow::Result<()> {
     let schemas = plan
         .models
@@ -364,10 +365,16 @@ async fn ensure_model_schemas(
     for schema in schemas {
         let schema = wamn_postgres::schema::BareSchemaName::new(schema)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "CREATE SCHEMA IF NOT EXISTS {}",
+            "CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION wamn_db_owner",
             schema.quoted()
         )))
         .execute(&mut *connection)
+        .await?;
+        wamn_control_provision::migration::grant_model_schema_access(
+            connection,
+            login,
+            schema.as_str(),
+        )
         .await?;
     }
     Ok(())

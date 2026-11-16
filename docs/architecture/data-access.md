@@ -51,7 +51,7 @@ Generated history migrations install record history triggers and tables.
 The catalog reader skips them by name, as [record history](#record-history) describes.
 
 Provisioning gives each project database one restricted package migration login.
-That login owns application schemas, relations, and generated history functions.
+The platform owner owns application schemas. The migration login owns their relations and generated history functions.
 The `NOLOGIN` database owner, `wamn_db_owner`, retains platform objects.
 A separate managed platform migration login inherits its privileges.
 Initialization takes resolved platform and package migration connections.
@@ -60,9 +60,9 @@ Explicit Postgres callers supply each migration login's own credential.
 Project role provisioning sets default privileges on the package migration login.
 Its new tables grant SELECT, INSERT, UPDATE and DELETE to `wamn_app` and SELECT to `wamn_query`.
 Its new sequences grant USAGE, SELECT and UPDATE to `wamn_app`.
-The migration login creates model schemas. Their default privileges grant USAGE to both runtime roles.
-These defaults apply without a schema list.
-The separate catalog connection creates platform-owned objects, so these defaults do not cover them.
+The platform owner creates model schemas. Package apply explicitly grants USAGE on each model schema to both runtime roles.
+It grants USAGE and CREATE on that schema to the migration login. These grants do not apply to future platform schemas.
+The separate catalog connection creates platform-owned relations. The table and sequence defaults do not cover those relations.
 CDC requires model schemas to exist. It prepares capture after package SQL runs.
 
 Each entity map records its relation OID, package, and entity.

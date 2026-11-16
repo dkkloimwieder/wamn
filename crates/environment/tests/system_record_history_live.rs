@@ -41,7 +41,7 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor(poo
     let mut seeded = Vec::new();
     for relation in relations {
         let present: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS(SELECT FROM {relation} WHERE created_by::text=$1)"
+            "SELECT EXISTS(SELECT FROM {relation} WHERE created_by=$1)"
         )))
         .bind(&actor)
         .fetch_one(&mut client)

@@ -49,10 +49,25 @@ async fn the_executor_platform_role_holds_exactly_its_measured_lease_surface(poo
         "INSERT INTO wamn_run.runs DEFAULT VALUES",
         "UPDATE wamn_run.runs SET input_json=input_json",
         "SELECT * FROM catalog.wiring_tombstones",
-        "SELECT wamn_run.guard_event_lineage_immutable()",
     ] {
         grants::refuses(&fixture.url, statement).await;
     }
+
+    let exposed: Vec<String> = sqlx::query_scalar(
+        "SELECT p.oid::regprocedure::text FROM pg_proc p
+         JOIN pg_namespace n ON n.oid=p.pronamespace
+         CROSS JOIN LATERAL aclexplode(p.proacl) a
+         WHERE n.nspname='wamn_run' AND p.prorettype='trigger'::regtype
+           AND a.grantee=$1::text::regrole AND a.privilege_type='EXECUTE'",
+    )
+    .bind(stable)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        exposed.is_empty(),
+        "executor retains trigger grants: {exposed:?}"
+    );
 
     // --- 4. THE POST-STATE, IN THE GENERATION'S OWN SESSION -----------------
     //

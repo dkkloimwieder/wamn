@@ -430,18 +430,30 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
             .await?;
         tx.rollback().await?;
     }
-    for (id, version, hash) in [("", 1, digest), ("workflow", 0, digest)] {
-        let invalid = RunAdmission {
-            workflow_id: &id.parse().unwrap(),
-            workflow_version: version,
-            wiring_hash: &hash,
-            idempotency_key: "invalid-workflow",
-            ..aborted
-        };
-        let mut tx = bound_transaction(&mut worker).await?;
-        assert!(admission::admit_run(&mut tx, &invalid).await.is_err());
-        tx.rollback().await?;
-    }
+    let invalid = RunAdmission {
+        workflow_version: 0,
+        idempotency_key: "invalid-workflow",
+        ..aborted
+    };
+    let mut tx = bound_transaction(&mut worker).await?;
+    assert!(admission::admit_run(&mut tx, &invalid).await.is_err());
+    tx.rollback().await?;
+    // Bypass the parsed input type to exercise the database's empty-name refusal.
+    let mut tx = admin.begin().await?;
+    assert!(
+        sqlx::query(
+            "INSERT INTO wamn_run.runs
+             SELECT (jsonb_populate_record(NULL::wamn_run.runs,
+                 to_jsonb(r) || jsonb_build_object('run_id','invalid-workflow',
+                     'idempotency_key','invalid-workflow','wiring_id',''))).*
+             FROM wamn_run.runs r WHERE run_id=$1",
+        )
+        .bind(run_id)
+        .execute(&mut *tx)
+        .await
+        .is_err()
+    );
+    tx.rollback().await?;
     // The schema refuses invalid persisted values and incomplete event ancestry.
     for (statement, value) in [
         (
