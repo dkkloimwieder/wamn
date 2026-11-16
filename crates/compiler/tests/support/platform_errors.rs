@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 use wamn_compiler::ManifestErrorType as GenerateErrorType;
-use wamn_compiler::manifest::validate_operation_vocabulary;
+use wamn_compiler::manifest::{PackageManifest, validate_operation_vocabulary};
 use wamn_schema_introspection::ir::{CatalogIr, Constraint, Table};
 
 use super::{description_json, fixture, parsed};
@@ -140,7 +140,7 @@ fn custom_constraints_follow_catalog_identity_and_type() {
 #[test]
 fn custom_visibility_permissions_and_components_remain_closed() {
     for (field, value, type_) in [
-        ("component", json!(""), GenerateErrorType::InvalidComponent),
+        ("component", json!(""), GenerateErrorType::InvalidManifest),
         (
             "permission",
             json!("widget.other"),
@@ -155,7 +155,8 @@ fn custom_visibility_permissions_and_components_remain_closed() {
         let mut manifest = fixture::manifest();
         manifest["custom_operations"]["widget.archive"][field] = value;
         assert_eq!(
-            validate_operation_vocabulary(&parsed(&manifest))
+            PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap())
+                .and_then(|manifest| validate_operation_vocabulary(&manifest))
                 .expect_err(field)
                 .error_type(),
             type_

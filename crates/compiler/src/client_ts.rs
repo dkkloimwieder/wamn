@@ -780,7 +780,7 @@ fn emit_operation(
     )
     .expect("write");
     writeln!(source, "export const {route_const}: OperationRoute = {{").expect("write");
-    writeln!(source, "  operation: {:?},", operation.operation).expect("write");
+    writeln!(source, "  operation: {:?},", operation.operation.as_str()).expect("write");
     writeln!(source, "  method: {:?},", route.method).expect("write");
     writeln!(source, "  template: {:?},", route.template).expect("write");
     source.push_str("  contract: {\n");

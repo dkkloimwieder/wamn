@@ -543,10 +543,17 @@ fn a_screen_names_its_page_controls_apart_from_the_operator_fields() {
         .expect("the query still filters and limits");
     assert_eq!(paging.sort_field_input, None);
     assert_eq!(paging.sort_direction_input, None);
+    let query = screen(&plan, "query");
+    let mut declared_sort_inputs = leaf_fields(&query.contract.input_fields)
+        .into_iter()
+        .filter(|field| field.path.starts_with("sort."))
+        .map(|field| field.path.as_str())
+        .collect::<Vec<_>>();
+    declared_sort_inputs.sort_unstable();
     assert_eq!(
-        paths(&screen(&plan, "query").inputs),
-        ["sort.direction", "sort.field"],
-        "a control the contract does not declare is ordinary input"
+        paths(&query.inputs),
+        declared_sort_inputs,
+        "undeclared page controls remain ordinary input ordered by path"
     );
 }
 

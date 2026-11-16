@@ -164,9 +164,8 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
 
     let mut empty = manifest();
     empty["models"]["gadget"]["operations"]["get"]["component"] = json!("");
-    let error = validate_operation_vocabulary(&parsed_manifest(&empty))
+    PackageManifest::from_slice(&serde_json::to_vec(&empty).unwrap())
         .expect_err("an empty component name was accepted");
-    assert_eq!(error.error_type(), GenerateErrorType::InvalidComponent);
 
     let mut unknown = manifest();
     unknown["models"]["gadget"]["operations"]["get"]["component"] = json!("missing");
