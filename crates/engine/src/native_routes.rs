@@ -11,7 +11,7 @@ pub const FRESH_CREDENTIAL_REQUIRED: &str = "fresh-credential-required";
 
 #[derive(Debug, Clone)]
 pub enum Source {
-    Attachment(String),
+    Attachment(wamn_catalog::canonical_name::CanonicalName),
     Registration(String),
 }
 
@@ -72,7 +72,7 @@ pub struct DeliveryReport {
 /// Admit one native platform endpoint under its authenticated attachment.
 pub fn resolve_authorized_host_route(
     manifest: &ServingManifest,
-    id: &str,
+    id: &wamn_catalog::canonical_name::CanonicalName,
     caller: Option<&AuthenticatedCaller>,
 ) -> Option<Result<&'static HostAttachment, DeliveryError>> {
     let attachment = manifest.host_attachment(id)?;

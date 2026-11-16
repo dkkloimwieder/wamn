@@ -28,7 +28,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         }))?;
         let member = wamn_catalog::ServingEntryMember {
             package_id: application.parse().unwrap(),
-            component: application.into(),
+            component: application.parse().unwrap(),
             digest: wamn_digest::bytes_sha256(application.as_bytes()),
         };
         release.composed_entry = Some(wamn_catalog::ServingComposedEntry {
@@ -89,7 +89,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         let metadata: Value = serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;
         let carrier = wamn_kubernetes::helm::template(&json!({
             "chart": chart, "version": metadata["version"],
-            "name": wamn_environment::environment::analyse::application_release_name(document, application)?,
+            "name": wamn_environment::environment::analyse::application_release_name(document, application).unwrap(),
             "namespace": NAMESPACE, "values": values,
         }))?;
         for workload in carrier

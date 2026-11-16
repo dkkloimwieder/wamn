@@ -3,6 +3,7 @@
 use anyhow::Context as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use wamn_catalog::canonical_name::CanonicalName;
 
 use wamn_catalog::{
     AdmittedComponentEffect, AdmittedComponentFacts, ComponentDeclaration,
@@ -189,7 +190,7 @@ pub fn validate_component_admission(
     let component = Component::new(engine.inner(), component_bytes).map_err(|source| {
         ComponentAdmissionError::new(
             ComponentAdmissionErrorType::InvalidComponentBytes,
-            &component_name,
+            component_name.as_str(),
             source,
         )
     })?;
@@ -289,15 +290,22 @@ pub fn validate_component_admission(
     let embedded = embedded_components(component_bytes).map_err(|source| {
         ComponentAdmissionError::new(
             ComponentAdmissionErrorType::InvalidComponentBytes,
-            &component_name,
+            component_name.as_str(),
             source,
         )
     })?;
     let declared_exports: BTreeSet<_> = request.declaration.operations.keys().cloned().collect();
     let byte_exports: BTreeSet<_> = component_type
         .exports(raw)
-        .map(|(name, _)| name.to_owned())
-        .collect();
+        .map(|(name, _)| name.parse::<CanonicalName>())
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map_err(|source| {
+            ComponentAdmissionError::new(
+                ComponentAdmissionErrorType::InvalidComponentFacts,
+                component_name.as_str(),
+                source,
+            )
+        })?;
     let missing: Vec<_> = declared_exports
         .difference(&byte_exports)
         .cloned()
@@ -307,13 +315,13 @@ pub fn validate_component_admission(
     // declared operations, so an export of an embedded member is inert.
     let extra: Vec<_> = byte_exports
         .difference(&declared_exports)
-        .filter(|export| !embedded.exports.contains(*export))
+        .filter(|export| !embedded.exports.contains(export.as_str()))
         .cloned()
         .collect();
     if !missing.is_empty() || !extra.is_empty() {
         return Err(ComponentAdmissionError::new(
             ComponentAdmissionErrorType::OperationExportMismatch,
-            &component_name,
+            component_name.as_str(),
             anyhow::anyhow!(
                 "declared handler exports differ from component bytes: missing={missing:?}, extra={extra:?}"
             ),
@@ -321,10 +329,14 @@ pub fn validate_component_admission(
     }
     for export in &declared_exports {
         let item = component_type
-            .get_export(raw, export)
+            .get_export(raw, export.as_str())
             .expect("the byte exports contain every declared operation");
-        if let Err(error) = validate_handler_signature(export, item.ty) {
-            return Err(operation_signature_mismatch(&component_name, export, error));
+        if let Err(error) = validate_handler_signature(export.as_str(), item.ty) {
+            return Err(operation_signature_mismatch(
+                component_name.as_str(),
+                export.as_str(),
+                error,
+            ));
         }
     }
     // Policy and facts key each import by its interface instance type, so two
@@ -345,7 +357,7 @@ pub fn validate_component_admission(
                 && exports.iter().any(|export| {
                     export.contains(':')
                         && is_application_operation_import(export)
-                        && !declared_exports.contains(export)
+                        && !declared_exports.contains(export.as_str())
                 })
         })
         .map(|(digest, _)| *digest)
@@ -353,7 +365,7 @@ pub fn validate_component_admission(
     if !unpinned_bases.is_empty() {
         return Err(ComponentAdmissionError::new(
             ComponentAdmissionErrorType::OperationDependencyMismatch,
-            &component_name,
+            component_name.as_str(),
             anyhow::anyhow!(
                 "composed bases are not pinned in the package manifest's base_dependencies: {unpinned_bases:?}"
             ),
@@ -369,7 +381,7 @@ pub fn validate_component_admission(
     if !byte_dependency_imports.is_empty() {
         return Err(ComponentAdmissionError::new(
             ComponentAdmissionErrorType::OperationDependencyMismatch,
-            &component_name,
+            component_name.as_str(),
             anyhow::anyhow!(
                 "declared operation dependencies differ from component imports: missing=[], extra={byte_dependency_imports:?}"
             ),
@@ -379,12 +391,12 @@ pub fn validate_component_admission(
     wamn_component_policy::analyze_project(
         &policy_imports,
         &request.admitted_platform_packages,
-        &component_name,
+        component_name.as_str(),
     )
     .map_err(|source| {
         ComponentAdmissionError::new(
             ComponentAdmissionErrorType::ImportPolicyRefused,
-            &component_name,
+            component_name.as_str(),
             source,
         )
     })?;
@@ -399,7 +411,7 @@ pub fn validate_component_admission(
     .map_err(|source| {
         ComponentAdmissionError::new(
             ComponentAdmissionErrorType::InvalidComponentFacts,
-            &component_name,
+            component_name.as_str(),
             source,
         )
     })?;
@@ -504,7 +516,9 @@ fn derive_effects(
     grouped
         .into_iter()
         .map(|(package, interfaces)| AdmittedComponentEffect {
-            package: package.to_owned(),
+            package: package
+                .parse()
+                .expect("an admitted WIT package has a canonical name"),
             provenance: ComponentEffectProvenance::Imported,
             interfaces: interfaces.into_iter().collect(),
         })
@@ -745,23 +759,23 @@ mod tests {
                     package_id: "orders".parse().unwrap(),
                     package_version: "1.0.0".parse().unwrap(),
                 },
-                component: "transform".to_string(),
-                interface_version: "0.1.0".to_string(),
+                component: "transform".parse().unwrap(),
+                interface_version: "0.1.0".parse().unwrap(),
                 operations: BTreeMap::from([(
-                    OPERATION.to_string(),
+                    OPERATION.parse().unwrap(),
                     ComponentOperationDeclaration {
                         committed_result_schema: None,
                         registered_operation: None,
                         input_ports: vec![ComponentPortDeclaration {
-                            name: "input".to_string(),
+                            name: "input".parse().unwrap(),
                             schema: json!({"type": "object"}),
                         }],
                         output_ports: vec![ComponentPortDeclaration {
-                            name: "main".to_string(),
+                            name: "main".parse().unwrap(),
                             schema: json!({"type": "object"}),
                         }],
                         parameters: vec![ComponentParameterDeclaration {
-                            name: "mapping".to_string(),
+                            name: "mapping".parse().unwrap(),
                             schema: json!({"type": "object"}),
                             required: true,
                         }],
@@ -914,7 +928,7 @@ mod tests {
         request
             .declaration
             .operations
-            .insert(ASYNC_HANDLER_OPERATION.to_string(), operation);
+            .insert(ASYNC_HANDLER_OPERATION.parse().unwrap(), operation);
         // The fixture's lift is asserted, not assumed: the dummy builder
         // applies the async ABI only where the type allows it, so a test that
         // skipped this test would pass on a sync lift and show nothing.
@@ -1006,7 +1020,7 @@ mod tests {
             request
                 .declaration
                 .operations
-                .insert(TYPED_OPERATION.to_owned(), declaration);
+                .insert(TYPED_OPERATION.parse().unwrap(), declaration);
             let result = validate_component_admission(&engine, &bytes, request);
             if expected {
                 result.expect("owned typed values are admitted");
@@ -1178,7 +1192,7 @@ mod tests {
         request
             .declaration
             .operations
-            .insert("second".to_string(), second);
+            .insert("second".parse().unwrap(), second);
 
         let component = validate_component_admission(&engine, &bytes, request)
             .expect("both exports of a composition admit")
@@ -1252,7 +1266,10 @@ mod tests {
             "wamn:connection".to_string(),
         ]);
         request.declaration.connections = vec![wamn_catalog::ComponentConnection {
-            store_alias: "erp".to_string().into(),
+            store_alias: "erp"
+                .parse::<wamn_catalog::canonical_name::CanonicalName>()
+                .unwrap()
+                .into(),
             requirement_type: wamn_catalog::ComponentConnectionType::Http,
             mode: wamn_catalog::ConnectionMode::Write,
         }];
@@ -1264,12 +1281,12 @@ mod tests {
             facts.component.effects,
             vec![
                 AdmittedComponentEffect {
-                    package: "wamn:connection".to_string(),
+                    package: "wamn:connection".parse().unwrap(),
                     provenance: ComponentEffectProvenance::Imported,
                     interfaces: vec!["wamn:connection/http@0.1.0".to_string()],
                 },
                 AdmittedComponentEffect {
-                    package: "wamn:postgres".to_string(),
+                    package: "wamn:postgres".parse().unwrap(),
                     provenance: ComponentEffectProvenance::Imported,
                     interfaces: vec!["wamn:postgres/statements@0.4.0".to_string()],
                 },
@@ -1277,7 +1294,13 @@ mod tests {
         );
         assert_eq!(facts.component.imports.len(), 4);
         assert_eq!(facts.connections.len(), 1);
-        assert_eq!(facts.connections[0].store_alias.name(), Some("erp"));
+        assert_eq!(
+            facts.connections[0]
+                .store_alias
+                .name()
+                .map(|name| name.as_str()),
+            Some("erp")
+        );
     }
 
     /// The negative control. A composed dependency adds no effect of its own:

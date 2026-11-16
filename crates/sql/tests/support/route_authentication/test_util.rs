@@ -33,10 +33,13 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
             runtime_schema: None,
             package_id: "cat".parse().unwrap(),
             descriptor: {
-                let mut descriptor =
-                    wamn_catalog::ComponentDescriptor::named("http-request", "0.1", digest('a'));
+                let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+                    "http-request".parse().unwrap(),
+                    "0.1".parse().unwrap(),
+                    digest('a'),
+                );
                 descriptor.operations = BTreeMap::from([(
-                    "request".into(),
+                    "request".parse().unwrap(),
                     AdmittedComponentOperation {
                         host_transaction: false,
                         input_ports: Vec::new(),
@@ -51,21 +54,21 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
         }]),
         BTreeSet::from([wamn_catalog::ServingRoute {
             package_id: "cat".parse().unwrap(),
-            component: "http-request".into(),
-            operation: "request".into(),
+            component: "http-request".parse().unwrap(),
+            operation: "request".parse().unwrap(),
             type_: wamn_catalog::OperationType::Command,
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
         }]),
         BTreeMap::from([(
-            "orders".to_string(),
+            "orders".parse().unwrap(),
             ServingAttachment {
                 type_: AttachmentType::Http,
                 package_id: "cat".parse().unwrap(),
                 target: AttachmentTarget::Route {
-                    component: "http-request".into(),
-                    operation: "request".into(),
+                    component: "http-request".parse().unwrap(),
+                    operation: "request".parse().unwrap(),
                 },
                 definition_hash: digest('c'),
                 definition: json!({
@@ -81,7 +84,11 @@ pub(super) fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
         &manifest.canonical_bytes(),
         "fixture",
         wamn_engine::release_manifest::ReleaseTarget::new(
-            wamn_registry::project_env_key("acme", "host-project", &"dev".parse().unwrap()),
+            wamn_registry::project_env_key(
+                &"acme".parse().unwrap(),
+                &"host-project".parse().unwrap(),
+                &"dev".parse().unwrap(),
+            ),
             "dev".parse().unwrap(),
         )
         .with_applications(

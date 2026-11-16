@@ -131,7 +131,7 @@ pub(super) fn read_package_manifests(
     for (package_id, package) in contracts {
         for contract in package {
             types.insert(
-                (package_id.clone(), contract.operation.to_string()),
+                (package_id.clone(), contract.operation.clone().into()),
                 contract.route,
             );
         }
@@ -224,7 +224,7 @@ fn operation_contracts(
 pub fn package_route(
     roots: &BTreeMap<wamn_catalog::PackageName, &Path>,
     package_id: &wamn_catalog::PackageName,
-    component: &str,
+    component: &wamn_catalog::canonical_name::CanonicalName,
     operation: &wamn_catalog::registered_operation::RegisteredOperation,
 ) -> Result<ServingRoute, PublishManifestError> {
     let unassembled = |package: &wamn_catalog::PackageName| {
@@ -326,7 +326,7 @@ mod tests {
     fn package_route(
         root: &Path,
         package_id: &wamn_catalog::PackageName,
-        component: &str,
+        component: &wamn_catalog::canonical_name::CanonicalName,
         operation: &wamn_catalog::registered_operation::RegisteredOperation,
     ) -> Result<wamn_catalog::ServingRoute, super::PublishManifestError> {
         let roots = BTreeMap::from([(package_id.to_owned(), root)]);
@@ -352,7 +352,7 @@ mod tests {
         let get = package_route(
             &wms,
             &"wamn_wms".parse().unwrap(),
-            "wms",
+            &"wms".parse().unwrap(),
             &sealed("wamn-wms:packaging/get"),
         )
         .expect("the packaging get has a contract");
@@ -363,7 +363,7 @@ mod tests {
         let query = package_route(
             &wms,
             &"wamn_wms".parse().unwrap(),
-            "wms",
+            &"wms".parse().unwrap(),
             &sealed("wamn-wms:packaging/query"),
         )
         .expect("the packaging query has a contract");
@@ -373,7 +373,7 @@ mod tests {
         let aggregate = package_route(
             &wms,
             &"wamn_wms".parse().unwrap(),
-            "wms",
+            &"wms".parse().unwrap(),
             &sealed("wamn-wms:inventory/aggregate"),
         )
         .expect("the authored projection has a contract");
@@ -385,7 +385,7 @@ mod tests {
         let history = package_route(
             &app("wamn_receiving"),
             &"wamn_receiving".parse().unwrap(),
-            "receiving",
+            &"receiving".parse().unwrap(),
             &sealed("wamn-receiving:receiving/load-purchase-order-history"),
         )
         .expect("the history projection has a contract");
@@ -398,7 +398,7 @@ mod tests {
         let write = package_route(
             &wms,
             &"wamn_wms".parse().unwrap(),
-            "wms",
+            &"wms".parse().unwrap(),
             &sealed("wamn-wms:inventory/move"),
         )
         .expect("the move command has a contract");
@@ -412,16 +412,21 @@ mod tests {
     fn a_write_route_names_its_idempotency_field() {
         let wms = app("wamn_wms");
         let route = |operation: &wamn_catalog::registered_operation::RegisteredOperation| {
-            package_route(&wms, &"wamn_wms".parse().unwrap(), "wms", operation)
-                .expect("the operation has a contract")
-                .idempotency
+            package_route(
+                &wms,
+                &"wamn_wms".parse().unwrap(),
+                &"wms".parse().unwrap(),
+                operation,
+            )
+            .expect("the operation has a contract")
+            .idempotency
         };
 
         assert_eq!(route(&sealed("wamn-wms:packaging/get")), None);
         let archive = package_route(
             &app("platform_fixture"),
             &"platform_fixture".parse().unwrap(),
-            "widget",
+            &"widget".parse().unwrap(),
             &"platform-fixture:widget/archive@2.1.1".parse().unwrap(),
         );
         assert_eq!(

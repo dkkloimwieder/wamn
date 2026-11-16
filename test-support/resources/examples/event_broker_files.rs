@@ -29,9 +29,9 @@ fn main() -> anyhow::Result<()> {
     );
     let work = PathBuf::from(&arguments[0]);
     let target = Triple::new(
-        arguments[1].as_str(),
+        arguments[1].parse()?,
         arguments[3].parse()?,
-        arguments[2].as_str(),
+        arguments[2].parse()?,
     );
     let project_env_key: wamn_registry::ProjectEnvKey = arguments[4].parse()?;
     let replicas: usize = arguments[5].parse().context("parse the stream replicas")?;
@@ -79,7 +79,10 @@ fn declared_consumers(target: &Triple, manifests: &[String]) -> anyhow::Result<V
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let application = target.project.parse::<wamn_catalog::ApplicationName>()?;
+    let application = target
+        .project
+        .as_str()
+        .parse::<wamn_catalog::ApplicationName>()?;
     let entities = manifests.iter().flat_map(PackageManifest::entity_pairs);
     let consumers = entities
         .map(|(package, entity)| {

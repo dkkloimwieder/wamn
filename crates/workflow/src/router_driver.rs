@@ -31,12 +31,12 @@ pub struct WorkflowRunRequest {
     pub project_env_key: wamn_registry::ProjectEnvKey,
     pub application: wamn_catalog::ApplicationName,
     pub environment: wamn_registry::EnvName,
-    pub wiring_id: String,
+    pub wiring_id: wamn_catalog::canonical_name::CanonicalName,
     pub wiring_version: u32,
     pub delivery_id: String,
     pub payload: serde_json::Value,
     pub wiring_hash: wamn_digest::Digest,
-    pub node_digests: BTreeMap<String, wamn_digest::Digest>,
+    pub node_digests: BTreeMap<wamn_catalog::canonical_name::CanonicalName, wamn_digest::Digest>,
     pub identity: WorkflowIdentity,
     pub causation: Option<Causation>,
 }
@@ -113,19 +113,19 @@ impl RouterDriver {
                             authorize_registered_operation(Some(&caller), operation.registered_operation.as_ref())?;
                             let deadline_ms = bounded_node_deadline_ms(call.deadline_ms);
                             if let Some(requested_ms) = call.deadline_ms.filter(|requested| *requested != deadline_ms) {
-                                adjustments.push(DeadlineAdjustment { node: call.node.clone(), requested_ms, effective_ms: deadline_ms });
+                                adjustments.push(DeadlineAdjustment { node: call.node.to_string(), requested_ms, effective_ms: deadline_ms });
                             }
                             let span = invocation_span(&InvocationSite {
                                 project_env_key: &request.project_env_key, project: &self.operations.project,
-                                environment: &request.environment, wiring_id: &request.wiring_id, wiring_version: version,
-                                node_id: &call.node, input_port: call.input_port.as_deref(), operation: operation_name,
+                                environment: &request.environment, wiring_id: request.wiring_id.as_str(), wiring_version: version,
+                                node_id: call.node.as_str(), input_port: call.input_port.as_ref().map(wamn_catalog::canonical_name::CanonicalName::as_str), operation: operation_name.as_str(),
                                 component_digest: &component.component_digest, caller: Some(&caller),
                             }, None);
                             async {
                                 let trace = node_trace_context(None, None);
                                 let context = node_types::NodeContext {
-                                    wiring_id: request.wiring_id.clone(), wiring_version: version, node_id: call.node.clone(),
-                                    delivery_id: request.delivery_id.clone(), input_port: call.input_port.clone(), occurrence: call.occurrence,
+                                    wiring_id: request.wiring_id.to_string(), wiring_version: version, node_id: call.node.to_string(),
+                                    delivery_id: request.delivery_id.clone(), input_port: call.input_port.as_ref().map(ToString::to_string), occurrence: call.occurrence,
                                     traceparent: trace.traceparent, tracestate: trace.tracestate, deadline_ms: Some(deadline_ms),
                                     config: serde_json::to_string(&call.definition.params).context("encode node config")?,
                                 };
@@ -181,7 +181,8 @@ fn lower_node_outcome(
                 payload,
                 port: emission
                     .port
-                    .unwrap_or_else(|| wamn_catalog::MAIN_PORT.to_owned()),
+                    .unwrap_or_else(|| wamn_catalog::MAIN_PORT.to_owned())
+                    .parse()?,
             })
         }
         Err(node_types::NodeError::Retryable(detail)) => Ok(NodeOutcome::Error(

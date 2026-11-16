@@ -154,8 +154,8 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     apply_package::apply_package_schema(ApplyPackageRequest {
         migration_database_url: wamn_control_provision::test_database::package_migration_input(
             &url,
-            &"record-retention-t",
-            &"fixture",
+            &"record-retention-t".parse().unwrap(),
+            &"fixture".parse().unwrap(),
             &"dev".parse().unwrap(),
         )
         .await
@@ -169,8 +169,8 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
             ),
         },
         database_url: url.to_owned(),
-        org: "record-retention-t".into(),
-        project: "fixture".into(),
+        org: "record-retention-t".parse().unwrap(),
+        project: "fixture".parse().unwrap(),
         environment: "dev".parse().unwrap(),
     })
     .await

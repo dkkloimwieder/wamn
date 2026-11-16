@@ -14,7 +14,8 @@ pub async fn recover(
         target.namespace == args.org,
         "reader must run in the org namespace"
     );
-    let triple = wamn_registry::Triple::new(&args.org, args.env.clone(), &args.project);
+    let triple =
+        wamn_registry::Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
     LifecycleLock::hold(
         wamn_postgres::connect(&args.system_database_url).await?,
         &triple,
@@ -39,7 +40,8 @@ pub async fn close(
         target.namespace == args.org,
         "reader must run in the org namespace"
     );
-    let triple = wamn_registry::Triple::new(&args.org, args.env.clone(), &args.project);
+    let triple =
+        wamn_registry::Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
     LifecycleLock::hold(
         wamn_postgres::connect(&args.system_database_url).await?,
         &triple,

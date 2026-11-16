@@ -57,7 +57,7 @@ async fn facts(
             statement_timeout_ms: 10_000,
         })?),
         &"lease--dev--rollout".parse().unwrap(),
-        "rollout",
+        &"rollout".parse().unwrap(),
         &"dev".parse().unwrap(),
     );
     Ok((Arc::new(facts), leases))

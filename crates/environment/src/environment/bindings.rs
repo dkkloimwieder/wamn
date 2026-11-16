@@ -116,7 +116,10 @@ pub async fn analyse(
     }
     let mut bindings = Vec::new();
     for (application, definition) in applications {
-        let mut declarations: BTreeMap<String, ConnectionDeclaration> = BTreeMap::new();
+        let mut declarations: BTreeMap<
+            wamn_catalog::canonical_name::CanonicalName,
+            ConnectionDeclaration,
+        > = BTreeMap::new();
         for package in packages
             .iter()
             .filter(|p| definition.packages.contains(&p.package.id))
@@ -133,7 +136,7 @@ pub async fn analyse(
             }
         }
         for name in definition.connections.keys() {
-            if !declarations.contains_key(name) {
+            if !declarations.contains_key(name.as_str()) {
                 return Err(refuse(
                     "connection_undeclared",
                     format!("{application}.{name}"),
@@ -144,7 +147,7 @@ pub async fn analyse(
             let at = format!("{application}.{name}");
             let integration = definition
                 .connections
-                .get(&name)
+                .get(name.as_str())
                 .ok_or_else(|| refuse("connection_unbound", &at))?;
             let row = selected
                 .get(&integration.name)
@@ -182,7 +185,7 @@ pub async fn analyse(
             };
             bindings.push(Binding {
                 application: application.clone(),
-                alias: name,
+                alias: name.to_string(),
                 connection_id: row.get(0),
                 integration_type,
                 exclusive: row.get(8),

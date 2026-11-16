@@ -59,11 +59,11 @@ SELECT canonical_bytes FROM catalog.releases \
 /// Inputs owned by the release publisher.
 #[derive(Debug)]
 pub struct PublishReleaseManifest<'a> {
-    pub org: &'a str,
-    pub project: &'a str,
+    pub org: &'a wamn_registry::OrgId,
+    pub project: &'a wamn_registry::ProjectId,
     pub environment: &'a wamn_registry::EnvName,
     pub packages: &'a BTreeSet<PackageCoordinate>,
-    pub attachments: &'a BTreeMap<String, ServingAttachment>,
+    pub attachments: &'a BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
     /// Local development can use rebuilt dependencies after target validation.
     /// Published construction always requires the declared dependency digests.
     pub environment_is_disposable: bool,
@@ -211,7 +211,13 @@ impl std::error::Error for PublishManifestError {
 
 /// The facts a route takes from the generated contract of the operation it
 /// calls, keyed by package id and exact operation.
-pub type RouteContracts = BTreeMap<(wamn_catalog::PackageName, String), RouteContract>;
+pub type RouteContracts = BTreeMap<
+    (
+        wamn_catalog::PackageName,
+        wamn_catalog::canonical_name::CanonicalName,
+    ),
+    RouteContract,
+>;
 
 /// What a route takes from the generated contract `operation.json` of its
 /// operation: the type, the relations a read reads, and the revision field of
@@ -244,8 +250,8 @@ pub struct PublishReleaseRequest {
     /// Selects one declared application; omitted for a one-application release.
     pub application: Option<wamn_catalog::ApplicationName>,
     /// Organization in the declared environment coordinate.
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     /// Environment the release is published for.
     pub environment: wamn_registry::EnvName,
     /// Available exact coordinates for the declared application packages.
@@ -321,7 +327,7 @@ pub fn compose_application(
         digest,
         application: wamn_catalog::ServingEntryMember {
             package_id: application.target.package_id.clone(),
-            component: application.component.as_str().to_owned(),
+            component: application.component.clone(),
             digest: application.component_digest,
         },
         application_digests,
@@ -651,7 +657,13 @@ pub struct ReleaseComponents {
         ),
         Vec<AdmittedComponent>,
     >,
-    connections: BTreeMap<(wamn_catalog::PackageName, String), Vec<ComponentConnection>>,
+    connections: BTreeMap<
+        (
+            wamn_catalog::PackageName,
+            wamn_catalog::canonical_name::CanonicalName,
+        ),
+        Vec<ComponentConnection>,
+    >,
 }
 
 impl ReleaseComponents {
@@ -836,8 +848,8 @@ mod tests {
         > = BTreeMap::from([(manifest.package.id.clone(), manifest)]);
         let publish = |environment| {
             let request = PublishReleaseManifest {
-                org: "acme",
-                project: "apps",
+                org: &"acme".parse().unwrap(),
+                project: &"apps".parse().unwrap(),
                 environment,
                 packages: &packages,
                 attachments: &BTreeMap::new(),
@@ -868,7 +880,7 @@ mod tests {
     }
 
     fn fixture_route_contracts(
-        attachments: &BTreeMap<String, ServingAttachment>,
+        attachments: &BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
     ) -> RouteContracts {
         attachments
             .values()
@@ -899,8 +911,8 @@ mod tests {
             type_: wamn_catalog::AttachmentType::Http,
             package_id: package_id.to_owned(),
             target: wamn_catalog::AttachmentTarget::Route {
-                component: component.to_owned(),
-                operation: operation.to_owned(),
+                component: component.parse().unwrap(),
+                operation: operation.parse().unwrap(),
             },
             definition_hash: definition_hash,
             definition,
@@ -913,7 +925,7 @@ mod tests {
     fn package_attachment_documents_merge_into_one_release() {
         let base = BTreeMap::from([
             (
-                "first".to_owned(),
+                "first".parse().unwrap(),
                 package_http_attachment(
                     "first",
                     &"source_fixture".parse().unwrap(),
@@ -923,7 +935,7 @@ mod tests {
                 ),
             ),
             (
-                "second".to_owned(),
+                "second".parse().unwrap(),
                 package_http_attachment(
                     "second",
                     &"source_fixture".parse().unwrap(),
@@ -934,7 +946,7 @@ mod tests {
             ),
         ]);
         let overlay = BTreeMap::from([(
-            "third".to_owned(),
+            "third".parse().unwrap(),
             package_http_attachment(
                 "third",
                 &"observer_fixture".parse().unwrap(),
@@ -992,11 +1004,11 @@ mod tests {
         let error = merge_package_attachment_documents(vec![
             (
                 PathBuf::from("apps/source_fixture/publication/attachments.json"),
-                BTreeMap::from([("fixture-http".to_owned(), base)]),
+                BTreeMap::from([("fixture-http".parse().unwrap(), base)]),
             ),
             (
                 PathBuf::from("apps/observer_fixture/publication/attachments.json"),
-                BTreeMap::from([("fixture-http".to_owned(), overlay)]),
+                BTreeMap::from([("fixture-http".parse().unwrap(), overlay)]),
             ),
         ])
         .expect_err("one attachment identity cannot have two package owners");
@@ -1026,11 +1038,11 @@ mod tests {
         let authored = merge_package_attachment_documents(vec![
             (
                 PathBuf::from("apps/source_fixture/publication/attachments.json"),
-                BTreeMap::from([("first-http".to_owned(), first)]),
+                BTreeMap::from([("first-http".parse().unwrap(), first)]),
             ),
             (
                 PathBuf::from("apps/observer_fixture/publication/attachments.json"),
-                BTreeMap::from([("second-http".to_owned(), second)]),
+                BTreeMap::from([("second-http".parse().unwrap(), second)]),
             ),
         ])
         .expect("distinct attachment identities merge before route validation");
@@ -1052,15 +1064,15 @@ mod tests {
             type_: wamn_catalog::AttachmentType::Http,
             package_id: "source_fixture".parse().unwrap(),
             target: wamn_catalog::AttachmentTarget::Route {
-                component: "widget".to_owned(),
-                operation: "source-fixture:widget/get@1.0.0".to_owned(),
+                component: "widget".parse().unwrap(),
+                operation: "source-fixture:widget/get@1.0.0".parse().unwrap(),
             },
             definition_hash: authored_hash,
             definition,
             auth_policy: serde_json::json!({"modes": ["pat"]}),
             registered_operation: Some("source-fixture:widget/get@1.0.0".parse().unwrap()),
         };
-        let authored = BTreeMap::from([("fixture-http".to_owned(), attachment)]);
+        let authored = BTreeMap::from([("fixture-http".parse().unwrap(), attachment)]);
 
         let resolved = resolve_route_methods(&authored, &fixture_route_contracts(&authored))
             .expect("a routed release needs no route host");
@@ -1130,7 +1142,7 @@ mod tests {
         second.definition["id"] = serde_json::json!("fixture-http-alias");
         second.definition["route"]["path"] = serde_json::json!("/widget/{widget_id}");
         refresh_definition_hash(&mut second);
-        colliding.insert("fixture-http-alias".to_owned(), second);
+        colliding.insert("fixture-http-alias".parse().unwrap(), second);
         let collision = resolve_route_methods(&colliding, &fixture_route_contracts(&colliding))
             .expect_err("one release cannot carry ambiguous route templates");
         assert_eq!(collision.error_type(), PublishManifestErrorType::Document);
@@ -1147,10 +1159,10 @@ mod tests {
                 path,
             );
             attachment.target = wamn_catalog::AttachmentTarget::Route {
-                component: "widget".to_owned(),
-                operation: operation.to_owned(),
+                component: "widget".parse().unwrap(),
+                operation: operation.parse().unwrap(),
             };
-            (id.to_owned(), attachment)
+            (id.parse().unwrap(), attachment)
         };
         let authored = BTreeMap::from([
             route("get-http", "source-fixture:widget/get@1.0.0", "/widget/get"),
@@ -1175,7 +1187,7 @@ mod tests {
                 "/widget/record",
             ),
             (
-                "wiring-http".to_owned(),
+                "wiring-http".parse().unwrap(),
                 package_http_attachment(
                     "wiring-http",
                     &"source_fixture".parse().unwrap(),
@@ -1198,7 +1210,7 @@ mod tests {
             (
                 (
                     "source_fixture".parse().unwrap(),
-                    format!("source-fixture:{operation}@1.0.0"),
+                    format!("source-fixture:{operation}@1.0.0").parse().unwrap(),
                 ),
                 RouteContract::from(type_),
             )
@@ -1288,8 +1300,8 @@ mod tests {
                 .iter()
                 .map(|fact| ServingRoute {
                     package_id: fact.target.package_id.clone(),
-                    component: "entry".into(),
-                    operation: "run".into(),
+                    component: "entry".parse().unwrap(),
+                    operation: "run".parse().unwrap(),
                     type_: OperationType::Get,
                     reads: BTreeSet::new(),
                     revision: None,
@@ -1382,7 +1394,10 @@ mod tests {
         let descriptor = wamn_catalog::ComponentDescriptor::new(
             fact.clone(),
             vec![ComponentConnection {
-                store_alias: "labels".to_owned().into(),
+                store_alias: "labels"
+                    .parse::<wamn_catalog::canonical_name::CanonicalName>()
+                    .unwrap()
+                    .into(),
                 requirement_type: wamn_catalog::ComponentConnectionType::Blobstore,
                 mode: wamn_catalog::ConnectionMode::Write,
             }],
@@ -1469,17 +1484,17 @@ mod tests {
         manifest.custom_operations.clear();
         manifest.internal_relations.clear();
         for model in manifest.models.values_mut() {
-            model.schema = "own_schema".into();
+            model.schema = "own_schema".parse().unwrap();
         }
         application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).unwrap();
         for model in manifest.models.values_mut() {
-            model.schema = "base_schema".into();
+            model.schema = "base_schema".parse().unwrap();
             model.owner = "base_package".parse().unwrap();
         }
         application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).unwrap();
         let mut extra = manifest.models.values().next().unwrap().clone();
-        extra.schema = "other_schema".into();
-        manifest.models.insert("other".into(), extra);
+        extra.schema = "other_schema".parse().unwrap();
+        manifest.models.insert("other".parse().unwrap(), extra);
         assert!(application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).is_err());
     }
 
@@ -1530,7 +1545,7 @@ mod tests {
         overlay.component_digest = (format!("sha256:{}", "b".repeat(64)))
             .parse::<wamn_digest::Digest>()
             .unwrap();
-        let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
+        let roots = BTreeMap::from([("entry".parse().unwrap(), overlay.clone())]);
         let facts: BTreeMap<
             (
                 wamn_catalog::PackageName,
@@ -1624,7 +1639,7 @@ mod tests {
             .parse::<wamn_digest::Digest>()
             .unwrap();
         assert_ne!(stale_pin, base.component_digest);
-        let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
+        let roots = BTreeMap::from([("entry".parse().unwrap(), overlay.clone())]);
         let facts: BTreeMap<
             (
                 wamn_catalog::PackageName,

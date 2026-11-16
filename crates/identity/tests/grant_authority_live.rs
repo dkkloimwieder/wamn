@@ -49,7 +49,11 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
     let mut first = connect(database.as_str()).await?;
     let mut observer = connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&test_database::seed_org_project_env_sql("acme", "billing", &"dev".parse().unwrap()))
+        (&test_database::seed_org_project_env_sql(
+            &"acme".parse().unwrap(),
+            &"billing".parse().unwrap(),
+            &"dev".parse().unwrap(),
+        ))
             .to_string(),
     ))
     .execute(&mut first)
@@ -58,7 +62,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
     let user = create_or_reuse_user(&mut first, "member@example.test", "Member")
         .await?
         .principal_id;
-    activate_org_membership(&mut first, &user, "acme").await?;
+    activate_org_membership(&mut first, &user, &"acme".parse().unwrap()).await?;
     let holder: i32 = sqlx::query("SELECT pg_backend_pid()")
         .fetch_one(&mut first)
         .await?
@@ -69,16 +73,28 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
         .await?
         .get(0);
     let mut tx = first.begin().await?;
-    lock_membership(&mut tx, &user, "acme").await?;
+    lock_membership(&mut tx, &user, &"acme".parse().unwrap()).await?;
     let target = user;
     let removal = tokio::spawn(async move {
         let mut tx = second.begin().await?;
-        deactivate_org_membership(&mut tx, &target, "acme", &mut AuthDrops::default()).await?;
+        deactivate_org_membership(
+            &mut tx,
+            &target,
+            &"acme".parse().unwrap(),
+            &mut AuthDrops::default(),
+        )
+        .await?;
         tx.commit().await?;
         anyhow::Ok(second)
     });
     blocked(&mut observer, waiting, holder).await?;
-    grant_project_admin(&mut tx, &user, "acme", "billing").await?;
+    grant_project_admin(
+        &mut tx,
+        &user,
+        &"acme".parse().unwrap(),
+        &"billing".parse().unwrap(),
+    )
+    .await?;
     tx.commit().await?;
     let mut second = removal.await??;
     let remaining: i64 = sqlx::query(
@@ -90,15 +106,26 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
     .get(0);
     assert_eq!(remaining, 0);
 
-    activate_org_membership(&mut first, &user, "acme").await?;
+    activate_org_membership(&mut first, &user, &"acme".parse().unwrap()).await?;
     let mut tx = first.begin().await?;
-    deactivate_org_membership(&mut tx, &user, "acme", &mut AuthDrops::default()).await?;
+    deactivate_org_membership(
+        &mut tx,
+        &user,
+        &"acme".parse().unwrap(),
+        &mut AuthDrops::default(),
+    )
+    .await?;
     let target = user;
     let grant = tokio::spawn(async move {
         let mut tx = second.begin().await?;
-        let refusal = grant_project_admin(&mut tx, &target, "acme", "billing")
-            .await
-            .expect_err("inactive membership refuses after the lock wait");
+        let refusal = grant_project_admin(
+            &mut tx,
+            &target,
+            &"acme".parse().unwrap(),
+            &"billing".parse().unwrap(),
+        )
+        .await
+        .expect_err("inactive membership refuses after the lock wait");
         assert_eq!(
             refusal.refusal(),
             Some(wamn_platform_identity::IdentityRefusal::UserNotActive)
@@ -134,7 +161,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
         !wamn_platform_identity::session_token::session_is_active(
             &mut first,
             &claims,
-            "billing",
+            &"billing".parse().unwrap(),
             &"dev".parse().unwrap()
         )
         .await?
@@ -143,15 +170,19 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
         !wamn_platform_identity::has_project_env_membership(
             &mut first,
             &user,
-            "acme",
-            "billing",
+            &"acme".parse().unwrap(),
+            &"billing".parse().unwrap(),
             &"dev".parse().unwrap()
         )
         .await?
     );
     assert!(
         !wamn_platform_identity::control::is_project_admin(
-            &mut first, &user, "acme", "billing", None
+            &mut first,
+            &user,
+            &"acme".parse().unwrap(),
+            &"billing".parse().unwrap(),
+            None
         )
         .await?
     );
@@ -186,7 +217,11 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
     let mut system = connect(system_database.as_str()).await?;
     let mut target = connect(target_database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&test_database::seed_org_project_env_sql("acme", "billing", &"dev".parse().unwrap()))
+        (&test_database::seed_org_project_env_sql(
+            &"acme".parse().unwrap(),
+            &"billing".parse().unwrap(),
+            &"dev".parse().unwrap(),
+        ))
             .to_string(),
     ))
     .execute(&mut system)
@@ -216,8 +251,8 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
     .await?;
     let principal: PrincipalId = *service.id();
     let coordinate = ApplicationTarget {
-        org: "acme",
-        project: "billing",
+        org: &"acme".parse().unwrap(),
+        project: &"billing".parse().unwrap(),
         env: &"dev".parse().unwrap(),
         project_env_key: &"acme--dev--billing".parse().unwrap(),
     };
@@ -227,8 +262,8 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
             assign_project_role(
                 &mut tx,
                 &principal,
-                "acme",
-                "billing",
+                &"acme".parse().unwrap(),
+                &"billing".parse().unwrap(),
                 "project-admin",
                 &mut AuthDrops::default(),
             )

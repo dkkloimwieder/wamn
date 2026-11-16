@@ -141,7 +141,8 @@ pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
 
 /// The project id used when a component names none — the single database a
 /// [`WamnPostgresConfig`] URL points at.
-pub const DEFAULT_PROJECT: &str = "default";
+pub static DEFAULT_PROJECT: std::sync::LazyLock<wamn_registry::ProjectId> =
+    std::sync::LazyLock::new(|| "default".parse().expect("fixed default project"));
 
 // ---------------------------------------------------------------------------
 // Plugin configuration
@@ -194,11 +195,11 @@ impl WamnPostgres {
             );
         }
         if let Some(project) = config.get(PROJECT_CONFIG_KEY) {
-            let project = project.clone();
+            let project: wamn_registry::ProjectId = project.parse()?;
             self.set_project(scope, &project)?;
             tracing::debug!(
                 component = scope,
-                project,
+                %project,
                 "wamn:postgres project registered"
             );
         }

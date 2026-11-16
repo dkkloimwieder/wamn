@@ -215,13 +215,17 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
 fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() -> anyhow::Result<()>
 {
     use crate::platform::operations;
-    let document = wamn_registry::Triple::new("acme", "dev".parse().unwrap(), "billing");
+    let document = wamn_registry::Triple::new(
+        "acme".parse().expect("fixed identifier"),
+        "dev".parse().unwrap(),
+        "billing".parse().expect("fixed identifier"),
+    );
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let cluster = "database-owner";
     let database = "recorded-environment-database";
     let entry = crate::environment::entry(
         &repository.join("deploy/charts/environment"),
-        &document.org,
+        document.org.as_str(),
         "fixture",
         operations::values(&document, cluster, database)?,
     )?;
@@ -242,7 +246,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         .iter()
         .filter(|object| object["kind"] == "ServiceAccount")
     {
-        assert_eq!(account["metadata"]["namespace"], document.org);
+        assert_eq!(account["metadata"]["namespace"], document.org.as_str());
         let name = account["metadata"]["name"].as_str().unwrap();
         let privileged = name.ends_with("-sql");
         let capture = wamn_control_provision::project_env_cdc_secret_name(
@@ -267,7 +271,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                         && object["metadata"]["namespace"] == binding["metadata"]["namespace"]
                 })
                 .unwrap();
-            assert_eq!(role["metadata"]["namespace"], document.org);
+            assert_eq!(role["metadata"]["namespace"], document.org.as_str());
             if name != capture {
                 assert!(role["rules"].as_array().unwrap().iter().any(|rule| {
                     rule["apiGroups"]
@@ -322,7 +326,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                     }));
                 }
 
-                if role["metadata"]["namespace"] == document.org {
+                if role["metadata"]["namespace"] == document.org.as_str() {
                     let resources = rule["resources"].as_array().unwrap();
                     let verbs = rule["verbs"].as_array().unwrap();
                     if resources.iter().any(|resource| resource == "secrets") {
@@ -396,7 +400,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
 fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() -> anyhow::Result<()>
 {
     let template = wamn_control_provision::Template::standard();
-    let (org, _) = template.stamp("acme", "wamn-pg");
+    let (org, _) = template.stamp("acme".parse().expect("fixed identifier"), "wamn-pg");
     let mut values = crate::org::values(&org, &template.policies)?;
     let cluster = values["clusters"][0]["name"].as_str().unwrap().to_owned();
     let role = wamn_control_provision::connection::managed_role(
@@ -408,7 +412,7 @@ fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() ->
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut entry = crate::environment::entry(
         &repository.join("deploy/charts/org"),
-        &org.id,
+        org.id.as_str(),
         "org-acme",
         values,
     )?;
@@ -438,7 +442,7 @@ fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() ->
                 object["kind"] == "Cluster" && object["metadata"]["name"] == input["name"]
             })
             .unwrap();
-        assert_eq!(cluster["metadata"]["namespace"], org.id);
+        assert_eq!(cluster["metadata"]["namespace"], org.id.as_str());
         assert_eq!(cluster["spec"]["instances"], input["policy"]["instances"]);
         assert_eq!(
             cluster["spec"]["storage"]["size"],
@@ -465,7 +469,7 @@ fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() ->
 #[test]
 fn recovery_refuses_the_source_shared_clusters_and_missing_policies() -> anyhow::Result<()> {
     let template = wamn_control_provision::Template::standard();
-    let (org, _) = template.stamp("acme", "wamn-pg");
+    let (org, _) = template.stamp("acme".parse().expect("fixed identifier"), "wamn-pg");
     let prod = "prod".parse().expect("valid environment name");
     let source = wamn_registry::name::cluster(&org.id, &prod);
     assert!(crate::org::recovery_values(&org, &prod, &template.policies, &source, None).is_err());
@@ -479,7 +483,8 @@ fn recovery_refuses_the_source_shared_clusters_and_missing_policies() -> anyhow:
         )
         .is_err()
     );
-    let (pooled, _) = wamn_control_provision::Template::trials().stamp("acme", "wamn-pg");
+    let (pooled, _) = wamn_control_provision::Template::trials()
+        .stamp("acme".parse().expect("fixed identifier"), "wamn-pg");
     assert!(
         crate::org::recovery_values(&pooled, &prod, &template.policies, "restored", None).is_err()
     );
@@ -493,7 +498,7 @@ fn recovery_refuses_the_source_shared_clusters_and_missing_policies() -> anyhow:
         .append(recovery["clusters"].as_array_mut().unwrap());
     let entry = crate::environment::entry(
         &repository.join("deploy/charts/org"),
-        &org.id,
+        org.id.as_str(),
         "recovery",
         values,
     )?;
@@ -557,10 +562,17 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let coordinates = [("a", "b-c", "d"), ("a", "b", "c-d")];
     let accounts = coordinates.map(|(org, _project, env)| {
-        wamn_registry::name::environment_service_account(org, &env.parse().unwrap())
+        wamn_registry::name::environment_service_account(
+            &org.parse().unwrap(),
+            &env.parse().unwrap(),
+        )
     });
     let secrets = coordinates.map(|(org, project, env)| {
-        wamn_registry::credential_secret_name(org, project, &env.parse().unwrap())
+        wamn_registry::credential_secret_name(
+            &org.parse().unwrap(),
+            &project.parse().unwrap(),
+            &env.parse().unwrap(),
+        )
     });
     assert_ne!(accounts[0], accounts[1]);
     assert_ne!(secrets[0], secrets[1]);

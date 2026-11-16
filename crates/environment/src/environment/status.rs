@@ -167,7 +167,7 @@ pub async fn status(
                     chart: revision.chart,
                 });
             let namespace = platform.target.namespace.as_str();
-            let host_name = super::ensure::environment_host_name(&triple.org, &triple.env)?;
+            let host_name = wamn_registry::name::environment_host_name(&triple.org, &triple.env);
             let observed = observe(namespace, &host_name, |path| async move {
                 let body = kubectl(platform, namespace, &["get", "--raw", &path], None).await?;
                 serde_json::from_str::<Value>(&body).with_context(|| format!("decode {path}"))

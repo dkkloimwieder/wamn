@@ -130,7 +130,11 @@ fn component(
         .module(&module)?
         .validate(true)
         .encode()?;
-    let mut descriptor = ComponentDescriptor::named(name, "1.0.0", bytes_sha256(&bytes));
+    let mut descriptor = ComponentDescriptor::named(
+        name.parse().unwrap(),
+        "1.0.0".parse().unwrap(),
+        bytes_sha256(&bytes),
+    );
     descriptor.operations = serde_json::from_value(serde_json::Value::Object(
         resolve.worlds[world]
             .exports
@@ -152,7 +156,10 @@ fn component(
     descriptor.connections = aliases
         .iter()
         .map(|alias| wamn_catalog::ComponentConnection {
-            store_alias: (*alias).into(),
+            store_alias: alias
+                .parse::<wamn_catalog::canonical_name::CanonicalName>()
+                .unwrap()
+                .into(),
             requirement_type: wamn_catalog::ComponentConnectionType::Http,
             mode: wamn_catalog::ConnectionMode::Write,
         })
@@ -231,8 +238,8 @@ fn package(
             value["connections"][connection
                 .store_alias
                 .name()
-                .expect("fixture connection has a literal alias")] =
-                json!({"interface":"wamn:connection/http@0.1.0","mode":"write"});
+                .expect("fixture connection has a literal alias")
+                .as_str()] = json!({"interface":"wamn:connection/http@0.1.0","mode":"write"});
         }
         std::fs::create_dir_all(root.join("descriptors"))?;
         std::fs::write(
@@ -416,8 +423,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "BEGIN; SET LOCAL ROLE wamn_system; {} {} COMMIT;",
         wamn_control_provision::test_database::seed_org_project_env_sql(
-            "acme",
-            "apps",
+            &"acme".parse().unwrap(),
+            &"apps".parse().unwrap(),
             &"dev".parse().unwrap()
         ),
         wamn_registry::test_util::activation_target_sql()
@@ -488,7 +495,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .execute(&mut *tx)
     .await
     .map(drop)?;
-    wamn_test_infrastructure::credentials::define(&mut tx, "acme", &json!({"project":"apps","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}), &store).await?;
+    wamn_test_infrastructure::credentials::define(&mut tx, &"acme".parse().unwrap(), &json!({"project":"apps","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}), &store).await?;
     tx.commit().await?;
     let project_admin = wamn_postgres::database_configuration(system.url(), &database_name)?;
     let platform_migration_input = wamn_control_provision::test_database::platform_migration_input(
@@ -798,9 +805,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             },
         );
     let mut candidate = old_package;
-    candidate
-        .connections
-        .insert("extra".into(), candidate.connections["upstream"].clone());
+    candidate.connections.insert(
+        "extra".parse().unwrap(),
+        candidate.connections["upstream"].clone(),
+    );
     candidate.components.get_mut("a").unwrap().connections =
         candidate.connections.keys().cloned().collect();
     candidate
@@ -871,7 +879,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let declaration = failed_packages[0].connections["upstream"].clone();
     failed_packages[0]
         .connections
-        .insert("failed".into(), declaration);
+        .insert("failed".parse().unwrap(), declaration);
     failed_packages[0]
         .components
         .get_mut("a")

@@ -132,8 +132,8 @@ impl EdgeStore {
     /// Commit the claim before entering the application.
     pub async fn claim(
         &self,
-        partition: &str,
-        operation: &str,
+        partition: &wamn_registry::OrgId,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
         key: &str,
         request: &[u8],
     ) -> anyhow::Result<Claim> {
@@ -146,13 +146,13 @@ impl EdgeStore {
             .await?;
         // This first write serializes claims before their lookup.
         let inserted = sqlx::query("INSERT INTO claims (partition, operation, idempotency_key, request, begun_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (partition, operation, idempotency_key) DO NOTHING")
-            .bind(partition).bind(log_operation(operation)).bind(key).bind(request).bind(now_ms()?)
+            .bind(partition.as_str()).bind(log_operation(operation.as_str())).bind(key).bind(request).bind(now_ms()?)
             .execute(&mut *transaction).await?;
         let result = if inserted.rows_affected() == 1 {
             Claim::New(inserted.last_insert_rowid())
         } else {
             let row = sqlx::query("SELECT request, outcome, begun_at FROM claims WHERE partition = ? AND operation = ? AND idempotency_key = ?")
-                .bind(partition).bind(log_operation(operation)).bind(key).fetch_one(&mut *transaction).await?;
+                .bind(partition.as_str()).bind(log_operation(operation.as_str())).bind(key).fetch_one(&mut *transaction).await?;
             if row.get::<Vec<u8>, _>(0) != request {
                 Claim::Conflict
             } else if let Some(outcome) = row.get::<Option<String>, _>(1) {
@@ -243,7 +243,12 @@ mod tests {
         drop(store.pool().acquire().await.unwrap());
         assert!(EdgeStore::open(&path).await.is_err());
         let Claim::New(id) = store
-            .claim("partition", "sample:device/read@1", "key", &[1])
+            .claim(
+                &"partition".parse().unwrap(),
+                &"sample:device/read@1".parse().unwrap(),
+                "key",
+                &[1],
+            )
             .await
             .unwrap()
         else {
@@ -251,28 +256,48 @@ mod tests {
         };
         assert!(matches!(
             store
-                .claim("partition", "sample:device/read@2", "key", &[1])
+                .claim(
+                    &"partition".parse().unwrap(),
+                    &"sample:device/read@2".parse().unwrap(),
+                    "key",
+                    &[1]
+                )
                 .await
                 .unwrap(),
             Claim::InProgress
         ));
         assert!(matches!(
             store
-                .claim("partition", "sample:device/read@1", "key", &[2])
+                .claim(
+                    &"partition".parse().unwrap(),
+                    &"sample:device/read@1".parse().unwrap(),
+                    "key",
+                    &[2]
+                )
                 .await
                 .unwrap(),
             Claim::Conflict
         ));
         assert!(matches!(
             store
-                .claim("partition", "sample:device/other@1", "key", &[1])
+                .claim(
+                    &"partition".parse().unwrap(),
+                    &"sample:device/other@1".parse().unwrap(),
+                    "key",
+                    &[1]
+                )
                 .await
                 .unwrap(),
             Claim::New(_)
         ));
         assert!(matches!(
             store
-                .claim("other", "sample:device/read@1", "key", &[1])
+                .claim(
+                    &"other".parse().unwrap(),
+                    &"sample:device/read@1".parse().unwrap(),
+                    "key",
+                    &[1]
+                )
                 .await
                 .unwrap(),
             Claim::New(_)
@@ -288,7 +313,12 @@ mod tests {
         );
         assert!(matches!(
             store
-                .claim("partition", "sample:device/read@1", "key", &[1])
+                .claim(
+                    &"partition".parse().unwrap(),
+                    &"sample:device/read@1".parse().unwrap(),
+                    "key",
+                    &[1]
+                )
                 .await
                 .unwrap(),
             Claim::InProgress
@@ -310,7 +340,12 @@ mod tests {
         let reopened = EdgeStore::open(&path).await.unwrap();
         let closed = reopened.closed();
         let Claim::Finished(result) = reopened
-            .claim("partition", "sample:device/read@1", "key", &[1])
+            .claim(
+                &"partition".parse().unwrap(),
+                &"sample:device/read@1".parse().unwrap(),
+                "key",
+                &[1],
+            )
             .await
             .unwrap()
         else {

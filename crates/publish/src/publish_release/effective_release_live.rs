@@ -91,7 +91,7 @@ fn admit_components(
             });
         let declaration = crate::component_declaration::render_package_declaration(
             &input.root,
-            input.component,
+            &input.component.parse().unwrap(),
             &PROJECT_ENV_KEY.parse().unwrap(),
         )
         .unwrap_or_else(|error| panic!("render {}: {error}", input.component));
@@ -162,8 +162,8 @@ fn base_and_overlay_project_admitted_routes() {
     let attachments =
         resolve_route_methods(&authored_attachments, &types).expect("resolve the route methods");
     let request = PublishReleaseManifest {
-        org: "effective-release-poc",
-        project: "fixture",
+        org: &"effective-release-poc".parse().expect("fixed identifier"),
+        project: &"fixture".parse().expect("fixed identifier"),
         environment: &ENVIRONMENT.parse().unwrap(),
         packages: &packages,
         attachments: &attachments,

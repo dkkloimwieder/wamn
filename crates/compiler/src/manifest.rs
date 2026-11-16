@@ -9,6 +9,7 @@ use wamn_record_history::{
 };
 
 use crate::manifest_error::{ManifestError, ManifestErrorType};
+use crate::source_name::SourceName;
 use wamn_catalog::local_operation::LocalOperation;
 
 pub use wamn_catalog::manifest::CONTROL_OWNED_RELATION_TABLES;
@@ -25,7 +26,7 @@ pub struct PackageManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_package: Option<ClientPackage>,
     #[serde(default)]
-    pub base_dependencies: BTreeMap<String, BaseDependencyRequirement>,
+    pub base_dependencies: BTreeMap<SourceName, BaseDependencyRequirement>,
     pub required_platform_policy_contract: PolicyContractRequirement,
     /// The target types the package may run on. Empty reads as `cloud` only,
     /// and a package with models runs on `cloud` only
@@ -35,14 +36,14 @@ pub struct PackageManifest {
     /// The number sequences the package fills or calls, by name, each with
     /// its default pattern.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub sequences: BTreeMap<String, SequenceDeclaration>,
-    pub models: BTreeMap<String, ModelDeclaration>,
+    pub sequences: BTreeMap<SourceName, SequenceDeclaration>,
+    pub models: BTreeMap<SourceName, ModelDeclaration>,
     #[serde(default)]
-    pub internal_relations: BTreeMap<String, InternalRelationDeclaration>,
+    pub internal_relations: BTreeMap<SourceName, InternalRelationDeclaration>,
     #[serde(default)]
     pub custom_operations: BTreeMap<LocalOperation, CustomOperationDeclaration>,
-    pub connections: BTreeMap<String, ConnectionDeclaration>,
-    pub components: BTreeMap<String, ComponentDeclaration>,
+    pub connections: BTreeMap<wamn_catalog::canonical_name::CanonicalName, ConnectionDeclaration>,
+    pub components: BTreeMap<SourceName, ComponentDeclaration>,
     /// The route entries generation writes for the generated operations.
     #[serde(default, skip_serializing_if = "RoutesDeclaration::is_default")]
     pub routes: RoutesDeclaration,
@@ -111,21 +112,21 @@ pub struct CustomOperationDeclaration {
     #[serde(default)]
     pub permission: Option<LocalOperation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub component: Option<String>,
+    pub component: Option<SourceName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub connection: Option<String>,
+    pub connection: Option<SourceName>,
     pub input: CustomOperationInputDeclaration,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<CustomOperationResultDeclaration>,
-    pub errors: Vec<String>,
+    pub errors: Vec<SourceName>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub error_details: BTreeMap<String, OperationErrorDetailDeclaration>,
+    pub error_details: BTreeMap<SourceName, OperationErrorDetailDeclaration>,
     #[serde(default)]
-    pub constraint_errors: BTreeMap<String, String>,
+    pub constraint_errors: BTreeMap<SourceName, SourceName>,
     #[serde(default)]
     pub relations: Vec<StaticSqlRelationDeclaration>,
     #[serde(default)]
-    pub statements: BTreeMap<String, StaticSqlStatementDeclaration>,
+    pub statements: BTreeMap<SourceName, StaticSqlStatementDeclaration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transaction: Option<CommandTransaction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -175,8 +176,8 @@ impl CustomOperationDeclaration {
     }
 
     /// Optional package-local component group; omission selects the sole group.
-    pub fn component(&self) -> Option<&str> {
-        self.component.as_deref()
+    pub fn component(&self) -> Option<&SourceName> {
+        self.component.as_ref()
     }
 
     /// Whether this operation's export works in the host transaction itself:
@@ -370,7 +371,7 @@ pub struct ContractFieldDeclaration {
 #[serde(deny_unknown_fields)]
 pub struct FieldReference {
     /// Model whose record the value names.
-    pub model: String,
+    pub model: SourceName,
     /// Input path of the same operation that narrows the list, when one does.
     ///
     /// One line of a batch names a record of the maker the operator already
@@ -390,7 +391,7 @@ pub struct ListDeclaration {
     /// Model whose records a selector offers from these rows. Absent when no
     /// selector offers them, for example rows of a total or of a history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    pub model: Option<SourceName>,
     /// Result fields of this operation whose values together name one row.
     /// One field is spelled as a string, and several as a list.
     #[serde(with = "row_key")]
@@ -520,15 +521,17 @@ pub enum AccessOperationErrorLiteral {
     CursorExpired,
 }
 
-/// One migration-derived relation consumed by static custom-operation SQL.
+/// One relation consumed by static custom-operation SQL.
+/// Authored declarations use SourceName. Generated SQL facts use CanonicalName.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct StaticSqlRelationDeclaration {
-    pub schema: String,
-    pub table: String,
-    pub select_fields: Vec<String>,
-    pub insert_fields: Vec<String>,
-    pub update_fields: Vec<String>,
+#[serde(bound(deserialize = "Name: Deserialize<'de>"))]
+pub struct StaticSqlRelationDeclaration<Name = SourceName> {
+    pub schema: Name,
+    pub table: Name,
+    pub select_fields: Vec<Name>,
+    pub insert_fields: Vec<Name>,
+    pub update_fields: Vec<Name>,
     /// Whether verified SQL deletes rows from this relation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub delete: bool,
@@ -536,7 +539,7 @@ pub struct StaticSqlRelationDeclaration {
     /// UPDATE carrier needed for the lock and does not treat it as DML intent.
     pub lock: bool,
     #[serde(default)]
-    pub constraints: Vec<String>,
+    pub constraints: Vec<Name>,
 }
 
 /// One static SQL accessor signature shared by native and Wamn projections.
@@ -554,7 +557,7 @@ pub struct StaticSqlStatementDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StaticSqlValueDeclaration {
-    pub name: String,
+    pub name: SourceName,
     #[serde(rename = "type")]
     pub ty: wamn_scalar::SqlValueType,
     /// `wamn build` states it for every value. A compiled `wamn.k` that does
@@ -688,7 +691,7 @@ impl PackageManifest {
     pub(crate) fn validate(&self) -> Result<(), ManifestError> {
         let manifest = self;
         for (name, connection) in &manifest.connections {
-            if !valid_connection_name(name) {
+            if !valid_connection_name(name.as_str()) {
                 return Err(ManifestError::new(
                     ManifestErrorType::InvalidConnection,
                     "connection name must match ^[a-z][a-z0-9-]{0,62}$",
@@ -710,10 +713,7 @@ impl PackageManifest {
                 ));
             }
         }
-        validate_identifier(
-            &manifest.required_platform_policy_contract.id,
-            "platform policy contract",
-        )?;
+
         if manifest.models.is_empty()
             && !manifest.declares_no_sql()
             && !manifest.uses_only_base_sql()
@@ -736,9 +736,11 @@ impl PackageManifest {
                     .find(|field| field.revision.is_revision())
                     .map(|field| field.path.as_str())
                     .or_else(|| match &operation.idempotent_by {
-                        Some(crate::manifest::CommandIdempotence::State(state)) => {
-                            state.guards.values().next().map(String::as_str)
-                        }
+                        Some(crate::manifest::CommandIdempotence::State(state)) => state
+                            .guards
+                            .values()
+                            .next()
+                            .map(std::string::String::as_str),
                         _ => None,
                     });
                 if let Some(revision) = revision {
@@ -771,7 +773,7 @@ impl PackageManifest {
     /// Resolve the host connections declared by one component.
     pub fn component_connections(
         &self,
-        component: &str,
+        component: &SourceName,
     ) -> Result<Vec<wamn_catalog::ComponentConnection>, ManifestError> {
         self.components[component]
             .connections
@@ -865,10 +867,9 @@ pub fn validate_operation_vocabulary(
     let mut component_by_operation = BTreeMap::new();
     let mut artifact_owners = BTreeMap::new();
     for (model_name, model) in &manifest.models {
-        validate_identifier(model_name, "operation module")?;
         validate_audit_log(manifest, model_name, model)?;
         validate_delete_mode(manifest, model_name, model)?;
-        artifact_owners.insert(model_name.clone(), format!("model {model_name}"));
+        artifact_owners.insert(model_name.to_string(), format!("model {model_name}"));
         for (action, operation) in &model.operations {
             let identity = LocalOperation::try_from(format!("{model_name}.{}", action.as_str()))?;
             if operation.permission != identity {
@@ -885,7 +886,7 @@ pub fn validate_operation_vocabulary(
                     format!("manifest repeats declared operation {identity}"),
                 ));
             }
-            component_by_operation.insert(identity.clone(), operation.component.as_deref());
+            component_by_operation.insert(identity.clone(), operation.component.as_ref());
         }
     }
     for (operation_name, operation) in &manifest.custom_operations {
@@ -918,7 +919,7 @@ pub fn validate_operation_vocabulary(
 /// Refuse a record-history declaration whose shape is invalid without a catalog.
 fn validate_audit_log(
     manifest: &PackageManifest,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
 ) -> Result<(), ManifestError> {
     let refuse =
@@ -964,7 +965,7 @@ fn validate_audit_log(
             "{model_name} audit_log retention must be none, unlimited, or P<n>D with a positive whole number of days"
         ));
     }
-    if model.log_retention().is_some() && !history_object_names_fit(&model.table) {
+    if model.log_retention().is_some() && !history_object_names_fit(model.table.as_str()) {
         return Err(ManifestError::for_object(
             ManifestErrorType::InvalidModel,
             format!(
@@ -985,7 +986,7 @@ fn validate_audit_log(
 /// package cannot delete a base row.
 fn validate_delete_mode(
     manifest: &PackageManifest,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
 ) -> Result<(), ManifestError> {
     let refuse =
@@ -1013,7 +1014,7 @@ fn validate_delete_mode(
 }
 
 fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(), ManifestError> {
-    let mut coordinates = BTreeMap::<(String, String), String>::new();
+    let mut coordinates = BTreeMap::<(SourceName, SourceName), String>::new();
     for (model_id, model) in &manifest.models {
         if CONTROL_OWNED_RELATION_TABLES.contains(&model.table.as_str()) {
             return Err(ManifestError::new(
@@ -1024,11 +1025,11 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
                 ),
             ));
         }
-        if is_history_table_name(&model.table) {
+        if is_history_table_name(model.table.as_str()) {
             return Err(reserved_history_name(
                 &format!("model {model_id}"),
-                &model.schema,
-                &model.table,
+                model.schema.as_str(),
+                model.table.as_str(),
             ));
         }
         if let Some(existing) = coordinates.insert(
@@ -1045,9 +1046,6 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
         }
     }
     for (relation_id, relation) in &manifest.internal_relations {
-        validate_identifier(relation_id, "internal relation")?;
-        validate_identifier(&relation.schema, "internal relation schema")?;
-        validate_identifier(&relation.table, "internal relation table")?;
         if CONTROL_OWNED_RELATION_TABLES.contains(&relation.table.as_str()) {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidManifest,
@@ -1058,11 +1056,13 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
             ));
         }
         // A history table takes its table name as its CDC exclusion relation id.
-        if is_history_table_name(relation_id) || is_history_table_name(&relation.table) {
+        if is_history_table_name(relation_id.as_str())
+            || is_history_table_name(relation.table.as_str())
+        {
             return Err(reserved_history_name(
                 &format!("internal relation {relation_id}"),
-                &relation.schema,
-                &relation.table,
+                relation.schema.as_str(),
+                relation.table.as_str(),
             ));
         }
         if manifest.models.contains_key(relation_id) {
@@ -1153,7 +1153,7 @@ fn validate_routes(routes: &RoutesDeclaration) -> Result<(), ManifestError> {
 
 fn validate_component_groups(
     manifest: &PackageManifest,
-    component_by_operation: &BTreeMap<LocalOperation, Option<&str>>,
+    component_by_operation: &BTreeMap<LocalOperation, Option<&SourceName>>,
 ) -> Result<(), ManifestError> {
     if manifest.components.is_empty() {
         return Err(ManifestError::new(
@@ -1163,16 +1163,9 @@ fn validate_component_groups(
     }
 
     for (name, declaration) in &manifest.components {
-        if name.is_empty() {
-            return Err(ManifestError::new(
-                ManifestErrorType::InvalidComponent,
-                "component name must not be empty",
-            ));
-        }
-        validate_identifier(name, "component")?;
         let mut seen = BTreeSet::new();
         for connection in &declaration.connections {
-            if !manifest.connections.contains_key(connection) || !seen.insert(connection) {
+            if !manifest.connections.contains_key(connection.as_str()) || !seen.insert(connection) {
                 return Err(ManifestError::new(
                     ManifestErrorType::InvalidConnection,
                     format!(
@@ -1188,21 +1181,15 @@ fn validate_component_groups(
     let mut grouped = manifest
         .components
         .keys()
-        .map(|name| (name.as_str(), 0_usize))
+        .map(|name| (name, 0_usize))
         .collect::<BTreeMap<_, _>>();
     for (operation, requested) in component_by_operation {
         let component = match requested {
-            Some("") => {
-                return Err(ManifestError::new(
-                    ManifestErrorType::InvalidComponent,
-                    format!("operation {operation} component must not be empty"),
-                ));
-            }
             Some(name) => {
-                validate_identifier(name, "component")?;
+
                 *name
             }
-            None => implicit.map(String::as_str).ok_or_else(|| {
+            None => implicit.ok_or_else(|| {
                 ManifestError::new(
                     ManifestErrorType::InvalidComponent,
                     format!(
@@ -1701,7 +1688,7 @@ fn validate_contract_path(
     let valid = !path.is_empty()
         && path.split('.').all(|segment| {
             let name = segment.strip_suffix("[]").unwrap_or(segment);
-            !name.is_empty() && validate_identifier(name, "contract field").is_ok()
+            !name.is_empty() && name.parse::<SourceName>().is_ok()
         });
     if valid {
         Ok(())
@@ -1719,7 +1706,7 @@ fn validate_custom_operation_errors(
     let errors = operation
         .errors
         .iter()
-        .map(String::as_str)
+        .map(super::source_name::SourceName::as_str)
         .collect::<BTreeSet<_>>();
     if errors.is_empty() || errors.len() != operation.errors.len() {
         return Err(ManifestError::new(
@@ -1736,9 +1723,6 @@ fn validate_custom_operation_errors(
             ),
         ));
     }
-    for error in &operation.errors {
-        validate_identifier(error, "custom-operation error")?;
-    }
     let authored_errors = errors
         .iter()
         .copied()
@@ -1747,7 +1731,7 @@ fn validate_custom_operation_errors(
     if operation
         .error_details
         .keys()
-        .map(String::as_str)
+        .map(super::source_name::SourceName::as_str)
         .collect::<BTreeSet<_>>()
         != authored_errors
     {
@@ -1766,18 +1750,17 @@ fn validate_custom_operation_errors(
         {
             validate_detail_keys(
                 operation_name,
-                error,
+                error.as_str(),
                 detail,
                 &[OperationErrorDetailKey::Constraint],
                 &[],
             )?;
         } else {
-            validate_unconstrained_detail_keys(operation_name, error, detail)?;
+            validate_unconstrained_detail_keys(operation_name, error.as_str(), detail)?;
         }
     }
     let mut mapped_errors = BTreeSet::new();
     for (constraint, error) in &operation.constraint_errors {
-        validate_identifier(constraint, "custom-operation constraint")?;
         if !errors.contains(error.as_str()) {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidOperation,
@@ -1941,10 +1924,10 @@ fn validate_static_sql_declarations(
     }
     let connection = operation
         .connection
-        .as_deref()
+        .as_ref()
         .expect("complete local SQL shape has a connection");
-    validate_identifier(connection, "custom-operation connection")?;
-    if connection != "postgres" && !manifest.connections.contains_key(connection) {
+
+    if connection != "postgres" && !manifest.connections.contains_key(connection.as_str()) {
         return Err(ManifestError::new(
             ManifestErrorType::InvalidOperation,
             format!("{operation_name} references unknown connection {connection}"),
@@ -1952,8 +1935,6 @@ fn validate_static_sql_declarations(
     }
     let mut relations = BTreeSet::new();
     for relation in &operation.relations {
-        validate_identifier(&relation.schema, "static SQL relation schema")?;
-        validate_identifier(&relation.table, "static SQL relation table")?;
         if CONTROL_OWNED_RELATION_TABLES.contains(&relation.table.as_str()) {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidOperation,
@@ -1964,7 +1945,7 @@ fn validate_static_sql_declarations(
             ));
         }
         // A history table admits a declared read. Only the log trigger writes it.
-        if is_history_table_name(&relation.table)
+        if is_history_table_name(relation.table.as_str())
             && (!relation.insert_fields.is_empty()
                 || !relation.update_fields.is_empty()
                 || relation.delete
@@ -2014,14 +1995,13 @@ fn validate_static_sql_declarations(
     let mut statement_paths = BTreeSet::new();
     let mut row_symbols = BTreeMap::new();
     for (name, statement) in &operation.statements {
-        validate_identifier(name, "static SQL statement")?;
-        if rust_identifier(name).is_none() {
+        if rust_identifier(name.as_str()).is_none() {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidIdentity,
                 format!("static SQL statement `{name}` is not a usable Rust identifier"),
             ));
         }
-        let row_symbol = format!("{}Row", rust_type_identifier(name));
+        let row_symbol = format!("{}Row", rust_type_identifier(name.as_str()));
         if let Some(existing) = row_symbols.insert(row_symbol.clone(), name.as_str()) {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidOperation,
@@ -2054,7 +2034,7 @@ fn validate_static_sql_declarations(
 fn validate_named_values(
     operation: &LocalOperation,
     type_: &str,
-    values: &[String],
+    values: &[SourceName],
 ) -> Result<(), ManifestError> {
     let unique = values.iter().collect::<BTreeSet<_>>();
     if unique.len() != values.len() {
@@ -2063,22 +2043,18 @@ fn validate_named_values(
             format!("{operation} repeats a declared {type_} name"),
         ));
     }
-    for value in values {
-        validate_identifier(value, type_)?;
-    }
     Ok(())
 }
 
 fn validate_static_sql_values(
     operation: &LocalOperation,
-    statement: &str,
+    statement: &SourceName,
     type_: &str,
     values: &[StaticSqlValueDeclaration],
 ) -> Result<(), ManifestError> {
     let mut names = BTreeSet::new();
     for value in values {
-        validate_identifier(&value.name, type_)?;
-        if rust_identifier(&value.name).is_none() {
+        if rust_identifier(value.name.as_str()).is_none() {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidIdentity,
                 format!(
@@ -2229,7 +2205,6 @@ pub fn resolve_operation_reference(
 fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), ManifestError> {
     let mut packages = BTreeSet::new();
     for (alias, requirement) in &manifest.base_dependencies {
-        validate_identifier(alias, "base dependency alias")?;
         if requirement.package == manifest.package.id {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidIdentity,
@@ -2271,21 +2246,6 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Manifest
         }
     }
     Ok(())
-}
-
-pub fn validate_identifier(value: &str, object: &str) -> Result<(), ManifestError> {
-    let mut bytes = value.bytes();
-    let valid_start = bytes.next().is_some_and(|byte| byte.is_ascii_lowercase());
-    let valid_tail =
-        bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
-    if valid_start && valid_tail && !value.ends_with('_') && !value.contains("__") {
-        Ok(())
-    } else {
-        Err(ManifestError::new(
-            ManifestErrorType::InvalidIdentity,
-            format!("{object} `{value}` must be singular snake_case"),
-        ))
-    }
 }
 
 /// Spell one singular snake_case name as a Rust 2024 identifier.
@@ -2373,7 +2333,9 @@ mod tests {
             super::PackageManifest::from_authored_slice(&serde_json::to_vec(document).unwrap())
         };
         let manifest = parse(&document).unwrap();
-        let connections = manifest.component_connections("notify").unwrap();
+        let connections = manifest
+            .component_connections(&"notify".parse().unwrap())
+            .unwrap();
         assert!(connections.iter().any(|connection| {
             connection.requirement_type == wamn_catalog::ComponentConnectionType::Http
                 && connection.mode == wamn_catalog::ConnectionMode::Write
@@ -2432,7 +2394,7 @@ pub struct ClientPackage {
 pub struct OperationOwners {
     pub package: PackageIdentity,
     #[serde(default)]
-    pub base_dependencies: BTreeMap<String, BaseDependencyRequirement>,
+    pub base_dependencies: BTreeMap<SourceName, BaseDependencyRequirement>,
 }
 
 impl OperationOwners {
@@ -2472,7 +2434,7 @@ pub struct BaseDependencyRequirement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyContractRequirement {
-    pub id: String,
+    pub id: SourceName,
     pub state: PolicyContractState,
 }
 
@@ -2488,8 +2450,8 @@ pub enum PolicyContractState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelDeclaration {
-    pub schema: String,
-    pub table: String,
+    pub schema: SourceName,
+    pub table: SourceName,
     pub owner: wamn_catalog::PackageName,
     #[serde(default)]
     pub client_field_extensible: bool,
@@ -2553,7 +2515,7 @@ pub struct SequenceDeclaration {
 pub struct ModelFieldDeclaration {
     /// The sequence whose next number the generated insert writes here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub number: Option<String>,
+    pub number: Option<SourceName>,
     /// The column's role.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<FieldRole>,
@@ -2570,11 +2532,11 @@ pub enum FieldRole {
 
 impl ModelDeclaration {
     /// The column a sequence numbers, and the sequence, if the model has one.
-    pub fn number_field(&self) -> Option<(&str, &str)> {
+    pub fn number_field(&self) -> Option<(&str, &SourceName)> {
         self.fields.iter().find_map(|(field, declaration)| {
             declaration
                 .number
-                .as_deref()
+                .as_ref()
                 .map(|sequence| (field.as_str(), sequence))
         })
     }
@@ -2632,8 +2594,8 @@ pub use wamn_catalog::manifest::{AuditLogDeclaration, RecordHistoryColumn};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InternalRelationDeclaration {
-    pub schema: String,
-    pub table: String,
+    pub schema: SourceName,
+    pub table: SourceName,
     pub cdc: CdcDisposition,
 }
 
@@ -2719,7 +2681,7 @@ pub struct OperationDeclaration {
     pub append_only: bool,
     pub permission: LocalOperation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub component: Option<String>,
+    pub component: Option<SourceName>,
     #[serde(default)]
     pub authored_sql: Option<AuthoredSqlDeclaration>,
     #[serde(default)]
@@ -2905,7 +2867,7 @@ pub struct RoutesDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpExposure {
-    pub id: String,
+    pub id: wamn_catalog::canonical_name::CanonicalName,
     pub path: String,
 }
 
@@ -2921,13 +2883,19 @@ impl RoutesDeclaration {
 pub struct ComponentDeclaration {
     /// External connection aliases available to every operation of this component.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub connections: Vec<String>,
+    pub connections: Vec<wamn_catalog::canonical_name::CanonicalName>,
     /// Private component exports outside the generated operation interfaces.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub exports: BTreeMap<String, wamn_catalog::ComponentOperationDeclaration>,
+    pub exports: BTreeMap<
+        wamn_catalog::canonical_name::CanonicalName,
+        wamn_catalog::ComponentOperationDeclaration,
+    >,
     /// Parameters of a generated operation, keyed by its local name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub parameters: BTreeMap<String, Vec<wamn_catalog::ComponentParameterDeclaration>>,
+    pub parameters: BTreeMap<
+        wamn_catalog::canonical_name::CanonicalName,
+        Vec<wamn_catalog::ComponentParameterDeclaration>,
+    >,
 }
 
 pub fn custom_artifact_stem(operation: &LocalOperation) -> String {
@@ -2980,17 +2948,17 @@ impl From<&PackageManifest> for wamn_catalog::manifest::PackageManifest {
             models: manifest
                 .models
                 .iter()
-                .map(|(name, model)| (name.clone(), model.into()))
+                .map(|(name, model)| (name.clone().into(), model.into()))
                 .collect(),
             internal_relations: manifest
                 .internal_relations
                 .iter()
                 .map(|(name, relation)| {
                     (
-                        name.clone(),
+                        name.clone().into(),
                         wamn_catalog::manifest::InternalRelation {
-                            schema: relation.schema.clone(),
-                            table: relation.table.clone(),
+                            schema: relation.schema.clone().into(),
+                            table: relation.table.clone().into(),
                         },
                     )
                 })
@@ -3002,8 +2970,8 @@ impl From<&PackageManifest> for wamn_catalog::manifest::PackageManifest {
 impl From<&ModelDeclaration> for wamn_catalog::manifest::ModelDeclaration {
     fn from(model: &ModelDeclaration) -> Self {
         Self {
-            schema: model.schema.clone(),
-            table: model.table.clone(),
+            schema: model.schema.clone().into(),
+            table: model.table.clone().into(),
             owner: model.owner.clone(),
             audit_log: model.audit_log.clone(),
         }

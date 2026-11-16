@@ -45,7 +45,7 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
             &SessionIdentity {
                 project_env_key: Some("test--dev--writelogtx".parse().unwrap()),
                 user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
-                operation: Some(OPERATION.into()),
+                operation: Some(OPERATION.parse().unwrap()),
                 ..SessionIdentity::default()
             },
         )
@@ -54,12 +54,16 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
     let transaction = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     assert!(matches!(
         transaction
-            .begin_opaque(OPERATION, "key", vec![1])
+            .begin_opaque(&OPERATION.parse().unwrap(), "key", vec![1])
             .await
             .unwrap(),
         super::Claim::New
     ));
-    transaction.finish_opaque(OPERATION, "key", json!({"value":{"id":7}}).to_string());
+    transaction.finish_opaque(
+        &OPERATION.parse().unwrap(),
+        "key",
+        json!({"value":{"id":7}}).to_string(),
+    );
     let mut observer = wamn_postgres::connect(database.as_str()).await.unwrap();
     let visible: bool = sqlx::query_scalar("SELECT EXISTS (SELECT FROM platform.write_log)")
         .fetch_one(&mut observer)
@@ -68,22 +72,27 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
     assert!(!visible);
     transaction.commit().await.unwrap();
     let retry = postgres.begin_operation_transaction(SCOPE).await.unwrap();
-    let super::Claim::Finished(result) =
-        retry.begin_opaque(OPERATION, "key", vec![1]).await.unwrap()
+    let super::Claim::Finished(result) = retry
+        .begin_opaque(&OPERATION.parse().unwrap(), "key", vec![1])
+        .await
+        .unwrap()
     else {
         panic!("completed claim replays");
     };
     let result: serde_json::Value = serde_json::from_str(&result).unwrap();
     assert_eq!(result["value"]["id"], 7);
     assert!(matches!(
-        retry.begin_opaque(OPERATION, "key", vec![2]).await.unwrap(),
+        retry
+            .begin_opaque(&OPERATION.parse().unwrap(), "key", vec![2])
+            .await
+            .unwrap(),
         super::Claim::Conflict
     ));
     retry.rollback().await.unwrap();
     let refused = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     assert!(matches!(
         refused
-            .begin_opaque(OPERATION, "refused", vec![1])
+            .begin_opaque(&OPERATION.parse().unwrap(), "refused", vec![1])
             .await
             .unwrap(),
         super::Claim::New
@@ -92,7 +101,7 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
     let again = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     assert!(matches!(
         again
-            .begin_opaque(OPERATION, "refused", vec![2])
+            .begin_opaque(&OPERATION.parse().unwrap(), "refused", vec![2])
             .await
             .unwrap(),
         super::Claim::New
@@ -102,14 +111,16 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
     let holder = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     assert!(matches!(
         holder
-            .begin_opaque(OPERATION, "competing", vec![1])
+            .begin_opaque(&OPERATION.parse().unwrap(), "competing", vec![1])
             .await
             .unwrap(),
         super::Claim::New
     ));
     let waiter = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     let waiting = tokio::spawn(async move {
-        let result = waiter.begin_opaque(OPERATION, "competing", vec![1]).await;
+        let result = waiter
+            .begin_opaque(&OPERATION.parse().unwrap(), "competing", vec![1])
+            .await;
         (waiter, result)
     });
     tokio::time::timeout(std::time::Duration::from_secs(120), async {
@@ -120,7 +131,11 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
             tokio::task::yield_now().await;
         }
     }).await.expect("competing claim waits for the uncommitted claim");
-    holder.finish_opaque(OPERATION, "competing", json!({"value":7}).to_string());
+    holder.finish_opaque(
+        &OPERATION.parse().unwrap(),
+        "competing",
+        json!({"value":7}).to_string(),
+    );
     holder.commit().await.unwrap();
     let (waiter, result) = waiting.await.unwrap();
     let super::Claim::Finished(result) = result.unwrap() else {
@@ -132,12 +147,14 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
 
     let lost = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     assert!(matches!(
-        lost.begin_opaque(OPERATION, "lost", vec![1]).await.unwrap(),
+        lost.begin_opaque(&OPERATION.parse().unwrap(), "lost", vec![1])
+            .await
+            .unwrap(),
         super::Claim::New
     ));
     sqlx::raw_sql("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction' AND pid <> pg_backend_pid()").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     assert!(
-        lost.begin_opaque(OPERATION, "after-loss", vec![1])
+        lost.begin_opaque(&OPERATION.parse().unwrap(), "after-loss", vec![1])
             .await
             .is_err()
     );
@@ -145,7 +162,7 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
     let recovered = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     assert!(matches!(
         recovered
-            .begin_opaque(OPERATION, "lost", vec![2])
+            .begin_opaque(&OPERATION.parse().unwrap(), "lost", vec![2])
             .await
             .unwrap(),
         super::Claim::New
@@ -164,7 +181,7 @@ async fn known_results_finish_at_host_commit_and_a_missing_finish_rolls_back(poo
             &SessionIdentity {
                 project_env_key: Some("test--dev--writelogtx".parse().unwrap()),
                 user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
-                operation: Some(OPERATION.into()),
+                operation: Some(OPERATION.parse().unwrap()),
                 ..SessionIdentity::default()
             },
         )
@@ -173,12 +190,16 @@ async fn known_results_finish_at_host_commit_and_a_missing_finish_rolls_back(poo
     let transaction = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     assert!(matches!(
         transaction
-            .begin_opaque(OPERATION, "missing", vec![1])
+            .begin_opaque(&OPERATION.parse().unwrap(), "missing", vec![1])
             .await
             .unwrap(),
         super::Claim::New
     ));
-    transaction.finish_opaque(OPERATION, "missing-other", json!({"value":1}).to_string());
+    transaction.finish_opaque(
+        &OPERATION.parse().unwrap(),
+        "missing-other",
+        json!({"value":1}).to_string(),
+    );
     assert!(transaction.commit().await.is_err());
     let known = postgres
         .begin_operation_transaction(SCOPE)
@@ -187,17 +208,21 @@ async fn known_results_finish_at_host_commit_and_a_missing_finish_rolls_back(poo
         .with_known_result(super::DELETED_RESULT.to_owned());
     assert!(matches!(
         known
-            .begin_opaque(OPERATION, "known", vec![1])
+            .begin_opaque(&OPERATION.parse().unwrap(), "known", vec![1])
             .await
             .unwrap(),
         super::Claim::New
     ));
-    known.finish_opaque(OPERATION, "known", super::DELETED_RESULT.to_owned());
+    known.finish_opaque(
+        &OPERATION.parse().unwrap(),
+        "known",
+        super::DELETED_RESULT.to_owned(),
+    );
     known.commit().await.unwrap();
     let replay = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     assert!(matches!(
         replay
-            .begin_opaque(OPERATION, "known", vec![1])
+            .begin_opaque(&OPERATION.parse().unwrap(), "known", vec![1])
             .await
             .unwrap(),
         super::Claim::Finished(_)
@@ -214,8 +239,8 @@ async fn model_versions_follow_wal_without_a_counter(pool: sqlx::PgPool) {
     let role = wamn_control_provision::workload_login(
         family,
         wamn_control_provision::WorkloadRoleIdentity::ProjectEnvironment {
-            org: "wal-test",
-            project: PROJECT,
+            org: &"wal-test".parse().unwrap(),
+            project: &PROJECT.parse().unwrap(),
             environment: &"test".parse().unwrap(),
             database: database.path().trim_start_matches('/'),
         },
@@ -250,7 +275,10 @@ async fn model_versions_follow_wal_without_a_counter(pool: sqlx::PgPool) {
     .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
     .await
     .unwrap();
-    let mut previous = postgres.model_version(PROJECT).await.unwrap();
+    let mut previous = postgres
+        .model_version(&PROJECT.parse().unwrap())
+        .await
+        .unwrap();
     for statement in [
         "UPDATE public.etag_rows SET id = 3 WHERE id = 1",
         "DELETE FROM public.etag_rows WHERE id = 3",
@@ -260,7 +288,10 @@ async fn model_versions_follow_wal_without_a_counter(pool: sqlx::PgPool) {
             .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
             .await
             .unwrap();
-        let current = postgres.model_version(PROJECT).await.unwrap();
+        let current = postgres
+            .model_version(&PROJECT.parse().unwrap())
+            .await
+            .unwrap();
         assert_ne!(previous, current, "{statement}");
         previous = current;
     }
@@ -274,19 +305,28 @@ async fn unfinished_claims_have_a_call_bound_and_accept_late_completion(pool: sq
         project_env_key_database(&pool, &"test--dev--writelogtx".parse().unwrap()).await;
     let store = WriteLogStore::new(
         postgres,
-        PROJECT.to_owned(),
+        PROJECT.parse().unwrap(),
         "test--dev--writelogtx".parse().unwrap(),
     );
     assert!(matches!(
-        store.claim(OPERATION, "late", vec![1]).await.unwrap(),
+        store
+            .claim(&OPERATION.parse().unwrap(), "late", vec![1])
+            .await
+            .unwrap(),
         super::Claim::New
     ));
     assert!(matches!(
-        store.claim(OPERATION, "late", vec![1]).await.unwrap(),
+        store
+            .claim(&OPERATION.parse().unwrap(), "late", vec![1])
+            .await
+            .unwrap(),
         super::Claim::InProgress
     ));
     assert!(matches!(
-        store.claim(OPERATION, "late", vec![2]).await.unwrap(),
+        store
+            .claim(&OPERATION.parse().unwrap(), "late", vec![2])
+            .await
+            .unwrap(),
         super::Claim::Conflict
     ));
     let bound = wamn_engine::engine::MAX_HOST_CALL_DURATION.as_secs() + 1;
@@ -297,7 +337,10 @@ async fn unfinished_claims_have_a_call_bound_and_accept_late_completion(pool: sq
     .await
     .unwrap();
     assert!(matches!(
-        store.claim(OPERATION, "late", vec![1]).await.unwrap(),
+        store
+            .claim(&OPERATION.parse().unwrap(), "late", vec![1])
+            .await
+            .unwrap(),
         super::Claim::InProgress
     ));
     let bound =
@@ -309,14 +352,24 @@ async fn unfinished_claims_have_a_call_bound_and_accept_late_completion(pool: sq
     .await
     .unwrap();
     assert!(matches!(
-        store.claim(OPERATION, "late", vec![1]).await.unwrap(),
+        store
+            .claim(&OPERATION.parse().unwrap(), "late", vec![1])
+            .await
+            .unwrap(),
         super::Claim::OutcomeUnknown
     ));
     store
-        .complete(OPERATION, "late", json!({"value":7}).to_string())
+        .complete(
+            &OPERATION.parse().unwrap(),
+            "late",
+            json!({"value":7}).to_string(),
+        )
         .await
         .unwrap();
-    let super::Claim::Finished(result) = store.claim(OPERATION, "late", vec![1]).await.unwrap()
+    let super::Claim::Finished(result) = store
+        .claim(&OPERATION.parse().unwrap(), "late", vec![1])
+        .await
+        .unwrap()
     else {
         panic!("late completion replays");
     };
@@ -324,12 +377,19 @@ async fn unfinished_claims_have_a_call_bound_and_accept_late_completion(pool: sq
     assert_eq!(result["value"], 7);
     assert!(
         store
-            .complete(OPERATION, "late", json!({"value":9}).to_string())
+            .complete(
+                &OPERATION.parse().unwrap(),
+                "late",
+                json!({"value":9}).to_string()
+            )
             .await
             .is_err()
     );
     assert!(matches!(
-        store.claim(OPERATION, "expired", vec![1]).await.unwrap(),
+        store
+            .claim(&OPERATION.parse().unwrap(), "expired", vec![1])
+            .await
+            .unwrap(),
         super::Claim::New
     ));
     {
@@ -346,7 +406,10 @@ async fn unfinished_claims_have_a_call_bound_and_accept_late_completion(pool: sq
         }
     }
     assert!(matches!(
-        store.claim(OPERATION, "expired", vec![1]).await.unwrap(),
+        store
+            .claim(&OPERATION.parse().unwrap(), "expired", vec![1])
+            .await
+            .unwrap(),
         super::Claim::New
     ));
 }
@@ -364,8 +427,8 @@ async fn cancellation_retains_external_claims_and_rolls_back_transactional_claim
     let mut observer = wamn_postgres::connect(database.as_str()).await.unwrap();
     let route = wamn_catalog::ServingRoute {
         package_id: "base".parse().unwrap(),
-        component: "widget".into(),
-        operation: OPERATION.into(),
+        component: "widget".parse().unwrap(),
+        operation: OPERATION.parse().unwrap(),
         type_: wamn_catalog::OperationType::Command,
         idempotency: None,
         reads: Default::default(),
@@ -380,7 +443,7 @@ async fn cancellation_retains_external_claims_and_rolls_back_transactional_claim
                 identity: SessionIdentity {
                     project_env_key: Some("test--dev--writelogtx".parse().unwrap()),
                     user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
-                    operation: Some(OPERATION.into()),
+                    operation: Some(OPERATION.parse().unwrap()),
                     ..SessionIdentity::default()
                 },
                 caller: None,
@@ -396,7 +459,7 @@ async fn cancellation_retains_external_claims_and_rolls_back_transactional_claim
         let result = postgres
             .invoke_node(
                 &authority,
-                OPERATION,
+                &OPERATION.parse().unwrap(),
                 &route,
                 transacted,
                 &json!([{"request_id":key,"value":7}]),

@@ -24,8 +24,8 @@ pub fn login(
 /// Explicit operator connections must supply this role's own credential separately.
 pub fn configuration(
     input: &str,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
 ) -> anyhow::Result<String> {
     let input = wamn_postgres::configuration(input)?;
@@ -37,7 +37,7 @@ pub fn configuration(
     let key = wamn_registry::project_env_key(org, project, environment);
     config.username = login(&key, &config.database)?;
     config.credentials = wamn_postgres::SecretRef {
-        namespace: org.into(),
+        namespace: org.to_string(),
         name: crate::workload_secret_name(WorkloadRoleFamily::Migration, org, project, environment),
     };
     config.to_json()

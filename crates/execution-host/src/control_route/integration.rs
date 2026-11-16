@@ -147,7 +147,7 @@ impl ControlRoutes<'_> {
         } else {
             None
         };
-        let environments: Vec<(String, wamn_registry::EnvName)> = sqlx::query_as(wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN).bind(self.org).bind(&project).bind(projection_env).fetch_all(&mut *transaction)
+        let environments: Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)> = sqlx::query_as(wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN).bind(self.org).bind(&project).bind(projection_env).fetch_all(&mut *transaction)
             .await?;
         if group == "connection" {
             for (_, env) in &environments {
@@ -275,7 +275,7 @@ impl ControlRoutes<'_> {
             }
             .await;
             if let Err(error) = projected {
-                tracing::warn!(%error,project,%env,"integration projection failed");
+                tracing::warn!(%error,%project,%env,"integration projection failed");
                 return Err(incomplete(project, env, &completed));
             }
             completed.push(format!("{project}/{env}"));
@@ -293,7 +293,7 @@ impl ControlRoutes<'_> {
 
 async fn deletion_identity(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
+    org: &wamn_registry::OrgId,
     group: &str,
     request: &Value,
 ) -> Result<String, Refusal> {

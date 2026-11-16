@@ -166,18 +166,11 @@ pub(super) async fn resources_in_place(
     {
         return Ok(false);
     }
-    let name = environment_host_name(&document.org, &document.env)?;
+    let name = wamn_registry::name::environment_host_name(&document.org, &document.env);
     if !super::analyse::release_present(platform, &name).await? {
         return Ok(false);
     }
     Ok(true)
-}
-
-pub(super) fn environment_host_name(
-    org: &str,
-    env: &wamn_registry::EnvName,
-) -> anyhow::Result<String> {
-    Ok(wamn_registry::name::environment_host_name(org, env)?)
 }
 
 /// Render the shared host without application release arguments or labels.
@@ -195,7 +188,7 @@ pub fn environment_host_values(
     let group = super::write::plan::host_group(host_group.unwrap_or_default())?;
     let registry_arguments = super::write::plan::registry_arguments(&group);
     let mut group = serde_json::to_value(group)?;
-    let name = environment_host_name(&document.org, &document.env)?;
+    let name = wamn_registry::name::environment_host_name(&document.org, &document.env);
     for field in [
         "name",
         "namespace",
@@ -260,7 +253,7 @@ pub fn environment_host_values(
         }
     }
     for (key, value) in [
-        ("WAMN_ORG", document.org.clone()),
+        ("WAMN_ORG", document.org.to_string()),
         ("WAMN_DRAIN_BOUND_SECONDS", drain_bound_seconds.to_string()),
     ]
     .into_iter()
@@ -292,7 +285,7 @@ pub fn environment_host_values(
 fn configure_projects(
     values: &mut serde_json::Value,
     document: &EnvironmentDocument,
-    projects: &[String],
+    projects: &[wamn_registry::ProjectId],
     name: &str,
 ) -> anyhow::Result<()> {
     use serde_json::json;
@@ -336,7 +329,7 @@ pub(super) async fn provision_environment_host(
         .events
         .as_ref()
         .context("environment provisioning requires the event broker")?;
-    let name = environment_host_name(&document.org, &document.env)?;
+    let name = wamn_registry::name::environment_host_name(&document.org, &document.env);
     let installed = crate::platform::resources::release_values(
         &platform.target,
         &platform.target.namespace,
@@ -366,7 +359,7 @@ pub(super) async fn provision_environment_host(
         &mut desired,
         document,
         &projects,
-        &wamn_registry::name::environment_host_name(&document.org, &document.env)?,
+        &wamn_registry::name::environment_host_name(&document.org, &document.env),
     )?;
     let cluster =
         resolve_cluster(&platform.system_database_url, &document.org, &policy_name).await?;
@@ -404,7 +397,7 @@ pub(super) async fn provision_environment_host(
 
 /// Remove one project's runtime access while leaving the other projects served.
 pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
-    let name = environment_host_name(&triple.org, &triple.env)?;
+    let name = wamn_registry::name::environment_host_name(&triple.org, &triple.env);
     let Some(mut values) = crate::platform::resources::release_values(
         &platform.target,
         &platform.target.namespace,
@@ -417,7 +410,7 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     let projects = values["projects"]
         .as_array_mut()
         .context("environment host has no project projection")?;
-    projects.retain(|project| project.as_str() != Some(&triple.project));
+    projects.retain(|project| project.as_str() != Some(triple.project.as_str()));
     if projects.is_empty() {
         values["runtime-operator"]["runtime"]["hostGroups"] = serde_json::json!([]);
         wamn_platform_install::environment::apply(
@@ -694,7 +687,7 @@ pub(super) async fn prepare_cdc(
     crate::provision_project_env::workload::wait_role(admin, &role).await?;
     let options = wamn_postgres::connect_options(project_admin_url).await?;
     let config = crate::provision_project_env::workload::configuration(
-        &document.org,
+        document.org.as_str(),
         &cluster,
         options.get_host().into(),
         options.get_port(),
@@ -705,7 +698,7 @@ pub(super) async fn prepare_cdc(
         role.clone(),
         secret_name.clone(),
     );
-    wamn_kubernetes::kubectl::apply(&platform.target.kubeconfig,&platform.target.context,&document.org,
+    wamn_kubernetes::kubectl::apply(&platform.target.kubeconfig,&platform.target.context,document.org.as_str(),
         &serde_json::json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"namespace":document.org,"name":secret_name},"data":{"connection.json":config.to_json()?}})
     ).await?;
 
@@ -752,7 +745,11 @@ pub(crate) async fn ensure_cdc_inputs(
     let manifests = installed_manifests(platform, document).await?;
     let schemas = manifests
         .iter()
-        .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
+        .flat_map(|manifest| {
+            manifest.models.values().map(|model| {
+                wamn_catalog::canonical_name::CanonicalName::from(model.schema.clone())
+            })
+        })
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
@@ -784,12 +781,12 @@ pub(crate) async fn ensure_cdc_inputs(
     .collect::<std::collections::BTreeSet<_>>();
     for manifest in &manifests {
         for model in manifest.models.values() {
-            if !full.insert((model.schema.clone(), model.table.clone())) {
+            if !full.insert((model.schema.to_string(), model.table.to_string())) {
                 continue;
             }
             let sql = crate::replica_identity::alter_replica_identity_sql(
-                &model.schema,
-                &model.table,
+                &model.schema.clone().into(),
+                &model.table.clone().into(),
                 crate::replica_identity::ReplicaIdentity::Full,
             );
             sqlx::raw_sql(sqlx::AssertSqlSafe(sql.clone()))
@@ -946,7 +943,7 @@ pub(super) async fn ensure_streams(
 async fn enable_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
-    schemas: &[String],
+    schemas: &[wamn_catalog::canonical_name::CanonicalName],
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
 ) -> anyhow::Result<()> {
     platform.events.as_ref().context(
@@ -1026,7 +1023,7 @@ async fn enable_cdc(
 pub async fn cdc_in_place(
     project: &mut sqlx::PgConnection,
     cdc_name: &str,
-    schemas: &[String],
+    schemas: &[wamn_catalog::canonical_name::CanonicalName],
 ) -> anyhow::Result<bool> {
     Ok(sqlx::query("SELECT EXISTS (SELECT FROM pg_publication p WHERE p.pubname = $1 \
          AND NOT p.puballtables \
@@ -1215,11 +1212,11 @@ mod tests {
             reapplied["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
             image
         );
-        let projects = vec![document.project.clone(), "billing".into()];
-        let name = environment_host_name(&document.org, &document.env)?;
+        let projects = vec![document.project.clone(), "billing".parse().unwrap()];
+        let name = wamn_registry::name::environment_host_name(&document.org, &document.env);
         configure_projects(&mut reapplied, &document, &projects, &name)?;
         let entry = json!({"chart":chart.0.join("platform/environment"), "version":crate::platform::artifact_plan::select(&chart.0)?.version,
-            "name":environment_host_name(&document.org, &document.env)?,
+            "name":wamn_registry::name::environment_host_name(&document.org, &document.env),
             "namespace":"hosts", "values":reapplied});
         let objects = wamn_kubernetes::helm::template(&entry)?;
         let host = objects
@@ -1243,7 +1240,7 @@ mod tests {
         for project in &projected {
             let expected = wamn_control_provision::project_env_secret_name(
                 &document.org,
-                project,
+                &project.parse().unwrap(),
                 &document.env,
             );
             assert!(
@@ -1282,5 +1279,5 @@ pub(super) async fn prepare_cdc_with_connection(
         &document.project,
         &document.env,
     );
-    wamn_kubernetes::kubectl::apply(&platform.target.kubeconfig,&platform.target.context,&document.org,&serde_json::json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":document.org},"data":{"connection.json":capture}})).await
+    wamn_kubernetes::kubectl::apply(&platform.target.kubeconfig,&platform.target.context,document.org.as_str(),&serde_json::json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":document.org},"data":{"connection.json":capture}})).await
 }

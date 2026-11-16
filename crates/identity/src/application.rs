@@ -624,8 +624,8 @@ pub async fn project_authority(
 /// The explicit environment of one authority projection.
 #[derive(Debug, Clone, Copy)]
 pub struct ApplicationTarget<'a> {
-    pub org: &'a str,
-    pub project: &'a str,
+    pub org: &'a wamn_registry::OrgId,
+    pub project: &'a wamn_registry::ProjectId,
     pub env: &'a wamn_registry::EnvName,
     pub project_env_key: &'a wamn_registry::ProjectEnvKey,
 }

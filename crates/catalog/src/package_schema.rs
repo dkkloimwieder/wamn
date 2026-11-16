@@ -1,7 +1,7 @@
 //! Package inputs and the physical relation declarations used by CDC.
 
-use crate::PackageCoordinate;
 use crate::manifest::PackageManifest;
+use crate::{PackageCoordinate, canonical_name::CanonicalName};
 use wamn_record_history::history_table_name;
 
 /// An immutable authored or compiler-generated migration.
@@ -29,9 +29,9 @@ pub struct PackageDirectory {
 /// Sole package-local model-key to physical relation mapping.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedModel {
-    pub model_id: String,
-    pub schema: String,
-    pub table: String,
+    pub model_id: CanonicalName,
+    pub schema: CanonicalName,
+    pub table: CanonicalName,
 }
 
 /// Package-owned relation excluded from CDC publication.
@@ -40,9 +40,9 @@ pub struct ManagedModel {
 /// logged relation is excluded by the declaration of that relation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CdcExcludedRelation {
-    pub relation_id: String,
-    pub schema: String,
-    pub table: String,
+    pub relation_id: CanonicalName,
+    pub schema: CanonicalName,
+    pub table: CanonicalName,
 }
 
 /// Package relation declarations. SQLx owns migration planning.
@@ -61,7 +61,7 @@ pub fn package_metadata(directory: &PackageDirectory) -> anyhow::Result<PackageM
     let mut cdc_excluded_relations = Vec::new();
     for (model_id, model) in manifest.models {
         if model.log_retention().is_some() {
-            let table = history_table_name(&model.table);
+            let table: CanonicalName = history_table_name(model.table.as_str()).parse()?;
             cdc_excluded_relations.push(CdcExcludedRelation {
                 relation_id: table.clone(),
                 schema: model.schema.clone(),

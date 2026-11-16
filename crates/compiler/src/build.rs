@@ -382,7 +382,9 @@ async fn register_verification_principal(connection: &mut sqlx::PgConnection) ->
 async fn history_columns(
     database_url: &str,
     manifest: &PackageManifest,
-) -> Result<BTreeMap<String, Vec<crate::history::RelationColumn>>> {
+) -> Result<
+    BTreeMap<wamn_catalog::canonical_name::CanonicalName, Vec<crate::history::RelationColumn>>,
+> {
     use crate::history::{RelationColumn, SELECT_RELATION_COLUMNS_SQL};
     let client = wamn_postgres::pool(database_url, 4).await?;
     let result = async {
@@ -397,7 +399,7 @@ async fn history_columns(
                 .fetch_all(&client)
                 .await?;
             columns.insert(
-                id.clone(),
+                id.clone().into(),
                 rows.iter()
                     .map(|row| RelationColumn {
                         name: row.get(0),
@@ -712,7 +714,7 @@ async fn migrate(
     let mut schemas = manifest.schemas();
     let mut directories = Vec::new();
     for base in bases {
-        schemas.extend(base.models.values().map(|model| model.schema.clone()));
+        schemas.extend(base.models.values().map(|model| model.schema.to_string()));
         directories.push(package_output(output_root, &base.package.id));
     }
     schemas.sort();
@@ -1088,8 +1090,9 @@ mod tests {
 struct ManifestSources {
     package: crate::manifest::PackageIdentity,
     #[serde(default)]
-    base_dependencies: BTreeMap<String, crate::manifest::BaseDependencyRequirement>,
-    models: BTreeMap<String, crate::manifest::ModelDeclaration>,
+    base_dependencies:
+        BTreeMap<crate::source_name::SourceName, crate::manifest::BaseDependencyRequirement>,
+    models: BTreeMap<crate::source_name::SourceName, crate::manifest::ModelDeclaration>,
     #[serde(default)]
     custom_operations: BTreeMap<String, OperationSources>,
 }
@@ -1113,7 +1116,7 @@ impl ManifestSources {
     fn schemas(&self) -> Vec<String> {
         self.models
             .values()
-            .map(|model| model.schema.clone())
+            .map(|model| model.schema.to_string())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()

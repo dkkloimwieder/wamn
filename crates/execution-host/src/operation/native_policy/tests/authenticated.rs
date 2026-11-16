@@ -81,8 +81,8 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
     let generation = workload_login(
         WorkloadRoleFamily::HttpAdmitter,
         WorkloadRoleIdentity::ProjectEnvironment {
-            org: ORG,
-            project: PROJECT,
+            org: &ORG.parse().unwrap(),
+            project: &PROJECT.parse().unwrap(),
             environment: &ENVIRONMENT.parse().unwrap(),
             database: &mut database,
         },
@@ -240,7 +240,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     let second = "00000000-0000-4000-8000-0000000000b2";
     session_authority::install_authority(
         &mut admin,
-        PROJECT,
+        &PROJECT.parse().unwrap(),
         &ENVIRONMENT.parse().unwrap(),
         AUDIENCE,
         &[&first, second],
@@ -351,13 +351,16 @@ async fn authenticated_as(
     let forged = format!("Bearer {message}.{replacement}{}", &signature[1..]);
     assert!(
         route
-            .authenticate_authorization_for_test(ATTACHMENT, Some(&forged))
+            .authenticate_authorization_for_test(&ATTACHMENT.parse().unwrap(), Some(&forged))
             .await
             .is_err(),
         "a changed signature cannot mint caller authority"
     );
     let caller = route
-        .authenticate_authorization_for_test(ATTACHMENT, Some(&format!("Bearer {token}")))
+        .authenticate_authorization_for_test(
+            &ATTACHMENT.parse().unwrap(),
+            Some(&format!("Bearer {token}")),
+        )
         .await
         .expect("production session authentication")
         .expect("verified caller");
@@ -436,14 +439,23 @@ async fn assert_case(caller: &AuthenticatedCaller, postgres: Arc<WamnPostgres>) 
             Some(caller.principal_id()),
             "the entry binds the caller principal"
         );
-        assert_eq!(identity.project.as_deref(), Some(PROJECT));
+        assert_eq!(
+            identity.project.as_ref().map(|project| project.as_str()),
+            Some(PROJECT)
+        );
         assert_eq!(
             identity.release,
             fixture.request(deadline).facts.acquisition.identity.release
         );
         let invocation = event.invocation.expect("host invocation");
         assert_eq!(invocation.operation, ROOT);
-        assert_eq!(identity.operation.as_deref(), Some(ROOT));
+        assert_eq!(
+            identity
+                .operation
+                .as_ref()
+                .map(|operation| operation.as_str()),
+            Some(ROOT)
+        );
         assert_eq!(
             invocation.origin,
             fixture
@@ -554,10 +566,10 @@ fn member_admission_request(child_digest: &wamn_digest::Digest) -> ComponentAdmi
                 package_id: "root".parse().unwrap(),
                 package_version: "1.0.0".parse().unwrap(),
             },
-            component: "node".into(),
-            interface_version: "0.1.0".into(),
+            component: "node".parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
-                ROOT.into(),
+                ROOT.parse().unwrap(),
                 ComponentOperationDeclaration {
                     registered_operation: Some(ROOT.parse().unwrap()),
                     committed_result_schema: None,
@@ -649,7 +661,7 @@ async fn native_member_statement_instances(pool: sqlx::PgPool) {
                 request.facts.caller = Some(caller.clone());
                 request.facts = fixture
                     .policy
-                    .prepare(&component_id, ROOT, &request.facts)
+                    .prepare(&component_id, &ROOT.parse().unwrap(), &request.facts)
                     .await
                     .expect("admit the invocation");
                 let scope = fixture.policy.scope_id(&request.facts).unwrap();
@@ -761,7 +773,7 @@ async fn native_sql_free_command_begins_from_its_transaction_field(pool: sqlx::P
                             &fixture.application,
                         ),
                         component: &fixture.root,
-                        operation: ROOT,
+                        operation: &ROOT.parse().unwrap(),
                         context: request.context,
                         input: &input,
                         deadline_ms: 10_000,
@@ -1085,8 +1097,8 @@ async fn warm_postgres_with_pool(
     let http_role = workload_login(
         WorkloadRoleFamily::HttpAdmitter,
         WorkloadRoleIdentity::ProjectEnvironment {
-            org: ORG,
-            project: PROJECT,
+            org: &ORG.parse().unwrap(),
+            project: &PROJECT.parse().unwrap(),
             environment: &ENVIRONMENT.parse().unwrap(),
             database: &mut database,
         },
@@ -1158,8 +1170,8 @@ async fn pat_caller(
     assign_project_role(
         &mut system,
         principal.id(),
-        ORG,
-        PROJECT,
+        &ORG.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
         "admin",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
@@ -1194,8 +1206,8 @@ async fn pat_caller(
     let reader_role = workload_login(
         WorkloadRoleFamily::IdentityReader,
         WorkloadRoleIdentity::Control {
-            org: ORG,
-            project: PROJECT,
+            org: &ORG.parse().unwrap(),
+            project: &PROJECT.parse().unwrap(),
             environment: &ENVIRONMENT.parse().unwrap(),
             database: system_database.path().trim_start_matches('/'),
         },
@@ -1246,7 +1258,10 @@ async fn pat_caller(
         ),
     ));
     routing
-        .authenticate_authorization_for_test(ATTACHMENT, Some(&format!("Bearer {}", token.token())))
+        .authenticate_authorization_for_test(
+            &ATTACHMENT.parse().unwrap(),
+            Some(&format!("Bearer {}", token.token())),
+        )
         .await
         .map_err(|(status, code)| anyhow::anyhow!("PAT authentication refused: {status} {code}"))?
         .ok_or_else(|| anyhow::anyhow!("PAT caller absent"))

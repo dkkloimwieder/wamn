@@ -14,7 +14,7 @@ pub async fn delete_registry_rows(
     system: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<Vec<String>> {
-    let (org, project, env) = (triple.org.as_str(), triple.project.as_str(), &triple.env);
+    let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let mut lines = Vec::new();
     let mut transaction = crate::provision_project_env::provisioning_transaction(system)
         .await

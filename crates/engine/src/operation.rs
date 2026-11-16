@@ -67,7 +67,7 @@ impl<P: InvocationPolicy> fmt::Debug for OperationClosure<'_, P> {
 pub struct OperationCall<'a, P: InvocationPolicy> {
     pub closure: OperationClosure<'a, P>,
     pub component: &'a AdmittedComponent,
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::canonical_name::CanonicalName,
     pub context: node_types::NodeContext,
     pub input: &'a serde_json::Value,
     /// The bounded deadline, the same value as `context.deadline_ms`.

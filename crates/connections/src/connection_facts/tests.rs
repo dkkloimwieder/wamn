@@ -12,7 +12,10 @@ use wamn_authority::auth_cache::test_util::{nats, until};
 struct NoProjectDatabase;
 #[async_trait::async_trait]
 impl crate::database::ProjectDatabase for NoProjectDatabase {
-    async fn read_connection(&self, _: &str) -> anyhow::Result<crate::database::ConnectionGuard> {
+    async fn read_connection(
+        &self,
+        _: &wamn_registry::ProjectId,
+    ) -> anyhow::Result<crate::database::ConnectionGuard> {
         anyhow::bail!("project database unavailable")
     }
 }
@@ -39,7 +42,7 @@ async fn write(fixture: &mut Fixture, password: &str) -> ConnectionDrops {
     let mut drops = ConnectionDrops::default();
     administration::execute_with_store(
         &mut tx,
-        "acme",
+        &"acme".parse().unwrap(),
         "connection.write",
         &json!({
             "project":"project-a", "env":"dev", "name":"erp",
@@ -79,10 +82,10 @@ async fn setup(
     let facts = ConnectionFacts::new(
         memory,
         changes,
-        Arc::new(fixture.reader("project-a").await),
+        Arc::new(fixture.reader(&"project-a".parse().unwrap()).await),
         &Arc::new(NoProjectDatabase),
         &PROJECT_ENV_KEY.parse().unwrap(),
-        "project-a",
+        &"project-a".parse().unwrap(),
         &"dev".parse().unwrap(),
     );
     (fixture, facts, id)

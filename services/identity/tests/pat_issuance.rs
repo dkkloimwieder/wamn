@@ -799,13 +799,13 @@ async fn snapshots(system: &mut Client, exclude_pats: bool) -> Vec<Vec<String>> 
 
 fn unused_target(admin: &url::Url) -> SessionTarget {
     let triple = Triple {
-        org: "acme".into(),
-        project: "pattest".into(),
+        org: "acme".parse().unwrap(),
+        project: "pattest".parse().unwrap(),
         env: "dev".parse().unwrap(),
     };
     let mut database = project_env_database_name(
-        "acme",
-        "pattest",
+        &"acme".parse().unwrap(),
+        &"pattest".parse().unwrap(),
         &"dev".parse().unwrap(),
         &"pattest1"
             .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
@@ -814,8 +814,8 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     let role = workload_login(
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleIdentity::ProjectEnvironment {
-            org: "acme",
-            project: "pattest",
+            org: &"acme".parse().unwrap(),
+            project: &"pattest".parse().unwrap(),
             environment: &"dev".parse().unwrap(),
             database: &mut database,
         },

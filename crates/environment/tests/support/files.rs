@@ -65,8 +65,8 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         (
             WorkloadRoleFamily::Administration,
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: "file-fixture",
-                project: "files",
+                org: &"file-fixture".parse().unwrap(),
+                project: &"files".parse().unwrap(),
                 environment: &"dev".parse().unwrap(),
                 database: name,
             },
@@ -214,8 +214,8 @@ pub struct Registry {
     pub reader: sqlx::PgPool,
     pub unmapped: Client,
     pub unenabled: Client,
-    pub org: String,
-    project: String,
+    pub org: wamn_registry::OrgId,
+    project: wamn_registry::ProjectId,
     pub credentials: std::sync::Arc<wamn_test_infrastructure::credentials::MemoryStore>,
     pub connection_id: String,
     pub generation: i64,
@@ -230,7 +230,7 @@ impl Registry {
         operation: &str,
         mut payload: serde_json::Value,
     ) -> anyhow::Result<()> {
-        payload["project"] = self.project.clone().into();
+        payload["project"] = self.project.as_str().into();
         payload["env"] = "dev".into();
         let mut tx = wamn_test_postgres::transaction(
             &mut self.control,
@@ -253,7 +253,7 @@ impl Registry {
     }
     pub async fn define_store(
         &mut self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         name: &str,
         parameters: &serde_json::Value,
     ) -> anyhow::Result<()> {
@@ -278,16 +278,16 @@ impl Registry {
 
 pub async fn active_file_connections<'e>(
     client: impl sqlx::Executor<'e, Database = sqlx::Postgres>,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     connection: Option<&str>,
 ) -> anyhow::Result<Vec<sqlx::postgres::PgRow>> {
     Ok(sqlx::query("SELECT connection_id::text,connection_name,generation,parameters FROM registry.read_file_connection($1,$2,'dev',$3::text::uuid)").bind(&org).bind(&project).bind(&connection).fetch_all(client).await?)
 }
 
 pub async fn registry(
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     definition: serde_json::Value,
 ) -> anyhow::Result<Registry> {
     use std::sync::Arc;
@@ -335,7 +335,7 @@ pub async fn registry(
         .execute(&mut owner)
         .await
         .map(drop)?;
-    for name in [project, "unenabled"] {
+    for name in [project, &"unenabled".parse().unwrap()] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&wamn_control_provision::test_database::seed_org_project_env_sql(
                 org,
@@ -368,7 +368,11 @@ pub async fn registry(
     .await?;
     let mut control = connect(&login(database.url(), &control_login)?).await?;
     let mut clients = Vec::new();
-    for (target_project, mapped) in [(project, true), ("unmapped", false), ("unenabled", true)] {
+    for (target_project, mapped) in [
+        (project, true),
+        (&"unmapped".parse().unwrap(), false),
+        (&"unenabled".parse().unwrap(), true),
+    ] {
         let role = system_reader_login(
             SystemReader::Connection,
             org,
@@ -421,8 +425,8 @@ pub async fn registry(
         reader,
         unmapped,
         unenabled,
-        org: org.into(),
-        project: project.into(),
+        org: org.clone(),
+        project: project.clone(),
         credentials: Arc::new(wamn_test_infrastructure::credentials::MemoryStore::default()),
         connection_id: String::new(),
         generation: 0,

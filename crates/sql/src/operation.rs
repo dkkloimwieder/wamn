@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
 use anyhow::Context as _;
+use wamn_catalog::canonical_name::CanonicalName;
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::InvocationTrace;
@@ -37,10 +38,10 @@ impl Default for OperationMetrics {
 }
 
 impl OperationMetrics {
-    fn record(&self, source: &str, class: DeliveryClass) {
+    fn record(&self, source: &CanonicalName, class: DeliveryClass) {
         let mut attributes = vec![
             opentelemetry::KeyValue::new("wamn.source.type", "attachment"),
-            opentelemetry::KeyValue::new("wamn.source.id", source.to_owned()),
+            opentelemetry::KeyValue::new("wamn.source.id", source.to_string()),
         ];
         self.attempts.add(1, &attributes);
         if let Some(error) = class.error() {
@@ -56,7 +57,7 @@ pub(super) struct OperationWorkload {
     start: (String, String),
     context: Arc<crate::invocation::ReleaseContext>,
     identity: SessionIdentity,
-    operations: BTreeMap<String, OperationAuthority>,
+    operations: BTreeMap<CanonicalName, OperationAuthority>,
     invoker: std::sync::RwLock<Option<std::sync::Weak<dyn OperationInvoker>>>,
 }
 
@@ -76,7 +77,7 @@ pub trait OperationInvoker: Send + Sync + std::fmt::Debug {
     async fn invoke(
         &self,
         authority: Arc<AuthorizedInvocation>,
-        operation: String,
+        operation: CanonicalName,
         context: wamn_engine::operation::node_types::NodeContext,
         input: String,
     ) -> anyhow::Result<
@@ -88,7 +89,7 @@ pub trait OperationInvoker: Send + Sync + std::fmt::Debug {
     async fn sign_result(
         &self,
         authority: Arc<AuthorizedInvocation>,
-        operation: String,
+        operation: CanonicalName,
         payload: String,
     ) -> anyhow::Result<String>;
 }
@@ -288,10 +289,10 @@ struct StoreOperation {
 struct OpenOperation {
     postgres: Arc<WamnPostgres>,
     authority: Arc<AuthorizedInvocation>,
-    operation: String,
+    operation: CanonicalName,
     key: String,
     write: bool,
-    source: String,
+    source: CanonicalName,
     settled: bool,
 }
 
@@ -418,6 +419,9 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
             wamn_engine::operation::node_types::NodeError,
         >,
     > {
+        let operation: CanonicalName = operation
+            .try_into()
+            .map_err(wash_runtime::wasmtime::Error::new)?;
         let store = accessor
             .with(|mut access| state(access.get().table).cloned())
             .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
@@ -651,6 +655,9 @@ async fn enter<T: 'static + Send>(
     request_hash: Vec<u8>,
     authorize_only: bool,
 ) -> wash_runtime::wasmtime::Result<Result<Begun, Refusal>> {
+    let Ok(operation) = CanonicalName::try_from(operation) else {
+        return Ok(Err(Refusal::UnknownOperation));
+    };
     let store = accessor.with(|mut access| {
         let ctx = access.get();
         if state(ctx.table).is_none() {
@@ -744,7 +751,7 @@ fn entry_invocation_span(
     postgres: &WamnPostgres,
     workload: &str,
     caller: Option<&AuthenticatedCaller>,
-    operation: &str,
+    operation: &CanonicalName,
 ) -> Option<tracing::Span> {
     let facts = postgres
         .operation_workloads
@@ -756,20 +763,20 @@ fn entry_invocation_span(
     let span = wamn_engine::invocation_trace::invocation_span(
         &wamn_engine::invocation_trace::InvocationSite {
             project_env_key: &release.project_env_key,
-            project: facts.identity.project.as_deref().unwrap_or_default(),
+            project: facts.identity.project.as_ref()?,
             environment: &release.environment,
             wiring_id: "",
             wiring_version: 0,
             node_id: "",
             input_port: None,
-            operation,
+            operation: operation.as_str(),
             component_digest: &facts.operations.get(operation)?.invocation.component_digest,
             caller,
         },
         None,
     );
     if let Some(caller) = caller {
-        span.record("wamn.attachment_id", caller.attachment_id());
+        span.record("wamn.attachment_id", caller.attachment_id().as_str());
     }
     Some(span)
 }
@@ -778,7 +785,7 @@ async fn begin(
     postgres: Arc<WamnPostgres>,
     workload: &str,
     caller: Option<&AuthenticatedCaller>,
-    operation: String,
+    operation: CanonicalName,
     key: String,
     request: Vec<u8>,
     authorize_only: bool,
@@ -962,7 +969,7 @@ impl WamnPostgres {
     pub async fn invoke_node<F, Fut>(
         self: &Arc<Self>,
         authority: &Arc<AuthorizedInvocation>,
-        operation: &str,
+        operation: &CanonicalName,
         route: &wamn_catalog::ServingRoute,
         transacted: bool,
         input: &serde_json::Value,
@@ -1037,10 +1044,10 @@ impl WamnPostgres {
             let open = OpenOperation {
                 postgres: Arc::clone(self),
                 authority: Arc::clone(authority),
-                operation: operation.into(),
+                operation: operation.clone(),
                 key: key.into(),
                 write: true,
-                source: operation.into(),
+                source: operation.clone(),
                 settled: true,
             };
             let claim = claim_operation(

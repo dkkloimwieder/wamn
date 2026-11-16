@@ -28,8 +28,8 @@ static OVERLAY_PACKAGE_VERSION: LazyLock<wamn_catalog::package_version::PackageV
 /// The Receiving release from this checkout.
 fn identity() -> &'static ReleaseIdentity {
     static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| ReleaseIdentity {
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
+        org: ORG.parse().unwrap(),
+        project: PROJECT.parse().unwrap(),
         environment: ENVIRONMENT.parse().unwrap(),
         route_host: "receiving.localhost".to_owned(),
         packages: JOURNEY_PACKAGES

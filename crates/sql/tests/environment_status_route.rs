@@ -86,7 +86,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
 /// admitted a caller, or its refusal.
 async fn admitted(route: &FlowHttpRouting) -> Result<bool, (u16, String)> {
     route
-        .authenticate_authorization_for_test(ROUTE, None)
+        .authenticate_authorization_for_test(&ROUTE.parse().unwrap(), None)
         .await
         .map(|caller| caller.is_some())
 }

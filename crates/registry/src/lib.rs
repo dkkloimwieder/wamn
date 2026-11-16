@@ -12,7 +12,11 @@ pub mod sql;
 mod types;
 
 pub use name::{control_nats_user, credential_secret_name, environment_nats_user, project_env_key};
-pub use types::{Environment, OrgId, ProjectId, Triple};
+pub use types::{Environment, Triple};
+mod org_id;
+mod project_id;
+pub use org_id::{OrgId, ParseOrgIdError};
+pub use project_id::{ParseProjectIdError, ProjectId};
 
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;

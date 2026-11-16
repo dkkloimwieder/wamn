@@ -17,9 +17,9 @@ async fn connect(url: &str) -> Client {
 fn models() -> Vec<ManagedModel> {
     ["orders", "lines"]
         .map(|table| ManagedModel {
-            model_id: table.to_owned(),
-            schema: "ri_data".to_owned(),
-            table: table.to_owned(),
+            model_id: table.parse().unwrap(),
+            schema: "ri_data".parse().unwrap(),
+            table: table.parse().unwrap(),
         })
         .into_iter()
         .collect()

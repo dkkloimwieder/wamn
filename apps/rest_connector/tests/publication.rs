@@ -48,8 +48,8 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
     let args = PublishReleaseRequest {
         applications: serde_json::from_value(serde_json::json!({"rest": {"packages": ["wamn_integration", "rest_connector", "rest_consumer_fixture"]}})).unwrap(),
         application: None,
-        org: "rest".into(),
-        project: "publication".into(),
+        org: "rest".parse().unwrap(),
+        project: "publication".parse().unwrap(),
         environment: "test".parse().unwrap(),
         packages: [
             "wamn_integration",
@@ -83,7 +83,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
         .iter_mut()
         .find(|edge| edge.from == "rows")
         .unwrap()
-        .from_port = "main".into();
+        .from_port = "main".parse().unwrap();
     assert!(
         wamn_catalog::condition_workflow_document(
             &target.project_env_key,
@@ -101,7 +101,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state(
         .nodes
         .get_mut("record")
         .unwrap()
-        .operation = "rest-consumer-fixture:item/other@0.1.0".into();
+        .operation = "rest-consumer-fixture:item/other@0.1.0".parse().unwrap();
     assert!(
         wamn_catalog::condition_workflow_document(
             &target.project_env_key,

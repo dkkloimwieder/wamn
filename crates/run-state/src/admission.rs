@@ -28,7 +28,7 @@ pub struct RunAdmission<'a> {
     pub application: &'a wamn_catalog::ApplicationName,
     pub manifest_digest: &'a wamn_digest::Digest,
     pub environment: &'a wamn_registry::EnvName,
-    pub workflow_id: &'a str,
+    pub workflow_id: &'a wamn_catalog::canonical_name::CanonicalName,
     pub workflow_version: i32,
     pub wiring_hash: &'a wamn_digest::Digest,
     pub execution_principal_id: &'a wamn_identity_protocol::PrincipalId,
@@ -148,7 +148,7 @@ pub async fn enabled_workflow(
     project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
-    workflow: &str,
+    workflow: &wamn_catalog::canonical_name::CanonicalName,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
     sqlx::query(ENABLED_WORKFLOW_SQL)
         .bind(project_env_key)
@@ -165,7 +165,7 @@ pub async fn workflow_version(
     project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
-    workflow: &str,
+    workflow: &wamn_catalog::canonical_name::CanonicalName,
     version: i32,
 ) -> Result<Option<(String, wamn_digest::Digest)>, sqlx::Error> {
     sqlx::query(WORKFLOW_VERSION_SQL)
@@ -280,7 +280,7 @@ pub async fn enabled_schedule(
     project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
-    workflow: &str,
+    workflow: &wamn_catalog::canonical_name::CanonicalName,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
     sqlx::query(
         "SELECT version, graph_json::text, wiring_hash, execution_role FROM catalog.workflows \
@@ -301,12 +301,12 @@ pub async fn enabled_schedules(
     project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     applications: &[wamn_catalog::ApplicationName],
-    project: &str,
+    project: &wamn_registry::ProjectId,
     tick: chrono::DateTime<chrono::Utc>,
 ) -> Result<
     Vec<(
         wamn_catalog::ApplicationName,
-        String,
+        wamn_catalog::canonical_name::CanonicalName,
         String,
         chrono::NaiveDateTime,
     )>,

@@ -33,15 +33,15 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
             .await
             .unwrap()
             .principal_id;
-        org::activate_org_membership(&mut client, &principal, "acme")
+        org::activate_org_membership(&mut client, &principal, &"acme".parse().unwrap())
             .await
             .unwrap();
         for environment in ["a", "b", "c"] {
             wamn_platform_identity::grant_project_env_membership(
                 &mut client,
                 &principal,
-                "acme",
-                "a",
+                &"acme".parse().unwrap(),
+                &"a".parse().unwrap(),
                 &environment.parse().unwrap(),
             )
             .await
@@ -50,19 +50,31 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         principals.push(principal);
     }
     let caller = &principals[0];
-    org::activate_org_membership(&mut client, caller, "other")
+    org::activate_org_membership(&mut client, caller, &"other".parse().unwrap())
         .await
         .unwrap();
-    org::grant_project_admin(&mut client, caller, "other", "a")
-        .await
-        .unwrap();
+    org::grant_project_admin(
+        &mut client,
+        caller,
+        &"other".parse().unwrap(),
+        &"a".parse().unwrap(),
+    )
+    .await
+    .unwrap();
     for project in ["a", "b", "c"] {
-        org::grant_project_admin(&mut client, caller, "acme", project)
-            .await
-            .unwrap();
+        org::grant_project_admin(
+            &mut client,
+            caller,
+            &"acme".parse().unwrap(),
+            &project.parse().unwrap(),
+        )
+        .await
+        .unwrap();
     }
 
-    let projects = control::org_projects(&mut client, "acme").await.unwrap();
+    let projects = control::org_projects(&mut client, &"acme".parse().unwrap())
+        .await
+        .unwrap();
     assert_eq!(
         projects
             .iter()
@@ -71,24 +83,27 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         ["a", "b", "c"]
     );
     assert_eq!(
-        control::org_projects_page(&mut client, "acme", None, Some(2))
+        control::org_projects_page(&mut client, &"acme".parse().unwrap(), None, Some(2))
             .await
             .unwrap(),
         projects[..2]
     );
     assert_eq!(
-        control::org_projects_page(&mut client, "acme", Some("b"), Some(2))
+        control::org_projects_page(&mut client, &"acme".parse().unwrap(), Some("b"), Some(2))
             .await
             .unwrap(),
         projects[2..]
     );
     assert!(
-        control::org_projects_page(&mut client, "acme", Some("c"), Some(2))
+        control::org_projects_page(&mut client, &"acme".parse().unwrap(), Some("c"), Some(2))
             .await
             .unwrap()
             .is_empty()
     );
-    let environments = org::project_envs(&mut client, "acme", "a").await.unwrap();
+    let environments =
+        org::project_envs(&mut client, &"acme".parse().unwrap(), &"a".parse().unwrap())
+            .await
+            .unwrap();
     assert_eq!(
         environments
             .iter()
@@ -97,25 +112,45 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         ["a", "b", "c"]
     );
     assert_eq!(
-        org::project_envs_page(&mut client, "acme", "a", None, Some(2))
-            .await
-            .unwrap(),
+        org::project_envs_page(
+            &mut client,
+            &"acme".parse().unwrap(),
+            &"a".parse().unwrap(),
+            None,
+            Some(2)
+        )
+        .await
+        .unwrap(),
         environments[..2]
     );
     assert_eq!(
-        org::project_envs_page(&mut client, "acme", "a", Some("b"), Some(2))
-            .await
-            .unwrap(),
+        org::project_envs_page(
+            &mut client,
+            &"acme".parse().unwrap(),
+            &"a".parse().unwrap(),
+            Some("b"),
+            Some(2)
+        )
+        .await
+        .unwrap(),
         environments[2..]
     );
     assert!(
-        org::project_envs_page(&mut client, "other", "a", None, Some(2))
-            .await
-            .unwrap()
-            .is_empty()
+        org::project_envs_page(
+            &mut client,
+            &"other".parse().unwrap(),
+            &"a".parse().unwrap(),
+            None,
+            Some(2)
+        )
+        .await
+        .unwrap()
+        .is_empty()
     );
 
-    let users = org::org_users(&mut client, "acme").await.unwrap();
+    let users = org::org_users(&mut client, &"acme".parse().unwrap())
+        .await
+        .unwrap();
     assert_eq!(
         users
             .iter()
@@ -124,7 +159,7 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         ["a@example.test", "b@example.test", "c@example.test"]
     );
     assert_eq!(
-        org::org_users_page(&mut client, "acme", None, None, Some(2))
+        org::org_users_page(&mut client, &"acme".parse().unwrap(), None, None, Some(2))
             .await
             .unwrap(),
         users[..2]
@@ -132,7 +167,7 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     assert_eq!(
         org::org_users_page(
             &mut client,
-            "acme",
+            &"acme".parse().unwrap(),
             Some(&users[1].email),
             Some(&users[1].principal_id),
             Some(2)
@@ -151,9 +186,10 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     .await
     .map(|result| result.rows_affected())
     .unwrap();
-    let members = org::project_members(&mut client, "acme", "a")
-        .await
-        .unwrap();
+    let members =
+        org::project_members(&mut client, &"acme".parse().unwrap(), &"a".parse().unwrap())
+            .await
+            .unwrap();
     assert_eq!(members.len(), 3);
     assert_eq!(
         members[0].environments,
@@ -163,8 +199,8 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     // `environments` to the one environment.
     let filtered = org::project_members_page(
         &mut client,
-        "acme",
-        "a",
+        &"acme".parse().unwrap(),
+        &"a".parse().unwrap(),
         Some(&"b".parse().unwrap()),
         None,
         None,
@@ -181,8 +217,8 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     );
     let rest = org::project_members_page(
         &mut client,
-        "acme",
-        "a",
+        &"acme".parse().unwrap(),
+        &"a".parse().unwrap(),
         Some(&"b".parse().unwrap()),
         Some(&filtered[0].email),
         Some(&filtered[0].principal_id),
@@ -199,8 +235,8 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     assert!(
         org::project_members_page(
             &mut client,
-            "acme",
-            "a",
+            &"acme".parse().unwrap(),
+            &"a".parse().unwrap(),
             Some(&"zzz".parse().unwrap()),
             None,
             None,
@@ -211,16 +247,24 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         .is_empty()
     );
     assert_eq!(
-        org::project_members_page(&mut client, "acme", "a", None, None, None, Some(2))
-            .await
-            .unwrap(),
+        org::project_members_page(
+            &mut client,
+            &"acme".parse().unwrap(),
+            &"a".parse().unwrap(),
+            None,
+            None,
+            None,
+            Some(2)
+        )
+        .await
+        .unwrap(),
         members[..2]
     );
     assert_eq!(
         org::project_members_page(
             &mut client,
-            "acme",
-            "a",
+            &"acme".parse().unwrap(),
+            &"a".parse().unwrap(),
             None,
             Some(&members[1].email),
             Some(&members[1].principal_id),
@@ -234,8 +278,8 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     assert_eq!(
         org::project_members_page(
             &mut client,
-            "acme",
-            "a",
+            &"acme".parse().unwrap(),
+            &"a".parse().unwrap(),
             None,
             Some(&members[1].email),
             Some(&"00000000-0000-0000-0000-000000000000".parse().unwrap()),
@@ -247,21 +291,33 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     );
 
     assert_eq!(
-        control::control_projects(&mut client, caller, "acme")
+        control::control_projects(&mut client, caller, &"acme".parse().unwrap())
             .await
             .unwrap(),
         ["a", "b", "c"]
     );
     assert_eq!(
-        control::control_projects_page(&mut client, caller, "acme", None, Some(2))
-            .await
-            .unwrap(),
+        control::control_projects_page(
+            &mut client,
+            caller,
+            &"acme".parse().unwrap(),
+            None,
+            Some(2)
+        )
+        .await
+        .unwrap(),
         ["a", "b"]
     );
     assert_eq!(
-        control::control_projects_page(&mut client, caller, "acme", Some("b"), Some(2))
-            .await
-            .unwrap(),
+        control::control_projects_page(
+            &mut client,
+            caller,
+            &"acme".parse().unwrap(),
+            Some(&"b".parse().unwrap()),
+            Some(2)
+        )
+        .await
+        .unwrap(),
         ["c"]
     );
     assert_eq!(
@@ -275,31 +331,49 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         ["acme"]
     );
     assert_eq!(
-        control::control_orgs_page(&mut client, caller, None, Some("acme"), Some(2))
-            .await
-            .unwrap(),
+        control::control_orgs_page(
+            &mut client,
+            caller,
+            None,
+            Some(&"acme".parse().unwrap()),
+            Some(2)
+        )
+        .await
+        .unwrap(),
         ["other"]
     );
     assert_eq!(
-        control::control_orgs_page(&mut client, caller, Some("acme"), None, Some(2))
-            .await
-            .unwrap(),
+        control::control_orgs_page(
+            &mut client,
+            caller,
+            Some(&"acme".parse().unwrap()),
+            None,
+            Some(2)
+        )
+        .await
+        .unwrap(),
         ["acme"]
     );
     org::revoke_project_admin(
         &mut client,
         caller,
-        "acme",
-        "c",
+        &"acme".parse().unwrap(),
+        &"c".parse().unwrap(),
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .unwrap();
     assert!(
-        control::control_projects_page(&mut client, caller, "acme", Some("b"), Some(2))
-            .await
-            .unwrap()
-            .is_empty()
+        control::control_projects_page(
+            &mut client,
+            caller,
+            &"acme".parse().unwrap(),
+            Some(&"b".parse().unwrap()),
+            Some(2)
+        )
+        .await
+        .unwrap()
+        .is_empty()
     );
     drop(client);
 }

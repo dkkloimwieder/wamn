@@ -19,7 +19,7 @@ impl WamnPostgres {
     pub(super) async fn build_pool(
         cfg: &ResolvedCredential,
         class: AuthorityClass,
-        _project: &str,
+        _project: &wamn_registry::ProjectId,
     ) -> anyhow::Result<sqlx::PgPool> {
         let options = wamn_postgres::connect_options(&cfg.database_url).await?;
         let timeout = cfg.statement_timeout_ms.to_string();
@@ -48,14 +48,14 @@ impl WamnPostgres {
     pub(super) async fn ensure_pool(
         &self,
         class: AuthorityClass,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> Result<Arc<ProjectPool>, PgError> {
         let cfg = match self.provider.resolve(project, class, project_env_key) {
             Ok(Some(c)) => c,
             Ok(None) => {
                 tracing::warn!(
-                    project,
+                    project = %project,
                     class = class.as_str(),
                     "wamn:postgres: no credentials for project"
                 );
@@ -63,7 +63,7 @@ impl WamnPostgres {
             }
             Err(e) => {
                 tracing::warn!(
-                    project,
+                    project = %project,
                     class = class.as_str(),
                     error = %e,
                     "wamn:postgres: credential resolution failed"
@@ -84,7 +84,7 @@ impl WamnPostgres {
             }),
             Err(e) => {
                 tracing::warn!(
-                    project,
+                    project = %project,
                     class = class.as_str(),
                     error = %e,
                     "wamn:postgres: pool build failed"
@@ -107,7 +107,7 @@ impl WamnPostgres {
         &self,
         project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<CheckoutProbe> {
-        self.probe_checkout_of(DEFAULT_PROJECT, project_env_key)
+        self.probe_checkout_of(&DEFAULT_PROJECT, project_env_key)
             .await
     }
 
@@ -117,7 +117,7 @@ impl WamnPostgres {
     /// observes the guest lifecycle that the conformance acceptance test is proving.
     pub async fn probe_checkout_of(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<CheckoutProbe> {
         let pp = self
@@ -141,14 +141,14 @@ impl WamnPostgres {
     async fn checkout_class(
         &self,
         class: AuthorityClass,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         async {
             let pp = self.ensure_pool(class, project, project_env_key).await?;
             let obj = pp.pool.acquire().await.map_err(|e| {
                 tracing::warn!(
-                    project,
+                    project = %project,
                     class = class.as_str(),
                     error = %e,
                     "wamn:postgres pool checkout failed"
@@ -176,7 +176,7 @@ impl WamnPostgres {
     /// connection cannot be selected without knowing which project it is for.
     pub(in super::super) async fn checkout_dynamic(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         self.checkout_class(AuthorityClass::DynamicSql, project, Some(project_env_key))
@@ -185,7 +185,7 @@ impl WamnPostgres {
 
     pub(in super::super) async fn checkout_guest(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         self.checkout_class(AuthorityClass::GuestSql, project, Some(project_env_key))
@@ -198,7 +198,7 @@ impl WamnPostgres {
     pub(in super::super) async fn checkout_workload(
         &self,
         _component_id: &str,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> Result<(Object, Arc<ProjectPool>, AuthorityClass), PgError> {
         let class = AuthorityClass::GuestSql;
@@ -218,7 +218,7 @@ impl WamnPostgres {
     /// and the guest cannot reach the relation.
     pub(in super::super) async fn checkout_platform(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         class: AuthorityClass,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         // A HARD refusal, not a debug_assert: a debug_assert compiles out of
@@ -228,7 +228,7 @@ impl WamnPostgres {
         // closed rather than quietly draw a guest credential for host work.
         if matches!(class, AuthorityClass::GuestSql | AuthorityClass::DynamicSql) {
             tracing::error!(
-                project,
+                project = %project,
                 "wamn:postgres: guest-sql is not a platform authority; refusing the checkout"
             );
             return Err(PgError::ConnectionUnavailable);

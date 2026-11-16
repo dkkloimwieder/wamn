@@ -47,16 +47,19 @@ pub(crate) async fn introspect_with_manifest(
     let client = wamn_postgres::pool(database_url, 4)
         .await
         .context("connect to the migrated database")?;
-    let schema_names = schemas.iter().map(String::as_str).collect::<Vec<_>>();
+    let schema_names = schemas
+        .iter()
+        .map(wamn_catalog::canonical_name::CanonicalName::as_str)
+        .collect::<Vec<_>>();
     let mut selected = manifest
         .models
         .values()
-        .map(|model| model.table.clone())
+        .map(|model| model.table.to_string())
         .chain(
             manifest
                 .internal_relations
                 .values()
-                .map(|relation| relation.table.clone()),
+                .map(|relation| relation.table.to_string()),
         )
         .collect::<BTreeSet<_>>();
     for source in authored_sql {
@@ -96,7 +99,7 @@ pub(crate) async fn introspect_with_manifest(
 pub(crate) async fn classify_statements(
     database_url: &str,
     corpus: &BTreeMap<String, Vec<u8>>,
-    schemas: &[String],
+    schemas: &[wamn_catalog::canonical_name::CanonicalName],
 ) -> Result<StatementTransactionality> {
     use sqlx::Connection as _;
     let calls = corpus
@@ -659,16 +662,16 @@ pub(crate) fn existing_files(root: &Path) -> Result<Vec<PathBuf>> {
 
 pub(crate) fn application_schemas(
     manifest: &PackageManifest,
-) -> Result<Vec<String>, crate::ManifestError> {
+) -> Result<Vec<wamn_catalog::canonical_name::CanonicalName>, crate::ManifestError> {
     let schemas = manifest
         .models
         .values()
-        .map(|model| model.schema.clone())
+        .map(|model| model.schema.clone().into())
         .chain(manifest.custom_operations.values().flat_map(|operation| {
             operation
                 .relations
                 .iter()
-                .map(|relation| relation.schema.clone())
+                .map(|relation| relation.schema.clone().into())
         }))
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -678,11 +681,7 @@ pub(crate) fn application_schemas(
     if schemas.is_empty() && (manifest.declares_no_sql() || manifest.uses_only_base_sql()) {
         return Ok(schemas);
     }
-    if schemas.is_empty()
-        || !schemas
-            .iter()
-            .all(|schema| crate::manifest::validate_identifier(schema, "schema").is_ok())
-    {
+    if schemas.is_empty() {
         return Err(crate::ManifestError::new(
             crate::ManifestErrorType::InvalidManifest,
             "manifest must name at least one valid application schema",

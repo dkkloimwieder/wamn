@@ -677,7 +677,7 @@ pub fn role_caller(
 ) -> Option<wamn_engine::flow_http_routing::AuthenticatedCaller> {
     let permissions = held.get(role)?;
     Some(wamn_engine::flow_http_routing::AuthenticatedCaller::new(
-        "workflow",
+        "workflow".parse().unwrap(),
         *principal_id,
         wamn_engine::flow_http_routing::CredentialType::QueuedService,
         role == wamn_identity_protocol::ADMIN_ROLE,

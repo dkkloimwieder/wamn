@@ -12,13 +12,11 @@ pub fn application_subject(
 
 /// The Helm release of one application.
 pub fn application_release_name(
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     application: &crate::ApplicationName,
-) -> Result<String, wamn_registry::name::NameError> {
-    wamn_registry::name::validate_coordinate("org", org)?;
-    wamn_registry::name::validate_coordinate("project", project)?;
+) -> String {
     let hash = hex::encode(sha256(
         format!("{org}/{env}/{project}/{application}").as_bytes(),
     ));
@@ -27,10 +25,7 @@ pub fn application_release_name(
         .chars()
         .take(wamn_registry::name::SLUG_LEN)
         .collect();
-    Ok(format!(
-        "r-{slug}-{}",
-        &hash[..wamn_registry::name::HASH_LEN]
-    ))
+    format!("r-{slug}-{}", &hash[..wamn_registry::name::HASH_LEN])
 }
 
 /// The durable event consumer for an application and source.

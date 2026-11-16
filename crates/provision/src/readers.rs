@@ -40,8 +40,8 @@ impl fmt::Display for SystemReader {
 /// Deterministic 160-bit suffix for one system-reader target.
 pub fn system_reader_identity_hash(
     reader: SystemReader,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
     database: &str,
 ) -> String {
@@ -59,8 +59,8 @@ pub fn system_reader_identity_hash(
 
 pub fn system_reader_login(
     reader: SystemReader,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
     database: &str,
 ) -> wamn_identity_protocol::LoginName {

@@ -79,7 +79,7 @@ async fn delete_locked(
     data: bool,
     admin_url: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let (org, project, env) = (triple.org.as_str(), triple.project.as_str(), &triple.env);
+    let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let mut lines = Vec::new();
     // A lifecycle verb: the provisioning credential, as the install Jobs use.
     let mut system = connect(admin_url).await?;
@@ -342,7 +342,7 @@ async fn delete_locked(
     ];
     let mut arguments = vec!["delete", "configmap", "--ignore-not-found"];
     arguments.extend(configurations.iter().map(String::as_str));
-    let deleted = kubectl(platform, org, &arguments, None).await?;
+    let deleted = kubectl(platform, org.as_str(), &arguments, None).await?;
     if !deleted.is_empty() {
         lines.push(deleted);
     }
@@ -355,7 +355,7 @@ async fn delete_locked(
     secrets.extend(pat_secrets);
     let mut arguments = vec!["delete", "secret", "--ignore-not-found"];
     arguments.extend(secrets.iter().map(String::as_str));
-    let deleted = kubectl(platform, org, &arguments, None).await?;
+    let deleted = kubectl(platform, org.as_str(), &arguments, None).await?;
     if !deleted.is_empty() {
         lines.push(deleted);
     }

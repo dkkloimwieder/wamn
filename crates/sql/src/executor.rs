@@ -10,7 +10,7 @@ struct ExecutorIdentity<'a> {
     schema: Option<&'a str>,
     runner: Option<&'a str>,
     user: Option<&'a wamn_identity_protocol::PrincipalId>,
-    operation: Option<&'a str>,
+    operation: Option<&'a wamn_catalog::canonical_name::CanonicalName>,
     application: Option<&'a wamn_catalog::ApplicationName>,
 }
 
@@ -18,7 +18,7 @@ impl WamnPostgres {
     /// Read through the authorized executor pool.
     pub async fn executor_read<T>(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         read: impl AsyncFnOnce(&mut sqlx::PgConnection) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         self.executor_transaction(
@@ -39,14 +39,17 @@ impl WamnPostgres {
     /// Write through the executor pool in one transaction. The callback must not end it.
     pub async fn executor_write<T, E>(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         write: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
     ) -> Result<T, E>
     where
         E: From<ProductionLeaseError>,
     {
         let executor = PlatformComponent::Executor.principal_id();
-        let operation = PlatformComponent::Executor.principal_name();
+        let operation: wamn_catalog::canonical_name::CanonicalName = PlatformComponent::Executor
+            .principal_name()
+            .parse()
+            .expect("platform operation");
         self.executor_transaction(
             project,
             ExecutorIdentity {
@@ -64,7 +67,7 @@ impl WamnPostgres {
 
     async fn executor_transaction<T, E>(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         identity: ExecutorIdentity<'_>,
         read_only: bool,
         work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
@@ -105,7 +108,7 @@ impl WamnPostgres {
     }
     async fn open_executor_transaction(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         identity: ExecutorIdentity<'_>,
         read_only: bool,
     ) -> Result<StatementConnectionGuard, ProductionLeaseError> {
@@ -130,7 +133,11 @@ impl WamnPostgres {
             identity.runner,
             None,
             Some(&principal),
-            Some(identity.operation.unwrap_or("wamn:executor")),
+            Some(
+                identity
+                    .operation
+                    .unwrap_or(&"wamn:executor".parse().expect("platform operation")),
+            ),
             identity.application,
             None,
             policy.statement_timeout_ms,
@@ -143,7 +150,10 @@ impl WamnPostgres {
 
 #[async_trait::async_trait]
 impl wamn_connections::database::ProjectDatabase for WamnPostgres {
-    async fn read_connection(&self, project: &str) -> anyhow::Result<StatementConnectionGuard> {
+    async fn read_connection(
+        &self,
+        project: &wamn_registry::ProjectId,
+    ) -> anyhow::Result<StatementConnectionGuard> {
         self.open_executor_transaction(
             project,
             ExecutorIdentity {
@@ -197,7 +207,7 @@ impl wamn_connections::production_lease::ExecutorDatabase for WamnPostgres {
                 schema: schema.as_deref(),
                 runner: runner.as_deref(),
                 user: user.as_ref(),
-                operation: operation.as_deref(),
+                operation: operation.as_ref(),
                 application: application.as_ref(),
             },
             false,
@@ -220,7 +230,7 @@ impl WamnPostgres {
     /// Check out the application's existing SQL pool without starting a transaction.
     pub async fn application_connection(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
         let (connection, _) = self

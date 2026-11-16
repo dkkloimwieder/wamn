@@ -12,7 +12,7 @@ use wamn_environment::identity_issuer::{IdentityIssuerRequest, provision_identit
 #[derive(Args)]
 pub struct ApiServiceArgs {
     #[arg(long)]
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
     #[arg(long)]
     pub env: wamn_registry::EnvName,
     #[arg(long)]
@@ -92,7 +92,7 @@ pub struct ProjectEnvMembershipArgs {
 
     /// Project within the organization.
     #[arg(long)]
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
 
     /// Exact environment within the project.
     #[arg(long)]

@@ -64,7 +64,7 @@ pub async fn provision_identity_issuer(
         &args.system_database_url,
         &kubeconfig,
         "",
-        &args.namespace,
+        &args.namespace.parse()?,
         cluster,
         &wamn_control_provision::connection::managed_role(
             role.clone(),

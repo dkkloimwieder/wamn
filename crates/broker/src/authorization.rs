@@ -315,7 +315,7 @@ mod configuration {
 
     /// The NATS user of the control host of `org` and its Certificate. It covers
     /// every environment of the org (docs/plan/alignment.md R7).
-    pub fn control_user(org: &str) -> (Account, Value) {
+    pub fn control_user(org: &wamn_registry::OrgId) -> (Account, Value) {
         let user = wamn_registry::control_nats_user(org);
         let mut publish = Vec::new();
         for bucket in ["wamn-auth", "wamn-connection"] {
@@ -374,7 +374,7 @@ pub mod test_util {
 /// Merge platform or environment users through the single authorization Secret writer.
 pub async fn update_authorization(
     target: &wamn_kubernetes::Target,
-    org: &str,
+    org: &wamn_registry::OrgId,
     coordinate: Option<&Triple>,
 ) -> anyhow::Result<Vec<Value>> {
     let mut certificates = Vec::new();
@@ -423,8 +423,12 @@ pub async fn update_authorization(
 mod tests {
     use super::*;
 
-    fn document(project: &str) -> Triple {
-        Triple::new("test", "dev".parse().unwrap(), project)
+    fn document(project: &wamn_registry::ProjectId) -> Triple {
+        Triple::new(
+            "test".parse().unwrap(),
+            "dev".parse().unwrap(),
+            project.clone(),
+        )
     }
 
     #[test]
@@ -445,8 +449,8 @@ mod tests {
     #[test]
     fn an_environment_user_reaches_no_subject_of_another() {
         let mut authorization = Authorization { users: Vec::new() };
-        render(&document("one"), &mut authorization);
-        render(&document("two"), &mut authorization);
+        render(&document(&"one".parse().unwrap()), &mut authorization);
+        render(&document(&"two".parse().unwrap()), &mut authorization);
         let subjects = |user: &Account| {
             let mut all = user.permissions.publish.allow.clone();
             all.extend(user.permissions.subscribe.allow.clone());
@@ -477,14 +481,23 @@ mod tests {
                     .contains(&wamn_registry::name::nats_subject(&[
                         "$KV",
                         (bucket).as_ref(),
-                        wamn_registry::project_env_key("test", "one", &"dev".parse().unwrap())
-                            .as_str(),
+                        wamn_registry::project_env_key(
+                            &"test".parse().unwrap(),
+                            &"one".parse().unwrap(),
+                            &"dev".parse().unwrap()
+                        )
+                        .as_str(),
                         ">"
                     ]))
             );
         }
         // Native hosts attach to provisioned consumers. Broker mutations stay refused.
-        let stream = source_stream_config(&document("one"), 1, Duration::from_secs(120)).name;
+        let stream = source_stream_config(
+            &document(&"one".parse().unwrap()),
+            1,
+            Duration::from_secs(120),
+        )
+        .name;
         for subject in [
             wamn_registry::name::nats_subject(&[
                 "$JS",

@@ -24,8 +24,8 @@ impl Fixture {
         for project in ["project-a", "project-b", "host-project", "other-project"] {
             sqlx::raw_sql(sqlx::AssertSqlSafe(
                 (&wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "acme",
-                    project,
+                    &"acme".parse().expect("fixed identifier"),
+                    &project.parse().unwrap(),
                     &"dev".parse().unwrap(),
                 ))
                     .to_string(),
@@ -121,18 +121,22 @@ impl Fixture {
             let stored = self
                 .store
                 .put(
-                    &wamn_registry::Triple::new("acme", "dev".parse().unwrap(), *project),
+                    &wamn_registry::Triple::new(
+                        "acme".parse().expect("fixed identifier"),
+                        "dev".parse().unwrap(),
+                        project.parse().unwrap(),
+                    ),
                     uuid::Uuid::new_v4(),
                     value.as_bytes(),
                 )
                 .await
                 .unwrap();
-            wamn_test_infrastructure::credentials::define(&mut tx,"acme",&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":if auth_type == "custom" { "{}" } else { value }}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await.unwrap();
+            wamn_test_infrastructure::credentials::define(&mut tx,&"acme".parse().expect("fixed identifier"),&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":if auth_type == "custom" { "{}" } else { value }}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await.unwrap();
             tx.commit().await.unwrap();
         }
     }
 
-    pub async fn reader(&self, project: &str) -> ConnectionCredentials {
+    pub async fn reader(&self, project: &wamn_registry::ProjectId) -> ConnectionCredentials {
         let mut admin = wamn_postgres::connect(self.database.as_str())
             .await
             .unwrap();
@@ -162,7 +166,7 @@ impl Fixture {
         ))
         .bind(&role)
         .bind(&wamn_registry::project_env_key(
-            "acme",
+            &"acme".parse().expect("fixed identifier"),
             project,
             &"dev".parse().unwrap(),
         ))
@@ -183,7 +187,7 @@ impl Fixture {
         url.set_password(Some("fixture-password")).unwrap();
         ConnectionCredentials::from_database(
             wamn_postgres::pool(url.as_str(), 4).await.unwrap(),
-            "acme",
+            &"acme".parse().expect("fixed identifier"),
         )
         .with_store(Arc::<MemoryStore>::clone(&self.store))
     }

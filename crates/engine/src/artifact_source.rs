@@ -280,15 +280,15 @@ mod tests {
                     package_id: "orders".parse().unwrap(),
                     package_version: "1.0.0".parse().unwrap(),
                 },
-                component: "transform".to_owned(),
-                interface_version: "0.1.0".to_owned(),
+                component: "transform".parse().unwrap(),
+                interface_version: "0.1.0".parse().unwrap(),
                 operations: BTreeMap::from([(
-                    "run".to_owned(),
+                    "run".parse().unwrap(),
                     ComponentOperationDeclaration {
                         committed_result_schema: None,
                         registered_operation: None,
                         input_ports: vec![ComponentPortDeclaration {
-                            name: "input".to_owned(),
+                            name: "input".parse().unwrap(),
                             schema: json!({}),
                         }],
                         output_ports: Vec::new(),

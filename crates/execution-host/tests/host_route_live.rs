@@ -38,12 +38,12 @@ use application_fixture::{
     load_release, login,
 };
 
-fn permission_mine() -> String {
+fn permission_mine() -> wamn_catalog::canonical_name::CanonicalName {
     route_of("wamn-control:permission/mine")
 }
 
 /// The attachment id of the application route with the stable reference.
-fn route_of(reference: &str) -> String {
+fn route_of(reference: &str) -> wamn_catalog::canonical_name::CanonicalName {
     HostRouteSet::Application
         .attachments()
         .find(|(_, attachment)| attachment.reference == reference)
@@ -53,7 +53,7 @@ fn route_of(reference: &str) -> String {
 
 async fn deliver(
     delivery: &HostRouteDelivery,
-    attachment: &str,
+    attachment: &wamn_catalog::canonical_name::CanonicalName,
     caller: Option<AuthenticatedCaller>,
 ) -> Result<Value, DeliveryError> {
     let body = outcome(delivery, attachment, caller, json!({})).await?;
@@ -65,7 +65,7 @@ async fn deliver(
 /// its input, and a write carries a request id and its input under `value`.
 async fn outcome(
     delivery: &HostRouteDelivery,
-    attachment: &str,
+    attachment: &wamn_catalog::canonical_name::CanonicalName,
     caller: Option<AuthenticatedCaller>,
     input: Value,
 ) -> Result<DeliveryOutcome, DeliveryError> {
@@ -84,7 +84,7 @@ async fn outcome(
     delivery
         .deliver(
             DeliveryRequest {
-                source: Source::Attachment(attachment.to_owned()),
+                source: Source::Attachment(attachment.clone()),
                 delivery_id: "host-route-test".to_owned(),
                 payload: json!([request_element]).to_string(),
                 caller: None,
@@ -152,7 +152,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     let (verifier, _token_clock, _key_clock) = server.verifier();
     session_authority::install_authority(
         &mut admin,
-        PROJECT,
+        &PROJECT.parse().unwrap(),
         &"dev".parse().unwrap(),
         AUDIENCE,
         &[claims()["sub"].as_str().unwrap(), MEMBER],
@@ -201,7 +201,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         Arc::clone(&release),
         HostRouteHandlers::Application {
             postgres: postgres_credentials,
-            project: PROJECT.to_owned(),
+            project: PROJECT.parse().unwrap(),
             identity: None,
             changes: Publisher::default(),
         },
@@ -820,15 +820,15 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
         .execute(&mut admin).await.unwrap();
-    let audience = wamn_platform_identity::control::control_audience(ORG)?;
+    let audience = wamn_platform_identity::control::control_audience(&ORG.parse().unwrap())?;
     let principal = claims()["sub"]
         .as_str()
         .expect("fixture principal")
         .to_owned();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::seed_org_project_env_sql(
-            ORG,
-            PROJECT,
+            &ORG.parse().unwrap(),
+            &PROJECT.parse().unwrap(),
             &"dev".parse().unwrap(),
         ))
             .to_string(),
@@ -855,7 +855,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
     let role = workload_login(
         WorkloadRoleFamily::Control,
         WorkloadRoleIdentity::Org {
-            org: ORG,
+            org: &ORG.parse().unwrap(),
             database: &database,
         },
     )?;
@@ -898,7 +898,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session(
             control,
             writer,
             identity: None,
-            org: ORG.to_owned(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::default(),
         },
     );

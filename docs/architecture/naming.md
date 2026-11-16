@@ -22,8 +22,14 @@ Derived events name their application. Captured database events name their packa
 The derived event record keeps its published `package_id` JSON key for the application name.
 Run records and trace fields also keep their published wire spelling.
 
-Both types parse at input boundaries and serialize as strings. SQL reads use
-the same constructors, so invalid stored names are refused.
+Authored declaration names use `wamn_compiler::source_name::SourceName`.
+A name starts with a lowercase ASCII letter and contains lowercase letters, digits, and isolated underscores.
+It cannot end with an underscore.
+`wamn_catalog::canonical_name::CanonicalName` owns component, port, parameter, wiring, node, and attachment names in compiled facts.
+It refuses empty names, NUL bytes, and surrounding whitespace.
+
+These types parse at input boundaries and serialize as strings.
+SQL reads use the same constructors, so invalid stored names are refused.
 
 Persisted identifiers and generated artifact names retain their declared contracts.
 Native Rust prose and private names do not redefine those contracts.
@@ -107,6 +113,13 @@ Rust carries this type through credential configuration and login derivation.
 SQLx reads and writes it as text. `platform.login_principal` keeps its login-to-principal mapping.
 
 ## Environment names
+
+`wamn_registry::OrgId`, `ProjectId`, and `EnvName` own registry coordinate names.
+Each name has at most 40 bytes of lowercase ASCII letters, digits, and isolated hyphens.
+Names start and end with a letter or digit.
+Org and project IDs also refuse `wamn` and the `wamn-` prefix.
+`ProjectEnvKey` parses the combined deployment key and its shared name budget.
+Internal calls carry these types. HTTP and WIT fields remain strings.
 
 `wamn_registry::name` owns resource names, database names, NATS users, event subjects, and host status labels.
 Every derived project key orders its coordinates as `<org>--<env>--<project>`.

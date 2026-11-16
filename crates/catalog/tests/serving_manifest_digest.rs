@@ -41,10 +41,13 @@ fn components() -> BTreeSet<ServingComponent> {
 
             package_id: "platform_fixture".parse().unwrap(),
             descriptor: {
-                let mut descriptor =
-                    ComponentDescriptor::named("transform", "0.1", COMPONENT_B.parse().unwrap());
+                let mut descriptor = ComponentDescriptor::named(
+                    "transform".parse().unwrap(),
+                    "0.1".parse().unwrap(),
+                    COMPONENT_B.parse().unwrap(),
+                );
                 descriptor.operations = BTreeMap::from([(
-                    "map".into(),
+                    "map".parse().unwrap(),
                     AdmittedComponentOperation {
                         host_transaction: false,
                         input_ports: Vec::new(),
@@ -62,10 +65,13 @@ fn components() -> BTreeSet<ServingComponent> {
 
             package_id: "platform_fixture_overlay".parse().unwrap(),
             descriptor: {
-                let mut descriptor =
-                    ComponentDescriptor::named("http-request", "0.1", COMPONENT_A.parse().unwrap());
+                let mut descriptor = ComponentDescriptor::named(
+                    "http-request".parse().unwrap(),
+                    "0.1".parse().unwrap(),
+                    COMPONENT_A.parse().unwrap(),
+                );
                 descriptor.operations = BTreeMap::from([(
-                    "platform-fixture-overlay:widget/get@3.0.0".into(),
+                    "platform-fixture-overlay:widget/get@3.0.0".parse().unwrap(),
                     AdmittedComponentOperation {
                         host_transaction: false,
                         input_ports: Vec::new(),
@@ -86,8 +92,8 @@ fn components() -> BTreeSet<ServingComponent> {
 fn routes() -> BTreeSet<ServingRoute> {
     BTreeSet::from([ServingRoute {
         package_id: "platform_fixture_overlay".parse().unwrap(),
-        component: "http-request".into(),
-        operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
+        component: "http-request".parse().unwrap(),
+        operation: "platform-fixture-overlay:widget/get@3.0.0".parse().unwrap(),
         type_: OperationType::Get,
         reads: BTreeSet::new(),
         revision: None,
@@ -101,13 +107,13 @@ fn manifest() -> ServingManifest {
         components(),
         routes(),
         BTreeMap::from([(
-            "widget-get-http".into(),
+            "widget-get-http".parse().unwrap(),
             ServingAttachment {
                 type_: AttachmentType::Http,
                 package_id: "platform_fixture_overlay".parse().unwrap(),
                 target: AttachmentTarget::Route {
-                    component: "http-request".into(),
-                    operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
+                    component: "http-request".parse().unwrap(),
+                    operation: "platform-fixture-overlay:widget/get@3.0.0".parse().unwrap(),
                 },
                 definition_hash: DEFINITION
                     .parse()
@@ -232,7 +238,7 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
         assert_eq!(
             ServingManifest::from_canonical_bytes(&candidate.canonical_bytes()),
             Err(CatalogIdentityError::InvalidAttachmentAuthPolicy {
-                attachment_id: "widget-get-http".into(),
+                attachment_id: "widget-get-http".parse().unwrap(),
             })
         );
     }
@@ -276,12 +282,12 @@ fn operation_provider_manifest(
                 package_id: package.clone(),
                 descriptor: {
                     let mut descriptor = ComponentDescriptor::named(
-                        "provider",
-                        "0.1.0",
+                        "provider".parse().unwrap(),
+                        "0.1.0".parse().unwrap(),
                         COMPONENT_A.parse().unwrap(),
                     );
                     descriptor.operations = BTreeMap::from([(
-                        export.into(),
+                        export.parse().unwrap(),
                         AdmittedComponentOperation {
                             host_transaction: false,
                             input_ports: Vec::new(),
@@ -309,12 +315,12 @@ fn operation_provider_manifest(
                 package_id: "consumer".parse().unwrap(),
                 descriptor: {
                     let mut descriptor = ComponentDescriptor::named(
-                        "consumer",
-                        "0.1.0",
+                        "consumer".parse().unwrap(),
+                        "0.1.0".parse().unwrap(),
                         COMPONENT_B.parse().unwrap(),
                     );
                     descriptor.operations =
-                        BTreeMap::from([("consumer:entry/run@1.0.0".into(), operation)]);
+                        BTreeMap::from([("consumer:entry/run@1.0.0".parse().unwrap(), operation)]);
                     descriptor
                 },
             },
@@ -340,7 +346,7 @@ fn duplicate_export_only_interfaces_are_admitted() {
             .find(|component| component.descriptor.component == "provider")
             .expect("fixture provider")
             .clone();
-        other.descriptor.component = "another-provider".into();
+        other.descriptor.component = "another-provider".parse().unwrap();
         other.descriptor.component_digest = COMPONENT_B.parse().unwrap();
         let operation = other.descriptor.operations.get_mut(export).unwrap();
         operation.registered_operation = None;

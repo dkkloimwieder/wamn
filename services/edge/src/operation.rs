@@ -7,6 +7,7 @@ use crate::store::{Claim, EdgeStore};
 use anyhow::Context as _;
 use std::collections::HashSet;
 use std::sync::Arc;
+use wamn_catalog::canonical_name::CanonicalName;
 use wamn_engine::entry_operation::operation::{self, Begun, Refusal};
 use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
@@ -25,13 +26,13 @@ pub struct EdgeOperation {
     release: Arc<EdgeRelease>,
     application: Arc<EdgeApplication>,
     store: EdgeStore,
-    org: String,
+    org: wamn_registry::OrgId,
     scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
 }
 
 #[derive(Debug, Clone)]
 struct AuthorizedCall {
-    operation: String,
+    operation: CanonicalName,
     caller: Option<AuthenticatedCaller>,
 }
 
@@ -47,7 +48,7 @@ impl EdgeOperation {
         release: Arc<EdgeRelease>,
         application: Arc<EdgeApplication>,
         store: EdgeStore,
-        org: String,
+        org: wamn_registry::OrgId,
         scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
     ) -> Self {
         Self {
@@ -62,7 +63,7 @@ impl EdgeOperation {
     fn authorize(
         &self,
         caller: Option<AuthenticatedCaller>,
-        operation: String,
+        operation: CanonicalName,
         write: bool,
     ) -> Result<AuthorizedCall, Refusal> {
         let manifest = self.release.release().manifest();
@@ -431,6 +432,9 @@ async fn enter<T: 'static + Send>(
     });
     let Ok(caller) = caller else {
         return Ok(Err(Refusal::InvalidCaller));
+    };
+    let Ok(operation) = operation.parse::<CanonicalName>() else {
+        return Ok(Err(Refusal::UnknownOperation));
     };
     let authorized = match plugin.authorize(caller, operation, claim.is_some()) {
         Ok(authorized) => authorized,

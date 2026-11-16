@@ -21,7 +21,7 @@ use wamn_catalog::MAIN_PORT;
 pub enum NodeOutcome {
     Success {
         payload: Value,
-        port: String,
+        port: wamn_catalog::canonical_name::CanonicalName,
     },
     Error(NodeError),
     /// The component stopped cooperatively without producing an emission.
@@ -34,7 +34,7 @@ impl NodeOutcome {
     pub fn ok(payload: Value) -> NodeOutcome {
         NodeOutcome::Success {
             payload,
-            port: MAIN_PORT.to_string(),
+            port: MAIN_PORT.parse().unwrap(),
         }
     }
 }

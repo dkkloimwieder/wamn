@@ -11,7 +11,6 @@ use sqlx::Row as _;
 
 use crate::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, control, database_error,
-    require_target_segment,
 };
 use wamn_broker::auth_changes::AuthDrops;
 
@@ -40,12 +39,11 @@ const PROJECT_ADMIN_SQL: &str = "INSERT INTO identity.project_roles \
 pub async fn activate_org_membership(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> Result<(), IdentityError> {
-    let org = require_target_segment("org", org)?;
     sqlx::query(ACTIVATE_MEMBERSHIP_SQL)
         .bind(principal_id)
-        .bind(&org)
+        .bind(org)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -57,13 +55,13 @@ pub async fn activate_org_membership(
 pub async fn grant_org_admin(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> Result<(), IdentityError> {
-    let org = active_member(client, principal_id, org).await?;
+    active_member(client, principal_id, org).await?;
     let principal = principal_id;
     sqlx::query(ORG_ROLE_SQL)
         .bind(principal)
-        .bind(&org)
+        .bind(org)
         .bind(ORG_ADMIN_ROLE)
         .execute(&mut *client)
         .await
@@ -76,14 +74,13 @@ pub async fn grant_org_admin(
 pub async fn grant_project_admin(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
 ) -> Result<(), IdentityError> {
-    let org = active_member(client, principal_id, org).await?;
-    let project = require_target_segment("project", project)?;
+    active_member(client, principal_id, org).await?;
     let in_org: bool = sqlx::query(PROJECT_IN_ORG_SQL)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -99,7 +96,7 @@ pub async fn grant_project_admin(
     let one = Some(project.as_str());
     sqlx::query(PROJECT_ADMIN_SQL)
         .bind(principal)
-        .bind(&org)
+        .bind(org)
         .bind(control::PROJECT_ADMIN_ROLE)
         .bind(one)
         .execute(&mut *client)
@@ -116,15 +113,14 @@ const ENV_IN_PROJECT_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_E
 pub async fn grant_member(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Result<(), IdentityError> {
-    let org = active_member(client, principal_id, org).await?;
-    let project = require_target_segment("project", project)?;
+    active_member(client, principal_id, org).await?;
     let found: bool = sqlx::query(ENV_IN_PROJECT_SQL)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .bind(env)
         .fetch_one(&mut *client)
         .await
@@ -137,7 +133,7 @@ pub async fn grant_member(
             format!("environment {project}/{env} is not an environment of org {org}"),
         ));
     }
-    crate::grant_project_env_membership(client, principal_id, &org, &project, env).await
+    crate::grant_project_env_membership(client, principal_id, org, project, env).await
 }
 
 const HOLDS_ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles \
@@ -149,17 +145,14 @@ const HOLDS_ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_rol
 pub async fn revoke_member(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = require_target_segment("org", org)?;
-    lock_membership(client, principal_id, &org).await?;
-    let project = require_target_segment("project", project)?;
-    refuse_under_org_admin(client, principal_id, &org).await?;
-    let covered =
-        control::is_project_admin(client, principal_id, &org, &project, Some(env)).await?;
+    lock_membership(client, principal_id, org).await?;
+    refuse_under_org_admin(client, principal_id, org).await?;
+    let covered = control::is_project_admin(client, principal_id, org, project, Some(env)).await?;
     if covered {
         return Err(IdentityError::refused(
             IdentityErrorType::Conflict,
@@ -170,7 +163,7 @@ pub async fn revoke_member(
             ),
         ));
     }
-    crate::revoke_project_env_membership(client, principal_id, &org, &project, env, drops).await?;
+    crate::revoke_project_env_membership(client, principal_id, org, project, env, drops).await?;
     Ok(())
 }
 
@@ -182,19 +175,17 @@ const DROP_PROJECT_ADMIN_SQL: &str = "DELETE FROM identity.project_roles \
 pub async fn revoke_project_admin(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = require_target_segment("org", org)?;
-    lock_membership(client, principal_id, &org).await?;
-    let project = require_target_segment("project", project)?;
-    refuse_under_org_admin(client, principal_id, &org).await?;
+    lock_membership(client, principal_id, org).await?;
+    refuse_under_org_admin(client, principal_id, org).await?;
     drops.identity(principal_id);
     sqlx::query(DROP_PROJECT_ADMIN_SQL)
         .bind(principal_id)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .bind(control::PROJECT_ADMIN_ROLE)
         .execute(&mut *client)
         .await
@@ -207,7 +198,7 @@ pub async fn revoke_project_admin(
 async fn refuse_under_org_admin(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> Result<(), IdentityError> {
     let covered: bool = sqlx::query(HOLDS_ORG_ADMIN_SQL)
         .bind(principal_id)
@@ -234,15 +225,13 @@ const CREATE_PROJECT_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_C
 /// Create an org-level project definition. An existing project is refused.
 pub async fn create_project(
     client: &mut sqlx::PgConnection,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
 ) -> Result<(), IdentityError> {
-    let org = require_target_segment("org", org)?;
-    lock_org_memberships(client, &org).await?;
-    let project = require_target_segment("project", project)?;
+    lock_org_memberships(client, org).await?;
     let created = sqlx::query(CREATE_PROJECT_SQL)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -257,14 +246,13 @@ pub async fn create_project(
     Ok(())
 }
 
-/// The validated org, when the principal is an active member of it.
+/// Require active membership of the organization.
 pub(crate) async fn active_member(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-) -> Result<String, IdentityError> {
-    let org = require_target_segment("org", org)?;
-    let active = lock_membership(client, principal_id, &org)
+    org: &wamn_registry::OrgId,
+) -> Result<(), IdentityError> {
+    let active = lock_membership(client, principal_id, org)
         .await?
         .is_some_and(|status| status == "active");
     if !active {
@@ -274,7 +262,7 @@ pub(crate) async fn active_member(
             format!("principal {principal_id} is not an active member of org {org}"),
         ));
     }
-    Ok(org)
+    Ok(())
 }
 
 const REACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET status = 'active' \
@@ -307,10 +295,10 @@ pub struct MemberGrants {
     /// Grant `org-admin` in the org.
     pub org_admin: bool,
     /// Projects of the org where the user gets `project-admin`.
-    pub project_admins: Vec<String>,
+    pub project_admins: Vec<wamn_registry::ProjectId>,
     /// Environments of the org, as `(project, env)`, where the user gets a
     /// membership.
-    pub memberships: Vec<(String, wamn_registry::EnvName)>,
+    pub memberships: Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)>,
 }
 
 /// Write the active org membership of an invited user, then each requested
@@ -318,7 +306,7 @@ pub struct MemberGrants {
 pub async fn invite_member(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
     grants: &MemberGrants,
 ) -> Result<(), IdentityError> {
     activate_org_membership(client, principal_id, org).await?;
@@ -339,12 +327,12 @@ pub async fn invite_member(
 pub async fn reactivate_org_membership(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> Result<(), IdentityError> {
-    let org = member(client, principal_id, org).await?;
+    member(client, principal_id, org).await?;
     sqlx::query(REACTIVATE_MEMBERSHIP_SQL)
         .bind(principal_id)
-        .bind(&org)
+        .bind(org)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -359,23 +347,23 @@ pub async fn reactivate_org_membership(
 pub async fn deactivate_org_membership(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = member(client, principal_id, org).await?;
+    member(client, principal_id, org).await?;
     let principal = principal_id;
     drops.identity(principal);
     let every: Option<&str> = None;
     sqlx::query(DROP_ENV_MEMBERSHIPS_SQL)
         .bind(principal)
-        .bind(&org)
+        .bind(org)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     sqlx::query(DROP_PROJECT_ROLES_SQL)
         .bind(principal)
-        .bind(&org)
+        .bind(org)
         .bind(every)
         .execute(&mut *client)
         .await
@@ -383,14 +371,14 @@ pub async fn deactivate_org_membership(
         .map_err(|error| database_error(&error))?;
     sqlx::query("DELETE FROM identity.environment_roles WHERE principal_id=$1 AND org=$2")
         .bind(principal)
-        .bind(&org)
+        .bind(org)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     sqlx::query(DROP_ORG_ROLES_SQL)
         .bind(principal)
-        .bind(&org)
+        .bind(org)
         .bind(every)
         .execute(&mut *client)
         .await
@@ -398,7 +386,7 @@ pub async fn deactivate_org_membership(
         .map_err(|error| database_error(&error))?;
     sqlx::query(DEACTIVATE_MEMBERSHIP_SQL)
         .bind(principal)
-        .bind(&org)
+        .bind(org)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -410,16 +398,15 @@ pub async fn deactivate_org_membership(
 pub async fn revoke_org_admin(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = require_target_segment("org", org)?;
-    lock_membership(client, principal_id, &org).await?;
+    lock_membership(client, principal_id, org).await?;
     let principal = principal_id;
     drops.identity(principal);
     sqlx::query(DROP_ORG_ROLES_SQL)
         .bind(principal)
-        .bind(&org)
+        .bind(org)
         .bind(Some(ORG_ADMIN_ROLE))
         .execute(&mut *client)
         .await
@@ -446,7 +433,7 @@ pub struct OrgUser {
 /// The active and inactive members of `org`, by email.
 pub async fn org_users(
     client: &mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> Result<Vec<OrgUser>, IdentityError> {
     org_users_page(client, org, None, None, None).await
 }
@@ -454,14 +441,13 @@ pub async fn org_users(
 /// Read a keyset page, or all rows when the limit is absent.
 pub async fn org_users_page(
     client: &mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
     after: Option<&str>,
     after_id: Option<&PrincipalId>,
     limit: Option<i64>,
 ) -> Result<Vec<OrgUser>, IdentityError> {
-    let org = require_target_segment("org", org)?;
     sqlx::query(ORG_USERS_SQL)
-        .bind(&org)
+        .bind(org)
         .bind(ORG_ADMIN_ROLE)
         .bind(after)
         .bind(after_id)
@@ -488,16 +474,12 @@ const ORG_ENVIRONMENTS_SQL: &str =
 /// The environments of `org`, or of one project of it, as `(project, env)`.
 pub async fn org_environments(
     client: &mut sqlx::PgConnection,
-    org: &str,
-    project: Option<&str>,
-) -> Result<Vec<(String, wamn_registry::EnvName)>, IdentityError> {
-    let org = require_target_segment("org", org)?;
-    let project = project
-        .map(|project| require_target_segment("project", project))
-        .transpose()?;
+    org: &wamn_registry::OrgId,
+    project: Option<&wamn_registry::ProjectId>,
+) -> Result<Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)>, IdentityError> {
     sqlx::query_as(ORG_ENVIRONMENTS_SQL)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))
@@ -539,16 +521,14 @@ pub struct EnvironmentSummary {
 /// is written.
 pub async fn status_environments(
     client: &mut sqlx::PgConnection,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: Option<&wamn_registry::EnvName>,
 ) -> Result<Vec<wamn_registry::EnvName>, IdentityError> {
-    let org = require_target_segment("org", org)?;
-    let project = require_target_segment("project", project)?;
     let Some(env) = env else {
         let in_org: bool = sqlx::query(PROJECT_IN_ORG_SQL)
-            .bind(&org)
-            .bind(&project)
+            .bind(org)
+            .bind(project)
             .fetch_one(&mut *client)
             .await
             .map_err(|error| database_error(&error))?
@@ -560,15 +540,15 @@ pub async fn status_environments(
                 format!("project {project} is not a project of org {org}"),
             ));
         }
-        return Ok(project_envs(client, &org, &project)
+        return Ok(project_envs(client, org, project)
             .await?
             .into_iter()
             .map(|entry| entry.name)
             .collect());
     };
     let found: bool = sqlx::query(ENV_IN_PROJECT_SQL)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .bind(env)
         .fetch_one(&mut *client)
         .await
@@ -591,16 +571,14 @@ const ENVIRONMENT_STATUS_SQL: &str =
 /// The control routes read them with [`status_environments`] first.
 pub async fn set_environment_status(
     client: &mut sqlx::PgConnection,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     environments: &[wamn_registry::EnvName],
     status: EnvironmentStatus,
 ) -> Result<(), IdentityError> {
-    let org = require_target_segment("org", org)?;
-    let project = require_target_segment("project", project)?;
     sqlx::query(ENVIRONMENT_STATUS_SQL)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .bind(environments)
         .bind(status.as_str())
         .execute(&mut *client)
@@ -647,8 +625,8 @@ const PROJECT_ENVS_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_PRO
 /// The environments of one project of `org`.
 pub async fn project_envs(
     client: &mut sqlx::PgConnection,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
 ) -> Result<Vec<EnvironmentSummary>, IdentityError> {
     project_envs_page(client, org, project, None, None).await
 }
@@ -656,16 +634,14 @@ pub async fn project_envs(
 /// Read a keyset page, or all rows when the limit is absent.
 pub async fn project_envs_page(
     client: &mut sqlx::PgConnection,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     after: Option<&str>,
     limit: Option<i64>,
 ) -> Result<Vec<EnvironmentSummary>, IdentityError> {
-    let org = require_target_segment("org", org)?;
-    let project = require_target_segment("project", project)?;
     sqlx::query(PROJECT_ENVS_SQL)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .bind(after)
         .bind(limit)
         .fetch_all(&mut *client)
@@ -706,8 +682,8 @@ pub struct ProjectMember {
 /// The users of one project of `org`, by email.
 pub async fn project_members(
     client: &mut sqlx::PgConnection,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
 ) -> Result<Vec<ProjectMember>, IdentityError> {
     project_members_page(client, org, project, None, None, None, None).await
 }
@@ -716,18 +692,16 @@ pub async fn project_members(
 /// keeps only its members.
 pub async fn project_members_page(
     client: &mut sqlx::PgConnection,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     environment: Option<&wamn_registry::EnvName>,
     after: Option<&str>,
     after_id: Option<&PrincipalId>,
     limit: Option<i64>,
 ) -> Result<Vec<ProjectMember>, IdentityError> {
-    let org = require_target_segment("org", org)?;
-    let project = require_target_segment("project", project)?;
     sqlx::query(PROJECT_MEMBERS_SQL)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .bind(control::PROJECT_ADMIN_ROLE)
         .bind(ORG_ADMIN_ROLE)
         .bind(after)
@@ -751,14 +725,13 @@ pub async fn project_members_page(
         .collect()
 }
 
-/// The validated org, when the principal is a member of it, active or not.
+/// Require membership of the organization, active or not.
 async fn member(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-) -> Result<String, IdentityError> {
-    let org = require_target_segment("org", org)?;
-    let found = lock_membership(client, principal_id, &org).await?.is_some();
+    org: &wamn_registry::OrgId,
+) -> Result<(), IdentityError> {
+    let found = lock_membership(client, principal_id, org).await?.is_some();
     if !found {
         return Err(IdentityError::refused(
             IdentityErrorType::NotFound,
@@ -766,7 +739,7 @@ async fn member(
             format!("principal {principal_id} is not a member of org {org}"),
         ));
     }
-    Ok(org)
+    Ok(())
 }
 
 /// Lock a user's org membership until the caller's system transaction ends.
@@ -774,7 +747,7 @@ async fn member(
 pub async fn lock_membership(
     client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> Result<Option<String>, IdentityError> {
     sqlx::query(ACTIVE_MEMBER_SQL)
         .bind(principal)
@@ -788,7 +761,7 @@ pub async fn lock_membership(
 /// Lock existing memberships in principal order before bulk authority writes.
 pub async fn lock_org_memberships(
     client: &mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> Result<(), IdentityError> {
     sqlx::query("SELECT principal_id FROM identity.org_memberships WHERE org=$1 ORDER BY principal_id FOR UPDATE").bind(org).fetch_all(&mut *client)
         .await.map_err(|error| database_error(&error))?;
@@ -799,29 +772,28 @@ pub async fn lock_org_memberships(
 pub async fn grant_environment_admin(
     client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
 ) -> Result<(), IdentityError> {
-    let org = active_member(client, principal, org).await?;
-    sqlx::query("INSERT INTO identity.environment_roles (principal_id,org,env,role) VALUES ($1,$2,$3,'environment-admin') ON CONFLICT DO NOTHING").bind(principal).bind(&org).bind(&env).execute(&mut *client).await.map(|result| result.rows_affected()).map_err(|error| database_error(&error))?;
+    active_member(client, principal, org).await?;
+    sqlx::query("INSERT INTO identity.environment_roles (principal_id,org,env,role) VALUES ($1,$2,$3,'environment-admin') ON CONFLICT DO NOTHING").bind(principal).bind(org).bind(env).execute(&mut *client).await.map(|result| result.rows_affected()).map_err(|error| database_error(&error))?;
     Ok(())
 }
 /// Revoke only the explicit environment grant.
 pub async fn revoke_environment_admin(
     client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = require_target_segment("org", org)?;
-    lock_membership(client, principal, &org).await?;
+    lock_membership(client, principal, org).await?;
     sqlx::query(
         "DELETE FROM identity.environment_roles WHERE principal_id=$1 AND org=$2 AND env=$3",
     )
     .bind(principal)
-    .bind(&org)
-    .bind(&env)
+    .bind(org)
+    .bind(env)
     .execute(&mut *client)
     .await
     .map(|result| result.rows_affected())

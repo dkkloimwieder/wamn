@@ -61,7 +61,7 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
     let (mut controller, device) = pseudo_terminal();
     let mut config = config(&directory, digest);
     config.device = Some(DeviceConfig {
-        attachment: ATTACHMENT.into(),
+        attachment: ATTACHMENT.parse().unwrap(),
         principal: PRINCIPAL.parse().unwrap(),
         role: ROLE.into(),
         serial: SerialConfig {

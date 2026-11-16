@@ -15,7 +15,7 @@ const OPERATION: &str = "wamn.dev/operation";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
-    project: String,
+    project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
     #[serde(default)]
     application: Option<wamn_catalog::ApplicationName>,
@@ -68,8 +68,8 @@ impl Operation {
 
     fn needs(
         self,
-        org: &str,
-        project: &str,
+        org: &wamn_registry::OrgId,
+        project: &wamn_registry::ProjectId,
         env: &wamn_registry::EnvName,
         database: &str,
         apply_credential: &str,
@@ -122,7 +122,7 @@ impl ControlRoutes<'_> {
             &request.project,
             &request.env,
         )
-        .map_err(|_| invalid("env"))?;
+        .map_err(anyhow::Error::from)?;
         // Repeat authority in the write transaction before contacting Kubernetes.
         let mut writer = self.writer.lock().await;
         let mut transaction = self
@@ -134,8 +134,11 @@ impl ControlRoutes<'_> {
                 Some(&request.env),
             )
             .await?;
-        let triple =
-            wamn_registry::Triple::new(self.org, request.env.clone(), request.project.as_str());
+        let triple = wamn_registry::Triple::new(
+            self.org.clone(),
+            request.env.clone(),
+            request.project.clone(),
+        );
         let exists = wamn_registry::deployment::exists(&mut transaction, &triple).await?;
         if !exists {
             return Err(Refusal::Declared {
@@ -275,7 +278,7 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
 fn manifest(
     operation: Operation,
     request: &Request,
-    org: &str,
+    org: &wamn_registry::OrgId,
     actor: &PrincipalId,
     coordinate: &str,
     database: &str,
@@ -291,7 +294,7 @@ fn manifest(
         "operation",
         operation.command(),
         "--org",
-        org,
+        org.as_str(),
         "--project",
         request.project.as_str(),
         "--env",
@@ -332,7 +335,7 @@ fn manifest(
     }
     let mut job =
         wamn_kubernetes::job::manifest(name, image, &["/usr/local/bin/wamn-control"], &arguments);
-    job["metadata"]["namespace"] = org.into();
+    job["metadata"]["namespace"] = org.as_str().into();
     job["metadata"]["annotations"] = json!({TARGET:coordinate,OPERATION:operation.command()});
     job["spec"]["suspend"] = false.into();
     job["spec"]["ttlSecondsAfterFinished"] = 3600.into();
@@ -384,7 +387,7 @@ mod tests {
         request.release = None;
         assert!(validate(Operation::Reset, &request).is_ok());
         let coordinate = wamn_control_provision::environment_names::environment_resource_name(
-            "acme",
+            &"acme".parse().unwrap(),
             &request.project,
             &request.env,
         )
@@ -397,7 +400,7 @@ mod tests {
             let job = manifest(
                 operation,
                 &request,
-                "acme",
+                &"acme".parse().unwrap(),
                 &"00000000-0000-4000-8000-000000000001".parse().unwrap(),
                 &coordinate,
                 "project-database",

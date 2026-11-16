@@ -13,7 +13,10 @@ use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorTy
 /// artifact pin.
 pub(crate) fn load_base_manifests(
     output_root: &Path,
-    dependencies: &std::collections::BTreeMap<String, crate::manifest::BaseDependencyRequirement>,
+    dependencies: &std::collections::BTreeMap<
+        crate::source_name::SourceName,
+        crate::manifest::BaseDependencyRequirement,
+    >,
 ) -> Result<Vec<PackageManifest>> {
     dependencies
         .values()

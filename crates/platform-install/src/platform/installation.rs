@@ -132,8 +132,8 @@ pub fn organization_entry(
     )?)?;
     crate::environment::entry(
         &chart.directory().join("platform/org"),
-        &document.org,
-        &wamn_registry::name::resource_suffix("org", &document.org),
+        document.org.as_str(),
+        &wamn_registry::name::resource_suffix("org", document.org.as_str()),
         values,
     )
 }
@@ -158,7 +158,7 @@ pub fn host_settings(document: &ClusterDocument) -> Value {
         &document.registry
     };
     values["hostEnvironment"] = json!({
-        "DOCKER_CONFIG":"/etc/wamn/registry", "WAMN_SESSION_ISSUER":super::identity::issuer(&document.org),
+        "DOCKER_CONFIG":"/etc/wamn/registry", "WAMN_SESSION_ISSUER":super::identity::issuer(document.org.as_str()),
         "WAMN_SESSION_JWKS_CA":"/etc/identity-ca/ca.crt",
         "WAMN_COMPONENT_ARTIFACT_BASE":format!("{registry}/wamn/components"),
         "WAMN_PACKAGE_ARTIFACT_BASE":format!("{registry}/wamn/packages"),

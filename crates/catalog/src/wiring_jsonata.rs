@@ -1,5 +1,7 @@
 //! Node-specific JSONata port contracts, derived from wiring configuration.
 
+use crate::canonical_name::CanonicalName;
+
 use crate::{
     AdmittedComponent, AdmittedComponentOperation, AdmittedComponentPort, WiringCompatibilityError,
     WiringCompatibilityErrorType, WiringDocument, WiringNode,
@@ -7,7 +9,7 @@ use crate::{
 use std::borrow::Cow;
 
 pub(super) fn specialize<'a>(
-    node_id: &str,
+    node_id: &CanonicalName,
     node: &WiringNode,
     component: &AdmittedComponent,
     operation: &'a AdmittedComponentOperation,
@@ -54,7 +56,7 @@ const SAMPLE_DEPTH: usize = 16;
 
 pub(super) fn validate_samples(
     wiring: &WiringDocument,
-    node_id: &str,
+    node_id: &CanonicalName,
     node: &WiringNode,
     component: &AdmittedComponent,
     operation: &AdmittedComponentOperation,
@@ -85,7 +87,7 @@ pub(super) fn validate_samples(
     let incoming: Vec<_> = wiring
         .edges
         .iter()
-        .filter(|edge| edge.to == node_id)
+        .filter(|edge| &edge.to == node_id)
         .collect();
     for (port_number, port) in operation.input_ports.iter().enumerate() {
         let used = if incoming.is_empty() {
@@ -93,8 +95,8 @@ pub(super) fn validate_samples(
         } else {
             incoming.iter().any(|edge| {
                 edge.to_port
-                    .as_deref()
-                    .map_or(operation.input_ports.len() == 1, |name| name == port.name)
+                    .as_ref()
+                    .map_or(operation.input_ports.len() == 1, |name| *name == port.name)
             })
         };
         if !used {
@@ -141,8 +143,8 @@ pub(super) fn validate_samples(
 }
 
 fn refusal(
-    node: &str,
-    port: &str,
+    node: &CanonicalName,
+    port: &CanonicalName,
     number: usize,
     sample: &serde_json::Value,
     error: &dyn std::fmt::Display,

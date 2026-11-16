@@ -48,7 +48,9 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         line.trim() == "project-created",
         "browser did not create the project: {line}"
     );
-    fixture.browser_environment(BROWSER_PROJECT).await?;
+    fixture
+        .browser_environment(&BROWSER_PROJECT.parse().unwrap())
+        .await?;
     input.write_all(b"environment-ready\n").await?;
     drop(input);
     browser.stdout = Some(output.into_inner());

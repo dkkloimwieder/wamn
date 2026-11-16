@@ -6,7 +6,10 @@ type Object = sqlx::pool::PoolConnection<sqlx::Postgres>;
 /// The project pool opens a read transaction with the executor identity.
 #[async_trait::async_trait]
 pub trait ProjectDatabase: Send + Sync {
-    async fn read_connection(&self, project: &str) -> anyhow::Result<ConnectionGuard>;
+    async fn read_connection(
+        &self,
+        project: &wamn_registry::ProjectId,
+    ) -> anyhow::Result<ConnectionGuard>;
 }
 
 /// Owns a acquired connection across an await.

@@ -21,9 +21,9 @@ pub(super) fn evidence(
         operation,
     } = &attachment.target;
     let declaration = declarations
-        .get(component)
+        .get(component.as_str())
         .and_then(|component| component.get("operations"))
-        .and_then(|operations| operations.get(operation));
+        .and_then(|operations| operations.get(operation.as_str()));
     let output_schema = declaration
         .and_then(|operation| operation.get("output-ports"))
         .and_then(Value::as_array)
@@ -46,7 +46,7 @@ pub(super) fn evidence(
         partial_schema: declaration
             .and_then(|operation| operation.get("committed-result-schema"))
             .cloned(),
-        terminal_operation: Some(operation.clone()),
+        terminal_operation: Some(operation.to_string()),
         direct: attachment
             .registered_operation
             .as_ref()

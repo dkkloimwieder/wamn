@@ -53,7 +53,7 @@ impl Fixture {
     async fn authenticator(
         &mut self,
         secret: &str,
-        project: &str,
+        project: &wamn_registry::ProjectId,
     ) -> Arc<PlatformRouteAuthenticator> {
         self.credentials
             .put("webhook", secret, &["host-project"])
@@ -91,7 +91,7 @@ impl Fixture {
             statement_timeout_ms: 5000,
         };
         let projects = wamn_sql::StaticCredentialProvider::projects_from_json(
-            &json!({(project):{"credentials":{"callable-http":self.database.as_str()}}})
+            &json!({(project.as_str()):{"credentials":{"callable-http":self.database.as_str()}}})
                 .to_string(),
             &base,
         )
@@ -104,7 +104,11 @@ impl Fixture {
             self.changes.clone(),
             Arc::new(self.credentials.reader(project).await),
             &postgres,
-            &wamn_registry::project_env_key("acme", project, &"dev".parse().unwrap()),
+            &wamn_registry::project_env_key(
+                &"acme".parse().unwrap(),
+                project,
+                &"dev".parse().unwrap(),
+            ),
             project,
             &"dev".parse().unwrap(),
         ));
@@ -135,7 +139,11 @@ impl Fixture {
         ))
     }
 
-    async fn plugin(&mut self, secret: &str, project: &str) -> FlowHttpRouting {
+    async fn plugin(
+        &mut self,
+        secret: &str,
+        project: &wamn_registry::ProjectId,
+    ) -> FlowHttpRouting {
         routing_policy(
             json!({"modes":["signature"],"header":"X-Signature","credential":"org:acme:webhook"}),
         )
@@ -145,7 +153,7 @@ impl Fixture {
     async fn valid_plugin(&mut self) -> FlowHttpRouting {
         self.plugin(
             r#"{"hmac":{"algorithm":"sha256","secret":"test-secret"}}"#,
-            "host-project",
+            &"host-project".parse().unwrap(),
         )
         .await
     }
@@ -190,7 +198,7 @@ impl Backend for Adapter {
             .map(|h| (h.name.as_str(), h.value.as_str()))
             .collect::<Vec<_>>();
         self.routing
-            .authenticate_request_for_test(&route.attachment_id, &headers, body)
+            .authenticate_request_for_test(&route.attachment_id.parse().unwrap(), &headers, body)
             .await
             .map_err(|(status, code)| http_route::AuthRejection { status, code })
     }
@@ -322,7 +330,9 @@ async fn missing_credentials_wrong_project_and_bad_secret_shapes_refuse() {
         "not json",
     ] {
         let (response, delivered) = request(
-            fixture.plugin(secret, "host-project").await,
+            fixture
+                .plugin(secret, &"host-project".parse().unwrap())
+                .await,
             headers(signed(BODY)),
         )
         .await;
@@ -337,7 +347,7 @@ async fn missing_credentials_wrong_project_and_bad_secret_shapes_refuse() {
         fixture
             .plugin(
                 r#"{"hmac":{"algorithm":"sha256","secret":"test-secret"}}"#,
-                "other-project",
+                &"other-project".parse().unwrap(),
             )
             .await,
         routing_policy(
@@ -347,7 +357,7 @@ async fn missing_credentials_wrong_project_and_bad_secret_shapes_refuse() {
             fixture
                 .authenticator(
                     r#"{"hmac":{"algorithm":"sha256","secret":"test-secret"}}"#,
-                    "host-project",
+                    &"host-project".parse().unwrap(),
                 )
                 .await,
         ),
@@ -382,7 +392,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     let signature = signed(BODY);
     let headers = [("X-Signature", signature.as_str())];
     let caller = routing
-        .authenticate_request_for_test("orders", &headers, BODY)
+        .authenticate_request_for_test(&"orders".parse().unwrap(), &headers, BODY)
         .await
         .unwrap()
         .unwrap();
@@ -400,7 +410,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     // A repeated request needs neither Postgres connection reads nor the store.
     sqlx::raw_sql("REVOKE EXECUTE ON FUNCTION registry.read_env_connections(text,text,text), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_secret(text,text,text,uuid) FROM wamn_conn_reader").execute(&mut fixture.credentials.admin).await.map(drop).unwrap();
     let repeated = routing
-        .authenticate_request_for_test("orders", &headers, BODY)
+        .authenticate_request_for_test(&"orders".parse().unwrap(), &headers, BODY)
         .await
         .unwrap()
         .unwrap();
@@ -426,7 +436,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     let mut drops = ConnectionDrops::default();
     administration::execute_with_store(
         &mut tx,
-        "acme",
+        &"acme".parse().unwrap(),
         "connection.set_credential",
         &json!({
             "project":"host-project", "env":"dev", "name":"webhook",
@@ -451,7 +461,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     .await;
     assert_eq!(
         routing
-            .authenticate_request_for_test("orders", &headers, BODY)
+            .authenticate_request_for_test(&"orders".parse().unwrap(), &headers, BODY)
             .await
             .unwrap_err(),
         (401, String::new())
@@ -467,7 +477,11 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     mac.update(BODY);
     let signature = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
     let caller = routing
-        .authenticate_request_for_test("orders", &[("X-Signature", &signature)], BODY)
+        .authenticate_request_for_test(
+            &"orders".parse().unwrap(),
+            &[("X-Signature", &signature)],
+            BODY,
+        )
         .await
         .unwrap()
         .unwrap();
@@ -482,7 +496,7 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
     let authenticator = fixture
         .authenticator(
             r#"{"hmac":{"algorithm":"sha256","secret":"test-secret"}}"#,
-            "host-project",
+            &"host-project".parse().unwrap(),
         )
         .await;
     let signature = routing_policy(
@@ -530,7 +544,7 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
     ] {
         assert_eq!(
             routing
-                .authenticate_request_for_test("orders", headers, BODY)
+                .authenticate_request_for_test(&"orders".parse().unwrap(), headers, BODY)
                 .await
                 .unwrap()
                 .unwrap()
@@ -563,7 +577,7 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
         ] {
             assert_eq!(
                 routing
-                    .authenticate_request_for_test("orders", headers, BODY)
+                    .authenticate_request_for_test(&"orders".parse().unwrap(), headers, BODY)
                     .await
                     .unwrap_err()
                     .0,

@@ -35,7 +35,7 @@ pub use name::{
     control_administration_secret_name, org_workload_secret_name, project_env_cdc_secret_name,
     project_env_database_name, project_env_guest_secret_name, project_env_key,
     project_env_namespace, project_env_secret_name, validate_project_env, validate_project_env_cdc,
-    validate_project_id, workload_secret_name,
+    workload_secret_name,
 };
 pub use platform_principals::{bind_platform_principal_sql, platform_principals_sql};
 pub use readers::{SystemReader, system_reader_identity_hash, system_reader_login};

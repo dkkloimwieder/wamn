@@ -219,18 +219,18 @@ pub struct Org {
 
 impl Org {
     /// An org that shares the given pool cluster (every env lands on it).
-    pub fn pooled(id: impl Into<String>, pool: impl Into<String>) -> Org {
+    pub fn pooled(id: OrgId, pool: impl Into<String>) -> Org {
         Org {
-            id: id.into(),
+            id,
             placement: Placement::Pooled { pool: pool.into() },
         }
     }
 
     /// An org that owns per-recovery-domain clusters (`<org>-<owner(env)>`,
     /// derived by [`cluster_of`]).
-    pub fn dedicated(id: impl Into<String>) -> Org {
+    pub fn dedicated(id: OrgId) -> Org {
         Org {
-            id: id.into(),
+            id,
             placement: Placement::Dedicated,
         }
     }

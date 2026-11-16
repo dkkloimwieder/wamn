@@ -12,7 +12,7 @@ impl WamnJetstream {
     pub async fn admit_application_events(
         &self,
         postgres: &wamn_sql::WamnPostgres,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         release: &wamn_engine::release_manifest::LoadedRelease,
         sources: &[(
             &wamn_catalog::ApplicationName,
@@ -21,7 +21,7 @@ impl WamnJetstream {
         )],
         admit: impl AsyncFn(
             &wamn_sql::WamnPostgres,
-            &str,
+            &wamn_registry::ProjectId,
             &wamn_engine::release_manifest::LoadedRelease,
             &EventBatchAdmission<'_>,
         ) -> Result<(), wamn_run_state::run_store::ProductionLeaseError>,

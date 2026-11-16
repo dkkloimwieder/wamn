@@ -26,7 +26,7 @@ use wamn_identity_client::PatIssuerConfig;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Configuration {
-    pub org: String,
+    pub org: wamn_registry::OrgId,
     pub http_addr: SocketAddr,
     pub public_origin: String,
     pub database: wamn_postgres::ConnectionConfig,
@@ -145,7 +145,7 @@ impl Configuration {
             target: wamn_kubernetes::Target {
                 kubeconfig: "/work/kubeconfig".into(),
                 context: "operation".into(),
-                namespace: self.org.clone(),
+                namespace: self.org.to_string(),
             },
             chart: self.chart.clone(),
             chart_download: None,
@@ -156,7 +156,7 @@ impl Configuration {
             insecure_registry: self.insecure_registry,
             package_artifact_base: Some(self.package_artifact_base.clone()),
             component_artifact_base: Some(self.component_artifact_base.clone()),
-            database_namespace: self.org.clone(),
+            database_namespace: self.org.to_string(),
             database_host: None,
             database_port: 5432,
             host_group: None,
@@ -177,9 +177,9 @@ pub struct Operation {
     #[arg(value_parser = ["deploy", "rollback", "stop", "diff", "apply", "reset", "retain"])]
     verb: String,
     #[arg(long)]
-    org: String,
+    org: wamn_registry::OrgId,
     #[arg(long)]
-    project: String,
+    project: wamn_registry::ProjectId,
     #[arg(long)]
     env: wamn_registry::EnvName,
     #[arg(long)]
@@ -197,10 +197,13 @@ pub async fn execute(config: &Configuration, operation: Operation) -> anyhow::Re
     let actor = std::env::var("WAMN_DEPLOY_ACTOR")
         .context("authenticated actor is absent")?
         .parse()?;
-    let triple =
-        wamn_registry::Triple::new(&operation.org, operation.env.clone(), &operation.project);
+    let triple = wamn_registry::Triple::new(
+        operation.org.clone(),
+        operation.env.clone(),
+        operation.project.clone(),
+    );
     let platform = config.platform()?;
-    write_kubeconfig(&platform.target.kubeconfig, &config.org)?;
+    write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     if operation.verb == "retain" {
         return Ok(
             json!({"removed":wamn_environment::environment::retention::prune(&platform, &triple).await?}),
@@ -285,7 +288,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     config.worker.database_credential = config.apply_database.credentials.name.clone();
     config.worker.administration = config.administration_dir.clone();
     let platform = Arc::new(config.platform()?);
-    write_kubeconfig(&platform.target.kubeconfig, &config.org)?;
+    write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let integration_registry = wamn_package_artifact::PackageRegistry {
         artifact_base: config.integration_artifact_base.clone(),
         credentials: None,
@@ -305,7 +308,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             )?,
         )
     };
-    write_kubeconfig(&platform.target.kubeconfig, &config.org)?;
+    write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let database = config.database.to_json()?;
     let pool = wamn_postgres::pool(&database, 4).await?;
     let cleanup_pool = pool.clone();
@@ -323,7 +326,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     );
     let verifier = wamn_identity_protocol::verifier::SessionVerifier::new(
         keys,
-        &config.org,
+        config.org.as_str(),
         &wamn_platform_identity::control::control_audience(&config.org)?,
     )?;
     let oauth = config
@@ -379,7 +382,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         .with_oauth(oauth.as_ref().map(Arc::clone)),
     );
     let database: Arc<str> = database.into();
-    let org: Arc<str> = config.org.into();
+    let org = Arc::new(config.org);
     let routing = Arc::new(FlowHttpRouting::new(Arc::default()));
     let listener = tokio::net::TcpListener::bind(config.http_addr).await?;
     let cleanup_org = Arc::clone(&org);

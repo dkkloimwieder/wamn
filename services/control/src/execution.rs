@@ -9,7 +9,7 @@ use wamn_identity_protocol::PrincipalId;
 
 #[derive(Debug)]
 pub(crate) struct Execution {
-    pub org: String,
+    pub org: wamn_registry::OrgId,
     pub worker: wamn_kubernetes::job::Worker,
     pub platform_database: wamn_postgres::ConnectionConfig,
     pub event_observer: Option<wamn_broker::nats::PlatformNats>,
@@ -25,7 +25,7 @@ pub(crate) struct Execution {
 impl Execution {
     pub(crate) fn application_database(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
     ) -> anyhow::Result<String> {
         wamn_control_provision::validate_project_env(&self.org, project, environment)?;
@@ -39,11 +39,11 @@ impl Execution {
 impl wamn_execution_host::ControlExecution for Execution {
     async fn execute(
         &self,
-        operation: &str,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
         caller: &PrincipalId,
         payload: &str,
     ) -> anyhow::Result<Value> {
-        match operation {
+        match operation.as_str() {
             "environment.configure" | "environment.delete" | "environment.operation_status" => {
                 self.environment(operation, caller, payload).await
             }
@@ -76,7 +76,7 @@ impl wamn_execution_host::ControlExecution for Execution {
                 #[derive(Deserialize)]
                 #[serde(deny_unknown_fields)]
                 struct Request {
-                    project: String,
+                    project: wamn_registry::ProjectId,
                     env: wamn_registry::EnvName,
                 }
                 let request: Request = serde_json::from_str(payload)?;
@@ -95,8 +95,11 @@ impl wamn_execution_host::ControlExecution for Execution {
                         json!({"slot":closed.slot,"created_at":closed.created_at.to_rfc3339(),"resync_at":closed.resync_at.to_rfc3339()}),
                     );
                 }
-                let triple =
-                    wamn_registry::Triple::new(&self.org, request.env.clone(), &request.project);
+                let triple = wamn_registry::Triple::new(
+                    self.org.clone(),
+                    request.env.clone(),
+                    request.project.clone(),
+                );
                 let instance = wamn_environment::provision_project_env::read_project_env_instance(
                     &self.platform.system_database_url,
                     &triple,
@@ -141,7 +144,7 @@ impl wamn_execution_host::ControlExecution for Execution {
                 #[derive(Deserialize)]
                 #[serde(deny_unknown_fields)]
                 struct Request {
-                    project: String,
+                    project: wamn_registry::ProjectId,
                     env: wamn_registry::EnvName,
                     name: String,
                     display_name: String,

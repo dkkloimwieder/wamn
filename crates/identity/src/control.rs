@@ -10,7 +10,7 @@ use sqlx::Row as _;
 use wamn_identity_protocol::token::{SessionAuthority, SessionClaims};
 
 use crate::org::ORG_ADMIN_ROLE;
-use crate::{IdentityError, IdentityErrorType, PrincipalId, database_error};
+use crate::{IdentityError, PrincipalId, database_error};
 
 /// The prefix of every control audience.
 pub const CONTROL_AUDIENCE_PREFIX: &str = "urn:wamn:control:";
@@ -46,34 +46,14 @@ const CONTROL_SESSION_ACTIVE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.
     AND l.principal_id = p.id AND l.issuer = $5 AND l.audience = $6 AND l.revoked_at IS NULL \
     AND l.expires_at > clock_timestamp() AND l.renewal_expires_at > clock_timestamp()))";
 
-/// Whether `org` has the spelling of `registry.orgs_id_charset_check`.
-fn valid_org(org: &str) -> bool {
-    org.len() <= 40
-        && org.split('-').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9'))
-        })
-}
-
-fn invalid_org() -> IdentityError {
-    IdentityError::new(IdentityErrorType::InvalidInput, "org is not an org id")
-}
-
 /// The control audience of an org.
-pub fn control_audience(org: &str) -> Result<String, IdentityError> {
-    if !valid_org(org) {
-        return Err(invalid_org());
-    }
+pub fn control_audience(org: &wamn_registry::OrgId) -> Result<String, IdentityError> {
     Ok(wamn_registry::name::control_audience(org))
 }
 
 /// The org of a control audience, or `None` when the audience is not one.
-pub fn control_audience_org(audience: &str) -> Option<&str> {
-    audience
-        .strip_prefix(CONTROL_AUDIENCE_PREFIX)
-        .filter(|org| valid_org(org))
+pub fn control_audience_org(audience: &str) -> Option<wamn_registry::OrgId> {
+    audience.strip_prefix(CONTROL_AUDIENCE_PREFIX)?.parse().ok()
 }
 
 /// The projects of `org` where the active user principal is
@@ -81,8 +61,8 @@ pub fn control_audience_org(audience: &str) -> Option<&str> {
 pub async fn control_projects(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-) -> Result<Vec<String>, IdentityError> {
+    org: &wamn_registry::OrgId,
+) -> Result<Vec<wamn_registry::ProjectId>, IdentityError> {
     control_projects_page(client, principal_id, org, None, None).await
 }
 
@@ -90,14 +70,11 @@ pub async fn control_projects(
 pub async fn control_projects_page(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    after: Option<&str>,
+    org: &wamn_registry::OrgId,
+    after: Option<&wamn_registry::ProjectId>,
     limit: Option<i64>,
-) -> Result<Vec<String>, IdentityError> {
-    if !valid_org(org) {
-        return Err(invalid_org());
-    }
-    Ok(sqlx::query(CONTROL_PROJECTS_SQL)
+) -> Result<Vec<wamn_registry::ProjectId>, IdentityError> {
+    sqlx::query(CONTROL_PROJECTS_SQL)
         .bind(principal_id)
         .bind(org)
         .bind(PROJECT_ADMIN_ROLE)
@@ -107,19 +84,16 @@ pub async fn control_projects_page(
         .await
         .map_err(|error| database_error(&error))?
         .iter()
-        .map(|row| row.get(0))
-        .collect())
+        .map(|row| row.try_get(0).map_err(|error| database_error(&error)))
+        .collect::<Result<_, _>>()
 }
 
 /// Whether the active user principal holds `org-admin` in `org`.
 pub async fn is_org_admin(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> Result<bool, IdentityError> {
-    if !valid_org(org) {
-        return Err(invalid_org());
-    }
     sqlx::query(ORG_ADMIN_SQL)
         .bind(principal_id)
         .bind(org)
@@ -136,18 +110,14 @@ pub async fn is_org_admin(
 pub async fn is_project_admin(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     environment: Option<&wamn_registry::EnvName>,
 ) -> Result<bool, IdentityError> {
-    if !valid_org(org) {
-        return Err(invalid_org());
-    }
-    let project = crate::require_target_segment("project", project)?;
     sqlx::query(PROJECT_ADMIN_SQL)
         .bind(principal_id)
         .bind(org)
-        .bind(&project)
+        .bind(project)
         .bind(PROJECT_ADMIN_ROLE)
         .bind(environment)
         .fetch_one(&mut *client)
@@ -161,7 +131,7 @@ pub async fn is_project_admin(
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ProjectSummary {
     /// The project name.
-    pub name: String,
+    pub name: wamn_registry::ProjectId,
     /// The state exposed by project.list.
     pub state: String,
 }
@@ -169,7 +139,7 @@ pub struct ProjectSummary {
 /// Every project of `org`, which an `org-admin` administers.
 pub async fn org_projects(
     client: &mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> Result<Vec<ProjectSummary>, IdentityError> {
     org_projects_page(client, org, None, None).await
 }
@@ -177,14 +147,11 @@ pub async fn org_projects(
 /// Read a keyset page, or all rows when the limit is absent.
 pub async fn org_projects_page(
     client: &mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
     after: Option<&str>,
     limit: Option<i64>,
 ) -> Result<Vec<ProjectSummary>, IdentityError> {
-    if !valid_org(org) {
-        return Err(invalid_org());
-    }
-    Ok(sqlx::query(ORG_PROJECTS_SQL)
+    sqlx::query(ORG_PROJECTS_SQL)
         .bind(org)
         .bind(after)
         .bind(limit)
@@ -192,11 +159,13 @@ pub async fn org_projects_page(
         .await
         .map_err(|error| database_error(&error))?
         .iter()
-        .map(|row| ProjectSummary {
-            name: row.get(0),
-            state: row.get(1),
+        .map(|row| {
+            Ok(ProjectSummary {
+                name: row.try_get(0).map_err(|error| database_error(&error))?,
+                state: row.try_get(1).map_err(|error| database_error(&error))?,
+            })
         })
-        .collect())
+        .collect::<Result<_, IdentityError>>()
 }
 
 /// Every registered org where the active user principal holds control
@@ -204,7 +173,7 @@ pub async fn org_projects_page(
 pub async fn control_orgs(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-) -> Result<Vec<String>, IdentityError> {
+) -> Result<Vec<wamn_registry::OrgId>, IdentityError> {
     control_orgs_page(client, principal_id, None, None, None).await
 }
 
@@ -212,11 +181,11 @@ pub async fn control_orgs(
 pub async fn control_orgs_page(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: Option<&str>,
-    after: Option<&str>,
+    org: Option<&wamn_registry::OrgId>,
+    after: Option<&wamn_registry::OrgId>,
     limit: Option<i64>,
-) -> Result<Vec<String>, IdentityError> {
-    Ok(sqlx::query(CONTROL_ORGS_SQL)
+) -> Result<Vec<wamn_registry::OrgId>, IdentityError> {
+    sqlx::query(CONTROL_ORGS_SQL)
         .bind(principal_id)
         .bind(PROJECT_ADMIN_ROLE)
         .bind(ORG_ADMIN_ROLE)
@@ -227,8 +196,8 @@ pub async fn control_orgs_page(
         .await
         .map_err(|error| database_error(&error))?
         .iter()
-        .map(|row| row.get(0))
-        .collect())
+        .map(|row| row.try_get(0).map_err(|error| database_error(&error)))
+        .collect::<Result<_, _>>()
 }
 
 /// Make sure of, without caching an approval, that a verified control session
@@ -242,7 +211,11 @@ pub async fn control_session_is_active(
     claims: &SessionClaims,
 ) -> Result<bool, IdentityError> {
     let SessionAuthority::Login(login) = &claims.authority;
-    if control_audience_org(&claims.aud) != Some(claims.org.as_str()) {
+    if control_audience_org(&claims.aud)
+        .as_ref()
+        .map(wamn_registry::OrgId::as_str)
+        != Some(claims.org.as_str())
+    {
         return Ok(false);
     }
     sqlx::query(CONTROL_SESSION_ACTIVE_SQL)

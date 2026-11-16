@@ -24,7 +24,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
     let acquisition = NodeAcquisition {
         identity: SessionIdentity {
             project_env_key: Some("org-a--dev--project".parse().unwrap()),
-            project: Some("project-a".to_owned()),
+            project: Some("project-a".parse().unwrap()),
             schema: Some("app".to_owned()),
             runner: Some("executor-a".to_owned()),
             role: Some("operator".to_owned()),
@@ -41,9 +41,11 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
             origin: ConnectionOrigin {
                 package_id: "platform_fixture_overlay".parse().unwrap(),
                 component_digest: wamn_digest::bytes_sha256(b"overlay"),
-                component: "overlay".to_owned(),
-                interface_version: "1.0.0".to_owned(),
-                operation: "platform-fixture-overlay:widget/record-batch@2.1.0".to_owned(),
+                component: "overlay".parse().unwrap(),
+                interface_version: "1.0.0".parse().unwrap(),
+                operation: "platform-fixture-overlay:widget/record-batch@2.1.0"
+                    .parse()
+                    .unwrap(),
             },
             entry: InvocationEntry::Wiring(WiringPosition {
                 configuration: Default::default(),
@@ -51,15 +53,17 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
                 wiring_hash: (format!("sha256:{}", "a".repeat(64)))
                     .parse::<wamn_digest::Digest>()
                     .unwrap(),
-                wiring_id: "record-batch".to_owned(),
+                wiring_id: "record-batch".parse().unwrap(),
                 wiring_version: 1,
-                node_id: "base-command".to_owned(),
+                node_id: "base-command".parse().unwrap(),
                 occurrence: 0,
             }),
             package_id: "platform_fixture_overlay".parse().unwrap(),
             component_digest: wamn_digest::bytes_sha256(b"overlay"),
-            component: "overlay".to_owned(),
-            operation: "platform-fixture-overlay:widget/record-batch@2.1.0".to_owned(),
+            component: "overlay".parse().unwrap(),
+            operation: "platform-fixture-overlay:widget/record-batch@2.1.0"
+                .parse()
+                .unwrap(),
             closure: ConnectionExecutionClosure::Released,
             effects: None,
         },
@@ -85,7 +89,11 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
         original.executing_identity(None, &"receiving".parse().expect("valid name")),
         SessionIdentity {
             user_id: Some(platform_user),
-            operation: Some("platform-fixture-overlay:widget/record-batch@2.1.0".to_owned()),
+            operation: Some(
+                "platform-fixture-overlay:widget/record-batch@2.1.0"
+                    .parse()
+                    .unwrap()
+            ),
             application: Some("receiving".parse().expect("valid name")),
             ..original.identity
         }

@@ -23,7 +23,7 @@ pub struct ClusterDocument {
     pub project_id: String,
     pub zone: String,
     pub cluster_name: String,
-    pub org: String,
+    pub org: wamn_registry::OrgId,
     pub owner_email: String,
     /// Registry host and optional repository path, without a URL scheme.
     pub registry: String,
@@ -90,10 +90,10 @@ impl UpgradeTarget {
         match self {
             Self::Control => (
                 wamn_registry::name::control_resource(&document.org).into(),
-                &document.org,
+                document.org.as_str(),
             ),
-            Self::Identity => ("identity".into(), &document.org),
-            Self::Host { release, .. } => (release.as_str().into(), &document.org),
+            Self::Identity => ("identity".into(), document.org.as_str()),
+            Self::Host { release, .. } => (release.as_str().into(), document.org.as_str()),
         }
     }
 }
@@ -147,7 +147,6 @@ impl ClusterDocument {
             name(&self.cluster_name, 40),
             "cluster_name is not a lowercase name"
         );
-        ensure!(coordinate_name(&self.org), "org is not a coordinate name");
         for (field, value) in [
             ("owner_email", &self.owner_email),
             ("resend_from", &self.resend_from),
@@ -162,7 +161,7 @@ impl ClusterDocument {
         );
         if self.provider == Provider::Gcp {
             ensure!(
-                self.project_id.len() >= 6 && name(&self.project_id, 30),
+                self.project_id.len() >= 6 && name(self.project_id.as_str(), 30),
                 "project_id is not a GCP project id"
             );
             let zone: Vec<_> = self.zone.split('-').collect();
@@ -229,10 +228,6 @@ pub fn name(value: &str, max: usize) -> bool {
         && token(value, "-")
         && value.starts_with(|c: char| c.is_ascii_lowercase())
         && !value.ends_with('-')
-}
-
-fn coordinate_name(value: &str) -> bool {
-    token(value, "_-") && value.starts_with(|c: char| c.is_ascii_lowercase())
 }
 
 fn dns_name(value: &str) -> bool {

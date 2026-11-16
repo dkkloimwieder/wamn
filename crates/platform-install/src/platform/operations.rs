@@ -32,7 +32,7 @@ pub async fn provision(
         &triple.env,
     )?;
     let target = Target {
-        namespace: triple.org.clone(),
+        namespace: triple.org.to_string(),
         ..target.clone()
     };
     crate::environment::apply(&target, &chart.join("platform/environment"), &name, values).await

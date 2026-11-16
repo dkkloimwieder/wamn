@@ -4,10 +4,10 @@ fn message(text: &str) -> ErrorDetail {
         ..Default::default()
     }
 }
-fn on_port(payload: Value, port: &str) -> NodeOutcome {
+fn on_port(payload: Value, port: &wamn_catalog::canonical_name::CanonicalName) -> NodeOutcome {
     NodeOutcome::Success {
         payload,
-        port: port.into(),
+        port: port.clone(),
     }
 }
 
@@ -23,18 +23,22 @@ use super::{
 use serde_json::{Value, json};
 use wamn_catalog::{WiringEdge, WiringNode};
 
-fn node(id: &str, component: &str) -> (String, WiringNode) {
+fn node(id: &str, component: &str) -> (wamn_catalog::canonical_name::CanonicalName, WiringNode) {
     node_cfg(id, component, Value::Null)
 }
 
-fn node_cfg(id: &str, component: &str, config: Value) -> (String, WiringNode) {
+fn node_cfg(
+    id: &str,
+    component: &str,
+    config: Value,
+) -> (wamn_catalog::canonical_name::CanonicalName, WiringNode) {
     (
-        id.to_owned(),
+        id.parse().unwrap(),
         WiringNode {
-            interface_version: "0.1.0".into(),
+            interface_version: "0.1.0".parse().unwrap(),
             operation_dependency: None,
-            component: component.to_string(),
-            operation: component.to_string(),
+            component: component.parse().unwrap(),
+            operation: component.parse().unwrap(),
             params: if config.is_null() {
                 Default::default()
             } else {
@@ -46,23 +50,27 @@ fn node_cfg(id: &str, component: &str, config: Value) -> (String, WiringNode) {
 }
 
 fn edge(from: &str, to: &str) -> WiringEdge {
-    edge_on(from, "main", to)
+    edge_on(from, &"main".parse().unwrap(), to)
 }
 
-fn edge_on(from: &str, port: &str, to: &str) -> WiringEdge {
-    edge_to(from, port, to, "input")
+fn edge_on(from: &str, port: &wamn_catalog::canonical_name::CanonicalName, to: &str) -> WiringEdge {
+    edge_to(from, port.as_str(), to, "input")
 }
 
 fn edge_to(from: &str, from_port: &str, to: &str, to_port: &str) -> WiringEdge {
     WiringEdge {
-        from: from.to_string(),
-        from_port: from_port.to_string(),
-        to: to.to_string(),
-        to_port: Some(to_port.to_string()),
+        from: from.parse().unwrap(),
+        from_port: from_port.parse().unwrap(),
+        to: to.parse().unwrap(),
+        to_port: Some(to_port.parse().unwrap()),
     }
 }
 
-fn wiring(entry: &str, nodes: Vec<(String, WiringNode)>, edges: Vec<WiringEdge>) -> Wiring {
+fn wiring(
+    entry: &str,
+    nodes: Vec<(wamn_catalog::canonical_name::CanonicalName, WiringNode)>,
+    edges: Vec<WiringEdge>,
+) -> Wiring {
     let document = wamn_catalog::WiringDocument::parse(&json!({
         "format-version": "0.1", "wiring-id": "test", "version": 1,
         "entry": entry, "nodes": nodes.into_iter().collect::<std::collections::BTreeMap<_, _>>(), "edges": edges,
@@ -129,7 +137,11 @@ fn run<'a>(
     }
 }
 
-fn run_bounded(wiring: &Wiring, walk: &mut Walk, max_iters: usize) -> (Vec<String>, WalkStatus) {
+fn run_bounded(
+    wiring: &Wiring,
+    walk: &mut Walk,
+    max_iters: usize,
+) -> (Vec<wamn_catalog::canonical_name::CanonicalName>, WalkStatus) {
     let mut invoked = Vec::new();
     for _ in 0..max_iters {
         match wiring.next(walk, 0) {
@@ -193,7 +205,7 @@ fn destination_input_port_reaches_each_invocation_and_survives_retry() {
     let target_attempt = Cell::new(0);
     let trace = run(&w, "r1", json!({}), |call| {
         if call.node == "source" {
-            return on_port(json!({"records": []}), "record");
+            return on_port(json!({"records": []}), &"record".parse().unwrap());
         }
         if target_attempt.replace(target_attempt.get() + 1) == 0 {
             NodeOutcome::Error(NodeError::Retryable(message("again")))
@@ -203,8 +215,20 @@ fn destination_input_port_reaches_each_invocation_and_survives_retry() {
     });
 
     assert_eq!(trace.invoked[0].input_port, None);
-    assert_eq!(trace.invoked[1].input_port.as_deref(), Some("batch"));
-    assert_eq!(trace.invoked[2].input_port.as_deref(), Some("batch"));
+    assert_eq!(
+        trace.invoked[1]
+            .input_port
+            .as_ref()
+            .map(|port| port.as_str()),
+        Some("batch")
+    );
+    assert_eq!(
+        trace.invoked[2]
+            .input_port
+            .as_ref()
+            .map(|port| port.as_str()),
+        Some("batch")
+    );
 }
 
 #[test]
@@ -217,12 +241,12 @@ fn branch_follows_only_the_selected_port() {
             node("no", "echo"),
         ],
         vec![
-            edge_on("cond", "true", "yes"),
-            edge_on("cond", "false", "no"),
+            edge_on("cond", &"true".parse().unwrap(), "yes"),
+            edge_on("cond", &"false".parse().unwrap(), "no"),
         ],
     );
     let t = run(&w, "r1", json!({}), |c| match c.node.as_str() {
-        "cond" => on_port(json!({ "picked": true }), "true"),
+        "cond" => on_port(json!({ "picked": true }), &"true".parse().unwrap()),
         _ => NodeOutcome::ok(json!({ "at": c.node })),
     });
     assert_eq!(t.status, WalkStatus::Completed);
@@ -299,7 +323,11 @@ fn an_error_routed_visit_advances_the_occurrence() {
     let w = wiring(
         "a",
         vec![node("a", "echo"), node("b", "call"), node("h", "handler")],
-        vec![edge("a", "b"), edge_on("b", "error", "h"), edge("h", "b")],
+        vec![
+            edge("a", "b"),
+            edge_on("b", &"error".parse().unwrap(), "h"),
+            edge("h", "b"),
+        ],
     );
     let first = Cell::new(true);
     let t = run(&w, "r1", json!({}), |c| match c.node.as_str() {
@@ -339,7 +367,11 @@ fn terminal_error_routes_to_error_port_and_continues() {
             node("c", "echo"),
             node("h", "handler"),
         ],
-        vec![edge("a", "b"), edge("b", "c"), edge_on("b", "error", "h")],
+        vec![
+            edge("a", "b"),
+            edge("b", "c"),
+            edge_on("b", &"error".parse().unwrap(), "h"),
+        ],
     );
     let t = run(&w, "r1", json!({}), |c| match c.node.as_str() {
         "b" => NodeOutcome::Error(NodeError::Terminal(ErrorDetail {
@@ -426,7 +458,7 @@ fn retry_config_overrides_budget_and_routes_to_error_path_when_exhausted() {
             ),
             node("h", "handler"),
         ],
-        vec![edge_on("b", "error", "h")],
+        vec![edge_on("b", &"error".parse().unwrap(), "h")],
     );
     let t = run(&w, "r1", json!({}), |c| match c.node.as_str() {
         "b" => NodeOutcome::Error(NodeError::Retryable(message("x"))),
@@ -613,7 +645,7 @@ fn the_hop_limit_verdict_is_terminal_even_with_an_error_path() {
             edge("in", "a"),
             edge("a", "b"),
             edge("b", "a"),
-            edge_on("a", "error", "rescue"),
+            edge_on("a", &"error".parse().unwrap(), "rescue"),
         ],
     );
     let mut walk = w.start(delivery(json!("go")));
@@ -649,7 +681,7 @@ fn a_wiring_that_uses_exactly_the_hop_limit_completes() {
     let trace = run(&w, "limit", json!({}), |_| {
         calls += 1;
         if calls == DEFAULT_HOP_LIMIT {
-            on_port(json!({}), "finished")
+            on_port(json!({}), &"finished".parse().unwrap())
         } else {
             NodeOutcome::ok(json!({}))
         }
@@ -662,9 +694,9 @@ fn a_wiring_that_uses_exactly_the_hop_limit_completes() {
 #[test]
 fn target_port_refuses_a_value_before_invocation() {
     let document = wamn_catalog::WiringDocument::new(
-        "typed",
+        "typed".parse().unwrap(),
         1,
-        "source",
+        "source".parse().unwrap(),
         [node("source", "emit"), node("target", "consume")]
             .into_iter()
             .collect(),

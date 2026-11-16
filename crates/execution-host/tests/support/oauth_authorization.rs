@@ -64,8 +64,8 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     });
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{}'::text::uuid,'','fixture','admin:fixture'); UPDATE registry.meta SET platform_domain='example.test'; INSERT INTO registry.target(name,type,status) VALUES('oauth-fixture','local','active'); UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='oauth-fixture')",PlatformComponent::Provisioning.principal_id()))).execute(&mut admin).await.map(drop)?;
     let mut tx = admin.begin().await?;
-    wamn_test_infrastructure::credentials::define(&mut tx,ORG,&json!({"project":"billing","env":"dev","name":"oauth","integration_type":"http","auth_type":"oauth2_authorization_code","parameters":{"primary-authority":provider_base,"tls-verification":"disabled","auth":{"client_id":"admin-client","authorize_url":"https://provider.example/authorize?existing=a%2Bb","token_url":token_url,"scopes":["read+","write"]}},"credential":json!({"client_secret":"private-secret"}).to_string()}),store.as_ref()).await?;
-    wamn_test_infrastructure::credentials::define(&mut tx, ORG, &json!({"project":"billing","env":"dev","name":"other","integration_type":"http","auth_type":"none","parameters":{"primary-authority":provider_base,"tls-verification":"disabled"}}), store.as_ref()).await?;
+    wamn_test_infrastructure::credentials::define(&mut tx,&ORG.parse().unwrap(),&json!({"project":"billing","env":"dev","name":"oauth","integration_type":"http","auth_type":"oauth2_authorization_code","parameters":{"primary-authority":provider_base,"tls-verification":"disabled","auth":{"client_id":"admin-client","authorize_url":"https://provider.example/authorize?existing=a%2Bb","token_url":token_url,"scopes":["read+","write"]}},"credential":json!({"client_secret":"private-secret"}).to_string()}),store.as_ref()).await?;
+    wamn_test_infrastructure::credentials::define(&mut tx, &ORG.parse().unwrap(), &json!({"project":"billing","env":"dev","name":"other","integration_type":"http","auth_type":"none","parameters":{"primary-authority":provider_base,"tls-verification":"disabled"}}), store.as_ref()).await?;
     tx.commit().await?;
     let boss = create_or_reuse_user(&mut admin, "oauth-admin@example.test", "OAuth admin")
         .await?
@@ -73,9 +73,9 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     invite_member(
         &mut admin,
         &boss,
-        ORG,
+        &ORG.parse().unwrap(),
         &MemberGrants {
-            project_admins: vec!["billing".to_owned()],
+            project_admins: vec!["billing".parse().unwrap()],
             ..MemberGrants::default()
         },
     )
@@ -86,9 +86,9 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     invite_member(
         &mut admin,
         &outsider,
-        ORG,
+        &ORG.parse().unwrap(),
         &MemberGrants {
-            project_admins: vec!["shop".to_owned()],
+            project_admins: vec!["shop".parse().unwrap()],
             ..MemberGrants::default()
         },
     )
@@ -129,7 +129,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
             let response = wamn_execution_host::oauth_callback::response(
                 &callback_oauth,
                 &callback_url,
-                ORG,
+                &ORG.parse().unwrap(),
                 job.req,
             )
             .await;
@@ -146,7 +146,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
             identity: None,
             administration: Some(logins.clone()),
             status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
-            org: ORG.to_owned(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::new(nats),
         },
     )

@@ -110,7 +110,9 @@ pub(crate) fn parse_coordinate(value: &str) -> anyhow::Result<wamn_registry::Tri
     let [org, env, project] = parts.as_slice() else {
         anyhow::bail!("a coordinate is org/env/project");
     };
+    let org = org.parse()?;
+    let project = project.parse()?;
     let env = env.parse()?;
-    wamn_control_provision::validate_project_env(org, project, &env)?;
-    Ok(wamn_registry::Triple::new(*org, env, *project))
+    wamn_control_provision::validate_project_env(&org, &project, &env)?;
+    Ok(wamn_registry::Triple::new(org, env, project))
 }

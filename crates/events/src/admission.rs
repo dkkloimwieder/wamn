@@ -15,7 +15,7 @@ pub struct ManualRunAdmission<'a> {
     /// The release the host serves, as its manifest digest.
     pub manifest_digest: &'a wamn_digest::Digest,
     pub environment: &'a wamn_registry::EnvName,
-    pub workflow_id: &'a str,
+    pub workflow_id: &'a wamn_catalog::canonical_name::CanonicalName,
     pub workflow_version: i32,
     pub wiring_hash: &'a wamn_digest::Digest,
     pub execution_principal_id: &'a wamn_identity_protocol::PrincipalId,
@@ -80,7 +80,7 @@ pub async fn enabled_workflow(
     project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
-    workflow_id: &str,
+    workflow_id: &wamn_catalog::canonical_name::CanonicalName,
 ) -> anyhow::Result<Option<EnabledWorkflow>> {
     let Some(row) = wamn_run_state::admission::enabled_workflow(
         connection,

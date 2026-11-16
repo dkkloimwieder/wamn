@@ -36,10 +36,10 @@ pub const WAMN_JETSTREAM_ID: &str = "wamn-jetstream";
 pub struct DerivedPublishRequest {
     pub component_id: String,
     pub application: wamn_catalog::ApplicationName,
-    pub wiring_id: String,
+    pub wiring_id: wamn_catalog::canonical_name::CanonicalName,
     pub wiring_version: u32,
-    pub node_id: String,
-    pub entity: String,
+    pub node_id: wamn_catalog::canonical_name::CanonicalName,
+    pub entity: wamn_catalog::canonical_name::CanonicalName,
     pub operation: Op,
     pub payload: serde_json::Value,
     pub dedup_id: String,
@@ -154,23 +154,8 @@ pub struct WamnJetstream {
 #[derive(Clone, Debug)]
 struct JetstreamIdentity<'a> {
     project_env_key: wamn_registry::ProjectEnvKey,
-    project: &'a str,
+    project: &'a wamn_registry::ProjectId,
     environment: &'a wamn_registry::EnvName,
-}
-
-fn require_event_coordinates(coordinates: &Triple) -> Result<(), DerivedPublishError> {
-    for (name, value) in [
-        ("org", coordinates.org.as_str()),
-        ("project", coordinates.project.as_str()),
-    ] {
-        if !wamn_event_wire::valid_subject_token(value) {
-            return Err(DerivedPublishError::new(
-                DerivedPublishErrorType::UnboundIdentity,
-                format!("event coordinate {name} is absent or not one NATS subject token"),
-            ));
-        }
-    }
-    Ok(())
 }
 
 #[derive(Debug)]
@@ -190,9 +175,9 @@ struct PreparedDerivedPublication<'a> {
 #[derive(Debug)]
 struct DerivedPublishWiring {
     application: wamn_catalog::ApplicationName,
-    wiring_id: String,
+    wiring_id: wamn_catalog::canonical_name::CanonicalName,
     wiring_version: u32,
-    node_id: String,
+    node_id: wamn_catalog::canonical_name::CanonicalName,
 }
 
 fn prepare_derived_publication<'a>(
@@ -206,7 +191,7 @@ fn prepare_derived_publication<'a>(
             "derived event environment differs from the platform event binding",
         ));
     }
-    if !wamn_event_wire::valid_subject_token(&request.entity) {
+    if !wamn_event_wire::valid_subject_token(request.entity.as_str()) {
         return Err(DerivedPublishError::new(
             DerivedPublishErrorType::InvalidInput,
             "derived event entity is empty or noncanonical",
@@ -290,7 +275,7 @@ fn js_span(
         "wamn.jetstream",
         EffectIdentity {
             project_env_key: Some(&identity.project_env_key),
-            project: identity.project,
+            project: identity.project.as_str(),
             component: component_id,
         },
         None,
@@ -300,9 +285,9 @@ fn js_span(
         &span,
         wiring.map(|wiring| EffectWiring {
             source: EffectSource::Application(&wiring.application),
-            wiring_id: &wiring.wiring_id,
+            wiring_id: wiring.wiring_id.as_str(),
             wiring_version: wiring.wiring_version,
-            node_id: &wiring.node_id,
+            node_id: wiring.node_id.as_str(),
             occurrence: 0,
             component_digest: None,
             component_name: "",
@@ -327,12 +312,6 @@ impl WamnJetstream {
             "event connection requires host coordinates"
         );
         let expected = if has_target {
-            require_event_coordinates(
-                plugin
-                    .event_coordinates
-                    .as_ref()
-                    .expect("event target is present"),
-            )?;
             Some(plugin.expected_event_streams()?)
         } else {
             None
@@ -471,7 +450,7 @@ impl WamnJetstream {
             &JETSTREAM_DURATION_MS,
             EFFECT_OPERATION,
             "publish-derived",
-            publication.identity.project,
+            publication.identity.project.as_str(),
             started.elapsed(),
         );
         let outcome = match &result {
@@ -514,10 +493,10 @@ mod tests {
         DerivedPublishRequest {
             component_id: component_id.into(),
             application: "platform_fixture".parse().unwrap(),
-            wiring_id: "fixture-orders".into(),
+            wiring_id: "fixture-orders".parse().unwrap(),
             wiring_version: 7,
-            node_id: "publish".into(),
-            entity: "orders".into(),
+            node_id: "publish".parse().unwrap(),
+            entity: "orders".parse().unwrap(),
             operation: Op::Update,
             payload: serde_json::json!(["arbitrary", {"status": "ready"}]),
             dedup_id: dedup_id.into(),
@@ -532,7 +511,11 @@ mod tests {
     /// A bound publisher without a broker connection.
     async fn span_test_plugin() -> WamnJetstream {
         WamnJetstream::new(WamnJetstreamConfig {
-            event_target: Some(Triple::new("fixture", "dev".parse().unwrap(), "widgets")),
+            event_target: Some(Triple::new(
+                "fixture".parse().unwrap(),
+                "dev".parse().unwrap(),
+                "widgets".parse().unwrap(),
+            )),
             stream_replicas: Some(1),
             dup_window_secs: Some(120),
             ..Default::default()
@@ -558,15 +541,16 @@ mod tests {
     fn derived_publication_uses_only_the_bound_identity_and_admitted_selector() {
         let dangerous_author_id = "author\r\nNats-Msg-Id: forged";
         let environment = "dev".parse().unwrap();
+        let project = "database-project".parse().unwrap();
         let publication = prepare_derived_publication(
             JetstreamIdentity {
                 project_env_key: "fixture-route-auth--dev--project".parse().unwrap(),
-                project: "database-project".into(),
+                project: &project,
                 environment: &environment,
             },
             &Triple {
-                org: "fixture".into(),
-                project: "widgets".into(),
+                org: "fixture".parse().unwrap(),
+                project: "widgets".parse().unwrap(),
                 env: "dev".parse().unwrap(),
             },
             derived_request("component-1", dangerous_author_id),
@@ -577,7 +561,7 @@ mod tests {
             publication.message_id,
             derived_msg_id(
                 &"fixture-route-auth--dev--project".parse().unwrap(),
-                "widgets",
+                &"widgets".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"platform_fixture".parse().unwrap(),
                 "orders",
@@ -608,24 +592,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn construction_refuses_invalid_event_coordinates_before_connect() {
-        for target in [
-            Triple::new("", "dev".parse().unwrap(), "widgets"),
-            Triple::new("fixture", "dev".parse().unwrap(), ""),
-            Triple::new("fixture.>", "dev".parse().unwrap(), "widgets"),
-        ] {
-            assert!(
-                WamnJetstream::new(WamnJetstreamConfig {
-                    event_target: Some(target),
-                    ..Default::default()
-                })
-                .await
-                .is_err()
-            );
-        }
-    }
-
-    #[tokio::test]
     async fn construction_requires_declared_stream_limits() {
         for (replicas, window) in [
             (None, None),
@@ -635,7 +601,11 @@ mod tests {
         ] {
             assert!(
                 WamnJetstream::new(WamnJetstreamConfig {
-                    event_target: Some(Triple::new("fixture", "dev".parse().unwrap(), "widgets")),
+                    event_target: Some(Triple::new(
+                        "fixture".parse().unwrap(),
+                        "dev".parse().unwrap(),
+                        "widgets".parse().unwrap()
+                    )),
                     stream_replicas: replicas,
                     dup_window_secs: window,
                     ..Default::default()
@@ -645,7 +615,11 @@ mod tests {
             );
         }
         WamnJetstream::new(WamnJetstreamConfig {
-            event_target: Some(Triple::new("fixture", "dev".parse().unwrap(), "widgets")),
+            event_target: Some(Triple::new(
+                "fixture".parse().unwrap(),
+                "dev".parse().unwrap(),
+                "widgets".parse().unwrap(),
+            )),
             stream_replicas: Some(3),
             dup_window_secs: Some(120),
             ..Default::default()
@@ -666,7 +640,11 @@ mod tests {
         let stream = "EVT_13_wamnjsderived_3_dev_3_app";
         let event_subject = "evt.wamnjsderived.dev.app.orders.update";
         let _ = ctx.delete_stream(stream).await;
-        let target = Triple::new("wamnjsderived", "dev".parse().unwrap(), "app");
+        let target = Triple::new(
+            "wamnjsderived".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "app".parse().unwrap(),
+        );
         let advisory_config = advisory_stream_config(&target, 1);
         let advisory_name = advisory_config.name.clone();
         let _ = ctx.delete_stream(&advisory_name).await;

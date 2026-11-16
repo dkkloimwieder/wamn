@@ -45,7 +45,7 @@ pub(super) enum Case {
 struct Journey<'a> {
     run: &'a Run,
     file: PathBuf,
-    project: &'a str,
+    project: &'a wamn_registry::ProjectId,
     environment: &'a wamn_registry::EnvName,
     isolated_host: &'a str,
     variables: &'a BTreeMap<String, String>,
@@ -73,7 +73,7 @@ impl Journey<'_> {
             .env_remove("WAMN_DATABASE_PORT")
             .env_remove("WAMN_IDENTITY_URL")
             .env_remove("WAMN_NATS_TLS_SERVER_NAME")
-            .env("WAMN_DATABASE_NAMESPACE", &self.run.document.org)
+            .env("WAMN_DATABASE_NAMESPACE", self.run.document.org.as_str())
             .env("WAMN_RELEASE_NAMESPACE", "hosts")
             .envs(self.variables)
             .env("WAMN_CONTROL_URL", self.control_url)
@@ -299,14 +299,14 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let sources = sources(&run.repository, &run.checkout, &id, cases).await?;
     let postgres = wamn_kubernetes::forward::port_forward(
         &run.target,
-        &run.document.org,
+        run.document.org.as_str(),
         "service/wamn-pg-rw",
         5432,
     )
     .await?;
     let identity = wamn_kubernetes::forward::port_forward(
         &run.target,
-        &run.document.org,
+        run.document.org.as_str(),
         "service/identity",
         443,
     )
@@ -315,7 +315,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         Provider::Kind => Some(
             wamn_kubernetes::forward::port_forward(
                 &run.target,
-                &run.document.org,
+                run.document.org.as_str(),
                 &format!(
                     "service/{}-http",
                     wamn_registry::name::control_resource(&run.document.org)
@@ -329,10 +329,10 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let edge =
         wamn_kubernetes::forward::port_forward(&run.target, "hosts", "service/wamn-edge", 80)
             .await?;
-    let identity_tls = get(run, &run.document.org, "secret", "identity-tls").await?;
+    let identity_tls = get(run, run.document.org.as_str(), "secret", "identity-tls").await?;
     let operator = get(
         run,
-        &run.document.org,
+        run.document.org.as_str(),
         "secret",
         &format!("operator-{}", run.document.org),
     )
@@ -347,7 +347,13 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         .resolve(&identity_host, ([127, 0, 0, 1], identity.port).into())
         .build()?;
     let endpoint = format!("https://{identity_host}:{}", identity.port);
-    let mut admin = get(run, &run.document.org, "secret", "wamn-pg-superuser").await?;
+    let mut admin = get(
+        run,
+        run.document.org.as_str(),
+        "secret",
+        "wamn-pg-superuser",
+    )
+    .await?;
     let mut admin_url = url::Url::parse(&format!(
         "postgresql://postgres@127.0.0.1:{}/wamn_system",
         postgres.port
@@ -444,7 +450,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let journey = Journey {
         run,
         file,
-        project: &project,
+        project: &project.parse().unwrap(),
         environment: &environment,
         isolated_host: &isolated_host,
         variables: &variables,
@@ -1406,7 +1412,7 @@ async fn recovery(
         "hosts",
         "create",
         "quota",
-        journey.project,
+        journey.project.as_str(),
         "--hard",
         &format!("pods={count}"),
     ]))
@@ -1523,9 +1529,14 @@ async fn recovery(
         Ok::<_, anyhow::Error>(())
     }
     .await;
-    let cleanup =
-        success(kubectl(journey.run).args(["-n", "hosts", "delete", "quota", journey.project]))
-            .await;
+    let cleanup = success(kubectl(journey.run).args([
+        "-n",
+        "hosts",
+        "delete",
+        "quota",
+        journey.project.as_str(),
+    ]))
+    .await;
     result?;
     cleanup?;
     journey

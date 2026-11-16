@@ -115,7 +115,7 @@ impl WamnPostgres {
         runner: Option<&str>,
         role: Option<&str>,
         user_id: Option<&wamn_identity_protocol::PrincipalId>,
-        operation: Option<&str>,
+        operation: Option<&wamn_catalog::canonical_name::CanonicalName>,
         application: Option<&wamn_catalog::ApplicationName>,
         run: Option<&Causation>,
         statement_timeout_ms: u32,
@@ -147,7 +147,7 @@ impl WamnPostgres {
         runner: Option<&str>,
         role: Option<&str>,
         user_id: Option<&wamn_identity_protocol::PrincipalId>,
-        operation: Option<&str>,
+        operation: Option<&wamn_catalog::canonical_name::CanonicalName>,
         application: Option<&wamn_catalog::ApplicationName>,
         run: Option<&Causation>,
         statement_timeout_ms: u32,
@@ -165,7 +165,7 @@ impl WamnPostgres {
                     .map_or("", wamn_catalog::ApplicationName::as_str)
                     .to_owned(),
             ),
-            operation.map(str::to_owned),
+            operation.map(ToString::to_string),
             runner.map(str::to_owned),
         ];
         // The isolation level is stated, not inherited from a session default:

@@ -34,7 +34,9 @@ pub fn admit(
             .unwrap(),
         package_version: "0.1.1".parse().unwrap(),
     };
-    let declaration = render_package_declaration(package, name, &target.project_env_key).unwrap();
+    let declaration =
+        render_package_declaration(package, &name.parse().unwrap(), &target.project_env_key)
+            .unwrap();
     let rendered = std::env::temp_dir().join(format!(
         "rest-publication-{}-{name}-{}.json",
         target.package_id,

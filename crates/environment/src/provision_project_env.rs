@@ -58,11 +58,11 @@ pub use registry::{
 pub struct ProvisionProjectEnvRequest {
     /// Org id (must already be registered — `provision-org`, or the T3 pool for a
     /// trials org). Names the target cluster and the `wamn-db-<org>--…` database.
-    pub org: String,
+    pub org: wamn_registry::OrgId,
 
     /// Project id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric). The
     /// reserved `wamn` prefix is rejected.
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
 
     /// Environment slug: any policy in the ORG's `registry.env_policies` set.
     /// Derives the target cluster via `cluster_of`.
@@ -206,10 +206,10 @@ pub async fn provision_project_env(
         .then(|| PatClient::new(&args.pat_issuer))
         .transpose()?;
 
-    let org = args.org.as_str();
-    let project = args.project.as_str();
+    let org = &args.org;
+    let project = &args.project;
     let env = &args.env;
-    let triple = Triple::new(org, env.clone(), project);
+    let triple = Triple::new(org.clone(), env.clone(), project.clone());
 
     // Validate the project id + the assembled `wamn-<org>--<project>--<env>`
     // namespace and `wamn-db-<org>--<project>--<env>--<instance>` database lengths

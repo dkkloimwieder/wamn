@@ -191,8 +191,8 @@ impl<'a> WorkflowTrigger<'a> {
 /// document's own `wiring-id` and `version`.
 #[derive(Clone, Copy, Debug)]
 pub struct AuthorWorkflowRequest<'a> {
-    pub org: &'a str,
-    pub project: &'a str,
+    pub org: &'a wamn_registry::OrgId,
+    pub project: &'a wamn_registry::ProjectId,
     pub environment: &'a wamn_registry::EnvName,
     /// The application of the workflow, by the name the environment declares.
     pub application: &'a wamn_catalog::ApplicationName,
@@ -300,7 +300,11 @@ pub(crate) async fn validate_event_trigger(
             .await
             .map_err(|error| storage("read captured model map", error))?
         {
-            models.insert(model.get::<String, _>(0));
+            models.insert(
+                model
+                    .try_get::<wamn_catalog::canonical_name::CanonicalName, _>(0)
+                    .map_err(|error| storage("read captured entity", error))?,
+            );
         }
     }
     if !models.contains(entity)
@@ -496,6 +500,7 @@ pub fn read_compiled_wiring_document(path: &Path) -> Result<WiringDocument, Auth
     })?;
     if document.nodes.values().any(|node| {
         node.operation
+            .as_str()
             .rsplit_once('@')
             .is_none_or(|(_, version)| version.is_empty())
     }) {
@@ -516,12 +521,12 @@ mod tests {
     fn workflow_input_requires_compiled_operation_identities() {
         let path =
             std::env::temp_dir().join(format!("workflow-input-{}.json", uuid::Uuid::now_v7()));
-        let mut document = wamn_catalog::fixture_graph("sync", 1);
+        let mut document = wamn_catalog::fixture_graph(&"sync".parse().unwrap(), 1);
         for (operation, accepted) in [
             ("netsuite:sync/finish@1.0.0", true),
             ("netsuite:sync/finish", false),
         ] {
-            document.nodes.values_mut().next().unwrap().operation = operation.to_owned();
+            document.nodes.values_mut().next().unwrap().operation = operation.parse().unwrap();
             std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
             let result = read_compiled_wiring_document(&path);
             std::fs::remove_file(&path).unwrap();

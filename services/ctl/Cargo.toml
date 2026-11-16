@@ -11,6 +11,7 @@ name = "wamn"
 path = "src/bin/wamn.rs"
 
 [dependencies]
+wamn-compiler.workspace = true
 wamn-build.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-identity-client = { workspace = true }
@@ -53,7 +54,6 @@ wamn-component-artifact = { workspace = true }
 
 [dev-dependencies]
 url = { workspace = true }
-wamn-compiler = { workspace = true }
 wamn-broker = { workspace = true }
 wamn-postgres.workspace = true
 wamn-kubernetes.workspace = true

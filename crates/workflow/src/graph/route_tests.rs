@@ -8,27 +8,27 @@ fn node(id: &str, terminal: Option<Terminal>) -> (String, WiringNode) {
     (
         id.to_owned(),
         WiringNode {
-            interface_version: "0.1.0".into(),
+            interface_version: "0.1.0".parse().unwrap(),
             operation_dependency: None,
-            component: "echo".to_string(),
-            operation: "echo".to_string(),
+            component: "echo".parse().unwrap(),
+            operation: "echo".parse().unwrap(),
             params: Default::default(),
             terminal,
         },
     )
 }
 
-fn edge_on(from: &str, port: &str, to: &str) -> WiringEdge {
+fn edge_on(from: &str, port: &wamn_catalog::canonical_name::CanonicalName, to: &str) -> WiringEdge {
     WiringEdge {
-        from: from.to_string(),
-        from_port: port.to_string(),
-        to: to.to_string(),
-        to_port: Some("input".to_string()),
+        from: from.parse().unwrap(),
+        from_port: port.clone(),
+        to: to.parse().unwrap(),
+        to_port: Some("input".parse().unwrap()),
     }
 }
 
 fn edge(from: &str, to: &str) -> WiringEdge {
-    edge_on(from, "main", to)
+    edge_on(from, &"main".parse().unwrap(), to)
 }
 
 fn wiring(entry: &str, nodes: Vec<(String, WiringNode)>, edges: Vec<WiringEdge>) -> Wiring {

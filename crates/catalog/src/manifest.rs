@@ -9,9 +9,9 @@ pub const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entities", "wamn_cdc
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageManifest {
     pub package: PackageIdentity,
-    pub models: BTreeMap<String, ModelDeclaration>,
+    pub models: BTreeMap<crate::canonical_name::CanonicalName, ModelDeclaration>,
     #[serde(default)]
-    pub internal_relations: BTreeMap<String, InternalRelation>,
+    pub internal_relations: BTreeMap<crate::canonical_name::CanonicalName, InternalRelation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,8 +22,8 @@ pub struct PackageIdentity {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelDeclaration {
-    pub schema: String,
-    pub table: String,
+    pub schema: crate::canonical_name::CanonicalName,
+    pub table: crate::canonical_name::CanonicalName,
     pub owner: crate::PackageName,
     #[serde(default)]
     pub audit_log: Option<AuditLogDeclaration>,
@@ -31,8 +31,8 @@ pub struct ModelDeclaration {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InternalRelation {
-    pub schema: String,
-    pub table: String,
+    pub schema: crate::canonical_name::CanonicalName,
+    pub table: crate::canonical_name::CanonicalName,
 }
 
 impl PackageManifest {

@@ -417,7 +417,7 @@ mod tests {
 
     fn connection_facts(
         reader: wamn_connections::connection_credentials::ConnectionCredentials,
-        project: &str,
+        project: &wamn_registry::ProjectId,
     ) -> Arc<wamn_connections::connection_facts::ConnectionFacts> {
         let postgres = wamn_sql::WamnPostgres::new(wamn_sql::WamnPostgresConfig {
             credentials: None,
@@ -432,7 +432,11 @@ mod tests {
             wamn_broker::Publisher::default(),
             Arc::new(reader),
             &Arc::new(postgres),
-            &wamn_registry::project_env_key("acme", project, &"dev".parse().unwrap()),
+            &wamn_registry::project_env_key(
+                &"acme".parse().unwrap(),
+                project,
+                &"dev".parse().unwrap(),
+            ),
             project,
             &"dev".parse().unwrap(),
         ))
@@ -444,7 +448,7 @@ mod tests {
         let container = container.with_connection_authority(
             connection_facts(
                 wamn_connections::connection_credentials::ConnectionCredentials::empty(),
-                "project-a",
+                &"project-a".parse().unwrap(),
             ),
             uuid::Uuid::nil(),
             1,
@@ -492,11 +496,17 @@ mod tests {
                 .put("store", "secret", &["project-a", "project-b"])
                 .await;
             let (container, _) = bound("p");
-            let facts = connection_facts(fixture.reader("project-a").await, "project-a");
+            let facts = connection_facts(
+                fixture.reader(&"project-a".parse().unwrap()).await,
+                &"project-a".parse().unwrap(),
+            );
             let connection = facts.env_connections().await.unwrap().connections["store"];
             let container = container.with_connection_authority(facts, connection, 1);
             let (other, _) = bound("p");
-            let facts = connection_facts(fixture.reader("project-b").await, "project-b");
+            let facts = connection_facts(
+                fixture.reader(&"project-b".parse().unwrap()).await,
+                &"project-b".parse().unwrap(),
+            );
             let connection = facts.env_connections().await.unwrap().connections["store"];
             let other = other.with_connection_authority(facts, connection, 1);
             container.put("item", vec![1]).await.unwrap();

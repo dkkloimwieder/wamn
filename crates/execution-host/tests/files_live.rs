@@ -53,7 +53,7 @@ mod signed_read;
 use application_fixture::{ApplicationHost, MEMBER, PROJECT, PROJECT_ENV_KEY, READ};
 use session_fixture::{ORG, claims, header, signed};
 
-fn attachment(action: &str) -> String {
+fn attachment(action: &str) -> wamn_catalog::canonical_name::CanonicalName {
     HostRouteSet::Application
         .attachments()
         .find(|(_, a)| a.reference == format!("wamn-control:file/{action}"))
@@ -112,9 +112,10 @@ impl FileHost {
         minio: files::Minio,
         definition: Value,
     ) -> anyhow::Result<Self> {
-        let mut registry = files::registry(ORG, PROJECT, definition)
-            .await
-            .context("prepare file registry")?;
+        let mut registry =
+            files::registry(&ORG.parse().unwrap(), &PROJECT.parse().unwrap(), definition)
+                .await
+                .context("prepare file registry")?;
         let (mut host, postgres, administration_url) =
             application_fixture::application_host_with_release(name, Arc::clone(&release))
                 .await
@@ -158,11 +159,12 @@ impl FileHost {
             sqlx::query("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&alias).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
         }
         let credentials = Arc::new(
-            ConnectionCredentials::from_database(registry.reader.clone(), ORG).with_store(Arc::<
-                wamn_test_infrastructure::credentials::MemoryStore,
-            >::clone(
-                &registry.credentials,
-            )),
+            ConnectionCredentials::from_database(registry.reader.clone(), &ORG.parse().unwrap())
+                .with_store(
+                    Arc::<wamn_test_infrastructure::credentials::MemoryStore>::clone(
+                        &registry.credentials,
+                    ),
+                ),
         );
         let facts = Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
@@ -170,7 +172,7 @@ impl FileHost {
             credentials,
             &postgres,
             &PROJECT_ENV_KEY.parse().unwrap(),
-            PROJECT,
+            &PROJECT.parse().unwrap(),
             &"dev".parse().unwrap(),
         ));
         let context = Arc::new(wamn_sql::invocation::ReleaseContext::new(
@@ -186,18 +188,18 @@ impl FileHost {
                 client: Some(registry.reader.clone()),
                 release: Arc::clone(&release),
                 facts: Arc::clone(&facts),
-                org: ORG.into(),
-                project: PROJECT.into(),
+                org: ORG.parse().unwrap(),
+                project: PROJECT.parse().unwrap(),
                 environment: "dev".parse().unwrap(),
             }),
-            PROJECT.into(),
+            PROJECT.parse().unwrap(),
             Some(administration_url.clone()),
         ));
         let delivery = HostRouteDelivery::new(
             Arc::clone(&release),
             HostRouteHandlers::Application {
                 postgres: Arc::clone(&postgres),
-                project: PROJECT.into(),
+                project: PROJECT.parse().unwrap(),
                 identity: None,
                 changes: wamn_broker::Publisher::default(),
             },
@@ -347,21 +349,21 @@ impl FileHost {
                 origin: ConnectionOrigin {
                     package_id: "session_test".parse().unwrap(),
                     component_digest: digest.clone(),
-                    component: "purchase".into(),
-                    interface_version: "0.1.0".into(),
-                    operation: READ.into(),
+                    component: "purchase".parse().unwrap(),
+                    interface_version: "0.1.0".parse().unwrap(),
+                    operation: READ.parse().unwrap(),
                 },
                 entry: InvocationEntry::Route,
                 package_id: "session_test".parse().unwrap(),
                 component_digest: digest,
-                component: "purchase".into(),
-                operation: READ.into(),
+                component: "purchase".parse().unwrap(),
+                operation: READ.parse().unwrap(),
                 closure: ConnectionExecutionClosure::Released,
                 effects: None,
             },
         )?;
         Ok(AuthenticatedCaller::new(
-            "file-operation",
+            "file-operation".parse().unwrap(),
             MEMBER.parse().unwrap(),
             CredentialType::Session,
             false,
@@ -629,7 +631,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     assert!(fixture.registry.move_store(&moved).await.is_err());
     fixture
         .registry
-        .define_store(PROJECT, "other-files", &moved)
+        .define_store(&PROJECT.parse().unwrap(), "other-files", &moved)
         .await?;
     let moved_backend = AmazonS3Builder::new()
         .with_endpoint(&fixture.minio.endpoint)
@@ -655,7 +657,11 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     // An independent project uses the same storage through its own authority.
     fixture
         .registry
-        .define_store("unenabled", files::STORE_NAME, &equivalent)
+        .define_store(
+            &"unenabled".parse().unwrap(),
+            files::STORE_NAME,
+            &equivalent,
+        )
         .await?;
     let mut source = fixture.registry.control.begin().await?;
     let mut administration = application_fixture::connect(&fixture.administration_url).await?;
@@ -670,8 +676,8 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     let _ = wamn_platform_identity::connection_projection::project(
         &mut source,
         &mut target,
-        ORG,
-        PROJECT,
+        &ORG.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await?;
@@ -713,7 +719,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         loop {
             if let Some(lease) = wamn_execution_host::file_collection::FileCollection::acquire(
                 &fixture.postgres,
-                PROJECT,
+                &PROJECT.parse().unwrap(),
                 &PROJECT_ENV_KEY.parse().unwrap(),
             )
             .await?
@@ -972,7 +978,7 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
     let mut tx = fixture.registry.control.begin().await?;
     wamn_platform_identity::connections::administration::execute(
         &mut tx,
-        ORG,
+        &ORG.parse().unwrap(),
         "connection.disable",
         &json!({"project":PROJECT,"env":"dev","name":files::STORE_NAME}).to_string(),
         &mut wamn_broker::auth_changes::AuthDrops::default(),
@@ -1392,7 +1398,10 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     let caller = fixture
         .host
         .routing
-        .authenticate_authorization_for_test(signed_read::ATTACHMENT, Some(&fixture.token(false)))
+        .authenticate_authorization_for_test(
+            &signed_read::ATTACHMENT.parse().unwrap(),
+            Some(&fixture.token(false)),
+        )
         .await
         .map_err(|error| anyhow::anyhow!("signed read session authentication: {error:?}"))?
         .context("operation session caller")?;
@@ -1410,11 +1419,11 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
             Publisher::default(),
             Arc::new(ConnectionCredentials::from_database(
                 fixture.registry.reader.clone(),
-                ORG,
+                &ORG.parse().unwrap(),
             )),
             &fixture.postgres,
             &PROJECT_ENV_KEY.parse().unwrap(),
-            PROJECT,
+            &PROJECT.parse().unwrap(),
             &"dev".parse().unwrap(),
         )),
         Arc::new(TracingLogger::default()),
@@ -1422,7 +1431,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
         Arc::clone(&package.release),
         Arc::new(LocalComponentSource::new(package.scratch.path().to_owned())),
         OperationHostConfig {
-            project: PROJECT.into(),
+            project: PROJECT.parse().unwrap(),
             schema: None,
             owner_prefix: "file-signed-read".into(),
             warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
@@ -1440,7 +1449,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
                 .component
                 .clone()])),
             component: &package.component,
-            operation: signed_read::OPERATION,
+            operation: &signed_read::OPERATION.parse().unwrap(),
             input: &input,
             context: wamn_engine::operation::node_types::NodeContext {
                 wiring_id: String::new(),
@@ -1463,7 +1472,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
                     ),
                     invocation: component_invocation(
                         &package.component,
-                        signed_read::OPERATION,
+                        &signed_read::OPERATION.parse().unwrap(),
                         wamn_authority::connection::InvocationEntry::Route,
                         wamn_authority::connection::ConnectionExecutionClosure::Released,
                         None,

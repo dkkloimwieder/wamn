@@ -6,11 +6,11 @@ use anyhow::Context as _;
 
 pub(crate) fn component_connection_names<'a>(
     manifest: &'a wamn_compiler::manifest::PackageManifest,
-    component: &str,
-) -> anyhow::Result<&'a [String]> {
+    component: &wamn_catalog::canonical_name::CanonicalName,
+) -> anyhow::Result<&'a [wamn_catalog::canonical_name::CanonicalName]> {
     manifest
         .components
-        .get(component)
+        .get(component.as_str())
         .map(|declaration| declaration.connections.as_slice())
         .with_context(|| format!("package declares no component {component}"))
 }

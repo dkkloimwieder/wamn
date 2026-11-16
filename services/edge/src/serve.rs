@@ -195,8 +195,9 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let engine = Arc::new(edge_engine(&release, &config.store.db).context("build the engine")?);
     let keys = FileKeys::load(&config.session.keys, &config.session.issuer)
         .context("load the session key file")?;
-    let verifier = SessionVerifier::new(keys, &config.session.org, &config.session.audience)
-        .context("bind the session target")?;
+    let verifier =
+        SessionVerifier::new(keys, config.session.org.as_str(), &config.session.audience)
+            .context("bind the session target")?;
     let store = EdgeStore::open(&config.store.db)
         .await
         .context("open the run-state file")?;

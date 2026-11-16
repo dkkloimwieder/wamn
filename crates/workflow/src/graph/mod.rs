@@ -35,7 +35,10 @@ mod walk_tests;
 #[cfg(test)]
 fn components(
     document: &wamn_catalog::WiringDocument,
-) -> std::collections::BTreeMap<String, wamn_catalog::AdmittedComponent> {
+) -> std::collections::BTreeMap<
+    wamn_catalog::canonical_name::CanonicalName,
+    wamn_catalog::AdmittedComponent,
+> {
     use std::collections::BTreeMap;
     use wamn_catalog::{
         AdmittedComponent, AdmittedComponentOperation, AdmittedComponentPort,
@@ -46,10 +49,17 @@ fn components(
         .nodes
         .iter()
         .map(|(id, node)| {
-            let mut ports = BTreeMap::from([("input".to_owned(), serde_json::json!({}))]);
+            let mut ports = BTreeMap::from([(
+                "input"
+                    .parse::<wamn_catalog::canonical_name::CanonicalName>()
+                    .unwrap(),
+                serde_json::json!({}),
+            )]);
             for edge in document.edges.iter().filter(|edge| edge.to == *id) {
                 ports.insert(
-                    edge.to_port.as_deref().unwrap_or("input").to_owned(),
+                    edge.to_port
+                        .clone()
+                        .unwrap_or_else(|| "input".parse().unwrap()),
                     serde_json::json!({}),
                 );
             }

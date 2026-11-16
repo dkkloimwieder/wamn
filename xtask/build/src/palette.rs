@@ -8,17 +8,20 @@ use std::{
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct PaletteDeclaration {
-    pub component: String,
-    pub interface_version: String,
+    pub component: wamn_catalog::canonical_name::CanonicalName,
+    pub interface_version: wamn_catalog::canonical_name::CanonicalName,
     #[serde(default)]
     pub connections: Vec<wamn_catalog::ComponentConnection>,
-    pub operations: std::collections::BTreeMap<String, wamn_catalog::ComponentOperationDeclaration>,
+    pub operations: std::collections::BTreeMap<
+        wamn_catalog::canonical_name::CanonicalName,
+        wamn_catalog::ComponentOperationDeclaration,
+    >,
 }
 
 /// One platform palette component and its declaration.
 #[derive(Debug)]
 pub struct PaletteComponent {
-    pub name: String,
+    pub name: wamn_catalog::canonical_name::CanonicalName,
     pub file: PathBuf,
     pub declaration: wamn_catalog::ComponentDescriptor,
 }
@@ -44,7 +47,7 @@ fn sources(repository: &Path) -> Result<Vec<(PathBuf, String, PaletteDeclaration
 }
 
 /// Platform component names, without reading application package declarations.
-pub fn names(repository: &Path) -> Result<Vec<String>> {
+pub fn names(repository: &Path) -> Result<Vec<wamn_catalog::canonical_name::CanonicalName>> {
     Ok(sources(repository)?
         .into_iter()
         .map(|(_, _, declaration)| declaration.component)
@@ -62,6 +65,7 @@ fn seal(
         .keys()
         .filter_map(|operation| {
             operation
+                .as_str()
                 .split_once('/')
                 .map(|(package, _)| package.to_owned())
         })

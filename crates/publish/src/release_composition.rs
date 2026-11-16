@@ -68,7 +68,7 @@ impl Error for CompositionError {
 pub struct SelectedComponentArtifact {
     pub package_id: wamn_catalog::PackageName,
     pub package_version: wamn_catalog::package_version::PackageVersion,
-    pub component: Box<str>,
+    pub component: wamn_catalog::canonical_name::CanonicalName,
     pub path: PathBuf,
     pub digest: wamn_digest::Digest,
 }
@@ -97,7 +97,7 @@ pub fn select_component_artifacts(
 /// `build.json` records, validated against its digest.
 fn built_component(
     package: &PackageInput,
-    component: &str,
+    component: &wamn_compiler::source_name::SourceName,
     build_record: &wamn_compiler::build_record::BuildRecord,
 ) -> Result<SelectedComponentArtifact, CompositionError> {
     let (path, entry) = plan::component_entry(package, component, build_record)?;

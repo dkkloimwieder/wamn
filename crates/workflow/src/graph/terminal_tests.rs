@@ -20,27 +20,27 @@ fn node(id: &str, terminal: Option<Terminal>) -> (String, WiringNode) {
     (
         id.to_owned(),
         WiringNode {
-            interface_version: "0.1.0".into(),
+            interface_version: "0.1.0".parse().unwrap(),
             operation_dependency: None,
-            component: "echo".to_string(),
-            operation: "echo".to_string(),
+            component: "echo".parse().unwrap(),
+            operation: "echo".parse().unwrap(),
             params: Default::default(),
             terminal,
         },
     )
 }
 
-fn edge_on(from: &str, port: &str, to: &str) -> WiringEdge {
+fn edge_on(from: &str, port: &wamn_catalog::canonical_name::CanonicalName, to: &str) -> WiringEdge {
     WiringEdge {
-        from: from.to_string(),
-        from_port: port.to_string(),
-        to: to.to_string(),
-        to_port: Some("input".to_string()),
+        from: from.parse().unwrap(),
+        from_port: port.clone(),
+        to: to.parse().unwrap(),
+        to_port: Some("input".parse().unwrap()),
     }
 }
 
 fn edge(from: &str, to: &str) -> WiringEdge {
-    edge_on(from, "main", to)
+    edge_on(from, &"main".parse().unwrap(), to)
 }
 
 fn wiring(entry: &str, nodes: Vec<(String, WiringNode)>, edges: Vec<WiringEdge>) -> Wiring {
@@ -62,8 +62,8 @@ fn started(wiring: &Wiring, caller_attached: bool) -> Walk {
 fn run(
     w: &Wiring,
     walk: &mut Walk,
-    mut outcome_fn: impl FnMut(&str) -> NodeOutcome,
-) -> (Vec<String>, WalkStatus) {
+    mut outcome_fn: impl FnMut(&wamn_catalog::canonical_name::CanonicalName) -> NodeOutcome,
+) -> (Vec<wamn_catalog::canonical_name::CanonicalName>, WalkStatus) {
     let mut invoked = Vec::new();
     loop {
         match w.next(walk, 0) {
@@ -78,12 +78,12 @@ fn run(
     }
 }
 
-fn says(node: &str) -> NodeOutcome {
+fn says(node: &wamn_catalog::canonical_name::CanonicalName) -> NodeOutcome {
     NodeOutcome::ok(json!({ "at": node }))
 }
 
 fn emit_terminal() -> Terminal {
-    Terminal::emit("orders", Op::Insert)
+    Terminal::emit("orders".parse().unwrap(), Op::Insert)
 }
 
 #[test]
@@ -139,7 +139,8 @@ fn respond_with_no_caller_fails_the_walk() {
     let Step::Invoke(call) = w.next(&mut walk, 0) else {
         panic!("expected an invocation");
     };
-    w.apply(&mut walk, &call, says("a"), 0).unwrap();
+    w.apply(&mut walk, &call, says(&"a".parse().unwrap()), 0)
+        .unwrap();
     assert_eq!(
         walk.failure().unwrap().type_,
         FailureType::RespondWithoutCaller
@@ -160,13 +161,14 @@ fn a_second_terminal_node_is_rejected() {
     let Step::Invoke(first) = w.next(&mut walk, 0) else {
         panic!("expected an invocation");
     };
-    w.apply(&mut walk, &first, says("a"), 0)
+    w.apply(&mut walk, &first, says(&"a".parse().unwrap()), 0)
         .expect("a responds");
     let Step::Invoke(second) = w.next(&mut walk, 0) else {
         panic!("expected an invocation");
     };
 
-    w.apply(&mut walk, &second, says("b"), 0).unwrap();
+    w.apply(&mut walk, &second, says(&"b".parse().unwrap()), 0)
+        .unwrap();
     assert_eq!(walk.failure().unwrap().type_, FailureType::SecondVerdict);
     {
         let Some(Verdict::Respond { payload, node_id }) = walk.verdict() else {
@@ -189,7 +191,7 @@ fn first_respond_verdict_stands_when_later_work_fails_or_cancels() {
             vec![edge("respond", "later")],
         );
         let mut walk = started(&w, true);
-        let (_, status) = run(&w, &mut walk, |node| match node {
+        let (_, status) = run(&w, &mut walk, |node| match node.as_str() {
             "respond" => says(node),
             _ if cancelled => NodeOutcome::Cancelled,
             _ => NodeOutcome::Error(NodeError::Terminal(message("later failed"))),
@@ -226,9 +228,9 @@ fn emit_publishes_the_event_under_the_authors_dedup_id() {
         Some(&Verdict::Emit {
             event,
             dedup_id: "wiring-1:7:a:d1".to_string(),
-            entity: "orders".to_string(),
+            entity: "orders".parse().unwrap(),
             operation: Op::Insert,
-            node_id: "a".to_string(),
+            node_id: "a".parse().unwrap(),
         }),
         "the dedup id travels beside the event the boundary dedups on, under the \
          node that declared the emit"
@@ -240,12 +242,12 @@ fn emit_without_a_dedup_id_routes_to_the_error_edge() {
     let w = wiring(
         "a",
         vec![node("a", Some(emit_terminal())), node("oops", None)],
-        vec![edge_on("a", "error", "oops")],
+        vec![edge_on("a", &"error".parse().unwrap(), "oops")],
     );
     let mut walk = started(&w, false);
-    let (invoked, status) = run(&w, &mut walk, |node| match node {
+    let (invoked, status) = run(&w, &mut walk, |node| match node.as_str() {
         "a" => NodeOutcome::ok(json!({ "order": 42 })),
-        other => says(other),
+        other => says(&other.parse().unwrap()),
     });
 
     assert_eq!(invoked, ["a", "oops"]);

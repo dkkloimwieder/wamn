@@ -22,7 +22,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         let mut manifest = source_manifest();
         manifest.package.id = package.to_owned();
         for model in manifest.models.values_mut() {
-            model.schema = schema.to_owned();
+            model.schema = schema.parse().unwrap();
             model.owner = package.to_owned();
         }
         let mut component = closure_component("application", None);
@@ -37,21 +37,23 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
             (&mut export.output_ports, "main"),
         ] {
             ports.push(wamn_catalog::AdmittedComponentPort {
-                name: name.to_owned(),
+                name: name.parse().unwrap(),
                 schema: wamn_catalog::ComponentSchema {
                     schema: serde_json::json!({}),
                 },
             });
         }
-        component.operations.insert(operation.clone(), export);
+        component
+            .operations
+            .insert(operation.clone().parse().unwrap(), export);
         components.insert(component, Vec::new()).unwrap();
         packages.insert(PackageCoordinate::new(package.clone(), "1.0.0".parse().unwrap()).unwrap());
         manifests.insert(package.to_owned(), manifest);
     }
     let published = publish_release_with_package_manifests(
         &PublishReleaseManifest {
-            org: "org-a",
-            project: "fixture",
+            org: &"org-a".parse().unwrap(),
+            project: &"fixture".parse().unwrap(),
             environment: &"dev".parse().unwrap(),
             packages: &packages,
             attachments: &BTreeMap::new(),

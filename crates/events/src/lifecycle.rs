@@ -10,7 +10,7 @@ use wamn_registry::Triple;
 pub async fn apply_cdc_sql(
     admin_database_url: &str,
     capture_database_url: &str,
-    schemas: &[String],
+    schemas: &[wamn_catalog::canonical_name::CanonicalName],
     cdc_name: &str,
     database: &str,
 ) -> anyhow::Result<()> {
@@ -54,7 +54,7 @@ pub async fn apply_cdc_sql(
 pub async fn record_event_reader(
     system_url: &str,
     triple: &Triple,
-    schemas: &[String],
+    schemas: &[wamn_catalog::canonical_name::CanonicalName],
     cdc_name: &str,
     secret_namespace: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -112,7 +112,11 @@ pub async fn discard_backlog(admin_url: &str, slot: &str) -> anyhow::Result<()> 
     Ok(())
 }
 
-fn cdc_schema_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> String {
+fn cdc_schema_sql_bundle(
+    schemas: &[wamn_catalog::canonical_name::CanonicalName],
+    cdc_name: &str,
+    db_name: &str,
+) -> String {
     let mut bundle = String::new();
     if schemas.is_empty() {
         writeln!(
@@ -127,9 +131,9 @@ fn cdc_schema_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> S
         writeln!(
             bundle,
             "\n{entity_map};\n{exclusion_map};\n{grants}",
-            entity_map = sql::ensure_entity_map_sql(schema),
-            exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema),
-            grants = sql::grant_replication_access_sql(db_name, cdc_name, schema),
+            entity_map = sql::ensure_entity_map_sql(schema.as_str()),
+            exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema.as_str()),
+            grants = sql::grant_replication_access_sql(db_name, cdc_name, schema.as_str()),
         )
         .expect("write CDC SQL into a string");
     }

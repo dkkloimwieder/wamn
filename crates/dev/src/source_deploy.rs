@@ -173,7 +173,7 @@ pub fn build_inputs(root: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {
         let packages = manifest
             .components
             .keys()
-            .map(|name| name.replace('_', "-"))
+            .map(|name| name.as_str().replace('_', "-"))
             .collect::<Vec<_>>();
         inputs.extend(wamn_build::source_dependencies(
             &workspace.join("Cargo.toml"),

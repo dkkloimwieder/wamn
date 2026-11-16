@@ -67,7 +67,7 @@ pub(crate) fn node_digests(
             .into_iter()
             .map(|(node, component)| {
                 (
-                    node,
+                    node.to_string(),
                     serde_json::Value::String(component.component_digest.to_string()),
                 )
             })
@@ -78,10 +78,10 @@ pub(crate) fn node_digests(
 /// Admit a due workflow under the release already loaded by the host.
 pub async fn admit_schedule_run(
     postgres: &WamnPostgres,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     release: &LoadedRelease,
     application: &wamn_catalog::ApplicationName,
-    workflow_id: &str,
+    workflow_id: &wamn_catalog::canonical_name::CanonicalName,
     tick: DateTime<Utc>,
 ) -> Result<ScheduleRunAdmitted, ProductionLeaseError> {
     let target = release.target();

@@ -3,11 +3,11 @@ use super::{WorkflowLifecycleError, WorkflowLifecycleErrorType};
 /// The key of one workflow version.
 #[derive(Clone, Copy, Debug)]
 pub struct WorkflowVersion<'a> {
-    pub org: &'a str,
-    pub project: &'a str,
+    pub org: &'a wamn_registry::OrgId,
+    pub project: &'a wamn_registry::ProjectId,
     pub environment: &'a wamn_registry::EnvName,
     pub application: &'a wamn_catalog::ApplicationName,
-    pub workflow_id: &'a str,
+    pub workflow_id: &'a wamn_catalog::canonical_name::CanonicalName,
     pub version: u32,
 }
 

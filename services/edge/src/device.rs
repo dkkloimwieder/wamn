@@ -66,7 +66,7 @@ pub fn start(
     stopped: watch::Receiver<bool>,
 ) -> anyhow::Result<DeviceLoop> {
     let caller = AuthenticatedCaller::new(
-        config.attachment.as_str(),
+        config.attachment.clone(),
         config.principal,
         CredentialType::QueuedService,
         false,
@@ -125,7 +125,7 @@ pub fn start(
 }
 
 async fn run(
-    attachment: String,
+    attachment: wamn_catalog::canonical_name::CanonicalName,
     caller: AuthenticatedCaller,
     delivery: Arc<EdgeOperation>,
     samples: SampleStore,

@@ -135,7 +135,8 @@ pub(crate) fn application_runtime_schema(
             .filter(|component| component.package_id == manifest.package.id)
             .any(|component| {
                 component.descriptor.operations.keys().any(|name| {
-                    name.starts_with(&prefix) && name.ends_with(&format!("@{}", dependency.version))
+                    name.as_str().starts_with(&prefix)
+                        && name.as_str().ends_with(&format!("@{}", dependency.version))
                 })
             })
         {
@@ -190,8 +191,8 @@ pub fn composes_integration(
                 .filter(|component| component.package_id == manifest.package.id)
                 .any(|component| {
                     component.descriptor.operations.keys().any(|name| {
-                        name.starts_with(&prefix)
-                            && name.ends_with(&format!("@{}", dependency.version))
+                        name.as_str().starts_with(&prefix)
+                            && name.as_str().ends_with(&format!("@{}", dependency.version))
                     })
                 })
     })

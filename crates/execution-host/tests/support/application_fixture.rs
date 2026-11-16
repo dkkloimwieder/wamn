@@ -55,8 +55,8 @@ pub(super) fn generation(
     Ok(workload_login(
         family,
         WorkloadRoleIdentity::ProjectEnvironment {
-            org: ORG,
-            project: PROJECT,
+            org: &ORG.parse().unwrap(),
+            project: &PROJECT.parse().unwrap(),
             environment: &"dev".parse().unwrap(),
             database,
         },
@@ -319,7 +319,7 @@ pub(super) async fn application_host_with_release(
     let (verifier, token_clock, key_clock) = server.verifier();
     super::session_authority::install_authority(
         &mut admin,
-        PROJECT,
+        &PROJECT.parse().unwrap(),
         &"dev".parse().unwrap(),
         AUDIENCE,
         &[&first, MEMBER],
@@ -370,8 +370,8 @@ pub(super) async fn application_host_with_release(
         Arc::clone(&release),
         HostRouteHandlers::Application {
             postgres: Arc::clone(&postgres_credentials),
-            project: PROJECT.to_owned(),
-            identity: Some((reader().await?, ORG.to_owned())),
+            project: PROJECT.parse().unwrap(),
+            identity: Some((reader().await?, ORG.parse().unwrap())),
             changes: Publisher::default(),
         },
     );

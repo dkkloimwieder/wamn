@@ -44,32 +44,32 @@ pub fn invocation() -> ConnectionInvocation {
         origin: ConnectionOrigin {
             package_id: "package_a".parse().unwrap(),
             component_digest: digest('a'),
-            component: "notifier".to_string(),
-            interface_version: "0.1".to_string(),
-            operation: "orders:notify/dispatch@1.0.0".to_string(),
+            component: "notifier".parse().unwrap(),
+            interface_version: "0.1".parse().unwrap(),
+            operation: "orders:notify/dispatch@1.0.0".parse().unwrap(),
         },
         entry: wamn_authority::connection::InvocationEntry::Wiring(
             wamn_authority::connection::WiringPosition {
                 application: "package_a".parse().unwrap(),
                 wiring_hash: fixture_wiring_hash(),
-                wiring_id: "orders".to_string(),
+                wiring_id: "orders".parse().unwrap(),
                 wiring_version: 3,
-                node_id: "notify".to_string(),
+                node_id: "notify".parse().unwrap(),
                 occurrence: 2,
                 configuration: Arc::default(),
             },
         ),
         package_id: "package_a".parse().unwrap(),
         component_digest: digest('a'),
-        component: "notifier".to_string(),
-        operation: "orders:notify/dispatch@1.0.0".to_string(),
+        component: "notifier".parse().unwrap(),
+        operation: "orders:notify/dispatch@1.0.0".parse().unwrap(),
         closure: ConnectionExecutionClosure::Released,
         effects: None,
     }
 }
 
 pub fn fixture_wiring_hash() -> wamn_digest::Digest {
-    wamn_catalog::fixture_graph("orders", 3).wiring_hash()
+    wamn_catalog::fixture_graph(&"orders".parse().unwrap(), 3).wiring_hash()
 }
 
 pub fn snapshot() -> ConnectionEffectSnapshot {
@@ -77,9 +77,9 @@ pub fn snapshot() -> ConnectionEffectSnapshot {
         connection_name: None,
         read_only: false,
         wiring_hash: Some(fixture_wiring_hash()),
-        component: Some("notifier".to_string()),
-        interface_version: Some("0.1".to_string()),
-        operation: Some("orders:notify/dispatch@1.0.0".to_string()),
+        component: Some("notifier".parse().unwrap()),
+        interface_version: Some("0.1".parse().unwrap()),
+        operation: Some("orders:notify/dispatch@1.0.0".parse().unwrap()),
         registered_operation: Some("package-a:orders/notify@1.0.0".parse().unwrap()),
         requirement_json: Some(serde_json::json!({
             "component-digest": digest('a'),
@@ -401,7 +401,7 @@ impl Fixture {
             .unwrap();
             wamn_test_infrastructure::credentials::define(
                 &mut tx,
-                "acme",
+                &"acme".parse().unwrap(),
                 &serde_json::json!({
                     "project": project, "env": "dev", "name": name,
                     "integration_type": "http", "auth_type": auth_type,
@@ -470,7 +470,10 @@ impl Fixture {
         component.descriptor.connections = ["handle", "other-handle"]
             .into_iter()
             .map(|name| wamn_catalog::ComponentConnection {
-                store_alias: name.into(),
+                store_alias: name
+                    .parse::<wamn_catalog::canonical_name::CanonicalName>()
+                    .unwrap()
+                    .into(),
                 requirement_type: wamn_catalog::ComponentConnectionType::Http,
                 mode: wamn_catalog::ConnectionMode::Write,
             })
@@ -482,7 +485,7 @@ impl Fixture {
             invocation.origin.component_digest = digest;
             component.descriptor.imports = vec!["wamn:connection/http@0.1.0".into()];
             component.descriptor.effects = vec![wamn_catalog::AdmittedComponentEffect {
-                package: "wamn:connection".into(),
+                package: "wamn:connection".parse().unwrap(),
                 provenance: wamn_catalog::ComponentEffectProvenance::Imported,
                 interfaces: component.descriptor.imports.clone(),
             }];
@@ -537,8 +540,11 @@ impl Fixture {
             let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
 
             sqlx::raw_sql("BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-oauth2')").execute(&mut admin).await.map(drop).unwrap();
-            let project_env_key =
-                wamn_registry::project_env_key("acme", project, &"dev".parse().unwrap());
+            let project_env_key = wamn_registry::project_env_key(
+                &"acme".parse().unwrap(),
+                &project.parse().unwrap(),
+                &"dev".parse().unwrap(),
+            );
             sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&project_env_key).bind(manifest_digest).bind(&bytes).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
             let rows = sqlx::query("SELECT c.id,i.id,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project=$1 AND c.env='dev'").bind(project).fetch_all(&mut wamn_postgres::connect(self.credentials.database.as_str()).await.unwrap()).await.unwrap();
             for row in rows {
@@ -624,7 +630,7 @@ impl Fixture {
             let mut executor = authority.clone();
             executor.set_username(executor_role.as_str()).unwrap();
             projects.insert(
-                project.to_owned(),
+                project.parse().unwrap(),
                 ProjectConfig {
                     credentials: ClassCredentials::default()
                         .with_class(AuthorityClass::GuestSql, guest)
@@ -644,10 +650,10 @@ impl Fixture {
             ConnectionFacts::new(
                 Arc::new(ConnectionMemory::default()),
                 Publisher::default(),
-                Arc::new(self.credentials.reader("project-a").await),
+                Arc::new(self.credentials.reader(&"project-a".parse().unwrap()).await),
                 &postgres,
                 &release.target().project_env_key,
-                "project-a",
+                &"project-a".parse().unwrap(),
                 &release.target().environment,
             )
             .with_oauth_encryption(Some(Arc::new(
@@ -687,10 +693,10 @@ impl Fixture {
             ConnectionFacts::new(
                 Arc::new(ConnectionMemory::default()),
                 Publisher::default(),
-                Arc::new(self.credentials.reader("project-a").await),
+                Arc::new(self.credentials.reader(&"project-a".parse().unwrap()).await),
                 &first.postgres,
                 &first.release.target().project_env_key,
-                "project-a",
+                &"project-a".parse().unwrap(),
                 &first.release.target().environment,
             )
             .with_oauth_encryption(Some(Arc::new(

@@ -24,7 +24,10 @@ pub(super) fn emit_model_wit(
 ) -> Result<(), GenerateError> {
     let package = compiled.package.id.as_str().replace('_', "-");
     let model_name = compiled.name;
-    let directory = format!("generated/wit/deps/{package}-{}", wit_name(model_name));
+    let directory = format!(
+        "generated/wit/deps/{package}-{}",
+        wit_name(model_name.as_str())
+    );
     insert_bytes(
         files,
         &format!("{directory}/package.wit"),
@@ -47,7 +50,7 @@ fn emit_model_package_wit(compiled: &super::operations::ModelDescription<'_>) ->
     let package = compiled.package.id.as_str().replace('_', "-");
     let mut source = format!(
         "package {package}:{}@{};\n\n",
-        wit_name(compiled.name),
+        wit_name(compiled.name.as_str()),
         compiled.package.version
     );
     for (action, facts) in &compiled.operations {
@@ -974,21 +977,21 @@ fn emit_owned_interface(
     let revision = compiled.revision;
     for (literal, detail) in details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
-            emit_error_detail(&mut source, literal, detail, revision);
+            emit_error_detail(&mut source, literal.as_str(), detail, revision);
         }
     }
     writeln!(source, "  variant {interface}-error {{").expect("writing to a String cannot fail");
     for literal in details.keys() {
         let detail = &details[literal];
         if detail.required.is_empty() && detail.optional.is_empty() {
-            writeln!(source, "    {},", wit_name(literal))
+            writeln!(source, "    {},", wit_name(literal.as_str()))
                 .expect("writing to a String cannot fail");
         } else {
             writeln!(
                 source,
                 "    {}({}-detail),",
-                wit_name(literal),
-                wit_name(literal)
+                wit_name(literal.as_str()),
+                wit_name(literal.as_str())
             )
             .expect("writing to a String cannot fail");
         }

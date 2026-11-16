@@ -118,7 +118,7 @@ pub(super) fn signed_read_fixture(
             package.as_path(),
         )]),
         &"file_fixture".parse().expect("valid name"),
-        "signed_read",
+        &"signed_read".parse().unwrap(),
         &OPERATION.parse()?,
     )?;
     let definition = json!({"id": ATTACHMENT, "type": "http", "route": {"path": "/files/signed-read"},

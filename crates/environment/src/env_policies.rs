@@ -16,7 +16,7 @@ use wamn_release_control::env_policies::env_policy_from_row;
 /// `promotion_rank`. Empty for an org with no stamped policies yet.
 pub async fn read_env_policies(
     client: &mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> anyhow::Result<Vec<EnvPolicy>> {
     let rows = sqlx::query(sqlx::AssertSqlSafe(
         (wamn_registry::sql::select_env_policies_sql().as_str()).to_string(),

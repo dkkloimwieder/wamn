@@ -21,8 +21,8 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     {
         let batches: &[&str] = &[
             &wamn_control_provision::test_database::seed_org_project_env_sql(
-                "fill",
-                "fixture",
+                &"fill".parse().unwrap(),
+                &"fixture".parse().unwrap(),
                 &"dev".parse().unwrap(),
             ),
             "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture'); UPDATE registry.meta SET platform_domain='example.invalid'",
@@ -49,12 +49,17 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     )
     .await?
     .id();
-    wamn_platform_identity::org::activate_org_membership(&mut authority, &member, "fill").await?;
+    wamn_platform_identity::org::activate_org_membership(
+        &mut authority,
+        &member,
+        &"fill".parse().unwrap(),
+    )
+    .await?;
     wamn_platform_identity::org::grant_member(
         &mut authority,
         &member,
-        "fill",
-        "fixture",
+        &"fill".parse().unwrap(),
+        &"fixture".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await?;
@@ -69,8 +74,8 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     wamn_platform_identity::assign_project_role(
         &mut authority,
         &service,
-        "fill",
-        "fixture",
+        &"fill".parse().unwrap(),
+        &"fixture".parse().unwrap(),
         "project-admin",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
@@ -88,8 +93,8 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     .unwrap();
     wamn_platform_identity::test_database::project_platform(project.as_str()).await;
     let target = ApplicationTarget {
-        org: "fill",
-        project: "fixture",
+        org: &"fill".parse().unwrap(),
+        project: &"fixture".parse().unwrap(),
         env: &"dev".parse().unwrap(),
         project_env_key: &"fill--dev--fixture".parse().unwrap(),
     };
@@ -142,8 +147,8 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     wamn_platform_identity::org::revoke_member(
         &mut authority,
         &member,
-        "fill",
-        "fixture",
+        &"fill".parse().unwrap(),
+        &"fixture".parse().unwrap(),
         &"dev".parse().unwrap(),
         &mut drops,
     )

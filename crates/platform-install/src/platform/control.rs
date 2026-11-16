@@ -117,7 +117,7 @@ pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::
     let configuration: Option<Value> = kubectl::get(
         &target.kubeconfig,
         &target.context,
-        &document.org,
+        document.org.as_str(),
         "configmap",
         &wamn_registry::name::control_administration_secret_name(&document.org),
     )
@@ -133,8 +133,8 @@ pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::
 }
 
 /// Render the org host values shared by the cluster and local control host.
-pub fn host_values(org: &str) -> Value {
-    let name = wamn_registry::name::resource_suffix("c", org);
+pub fn host_values(org: &wamn_registry::OrgId) -> Value {
+    let name = wamn_registry::name::resource_suffix("c", org.as_str());
     let mut values = json!({"runtime-operator": {"runtime": {
         "terminationGracePeriodSeconds": 70,
         "serviceAccount": {"create":true,"name":wamn_registry::control_nats_user(org)},
@@ -155,7 +155,7 @@ pub fn host_values(org: &str) -> Value {
                 {"name": "WAMN_CONTROL_ADMINISTRATION_DIR", "value": "/etc/wamn/control-administration"}
             ],
             "volumes": [
-                {"name": "identity-operator", "secret": {"secretName": wamn_registry::name::resource_suffix("operator",org)}},
+                {"name": "identity-operator", "secret": {"secretName": wamn_registry::name::resource_suffix("operator",org.as_str())}},
                 {"name": "control-administration", "configMap": {"name": wamn_registry::name::control_administration_secret_name(org)}}
             ],
             "volumeMounts": [
@@ -191,7 +191,7 @@ pub(super) fn resource_entry(
     )?;
     let connection = |username, secret| {
         crate::credentials::configuration(
-            org,
+            org.as_str(),
             "wamn-pg",
             format!("wamn-pg-rw.{org}.svc.cluster.local"),
             5432,
@@ -220,16 +220,16 @@ pub(super) fn resource_entry(
     let config = json!({"org":org,"http_addr":"0.0.0.0:80","public_origin":format!("{scheme}://{}",document.route_hosts.control),
         "database":connection(login,wamn_control_provision::org_workload_secret_name(WorkloadRoleFamily::Control,org)),
         "apply_database":connection("wamn_apply".parse::<wamn_identity_protocol::LoginName>()?,"wamn-apply".into()),
-        "session_issuer":super::identity::issuer(org),"session_jwks_ca":"/etc/identity-ca/ca.crt",
+        "session_issuer":super::identity::issuer(org.as_str()),"session_jwks_ca":"/etc/identity-ca/ca.crt",
         "administration_dir":"/etc/wamn/control-administration","worker":{"image":chart.image("control")?,"configuration":configuration,"service_account":wamn_registry::name::operation(org)},
         "chart":chart.reference(),"release_artifact_base":format!("{registry}/wamn/releases"),"package_artifact_base":format!("{registry}/wamn/packages"),"component_artifact_base":format!("{registry}/wamn/components"),"integration_artifact_base":format!("{registry}/wamn/integrations"),
         "registry_auth_file":"/credentials/registry/config.json","registry_token_metadata":document.provider!=Provider::Kind,"insecure_registry":document.provider==Provider::Kind,
         "nats":nats,"events":{"stream_replicas":1,"dup_window_secs":120},
-        "event_observer":null,"identity":{"endpoint":super::identity::issuer(org),"client_cert":"/etc/identity-operator/tls.crt","client_key":"/etc/identity-operator/tls.key","server_ca":"/etc/identity-ca/ca.crt"},"oauth_encryption":super::oauth::configuration(document)});
+        "event_observer":null,"identity":{"endpoint":super::identity::issuer(org.as_str()),"client_cert":"/etc/identity-operator/tls.crt","client_key":"/etc/identity-operator/tls.key","server_ca":"/etc/identity-ca/ca.crt"},"oauth_encryption":super::oauth::configuration(document)});
     Ok(
         json!({"chart":chart.directory(),"version":chart.version,"name":name,"namespace":org,
         "values":{"controlService":true,"org":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},
-        "control":{"image":chart.image("control")?,"configuration":config,"natsSecret":wamn_registry::name::control_nats_certificate(org),"operatorSecret":wamn_registry::name::resource_suffix("operator",org),"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::control_nats_user(org),"registrySecret":if document.provider==Provider::Kind {REGISTRY_PULL}else{""},"oauthSecret":if document.provider==Provider::Kind {"wamn-oauth"}else{""}},
+        "control":{"image":chart.image("control")?,"configuration":config,"natsSecret":wamn_registry::name::control_nats_certificate(org),"operatorSecret":wamn_registry::name::resource_suffix("operator",org.as_str()),"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::control_nats_user(org),"registrySecret":if document.provider==Provider::Kind {REGISTRY_PULL}else{""},"oauthSecret":if document.provider==Provider::Kind {"wamn-oauth"}else{""}},
         "platform":{"chart":chart.reference()}}}),
     )
 }
@@ -247,7 +247,7 @@ pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Resul
         )
     );
     let forward =
-        wamn_kubernetes::forward::port_forward(target, &document.org, &service, 80).await?;
+        wamn_kubernetes::forward::port_forward(target, document.org.as_str(), &service, 80).await?;
     let response = HttpClient::builder()
         .redirects(Redirects::None)
         .timeout(std::time::Duration::from_secs(5))

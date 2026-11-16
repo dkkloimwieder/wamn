@@ -8,7 +8,7 @@ use wasmtime_wasi_http::WasiBody;
 pub async fn response(
     oauth: &Authorization,
     database_url: &str,
-    org: &str,
+    org: &wamn_registry::OrgId,
     request: hyper::Request<WasiBody>,
 ) -> hyper::Response<WasiBody> {
     if request.uri().path() != "/oauth/callback" {

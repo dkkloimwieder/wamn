@@ -600,7 +600,10 @@ fn default_field_labels(fields: &mut [FieldIr]) {
 
 /// Index final publication documents without resolving references.
 pub fn published_routes(
-    published: BTreeMap<String, wamn_catalog::ServingAttachment>,
+    published: BTreeMap<
+        wamn_catalog::canonical_name::CanonicalName,
+        wamn_catalog::ServingAttachment,
+    >,
     declarations: &Value,
 ) -> Result<BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>, ClientIrError>
 {

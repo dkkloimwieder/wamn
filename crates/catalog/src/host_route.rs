@@ -13,6 +13,7 @@
 
 mod contract_files;
 
+use crate::canonical_name::CanonicalName;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
@@ -860,7 +861,7 @@ impl HostAttachment {
 /// Every host route by its set and attachment id. The two sets are served
 /// under different audiences, so a route of each set can derive one id, as
 /// `user.list` does.
-static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, String), HostAttachment>> =
+static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, CanonicalName), HostAttachment>> =
     LazyLock::new(|| {
         ROUTES
             .iter()
@@ -906,16 +907,19 @@ static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, String), HostAttachment>> =
 
 impl HostRouteSet {
     /// Every route of this set, by attachment id.
-    pub fn attachments(self) -> impl Iterator<Item = (&'static str, &'static HostAttachment)> {
+    pub fn attachments(
+        self,
+    ) -> impl Iterator<Item = (&'static CanonicalName, &'static HostAttachment)> {
         ATTACHMENTS
             .iter()
             .filter(move |((set, _), _)| *set == self)
-            .map(|((_, id), attachment)| (id.as_str(), attachment))
+            .map(|((_, id), attachment)| (id, attachment))
     }
 
     /// One route of this set by attachment id.
-    pub fn attachment(self, id: &str) -> Option<&'static HostAttachment> {
-        ATTACHMENTS.get(&(self, id.to_owned()))
+    pub fn attachment(self, id: &CanonicalName) -> Option<&'static HostAttachment> {
+        self.attachments()
+            .find_map(|(key, attachment)| (key == id).then_some(attachment))
     }
 
     /// The package name of the generated TypeScript client of this set, as
@@ -936,7 +940,7 @@ mod tests {
     #[test]
     fn host_routes_derive_their_ids_from_the_control_contract() {
         let application = HostRouteSet::Application
-            .attachment("wamn-control-permission-mine-http")
+            .attachment(&"wamn-control-permission-mine-http".parse().unwrap())
             .expect("permission.mine is an application host route");
         assert_eq!(
             application.operation,
@@ -956,7 +960,7 @@ mod tests {
         };
 
         let control = HostRouteSet::Control
-            .attachment("wamn-control-control-mine-http")
+            .attachment(&"wamn-control-control-mine-http".parse().unwrap())
             .expect("control.mine is a control host route");
         assert_eq!(
             control.operation,
@@ -969,7 +973,7 @@ mod tests {
         };
         assert!(
             HostRouteSet::Application
-                .attachment("wamn-control-control-mine-http")
+                .attachment(&"wamn-control-control-mine-http".parse().unwrap())
                 .is_none(),
             "an application release never serves a control route"
         );
@@ -979,10 +983,10 @@ mod tests {
         assert!(!is_host_route_operation("wamn-receiving:receipt/get"));
 
         let users = HostRouteSet::Application
-            .attachment("wamn-control-user-list-http")
+            .attachment(&"wamn-control-user-list-http".parse().unwrap())
             .expect("user.list is an application host route");
         let members = HostRouteSet::Control
-            .attachment("wamn-control-user-list-http")
+            .attachment(&"wamn-control-user-list-http".parse().unwrap())
             .expect("user.list is a control host route");
         assert_eq!(users.route.handler, HostHandler::ApplicationUserList);
         assert_eq!(members.route.handler, HostHandler::UserList);
@@ -994,7 +998,7 @@ mod tests {
         assert_eq!(host_route_path_prefix(), "/wamn_control/");
 
         let counter = HostRouteSet::Application
-            .attachment("wamn-control-number-counter-set-http")
+            .attachment(&"wamn-control-number-counter-set-http".parse().unwrap())
             .expect("number_counter.set is an application host route");
         assert_eq!(counter.reference, "wamn-control:number-counter/set");
         assert_eq!(
@@ -1008,7 +1012,7 @@ mod tests {
             "wamn-control:number-counter/set@0.9.0"
         ));
         let start = HostRouteSet::Application
-            .attachment("wamn-control-workflow-start-http")
+            .attachment(&"wamn-control-workflow-start-http".parse().unwrap())
             .expect("workflow.start is an application host route");
         assert_eq!(start.route.handler, HostHandler::WorkflowStart);
         assert_eq!(start.reference, "wamn-control:workflow/start");
@@ -1049,7 +1053,7 @@ mod tests {
             ),
         ];
         for (action, input) in contracts {
-            let id = format!("wamn-control-file-{action}-http");
+            let id: CanonicalName = format!("wamn-control-file-{action}-http").parse().unwrap();
             let route = HostRouteSet::Application.attachment(&id).unwrap();
             assert_eq!(route.route.authority, HostRouteAuthority::Granted);
             assert!(route.registered_operation().is_some());

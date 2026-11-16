@@ -27,7 +27,7 @@ impl std::fmt::Display for RuntimeType {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentConnectionRequirement {
     component_digest: wamn_digest::Digest,
-    store_alias: String,
+    store_alias: crate::canonical_name::CanonicalName,
     requirement: ConnectionTypeDescriptor,
 }
 
@@ -35,12 +35,12 @@ impl ComponentConnectionRequirement {
     /// Construct one requirement from its admitted component identity.
     pub fn new(
         component_digest: wamn_digest::Digest,
-        store_alias: impl Into<String>,
+        store_alias: crate::canonical_name::CanonicalName,
         requirement: ConnectionTypeDescriptor,
     ) -> Self {
         Self {
             component_digest,
-            store_alias: store_alias.into(),
+            store_alias,
             requirement,
         }
     }
@@ -49,7 +49,7 @@ impl ComponentConnectionRequirement {
         &self.component_digest
     }
 
-    pub fn store_alias(&self) -> &str {
+    pub fn store_alias(&self) -> &crate::canonical_name::CanonicalName {
         &self.store_alias
     }
 
@@ -401,14 +401,14 @@ impl BlobstoreDefinition {
 }
 
 /// Derive the credential handle of an org connection.
-pub fn org_credential_handle(org: &str, name: &str) -> Result<String, String> {
+pub fn org_credential_handle(org: &wamn_registry::OrgId, name: &str) -> Result<String, String> {
     let handle = format!("org:{org}:{name}");
     parse_org_credential_handle(&handle)?;
     Ok(handle)
 }
 
 /// Parse an org handle without accepting ambiguous or empty coordinates.
-pub fn parse_org_credential_handle(handle: &str) -> Result<(&str, &str), String> {
+pub fn parse_org_credential_handle(handle: &str) -> Result<(wamn_registry::OrgId, &str), String> {
     let invalid = || "invalid org credential handle; expected org:<org>:<name>".to_owned();
     let (org, name) = handle
         .strip_prefix("org:")
@@ -422,17 +422,8 @@ pub fn parse_org_credential_handle(handle: &str) -> Result<(&str, &str), String>
     } else {
         name
     };
-    if org.is_empty()
-        || org.len() > 40
-        || !org.split('-').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-        })
-        || org == "wamn"
-        || org.starts_with("wamn-")
-        || name.is_empty()
+    let org = org.parse::<wamn_registry::OrgId>().map_err(|_| invalid())?;
+    if name.is_empty()
         || name.len() > 63
         || !name.as_bytes()[0].is_ascii_lowercase()
         || !name
@@ -825,11 +816,11 @@ mod org_handle_tests {
 
     #[test]
     fn org_handles_round_trip_and_reserve_the_prefix() {
-        let handle = org_credential_handle("acme", "erp_main").unwrap();
+        let handle = org_credential_handle(&"acme".parse().unwrap(), "erp_main").unwrap();
         assert_eq!(handle, "org:acme:erp_main");
         assert_eq!(
             parse_org_credential_handle(&handle).unwrap(),
-            ("acme", "erp_main")
+            ("acme".parse().unwrap(), "erp_main")
         );
         assert!(
             RequirementType::Http

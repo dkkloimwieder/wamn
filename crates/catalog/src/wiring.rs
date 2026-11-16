@@ -21,6 +21,8 @@
 //! this document rather than a reordered preimage, array position carries that
 //! order and no explicit ordinal is needed.
 
+use crate::canonical_name::CanonicalName;
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -46,16 +48,16 @@ impl WiringEventOperation {
     }
 }
 
-use crate::{CatalogIdentityError, validate_text};
+use crate::CatalogIdentityError;
 
 /// One authored invocation through a package-manifest base dependency alias.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WiringOperationDependency {
     /// Alias keyed by the owning package's `base_dependencies` declaration.
-    pub alias: String,
+    pub alias: CanonicalName,
     /// Canonical package-local operation admitted by that dependency.
-    pub operation: String,
+    pub operation: CanonicalName,
 }
 
 /// The only wiring-document format shipped by the MVP.
@@ -77,7 +79,7 @@ pub enum WiringTerminal {
     Emit {
         /// Stable catalog entity id used in the event subject and registration
         /// match, never a physical relation name inferred at execution time.
-        entity: String,
+        entity: CanonicalName,
         /// The exact event operation admitted for this terminal occurrence.
         operation: WiringEventOperation,
     },
@@ -85,11 +87,8 @@ pub enum WiringTerminal {
 
 impl WiringTerminal {
     /// Construct an emit terminal from its exact admitted selector.
-    pub fn emit(entity: impl Into<String>, operation: WiringEventOperation) -> Self {
-        Self::Emit {
-            entity: entity.into(),
-            operation,
-        }
+    pub fn emit(entity: CanonicalName, operation: WiringEventOperation) -> Self {
+        Self::Emit { entity, operation }
     }
 }
 
@@ -101,13 +100,13 @@ pub struct WiringNode {
     /// pools are per component, shared across every wiring using it — and half
     /// of the `(component, interface-version)` pair promotion tests the target
     /// library covers.
-    pub component: String,
+    pub component: CanonicalName,
     /// The WIT interface version this node was wired against. The other half of
     /// the promotion pair, and what late binding holds within.
-    pub interface_version: String,
+    pub interface_version: CanonicalName,
     /// The operation the router invokes over the typed WIT seam once it holds a
     /// pooled instance (`entity.create` is this field's `create`).
-    pub operation: String,
+    pub operation: CanonicalName,
     /// Cross-package registered operation this node resolves through, if any.
     /// The package manifest owns the alias-to-exact-target requirement; wiring
     /// bytes name only the alias and one operation from its permitted set.
@@ -119,7 +118,7 @@ pub struct WiringNode {
     /// crate: the palette is project data, so a shape written here would be a
     /// second, staler copy of it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub params: BTreeMap<String, Value>,
+    pub params: BTreeMap<CanonicalName, Value>,
     /// The [`WiringTerminal`] this node ends the delivery with, if it is one.
     /// Absent on ordinary nodes — most of a graph is intermediate work — and
     /// absent from the serialized bytes when it is, so an ordinary node's
@@ -140,17 +139,17 @@ pub struct WiringNode {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WiringEdge {
     /// Source node id — a key of [`WiringDocument::nodes`].
-    pub from: String,
+    pub from: CanonicalName,
     /// Source output port. Omitted means [`crate::MAIN_PORT`];
     /// [`crate::ERROR_PORT`] is the error path the walk routes failures
     /// along without ending the delivery.
     #[serde(default = "main_port", skip_serializing_if = "is_main_port")]
-    pub from_port: String,
+    pub from_port: CanonicalName,
     /// Target node id — a key of [`WiringDocument::nodes`].
-    pub to: String,
+    pub to: CanonicalName,
     /// Target input port. Absent means the component's single declared input.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub to_port: Option<String>,
+    pub to_port: Option<CanonicalName>,
 }
 
 /// The normal HTTP response and optional source of committed command evidence.
@@ -158,12 +157,12 @@ pub struct WiringEdge {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WiringResponse {
     /// The Respond terminal whose whole HTTP envelope matches the schema.
-    pub node: String,
+    pub node: CanonicalName,
     /// The whole normal HTTP envelope, independent of schemas on wiring edges.
     pub schema: Value,
     /// The node whose admitted operation declares a committed result schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub committed_result: Option<String>,
+    pub committed_result: Option<CanonicalName>,
 }
 
 /// One version of a wiring: the document `catalog.workflows.graph_json` stores.
@@ -174,7 +173,7 @@ pub struct WiringDocument {
     /// [`WiringDocument::parse`] rather than being partially understood.
     pub format_version: String,
     /// Stable identifier shared across every version of this wiring.
-    pub wiring_id: String,
+    pub wiring_id: CanonicalName,
     /// Monotonic version of this wiring — `catalog.workflows.version`, the row a
     /// rollback flips back to.
     pub version: u32,
@@ -186,10 +185,10 @@ pub struct WiringDocument {
     /// serving path — where the same refusal is
     /// the workflow walk, one activation and one
     /// cache miss too late.
-    pub entry: String,
+    pub entry: CanonicalName,
     /// The graph's nodes, keyed by node id. The router resolves the active
     /// wiring and walks these in frontier order (wamn-0h0g.16.5).
-    pub nodes: BTreeMap<String, WiringNode>,
+    pub nodes: BTreeMap<CanonicalName, WiringNode>,
     /// The wires between node ports, in fan-out order within each
     /// `(from, from-port)` group — the sequence the walk dispatches a branch's
     /// targets in.
@@ -202,20 +201,20 @@ pub struct WiringDocument {
 
 /// A valid one-node graph of `wiring_id` at `version`, for tests.
 #[cfg(any(test, feature = "test-util"))]
-pub fn fixture_graph(wiring_id: &str, version: u32) -> WiringDocument {
+pub fn fixture_graph(wiring_id: &CanonicalName, version: u32) -> WiringDocument {
     let node = WiringNode {
-        component: "transform".to_owned(),
-        interface_version: "0.1".to_owned(),
-        operation: "map".to_owned(),
+        component: "transform".parse().unwrap(),
+        interface_version: "0.1".parse().unwrap(),
+        operation: "map".parse().unwrap(),
         operation_dependency: None,
         params: BTreeMap::new(),
         terminal: None,
     };
     WiringDocument::new(
-        wiring_id,
+        wiring_id.clone(),
         version,
-        "in",
-        BTreeMap::from([("in".to_owned(), node)]),
+        "in".parse().unwrap(),
+        BTreeMap::from([("in".parse().unwrap(), node)]),
         Vec::new(),
     )
     .expect("the fixture graph is valid")
@@ -229,17 +228,17 @@ impl WiringDocument {
     /// `generate crud` (wamn-0h0g.23.3) is a production producer — so a fence
     /// here would block the emitter rather than a misuse.
     pub fn new(
-        wiring_id: impl Into<String>,
+        wiring_id: CanonicalName,
         version: u32,
-        entry: impl Into<String>,
-        nodes: BTreeMap<String, WiringNode>,
+        entry: CanonicalName,
+        nodes: BTreeMap<CanonicalName, WiringNode>,
         edges: Vec<WiringEdge>,
     ) -> Result<Self, CatalogIdentityError> {
         let document = Self {
             format_version: WIRING_DOCUMENT_FORMAT_VERSION.to_string(),
-            wiring_id: wiring_id.into(),
+            wiring_id,
             version,
-            entry: entry.into(),
+            entry,
             nodes,
             edges,
             response: None,
@@ -282,32 +281,18 @@ impl WiringDocument {
         if self.format_version != WIRING_DOCUMENT_FORMAT_VERSION {
             return invalid("wiring document format-version must be textual 0.1");
         }
-        validate_text(&self.wiring_id, "wiring-id")?;
+
         if self.version == 0 {
             return Err(CatalogIdentityError::ZeroVersion { field: "version" });
         }
         if self.nodes.is_empty() {
             return invalid("a wiring with no nodes has nothing for the router to walk");
         }
-        validate_text(&self.entry, "entry")?;
+
         if !self.nodes.contains_key(&self.entry) {
             return Err(CatalogIdentityError::UnresolvedWiringEntry {
                 node_id: self.entry.clone(),
             });
-        }
-
-        for (node_id, node) in &self.nodes {
-            validate_text(node_id, "node-id")?;
-            validate_text(&node.component, "component")?;
-            validate_text(&node.interface_version, "interface-version")?;
-            validate_text(&node.operation, "operation")?;
-            if let Some(dependency) = &node.operation_dependency {
-                validate_text(&dependency.alias, "operation-dependency alias")?;
-                validate_text(&dependency.operation, "operation-dependency operation")?;
-            }
-            if let Some(WiringTerminal::Emit { entity, .. }) = &node.terminal {
-                validate_text(entity, "emit-entity")?;
-            }
         }
 
         for edge in &self.edges {
@@ -318,14 +303,9 @@ impl WiringDocument {
                     });
                 }
             }
-            validate_text(&edge.from_port, "from-port")?;
-            if let Some(to_port) = &edge.to_port {
-                validate_text(to_port, "to-port")?;
-            }
         }
 
         if let Some(response) = &self.response {
-            validate_text(&response.node, "response node")?;
             let node = self.nodes.get(&response.node).ok_or_else(|| {
                 CatalogIdentityError::UnresolvedWiringNode {
                     node_id: response.node.clone(),
@@ -339,13 +319,12 @@ impl WiringDocument {
                     message: format!("wiring response schema is invalid: {error}"),
                 },
             )?;
-            if let Some(committed) = &response.committed_result {
-                validate_text(committed, "committed-result node")?;
-                if !self.nodes.contains_key(committed) {
-                    return Err(CatalogIdentityError::UnresolvedWiringNode {
-                        node_id: committed.clone(),
-                    });
-                }
+            if let Some(committed) = &response.committed_result
+                && !self.nodes.contains_key(committed)
+            {
+                return Err(CatalogIdentityError::UnresolvedWiringNode {
+                    node_id: committed.clone(),
+                });
             }
         }
 
@@ -403,11 +382,11 @@ fn invalid(message: &str) -> Result<(), CatalogIdentityError> {
     })
 }
 
-fn main_port() -> String {
-    crate::MAIN_PORT.to_string()
+fn main_port() -> CanonicalName {
+    crate::MAIN_PORT.parse().expect("fixed main port")
 }
 
-fn is_main_port(port: &str) -> bool {
+fn is_main_port(port: &CanonicalName) -> bool {
     port == crate::MAIN_PORT
 }
 
@@ -425,9 +404,9 @@ mod tests {
 
     fn node(component: &str) -> WiringNode {
         WiringNode {
-            component: component.to_owned(),
-            interface_version: "0.1.0".to_owned(),
-            operation: "call".to_owned(),
+            component: component.parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
+            operation: "call".parse().unwrap(),
             operation_dependency: None,
             params: BTreeMap::new(),
             terminal: None,
@@ -442,37 +421,43 @@ mod tests {
     }
 
     fn crud_wiring() -> WiringDocument {
-        let nodes = BTreeMap::from([
-            ("in".to_owned(), node("http-entry")),
-            ("write".to_owned(), node("entity")),
+        let nodes: BTreeMap<crate::canonical_name::CanonicalName, WiringNode> = BTreeMap::from([
+            ("in".parse().unwrap(), node("http-entry")),
+            ("write".parse().unwrap(), node("entity")),
             (
-                "out".to_owned(),
+                "out".parse().unwrap(),
                 terminal_node("respond", WiringTerminal::Respond),
             ),
         ]);
         let edges = vec![
             WiringEdge {
-                from: "in".to_owned(),
-                from_port: crate::MAIN_PORT.to_owned(),
-                to: "write".to_owned(),
+                from: "in".parse().unwrap(),
+                from_port: crate::MAIN_PORT.parse().unwrap(),
+                to: "write".parse().unwrap(),
                 to_port: None,
             },
             WiringEdge {
-                from: "write".to_owned(),
-                from_port: crate::MAIN_PORT.to_owned(),
-                to: "out".to_owned(),
+                from: "write".parse().unwrap(),
+                from_port: crate::MAIN_PORT.parse().unwrap(),
+                to: "out".parse().unwrap(),
                 to_port: None,
             },
         ];
-        WiringDocument::new("orders-create", 1, "in", nodes, edges)
-            .expect("the generated crud shape is a valid wiring")
+        WiringDocument::new(
+            "orders-create".parse().unwrap(),
+            1,
+            "in".parse().unwrap(),
+            nodes,
+            edges,
+        )
+        .expect("the generated crud shape is a valid wiring")
     }
 
     #[test]
     fn secret_values_refuse_but_reference_names_remain_portable() {
         let mut wiring = crud_wiring();
         wiring.nodes.get_mut("write").unwrap().params.insert(
-            "credential".to_owned(),
+            "credential".parse().unwrap(),
             json!({"secret_ref": "fixture-api-token", "environment": "prod"}),
         );
         let portable = serde_json::to_value(&wiring).unwrap();
@@ -496,7 +481,7 @@ mod tests {
             .get_mut("write")
             .unwrap()
             .params
-            .insert("header".to_owned(), json!("Bearer fixture-token"));
+            .insert("header".parse().unwrap(), json!("Bearer fixture-token"));
         WiringDocument::new(
             wiring.wiring_id,
             wiring.version,
@@ -561,8 +546,8 @@ mod tests {
         assert_eq!(
             parsed.nodes["write"].operation_dependency,
             Some(WiringOperationDependency {
-                alias: "fixture".to_owned(),
-                operation: "widget.record_batch".to_owned(),
+                alias: "fixture".parse().unwrap(),
+                operation: "widget.record_batch".parse().unwrap(),
             })
         );
         assert_eq!(
@@ -666,13 +651,13 @@ mod tests {
     #[test]
     fn an_edge_endpoint_must_name_a_declared_node() {
         let mut wiring = crud_wiring();
-        wiring.edges[1].to = "missing".to_owned();
+        wiring.edges[1].to = "missing".parse().unwrap();
         let wire = serde_json::to_value(&wiring).expect("serializes");
 
         assert_eq!(
             WiringDocument::parse(&wire).unwrap_err(),
             CatalogIdentityError::UnresolvedWiringNode {
-                node_id: "missing".to_owned()
+                node_id: "missing".parse().unwrap()
             }
         );
     }
@@ -687,13 +672,16 @@ mod tests {
     fn a_node_declares_its_terminal_and_the_document_declares_its_entry() {
         let mut wiring = crud_wiring();
         wiring.nodes.insert(
-            "publish".to_owned(),
-            terminal_node("bus", WiringTerminal::emit("orders", Op::Insert)),
+            "publish".parse().unwrap(),
+            terminal_node(
+                "bus",
+                WiringTerminal::emit("orders".parse().unwrap(), Op::Insert),
+            ),
         );
         wiring.edges.push(WiringEdge {
-            from: "write".to_owned(),
-            from_port: crate::MAIN_PORT.to_owned(),
-            to: "publish".to_owned(),
+            from: "write".parse().unwrap(),
+            from_port: crate::MAIN_PORT.parse().unwrap(),
+            to: "publish".parse().unwrap(),
             to_port: None,
         });
         let stored = serde_json::to_value(&wiring).expect("serializes");
@@ -724,7 +712,7 @@ mod tests {
         );
         assert_eq!(
             read_back.nodes["publish"].terminal,
-            Some(WiringTerminal::emit("orders", Op::Insert))
+            Some(WiringTerminal::emit("orders".parse().unwrap(), Op::Insert))
         );
         assert_eq!(read_back.nodes["write"].terminal, None);
         assert_eq!(read_back, wiring);
@@ -736,25 +724,14 @@ mod tests {
     #[test]
     fn the_entry_must_name_a_declared_node() {
         let mut wiring = crud_wiring();
-        wiring.entry = "missing".to_owned();
+        wiring.entry = "missing".parse().unwrap();
         let stored = serde_json::to_value(&wiring).expect("serializes");
 
         assert_eq!(
             WiringDocument::parse(&stored).unwrap_err(),
             CatalogIdentityError::UnresolvedWiringEntry {
-                node_id: "missing".to_owned()
+                node_id: "missing".parse().unwrap()
             }
-        );
-
-        // An absent entry spelled as the empty string is an empty identity, and
-        // reads as one — the same refusal `wiring-id` and every node id give,
-        // not the unresolved-node report a caller would go looking for a node
-        // over.
-        let mut blank = crud_wiring();
-        blank.entry = String::new();
-        assert_eq!(
-            WiringDocument::parse(&serde_json::to_value(&blank).expect("serializes")).unwrap_err(),
-            CatalogIdentityError::EmptyIdentity { field: "entry" }
         );
 
         // The field is required at the WIRE, never defaulted and then rejected.
@@ -795,7 +772,7 @@ mod tests {
             .get_mut("write")
             .expect("the entity node")
             .params
-            .insert("relation".to_owned(), json!("orders"));
+            .insert("relation".parse().unwrap(), json!("orders"));
         assert_ne!(reparameterized.wiring_hash(), hash);
 
         // The terminal and the entry are conditioned definition content, not runtime
@@ -807,7 +784,7 @@ mod tests {
             .nodes
             .get_mut("out")
             .expect("the respond node")
-            .terminal = Some(WiringTerminal::emit("orders", Op::Update));
+            .terminal = Some(WiringTerminal::emit("orders".parse().unwrap(), Op::Update));
         assert_ne!(reterminaled.wiring_hash(), hash);
 
         let mut reselected = reterminaled;
@@ -815,11 +792,14 @@ mod tests {
             .nodes
             .get_mut("out")
             .expect("the emit node")
-            .terminal = Some(WiringTerminal::emit("shipments", Op::Update));
+            .terminal = Some(WiringTerminal::emit(
+            "shipments".parse().unwrap(),
+            Op::Update,
+        ));
         assert_ne!(reselected.wiring_hash(), hash);
 
         let mut reentered = wiring;
-        reentered.entry = "write".to_owned();
+        reentered.entry = "write".parse().unwrap();
         assert_ne!(reentered.wiring_hash(), hash);
     }
 

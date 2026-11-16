@@ -75,13 +75,13 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         "components": [], "routes": [], "attachments": {},
     }))?;
     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
-        "consumer",
-        "1.0.0",
+        "consumer".parse().unwrap(),
+        "1.0.0".parse().unwrap(),
         (format!("sha256:{}", "a".repeat(64)))
             .parse::<wamn_digest::Digest>()
             .unwrap(),
     );
-    descriptor.operations.insert(OPERATION.into(), serde_json::from_value(json!({
+    descriptor.operations.insert(OPERATION.parse().unwrap(), serde_json::from_value(json!({
         "registered-operation": OPERATION, "input-ports": [], "output-ports": [], "parameters": []
     }))?);
     manifest.components.insert(wamn_catalog::ServingComponent {
@@ -90,7 +90,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         descriptor: {
             let mut descriptor = descriptor;
             descriptor.operations = std::collections::BTreeMap::from([(
-                OPERATION.into(),
+                OPERATION.parse().unwrap(),
                 wamn_catalog::AdmittedComponentOperation {
                     host_transaction: false,
                     input_ports: Vec::new(),
@@ -114,7 +114,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     }))?;
     let mut application = manifest.components.iter().next().unwrap().clone();
     application.package_id = "integration".parse().expect("valid name");
-    application.descriptor.component = "integration".into();
+    application.descriptor.component = "integration".parse().unwrap();
     application.descriptor.operations.clear();
     application.descriptor.operations.insert(
         wamn_catalog::operation_token(

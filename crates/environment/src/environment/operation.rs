@@ -69,8 +69,8 @@ pub async fn schema(
 #[derive(Debug)]
 pub struct Request<'a> {
     pub operation: &'a str,
-    pub org: &'a str,
-    pub project: &'a str,
+    pub org: &'a wamn_registry::OrgId,
+    pub project: &'a wamn_registry::ProjectId,
     pub env: &'a wamn_registry::EnvName,
     pub application: Option<&'a wamn_catalog::ApplicationName>,
     pub release: Option<&'a wamn_digest::Digest>,
@@ -94,7 +94,11 @@ pub async fn execute(
         "unknown application operation"
     );
     wamn_control_provision::validate_project_env(request.org, request.project, request.env)?;
-    let triple = wamn_registry::Triple::new(request.org, request.env.clone(), request.project);
+    let triple = wamn_registry::Triple::new(
+        request.org.clone(),
+        request.env.clone(),
+        request.project.clone(),
+    );
     match request.operation {
         "deploy" => {
             let analysis = super::apply_selection(

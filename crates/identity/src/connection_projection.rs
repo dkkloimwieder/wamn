@@ -30,8 +30,8 @@ impl std::error::Error for ProjectionError {
 }
 
 fn failure(
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     source: anyhow::Error,
 ) -> ProjectionError {
@@ -44,8 +44,8 @@ fn failure(
 /// Read the project's external systems and integrations and the environment's connections.
 pub async fn projection(
     system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Result<PlatformConfiguration, ProjectionError> {
     async { rows_from_document(&document(system, org, project, env).await?) }
@@ -57,8 +57,8 @@ pub async fn projection(
 pub async fn project(
     system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     target: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Result<AuthDrops, ProjectionError> {
     push(system, target, org, project, env)
@@ -68,8 +68,8 @@ pub async fn project(
 
 async fn document(
     system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> anyhow::Result<serde_json::Value> {
     wamn_registry::connections::projection(system, org, project, env)
@@ -124,8 +124,8 @@ fn text(row: &serde_json::Value, field: &str) -> anyhow::Result<String> {
 async fn push(
     system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     target: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> anyhow::Result<AuthDrops> {
     let document = document(system, org, project, env).await?;
@@ -223,8 +223,8 @@ mod tests {
         ] {
             sqlx::raw_sql(sqlx::AssertSqlSafe(
                 (&wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "acme",
-                    project,
+                    &"acme".parse().unwrap(),
+                    &project.parse().unwrap(),
                     &env.parse().unwrap(),
                 ))
                     .to_string(),
@@ -244,16 +244,26 @@ mod tests {
             .await
             .map(drop)
             .unwrap();
-        let rows = super::projection(&mut source, "acme", "project-a", &"dev".parse().unwrap())
-            .await
-            .unwrap();
+        let rows = super::projection(
+            &mut source,
+            &"acme".parse().unwrap(),
+            &"project-a".parse().unwrap(),
+            &"dev".parse().unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(rows.external_systems.len(), 1);
         assert_eq!(rows.integrations.len(), 2);
         assert_eq!(rows.connections.len(), 1);
         assert_eq!(rows.connections[0].status, "disabled");
-        let other = super::projection(&mut source, "acme", "project-b", &"dev".parse().unwrap())
-            .await
-            .unwrap();
+        let other = super::projection(
+            &mut source,
+            &"acme".parse().unwrap(),
+            &"project-b".parse().unwrap(),
+            &"dev".parse().unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(other.connections.len(), 1);
         assert_eq!(other.connections[0].status, "active");
         assert_ne!(rows.connections[0].id, other.connections[0].id);
@@ -262,9 +272,14 @@ mod tests {
             .await
             .map(drop)
             .unwrap();
-        let disabled = super::projection(&mut source, "acme", "project-b", &"dev".parse().unwrap())
-            .await
-            .unwrap();
+        let disabled = super::projection(
+            &mut source,
+            &"acme".parse().unwrap(),
+            &"project-b".parse().unwrap(),
+            &"dev".parse().unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(disabled.connections[0].status, "disabled");
         source.rollback().await.unwrap();
     }

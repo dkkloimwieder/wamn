@@ -103,7 +103,11 @@ pub async fn read_target(
 }
 
 async fn owner_values(target: &Target, namespace: &str, name: &str) -> Result<Option<Value>, ()> {
-    if name == "identity" || name == wamn_registry::name::control_resource(namespace) {
+    if name == "identity"
+        || namespace
+            .parse::<wamn_registry::OrgId>()
+            .is_ok_and(|org| name == wamn_registry::name::control_resource(&org))
+    {
         let installed = super::installed::InstalledPlatform::read(target)
             .await
             .map_err(|_| ())?;
@@ -297,7 +301,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
     }
     let mut inherited_hosts = Vec::new();
     let mut inherited_readiness = Vec::new();
-    let hosts = helm_json(target, &["list", "-n", &document.org, "-o", "json"]).await;
+    let hosts = helm_json(target, &["list", "-n", document.org.as_str(), "-o", "json"]).await;
     for release in hosts
         .as_ref()
         .ok()
@@ -311,7 +315,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         if name == wamn_registry::name::control_resource(&document.org) {
             continue;
         }
-        let installed = owner_values(target, &document.org, name).await;
+        let installed = owner_values(target, document.org.as_str(), name).await;
         // An unreadable owner cannot establish whether it has an explicit override.
         if !matches!(installed, Ok(Some(_))) {
             let mut selected = selected_chart(
@@ -377,11 +381,11 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
     }
     let mut warnings = Vec::new();
     let control = wamn_registry::name::control_resource(&document.org);
-    let org_release = wamn_registry::name::resource_suffix("org", &document.org);
+    let org_release = wamn_registry::name::resource_suffix("org", document.org.as_str());
     for (namespace, name) in [
         ("platform", "wamn-infrastructure"),
         ("platform", "wamn"),
-        (&document.org, org_release.as_str()),
+        (document.org.as_str(), org_release.as_str()),
     ] {
         let result = helm_json(
             target,
@@ -1114,7 +1118,7 @@ async fn probe(
         .redirects(Redirects::None);
     let identity_host = format!("identity.{}.svc.cluster.local", document.org);
     let url = if identity {
-        let Some(tls) = get(target, &document.org, "secret", "identity-tls").await? else {
+        let Some(tls) = get(target, document.org.as_str(), "secret", "identity-tls").await? else {
             return Ok(observation(
                 "identity/Secret/identity-tls",
                 Category::Incomplete,

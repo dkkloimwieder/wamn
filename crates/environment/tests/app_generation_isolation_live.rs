@@ -102,14 +102,14 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     let mut superuser = connect(&url).await;
 
     let home = project_env_database_name(
-        ORG,
-        PROJECT,
+        &ORG.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
         &HOME_ENVIRONMENT.parse().unwrap(),
         &INSTANCE.parse().unwrap(),
     );
     let neighbour = project_env_database_name(
-        ORG,
-        PROJECT,
+        &ORG.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
         &NEIGHBOUR_ENVIRONMENT.parse().unwrap(),
         &INSTANCE.parse().unwrap(),
     );

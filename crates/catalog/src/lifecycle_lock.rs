@@ -45,11 +45,14 @@ impl LifecycleLock {
     /// Take exclusive ownership of the host shared by an org and environment.
     pub async fn acquire_environment(
         client: Client,
-        org: &str,
+        org: &wamn_registry::OrgId,
         env: &wamn_registry::EnvName,
     ) -> anyhow::Result<Self> {
         let lock = Self::start(client).await?;
-        if !lock.try_acquire(TRY_LOCK_SQL, &[org, env.as_str()]).await? {
+        if !lock
+            .try_acquire(TRY_LOCK_SQL, &[org.as_str(), env.as_str()])
+            .await?
+        {
             bail!("{DEPLOYMENT_IN_PROGRESS}: environment {org}/{env}");
         }
         Ok(lock)
@@ -59,7 +62,7 @@ impl LifecycleLock {
     pub async fn acquire_wait(client: Client, triple: &Triple) -> anyhow::Result<Self> {
         let lock = Self::start(client).await?;
         while !lock
-            .try_acquire(TRY_LOCK_SQL, &[&triple.org, triple.env.as_str()])
+            .try_acquire(TRY_LOCK_SQL, &[triple.org.as_str(), triple.env.as_str()])
             .await?
         {}
         Ok(lock)
@@ -91,7 +94,10 @@ impl LifecycleLock {
     pub async fn acquire_shared(client: Client, triple: &Triple) -> anyhow::Result<Self> {
         let lock = Self::start(client).await?;
         let held = lock
-            .try_acquire(TRY_SHARED_LOCK_SQL, &[&triple.org, triple.env.as_str()])
+            .try_acquire(
+                TRY_SHARED_LOCK_SQL,
+                &[triple.org.as_str(), triple.env.as_str()],
+            )
             .await?;
         if !held {
             bail!("{DEPLOYMENT_IN_PROGRESS}: environment {triple}");

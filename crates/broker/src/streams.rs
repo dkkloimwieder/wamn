@@ -149,7 +149,11 @@ mod tests {
 
     #[test]
     fn provision_refuses_foreign_consumers_before_connecting() {
-        let target = Triple::new("example", "dev".parse().unwrap(), "fixture");
+        let target = Triple::new(
+            "example".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "fixture".parse().unwrap(),
+        );
         let expected = event_consumer_config(
             "mat_t_pkg_r1",
             "evt.example.dev.fixture.widget.>",
@@ -187,7 +191,11 @@ mod tests {
 
     #[test]
     fn provision_refuses_implicit_or_unbounded_delivery_inputs() {
-        let target = Triple::new("example", "dev".parse().unwrap(), "fixture");
+        let target = Triple::new(
+            "example".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "fixture".parse().unwrap(),
+        );
         let config = event_consumer_config(
             "mat_t_pkg_r1",
             "evt.example.dev.fixture.widget.>",

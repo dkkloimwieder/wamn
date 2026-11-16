@@ -47,13 +47,13 @@ use crate::control_route::{Refusal, parse};
 /// What the application routes of one host use.
 pub(crate) struct ApplicationRoutes<'a> {
     pub(crate) postgres: &'a WamnPostgres,
-    pub(crate) project: &'a str,
+    pub(crate) project: &'a wamn_registry::ProjectId,
     /// Publishes each role or permission change.
     pub(crate) changes: &'a Publisher,
     pub(crate) release: &'a LoadedRelease,
     /// The identity reader of `wamn_system` and the org, for the covering
     /// fact of `user.list` and the covering test of an `admin` revoke.
-    pub(crate) identity: Option<(&'a sqlx::PgPool, &'a str)>,
+    pub(crate) identity: Option<(&'a sqlx::PgPool, &'a wamn_registry::OrgId)>,
 }
 
 #[derive(Deserialize)]
@@ -70,7 +70,7 @@ struct RoleRequest {
 #[serde(deny_unknown_fields)]
 struct PermissionRequest {
     role: String,
-    operation: String,
+    operation: wamn_catalog::canonical_name::CanonicalName,
 }
 
 /// The input of `workflow.start`. It names no user, role or release: the caller
@@ -81,7 +81,7 @@ struct PermissionRequest {
 #[serde(deny_unknown_fields)]
 struct WorkflowStartRequest {
     application: wamn_catalog::ApplicationName,
-    workflow_id: String,
+    workflow_id: wamn_catalog::canonical_name::CanonicalName,
     input_json: Value,
     idempotency_key: String,
 }
@@ -176,9 +176,6 @@ impl ApplicationRoutes<'_> {
         payload: &str,
     ) -> Result<Value, Refusal> {
         let request: WorkflowStartRequest = parse(payload)?;
-        if request.workflow_id.is_empty() {
-            return Err(start_refusal("invalid_input", "workflow_id"));
-        }
         if request.idempotency_key.is_empty() {
             return Err(start_refusal("invalid_input", "idempotency_key"));
         }
@@ -216,7 +213,10 @@ impl ApplicationRoutes<'_> {
                 .map_err(not_served)?
                 .into_iter()
                 .map(|(node, component)| {
-                    (node, Value::String(component.component_digest.to_string()))
+                    (
+                        node.to_string(),
+                        Value::String(component.component_digest.to_string()),
+                    )
                 })
                 .collect();
         let user = caller.principal_id();
@@ -389,7 +389,7 @@ impl ApplicationRoutes<'_> {
                         GrantAuthority::User(principal),
                         GrantChange::Permission {
                             role: &request.role,
-                            reference: &request.operation,
+                            reference: request.operation.as_str(),
                             grant: true,
                         },
                         drops,
@@ -408,7 +408,7 @@ impl ApplicationRoutes<'_> {
                         GrantAuthority::User(principal),
                         GrantChange::Permission {
                             role: &request.role,
-                            reference: &request.operation,
+                            reference: request.operation.as_str(),
                             grant: false,
                         },
                         drops,
@@ -506,7 +506,7 @@ impl ApplicationRoutes<'_> {
 
     /// The identity reader of the host. `project-admin`, which `org-admin`
     /// writes in every project of the org, covers a user's `admin`.
-    fn identity_reader(&self) -> Result<(&sqlx::PgPool, &str), Refusal> {
+    fn identity_reader(&self) -> Result<(&sqlx::PgPool, &wamn_registry::OrgId), Refusal> {
         self.identity.ok_or_else(|| {
             Refusal::Failed(anyhow::anyhow!(
                 "the covering condition of admin needs the identity reader of the host"
@@ -528,7 +528,7 @@ impl ApplicationRoutes<'_> {
             .administration_transaction(
                 self.project,
                 principal,
-                attachment.operation.as_str(),
+                &attachment.operation.clone().into(),
                 async |client| {
                     if lock {
                         sqlx::query(OPERATION_GRANT_LOCK_SQL)

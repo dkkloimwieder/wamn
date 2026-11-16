@@ -59,7 +59,7 @@ pub async fn database_placement(
 /// Returns database errors.
 pub async fn org_placement(
     connection: &mut PgConnection,
-    org: &str,
+    org: &crate::OrgId,
 ) -> Result<Option<OrgPlacement>, sqlx::Error> {
     Ok(
         sqlx::query_as::<_, (String, Option<String>)>(sql::select_org_placement_sql())
@@ -109,7 +109,7 @@ pub async fn project_policy(
 /// Returns database errors.
 pub async fn environment_policy(
     connection: &mut PgConnection,
-    org: &str,
+    org: &crate::OrgId,
     env: &crate::EnvName,
 ) -> Result<crate::EnvName, sqlx::Error> {
     sqlx::query_scalar("SELECT policy_name FROM registry.environments WHERE org=$1 AND env=$2")
@@ -125,9 +125,9 @@ pub async fn environment_policy(
 /// Returns database errors.
 pub async fn projects(
     connection: &mut PgConnection,
-    org: &str,
+    org: &crate::OrgId,
     env: &crate::EnvName,
-) -> Result<Vec<String>, sqlx::Error> {
+) -> Result<Vec<crate::ProjectId>, sqlx::Error> {
     sqlx::query_scalar("SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2 ORDER BY project")
         .bind(org).bind(env).fetch_all(connection).await
 }
@@ -159,8 +159,8 @@ pub async fn exists(connection: &mut PgConnection, triple: &Triple) -> Result<bo
 /// Returns database errors.
 pub async fn record_project(
     connection: &mut PgConnection,
-    org: &str,
-    project: &str,
+    org: &crate::OrgId,
+    project: &crate::ProjectId,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(sql::upsert_project_sql())
         .bind(org)
@@ -217,7 +217,7 @@ pub async fn record(
 /// Returns a database error if the organization is absent or cannot be locked.
 pub async fn lock_org(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
+    org: &crate::OrgId,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("SELECT id FROM registry.orgs WHERE id=$1 FOR UPDATE")
         .bind(org)

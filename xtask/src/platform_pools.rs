@@ -60,7 +60,7 @@ pub async fn resize(
             let kubeconfig = work_directory.join(format!("{}.kubeconfig", document.cluster_name));
             let context = document.provider.kubeconfig(document, &kubeconfig).await?;
             let started = Instant::now();
-            postgres_ready(&kubeconfig, &context, &document.org).await?;
+            postgres_ready(&kubeconfig, &context, document.org.as_str()).await?;
             progress(&format!(
                 "pod wamn-pg-1: Ready {:.1}s",
                 started.elapsed().as_secs_f64()

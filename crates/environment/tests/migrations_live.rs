@@ -262,15 +262,15 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
     wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let migration_input = wamn_control_provision::test_database::package_migration_input(
         database.as_str(),
-        "mapping",
-        "fixture",
+        &"mapping".parse().unwrap(),
+        &"fixture".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await?;
     let migration_input = migration::configuration(
         &migration_input,
-        "mapping",
-        "fixture",
+        &"mapping".parse().unwrap(),
+        &"fixture".parse().unwrap(),
         &"dev".parse().unwrap(),
     )?;
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
@@ -309,8 +309,8 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
         changes: wamn_broker::Publisher::default(),
         database_url: database.as_str().to_owned(),
         migration_database_url: migration_input.clone(),
-        org: "mapping".into(),
-        project: "fixture".into(),
+        org: "mapping".parse().unwrap(),
+        project: "fixture".parse().unwrap(),
         environment: "dev".parse().unwrap(),
     };
     const INITIAL: &str = "CREATE TABLE fixture_app.item(id int PRIMARY KEY)";
@@ -396,14 +396,18 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
     wamn_control_provision::test_database::system(system.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::test_database::seed_org_project_env_sql(
-            "reset",
-            "fixture",
+            &"reset".parse().unwrap(),
+            &"fixture".parse().unwrap(),
             &"dev".parse().unwrap(),
         ),
     ))
     .execute(&mut wamn_postgres::connect(system.as_str()).await.unwrap())
     .await?;
-    let triple = wamn_registry::Triple::new("reset", "dev".parse().unwrap(), "fixture");
+    let triple = wamn_registry::Triple::new(
+        "reset".parse().unwrap(),
+        "dev".parse().unwrap(),
+        "fixture".parse().unwrap(),
+    );
 
     let database = url::Url::parse(
         case_server
@@ -434,8 +438,8 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
 
     let migration_input = wamn_control_provision::test_database::package_migration_input(
         database.as_str(),
-        "reset",
-        "fixture",
+        &"reset".parse().unwrap(),
+        &"fixture".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await?;
@@ -455,8 +459,8 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
         changes: wamn_broker::Publisher::default(),
         database_url: database.as_str().to_owned(),
         migration_database_url: migration_input.clone(),
-        org: "reset".into(),
-        project: "fixture".into(),
+        org: "reset".parse().unwrap(),
+        project: "fixture".parse().unwrap(),
         environment: "dev".parse().unwrap(),
     };
     apply_package::apply_package_schema(apply()).await?;
@@ -468,7 +472,7 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
     let schemas = metadata
         .models
         .iter()
-        .map(|model| postgres_protocol::escape::escape_identifier(&model.schema))
+        .map(|model| postgres_protocol::escape::escape_identifier(model.schema.as_str()))
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>()
@@ -499,8 +503,8 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
         let absent: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NULL")
             .bind(format!(
                 "{}.{}",
-                postgres_protocol::escape::escape_identifier(&model.schema),
-                postgres_protocol::escape::escape_identifier(&model.table)
+                postgres_protocol::escape::escape_identifier(model.schema.as_str()),
+                postgres_protocol::escape::escape_identifier(model.table.as_str())
             ))
             .fetch_one(&mut admin)
             .await?;

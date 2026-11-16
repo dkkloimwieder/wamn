@@ -133,7 +133,7 @@ impl Authorization {
     pub async fn callback(
         &self,
         database: &mut sqlx::PgConnection,
-        org: &str,
+        org: &wamn_registry::OrgId,
         query: &str,
     ) -> Result<(), Error> {
         let mut tx = database
@@ -157,7 +157,7 @@ impl Authorization {
     async fn exchange(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        org: &str,
+        org: &wamn_registry::OrgId,
         query: &str,
     ) -> Result<(), Error> {
         let query: Callback = callback_parameters(query)?;

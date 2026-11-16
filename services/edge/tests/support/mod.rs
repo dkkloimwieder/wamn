@@ -137,12 +137,12 @@ fn build_bundle() -> PathBuf {
     let _ = std::fs::remove_dir_all(&out);
     write_package(
         &package,
-        "device",
+        &"device".parse().unwrap(),
         &repository.join("apps/target/wamn/edge_device/components/device.wasm"),
         &ingress,
         &EdgeTarget {
-            org: ORG,
-            project: PROJECT,
+            org: &ORG.parse().unwrap(),
+            project: &PROJECT.parse().unwrap(),
             environment: &ENVIRONMENT.parse().unwrap(),
         },
         &out,
@@ -156,8 +156,8 @@ fn build_bundle() -> PathBuf {
 pub fn config(directory: &Path, digest: wamn_digest::Digest) -> EdgeConfig {
     EdgeConfig {
         target: TargetConfig {
-            org: ORG.into(),
-            project: PROJECT.into(),
+            org: ORG.parse().unwrap(),
+            project: PROJECT.parse().unwrap(),
             environment: ENVIRONMENT.parse().unwrap(),
         },
         release: ReleaseConfig {
@@ -167,7 +167,7 @@ pub fn config(directory: &Path, digest: wamn_digest::Digest) -> EdgeConfig {
         session: SessionConfig {
             keys: directory.join("session-keys.json"),
             issuer: ISSUER.into(),
-            org: ORG.into(),
+            org: ORG.parse().unwrap(),
             audience: AUDIENCE.into(),
         },
         store: StoreConfig {

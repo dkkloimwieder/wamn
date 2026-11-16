@@ -6391,6 +6391,7 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-package-artifact",
+ "wamn-registry",
  "wamn-sql",
  "wash-runtime",
  "wasmtime",
@@ -6902,6 +6903,7 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-kubernetes",
+ "wamn-registry",
  "wash-runtime",
 ]
 

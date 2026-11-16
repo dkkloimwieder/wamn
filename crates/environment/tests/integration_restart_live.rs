@@ -181,7 +181,7 @@ impl Application {
         let engine = wamn_engine::build_engine(&[])?;
         let mut declaration = wamn_publish::component_declaration::render_package_declaration(
             &package,
-            "modbus_reader",
+            &"modbus_reader".parse().unwrap(),
             &"acme--dev--one".parse().unwrap(),
         )?;
         declaration["target"]["package-version"] = json!("0.1.0");
@@ -357,14 +357,14 @@ fn loaded_release(
                 package_id: package.parse().unwrap(),
                 descriptor: {
                     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
-                        "reader",
-                        "0.1.0",
+                        "reader".parse().unwrap(),
+                        "0.1.0".parse().unwrap(),
                         format!("sha256:{}", byte.repeat(64))
                             .parse::<wamn_digest::Digest>()
                             .unwrap(),
                     );
                     descriptor.operations = BTreeMap::from([(
-                        "wamn:node/handler@0.1.0".into(),
+                        "wamn:node/handler@0.1.0".parse().unwrap(),
                         AdmittedComponentOperation {
                             host_transaction: false,
                             input_ports: Vec::new(),
@@ -526,8 +526,8 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         (&format!(
             "SET ROLE wamn_system; {}",
             wamn_control_provision::test_database::seed_org_project_env_sql(
-                "acme",
-                "one",
+                &"acme".parse().unwrap(),
+                &"one".parse().unwrap(),
                 &"dev".parse().unwrap()
             )
         ))
@@ -579,7 +579,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         ("meter", &authority),
         ("observer-meter", &observer_authority),
     ] {
-        wamn_test_infrastructure::credentials::define(&mut tx,"acme",&json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":endpoint}}),&store).await?;
+        wamn_test_infrastructure::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":endpoint}}),&store).await?;
     }
     tx.commit().await?;
     let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(
@@ -670,10 +670,10 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     );
     let credentials = Arc::new(ConnectionCredentials::from_database(
         wamn_postgres::pool(reader_url.as_str(), 4).await?,
-        "acme",
+        &"acme".parse().unwrap(),
     ));
     let postgres = Arc::new(wamn_sql::WamnPostgres::from_env_for_project(
-        "one",
+        &"one".parse().unwrap(),
         Some(wamn_sql::ClassCredentials::every_class(
             project_database.as_str().to_owned(),
         )),
@@ -687,7 +687,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         Arc::clone(&credentials),
         &postgres,
         &"acme--dev--one".parse().unwrap(),
-        "one",
+        &"one".parse().unwrap(),
         &"dev".parse().unwrap(),
     ));
     let imports = async |document: &EnvironmentDocument,
@@ -700,7 +700,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
             Arc::clone(&facts),
             &release,
             &postgres,
-            "one",
+            &"one".parse().unwrap(),
             configuration.clone(),
             RegistryCredentialSource::Fixed(read_registry_credentials(&auth, &registry.address)?),
         )
@@ -821,7 +821,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
     wamn_platform_identity::connections::administration::execute_with_store(
         &mut tx,
-        "acme",
+        &"acme".parse().unwrap(),
         "connection.write",
         &json!({"project":"one","env":"dev","name":"meter","parameters":{"authority":authority}})
             .to_string(),

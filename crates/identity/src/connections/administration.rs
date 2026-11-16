@@ -19,7 +19,7 @@ fn store_error(source: wamn_kubernetes::Error) -> ConnectionError {
 /// Execute a route with a store selected from the target environment.
 pub async fn execute(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
+    org: &wamn_registry::OrgId,
     operation: &str,
     payload: &str,
     drops: &mut AuthDrops,
@@ -40,7 +40,7 @@ pub async fn execute(
 /// The store injection point for administration tests.
 pub async fn execute_with_store(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
+    org: &wamn_registry::OrgId,
     operation: &str,
     payload: &str,
     drops: &mut AuthDrops,
@@ -63,7 +63,7 @@ pub async fn execute_with_store(
 pub async fn execute_in_environment(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     environment: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
+    org: &wamn_registry::OrgId,
     operation: &str,
     payload: &str,
     drops: &mut AuthDrops,
@@ -83,7 +83,7 @@ pub async fn execute_in_environment(
 
 async fn execute_in(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
+    org: &wamn_registry::OrgId,
     operation: &str,
     payload: &str,
     (drops, connections): (&mut AuthDrops, &mut ConnectionDrops),
@@ -124,13 +124,18 @@ async fn execute_in(
 /// An integration delete changes no map, because it refuses while the
 /// integration has a connection.
 fn record_connection_drops(
-    org: &str,
+    org: &wamn_registry::OrgId,
     operation: &str,
     request: &Value,
     result: &mut Value,
     connections: &mut ConnectionDrops,
 ) {
-    let project = request["project"].as_str().unwrap_or_default();
+    let Some(project) = request["project"]
+        .as_str()
+        .and_then(|project| project.parse::<wamn_registry::ProjectId>().ok())
+    else {
+        return;
+    };
     if matches!(
         operation,
         "connection.write" | "connection.copy" | "connection.delete"
@@ -138,7 +143,7 @@ fn record_connection_drops(
         .as_str()
         .and_then(|env| env.parse::<wamn_registry::EnvName>().ok())
     {
-        connections.connections(&wamn_registry::project_env_key(org, project, &env));
+        connections.connections(&wamn_registry::project_env_key(org, &project, &env));
     }
     let mut record = |env: &Value, id: &Value| {
         if let (Some(env), Some(id)) = (
@@ -146,7 +151,7 @@ fn record_connection_drops(
                 .and_then(|env| env.parse::<wamn_registry::EnvName>().ok()),
             id.as_str().and_then(|id| id.parse::<uuid::Uuid>().ok()),
         ) {
-            connections.connection(&wamn_registry::project_env_key(org, project, &env), id);
+            connections.connection(&wamn_registry::project_env_key(org, &project, &env), id);
         }
     };
     match operation {
@@ -259,7 +264,7 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
 /// Call only the security-definer family that owns the requested group.
 pub async fn configure(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
+    org: &wamn_registry::OrgId,
     operation: &str,
     request: &Value,
 ) -> Result<Value, ConnectionError> {
@@ -318,7 +323,7 @@ pub async fn configure(
 
 async fn generation(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
+    org: &wamn_registry::OrgId,
     operation: &str,
     (mut request, credential): (Value, Option<Value>),
     drops: &mut AuthDrops,
@@ -382,13 +387,17 @@ async fn generation(
             store_credential(
                 store,
                 &wamn_registry::Triple::new(
-                    org,
+                    org.clone(),
                     request["env"]
                         .as_str()
                         .unwrap()
                         .parse()
                         .map_err(|_| refuse("invalid_input", "env"))?,
-                    request["project"].as_str().unwrap(),
+                    request["project"]
+                        .as_str()
+                        .unwrap()
+                        .parse()
+                        .map_err(|_| refuse("invalid_input", "project"))?,
                 ),
                 value,
             )
@@ -675,7 +684,11 @@ mod tests {
         let value = r#"{"key":"private-1234"}"#;
         let metadata = store_credential(
             &store,
-            &wamn_registry::Triple::new("acme", "dev".parse().unwrap(), "app"),
+            &wamn_registry::Triple::new(
+                "acme".parse().unwrap(),
+                "dev".parse().unwrap(),
+                "app".parse().unwrap(),
+            ),
             value,
         )
         .await

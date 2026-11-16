@@ -3,15 +3,6 @@ use sqlx::{Connection as _, Row as _};
 
 use super::*;
 
-#[test]
-fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
-    // The name validation runs first — a reserved / non-slug project id fails
-    // without touching the registry or emitting a CR.
-    assert!(validate_project_env("demo", "wamn-x", &"dev".parse().unwrap()).is_err());
-    assert!(validate_project_env("demo", "Bad", &"prod".parse().unwrap()).is_err());
-    assert!(validate_project_env("demo", "billing", &"prod".parse().unwrap()).is_ok());
-}
-
 /// The target cluster is DERIVED (D18 `cluster_of`) from the org's placement +
 /// the env's policy: a dedicated org owns `<org>-<owner(env)>`, a pooled org
 /// collapses every env onto its pool. (The live routing through the DB is
@@ -20,10 +11,10 @@ fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
 #[test]
 fn cluster_is_derived_by_placement_and_policy() {
     use wamn_control_provision::EnvPolicy;
-    let ded = Org::dedicated("demo");
+    let ded = Org::dedicated("demo".parse().unwrap());
     assert_eq!(cluster_of(&ded, &EnvPolicy::dev()).name, "demo-dev");
     assert_eq!(cluster_of(&ded, &EnvPolicy::prod()).name, "demo-prod");
-    let pooled = Org::pooled("try", "wamn-pg");
+    let pooled = Org::pooled("try".parse().unwrap(), "wamn-pg");
     assert_eq!(cluster_of(&pooled, &EnvPolicy::prod()).name, "wamn-pg");
 }
 
@@ -76,8 +67,8 @@ async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
     for (secret_namespace, disposable) in [(Some("hosts".to_owned()), None), (None, Some(true))] {
         let _error = provision_project_env(&ProvisionProjectEnvRequest {
             changes: wamn_broker::Publisher::default(),
-            org: "acme".into(),
-            project: "billing".into(),
+            org: "acme".parse().unwrap(),
+            project: "billing".parse().unwrap(),
             env: "dev".parse().unwrap(),
             policy: None,
             target: "cloud".to_owned(),
@@ -127,7 +118,11 @@ async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) 
         .map(drop)
         .unwrap();
     transaction.commit().await.unwrap();
-    let triple = Triple::new("demo", "dev".parse().unwrap(), "inventory");
+    let triple = Triple::new(
+        "demo".parse().unwrap(),
+        "dev".parse().unwrap(),
+        "inventory".parse().unwrap(),
+    );
     for disposable in [Some(true), None] {
         do_record_project_env(
             &mut client,

@@ -196,7 +196,7 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
     async fn lookup(
         &self,
         application: &wamn_catalog::ApplicationName,
-        binding: Option<&str>,
+        binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
         pinned: Option<&str>,
     ) -> Result<FileConnection, FileError>;
 }
@@ -207,8 +207,8 @@ pub struct RegistryFileConnections {
     pub client: Option<sqlx::PgPool>,
     pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
     pub facts: Arc<wamn_connections::connection_facts::ConnectionFacts>,
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
 }
 impl fmt::Debug for RegistryFileConnections {
@@ -250,7 +250,7 @@ impl FileConnections for RegistryFileConnections {
     async fn lookup(
         &self,
         application: &wamn_catalog::ApplicationName,
-        binding: Option<&str>,
+        binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
         pinned: Option<&str>,
     ) -> Result<FileConnection, FileError> {
         let (id, read_only, version) = match binding {
@@ -271,7 +271,7 @@ impl FileConnections for RegistryFileConnections {
                     .bindings
                     .iter()
                     .find(|binding| {
-                        binding.name == name
+                        binding.name == name.as_str()
                             && pinned.is_none_or(|id| id == binding.connection_id.to_string())
                             && wamn_catalog::application_for_package(
                                 &self.release.target().applications,
@@ -360,20 +360,20 @@ struct FileRequest {
 struct DeleteRequest {
     application: wamn_catalog::ApplicationName,
     file_id: Uuid,
-    binding: String,
+    binding: wamn_catalog::canonical_name::CanonicalName,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExposeRequest {
     application: wamn_catalog::ApplicationName,
     file_id: Uuid,
-    binding: String,
+    binding: wamn_catalog::canonical_name::CanonicalName,
     exposure: Exposure,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UploadQuery {
-    binding: String,
+    binding: wamn_catalog::canonical_name::CanonicalName,
     name: String,
 }
 
@@ -384,7 +384,7 @@ pub struct FileRoutes {
     pub(crate) postgres: Arc<WamnPostgres>,
     pub(crate) blobstore: Arc<WamnBlobstore>,
     pub(crate) connections: Arc<dyn FileConnections>,
-    pub(crate) project: String,
+    pub(crate) project: wamn_registry::ProjectId,
     administration_url: Option<String>,
 }
 impl fmt::Debug for FileRoutes {
@@ -403,7 +403,7 @@ impl FileRoutes {
         postgres: Arc<WamnPostgres>,
         blobstore: Arc<WamnBlobstore>,
         connections: Arc<dyn FileConnections>,
-        project: String,
+        project: wamn_registry::ProjectId,
         administration_url: Option<String>,
     ) -> Self {
         Self {
@@ -441,7 +441,7 @@ impl FileRoutes {
     async fn store(
         &self,
         application: &wamn_catalog::ApplicationName,
-        binding: Option<&str>,
+        binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
         pinned: Option<&str>,
         write: bool,
         deadline: tokio::time::Instant,
@@ -499,7 +499,9 @@ impl FileRoutes {
                 &format!(
                     "wamn-control:file/{action}@{}",
                     wamn_catalog::host_route_version()
-                ),
+                )
+                .parse()
+                .expect("file operation"),
                 async |client| {
                     let row = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
                         .bind(id.to_string())
@@ -519,7 +521,7 @@ impl FileRoutes {
         &self,
         caller: &AuthenticatedCaller,
         application: &wamn_catalog::ApplicationName,
-        binding: &str,
+        binding: &wamn_catalog::canonical_name::CanonicalName,
         name: &str,
         media_type: &str,
         body: impl AsyncRead + Unpin + Send,
@@ -536,7 +538,7 @@ impl FileRoutes {
         let staged = store.stage(id, body).await?;
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
         self.postgres.administration_transaction(&self.project, &principal,
-            &format!("wamn-control:file/put@{}", wamn_catalog::host_route_version()), async |client| {
+            &format!("wamn-control:file/put@{}", wamn_catalog::host_route_version()).parse().expect("file operation"), async |client| {
                 sqlx::query("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')").bind(id.to_string()).bind(application).bind(&connection.id).bind(name).bind(media_type).bind(size).bind(staged.sha256).bind(&staged.blob_key).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(())
             }).await.map_err(|error| failed("catalog", error))??;
@@ -616,7 +618,9 @@ impl FileRoutes {
                 &format!(
                     "wamn-control:file/delete@{}",
                     wamn_catalog::host_route_version()
-                ),
+                )
+                .parse()
+                .expect("file operation"),
                 async |client| {
                     let deleted = sqlx::query(
                         "DELETE FROM platform.file WHERE id = $1::text::uuid AND application = $2",
@@ -685,7 +689,7 @@ impl FileRoutes {
         )
         .await?;
         let written = self.postgres.administration_transaction(&self.project, &principal,
-            &format!("wamn-control:file/expose@{}", wamn_catalog::host_route_version()), async |client| {
+            &format!("wamn-control:file/expose@{}", wamn_catalog::host_route_version()).parse().expect("file operation"), async |client| {
                 let updated = sqlx::query("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)").bind(request.file_id.to_string()).bind(&request.application).bind(request.exposure.literal()).bind(&url).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(updated)
             }).await.map_err(|error| failed("catalog", error))?;
@@ -823,7 +827,9 @@ impl FileRoutes {
             (NativeRoute::Get { .. }, "GET") => "get",
             _ => return Ok(response(405, &json!({"error":"method_not_allowed"}))),
         };
-        let id = format!("wamn-control-file-{action}-http");
+        let id = format!("wamn-control-file-{action}-http")
+            .parse()
+            .expect("file attachment");
         let headers: Result<Vec<_>, _> = request
             .headers()
             .iter()
@@ -923,7 +929,7 @@ fn principal(caller: &AuthenticatedCaller, action: &str) -> Result<PrincipalId, 
 fn declares_store(
     release: &LoadedRelease,
     app: &wamn_catalog::ApplicationDefinition,
-    alias: &str,
+    alias: &wamn_catalog::canonical_name::CanonicalName,
 ) -> bool {
     release.manifest().components.iter().any(|component| {
         app.packages.contains(&component.package_id)
@@ -937,7 +943,7 @@ fn declares_store(
 fn require_binding(
     release: &LoadedRelease,
     application: &wamn_catalog::ApplicationName,
-    binding: Option<&str>,
+    binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
     pinned: Option<&str>,
     connection: &FileConnection,
     write: bool,
@@ -1185,14 +1191,17 @@ mod tests {
 
     fn release() -> Arc<LoadedRelease> {
         let mut descriptor = ComponentDescriptor::named(
-            "files",
-            "0.1",
+            "files".parse().unwrap(),
+            "0.1".parse().unwrap(),
             (format!("sha256:{}", "a".repeat(64)))
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
         );
         descriptor.connections = vec![ComponentConnection {
-            store_alias: "documents".into(),
+            store_alias: "documents"
+                .parse::<wamn_catalog::canonical_name::CanonicalName>()
+                .unwrap()
+                .into(),
             requirement_type: ComponentConnectionType::Blobstore,
             mode: wamn_catalog::ConnectionMode::Write,
         }];
@@ -1210,7 +1219,7 @@ mod tests {
                 descriptor: {
                     let mut descriptor = descriptor;
                     descriptor.operations = BTreeMap::from([(
-                        "request".into(),
+                        "request".parse().unwrap(),
                         wamn_catalog::AdmittedComponentOperation {
                             host_transaction: false,
                             input_ports: Vec::new(),
@@ -1262,7 +1271,7 @@ mod tests {
         credential: CredentialType,
     ) -> AuthenticatedCaller {
         AuthenticatedCaller::new(
-            "wamn-control-file-get-http",
+            "wamn-control-file-get-http".parse().unwrap(),
             "22222222-2222-4222-8222-222222222222".parse().unwrap(),
             credential,
             admin,
@@ -1280,7 +1289,7 @@ mod tests {
         async fn lookup(
             &self,
             _: &wamn_catalog::ApplicationName,
-            _: Option<&str>,
+            _: Option<&wamn_catalog::canonical_name::CanonicalName>,
             _: Option<&str>,
         ) -> Result<FileConnection, FileError> {
             panic!("a refused request must not reach connection authority")
@@ -1307,7 +1316,7 @@ mod tests {
                     Arc::new(ConnectionCredentials::empty()),
                     &postgres,
                     &release.target().project_env_key,
-                    "project",
+                    &"project".parse().unwrap(),
                     &"dev".parse().unwrap(),
                 )),
             )
@@ -1319,7 +1328,7 @@ mod tests {
             postgres,
             blobstore,
             Arc::new(NoConnections),
-            "project".into(),
+            "project".parse().unwrap(),
             None,
         )
     }
@@ -1383,7 +1392,7 @@ mod tests {
             require_binding(
                 &release,
                 &"orders".parse().unwrap(),
-                Some("documents"),
+                Some(&"documents".parse().unwrap()),
                 None,
                 &connection,
                 true
@@ -1403,7 +1412,7 @@ mod tests {
                 require_binding(
                     &release,
                     &application.parse().unwrap(),
-                    binding,
+                    binding.map(str::parse).transpose().unwrap().as_ref(),
                     pinned,
                     &connection,
                     true
@@ -1417,7 +1426,7 @@ mod tests {
             require_binding(
                 &release,
                 &"orders".parse().unwrap(),
-                Some("documents"),
+                Some(&"documents".parse().unwrap()),
                 None,
                 &read,
                 true
@@ -1441,7 +1450,7 @@ mod tests {
             require_binding(
                 &release,
                 &"orders".parse().unwrap(),
-                Some("documents"),
+                Some(&"documents".parse().unwrap()),
                 None,
                 &wrong,
                 false
@@ -1453,7 +1462,7 @@ mod tests {
             require_binding(
                 &release,
                 &"orders".parse().unwrap(),
-                Some("documents"),
+                Some(&"documents".parse().unwrap()),
                 None,
                 &wrong,
                 false
@@ -1498,7 +1507,7 @@ mod tests {
                 Some(Err(DeliveryError::InvalidRequest))
             ));
             let caller = AuthenticatedCaller::new(
-                id,
+                id.clone(),
                 "22222222-2222-4222-8222-222222222222".parse().unwrap(),
                 CredentialType::Session,
                 false,
@@ -1578,8 +1587,11 @@ mod tests {
             .unwrap();
         assert!(response.status().is_success());
         let reports: wamn_kubernetes::environment_state::Residency = response.json().await.unwrap();
-        let releases =
-            wamn_kubernetes::environment_state::project_residency(vec![reports], "orders").unwrap();
+        let releases = wamn_kubernetes::environment_state::project_residency(
+            vec![reports],
+            &"orders".parse().unwrap(),
+        )
+        .unwrap();
         assert!(
             releases
                 .iter()
@@ -1735,7 +1747,7 @@ mod tests {
             let error = files
                 .store(
                     &application.parse().unwrap(),
-                    Some(binding),
+                    Some(&binding.parse().unwrap()),
                     None,
                     true,
                     tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
@@ -1762,15 +1774,15 @@ mod tests {
                     origin: ConnectionOrigin {
                         package_id: "app".parse().unwrap(),
                         component_digest: digest.clone(),
-                        component: "files".into(),
-                        interface_version: "0.1".into(),
-                        operation: "request".into(),
+                        component: "files".parse().unwrap(),
+                        interface_version: "0.1".parse().unwrap(),
+                        operation: "request".parse().unwrap(),
                     },
                     entry: InvocationEntry::Route,
                     package_id: "app".parse().unwrap(),
                     component_digest: digest,
-                    component: "files".into(),
-                    operation: "request".into(),
+                    component: "files".parse().unwrap(),
+                    operation: "request".parse().unwrap(),
                     closure: ConnectionExecutionClosure::Released,
                     effects: None,
                 },

@@ -130,12 +130,16 @@ impl Proxy {
 
 fn reader_args(super_url: &str, cdc_name: &str, nats_url: String) -> ReaderConfig {
     ReaderConfig {
-        org: ORG.into(),
-        project: PROJECT.into(),
+        org: ORG.parse().unwrap(),
+        project: PROJECT.parse().unwrap(),
         env: ENV.parse().unwrap(),
         publication: cdc_name.into(),
         slot: cdc_name.into(),
-        stream: wamn_event_wire::stream_name(ORG, PROJECT, &ENV.parse().unwrap()),
+        stream: wamn_event_wire::stream_name(
+            &ORG.parse().unwrap(),
+            &PROJECT.parse().unwrap(),
+            &ENV.parse().unwrap(),
+        ),
         cdc_url: cdc_plain_url(super_url, cdc_name),
         nats_url,
         nats_tls_ca: None,
@@ -281,12 +285,16 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .to_owned();
 
     let cdc_name = cdc_object_name(
-        ORG,
-        PROJECT,
+        &ORG.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
         &ENV.parse().unwrap(),
         &INSTANCE.parse().unwrap(),
     );
-    let stream_name = wamn_event_wire::stream_name(ORG, PROJECT, &ENV.parse().unwrap());
+    let stream_name = wamn_event_wire::stream_name(
+        &ORG.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
+        &ENV.parse().unwrap(),
+    );
 
     // --- hermetic preamble (the M2 lesson: leftovers mask mutations) --------
     let mut admin = connect(&super_url).await;
@@ -480,7 +488,11 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     let proxy = Proxy::start(upstream).await;
     let proxied_nats = format!("nats://127.0.0.1:{}", proxy.port);
 
-    let coordinate = wamn_registry::Triple::new(ORG, ENV.parse().unwrap(), PROJECT);
+    let coordinate = wamn_registry::Triple::new(
+        ORG.parse().unwrap(),
+        ENV.parse().unwrap(),
+        PROJECT.parse().unwrap(),
+    );
     let source_config =
         wamn_broker::events::source_stream_config(&coordinate, 1, Duration::from_secs(120));
     let advisory_config = wamn_broker::events::advisory_stream_config(&coordinate, 1);
@@ -673,14 +685,21 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         assert_eq!(
             subj,
             &subject(
-                ORG,
-                PROJECT,
+                &ORG.parse().unwrap(),
+                &PROJECT.parse().unwrap(),
                 &ENV.parse().unwrap(),
                 e.entity_segment(),
                 e.op
             )
         );
-        assert_eq!(id, &msg_id(PROJECT, &ENV.parse().unwrap(), &e.identity));
+        assert_eq!(
+            id,
+            &msg_id(
+                &PROJECT.parse().unwrap(),
+                &ENV.parse().unwrap(),
+                &e.identity
+            )
+        );
         assert_eq!(e.package_id, "platform_fixture".parse().unwrap());
         assert_eq!(e.entity, "widget");
         assert_eq!(e.table, "widgets");

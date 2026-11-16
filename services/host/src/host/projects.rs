@@ -59,20 +59,23 @@ struct Project {
 }
 
 #[derive(Default)]
-pub(super) struct Projects(RwLock<BTreeMap<String, Arc<RwLock<Project>>>>);
+pub(super) struct Projects(RwLock<BTreeMap<wamn_registry::ProjectId, Arc<RwLock<Project>>>>);
 
 impl Projects {
-    fn entries(&self) -> std::sync::RwLockReadGuard<'_, BTreeMap<String, Arc<RwLock<Project>>>> {
+    fn entries(
+        &self,
+    ) -> std::sync::RwLockReadGuard<'_, BTreeMap<wamn_registry::ProjectId, Arc<RwLock<Project>>>>
+    {
         // The index contains independent, fully constructed handles. Insertion
         // cannot corrupt other entries; project data changes under its own lock.
         self.0.read().unwrap_or_else(|error| error.into_inner())
     }
 
-    fn get(&self, project: &str) -> Option<Arc<RwLock<Project>>> {
+    fn get(&self, project: &wamn_registry::ProjectId) -> Option<Arc<RwLock<Project>>> {
         self.entries().get(project).map(Arc::clone)
     }
 
-    fn entry(&self, project: &str) -> Arc<RwLock<Project>> {
+    fn entry(&self, project: &wamn_registry::ProjectId) -> Arc<RwLock<Project>> {
         // As with reads, recovery exposes only intact handles, never project data.
         let mut projects = self.0.write().unwrap_or_else(|error| error.into_inner());
         Arc::clone(projects.entry(project.to_owned()).or_default())
@@ -83,7 +86,7 @@ pub(super) struct Credentials(pub(super) Arc<Projects>);
 impl CredentialProvider for Credentials {
     fn resolve(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         class: AuthorityClass,
         project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
@@ -176,22 +179,15 @@ impl Environment {
         }
     }
 
-    fn declared(&self) -> anyhow::Result<HashSet<String>> {
+    fn declared(&self) -> anyhow::Result<HashSet<wamn_registry::ProjectId>> {
         let path = self
             .args
             .projects
             .as_ref()
             .context("environment has no project projection")?;
-        let projects: HashSet<String> = serde_json::from_slice(
+        let projects: HashSet<wamn_registry::ProjectId> = serde_json::from_slice(
             &std::fs::read(path).context("read environment project projection")?,
         )?;
-        for project in &projects {
-            anyhow::ensure!(
-                wamn_registry::identifiers::project_id_reason(project).is_none()
-                    && !wamn_registry::identifiers::project_id_is_reserved(project),
-                "invalid project in environment projection"
-            );
-        }
         Ok(projects)
     }
 
@@ -205,7 +201,7 @@ impl Environment {
             .parse::<wamn_registry::ProjectEnvKey>()?;
         let coordinate = key.triple();
         anyhow::ensure!(
-            Some(coordinate.org.as_str()) == self.args.org.as_deref()
+            Some(&coordinate.org) == self.args.org.as_ref()
                 && Some(&coordinate.env) == self.args.environment.as_ref()
                 && self.declared()?.contains(&coordinate.project),
             "workload belongs to another environment"
@@ -254,11 +250,14 @@ impl Environment {
         }
     }
 
-    async fn prepare(&self, project: &str) -> anyhow::Result<Arc<releases::Releases>> {
+    async fn prepare(
+        &self,
+        project: &wamn_registry::ProjectId,
+    ) -> anyhow::Result<Arc<releases::Releases>> {
         let args = &self.args;
         let org = args
             .org
-            .as_deref()
+            .as_ref()
             .context("environment host requires an org")?;
         let environment = args
             .environment
@@ -270,7 +269,7 @@ impl Environment {
             .context("missing project projection")?
             .parent()
             .context("project projection directory")?
-            .join(project);
+            .join(project.as_str());
         let read = |family: wamn_control_provision::WorkloadRoleFamily| -> anyhow::Result<String> {
             std::fs::read_to_string(directory.join(format!("{}.json", family.component_stem())))
                 .context("read projected project connection")
@@ -346,7 +345,11 @@ impl Environment {
         let identity = wamn_postgres::pool(&identity, 4).await?;
         let target = ReleaseTarget::new(key.clone(), environment.clone());
         let mut events = WamnJetstreamConfig::from_env().with_nats(nats.clone());
-        events.event_target = Some(Triple::new(org, environment.clone(), project));
+        events.event_target = Some(Triple::new(
+            org.clone(),
+            environment.clone(),
+            project.clone(),
+        ));
         let jetstream = Arc::new(WamnJetstream::new(events).await?);
         let base = args
             .component_artifact_base
@@ -474,11 +477,13 @@ impl Environment {
         self: &Arc<Self>,
         mut stopping: watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
-        let mut initializers =
-            tokio::task::JoinSet::<(String, anyhow::Result<Arc<releases::Releases>>)>::new();
-        let mut initializing = HashSet::<String>::new();
+        let mut initializers = tokio::task::JoinSet::<(
+            wamn_registry::ProjectId,
+            anyhow::Result<Arc<releases::Releases>>,
+        )>::new();
+        let mut initializing = HashSet::<wamn_registry::ProjectId>::new();
         let mut managers = tokio::task::JoinSet::new();
-        let mut stops = HashMap::<String, watch::Sender<bool>>::new();
+        let mut stops = HashMap::<wamn_registry::ProjectId, watch::Sender<bool>>::new();
         let mut ticks = tokio::time::interval(Duration::from_secs(1));
         loop {
             tokio::select! {
@@ -610,7 +615,7 @@ impl wamn_execution_host::file_route::ResidencyReader for Environment {
 impl wamn_engine::flow_http_routing::EnvironmentStatus for Environment {
     async fn inactive(&self, key: &wamn_registry::ProjectEnvKey) -> anyhow::Result<bool> {
         let coordinate = key.triple();
-        if Some(coordinate.org.as_str()) != self.args.org.as_deref()
+        if Some(&coordinate.org) != self.args.org.as_ref()
             || Some(&coordinate.env) != self.args.environment.as_ref()
             || !self.declared()?.contains(&coordinate.project)
         {
@@ -629,14 +634,14 @@ mod tests {
     #[tokio::test]
     async fn poisoned_project_keeps_other_project_usable() {
         let projects = Arc::new(Projects::default());
-        let broken = projects.entry("broken");
+        let broken = projects.entry(&"broken".parse().unwrap());
         projects
-            .entry("healthy")
+            .entry(&"healthy".parse().unwrap())
             .write()
             .unwrap()
             .credentials
             .insert(
-                "healthy".into(),
+                "healthy".parse().unwrap(),
                 ProjectConfig {
                     credentials: wamn_sql::ClassCredentials::default().with_class(
                         AuthorityClass::ExecutorPlatform,
@@ -659,12 +664,20 @@ mod tests {
         });
 
         let error = credentials
-            .resolve("broken", AuthorityClass::ExecutorPlatform, None)
+            .resolve(
+                &"broken".parse().unwrap(),
+                AuthorityClass::ExecutorPlatform,
+                None,
+            )
             .expect_err("poisoned credentials must refuse resolution");
         assert!(error.is::<StatePoisoned>());
         assert!(
             credentials
-                .resolve("healthy", AuthorityClass::ExecutorPlatform, None)
+                .resolve(
+                    &"healthy".parse().unwrap(),
+                    AuthorityClass::ExecutorPlatform,
+                    None
+                )
                 .unwrap()
                 .is_some()
         );
@@ -675,7 +688,11 @@ mod tests {
             listener,
             move |project| {
                 credentials
-                    .resolve(project, AuthorityClass::ExecutorPlatform, None)
+                    .resolve(
+                        &project.parse().unwrap(),
+                        AuthorityClass::ExecutorPlatform,
+                        None,
+                    )
                     .map(|_| None)
             },
             Arc::new(wamn_engine::flow_http_routing::FlowHttpRouting::new(

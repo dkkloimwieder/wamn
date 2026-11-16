@@ -1,15 +1,10 @@
-//! Shared validators for registry coordinates.
-//! PostgreSQL identity use bound parameters. Schema names also use these
-//! validators before interpolation into DDL.
+//! Slug syntax shared by registry coordinate constructors.
 //!
 //! Organization, project, and environment identifiers share this module's
 //! character, length, and hyphen rules (wamn-0h0g.9.20).
 //! Organization and project identifiers also reject the reserved `wamn` prefix.
 //! Environment identifiers permit that prefix. Derived resource names permit
 //! consecutive hyphens and use their own length limit.
-//! The public project-named functions and constant retain their existing names
-//! for provisioning and runtime callers. [`MAX_PROJECT_ID_LEN`] explains the
-//! shared identifier budget.
 
 /// Max bytes in an organization, project, or environment identifier.
 ///
@@ -36,35 +31,8 @@ pub(crate) fn is_alnum(byte: u8) -> bool {
     byte.is_ascii_lowercase() || byte.is_ascii_digit()
 }
 
-/// Why an organization, project, or environment identifier has an invalid shape.
-///
-/// This owns the shared identifier shape (wamn-0h0g.9.20). It lives here
-/// rather than in `wamn-control-provision` because the runtime reads it through
-/// [`valid_project`] and provisioning reads it through
-/// `wamn-control-provision::validate_project_id`. A shared rule means that an
-/// id the registry accepts is always an id provisioning can provision.
-///
-/// The rule: a non-empty lowercase slug over `[a-z0-9-]`, at most
-/// [`MAX_PROJECT_ID_LEN`] bytes, starting and ending on a letter or a digit,
-/// with no run of consecutive hyphens.
-///
-/// Lowercase and hyphen (never underscore) is deliberate. The id is a Kubernetes
-/// name component, which admits no underscore. Quoted, the same id is a Postgres
-/// database name. One slug therefore serves both domains with no translation.
-///
-/// The consecutive-hyphen ban (wamn-R27) closes an identity collision. `--`
-/// separates the components of the derived database name and, mapped to `__`,
-/// of the derived CDC object name. A `--` run inside a component lets two
-/// distinct triples, such as `(a, x--p, dev)` and `(a--x, p, dev)`, derive the
-/// same names. The charset admits no underscore, so a `-` to `_` mapping only
-/// ever yields an isolated `_` and the `__` separator stays unambiguous.
-///
-/// The reserved `wamn` prefix is a separate question: see
-/// [`project_id_is_reserved`]. Callers that must tell the two apart, such as
-/// provisioning, ask both. Callers that only need a yes or a no ask
-/// [`valid_project`]. The reason is a `&'static str` so a caller can put it
-/// straight into its own error type without a second error taxonomy.
-pub fn project_id_reason(id: &str) -> Option<&'static str> {
+/// The shared slug shape used by coordinate constructors.
+pub(crate) fn project_id_reason(id: &str) -> Option<&'static str> {
     if id.is_empty() {
         return Some("empty");
     }
@@ -102,73 +70,6 @@ fn slug_reason(id: &str) -> Option<&'static str> {
 /// Whether `id` sits under the platform-reserved `wamn` prefix (wamn-66x): the
 /// bare word `wamn`, or any id starting `wamn-`. The boundary is a hyphen, so
 /// `wamning` is an ordinary project id. This mirrors the catalog rule.
-pub fn project_id_is_reserved(id: &str) -> bool {
+pub(crate) fn project_id_is_reserved(id: &str) -> bool {
     id == RESERVED_PROJECT_PREFIX || id.starts_with("wamn-")
-}
-
-/// A project id: well-formed by [`project_id_reason`] and not reserved by
-/// [`project_id_is_reserved`].
-///
-/// The runtime calls this to fail closed on a malformed project before it looks
-/// up a credential. It is the same rule provisioning enforces, so the runtime
-/// never admits a project that provisioning refuses to build.
-pub fn valid_project(project: &str) -> bool {
-    project_id_reason(project).is_none() && !project_id_is_reserved(project)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn project_validation_is_the_strict_provisioned_name_rule() {
-        let at_cap = "x".repeat(MAX_PROJECT_ID_LEN);
-        for good in ["a", "p9", "acme", "acme-corp", "a-b-c", at_cap.as_str()] {
-            assert!(valid_project(good), "valid project {good:?}");
-            assert_eq!(project_id_reason(good), None, "reason for {good:?}");
-        }
-        let over_cap = "x".repeat(MAX_PROJECT_ID_LEN + 1);
-        for bad in [
-            "",
-            "Acme",
-            "under_score",
-            "has.dot",
-            "space bar",
-            "-lead",
-            "trail-",
-            "a--b",
-            over_cap.as_str(),
-            "wamn",
-            "wamn-db",
-        ] {
-            assert!(!valid_project(bad), "invalid project {bad:?}");
-        }
-    }
-
-    #[test]
-    fn malformed_projects_have_a_refusal() {
-        for input in [
-            "",
-            &"x".repeat(MAX_PROJECT_ID_LEN + 1),
-            "Acme",
-            "under_score",
-            "-lead",
-            "a--b",
-        ] {
-            assert!(project_id_reason(input).is_some());
-        }
-    }
-
-    #[test]
-    fn the_reserved_prefix_stops_at_a_hyphen() {
-        for reserved in ["wamn", "wamn-db", "wamn-anything"] {
-            assert!(project_id_is_reserved(reserved), "reserved {reserved:?}");
-            // The shape is fine. Only the prefix rule refuses these.
-            assert_eq!(project_id_reason(reserved), None, "shape of {reserved:?}");
-        }
-        for ordinary in ["wamning", "wamnable", "wam", "awamn"] {
-            assert!(!project_id_is_reserved(ordinary), "ordinary {ordinary:?}");
-            assert!(valid_project(ordinary), "valid project {ordinary:?}");
-        }
-    }
 }

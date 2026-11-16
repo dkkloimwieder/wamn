@@ -29,7 +29,7 @@ async fn enroll(fixture: &mut Fixture, email: &str, password: &str) -> Principal
     grant(
         &mut fixture.system.client,
         &user,
-        "demo",
+        &"demo".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await;
@@ -152,7 +152,7 @@ async fn active(fixture: &Fixture, body: &Value) -> bool {
     wamn_platform_identity::session_token::session_is_active(
         &mut *fixture.observations.acquire().await.unwrap(),
         &claims(fixture, body).await,
-        "widgets",
+        &"widgets".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await
@@ -237,8 +237,8 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     revoke_project_env_membership(
         &mut fixture.system.client,
         user.id(),
-        "demo",
-        "widgets",
+        &"demo".parse().unwrap(),
+        &"widgets".parse().unwrap(),
         &"dev".parse().unwrap(),
         &mut AuthDrops::default(),
     )
@@ -255,7 +255,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     grant(
         &mut fixture.system.client,
         &user,
-        "demo",
+        &"demo".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await;
@@ -515,8 +515,8 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     wamn_platform_identity::assign_project_role(
         &mut fixture.system.client,
         user.id(),
-        "demo",
-        "widgets",
+        &"demo".parse().unwrap(),
+        &"widgets".parse().unwrap(),
         "project-admin",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
@@ -528,7 +528,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     );
     // An application shell names its org and project, and is offered the
     // control audience of its org beside the environments (wamn-a40n.11).
-    let targeted = async |org: &str| {
+    let targeted = async |org: &wamn_registry::OrgId| {
         discovery_window(&fixture.observations).await;
         let response = post(
             &https,
@@ -545,11 +545,12 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
             .expect_redacted("targeted discovery JSON")
     };
     assert!(
-        audiences(&targeted("demo").await).contains(&json!({"aud": CONTROL, "org": "demo"})),
+        audiences(&targeted(&"demo".parse().unwrap()).await)
+            .contains(&json!({"aud": CONTROL, "org": "demo"})),
         "a request that names a project is offered the control audience of its org"
     );
     assert!(
-        !audiences(&targeted("other").await)
+        !audiences(&targeted(&"other".parse().unwrap()).await)
             .iter()
             .any(|entry| entry["aud"] == CONTROL),
         "a request for another org is not offered this org's control audience"

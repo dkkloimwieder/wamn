@@ -38,7 +38,10 @@ pub fn palette_connections<'a>(
     connection: &wamn_catalog::ComponentConnection,
     packages: impl IntoIterator<Item = &'a PackageManifest>,
 ) -> std::collections::BTreeMap<
-    (&'a wamn_catalog::PackageName, &'a str),
+    (
+        &'a wamn_catalog::PackageName,
+        &'a wamn_catalog::canonical_name::CanonicalName,
+    ),
     &'a wamn_compiler::manifest::ConnectionDeclaration,
 > {
     let mut names = std::collections::BTreeMap::new();
@@ -52,7 +55,7 @@ pub fn palette_connections<'a>(
                         import == connection.requirement_type.import_package()
                     })
             {
-                names.insert((&package.package.id, name.as_str()), declaration);
+                names.insert((&package.package.id, name), declaration);
             }
         }
     }
@@ -77,7 +80,7 @@ mod palette_tests {
             .collect();
         let connection = wamn_catalog::ComponentConnection {
             store_alias: wamn_catalog::ComponentConnectionAlias::Configuration {
-                parameter: "store_alias".into(),
+                parameter: "store_alias".parse().unwrap(),
             },
             requirement_type: wamn_catalog::ComponentConnectionType::Blobstore,
             mode: wamn_catalog::ConnectionMode::Write,
@@ -86,7 +89,7 @@ mod palette_tests {
         for package in &packages {
             for (alias, declaration) in &package.connections {
                 assert_eq!(
-                    selected.get(&(&package.package.id, alias.as_str())),
+                    selected.get(&(&package.package.id, alias)),
                     Some(&declaration)
                 );
             }
@@ -128,7 +131,8 @@ pub async fn prepare_release(
                         .clone()
                         .into_admitted(wamn_catalog::palette_target(project_env_key));
                     let bytes = source.pull_verified(&fact.component).await?;
-                    let interface = require_imports(&bytes, alias, &declaration.interface)?;
+                    let interface =
+                        require_imports(&bytes, alias.as_str(), &declaration.interface)?;
                     let mode = match declaration.mode {
                         wamn_compiler::manifest::ConnectionMode::Read => "read",
                         wamn_compiler::manifest::ConnectionMode::Write => "write",
@@ -187,7 +191,7 @@ pub async fn write(
     project_env_key: &wamn_registry::ProjectEnvKey,
     manifest: &PackageManifest,
     digest: &wamn_digest::Digest,
-    connections: &[String],
+    connections: &[wamn_catalog::canonical_name::CanonicalName],
     bytes: &[u8],
 ) -> anyhow::Result<u64> {
     let mut written = 0;
@@ -217,7 +221,7 @@ pub async fn write(
             connections.iter().any(|name| name == label)
                 && manifest
                     .connections
-                    .get(label)
+                    .get(label.as_str())
                     .is_some_and(|declared| declared.interface == interface),
             "connection undeclared: {label} importing {interface}"
         );
@@ -225,9 +229,9 @@ pub async fn write(
     for name in connections {
         let declaration = manifest
             .connections
-            .get(name)
+            .get(name.as_str())
             .with_context(|| format!("package declares no connection {name}"))?;
-        let interface = require_imports(bytes, name, &declaration.interface)?;
+        let interface = require_imports(bytes, name.as_str(), &declaration.interface)?;
         let mode = match declaration.mode {
             wamn_compiler::manifest::ConnectionMode::Read => "read",
             wamn_compiler::manifest::ConnectionMode::Write => "write",

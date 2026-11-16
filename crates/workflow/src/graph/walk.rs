@@ -20,7 +20,8 @@ use super::retry::RetryPolicy;
 use super::terminal::{DEDUP_ID_FIELD, Verdict};
 use super::wiring::{DEFAULT_HOP_LIMIT, Wiring};
 use std::sync::Arc;
-use wamn_catalog::ERROR_PORT;
+static ERROR_OUTPUT: std::sync::LazyLock<wamn_catalog::canonical_name::CanonicalName> =
+    std::sync::LazyLock::new(|| wamn_catalog::ERROR_PORT.parse().expect("error port"));
 use wamn_catalog::{WiringNode, WiringTerminal as Terminal};
 
 /// One delivery entering the router: the unit of work a walk carries.
@@ -99,7 +100,7 @@ impl FailureType {
 /// The recorded failure of a walk.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Failure {
-    pub node: String,
+    pub node: wamn_catalog::canonical_name::CanonicalName,
     pub type_: FailureType,
     pub detail: ErrorDetail,
 }
@@ -107,18 +108,18 @@ pub struct Failure {
 /// One pending unit of work: a node to run with the payload that entered it.
 #[derive(Debug, Clone, PartialEq)]
 struct Token {
-    node: String,
+    node: wamn_catalog::canonical_name::CanonicalName,
     /// `None` only for the wiring entry; routed tokens carry the edge's resolved
     /// target operation input.
-    input_port: Option<String>,
+    input_port: Option<wamn_catalog::canonical_name::CanonicalName>,
     payload: Arc<Value>,
 }
 
 /// The node currently being invoked (or awaiting a scheduled retry).
 #[derive(Debug, Clone, PartialEq)]
 struct Active {
-    node: String,
-    input_port: Option<String>,
+    node: wamn_catalog::canonical_name::CanonicalName,
+    input_port: Option<wamn_catalog::canonical_name::CanonicalName>,
     payload: Arc<Value>,
     /// 0 on first execution, incremented per retry.
     attempt: u32,
@@ -139,7 +140,7 @@ pub struct Walk {
     /// COMPLETED visits per node (a success or an error-ROUTED emission; retries
     /// of one visit do not count) — the source of [`NodeCall::occurrence`], so a
     /// merge/loop node's Nth visit is distinguishable from its first.
-    visits: HashMap<String, u32>,
+    visits: HashMap<wamn_catalog::canonical_name::CanonicalName, u32>,
     result: Arc<Value>,
     failure: Option<Failure>,
     /// Whether this delivery arrived with a synchronous caller waiting
@@ -201,10 +202,10 @@ pub enum Step<'a> {
 /// A single node invocation the caller must perform.
 #[derive(Debug, PartialEq)]
 pub struct NodeCall<'a> {
-    pub node: String,
+    pub node: wamn_catalog::canonical_name::CanonicalName,
     /// The target operation input selected by the incoming edge. `None` only
     /// for the wiring entry, which has no incoming edge.
-    pub input_port: Option<String>,
+    pub input_port: Option<wamn_catalog::canonical_name::CanonicalName>,
     pub definition: &'a WiringNode,
     /// The payload entering this node — the delivery payload at the entry,
     /// otherwise the upstream node's output (unchanged across retries).
@@ -234,7 +235,10 @@ pub enum ApplyErrorType {
     /// Nothing is active to apply an outcome to.
     NoActiveNode,
     /// The outcome names a node the walk is not on.
-    MismatchedNode { expected: String, actual: String },
+    MismatchedNode {
+        expected: wamn_catalog::canonical_name::CanonicalName,
+        actual: wamn_catalog::canonical_name::CanonicalName,
+    },
 }
 
 impl std::fmt::Display for ApplyError {
@@ -256,7 +260,7 @@ impl Wiring {
     pub fn start(&self, delivery: Delivery) -> Walk {
         let mut frontier = VecDeque::new();
         frontier.push_back(Token {
-            node: self.entry().to_string(),
+            node: self.entry().clone(),
             input_port: None,
             payload: Arc::new(delivery.payload),
         });
@@ -287,7 +291,7 @@ impl Wiring {
             match walk.frontier.pop_front() {
                 Some(tok) => {
                     if let Err(detail) =
-                        self.validate_input(&tok.node, tok.input_port.as_deref(), &tok.payload)
+                        self.validate_input(&tok.node, tok.input_port.as_ref(), &tok.payload)
                     {
                         // A refused delivery is never invoked or retried. Charge the
                         // hop budget so a cycle of error ports remains bounded.
@@ -355,7 +359,7 @@ impl Wiring {
             if walk.caller_attached {
                 walk.status = WalkStatus::Failed;
                 walk.failure = Some(Failure {
-                    node: self.entry().to_string(),
+                    node: self.entry().clone(),
                     type_: FailureType::UnreleasedCaller,
                     detail: ErrorDetail::coded(
                         FailureType::UnreleasedCaller.code(),
@@ -492,11 +496,17 @@ impl Wiring {
     }
 
     /// Enqueue the edges leaving `node` on `port`, each carrying `payload`.
-    fn enqueue_successors(&self, walk: &mut Walk, node: &str, port: &str, payload: &Arc<Value>) {
+    fn enqueue_successors(
+        &self,
+        walk: &mut Walk,
+        node: &wamn_catalog::canonical_name::CanonicalName,
+        port: &wamn_catalog::canonical_name::CanonicalName,
+        payload: &Arc<Value>,
+    ) {
         for (edge, input_port) in self.successors(node, port) {
             walk.frontier.push_back(Token {
                 node: edge.to.clone(),
-                input_port: Some(input_port.to_owned()),
+                input_port: Some(input_port.clone()),
                 payload: Arc::clone(payload),
             });
         }
@@ -508,20 +518,31 @@ impl Wiring {
     /// [`ERROR_PORT`](wamn_catalog::ERROR_PORT) successors carrying `payload`.
     /// Deliberately leaves `step_seq` and `result` untouched: an error route is
     /// not a success completion.
-    fn route_error(&self, walk: &mut Walk, node: &str, payload: &Arc<Value>) {
+    fn route_error(
+        &self,
+        walk: &mut Walk,
+        node: &wamn_catalog::canonical_name::CanonicalName,
+        payload: &Arc<Value>,
+    ) {
         walk.current = None;
-        *walk.visits.entry(node.to_string()).or_default() += 1;
-        self.enqueue_successors(walk, node, ERROR_PORT, payload);
+        *walk.visits.entry(node.clone()).or_default() += 1;
+        self.enqueue_successors(walk, node, &ERROR_OUTPUT, payload);
     }
 
     /// Route the failed node to its error edge if one exists; otherwise end the
     /// walk as failed with the given `type`.
-    fn error_or_fail(&self, walk: &mut Walk, node: &str, detail: ErrorDetail, type_: FailureType) {
+    fn error_or_fail(
+        &self,
+        walk: &mut Walk,
+        node: &wamn_catalog::canonical_name::CanonicalName,
+        detail: ErrorDetail,
+        type_: FailureType,
+    ) {
         walk.current = None;
-        if self.successors(node, ERROR_PORT).next().is_none() {
+        if self.successors(node, &ERROR_OUTPUT).next().is_none() {
             walk.status = WalkStatus::Failed;
             walk.failure = Some(Failure {
-                node: node.to_string(),
+                node: node.clone(),
                 type_,
                 detail,
             });
@@ -540,7 +561,7 @@ impl Wiring {
 /// caller applies.
 fn terminal_verdict(
     walk: &Walk,
-    node: &str,
+    node: &wamn_catalog::canonical_name::CanonicalName,
     terminal: &Terminal,
     payload: &Value,
 ) -> Result<Option<Verdict>, FailureType> {
@@ -551,7 +572,7 @@ fn terminal_verdict(
         Terminal::Respond if !walk.caller_attached => Err(FailureType::RespondWithoutCaller),
         Terminal::Respond => Ok(Some(Verdict::Respond {
             payload: payload.clone(),
-            node_id: node.to_string(),
+            node_id: node.clone(),
         })),
         Terminal::Emit { entity, operation } => Ok(payload
             .get(DEDUP_ID_FIELD)
@@ -562,7 +583,7 @@ fn terminal_verdict(
                 dedup_id: id.to_string(),
                 entity: entity.clone(),
                 operation: *operation,
-                node_id: node.to_string(),
+                node_id: node.clone(),
             })),
     }
 }

@@ -67,16 +67,16 @@ async fn project_env_database_ownership_and_connect_are_targeted(pool: sqlx::PgP
     // TWO project-env databases: a single one makes every cross-database sweep
     // below vacuous (a loop over one row shows nothing about the cluster).
     let first = project_env_database_name(
-        "acme",
-        "ownership",
+        &"acme".parse().unwrap(),
+        &"ownership".parse().unwrap(),
         &"dev".parse().unwrap(),
         &"k3m9x2p7"
             .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
             .unwrap(),
     );
     let second = project_env_database_name(
-        "acme",
-        "ownership",
+        &"acme".parse().unwrap(),
+        &"ownership".parse().unwrap(),
         &"prod".parse().unwrap(),
         &"q80zdw41"
             .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
@@ -86,8 +86,8 @@ async fn project_env_database_ownership_and_connect_are_targeted(pool: sqlx::PgP
     // test creates and drops it, but never runs a project privilege builder
     // against it.
     let canary = project_env_database_name(
-        "acme",
-        "ownership",
+        &"acme".parse().unwrap(),
+        &"ownership".parse().unwrap(),
         &"canary".parse().unwrap(),
         &"v6n1br4c"
             .parse::<wamn_registry::instance_suffix::InstanceSuffix>()

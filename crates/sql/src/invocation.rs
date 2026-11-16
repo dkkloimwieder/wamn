@@ -55,7 +55,7 @@ pub fn validate_context(
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         identity.project_env_key.as_ref() == Some(&context.release.target().project_env_key)
-            && identity.project.as_deref() == Some(context.connections.project())
+            && identity.project.as_ref() == Some(context.connections.project())
             && identity.release.as_ref()
                 == Some(&wamn_authority::identity::ReleaseIdentity::from_loaded(
                     &context.release
@@ -196,23 +196,8 @@ pub fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::Result<
             invocation.closure,
             ConnectionExecutionClosure::Candidate { .. }
         ),
-        InvocationEntry::Wiring(position) => {
-            !position.wiring_id.is_empty()
-                && position.wiring_version > 0
-                && !position.node_id.is_empty()
-        }
+        InvocationEntry::Wiring(position) => position.wiring_version > 0,
     };
     anyhow::ensure!(entry_valid, "connection-http-invocation-invalid");
-    if let ConnectionExecutionClosure::Candidate {
-        component,
-        interface_version,
-        ..
-    } = &invocation.closure
-    {
-        anyhow::ensure!(
-            !component.is_empty() && !interface_version.is_empty(),
-            "connection-http-candidate-closure-invalid"
-        );
-    }
     Ok(())
 }

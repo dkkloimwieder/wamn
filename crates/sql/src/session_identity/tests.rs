@@ -30,7 +30,10 @@ fn candidate_binding_world_requires_complete_canonical_unique_rows() {
         .expect("ordered complete world");
     assert!(
         world
-            .binding(&wamn_digest::Digest::from([0; 32]), "primary")
+            .binding(
+                &wamn_digest::Digest::from([0; 32]),
+                &"primary".parse().unwrap()
+            )
             .is_some()
     );
     let mut missing_mode = candidate_binding(0, "primary");
@@ -54,7 +57,7 @@ async fn a_platform_checkout_refuses_the_guest_authority() {
     )))
     .expect("compose");
     let refused = postgres
-        .checkout_platform(DEFAULT_PROJECT, AuthorityClass::GuestSql)
+        .checkout_platform(&DEFAULT_PROJECT, AuthorityClass::GuestSql)
         .await;
     assert!(
         refused.is_err(),
@@ -97,7 +100,7 @@ fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
     assert!(
         host.provider
             .resolve(
-                DEFAULT_PROJECT,
+                &DEFAULT_PROJECT,
                 AuthorityClass::GuestSql,
                 Some(&"test--dev--fixture".parse().unwrap())
             )
@@ -107,7 +110,7 @@ fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
     assert!(
         host.provider
             .resolve(
-                DEFAULT_PROJECT,
+                &DEFAULT_PROJECT,
                 AuthorityClass::GuestSql,
                 Some(&"evil--dev--project".parse().unwrap())
             )
@@ -116,7 +119,7 @@ fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
     );
     assert!(
         host.provider
-            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, None)
+            .resolve(&DEFAULT_PROJECT, AuthorityClass::GuestSql, None)
             .is_err(),
         "guest resolution without an project_env_key has no authority to validate"
     );
@@ -124,7 +127,7 @@ fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
     // part of their binding and its absence is not an error.
     assert!(
         host.provider
-            .resolve(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
+            .resolve(&DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
             .expect("platform resolution needs no project_env_key")
             .is_some()
     );
@@ -141,7 +144,7 @@ fn the_composed_credential_becomes_the_default_project() {
         composed
             .provider
             .resolve(
-                DEFAULT_PROJECT,
+                &DEFAULT_PROJECT,
                 AuthorityClass::GuestSql,
                 Some(&"test--dev--fixture".parse().unwrap())
             )
@@ -156,7 +159,7 @@ fn the_composed_credential_becomes_the_default_project() {
     assert!(
         bare.provider
             .resolve(
-                DEFAULT_PROJECT,
+                &DEFAULT_PROJECT,
                 AuthorityClass::GuestSql,
                 Some(&"test--dev--fixture".parse().unwrap())
             )
@@ -171,7 +174,7 @@ fn the_composed_credential_becomes_the_default_project() {
 fn a_serving_host_binds_its_credential_to_the_declared_project() {
     let executor_platform_url = "postgres://executor-platform@db/host-fixture";
     let composed = WamnPostgres::from_env_for_project(
-        "fixture",
+        &"fixture".parse().unwrap(),
         Some(
             ClassCredentials::default()
                 .with_class(AuthorityClass::ExecutorPlatform, executor_platform_url),
@@ -180,7 +183,11 @@ fn a_serving_host_binds_its_credential_to_the_declared_project() {
     .expect("compose the declared project credential");
     let resolved = composed
         .provider
-        .resolve("fixture", AuthorityClass::ExecutorPlatform, None)
+        .resolve(
+            &"fixture".parse().unwrap(),
+            AuthorityClass::ExecutorPlatform,
+            None,
+        )
         .expect("resolve the declared project")
         .expect("the declared project has an executor-platform credential");
     assert_eq!(
@@ -190,17 +197,11 @@ fn a_serving_host_binds_its_credential_to_the_declared_project() {
     assert!(
         composed
             .provider
-            .resolve(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
+            .resolve(&DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
             .expect("resolve the unrelated default project")
             .is_none(),
         "binding a named project must not mint a default-project alias"
     );
-}
-
-#[test]
-fn a_serving_host_refuses_an_invalid_declared_project() {
-    let _error = WamnPostgres::from_env_for_project("fixture.prod", None)
-        .expect_err("an invalid project must refuse before reading ambient configuration");
 }
 
 // The identity-time record must match `runs_release_record_check` exactly, or a
@@ -216,7 +217,7 @@ fn validate_identity_rejects_malformed_identities() {
             Some("public"),
             Some("owner-1"),
             Some("inspector"),
-            Some("platform-fixture:widget/update@1.0.0")
+            Some(&"platform-fixture:widget/update@1.0.0".parse().unwrap())
         )
         .is_ok()
     );
@@ -225,8 +226,6 @@ fn validate_identity_rejects_malformed_identities() {
     assert!(validate_session_identity(None, Some("bad;runner"), None, None).is_err());
     // `''` is the base denial policy, never an identity.
     assert!(validate_session_identity(None, None, Some(""), None).is_err());
-    // `''` is the unbound operation, never an identity.
-    assert!(validate_session_identity(None, None, None, Some("")).is_err());
 }
 
 #[test]
@@ -257,9 +256,9 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
             component_digest: format!("sha256:{}", "a".repeat(64))
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
-            component: "receiver".to_string(),
-            interface_version: "0.1.0".to_string(),
-            operation: "platform-fixture:widget/update@1.0.0".to_string(),
+            component: "receiver".parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
+            operation: "platform-fixture:widget/update@1.0.0".parse().unwrap(),
         },
         entry: wamn_authority::connection::InvocationEntry::Wiring(
             wamn_authority::connection::WiringPosition {
@@ -268,9 +267,9 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
                 wiring_hash: format!("sha256:{}", "a".repeat(64))
                     .parse::<wamn_digest::Digest>()
                     .unwrap(),
-                wiring_id: "orders".to_string(),
+                wiring_id: "orders".parse().unwrap(),
                 wiring_version: 3,
-                node_id: node_id.to_string(),
+                node_id: node_id.parse().unwrap(),
                 occurrence: 1,
             },
         ),
@@ -278,8 +277,8 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
         component_digest: format!("sha256:{}", "a".repeat(64))
             .parse::<wamn_digest::Digest>()
             .unwrap(),
-        component: "receiver".to_string(),
-        operation: "platform-fixture:widget/update@1.0.0".to_string(),
+        component: "receiver".parse().unwrap(),
+        operation: "platform-fixture:widget/update@1.0.0".parse().unwrap(),
         closure: ConnectionExecutionClosure::Released,
         effects: None,
     }
@@ -291,7 +290,7 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     let pg = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::default_only(None),
     )));
-    let deployment = |key: &wamn_registry::ProjectEnvKey, project: &str| {
+    let deployment = |key: &wamn_registry::ProjectEnvKey, project: &wamn_registry::ProjectId| {
         let release = wamn_authority::connection::test_release(key);
         let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
@@ -304,14 +303,20 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
         ));
         Arc::new(crate::invocation::ReleaseContext::new(release, facts).unwrap())
     };
-    let first_project = deployment(&"test--dev--fixture".parse().unwrap(), "fixture");
-    let second_project = deployment(&"test--dev--other".parse().unwrap(), "other");
+    let first_project = deployment(
+        &"test--dev--fixture".parse().unwrap(),
+        &"fixture".parse().unwrap(),
+    );
+    let second_project = deployment(
+        &"test--dev--other".parse().unwrap(),
+        &"other".parse().unwrap(),
+    );
     let enter = |scope: &str| InvocationRequest {
         context: Some(Arc::clone(&first_project)),
         scope: scope.to_owned(),
         identity: SessionIdentity {
             project_env_key: Some("test--dev--fixture".parse().unwrap()),
-            project: Some("fixture".to_owned()),
+            project: Some("fixture".parse().unwrap()),
             release: Some(ReleaseIdentity::from_loaded(&first_project.release)),
             ..SessionIdentity::default()
         },
@@ -331,7 +336,7 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     let mut other = enter("c2");
     other.context = Some(Arc::clone(&second_project));
     other.identity.project_env_key = Some(second_project.release.target().project_env_key.clone());
-    other.identity.project = Some("other".to_owned());
+    other.identity.project = Some("other".parse().unwrap());
     let second = AuthorizedInvocation::enter(&pg, other).await.unwrap();
     assert!(Arc::ptr_eq(
         &crate::invocation::context(&pg.scopes, "c1")
@@ -372,13 +377,13 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
     // Two components under workload "wl-a", one under "wl-b".
     for c in ["wl-a-component-0", "wl-b-component-0"] {
         pg.set_project_env_key(c, &"test--dev--fixture".parse().unwrap());
-        pg.set_project(c, "proj").unwrap();
+        pg.set_project(c, &"proj".parse().unwrap()).unwrap();
         pg.set_schema(c, "s_run").unwrap();
         pg.set_runner(c, "owner-1").unwrap();
         pg.set_role(c, "inspector").unwrap();
         pg.set_user_id(c, &"6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b".parse().unwrap())
             .unwrap();
-        pg.set_operation(c, "platform-fixture:widget/update@1.0.0")
+        pg.set_operation(c, &"platform-fixture:widget/update@1.0.0".parse().unwrap())
             .unwrap();
         pg.set_application(c, "platform_fixture".parse().unwrap());
         pg.set_current_run(
@@ -405,7 +410,7 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
     // Every registry emptied for the unbound workload's component.
     assert_eq!(pg.project_env_key_for("wl-a-component-0"), None);
     // project_for falls back to DEFAULT_PROJECT once the identity is gone.
-    assert_eq!(pg.project_for("wl-a-component-0"), DEFAULT_PROJECT);
+    assert_eq!(pg.project_for("wl-a-component-0"), *DEFAULT_PROJECT);
     assert_eq!(pg.schema_for("wl-a-component-0"), None);
     assert_eq!(pg.runner_for("wl-a-component-0"), None);
     assert_eq!(pg.role_for("wl-a-component-0"), None);
@@ -435,7 +440,9 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
         Some("6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b".parse().unwrap())
     );
     assert_eq!(
-        pg.operation_for("wl-b-component-0").as_deref(),
+        pg.operation_for("wl-b-component-0")
+            .as_ref()
+            .map(|operation| operation.as_str()),
         Some("platform-fixture:widget/update@1.0.0")
     );
     assert_eq!(
@@ -828,7 +835,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sql
 
     // The real transaction keeps its caller even when guest SQL sets a role.
     let (mut conn, _pp) = pg
-        .checkout_guest(DEFAULT_PROJECT, &PROJECT_ENV_KEY.parse().unwrap())
+        .checkout_guest(&DEFAULT_PROJECT, &PROJECT_ENV_KEY.parse().unwrap())
         .await
         .unwrap();
     pg.begin_with_identity(
@@ -927,7 +934,7 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
         Arc::new(wamn_connections::connection_credentials::ConnectionCredentials::empty()),
         &pg,
         &"org--dev--a".parse().unwrap(),
-        DEFAULT_PROJECT,
+        &DEFAULT_PROJECT,
         &"dev".parse().unwrap(),
     );
 
@@ -935,22 +942,22 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
         entry: wamn_authority::identity::ConnectionEntryLookup::Wiring {
             application: &"catalog".parse().unwrap(),
             wiring: wamn_authority::identity::WiringLookup {
-                wiring_id: "wiring",
+                wiring_id: &"wiring".parse().unwrap(),
                 wiring_version: 1,
-                node_id: "node",
+                node_id: &"node".parse().unwrap(),
             },
         },
         origin_package_id: &"catalog".parse().unwrap(),
         origin_component_digest: &wamn_digest::bytes_sha256(b"component"),
-        origin_component: "component",
-        origin_interface_version: "0.1.0",
-        origin_operation: "operation",
+        origin_component: &"component".parse().unwrap(),
+        origin_interface_version: &"0.1.0".parse().unwrap(),
+        origin_operation: &"operation".parse().unwrap(),
         package_id: &"catalog".parse().unwrap(),
-        operation: "operation",
+        operation: &"operation".parse().unwrap(),
         manifest_digest: &wamn_digest::bytes_sha256(b"release"),
         environment: &"dev".parse().unwrap(),
         component_digest: &wamn_digest::bytes_sha256(b"component"),
-        store_alias: "manager",
+        store_alias: &"manager".parse().unwrap(),
         candidate_binding: None,
     };
 
@@ -1016,7 +1023,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
         Arc::new(wamn_connections::connection_credentials::ConnectionCredentials::empty()),
         &pg,
         &"org--dev--a".parse().unwrap(),
-        DEFAULT_PROJECT,
+        &DEFAULT_PROJECT,
         &"dev".parse().unwrap(),
     );
 
@@ -1024,22 +1031,22 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
         entry: wamn_authority::identity::ConnectionEntryLookup::Wiring {
             application: &"catalog".parse().unwrap(),
             wiring: wamn_authority::identity::WiringLookup {
-                wiring_id: "wiring",
+                wiring_id: &"wiring".parse().unwrap(),
                 wiring_version: 1,
-                node_id: "node",
+                node_id: &"node".parse().unwrap(),
             },
         },
         origin_package_id: &"catalog".parse().unwrap(),
         origin_component_digest: &wamn_digest::bytes_sha256(b"component"),
-        origin_component: "component",
-        origin_interface_version: "0.1.0",
-        origin_operation: "operation",
+        origin_component: &"component".parse().unwrap(),
+        origin_interface_version: &"0.1.0".parse().unwrap(),
+        origin_operation: &"operation".parse().unwrap(),
         package_id: &"catalog".parse().unwrap(),
-        operation: "operation",
+        operation: &"operation".parse().unwrap(),
         manifest_digest: &wamn_digest::bytes_sha256(b"release"),
         environment: &"dev".parse().unwrap(),
         component_digest: &wamn_digest::bytes_sha256(b"component"),
-        store_alias: "manager",
+        store_alias: &"manager".parse().unwrap(),
         candidate_binding: None,
     };
 
@@ -1074,7 +1081,7 @@ struct RecordingProvider {
 impl CredentialProvider for RecordingProvider {
     fn resolve(
         &self,
-        _project: &str,
+        _project: &wamn_registry::ProjectId,
         class: AuthorityClass,
         _project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
@@ -1095,7 +1102,7 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
         .expect("user UUID");
 
     pg.user_operation_permissions(
-        DEFAULT_PROJECT,
+        &DEFAULT_PROJECT,
         &"org--dev--a".parse().unwrap(),
         &principal_id,
     )
@@ -1580,7 +1587,7 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
             .unwrap()
     );
     assert_eq!(denial.project_env_key(), &PROJECT_ENV_KEY.parse().unwrap());
-    assert_eq!(denial.project(), DEFAULT_PROJECT);
+    assert_eq!(denial.project(), &*DEFAULT_PROJECT);
 
     // CONTROL: the provisioned principal binds.
     pg.bind_session_identity(scope, &identity(LIVE_PRINCIPAL.parse().unwrap()))
@@ -1832,7 +1839,7 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
     let scope = "operation-instance-0";
     let identity = SessionIdentity {
         project_env_key: Some(LIVE_PROJECT_ENV_KEY.parse().unwrap()),
-        operation: Some(OPERATION.to_string()),
+        operation: Some(OPERATION.parse().unwrap()),
         ..SessionIdentity::default()
     };
     pg.bind_session_identity(scope, &identity)
@@ -1856,17 +1863,6 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
         .expect("the operation binds again");
     pg.revoke_session_identity(scope);
     assert_eq!(pg.operation_for(scope), None);
-
-    let refused = pg
-        .bind_session_identity(
-            scope,
-            &SessionIdentity {
-                operation: Some(String::new()),
-                ..identity
-            },
-        )
-        .await;
-    assert!(refused.is_err(), "the unbound value is not an operation");
 }
 
 /// Reads and writes record their operation. A later transaction inherits none.
@@ -1900,7 +1896,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     let identity = SessionIdentity {
         project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
         user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
-        operation: Some(OPERATION.to_string()),
+        operation: Some(OPERATION.parse().unwrap()),
         ..SessionIdentity::default()
     };
     pg.bind_session_identity(scope, &identity)
@@ -2340,7 +2336,7 @@ async fn workflow_caller_retains_typed_connection_unavailable() -> anyhow::Resul
     )));
     let error = postgres
         .workflow_node_caller(
-            "default",
+            &"default".parse().unwrap(),
             &"org--dev--a".parse().unwrap(),
             &"00000000-0000-4000-8000-000000000081"
                 .parse::<wamn_identity_protocol::PrincipalId>()
@@ -2390,7 +2386,7 @@ async fn live_operation_reads_keep_identity_and_refuse_writes(pool: sqlx::PgPool
         &SessionIdentity {
             project_env_key: Some(PROJECT.parse().unwrap()),
             user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
-            operation: Some("admin:read-probe".into()),
+            operation: Some("admin:read-probe".parse().unwrap()),
             application: Some("fixture".parse().unwrap()),
             ..SessionIdentity::default()
         },

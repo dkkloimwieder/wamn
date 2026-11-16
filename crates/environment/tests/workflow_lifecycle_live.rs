@@ -72,10 +72,10 @@ fn release() -> ServingManifest {
             package_id: APPLICATION.parse().unwrap(),
             package_version: "1.0.0".parse().unwrap(),
         },
-        component: "orders_data".to_owned(),
-        interface_version: "0.1".to_owned(),
+        component: "orders_data".parse().unwrap(),
+        interface_version: "0.1".parse().unwrap(),
         operations: BTreeMap::from([(
-            OPERATION.to_owned(),
+            OPERATION.parse().unwrap(),
             AdmittedComponentOperation {
                 committed_result_schema: None,
                 registered_operation: Some(OPERATION.parse().unwrap()),
@@ -112,15 +112,15 @@ fn release() -> ServingManifest {
 /// A one-node workflow over the application's operation, or over `component`.
 fn workflow(id: &str, version: u32, node: &str, component: &str) -> WiringDocument {
     WiringDocument::new(
-        id,
+        id.parse().unwrap(),
         version,
-        node,
+        node.parse().unwrap(),
         BTreeMap::from([(
-            node.to_owned(),
+            node.parse().unwrap(),
             WiringNode {
-                component: component.to_owned(),
-                interface_version: "0.1".to_owned(),
-                operation: OPERATION.to_owned(),
+                component: component.parse().unwrap(),
+                interface_version: "0.1".parse().unwrap(),
+                operation: OPERATION.parse().unwrap(),
                 operation_dependency: None,
                 params: BTreeMap::new(),
                 terminal: Some(WiringTerminal::Respond),
@@ -216,8 +216,8 @@ impl Fixture {
         author_workflow(
             &mut transaction,
             &AuthorWorkflowRequest {
-                org: "workflow-project",
-                project: "fixture",
+                org: &ORG_ID,
+                project: &PROJECT_ID,
                 environment: &ENVIRONMENT.parse().unwrap(),
                 application: &APPLICATION.parse().unwrap(),
                 declared: &declared(),
@@ -262,7 +262,7 @@ impl Fixture {
             &self.project_url,
             &triple(),
             &mut self.project,
-            &key(&ENVIRONMENT.parse().unwrap(), id, version),
+            &key(&ENVIRONMENT.parse().unwrap(), &id.parse().unwrap(), version),
             &enabler
                 .parse::<wamn_identity_protocol::PrincipalId>()
                 .unwrap(),
@@ -290,19 +290,27 @@ impl Fixture {
 }
 
 fn triple() -> Triple {
-    Triple::new("acme", ENVIRONMENT.parse().unwrap(), "orders")
+    Triple::new(
+        "acme".parse().unwrap(),
+        ENVIRONMENT.parse().unwrap(),
+        "orders".parse().unwrap(),
+    )
 }
 
+static ORG_ID: std::sync::LazyLock<wamn_registry::OrgId> =
+    std::sync::LazyLock::new(|| "workflow-project".parse().unwrap());
+static PROJECT_ID: std::sync::LazyLock<wamn_registry::ProjectId> =
+    std::sync::LazyLock::new(|| "fixture".parse().unwrap());
 fn key<'a>(
     environment: &'a wamn_registry::EnvName,
-    id: &'a str,
+    id: &'a wamn_catalog::canonical_name::CanonicalName,
     version: u32,
 ) -> WorkflowVersion<'a> {
     static APPLICATION_NAME: std::sync::LazyLock<wamn_catalog::ApplicationName> =
         std::sync::LazyLock::new(|| APPLICATION.parse().unwrap());
     WorkflowVersion {
-        org: "workflow-project",
-        project: "fixture",
+        org: &ORG_ID,
+        project: &PROJECT_ID,
         environment,
         application: &APPLICATION_NAME,
         workflow_id: id,
@@ -431,7 +439,11 @@ async fn one_version_is_enabled_and_the_lock_refuses_while_held(pool: sqlx::PgPo
         &project_url,
         &triple(),
         &mut fixture.project,
-        &key(&ENVIRONMENT.parse().unwrap(), "nightly", 2),
+        &key(
+            &ENVIRONMENT.parse().unwrap(),
+            &"nightly".parse().unwrap(),
+            2,
+        ),
     )
     .await
     .expect("disable 2");
@@ -440,7 +452,11 @@ async fn one_version_is_enabled_and_the_lock_refuses_while_held(pool: sqlx::PgPo
         &project_url,
         &triple(),
         &mut fixture.project,
-        &key(&ENVIRONMENT.parse().unwrap(), "nightly", 9),
+        &key(
+            &ENVIRONMENT.parse().unwrap(),
+            &"nightly".parse().unwrap(),
+            9,
+        ),
     )
     .await
     .expect_err("an absent version refuses");
@@ -565,7 +581,7 @@ async fn event_authorship_requires_a_captured_application_model(pool: sqlx::PgPo
                 WorkflowExecution::Invoker,
                 WorkflowTrigger::Event {
                     source_package: &source_package.parse().unwrap(),
-                    entity,
+                    entity: &entity.parse().unwrap(),
                     ops: &ops,
                     condition,
                 },
@@ -576,7 +592,7 @@ async fn event_authorship_requires_a_captured_application_model(pool: sqlx::PgPo
     }
     let trigger = WorkflowTrigger::Event {
         source_package: &APPLICATION.parse().expect("valid fixture name"),
-        entity: "order",
+        entity: &"order".parse().unwrap(),
         ops: &[Op::Update, Op::Delete],
         condition: Some("new.status != old.status"),
     };
@@ -639,7 +655,7 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
             WorkflowExecution::Invoker,
             WorkflowTrigger::Event {
                 source_package: &APPLICATION.parse().expect("valid fixture name"),
-                entity: "order",
+                entity: &"order".parse().unwrap(),
                 ops: &[wamn_catalog::WiringEventOperation::Update],
                 condition: None,
             },
@@ -702,7 +718,11 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
         &fixture.project_url,
         &target,
         &mut fixture.project,
-        &key(&ENVIRONMENT.parse().unwrap(), "changed", 1),
+        &key(
+            &ENVIRONMENT.parse().unwrap(),
+            &"changed".parse().unwrap(),
+            1,
+        ),
         &ALICE
             .parse::<wamn_identity_protocol::PrincipalId>()
             .unwrap(),
@@ -733,7 +753,11 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
         &fixture.project_url,
         &target,
         &mut fixture.project,
-        &key(&ENVIRONMENT.parse().unwrap(), "changed", 1),
+        &key(
+            &ENVIRONMENT.parse().unwrap(),
+            &"changed".parse().unwrap(),
+            1,
+        ),
     )
     .await
     .unwrap();
@@ -756,7 +780,11 @@ async fn event_enable_records_stream_tail_and_requires_admin(pool: sqlx::PgPool)
         &fixture.project_url,
         &target,
         &mut fixture.project,
-        &key(&ENVIRONMENT.parse().unwrap(), "changed", 1),
+        &key(
+            &ENVIRONMENT.parse().unwrap(),
+            &"changed".parse().unwrap(),
+            1,
+        ),
         &ALICE
             .parse::<wamn_identity_protocol::PrincipalId>()
             .unwrap(),

@@ -234,7 +234,7 @@ mod tests {
             .unwrap()
             .insert("bound".into(), component);
         NativeInvocation {
-            operation: OPERATION.into(),
+            operation: OPERATION.parse().unwrap(),
             context: node_types::NodeContext {
                 wiring_id: String::new(),
                 wiring_version: 0,
@@ -250,7 +250,7 @@ mod tests {
             input: wamn_engine::operation::native_call::NativeInput::Encoded("{}".into()),
             deadline: Instant::now() + Duration::from_secs(60),
             facts: EdgeFacts::entry(Some(AuthenticatedCaller::new(
-                "record-http",
+                "record-http".parse().unwrap(),
                 "00000000-0000-4000-8000-000000000001".parse().unwrap(),
                 CredentialType::Session,
                 false,
@@ -284,7 +284,7 @@ mod tests {
         let policy = &request.application.policy;
         policy.authorize("bound", &request).unwrap();
         request.facts = EdgeFacts::entry(Some(AuthenticatedCaller::new(
-            "record-http",
+            "record-http".parse().unwrap(),
             "00000000-0000-4000-8000-000000000001".parse().unwrap(),
             CredentialType::Session,
             false,

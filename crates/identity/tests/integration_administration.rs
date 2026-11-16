@@ -58,7 +58,7 @@ async fn execute(
         .unwrap();
     let result = administration::execute_with_store(
         &mut tx,
-        "acme",
+        &"acme".parse().unwrap(),
         operation,
         &request.to_string(),
         &mut AuthDrops::default(),
@@ -96,8 +96,8 @@ async fn write_and_copy_keep_environment_generations_and_credentials_separate(po
     for env in ["dev", "prod"] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&wamn_control_provision::test_database::seed_org_project_env_sql(
-                "acme",
-                "app",
+                &"acme".parse().unwrap(),
+                &"app".parse().unwrap(),
                 &env.parse().unwrap(),
             ))
                 .to_string(),
@@ -207,8 +207,8 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction(pool: sqlx:
     .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::seed_org_project_env_sql(
-            "acme",
-            "app",
+            &"acme".parse().unwrap(),
+            &"app".parse().unwrap(),
             &"dev".parse().unwrap(),
         ))
             .to_string(),
@@ -286,8 +286,8 @@ async fn jwt_connection_write_enforces_credential_and_auth_schemas(pool: sqlx::P
     .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::seed_org_project_env_sql(
-            "acme",
-            "app",
+            &"acme".parse().unwrap(),
+            &"app".parse().unwrap(),
             &"dev".parse().unwrap(),
         ))
             .to_string(),
@@ -353,7 +353,7 @@ async fn jwt_connection_write_enforces_credential_and_auth_schemas(pool: sqlx::P
             .unwrap();
         let result = administration::execute_with_store(
             &mut tx,
-            "acme",
+            &"acme".parse().unwrap(),
             "connection.write",
             &request.to_string(),
             &mut AuthDrops::default(),

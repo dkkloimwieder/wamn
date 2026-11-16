@@ -96,13 +96,13 @@ pub(super) fn bind_signed_file_results(
 pub fn portable_requirement(
     component_digest: &wamn_digest::Digest,
     connection: &ComponentConnection,
-    store_alias: &str,
+    store_alias: &wamn_catalog::canonical_name::CanonicalName,
 ) -> ComponentConnectionRequirement {
     let descriptor = match connection.requirement_type {
         ComponentConnectionType::Http => ConnectionTypeDescriptor::http_v1(),
         ComponentConnectionType::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
     };
-    ComponentConnectionRequirement::new(*component_digest, store_alias, descriptor)
+    ComponentConnectionRequirement::new(*component_digest, store_alias.clone(), descriptor)
 }
 
 /// The exports among `selected` whose request element transaction the host begins, as
@@ -160,7 +160,10 @@ pub(super) fn validate_component_operation_assignment(
     component: &AdmittedComponent,
     expected: &BTreeMap<RegisteredOperation, ExpectedOperationContract>,
 ) -> Result<BTreeSet<RegisteredOperation>, ComponentProjectionError> {
-    if !manifest.components.contains_key(&component.component) {
+    if !manifest
+        .components
+        .contains_key(component.component.as_str())
+    {
         let registered = component
             .operations
             .iter()
@@ -255,7 +258,6 @@ pub(super) fn expected_operation_contracts(
             .keys()
             .next()
             .expect("one component exists")
-            .as_str()
     });
     let mut expected = BTreeMap::new();
     for (model, declaration) in &manifest.models {
@@ -274,7 +276,7 @@ pub(super) fn expected_operation_contracts(
                 manifest,
                 &mut expected,
                 &local_operation,
-                operation.component.as_deref().or(default_component),
+                operation.component.as_ref().or(default_component),
                 true,
             )?;
         }
@@ -284,7 +286,7 @@ pub(super) fn expected_operation_contracts(
             manifest,
             &mut expected,
             local_operation,
-            operation.component.as_deref().or(default_component),
+            operation.component.as_ref().or(default_component),
             operation.visibility() == wamn_compiler::manifest::OperationVisibility::Public,
         )?;
     }
@@ -295,7 +297,7 @@ pub(super) fn insert_expected_operation(
     manifest: &wamn_compiler::manifest::PackageManifest,
     expected: &mut BTreeMap<RegisteredOperation, ExpectedOperationContract>,
     local_operation: &wamn_catalog::local_operation::LocalOperation,
-    component: Option<&str>,
+    component: Option<&wamn_compiler::source_name::SourceName>,
     public: bool,
 ) -> Result<(), ComponentProjectionError> {
     let component = component.ok_or_else(|| {
@@ -316,7 +318,7 @@ pub(super) fn insert_expected_operation(
         .insert(
             operation.clone(),
             ExpectedOperationContract {
-                component: component.to_owned(),
+                component: component.clone().into(),
                 public,
             },
         )

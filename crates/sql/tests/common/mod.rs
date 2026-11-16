@@ -91,8 +91,8 @@ async fn install_executor(
     let role = workload_login(
         family,
         WorkloadRoleIdentity::ProjectEnvironment {
-            org: "lease-live-org",
-            project: "lease-live-project",
+            org: &"lease-live-org".parse().unwrap(),
+            project: &"lease-live-project".parse().unwrap(),
             environment: &ENVIRONMENT.parse().unwrap(),
             database: &database,
         },
@@ -287,7 +287,7 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     let executor = wamn_identity_protocol::PlatformComponent::Executor;
     for component in [COMPONENT, ROLLED_COMPONENT] {
         plugin.set_user_id(component, &executor.principal_id())?;
-        plugin.set_operation(component, &executor.principal_name())?;
+        plugin.set_operation(component, &executor.principal_name().parse()?)?;
     }
     plugin.set_project_env_key(COMPONENT, &PROJECT_ENV_KEY.parse().unwrap());
     plugin.set_schema(COMPONENT, SCHEMA)?;

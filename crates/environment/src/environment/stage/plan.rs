@@ -31,7 +31,7 @@ pub fn sequence_defaults<'a>(
         .map(|((application, name), (_, pattern))| {
             wamn_platform_identity::configuration::SequenceDefault {
                 application,
-                name,
+                name: name.to_string(),
                 pattern,
             }
         })

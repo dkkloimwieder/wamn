@@ -38,7 +38,7 @@ pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
     let component = metadata
         .packages
         .iter()
-        .find(|candidate| candidate.name.as_str() == component.replace('_', "-"))
+        .find(|candidate| candidate.name.as_str() == component.as_str().replace('_', "-"))
         .context("component has no Cargo package")?;
     let source = component
         .targets
@@ -137,8 +137,11 @@ pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
 }
 
 /// Copy a generated browser component to an application-owned path.
-pub fn component(package: &Path, name: &str, destination: &Path) -> Result<()> {
-    wamn_compiler::manifest::validate_identifier(name, "component")?;
+pub fn component(
+    package: &Path,
+    name: &wamn_compiler::source_name::SourceName,
+    destination: &Path,
+) -> Result<()> {
     let source = wamn_compiler::output_root(package)
         .join("client-ts/components")
         .join(format!("{name}.ts"));
@@ -269,7 +272,7 @@ mod tests {
         )
         .unwrap();
         let destination = package.join("thing.ts");
-        component(&package, "thing", &destination).unwrap();
+        component(&package, &"thing".parse().unwrap(), &destination).unwrap();
         let compiled = std::process::Command::new("tsc")
             .args([
                 "--strict",
@@ -288,6 +291,6 @@ mod tests {
             String::from_utf8_lossy(&compiled.stdout),
             String::from_utf8_lossy(&compiled.stderr)
         );
-        assert!(component(&package, "thing", &destination).is_err());
+        assert!(component(&package, &"thing".parse().unwrap(), &destination).is_err());
     }
 }

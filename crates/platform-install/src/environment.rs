@@ -39,7 +39,7 @@ pub fn publication_values(
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
     cluster: &str,
     name: &str,
-    schemas: &[String],
+    schemas: &[wamn_catalog::canonical_name::CanonicalName],
 ) -> Value {
     json!({"publication":{"name":name,"cluster":cluster,"org":triple.org,"project":triple.project,"env":triple.env,
         "database":wamn_control_provision::project_env_database_name(&triple.org,&triple.project,&triple.env,instance),
@@ -87,7 +87,7 @@ pub async fn connection(
     };
     let cluster = wamn_control_provision::cluster_of(&org, &policy).name;
     Ok(crate::credentials::configuration(
-        &triple.org,
+        triple.org.as_str(),
         &cluster,
         format!("{cluster}-rw.{}.svc.cluster.local", triple.org),
         5432,
@@ -167,7 +167,7 @@ pub async fn provision(
     wamn_kubernetes::kubectl::wait(
         &target.kubeconfig,
         &target.context,
-        &triple.org,
+        triple.org.as_str(),
         "database",
         &connection.database,
         "condition=Applied",
@@ -201,7 +201,7 @@ pub async fn remove_database(
     wamn_kubernetes::kubectl::wait(
         &target.kubeconfig,
         &target.context,
-        &triple.org,
+        triple.org.as_str(),
         "database",
         &connection.database,
         "condition=Applied",

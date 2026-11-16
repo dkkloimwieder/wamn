@@ -189,7 +189,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
     .map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&serde_json::to_string(&document)?).bind(&graph_hash).bind(&workflow_user).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let mut manual = document;
-    manual.wiring_id = "echo-manual".into();
+    manual.wiring_id = "echo-manual".parse().expect("fixed identifier");
     sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo-manual', 1, $2::text::jsonb, $3, 'manual', 'invoker', true, $4::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&serde_json::to_string(&manual)?).bind(&&manual.wiring_hash()).bind(&SERVICE).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
@@ -234,8 +234,8 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
             }
         } else {
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: "automation",
-                project: "default",
+                org: &"automation".parse().expect("fixed identifier"),
+                project: &"default".parse().expect("fixed identifier"),
                 environment: &"test".parse().unwrap(),
                 database: &db_name,
             }
@@ -281,11 +281,16 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
             "automation-live-queue",
             &SessionIdentity {
                 project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
-                project: Some("default".to_owned()),
+                project: Some("default".parse().expect("fixed identifier")),
                 schema: Some("wamn_run".to_owned()),
                 runner: Some("automation-live".to_owned()),
                 user_id: Some(PlatformComponent::Executor.principal_id()),
-                operation: Some(PlatformComponent::Executor.principal_name()),
+                operation: Some(
+                    PlatformComponent::Executor
+                        .principal_name()
+                        .parse()
+                        .unwrap(),
+                ),
                 release: Some(ReleaseIdentity::for_test(release.release().manifest_digest)),
                 ..SessionIdentity::default()
             },
@@ -319,7 +324,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
             &PROJECT_ENV_KEY.parse().unwrap(),
-            "default",
+            &"default".parse().expect("fixed identifier"),
             &"test".parse().unwrap(),
         )),
         Arc::clone(&logging),
@@ -327,7 +332,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
         Arc::clone(&release),
         Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
         OperationHostConfig {
-            project: "default".to_owned(),
+            project: "default".parse().expect("fixed identifier"),
             schema: Some("application_data".to_owned()),
             owner_prefix: "automation-live".to_owned(),
             warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
@@ -336,7 +341,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
     let target = QueueTarget {
         invocation: "automation-live-queue".to_owned(),
         project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
-        project: "default".to_owned(),
+        project: "default".parse().expect("fixed identifier"),
         applications: vec!["automation".parse().unwrap()],
         environment: "test".parse().expect("valid fixture coordinate"),
     };
@@ -356,7 +361,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
             Arc::clone(&release),
             wamn_execution_host::HostRouteHandlers::Application {
                 postgres: Arc::clone(&postgres),
-                project: "default".into(),
+                project: "default".parse().expect("fixed identifier"),
                 identity: None,
                 changes: wamn_broker::Publisher::default(),
             },
@@ -364,7 +369,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
     };
     let request = StartInput {
         application: "automation".parse().unwrap(),
-        wiring_id: "echo-manual".to_owned(),
+        wiring_id: "echo-manual".parse().expect("fixed identifier"),
         idempotency_key: "shutdown".to_owned(),
         input: json!({"queued":true}),
     };
@@ -395,7 +400,7 @@ async fn run_current(pool: &sqlx::PgPool, mode: Mode) -> anyhow::Result<()> {
 
 struct StartInput {
     application: wamn_catalog::ApplicationName,
-    wiring_id: String,
+    wiring_id: wamn_catalog::canonical_name::CanonicalName,
     idempotency_key: String,
     input: serde_json::Value,
 }
@@ -424,7 +429,7 @@ impl WorkflowsFixture {
         let held = self
             .postgres
             .user_operation_permissions(
-                "default",
+                &"default".parse().expect("fixed identifier"),
                 &PROJECT_ENV_KEY.parse().unwrap(),
                 &SERVICE.parse()?,
             )

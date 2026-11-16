@@ -179,10 +179,10 @@ mod tests {
 
     fn registration(condition: Option<&str>) -> EventTrigger {
         EventTrigger {
-            workflow_id: "r1".into(),
+            workflow_id: "r1".parse().unwrap(),
             application: "sales.eu".parse().unwrap(),
             source_package: "cat".parse().unwrap(),
-            entity: "receipts".into(),
+            entity: "receipts".parse().unwrap(),
             ops: vec![Op::Insert, Op::Update],
             enable_sequence: 0,
             condition: condition.map(str::to_owned),
@@ -368,20 +368,37 @@ mod tests {
     #[test]
     fn source_identity_requires_one_exact_header() {
         let envelope = envelope();
-        let expected = wamn_event_wire::msg_id("app", &"dev".parse().unwrap(), &envelope.identity);
+        let expected = wamn_event_wire::msg_id(
+            &"app".parse().unwrap(),
+            &"dev".parse().unwrap(),
+            &envelope.identity,
+        );
         assert_eq!(
-            verified_source_event_id("app", &"dev".parse().unwrap(), &envelope, &[&expected])
-                .unwrap()
-                .as_str(),
+            verified_source_event_id(
+                &"app".parse().unwrap(),
+                &"dev".parse().unwrap(),
+                &envelope,
+                &[&expected]
+            )
+            .unwrap()
+            .as_str(),
             expected
         );
-        assert!(verified_source_event_id("app", &"dev".parse().unwrap(), &envelope, &[]).is_none());
+        assert!(
+            verified_source_event_id(
+                &"app".parse().unwrap(),
+                &"dev".parse().unwrap(),
+                &envelope,
+                &[]
+            )
+            .is_none()
+        );
     }
 
     fn derived(depth: u32) -> DerivedEvent {
         DerivedEvent::new(
             "t1--dev--project".parse().unwrap(),
-            "app",
+            "app".parse().unwrap(),
             "dev".parse().unwrap(),
             "sales.eu".parse().unwrap(),
             "receipts",
@@ -445,7 +462,7 @@ mod tests {
         let event = derived(0);
         let expected = wamn_event_wire::derived_msg_id(
             &"t1--dev--project".parse().unwrap(),
-            "app",
+            &"app".parse().unwrap(),
             &"dev".parse().unwrap(),
             &event.application,
             &event.entity,
@@ -455,7 +472,7 @@ mod tests {
         assert_eq!(
             verified_derived_source_event_id(
                 &"t1--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &event,
                 &[&expected]
@@ -467,7 +484,7 @@ mod tests {
         assert!(
             verified_derived_source_event_id(
                 &"other--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &event,
                 &[&expected]
@@ -477,7 +494,7 @@ mod tests {
         assert!(
             verified_derived_source_event_id(
                 &"t1--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &event,
                 &[&expected, &expected]
@@ -493,7 +510,7 @@ mod tests {
         let event = DerivedEvent::from_slice(&encoded).expect("derived event wire decodes");
         let message_id = wamn_event_wire::derived_msg_id(
             &"t1--dev--project".parse().unwrap(),
-            "app",
+            &"app".parse().unwrap(),
             &"dev".parse().unwrap(),
             &event.application,
             &event.entity,
@@ -502,7 +519,7 @@ mod tests {
         );
         let source = verified_derived_source_event_id(
             &"t1--dev--project".parse().unwrap(),
-            "app",
+            &"app".parse().unwrap(),
             &"dev".parse().unwrap(),
             &event,
             &[&message_id],

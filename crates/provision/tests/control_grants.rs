@@ -17,8 +17,8 @@ async fn control_refusals_and_catalog_rules(pool: sqlx::PgPool) {
         grants::execute(
             &mut fixture.admin,
             &wamn_control_provision::test_database::seed_org_project_env_sql(
-                org,
-                "orders",
+                &org.parse().unwrap(),
+                &"orders".parse().unwrap(),
                 &"dev".parse().unwrap(),
             ),
         )

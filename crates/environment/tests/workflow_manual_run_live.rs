@@ -260,7 +260,7 @@ async fn connect(url: &str) -> Client {
 }
 
 /// The attachment of `workflow.start` in the application host route set.
-fn start_attachment() -> String {
+fn start_attachment() -> wamn_catalog::canonical_name::CanonicalName {
     HostRouteSet::Application
         .attachments()
         .find(|(_, attachment)| attachment.reference == START_REFERENCE)
@@ -444,8 +444,8 @@ async fn targeted_postgres(admin: &mut Client, url: &str) -> Arc<WamnPostgres> {
             }
         } else {
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: PROJECT_ENV_KEY,
-                project: PROJECT,
+                org: &PROJECT_ENV_KEY.parse().unwrap(),
+                project: &PROJECT.parse().unwrap(),
                 environment: &ENVIRONMENT.parse().unwrap(),
                 database: &database,
             }
@@ -489,7 +489,7 @@ fn host(postgres: &Arc<WamnPostgres>, release: &Arc<LoadedRelease>) -> HostRoute
         Arc::clone(release),
         HostRouteHandlers::Application {
             postgres: Arc::clone(postgres),
-            project: PROJECT.to_owned(),
+            project: PROJECT.parse().unwrap(),
             identity: None,
             changes: Publisher::default(),
         },
@@ -512,7 +512,7 @@ impl Fixture {
                     Arc::new(ConnectionCredentials::empty()),
                     &self.postgres,
                     &release.target().project_env_key.as_str().parse().unwrap(),
-                    PROJECT,
+                    &PROJECT.parse().unwrap(),
                     &release.target().environment,
                 )),
                 Arc::clone(&self.logging),
@@ -520,7 +520,7 @@ impl Fixture {
                 Arc::clone(release),
                 Arc::new(LocalComponentSource::new(self.scratch.path().to_owned())),
                 OperationHostConfig {
-                    project: PROJECT.to_owned(),
+                    project: PROJECT.parse().unwrap(),
                     schema: Some("application_data".to_owned()),
                     owner_prefix: "manual-live".to_owned(),
                     warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
@@ -546,8 +546,8 @@ impl Fixture {
         author_workflow_in_databases(
             &self.url,
             &AuthorWorkflowRequest {
-                org: "manual-live",
-                project: "default",
+                org: &"manual-live".parse().unwrap(),
+                project: &"default".parse().unwrap(),
                 environment: &ENVIRONMENT.parse().unwrap(),
                 application: &APP.parse().unwrap(),
                 declared: &declared(),
@@ -567,14 +567,18 @@ impl Fixture {
     async fn enable(&mut self, version: u32, enabler: &str) {
         enable_workflow(
             &self.url,
-            &Triple::new("acme", ENVIRONMENT.parse().unwrap(), APPLICATION),
+            &Triple::new(
+                "acme".parse().unwrap(),
+                ENVIRONMENT.parse().unwrap(),
+                APPLICATION.parse().unwrap(),
+            ),
             &mut self.admin,
             &WorkflowVersion {
-                org: "manual-live",
-                project: "default",
+                org: &"manual-live".parse().unwrap(),
+                project: &"default".parse().unwrap(),
                 environment: &ENVIRONMENT.parse().unwrap(),
                 application: &APP.parse().unwrap(),
-                workflow_id: WORKFLOW,
+                workflow_id: &WORKFLOW.parse().unwrap(),
                 version,
             },
             &enabler
@@ -615,7 +619,7 @@ impl Fixture {
         let held = self
             .postgres
             .session_operation_permissions(
-                PROJECT,
+                &PROJECT.parse().unwrap(),
                 &PROJECT_ENV_KEY.parse().unwrap(),
                 &signed,
                 &principal,
@@ -703,7 +707,7 @@ impl Fixture {
             ),
             release,
             QueueServiceConfig {
-                project: PROJECT.to_owned(),
+                project: PROJECT.parse().unwrap(),
                 runner: "manual-live".to_owned(),
                 lease_ttl_ms: 30_000,
             },
@@ -924,7 +928,7 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution(pool: sql
     let input = json!({"day": 1});
     let ManualRunAdmitted::Queued { run_id: run } = fixture
         .postgres
-        .executor_write(PROJECT, async |connection| {
+        .executor_write(&PROJECT.parse().unwrap(), async |connection| {
             wamn_events::admission::admit_manual_run(
                 connection,
                 &PROJECT_ENV_KEY.parse().unwrap(),
@@ -932,7 +936,7 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution(pool: sql
                     application: &APP.parse().expect("valid fixture name"),
                     manifest_digest: &fixture.digest,
                     environment: &ENVIRONMENT.parse().unwrap(),
-                    workflow_id: WORKFLOW,
+                    workflow_id: &WORKFLOW.parse().unwrap(),
                     workflow_version: 2,
                     wiring_hash: &wrong,
                     execution_principal_id: &READER

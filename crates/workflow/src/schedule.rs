@@ -18,7 +18,7 @@ use wamn_sql::WamnPostgres;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnabledSchedule {
     pub application: wamn_catalog::ApplicationName,
-    pub workflow_id: String,
+    pub workflow_id: wamn_catalog::canonical_name::CanonicalName,
     /// Five-field cron, evaluated in the environment time zone.
     pub schedule: String,
     /// The due instant expressed in the environment time zone.
@@ -30,7 +30,7 @@ pub struct EnabledSchedule {
 /// [`admit_schedule_run`].
 pub struct PostgresSchedules {
     postgres: Arc<WamnPostgres>,
-    project: String,
+    project: wamn_registry::ProjectId,
     application: wamn_catalog::ApplicationName,
     selection:
         tokio::sync::watch::Receiver<Option<Arc<wamn_engine::release_manifest::LoadedRelease>>>,
@@ -49,7 +49,7 @@ impl PostgresSchedules {
     /// Resolve schedule admission against the current host selection.
     pub fn new(
         postgres: Arc<WamnPostgres>,
-        project: impl Into<String>,
+        project: wamn_registry::ProjectId,
         application: wamn_catalog::ApplicationName,
         selection: tokio::sync::watch::Receiver<
             Option<Arc<wamn_engine::release_manifest::LoadedRelease>>,
@@ -57,7 +57,7 @@ impl PostgresSchedules {
     ) -> Self {
         Self {
             postgres,
-            project: project.into(),
+            project,
             application: application.into(),
             selection,
         }

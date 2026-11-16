@@ -31,7 +31,7 @@ impl Store for ReferencedCredentials<'_> {
 /// Create project authority through the administration functions.
 pub async fn define(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
+    org: &wamn_registry::OrgId,
     request: &serde_json::Value,
     store: &dyn Store,
 ) -> anyhow::Result<()> {
@@ -77,8 +77,8 @@ pub async fn define(
 /// Rotate an existing fixture through the administration path.
 pub async fn set_reference(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
     name: &str,
     stored: &StoreVersion,
@@ -101,8 +101,8 @@ pub async fn set_reference(
 pub async fn database_login(
     system_input: &str,
     target_input: Option<&str>,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
     family: wamn_control_provision::WorkloadRoleFamily,
 ) -> anyhow::Result<String> {

@@ -218,7 +218,7 @@ impl Integrations {
         facts: Arc<ConnectionFacts>,
         release: &wamn_engine::release_manifest::LoadedRelease,
         postgres: &WamnPostgres,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         registry: PackageRegistry,
         registry_credentials: RegistryCredentialSource,
     ) -> anyhow::Result<Self> {
@@ -352,6 +352,7 @@ impl ConnectionDispatch for ComponentImports {
         function: &str,
         parameters: &[wasmtime::component::Val],
     ) -> anyhow::Result<Option<anyhow::Result<Vec<wasmtime::component::Val>>>> {
+        let alias: wamn_catalog::canonical_name::CanonicalName = name.parse()?;
         let (scopes, scope) = scope.context("integration call has no scope")?;
         let context = wamn_sql::invocation::context(scopes, scope)?;
         anyhow::ensure!(
@@ -363,7 +364,7 @@ impl ConnectionDispatch for ComponentImports {
             .read::<wamn_sql::invocation::Authority, _>(scope, |record| {
                 record.invocation.as_ref().is_some_and(|invocation| {
                     invocation
-                        .connection(context.release.manifest(), name)
+                        .connection(context.release.manifest(), &alias)
                         .is_some()
                 })
             })

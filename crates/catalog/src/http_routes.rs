@@ -34,7 +34,7 @@ pub fn route_data(
 }
 fn route_definition(
     manifest: &ServingManifest,
-    attachment_id: &str,
+    attachment_id: &crate::canonical_name::CanonicalName,
     attachment: ServedAttachment<'_>,
     release_digest: &wamn_digest::Digest,
 ) -> Option<RouteDefinition> {
@@ -89,7 +89,7 @@ fn route_definition(
             }
         }),
         operation_deadline_ms: 30_000,
-        sealed_operation_id: operation?.operation.clone(),
+        sealed_operation_id: operation?.operation.to_string(),
         auth_policy: attachment.auth_policy().clone(),
         idempotency_rule: operation
             .filter(|route| !route.type_.is_read())

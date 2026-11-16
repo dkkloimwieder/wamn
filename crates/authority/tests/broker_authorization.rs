@@ -5,8 +5,12 @@ use wamn_broker::authorization::test_util::{
     Account, Authorization, Permissions, Subjects, control_user, render,
 };
 use wamn_registry::Triple;
-fn document(project: &str) -> Triple {
-    Triple::new("test", "dev".parse().unwrap(), project)
+fn document(project: &wamn_registry::ProjectId) -> Triple {
+    Triple::new(
+        "test".parse().unwrap(),
+        "dev".parse().unwrap(),
+        project.clone(),
+    )
 }
 /// The control host and an environment host open their auth memory
 /// watches as their own users on a real server (docs/plan/alignment.md
@@ -25,8 +29,10 @@ async fn the_control_and_environment_users_open_their_memory_watches() {
         .unwrap()
         .port();
     let mut authorization = Authorization { users: Vec::new() };
-    render(&document("one"), &mut authorization);
-    authorization.users.push(control_user("test").0);
+    render(&document(&"one".parse().unwrap()), &mut authorization);
+    authorization
+        .users
+        .push(control_user(&"test".parse().unwrap()).0);
     authorization.users.push(Account {
         user: "admin".into(),
         password: None,
@@ -74,13 +80,20 @@ async fn the_control_and_environment_users_open_their_memory_watches() {
     wamn_broker::kv_memory::create_buckets(&admin)
         .await
         .unwrap();
-    let project_env_key = wamn_registry::project_env_key("test", "one", &"dev".parse().unwrap());
+    let project_env_key = wamn_registry::project_env_key(
+        &"test".parse().unwrap(),
+        &"one".parse().unwrap(),
+        &"dev".parse().unwrap(),
+    );
     for (user, target) in [
         (
             wamn_registry::environment_nats_user(&project_env_key),
             Some(&project_env_key),
         ),
-        (wamn_registry::control_nats_user("test"), None),
+        (
+            wamn_registry::control_nats_user(&"test".parse().unwrap()),
+            None,
+        ),
     ] {
         eprintln!("{user} opens its auth memory watch");
         let client = async_nats::ConnectOptions::with_user_and_password(user.clone(), "p".into())

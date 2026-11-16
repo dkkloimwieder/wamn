@@ -251,7 +251,11 @@ mod tests {
 
     #[test]
     fn application_consumers_accept_application_names_and_refuse_invalid_source_tokens() {
-        let target = Triple::new("acme", "dev".parse().unwrap(), "widgets");
+        let target = Triple::new(
+            "acme".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "widgets".parse().unwrap(),
+        );
         let config = application_consumer(
             &target,
             &"sales.eu".parse().unwrap(),
@@ -289,15 +293,6 @@ mod tests {
                 )
                 .is_err()
             );
-            assert!(
-                application_consumer(
-                    &Triple::new(invalid, "dev".parse().unwrap(), "widgets"),
-                    &"sales.eu".parse().unwrap(),
-                    &"orders".parse().unwrap(),
-                    "order"
-                )
-                .is_err()
-            );
         }
         for changed in [
             pull::Config {
@@ -319,7 +314,11 @@ mod tests {
     #[test]
     fn source_comparison_refuses_foreign_inputs_and_changed_delivery_policy() {
         let expected = source_stream_config(
-            &Triple::new("acme", "dev".parse().unwrap(), "widgets"),
+            &Triple::new(
+                "acme".parse().unwrap(),
+                "dev".parse().unwrap(),
+                "widgets".parse().unwrap(),
+            ),
             3,
             Duration::from_secs(120),
         );
@@ -417,7 +416,11 @@ mod tests {
 
     #[test]
     fn stream_comparison_accepts_server_annotations() {
-        let target = Triple::new("acme", "dev".parse().unwrap(), "widgets");
+        let target = Triple::new(
+            "acme".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "widgets".parse().unwrap(),
+        );
         for expected in [
             source_stream_config(&target, 3, Duration::from_secs(120)),
             advisory_stream_config(&target, 3),
@@ -431,8 +434,14 @@ mod tests {
 
     #[test]
     fn stream_comparison_refuses_a_changed_owned_field_beside_annotations() {
-        let expected =
-            advisory_stream_config(&Triple::new("acme", "dev".parse().unwrap(), "widgets"), 3);
+        let expected = advisory_stream_config(
+            &Triple::new(
+                "acme".parse().unwrap(),
+                "dev".parse().unwrap(),
+                "widgets".parse().unwrap(),
+            ),
+            3,
+        );
         let reported = server_reported(&expected);
         let changed = [
             stream::Config {

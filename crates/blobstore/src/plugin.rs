@@ -145,7 +145,7 @@ impl WamnBlobstore {
     pub(super) async fn container_for(
         &self,
         component_id: &str,
-        store_alias: &str,
+        store_alias: &wamn_catalog::canonical_name::CanonicalName,
     ) -> Result<BoundContainer, BindingError> {
         let context = wamn_sql::invocation::context(&self.postgres.scopes, component_id)
             .map_err(|_| BindingError::unauthorized())?;
@@ -157,7 +157,7 @@ impl WamnBlobstore {
         )
         .await
         .map_err(|error| {
-            tracing::warn!(%error, component_id, store_alias, "blobstore authority refused");
+            tracing::warn!(%error, component_id, %store_alias, "blobstore authority refused");
             BindingError::unauthorized()
         })?;
         let id = snapshot
@@ -385,7 +385,10 @@ pub(super) fn blobstore_span(
                     .and_then(|identity| identity.project_env_key.as_ref()),
                 project: identity
                     .as_ref()
-                    .and_then(|identity| identity.project.as_deref())
+                    .and_then(|identity| identity
+                        .project
+                        .as_ref()
+                        .map(wamn_registry::ProjectId::as_str))
                     .unwrap_or(""),
                 component: component_id,
             },

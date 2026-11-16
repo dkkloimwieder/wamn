@@ -13,7 +13,7 @@ use crate::{Configuration, execution::Execution};
 enum Request {
     Environment {
         operation: String,
-        project: String,
+        project: wamn_registry::ProjectId,
         env: wamn_registry::EnvName,
         document: Option<Value>,
         application: Option<wamn_catalog::ApplicationName>,
@@ -27,7 +27,7 @@ enum Request {
     },
     Schema {
         target: String,
-        project: Option<String>,
+        project: Option<wamn_registry::ProjectId>,
         env: Option<wamn_registry::EnvName>,
         apply: bool,
     },
@@ -36,7 +36,7 @@ enum Request {
 impl Execution {
     pub(crate) async fn platform(
         &self,
-        operation: &str,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
         actor: &PrincipalId,
         payload: &str,
     ) -> anyhow::Result<Value> {
@@ -45,12 +45,15 @@ impl Execution {
             api.namespace == self.org,
             "platform worker must share the org namespace"
         );
-        let environment = operation.starts_with("environment.");
+        let environment = operation.as_str().starts_with("environment.");
         let input: Value = serde_json::from_str(payload)?;
         let coordinate = if environment {
             wamn_control_provision::environment_names::environment_resource_name(
                 &self.org,
-                input["project"].as_str().context("project is absent")?,
+                &input["project"]
+                    .as_str()
+                    .context("project is absent")?
+                    .parse()?,
                 &input["env"]
                     .as_str()
                     .context("environment is absent")?
@@ -64,12 +67,12 @@ impl Execution {
         } else {
             "platform"
         };
-        if operation.ends_with("operation_status") {
+        if operation.as_str().ends_with("operation_status") {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
             struct Status {
                 job: String,
-                project: Option<String>,
+                project: Option<wamn_registry::ProjectId>,
                 env: Option<wamn_registry::EnvName>,
             }
             let request: Status = serde_json::from_str(payload)?;
@@ -116,9 +119,9 @@ impl Execution {
         } = &request
             && target == "project"
         {
-            let project = project.as_deref().context("project is absent")?;
+            let project = project.as_ref().context("project is absent")?;
             let env = env.as_ref().context("environment is absent")?;
-            let triple = wamn_registry::Triple::new(&self.org, env.clone(), project);
+            let triple = wamn_registry::Triple::new(self.org.clone(), env.clone(), project.clone());
             let instance = wamn_environment::provision_project_env::read_project_env_instance(
                 &self.platform.system_database_url,
                 &triple,
@@ -155,7 +158,7 @@ impl Execution {
         wamn_kubernetes::job::mount(
             &mut job,
             "identity-operator",
-            &wamn_registry::name::resource_suffix("operator", &self.org),
+            &wamn_registry::name::resource_suffix("operator", self.org.as_str()),
             "/etc/identity-operator",
             &["tls.crt", "tls.key"],
         );
@@ -181,7 +184,7 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
         .parse()?;
     let request: Request = serde_json::from_str(payload)?;
     let platform = config.platform()?;
-    crate::write_kubeconfig(&platform.target.kubeconfig, &config.org)?;
+    crate::write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let mut output = Vec::new();
     match request {
         Request::Environment {
@@ -193,7 +196,8 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
             disposable,
             data,
         } => {
-            let triple = wamn_registry::Triple::new(&config.org, env.clone(), &project);
+            let triple =
+                wamn_registry::Triple::new(config.org.clone(), env.clone(), project.clone());
             let system =
                 MigrationDatabase::System.configuration(&config.apply_database.to_json()?)?;
             if operation == "environment.delete" {
@@ -277,7 +281,8 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                 ensure!(target == "project", "unknown platform SQL target");
                 let project = project.context("project is absent")?;
                 let env = env.context("environment is absent")?;
-                let triple = wamn_registry::Triple::new(&config.org, env.clone(), &project);
+                let triple =
+                    wamn_registry::Triple::new(config.org.clone(), env.clone(), project.clone());
                 let document = wamn_environment::environment::document::EnvironmentDocument::read(
                     &platform, &triple,
                 )
@@ -327,17 +332,17 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
 impl Execution {
     pub(crate) async fn environment(
         &self,
-        operation: &str,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
         actor: &PrincipalId,
         payload: &str,
     ) -> anyhow::Result<Value> {
-        if operation.ends_with("operation_status") {
+        if operation.as_str().ends_with("operation_status") {
             return self.platform(operation, actor, payload).await;
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Input {
-            project: String,
+            project: wamn_registry::ProjectId,
             env: wamn_registry::EnvName,
             document: Option<Value>,
             application: Option<wamn_catalog::ApplicationName>,

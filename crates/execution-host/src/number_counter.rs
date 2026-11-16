@@ -146,7 +146,7 @@ const SET_SQL: &str = "SELECT platform.set_counter($1::text::uuid, $2, $3, $4)";
 /// Neither commits anything.
 pub async fn set_number_counter(
     postgres: &WamnPostgres,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     project_env_key: &wamn_registry::ProjectEnvKey,
     user_id: &wamn_identity_protocol::PrincipalId,
     operation: &wamn_catalog::registered_operation::RegisteredOperation,
@@ -174,7 +174,7 @@ pub async fn set_number_counter(
         project_env_key: Some(project_env_key.to_owned()),
         project: Some(project.to_owned()),
         user_id: Some(user_id.to_owned()),
-        operation: Some(operation.to_string()),
+        operation: Some(operation.clone().into()),
         application: Some(set.application.clone()),
         ..SessionIdentity::default()
     };
@@ -215,7 +215,11 @@ async fn set_in_transaction(
         &serde_json::to_vec(set).expect("a counter set serializes to JSON"),
     );
     let begun = match transaction
-        .begin_opaque(operation.as_str(), request_id, request.as_bytes().to_vec())
+        .begin_opaque(
+            &operation.clone().into(),
+            request_id,
+            request.as_bytes().to_vec(),
+        )
         .await
     {
         Ok(begun) => begun,

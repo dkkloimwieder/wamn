@@ -19,7 +19,7 @@ pub enum WorkflowTrigger<'a> {
     /// A captured model change, filtered with the registration vocabulary.
     Event {
         source_package: &'a wamn_catalog::PackageName,
-        entity: &'a str,
+        entity: &'a wamn_catalog::canonical_name::CanonicalName,
         ops: &'a [wamn_catalog::WiringEventOperation],
         condition: Option<&'a str>,
     },

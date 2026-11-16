@@ -18,7 +18,10 @@ struct AuthoredRoute {
 /// Read final compiler output. Publication already carries inline schemas and hashes.
 pub(super) fn read_package_attachments(
     paths: &[PathBuf],
-) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
+) -> Result<
+    BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
+    PublishManifestError,
+> {
     let mut documents = Vec::new();
     for path in paths {
         let root = path

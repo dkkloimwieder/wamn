@@ -104,7 +104,7 @@ pub(super) fn emit_model_data(
     let model_name = compiled.name;
     let table = &compiled.shape;
     let api = &compiled.api;
-    let model_type = rust_type_identifier(model_name);
+    let model_type = rust_type_identifier(model_name.as_str());
     // A read runs on the connection; a change runs in the host's transaction.
     let connection = if api
         .accessors
@@ -230,7 +230,7 @@ fn key_request(
 
 fn emit_get(
     source: &mut String,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
 ) {
@@ -250,12 +250,16 @@ fn emit_get(
 
 fn emit_create(
     source: &mut String,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     api: &WamnApi,
-    number: Option<&(&str, &str, wamn_number_pattern::Pattern)>,
+    number: Option<&(
+        &str,
+        &crate::source_name::SourceName,
+        wamn_number_pattern::Pattern,
+    )>,
 ) {
     let accessor = api
         .accessors
@@ -391,7 +395,7 @@ fn emit_value(body: &mut String, target: &str, path: &str, bind: &AccessorBind, 
 
 fn emit_update(
     source: &mut String,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
@@ -483,7 +487,7 @@ fn emit_update(
 
 fn emit_delete(
     source: &mut String,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
@@ -525,7 +529,7 @@ fn emit_delete(
 
 fn emit_query(
     source: &mut String,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
@@ -689,7 +693,7 @@ fn emit_query(
 /// (docs/architecture/execution.md#change-feed).
 fn emit_feed(
     source: &mut String,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
     binds: &str,
@@ -861,7 +865,12 @@ pub(super) fn emit_package_data(
 /// key carries exactly the values the default pattern names (`per=`,
 /// `reset=` and `{field:}`), as text; it is not a record. A pattern that
 /// names none takes no key: `next()` and `peek()`.
-fn emit_sequences(sequences: &[(&String, &crate::manifest::SequenceDeclaration)]) -> String {
+fn emit_sequences(
+    sequences: &[(
+        &crate::source_name::SourceName,
+        &crate::manifest::SequenceDeclaration,
+    )],
+) -> String {
     let mut source = String::from(HEADER);
     source.push_str("// The sequences of the package.\n");
     for (name, sequence) in sequences {
@@ -883,7 +892,7 @@ fn emit_sequences(sequences: &[(&String, &crate::manifest::SequenceDeclaration)]
         let (key_type, parameter, bind) = if fields.is_empty() {
             (String::new(), String::new(), String::new())
         } else {
-            let key = format!("{}Key", rust_type_identifier(name));
+            let key = format!("{}Key", rust_type_identifier(name.as_str()));
             let members = fields.iter().fold(String::new(), |mut members, field| {
                 writeln!(members, "    pub {field}: String,")
                     .expect("writing to a String cannot fail");
@@ -922,7 +931,7 @@ fn emit_sequences(sequences: &[(&String, &crate::manifest::SequenceDeclaration)]
              }}\n\
              }}",
             sequence.pattern.escape_debug(),
-            field_name(name),
+            field_name(name.as_str()),
         )
         .expect("writing to a String cannot fail");
     }

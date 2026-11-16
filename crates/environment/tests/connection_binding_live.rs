@@ -56,8 +56,8 @@ async fn runtime_credentials(database: &url::Url) -> ClassCredentials {
         let login = workload_login(
             family,
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: "connection-binding-project",
-                project: DEFAULT_PROJECT,
+                org: &"connection-binding-project".parse().unwrap(),
+                project: &DEFAULT_PROJECT,
                 environment: &"dev".parse().unwrap(),
                 database: name,
             },
@@ -141,8 +141,8 @@ async fn provision_project(project: &mut Client, project_url: &str) {
     apply_package::apply_package(ApplyPackageRequest {
         migration_database_url: wamn_control_provision::test_database::package_migration_input(
             &project_url,
-            &"connection-binding-project",
-            &"fixture",
+            &"connection-binding-project".parse().unwrap(),
+            &"fixture".parse().unwrap(),
             &"dev".parse().unwrap(),
         )
         .await
@@ -157,8 +157,8 @@ async fn provision_project(project: &mut Client, project_url: &str) {
             ),
         },
         database_url: project_url.to_string(),
-        org: "connection-binding-project".into(),
-        project: "fixture".into(),
+        org: "connection-binding-project".parse().unwrap(),
+        project: "fixture".parse().unwrap(),
         environment: "dev".parse().unwrap(),
     })
     .await
@@ -188,8 +188,8 @@ impl Authority {
             .unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&wamn_control_provision::test_database::seed_org_project_env_sql(
-                "connection-binding-project",
-                DEFAULT_PROJECT,
+                &"connection-binding-project".parse().unwrap(),
+                &DEFAULT_PROJECT,
                 &"dev".parse().unwrap(),
             ))
                 .to_string(),
@@ -227,7 +227,7 @@ impl Authority {
                 json!({"username":"fixture","password":"private"}),
             ),
         ] {
-            wamn_test_infrastructure::credentials::define(&mut tx,"connection-binding-project",&json!({"project":DEFAULT_PROJECT,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":credential.to_string()}),store.as_ref()).await.unwrap();
+            wamn_test_infrastructure::credentials::define(&mut tx,&"connection-binding-project".parse().unwrap(),&json!({"project":DEFAULT_PROJECT.as_str(),"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":credential.to_string()}),store.as_ref()).await.unwrap();
         }
         tx.commit().await.unwrap();
         Self {
@@ -238,7 +238,7 @@ impl Authority {
         }
     }
     fn document(digest: &wamn_digest::Digest) -> EnvironmentDocument {
-        let mut document: EnvironmentDocument = serde_json::from_value(json!({"org":"connection-binding-project","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev","revocation_seconds":60, "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
+        let mut document: EnvironmentDocument = serde_json::from_value(json!({"org":"connection-binding-project","project":DEFAULT_PROJECT.as_str(),"env":"dev","target":"cloud","policy":"dev","revocation_seconds":60, "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
         "applications": {PACKAGE:{"revocation_seconds":5,"hostname": "fixture.example","connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap();
         let selection = document.applications.get_mut(PACKAGE).unwrap();
         selection.current =
@@ -329,7 +329,7 @@ impl Authority {
         .bind(&role)
         .bind(&PROJECT_ENV_KEY)
         .bind(&"connection-binding-project")
-        .bind(&DEFAULT_PROJECT)
+        .bind(&*DEFAULT_PROJECT)
         .bind(&ENVIRONMENT)
         .execute(&mut self.system)
         .await
@@ -345,7 +345,7 @@ impl Authority {
         url.set_password(Some("fixture-password")).unwrap();
         ConnectionCredentials::from_database(
             wamn_postgres::pool(url.as_str(), 4).await.unwrap(),
-            "connection-binding-project",
+            &"connection-binding-project".parse().unwrap(),
         )
     }
 }
@@ -365,19 +365,22 @@ fn provision_project_components_for_http_manifest()
 -> std::collections::BTreeSet<wamn_catalog::ServingComponent> {
     let operation = "wamn:node/handler@0.1.0";
     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
-        "http-sidecar",
-        "0.1.0",
+        "http-sidecar".parse().unwrap(),
+        "0.1.0".parse().unwrap(),
         HTTP_SIDECAR.parse().unwrap(),
     );
     descriptor
         .connections
         .push(wamn_catalog::ComponentConnection {
-            store_alias: "erp".into(),
+            store_alias: "erp"
+                .parse::<wamn_catalog::canonical_name::CanonicalName>()
+                .unwrap()
+                .into(),
             requirement_type: wamn_catalog::ComponentConnectionType::Http,
             mode: wamn_catalog::ConnectionMode::Read,
         });
     descriptor.operations.insert(
-        operation.into(),
+        operation.parse().unwrap(),
         AdmittedComponentOperation {
             committed_result_schema: None,
             registered_operation: None,
@@ -393,7 +396,7 @@ fn provision_project_components_for_http_manifest()
         descriptor: {
             let mut descriptor = descriptor;
             descriptor.operations = BTreeMap::from([(
-                operation.into(),
+                operation.parse().unwrap(),
                 wamn_catalog::AdmittedComponentOperation {
                     host_transaction: false,
                     input_ports: Vec::new(),
@@ -421,15 +424,15 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     let mut project = connect(database.as_str()).await;
     provision_project(&mut project, database.as_str()).await;
     let document = WiringDocument::new(
-        "http_read",
+        "http_read".parse().unwrap(),
         1,
-        "read",
+        "read".parse().unwrap(),
         BTreeMap::from([(
-            "read".into(),
+            "read".parse().unwrap(),
             WiringNode {
-                component: "http-sidecar".into(),
-                interface_version: "0.1.0".into(),
-                operation: "wamn:node/handler@0.1.0".into(),
+                component: "http-sidecar".parse().unwrap(),
+                interface_version: "0.1.0".parse().unwrap(),
+                operation: "wamn:node/handler@0.1.0".parse().unwrap(),
                 operation_dependency: None,
                 params: BTreeMap::new(),
                 terminal: Some(WiringTerminal::Respond),
@@ -500,7 +503,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         Arc::new(authority.reader().await),
         &postgres,
         &PROJECT_ENV_KEY.parse().unwrap(),
-        DEFAULT_PROJECT,
+        &DEFAULT_PROJECT,
         &ENVIRONMENT.parse().unwrap(),
     ));
     let release = Arc::new(
@@ -521,23 +524,23 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         origin: ConnectionOrigin {
             package_id: PACKAGE.parse().unwrap(),
             component_digest: HTTP_SIDECAR.parse().unwrap(),
-            component: "http-sidecar".into(),
-            interface_version: "0.1.0".into(),
-            operation: "wamn:node/handler@0.1.0".into(),
+            component: "http-sidecar".parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
+            operation: "wamn:node/handler@0.1.0".parse().unwrap(),
         },
         entry: InvocationEntry::Wiring(WiringPosition {
             application: PACKAGE.parse().unwrap(),
-            wiring_id: "http_read".into(),
+            wiring_id: "http_read".parse().unwrap(),
             wiring_version: 1,
-            node_id: "read".into(),
+            node_id: "read".parse().unwrap(),
             occurrence: 0,
             configuration: Default::default(),
             wiring_hash: document.wiring_hash(),
         }),
         package_id: PACKAGE.parse().unwrap(),
         component_digest: HTTP_SIDECAR.parse().unwrap(),
-        component: "http-sidecar".into(),
-        operation: "wamn:node/handler@0.1.0".into(),
+        component: "http-sidecar".parse().unwrap(),
+        operation: "wamn:node/handler@0.1.0".parse().unwrap(),
         closure: ConnectionExecutionClosure::Released,
         effects: None,
     };
@@ -576,9 +579,9 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     let entry = wamn_authority::identity::ConnectionEntryLookup::Wiring {
         application: &PACKAGE.parse().unwrap(),
         wiring: wamn_authority::identity::WiringLookup {
-            wiring_id: "http_read",
+            wiring_id: &"http_read".parse().unwrap(),
             wiring_version: 1,
-            node_id: "read",
+            node_id: &"read".parse().unwrap(),
         },
     };
     let snapshot = postgres
@@ -589,15 +592,15 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
                 entry,
                 origin_package_id: &PACKAGE.parse().expect("valid fixture name"),
                 origin_component_digest: &HTTP_SIDECAR.parse().unwrap(),
-                origin_component: "http-sidecar",
-                origin_interface_version: "0.1.0",
-                origin_operation: "wamn:node/handler@0.1.0",
+                origin_component: &"http-sidecar".parse().unwrap(),
+                origin_interface_version: &"0.1.0".parse().unwrap(),
+                origin_operation: &"wamn:node/handler@0.1.0".parse().unwrap(),
                 package_id: &PACKAGE.parse().expect("valid fixture name"),
-                operation: "wamn:node/handler@0.1.0",
+                operation: &"wamn:node/handler@0.1.0".parse().unwrap(),
                 manifest_digest: &manifest_digest,
                 environment: &ENVIRONMENT.parse().unwrap(),
                 component_digest: &HTTP_SIDECAR.parse().unwrap(),
-                store_alias: "erp",
+                store_alias: &"erp".parse().unwrap(),
                 candidate_binding: None,
             },
             &facts,
@@ -611,7 +614,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
     let forged = CandidateConnectionBinding {
         read_only: false,
         component_digest: HTTP_SIDECAR.parse().unwrap(),
-        store_alias: "erp".into(),
+        store_alias: "erp".parse().unwrap(),
         requirement_hash: snapshot.requirement_hash.unwrap(),
         instance_id: snapshot.instance_id.unwrap(),
         instance_revision: snapshot.instance_revision.unwrap(),
@@ -626,8 +629,8 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(poo
         manifest_digest,
         environment: ENVIRONMENT.parse().unwrap(),
         wiring_hash: document.wiring_hash(),
-        component: "http-sidecar".into(),
-        interface_version: "0.1.0".into(),
+        component: "http-sidecar".parse().unwrap(),
+        interface_version: "0.1.0".parse().unwrap(),
         binding_world: Arc::new(
             wamn_authority::identity::CandidateBindingWorld::from_json(
                 serde_json::to_value([forged]).unwrap(),
@@ -684,9 +687,13 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     let database = wamn_test_postgres::url(&pool);
     let mut project = connect(database.as_str()).await;
     provision_project(&mut project, database.as_str()).await;
-    let mut descriptor = ComponentDescriptor::named("blob-put", "0.1.0", DIGEST.parse().unwrap());
+    let mut descriptor = ComponentDescriptor::named(
+        "blob-put".parse().unwrap(),
+        "0.1.0".parse().unwrap(),
+        DIGEST.parse().unwrap(),
+    );
     descriptor.operations.insert(
-        OPERATION.into(),
+        OPERATION.parse().unwrap(),
         serde_json::from_value(json!({
             "input-ports":[], "output-ports":[], "parameters":[]
         }))
@@ -694,7 +701,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     );
     descriptor.connections.push(ComponentConnection {
         store_alias: ComponentConnectionAlias::Configuration {
-            parameter: "binding".into(),
+            parameter: "binding".parse().unwrap(),
         },
         requirement_type: ComponentConnectionType::Blobstore,
         mode: ConnectionMode::ByBinding(
@@ -703,7 +710,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
                 .map(|package| {
                     (
                         package.parse().unwrap(),
-                        BTreeMap::from([("labels".into(), ConnectionMode::Write)]),
+                        BTreeMap::from([("labels".parse().unwrap(), ConnectionMode::Write)]),
                     )
                 })
                 .collect(),
@@ -782,21 +789,21 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
         Arc::new(authority.reader().await),
         &postgres,
         &PROJECT_ENV_KEY.parse().unwrap(),
-        DEFAULT_PROJECT,
+        &DEFAULT_PROJECT,
         &ENVIRONMENT.parse().unwrap(),
     ));
     let wiring = WiringDocument::new(
-        "store_label",
+        "store_label".parse().unwrap(),
         1,
-        "store",
+        "store".parse().unwrap(),
         BTreeMap::from([(
-            "store".into(),
+            "store".parse().unwrap(),
             WiringNode {
-                component: "blob-put".into(),
-                interface_version: "0.1.0".into(),
-                operation: OPERATION.into(),
+                component: "blob-put".parse().unwrap(),
+                interface_version: "0.1.0".parse().unwrap(),
+                operation: OPERATION.parse().unwrap(),
                 operation_dependency: None,
-                params: BTreeMap::from([("binding".into(), json!("labels"))]),
+                params: BTreeMap::from([("binding".parse().unwrap(), json!("labels"))]),
                 terminal: Some(WiringTerminal::Respond),
             },
         )]),
@@ -807,23 +814,23 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
         origin: ConnectionOrigin {
             package_id: PALETTE_PACKAGE_ID.parse().unwrap(),
             component_digest: DIGEST.parse().unwrap(),
-            component: "blob-put".into(),
-            interface_version: "0.1.0".into(),
-            operation: OPERATION.into(),
+            component: "blob-put".parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
+            operation: OPERATION.parse().unwrap(),
         },
         entry: InvocationEntry::Wiring(WiringPosition {
             application: PACKAGE.parse().unwrap(),
-            wiring_id: "store_label".into(),
+            wiring_id: "store_label".parse().unwrap(),
             wiring_version: 1,
-            node_id: "store".into(),
+            node_id: "store".parse().unwrap(),
             occurrence: 0,
             configuration: Arc::new(wiring.nodes["store"].params.clone()),
             wiring_hash: wiring.wiring_hash(),
         }),
         package_id: PALETTE_PACKAGE_ID.parse().unwrap(),
         component_digest: DIGEST.parse().unwrap(),
-        component: "blob-put".into(),
-        operation: OPERATION.into(),
+        component: "blob-put".parse().unwrap(),
+        operation: OPERATION.parse().unwrap(),
         closure: ConnectionExecutionClosure::Released,
         effects: None,
     };
@@ -836,10 +843,12 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     postgres
         .bind_invocation(COMPONENT_ID, invocation.clone())
         .unwrap();
-    let snapshot = resolve(&postgres, COMPONENT_ID, "labels").await.unwrap();
+    let snapshot = resolve(&postgres, COMPONENT_ID, &"labels".parse().unwrap())
+        .await
+        .unwrap();
     assert!(binding::resolve(&snapshot, BlobstoreProvider::S3).is_ok());
     assert!(
-        resolve(&postgres, COMPONENT_ID, "undeclared")
+        resolve(&postgres, COMPONENT_ID, &"undeclared".parse().unwrap())
             .await
             .is_err()
     );
@@ -856,7 +865,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     let pinned = CandidateConnectionBinding {
         read_only: snapshot.read_only,
         component_digest: DIGEST.parse().unwrap(),
-        store_alias: "labels".into(),
+        store_alias: "labels".parse().unwrap(),
         requirement_hash: snapshot.requirement_hash.unwrap(),
         instance_id: snapshot.instance_id.unwrap(),
         instance_revision: snapshot.instance_revision.unwrap(),
@@ -899,7 +908,9 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
             .bind_invocation(COMPONENT_ID, invocation.clone())
             .unwrap();
         assert_eq!(
-            resolve(&postgres, COMPONENT_ID, "labels").await.is_ok(),
+            resolve(&postgres, COMPONENT_ID, &"labels".parse().unwrap())
+                .await
+                .is_ok(),
             accepted
         );
     }
@@ -909,5 +920,9 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
     let conflicting = facts.env_connections().await.unwrap().connections["http-read"];
     sqlx::query("UPDATE catalog.connection_binding SET connection_id=$4 WHERE project_env_key=$1 AND manifest_digest=$2 AND component_digest=$3 AND package_id='nested_origin' AND name='labels'")
         .bind(PROJECT_ENV_KEY).bind(&digest).bind(DIGEST).bind(conflicting).execute(&mut project).await.unwrap();
-    assert!(resolve(&postgres, COMPONENT_ID, "labels").await.is_err());
+    assert!(
+        resolve(&postgres, COMPONENT_ID, &"labels".parse().unwrap())
+            .await
+            .is_err()
+    );
 }

@@ -108,7 +108,7 @@ impl SelectedChart {
                 ensure!(
                     selected
                         .get("namespace")
-                        .is_none_or(|namespace| namespace == &document.org),
+                        .is_none_or(|namespace| namespace == document.org.as_str()),
                     "selected host group must be in its org namespace"
                 );
                 let reference: oci_client::Reference = self.host.parse()?;

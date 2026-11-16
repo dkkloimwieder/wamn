@@ -8,18 +8,22 @@ use wamn_registry::Triple;
 #[test]
 fn changed_target_identity_is_refused() {
     fn target() -> SessionTarget {
-        let triple = Triple::new("acme", "dev".parse().unwrap(), "widgets");
+        let triple = Triple::new(
+            "acme".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "widgets".parse().unwrap(),
+        );
         let database = wamn_control_provision::project_env_database_name(
-            "acme",
-            "widgets",
+            &"acme".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"dev".parse().unwrap(),
             &"k3m9x2p7".parse().unwrap(),
         );
         let username = workload_login(
             WorkloadRoleFamily::SessionRoleReader,
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: "acme",
-                project: "widgets",
+                org: &"acme".parse().unwrap(),
+                project: &"widgets".parse().unwrap(),
                 environment: &"dev".parse().unwrap(),
                 database: &database,
             },
@@ -44,7 +48,11 @@ fn changed_target_identity_is_refused() {
             &"k3m9x2p7"
                 .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
                 .unwrap(),
-            &wamn_registry::project_env_key("acme", "widgets", &"dev".parse().unwrap()),
+            &wamn_registry::project_env_key(
+                &"acme".parse().unwrap(),
+                &"widgets".parse().unwrap(),
+                &"dev".parse().unwrap(),
+            ),
             &connection.to_json().unwrap(),
         )
         .unwrap()

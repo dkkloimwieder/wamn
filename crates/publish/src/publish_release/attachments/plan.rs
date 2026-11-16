@@ -5,10 +5,16 @@ use super::{
 };
 
 pub(in super::super) fn merge_package_attachment_documents(
-    documents: Vec<(PathBuf, BTreeMap<String, ServingAttachment>)>,
-) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
+    documents: Vec<(
+        PathBuf,
+        BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
+    )>,
+) -> Result<
+    BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
+    PublishManifestError,
+> {
     let mut merged = BTreeMap::new();
-    let mut sources = BTreeMap::<String, PathBuf>::new();
+    let mut sources = BTreeMap::<wamn_catalog::canonical_name::CanonicalName, PathBuf>::new();
     for (path, attachments) in documents {
         for (attachment_id, attachment) in attachments {
             if let Some(first_path) = sources.get(&attachment_id) {
@@ -34,9 +40,12 @@ pub(in super::super) fn merge_package_attachment_documents(
 /// The release names no route host (R1): a route is its path and method, and
 /// the host configuration and the http workload's `config.host` name the host.
 pub(in super::super) fn resolve_route_methods(
-    authored: &BTreeMap<String, ServingAttachment>,
+    authored: &BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
     route_contracts: &RouteContracts,
-) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
+) -> Result<
+    BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
+    PublishManifestError,
+> {
     validate_authored_attachment_routes(authored)?;
     let mut resolved = authored.clone();
     let mut route_keys = BTreeSet::new();
@@ -76,7 +85,7 @@ pub(in super::super) fn resolve_route_methods(
                 path,
                 method: method.to_owned(),
             },
-            attachment_id,
+            attachment_id.as_str(),
         )
         .map_err(|error| {
             PublishManifestError::with_source(
@@ -120,7 +129,7 @@ pub(in super::super) fn resolve_route_methods(
 /// The method of one routed attachment: GET for a route to a read operation,
 /// POST for every other route and for every wiring.
 pub(super) fn route_method(
-    attachment_id: &str,
+    attachment_id: &wamn_catalog::canonical_name::CanonicalName,
     attachment: &ServingAttachment,
     route_contracts: &RouteContracts,
 ) -> Result<&'static str, PublishManifestError> {
@@ -142,7 +151,7 @@ pub(super) fn route_method(
 /// are deliberately absent from this schema: no release names a hostname
 /// (R1), and the method follows from the operation type.
 pub(super) fn validate_authored_attachment_routes(
-    authored: &BTreeMap<String, ServingAttachment>,
+    authored: &BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
 ) -> Result<(), PublishManifestError> {
     for (attachment_id, attachment) in authored {
         if attachment.definition.pointer("/route/host").is_some() {

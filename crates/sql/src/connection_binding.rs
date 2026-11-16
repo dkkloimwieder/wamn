@@ -10,7 +10,7 @@ use wamn_authority::connection::{
 pub async fn resolve(
     postgres: &WamnPostgres,
     scope: &str,
-    alias: &str,
+    alias: &wamn_catalog::canonical_name::CanonicalName,
 ) -> anyhow::Result<ConnectionEffectSnapshot> {
     use anyhow::Context as _;
     let context = crate::invocation::context(&postgres.scopes, scope)?;

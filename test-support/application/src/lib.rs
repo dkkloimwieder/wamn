@@ -104,7 +104,7 @@ impl Application {
         product([
             "create-api-service",
             "--project",
-            &document.project,
+            document.project.as_str(),
             "--env",
             document.env.as_str(),
             "--name",

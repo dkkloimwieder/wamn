@@ -73,8 +73,8 @@ fn input(env: &wamn_registry::EnvName) -> ValuesInput {
     let mut config = Mapping::new();
     config.insert("wamn.project_env_key".into(), "acme".into());
     ValuesInput {
-        org: "acme".into(),
-        project: "wms".into(),
+        org: "acme".parse().unwrap(),
+        project: "wms".parse().unwrap(),
         env: env.clone(),
         manifest_digest: DIGEST.parse().unwrap(),
         artifact_base: "registry.example/releases".into(),
@@ -124,7 +124,13 @@ fn render_yaml(
         .and_then(|applications| applications.keys().next())
         .and_then(Value::as_str)
         .unwrap_or("wms");
-    let name = release_name("acme", "wms", env, &application.parse().unwrap()).unwrap();
+    let name = release_name(
+        &"acme".parse().unwrap(),
+        &"wms".parse().unwrap(),
+        env,
+        &application.parse().unwrap(),
+    )
+    .unwrap();
     let path = scratch.0.join(format!("values-{env}.yaml"));
     std::fs::write(&path, serde_yaml::to_string(values).expect("yaml")).expect("write values");
     let output = helm(&[
@@ -199,7 +205,7 @@ fn applications_in_one_environment_have_independent_release_resources() {
                     let spec = &object["spec"]["template"]["spec"];
                     assert_eq!(
                         spec["hostSelector"]["hostgroup"],
-                        wamn_registry::name::environment_host_name(&input.org, &input.env).unwrap()
+                        wamn_registry::name::environment_host_name(&input.org, &input.env)
                     );
                     assert_eq!(
                         spec["components"][0]["image"],
@@ -221,7 +227,7 @@ fn applications_in_one_environment_have_independent_release_resources() {
                 "Service" if object["spec"]["selector"].is_mapping() => {
                     assert_eq!(
                         object["spec"]["selector"]["wasmcloud.com/hostgroup"],
-                        wamn_registry::name::environment_host_name(&input.org, &input.env).unwrap()
+                        wamn_registry::name::environment_host_name(&input.org, &input.env)
                     );
                 }
                 "ConfigMap" if object["metadata"]["name"] == name => {

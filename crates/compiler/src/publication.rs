@@ -17,7 +17,7 @@ pub fn read(root: &Path, relative: &str) -> anyhow::Result<Value> {
 /// Read the final attachment map.
 pub fn read_package_attachments(
     root: &Path,
-) -> anyhow::Result<BTreeMap<String, ServingAttachment>> {
+) -> anyhow::Result<BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>> {
     Ok(serde_json::from_value(read(root, ATTACHMENTS)?)?)
 }
 
@@ -26,15 +26,20 @@ pub fn read_package_attachments(
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CompiledComponentDeclaration {
     pub target: wamn_catalog::PackageCoordinate,
-    pub component: String,
-    pub interface_version: String,
-    pub operations: BTreeMap<String, wamn_catalog::ComponentOperationDeclaration>,
+    pub component: wamn_catalog::canonical_name::CanonicalName,
+    pub interface_version: wamn_catalog::canonical_name::CanonicalName,
+    pub operations: BTreeMap<
+        wamn_catalog::canonical_name::CanonicalName,
+        wamn_catalog::ComponentOperationDeclaration,
+    >,
     pub connections: Vec<wamn_catalog::ComponentConnection>,
 }
 
 /// Read final component declarations without deployment identity.
 pub fn read_components(
     root: &Path,
-) -> anyhow::Result<BTreeMap<String, CompiledComponentDeclaration>> {
+) -> anyhow::Result<
+    BTreeMap<wamn_catalog::canonical_name::CanonicalName, CompiledComponentDeclaration>,
+> {
     Ok(serde_json::from_value(read(root, COMPONENTS)?)?)
 }

@@ -143,7 +143,7 @@ impl PackedPackage {
 /// canonical descriptor bytes.
 #[derive(Debug, Clone)]
 struct DescriptorFile {
-    name: String,
+    name: wamn_catalog::canonical_name::CanonicalName,
     digest: wamn_digest::Digest,
     bytes: Vec<u8>,
 }
@@ -207,7 +207,13 @@ pub(crate) async fn connection_components(
     source: Option<
         &wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
     >,
-) -> anyhow::Result<Vec<(wamn_digest::Digest, Vec<String>, Vec<u8>)>> {
+) -> anyhow::Result<
+    Vec<(
+        wamn_digest::Digest,
+        Vec<wamn_catalog::canonical_name::CanonicalName>,
+        Vec<u8>,
+    )>,
+> {
     let descriptors = read_descriptors(root)?;
     if !descriptors.is_empty() {
         use wamn_component_artifact::component_artifact_source::ComponentArtifactSource;
@@ -360,7 +366,10 @@ fn pack_layers(root: &Path, mut descriptors: Vec<DescriptorFile>) -> anyhow::Res
         layers.push(PackedLayer {
             media_type: COMPONENT_DESCRIPTOR_MEDIA_TYPE.to_owned(),
             annotations: BTreeMap::from([
-                (COMPONENT_NAME_ANNOTATION.to_owned(), descriptor.name),
+                (
+                    COMPONENT_NAME_ANNOTATION.to_owned(),
+                    descriptor.name.to_string(),
+                ),
                 (
                     COMPONENT_DIGEST_ANNOTATION.to_owned(),
                     descriptor.digest.to_string(),
@@ -415,7 +424,7 @@ fn collect_files(
 /// One component named by the compiled package.
 #[derive(Debug)]
 struct SourceComponent {
-    name: String,
+    name: wamn_catalog::canonical_name::CanonicalName,
     file: PathBuf,
     sha256: wamn_digest::Digest,
 }
@@ -433,10 +442,10 @@ fn source_components(
                 .outputs
                 .components
                 .iter()
-                .find(|entry| &entry.name == name)
+                .find(|entry| entry.name.as_str() == name.as_str())
                 .with_context(|| format!("build.json records no component {name}"))?;
             Ok(SourceComponent {
-                name: name.clone(),
+                name: name.clone().into(),
                 file: output.join(&entry.path),
                 sha256: entry.sha256,
             })
@@ -1101,7 +1110,7 @@ mod tests {
                 let path = format!("components/{name}.wasm");
                 write(&output, &path, name.as_bytes());
                 build_record::BuildComponent {
-                    name: name.to_owned(),
+                    name: name.parse().unwrap(),
                     path,
                     sha256: bytes_sha256(name.as_bytes()),
                 }
@@ -1185,7 +1194,7 @@ mod tests {
         }))
         .unwrap();
         DescriptorFile {
-            name: "receiving".to_owned(),
+            name: "receiving".parse().unwrap(),
             digest,
             bytes: wamn_digest::canonical_json_bytes(&serde_json::to_value(&descriptor).unwrap()),
         }

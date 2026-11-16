@@ -109,14 +109,18 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     .map(drop)
     .expect("registry owner");
 
-    let triple = Triple::new(ORG, ENV.parse().unwrap(), PROJECT);
+    let triple = Triple::new(
+        ORG.parse().unwrap(),
+        ENV.parse().unwrap(),
+        PROJECT.parse().unwrap(),
+    );
     let cdc_name = cdc_object_name(
-        ORG,
-        PROJECT,
+        &ORG.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
         &ENV.parse().unwrap(),
         &INSTANCE.parse().unwrap(),
     );
-    let schemas = vec!["app".to_owned(), "other".to_owned()];
+    let schemas = vec!["app".parse().unwrap(), "other".parse().unwrap()];
     let observations = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
     let in_place = async || {
         let mut observation = observations.acquire().await?;
@@ -162,7 +166,10 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "CREATE SCHEMA app; CREATE SCHEMA other; {}",
-            sql::create_publication_schemas_sql(&cdc_name, &schemas)
+            sql::create_publication_schemas_sql(
+                &cdc_name,
+                &schemas.iter().map(ToString::to_string).collect::<Vec<_>>()
+            )
         ))
             .to_string(),
     ))
@@ -173,7 +180,7 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     assert!(in_place().await.expect("probe"), "CDC is in place");
 
     assert!(
-        !cdc_in_place(&mut db, &cdc_name, &["another".to_owned()])
+        !cdc_in_place(&mut db, &cdc_name, &["another".parse().unwrap()])
             .await
             .unwrap()
     );
@@ -201,9 +208,13 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     record().await.expect("record the reader again");
     assert_eq!(readers().await, 1);
     assert!(
-        cdc_in_place(&mut db, &cdc_name, &["other".to_owned(), "app".to_owned()])
-            .await
-            .unwrap()
+        cdc_in_place(
+            &mut db,
+            &cdc_name,
+            &["other".parse().unwrap(), "app".parse().unwrap()]
+        )
+        .await
+        .unwrap()
     );
     let registered: Vec<String> =
         sqlx::query("SELECT schema FROM registry.event_readers WHERE org = $1")

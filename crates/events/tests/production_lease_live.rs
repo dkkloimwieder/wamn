@@ -376,7 +376,7 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
 
     let actor = wamn_identity_protocol::PlatformComponent::Executor.principal_id();
     let admitted = plugin
-        .executor_write("default", async |connection| {
+        .executor_write(&"default".parse().unwrap(), async |connection| {
             wamn_events::admission::admit_manual_run(
                 connection,
                 &PROJECT_ENV_KEY.parse().unwrap(),
@@ -384,7 +384,7 @@ async fn queue_writers_stamp_existing_executor_leases(pool: sqlx::PgPool) -> any
                     application: &PACKAGE_ID.parse().unwrap(),
                     manifest_digest: &POD_MANIFEST_DIGEST.parse().unwrap(),
                     environment: &ENVIRONMENT.parse().unwrap(),
-                    workflow_id: WIRING_ID,
+                    workflow_id: &WIRING_ID.parse().unwrap(),
                     workflow_version: WIRING_VERSION,
                     wiring_hash: &EMPTY_HASH.parse().unwrap(),
                     execution_principal_id: &actor,

@@ -59,7 +59,7 @@ pub async fn write_revocation_configuration(
     };
     let settings = std::iter::once(Setting {
         target_type: "project".into(),
-        target_id: document.project.clone(),
+        target_id: document.project.to_string(),
         key: "revocation-seconds".into(),
         value: document.revocation_seconds.into(),
         locked: true,
@@ -331,14 +331,18 @@ mod tests {
         wamn_control_provision::test_database::system(database.as_str()).await;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             wamn_control_provision::test_database::seed_org_project_env_sql(
-                "acme",
-                "wms",
+                &"acme".parse().unwrap(),
+                &"wms".parse().unwrap(),
                 &"prod".parse().unwrap(),
             ),
         ))
         .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
         .await?;
-        let triple = Triple::new("acme", "prod".parse().unwrap(), "wms");
+        let triple = Triple::new(
+            "acme".parse().unwrap(),
+            "prod".parse().unwrap(),
+            "wms".parse().unwrap(),
+        );
         let mut connection = wamn_postgres::connect(database.as_str()).await?;
         assert!(
             read_configuration(&mut connection, &triple)
@@ -482,14 +486,18 @@ mod tests {
         wamn_control_provision::test_database::system(database.as_str()).await;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             wamn_control_provision::test_database::seed_org_project_env_sql(
-                "acme",
-                "wms",
+                &"acme".parse().unwrap(),
+                &"wms".parse().unwrap(),
                 &"prod".parse().unwrap(),
             ),
         ))
         .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
         .await?;
-        let triple = Triple::new("acme", "prod".parse().unwrap(), "wms");
+        let triple = Triple::new(
+            "acme".parse().unwrap(),
+            "prod".parse().unwrap(),
+            "wms".parse().unwrap(),
+        );
         let mut connection = wamn_postgres::connect(database.as_str()).await?;
         let expected =
             EnvironmentDocument::from_json(&serde_json::to_vec(&configuration())?)?.configuration();
@@ -569,8 +577,8 @@ mod tests {
         );
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             wamn_control_provision::test_database::seed_org_project_env_sql(
-                "acme",
-                "wms",
+                &"acme".parse().unwrap(),
+                &"wms".parse().unwrap(),
                 &"dev".parse().unwrap(),
             ),
         ))
@@ -590,7 +598,11 @@ mod tests {
             read_configuration(&mut connection, &triple).await?.as_ref(),
             Some(&expected)
         );
-        let missing = Triple::new("acme", "prod".parse().unwrap(), "missing");
+        let missing = Triple::new(
+            "acme".parse().unwrap(),
+            "prod".parse().unwrap(),
+            "missing".parse().unwrap(),
+        );
         assert!(
             read_configuration(&mut connection, &missing)
                 .await?
