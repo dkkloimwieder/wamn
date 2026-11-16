@@ -63,7 +63,7 @@ pub async fn delete(
     LifecycleLock::hold(
         wamn_postgres::connect(&platform.system_database_url).await?,
         triple,
-        async |_| delete_locked(platform, triple, data, admin_url).await,
+        async |_| Box::pin(delete_locked(platform, triple, data, admin_url)).await,
     )
     .await
 }

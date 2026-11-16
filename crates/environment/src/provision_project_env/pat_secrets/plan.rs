@@ -8,9 +8,9 @@ pub(in super::super) fn render_pat_secret(
     token: &str,
     prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
     expires_at: &str,
-) -> anyhow::Result<Value> {
+) -> Value {
     let subject = purpose.subject(triple);
-    Ok(json!({
+    json!({
         "apiVersion": "v1",
         "kind": "Secret",
         "metadata": {
@@ -37,7 +37,7 @@ pub(in super::super) fn render_pat_secret(
         "stringData": {
             "token": token,
         },
-    }))
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
