@@ -6,7 +6,7 @@ use super::session_fixture::{ISSUER, ORG};
 /// Seed route-test principals in the installed product control schema.
 pub(super) async fn install_authority(
     client: &mut sqlx::PgConnection,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
     audience: &str,
     principals: &[&str],
@@ -15,7 +15,11 @@ pub(super) async fn install_authority(
     let mut transaction =
         wamn_test_postgres::transaction(client, &actor, "admin:seed-session-authority").await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::test_database::seed_org_project_env_sql(ORG, project, environment),
+        wamn_control_provision::test_database::seed_org_project_env_sql(
+            &ORG.parse().unwrap(),
+            project,
+            environment,
+        ),
     ))
     .execute(&mut *transaction)
     .await?;

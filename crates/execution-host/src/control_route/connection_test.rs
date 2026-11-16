@@ -53,7 +53,11 @@ impl ControlRoutes<'_> {
             .unwrap()
             .remove("credential")
             .filter(|value| !value.is_null());
-        let project = request["project"].as_str().unwrap();
+        let project: wamn_registry::ProjectId = request["project"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .map_err(|_| invalid("project"))?;
         let target: ProjectTarget = parse(payload)?;
         let env = target
             .env
@@ -62,7 +66,7 @@ impl ControlRoutes<'_> {
         let context = {
             let mut writer = self.writer.lock().await;
             let mut transaction = self
-                .begin_in_environment(&mut writer, attachment, caller, Some(project), Some(env))
+                .begin_in_environment(&mut writer, attachment, caller, Some(&project), Some(env))
                 .await?;
             let context = administration::configure(
                 &mut transaction,
@@ -90,7 +94,7 @@ impl ControlRoutes<'_> {
             .as_i64()
             .and_then(|version| i32::try_from(version).ok());
         if let Some(connection) = context["id"].as_str() {
-            let logins = self.logins(&[(project.into(), env.clone())])?;
+            let logins = self.logins(&[(project.clone(), env.clone())])?;
             let mut client = wamn_postgres::connect(&logins[0]).await?;
 
             let mut transaction =
@@ -111,11 +115,11 @@ impl ControlRoutes<'_> {
                 administration::validate_version_parameters(&request["parameters"], &schema)?;
             }
             if selected.is_none() {
-                let status = self.status.read(self.org, project, env).await?;
+                let status = self.status.read(self.org, &project, env).await?;
                 if let Some(digest) = status["digest"].as_str() {
                     let digest: wamn_digest::Digest =
                         digest.parse().map_err(anyhow::Error::from)?;
-                    selected = sqlx::query("SELECT version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2 AND connection_id=$3::text::uuid").bind(wamn_registry::project_env_key(self.org,project,env)).bind(digest).bind(connection).fetch_optional(&mut *transaction).await?.map(|row|row.get(0));
+                    selected = sqlx::query("SELECT version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2 AND connection_id=$3::text::uuid").bind(wamn_registry::project_env_key(self.org,&project,env)).bind(digest).bind(connection).fetch_optional(&mut *transaction).await?.map(|row|row.get(0));
                 }
             }
             transaction.rollback().await?;

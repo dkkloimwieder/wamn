@@ -140,7 +140,7 @@ fn read(documents: &Path, file: &str) -> anyhow::Result<Value> {
 
 struct Writes<'a, 'c> {
     tx: &'a mut sqlx::Transaction<'c, sqlx::Postgres>,
-    org: &'a str,
+    org: &'a wamn_registry::OrgId,
     auth: AuthDrops,
     drops: ConnectionDrops,
 }

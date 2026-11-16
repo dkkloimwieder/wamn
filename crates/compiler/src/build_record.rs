@@ -67,7 +67,7 @@ pub struct BuildOutputs {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuildComponent {
-    pub name: String,
+    pub name: wamn_catalog::canonical_name::CanonicalName,
     pub path: String,
     pub sha256: wamn_digest::Digest,
 }

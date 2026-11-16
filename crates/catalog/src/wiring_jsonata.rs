@@ -1,5 +1,7 @@
 //! Node-specific JSONata port contracts, derived from wiring configuration.
 
+use crate::canonical_name::CanonicalName;
+
 use crate::{
     AdmittedComponent, AdmittedComponentOperation, WiringCompatibilityError,
     WiringCompatibilityErrorType, WiringNode,
@@ -15,7 +17,7 @@ use std::borrow::Cow;
 /// # Errors
 /// Returns a refusal for a missing or invalid schema declaration.
 pub fn specialize_wiring_operation<'a>(
-    node_id: &str,
+    node_id: &CanonicalName,
     node: &WiringNode,
     component: &AdmittedComponent,
     operation: &'a AdmittedComponentOperation,
@@ -67,7 +69,7 @@ const SAMPLE_VALUE_BUDGET: usize = 256;
 const SAMPLE_DEPTH: usize = 16;
 
 pub(super) fn validate_samples(
-    node_id: &str,
+    node_id: &CanonicalName,
     node: &WiringNode,
 ) -> Result<(), WiringCompatibilityError> {
     let expression = node.params["expression"]
@@ -123,7 +125,7 @@ pub(super) fn validate_samples(
 }
 
 fn refusal(
-    node: &str,
+    node: &CanonicalName,
     number: usize,
     sample: &serde_json::Value,
     error: &dyn std::fmt::Display,

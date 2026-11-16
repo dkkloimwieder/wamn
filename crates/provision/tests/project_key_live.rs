@@ -34,7 +34,11 @@ struct Target {
 impl Target {
     fn new(slug: &wamn_registry::EnvName) -> Self {
         Self {
-            db: wamn_registry::name::project_env_database_stem("acme", "billing", slug),
+            db: wamn_registry::name::project_env_database_stem(
+                &"acme".parse().unwrap(),
+                &"billing".parse().unwrap(),
+                slug,
+            ),
             owner: format!("wamn_db_owner_{slug}"),
             app: format!("wamn_app_{slug}"),
         }

@@ -6882,6 +6882,7 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-kubernetes",
+ "wamn-registry",
  "wash-runtime",
 ]
 

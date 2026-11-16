@@ -49,12 +49,12 @@ ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base".parse()
 BTreeSet::from([ServingComponent {
             runtime_schema: None,
             package_id: "base".parse().unwrap(),
-            descriptor: { let mut descriptor = ComponentDescriptor::named("entry", "0.1", digest('a')); descriptor.operations = BTreeMap::from([(READ_OPERATION.into(), AdmittedComponentOperation {
+            descriptor: { let mut descriptor = ComponentDescriptor::named("entry".parse().unwrap(), "0.1".parse().unwrap(), digest('a')); descriptor.operations = BTreeMap::from([(READ_OPERATION.parse().unwrap(), AdmittedComponentOperation {
 host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: None,
                 committed_result_schema: None,
 
-            }), (OPERATION.into(), AdmittedComponentOperation {
+            }), (OPERATION.parse().unwrap(), AdmittedComponentOperation {
 host_transaction: true, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: Some(OPERATION.parse().unwrap()),
                 committed_result_schema: None,
@@ -62,14 +62,14 @@ host_transaction: true, input_ports: Vec::new(), output_ports: Vec::new(), param
 
         }]),
 BTreeSet::from([ServingRoute {
-            package_id: "base".parse().unwrap(), component: "entry".into(),
-            operation: READ_OPERATION.into(), type_: OperationType::Get,
+            package_id: "base".parse().unwrap(), component: "entry".parse().unwrap(),
+            operation: READ_OPERATION.parse().unwrap(), type_: OperationType::Get,
             reads: BTreeSet::new(), revision: None,
             idempotency: None,
         }]),
-BTreeMap::from([("entry".into(), ServingAttachment {
+BTreeMap::from([("entry".parse().unwrap(), ServingAttachment {
             type_: AttachmentType::Http, package_id: "base".parse().unwrap(),
-            target: AttachmentTarget::Route { component: "entry".into(), operation: READ_OPERATION.into() },
+            target: AttachmentTarget::Route { component: "entry".parse().unwrap(), operation: READ_OPERATION.parse().unwrap() },
             definition_hash: digest('c'),
             definition: json!({"route": {"host": "entry.localhost", "path": "/entry", "method": "POST"}}),
                 auth_policy: json!({"modes": ["pat"]}),
@@ -81,12 +81,12 @@ BTreeMap::from([("entry".into(), ServingAttachment {
         route_digest: digest('f'),
         application: wamn_catalog::ServingEntryMember {
             package_id: "base".parse().unwrap(),
-            component: "entry".into(),
+            component: "entry".parse().unwrap(),
             digest: digest('a'),
         },
         members: BTreeSet::from([wamn_catalog::ServingEntryMember {
             package_id: "base".parse().unwrap(),
-            component: "entry".into(),
+            component: "entry".parse().unwrap(),
             digest: digest('a'),
         }]),
     });
@@ -128,7 +128,7 @@ impl GuestCall for Run {
             for mode in modes {
                 let (run, caller) = accessor.with(|mut access| {
                     let caller = access.get().table.push(AuthenticatedCaller::new(
-                        "entry",
+                        "entry".parse().unwrap(),
                         LIVE_PRINCIPAL.parse().unwrap(),
                         CredentialType::Pat,
                         false,
@@ -245,7 +245,7 @@ async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Arc<WamnPostgres>, Arc<Loade
             "entry",
             SessionIdentity {
                 project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
-                project: Some(super::super::DEFAULT_PROJECT.into()),
+                project: Some((*super::super::DEFAULT_PROJECT).clone()),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionIdentity::default()
             },
@@ -355,7 +355,7 @@ fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {
             "entry",
             SessionIdentity {
                 project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
-                project: Some(super::super::DEFAULT_PROJECT.into()),
+                project: Some((*super::super::DEFAULT_PROJECT).clone()),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionIdentity::default()
             },
@@ -673,7 +673,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
     let postgres = Arc::new(postgres);
     let identity = SessionIdentity {
         project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
-        project: Some(super::super::DEFAULT_PROJECT.into()),
+        project: Some((*super::super::DEFAULT_PROJECT).clone()),
         release: Some(ReleaseIdentity::from_loaded(&release)),
         ..SessionIdentity::default()
     };
@@ -738,7 +738,7 @@ fn test_context(
         Arc::new(wamn_connections::connection_credentials::ConnectionCredentials::empty()),
         postgres,
         &release.target().project_env_key,
-        super::super::DEFAULT_PROJECT,
+        &super::super::DEFAULT_PROJECT,
         &release.target().environment,
     ));
     Arc::new(wamn_connections::invocation::ReleaseContext::new(release, facts).unwrap())

@@ -25,7 +25,7 @@ async fn pat_mode_is_recognized_and_an_absent_backend_is_one_generic_outage() {
     let plugin = routing(&json!([PAT_AUTHENTICATION_MODE]));
 
     let rejection = plugin
-        .authenticate_headers_for_test("orders", &[])
+        .authenticate_headers_for_test(&"orders".parse().unwrap(), &[])
         .await
         .expect_err("a protected route without its backend refuses");
 
@@ -39,7 +39,7 @@ async fn a_bearer_and_a_session_cookie_together_refuse() {
     for authorization in ["Bearer session.token", "Bearer wamn_pat_x", "Basic x"] {
         let rejection = plugin
             .authenticate_headers_for_test(
-                "orders",
+                &"orders".parse().unwrap(),
                 &[
                     ("authorization", authorization),
                     ("cookie", "__Host-wamn-session=session.token"),
@@ -60,7 +60,10 @@ async fn an_empty_authenticator_refuses_a_session_route_401_and_a_pat_route_503(
         (json!([PAT_AUTHENTICATION_MODE]), UNAVAILABLE),
     ] {
         let rejection = routing(&modes)
-            .authenticate_headers_for_test("orders", &[("authorization", "Bearer token")])
+            .authenticate_headers_for_test(
+                &"orders".parse().unwrap(),
+                &[("authorization", "Bearer token")],
+            )
             .await
             .expect_err("an empty authenticator refuses");
         assert_eq!((rejection.0, rejection.1.as_str()), expected);

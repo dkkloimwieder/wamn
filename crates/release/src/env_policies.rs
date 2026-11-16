@@ -40,7 +40,7 @@ pub fn env_policy_from_row(row: &Row) -> anyhow::Result<EnvPolicy> {
 /// the org's policies.
 pub async fn read_env_policy(
     client: &mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
     name: &wamn_registry::EnvName,
 ) -> anyhow::Result<Option<EnvPolicy>> {
     let rows = sqlx::query(sqlx::AssertSqlSafe(

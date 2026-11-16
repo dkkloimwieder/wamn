@@ -8,7 +8,7 @@ use super::{
 };
 
 pub(super) fn resolve_component_dependency_closure(
-    roots: &BTreeMap<String, AdmittedComponent>,
+    roots: &BTreeMap<wamn_catalog::canonical_name::CanonicalName, AdmittedComponent>,
     component_facts: &BTreeMap<
         (
             wamn_catalog::PackageName,
@@ -194,15 +194,15 @@ fn resolve_base_dependency<'a>(
 }
 
 pub(super) fn resolve_route_component<'a>(
-    attachment_id: &str,
+    attachment_id: &wamn_catalog::canonical_name::CanonicalName,
     attachment: &ServingAttachment,
-    component: &str,
-    operation: &str,
+    component: &wamn_catalog::canonical_name::CanonicalName,
+    operation: &wamn_catalog::canonical_name::CanonicalName,
     facts: &'a [AdmittedComponent],
 ) -> Result<&'a AdmittedComponent, PublishManifestError> {
     let mut matches = facts
         .iter()
-        .filter(|fact| fact.component == component && fact.operation(operation).is_some());
+        .filter(|fact| &fact.component == component && fact.operation(operation).is_some());
     let Some(fact) = matches.next() else {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::Component,
@@ -237,7 +237,7 @@ pub(super) fn resolve_route_component<'a>(
 /// operation that begins a host transaction, or a transactional statement at
 /// `site`.
 fn refuse_anonymous_reach(
-    attachment_id: &str,
+    attachment_id: &wamn_catalog::canonical_name::CanonicalName,
     operation: &AdmittedComponentOperation,
     site: &str,
 ) -> Result<(), PublishManifestError> {
@@ -275,7 +275,7 @@ pub(super) fn palette_connections(
         .map(|connection| {
             let mut modes: BTreeMap<
                 wamn_catalog::PackageName,
-                BTreeMap<String, wamn_catalog::ConnectionMode>,
+                BTreeMap<wamn_catalog::canonical_name::CanonicalName, wamn_catalog::ConnectionMode>,
             > = BTreeMap::new();
             for ((package, alias), declaration) in
                 crate::connection_requirement::palette_connections(connection, manifests.values())
@@ -291,7 +291,7 @@ pub(super) fn palette_connections(
                 modes
                     .entry(package.clone())
                     .or_default()
-                    .insert(alias.into(), mode);
+                    .insert(alias.clone(), mode);
             }
             wamn_catalog::ComponentConnection {
                 mode: wamn_catalog::ConnectionMode::ByBinding(modes),

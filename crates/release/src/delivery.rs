@@ -7,8 +7,8 @@ use wamn_catalog::PackageCoordinate;
 /// The release inputs that an application fixture provisions and publishes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReleaseIdentity {
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
     pub route_host: String,
     pub packages: BTreeSet<PackageCoordinate>,

@@ -56,7 +56,10 @@ fn failed() -> ExchangeFailure {
 /// never configured.
 pub(super) enum Audience<'a> {
     Environment(&'a ConfiguredTarget),
-    Control { audience: &'a str, org: &'a str },
+    Control {
+        audience: &'a str,
+        org: wamn_registry::OrgId,
+    },
 }
 
 /// Resolve the audience requested by a password login.
@@ -76,7 +79,7 @@ pub(super) async fn claims_for_audience(
     audience: &Audience<'_>,
     authority: SessionAuthority,
 ) -> Result<SessionClaims, ExchangeFailure> {
-    match *audience {
+    match audience {
         Audience::Environment(configured) => {
             claims_for_principal(inner, principal, configured, authority).await
         }
@@ -94,7 +97,7 @@ pub(super) async fn claims_for_audience(
 pub(super) async fn holds_control(
     client: &mut sqlx::PgConnection,
     principal: &AuthenticatedPrincipal,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> Result<bool, ExchangeFailure> {
     let registered: bool = sqlx::query(REGISTERED_ORG_SQL)
         .bind(org)
@@ -136,7 +139,7 @@ pub(super) async fn claims_for_principal(
 fn claims(
     inner: &Inner,
     principal: &AuthenticatedPrincipal,
-    org: &str,
+    org: &wamn_registry::OrgId,
     audience: &str,
     roles: Vec<String>,
     authority: SessionAuthority,
@@ -153,7 +156,7 @@ fn claims(
     Ok(SessionClaims {
         iss: inner.issuer.clone(),
         sub: *principal.principal().id(),
-        org: org.to_owned(),
+        org: org.to_string(),
         aud: audience.to_owned(),
         roles: roles
             .into_iter()

@@ -27,19 +27,23 @@ pub fn project_package_catalog(
     for package in installed {
         for model in package.models.values() {
             relation_owners
-                .entry((model.schema.clone(), model.table.clone()))
+                .entry((model.schema.to_string(), model.table.to_string()))
                 .or_insert_with(|| model.owner.clone());
             for (field, owner) in &model.field_owners {
                 field_owners.insert(
-                    (model.schema.clone(), model.table.clone(), field.clone()),
+                    (
+                        model.schema.to_string(),
+                        model.table.to_string(),
+                        field.clone(),
+                    ),
                     owner.clone(),
                 );
             }
             for (constraint, owner) in &model.constraint_owners {
                 constraint_owners.insert(
                     (
-                        model.schema.clone(),
-                        model.table.clone(),
+                        model.schema.to_string(),
+                        model.table.to_string(),
                         constraint.clone(),
                     ),
                     owner.clone(),
@@ -48,7 +52,7 @@ pub fn project_package_catalog(
         }
         for relation in package.internal_relations.values() {
             relation_owners.insert(
-                (relation.schema.clone(), relation.table.clone()),
+                (relation.schema.to_string(), relation.table.to_string()),
                 package.package.id.clone(),
             );
         }

@@ -39,10 +39,10 @@ pub(super) async fn reconcile_entity_maps(
     for model in &plan.models {
         let relation_owner = &manifest
             .models
-            .get(&model.model_id)
+            .get(model.model_id.as_str())
             .expect("the migration plan preserves every manifest model")
             .owner;
-        let schema = wamn_postgres::schema::BareSchemaName::new(&model.schema)
+        let schema = wamn_postgres::schema::BareSchemaName::new(model.schema.to_string())
             .context("validate manifest model schema for entity-map query")?;
         let mapping_sql = format!(
             "SELECT mapped.package_id, mapped.entity_id, mapped.table_name, \
@@ -102,7 +102,7 @@ pub(super) async fn reconcile_entity_maps(
             }
         }
         let mapped = sqlx::query(sqlx::AssertSqlSafe(
-            wamn_control_provision::sql::upsert_entity_map_sql(&model.schema),
+            wamn_control_provision::sql::upsert_entity_map_sql(model.schema.as_str()),
         ))
         .bind(relation_owner)
         .bind(&model.model_id)
@@ -120,7 +120,7 @@ pub(super) async fn reconcile_entity_maps(
     }
 
     for excluded in &plan.cdc_excluded_relations {
-        let schema = wamn_postgres::schema::BareSchemaName::new(&excluded.schema)
+        let schema = wamn_postgres::schema::BareSchemaName::new(excluded.schema.to_string())
             .context("validate internal relation schema for CDC-exclusion query")?;
         let mapping_sql = format!(
             "SELECT mapped.package_id, mapped.relation_id, mapped.table_name, \
@@ -181,7 +181,7 @@ pub(super) async fn reconcile_entity_maps(
             }
         }
         let mapped = sqlx::query(sqlx::AssertSqlSafe(
-            wamn_control_provision::sql::upsert_cdc_exclusion_map_sql(&excluded.schema),
+            wamn_control_provision::sql::upsert_cdc_exclusion_map_sql(excluded.schema.as_str()),
         ))
         .bind(&manifest.package.id)
         .bind(&excluded.relation_id)

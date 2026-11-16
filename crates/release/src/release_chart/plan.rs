@@ -7,18 +7,19 @@ use anyhow::Context as _;
 /// characters of SHA-256 over `org/env/project/application`. The name is at most
 /// 47 characters, inside Helm's bound of 53.
 pub fn release_name(
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<String> {
-    wamn_control_provision::environment_names::application_release_name(
-        org,
-        project,
-        env,
-        application,
+    Ok(
+        wamn_control_provision::environment_names::application_release_name(
+            org,
+            project,
+            env,
+            application,
+        )?,
     )
-    .context("the environment coordinate is not valid")
 }
 
 /// The name the release chart gives the WorkloadDeployment of `role` in
@@ -32,15 +33,15 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 /// Each role's configuration derives from the coordinate.
 pub fn roles(
     manifest: &ServingManifest,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Vec<Role> {
     let project_env_key = wamn_control_provision::project_env_key(org, project, env);
     let target = |extra: &[(&str, &str)]| -> Mapping {
         [
             ("wamn.project_env_key", project_env_key.as_str()),
-            ("wamn.project", project),
+            ("wamn.project", project.as_str()),
             ("wamn.environment", env.as_str()),
         ]
         .iter()
@@ -123,7 +124,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     values.insert("audit".into(), mapping([("actor", input.actor.clone())]));
     values.insert(
         "hostGroup".into(),
-        wamn_registry::name::environment_host_name(&input.org, &input.env)?.into(),
+        wamn_registry::name::environment_host_name(&input.org, &input.env).into(),
     );
     Ok(Value::Mapping(values))
 }
@@ -184,8 +185,8 @@ impl RoleName {
 /// The inputs of one application's install values.
 #[derive(Debug, Clone)]
 pub struct ValuesInput {
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
     /// `sha256:<hex>` of the release manifest.
     pub manifest_digest: wamn_digest::Digest,

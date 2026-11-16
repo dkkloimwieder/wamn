@@ -66,11 +66,11 @@ fn history_triggers(
         .collect::<Vec<_>>();
     let quoted = format!(
         "{}.{}",
-        quoted_name(&model.schema),
-        quoted_name(&model.table)
+        quoted_name(model.schema.as_str()),
+        quoted_name(model.table.as_str())
     );
-    let stamp_name = generated_function_name(&model.schema, &model.table, "stamp")?;
-    let log_name = generated_function_name(&model.schema, &model.table, "log")?;
+    let stamp_name = generated_function_name(model.schema.as_str(), model.table.as_str(), "stamp")?;
+    let log_name = generated_function_name(model.schema.as_str(), model.table.as_str(), "log")?;
     let stamp_ident = quoted_name(&stamp_name);
     let log_ident = quoted_name(&log_name);
     let stamp = (!stamped.is_empty()).then(|| {
@@ -80,8 +80,8 @@ fn history_triggers(
             "TRIGGER {STAMP_TRIGGER} BEFORE INSERT OR UPDATE ON {quoted} FOR EACH ROW EXECUTE FUNCTION wamn_history.{stamp_ident}()"))
     });
     let log = model.log_retention().map(|retention| {
-        let history = format!("{}.{}", postgres_protocol::escape::escape_identifier(&model.schema),
-            postgres_protocol::escape::escape_identifier(&history_table_name(&model.table)));
+        let history = format!("{}.{}", postgres_protocol::escape::escape_identifier(model.schema.as_str()),
+            postgres_protocol::escape::escape_identifier(&history_table_name(model.table.as_str())));
         (log_function_sql(&log_ident, &history, columns), format!(
             "TRIGGER {LOG_TRIGGER} AFTER INSERT OR DELETE OR UPDATE ON {quoted} FOR EACH ROW EXECUTE FUNCTION wamn_history.{log_ident}({})",
             postgres_protocol::escape::escape_literal(retention)))
@@ -104,8 +104,8 @@ fn history_triggers(
 pub fn history_table_sql(model: &ModelDeclaration) -> String {
     format!(
         "SELECT wamn_history.create_history_table({}, {}, false)",
-        postgres_protocol::escape::escape_literal(&model.schema),
-        postgres_protocol::escape::escape_literal(&model.table)
+        postgres_protocol::escape::escape_literal(model.schema.as_str()),
+        postgres_protocol::escape::escape_literal(model.table.as_str())
     )
 }
 
@@ -125,7 +125,7 @@ SELECT a.attname::text, \
 pub(crate) async fn render(
     root: &std::path::Path,
     manifest: &PackageManifest,
-    columns: &BTreeMap<String, Vec<RelationColumn>>,
+    columns: &BTreeMap<wamn_catalog::canonical_name::CanonicalName, Vec<RelationColumn>>,
 ) -> anyhow::Result<String> {
     let mut statements = retired_triggers(root, manifest).await?;
     for (id, model) in manifest
@@ -143,8 +143,8 @@ pub(crate) async fn render(
             statements.push(format!(
                 "DROP TRIGGER IF EXISTS {} ON {}.{}",
                 trigger.name,
-                postgres_protocol::escape::escape_identifier(&model.schema),
-                postgres_protocol::escape::escape_identifier(&model.table)
+                postgres_protocol::escape::escape_identifier(model.schema.as_str()),
+                postgres_protocol::escape::escape_identifier(model.table.as_str())
             ));
             if let Some((function, definition)) = trigger.definition {
                 statements.push(function);

@@ -26,12 +26,12 @@ fn the_bundle_pins_the_separate_route_component() {
     let _ = std::fs::remove_dir_all(&out);
     write_package(
         &repository().join("apps/edge_device"),
-        "device",
+        &"device".parse().unwrap(),
         &component,
         &route,
         &EdgeTarget {
-            org: "acme",
-            project: "plant",
+            org: &"acme".parse().unwrap(),
+            project: &"plant".parse().unwrap(),
             environment: &"dev".parse().unwrap(),
         },
         &out,

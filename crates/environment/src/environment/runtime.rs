@@ -25,7 +25,7 @@ pub async fn resolve(
     let target = Target {
         kubeconfig,
         context,
-        namespace: environment.org.clone(),
+        namespace: environment.org.to_string(),
     };
     platform.target = target;
     platform.release_artifact_base = format!("{}/wamn/releases", document.registry);
@@ -44,7 +44,10 @@ pub(super) async fn resolve_target(
 }
 
 /// Read platform inputs before an environment or application exists.
-pub async fn resolve_platform(platform: &mut Platform, org: &str) -> anyhow::Result<Value> {
+pub async fn resolve_platform(
+    platform: &mut Platform,
+    org: &wamn_registry::OrgId,
+) -> anyhow::Result<Value> {
     crate::platform::edge::require_running(&platform.target).await?;
     let installed = crate::platform::installed::InstalledPlatform::read(&platform.target)
         .await?
@@ -61,18 +64,21 @@ pub async fn resolve_platform(platform: &mut Platform, org: &str) -> anyhow::Res
     if chart.is_downloaded() {
         platform.chart_download = Some(std::sync::Arc::new(chart));
     }
-    platform.target.namespace = org.into();
-    platform.database_namespace = org.into();
+    platform.target.namespace = org.to_string();
+    platform.database_namespace = org.to_string();
     apply_registry_configuration(platform, &installed.values["configuration"])?;
     Ok(installed.values)
 }
 
-pub(super) async fn resolve_registry(platform: &mut Platform, org: &str) -> anyhow::Result<Value> {
+pub(super) async fn resolve_registry(
+    platform: &mut Platform,
+    org: &wamn_registry::OrgId,
+) -> anyhow::Result<Value> {
     let installed = crate::platform::installed::InstalledPlatform::read(&platform.target)
         .await?
         .context("platform is not installed")?;
-    platform.target.namespace = org.into();
-    platform.database_namespace = org.into();
+    platform.target.namespace = org.to_string();
+    platform.database_namespace = org.to_string();
     apply_registry_configuration(platform, &installed.values["configuration"])?;
     Ok(installed.values)
 }
@@ -159,7 +165,7 @@ pub(super) async fn resolve_application(
             .as_deref()
             .context("missing component registry")?,
     )?;
-    let name = super::ensure::environment_host_name(&environment.org, &environment.env)?;
+    let name = wamn_registry::name::environment_host_name(&environment.org, &environment.env);
     let shared = resources::helm(
         target,
         &[

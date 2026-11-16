@@ -1,5 +1,7 @@
 //! Pure semantic condition for a wiring against admitted component facts.
 
+use crate::canonical_name::CanonicalName;
+
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -97,7 +99,7 @@ pub fn validate_wiring_compatibility(
         let (component, operation) = resolve_component_operation(node_id, node, components)?;
         validate_parameters(node_id, node, operation)?;
         resolved.insert(
-            node_id.as_str(),
+            node_id,
             crate::specialize_wiring_operation(node_id, node, component, operation)?,
         );
     }
@@ -114,7 +116,7 @@ pub fn validate_wiring_compatibility(
 /// parameter, port, and schema rules as the package-local condition.
 pub fn validate_resolved_wiring_compatibility(
     wiring: &WiringDocument,
-    components: &BTreeMap<String, AdmittedComponent>,
+    components: &BTreeMap<CanonicalName, AdmittedComponent>,
 ) -> Result<(), WiringCompatibilityError> {
     let mut resolved = BTreeMap::new();
     for (node_id, node) in &wiring.nodes {
@@ -149,7 +151,7 @@ pub fn validate_resolved_wiring_compatibility(
         })?;
         validate_parameters(node_id, node, operation)?;
         resolved.insert(
-            node_id.as_str(),
+            node_id,
             crate::specialize_wiring_operation(node_id, node, component, operation)?,
         );
     }
@@ -165,12 +167,12 @@ pub fn validate_resolved_wiring_compatibility(
 
 fn validate_resolved_edges(
     wiring: &WiringDocument,
-    resolved: &BTreeMap<&str, Cow<'_, AdmittedComponentOperation>>,
+    resolved: &BTreeMap<&CanonicalName, Cow<'_, AdmittedComponentOperation>>,
 ) -> Result<(), WiringCompatibilityError> {
     if let Some(node_id) = wiring
         .response
         .as_ref()
-        .and_then(|response| response.committed_result.as_deref())
+        .and_then(|response| response.committed_result.as_ref())
     {
         let operation = resolved
             .get(node_id)
@@ -202,15 +204,15 @@ fn validate_resolved_edges(
     }
     for edge in &wiring.edges {
         let source = resolved
-            .get(edge.from.as_str())
+            .get(&edge.from)
             .expect("WiringDocument validation resolves every source node");
         let target = resolved
-            .get(edge.to.as_str())
+            .get(&edge.to)
             .expect("WiringDocument validation resolves every target node");
         let target_port = resolve_input_port(
             &edge.to,
             &wiring.nodes[&edge.to].operation,
-            edge.to_port.as_deref(),
+            edge.to_port.as_ref(),
             target,
         )?;
 
@@ -257,7 +259,7 @@ fn validate_resolved_edges(
 }
 
 fn resolve_component_operation<'a>(
-    node_id: &str,
+    node_id: &CanonicalName,
     node: &WiringNode,
     components: &'a [AdmittedComponent],
 ) -> Result<(&'a AdmittedComponent, &'a AdmittedComponentOperation), WiringCompatibilityError> {
@@ -315,7 +317,7 @@ fn resolve_component_operation<'a>(
 }
 
 fn validate_parameters(
-    node_id: &str,
+    node_id: &CanonicalName,
     node: &WiringNode,
     operation: &AdmittedComponentOperation,
 ) -> Result<(), WiringCompatibilityError> {
@@ -352,8 +354,8 @@ fn validate_parameters(
 }
 
 fn validate_parameter_value(
-    node_id: &str,
-    parameter: &str,
+    node_id: &CanonicalName,
+    parameter: &CanonicalName,
     value: &serde_json::Value,
     schema: &ComponentSchema,
 ) -> Result<(), WiringCompatibilityError> {
@@ -379,16 +381,16 @@ fn validate_parameter_value(
 
 /// Resolve an authored input port, or the operation's single input.
 pub fn resolve_input_port<'a>(
-    node_id: &str,
-    operation_name: &str,
-    authored_port: Option<&str>,
+    node_id: &CanonicalName,
+    operation_name: &CanonicalName,
+    authored_port: Option<&CanonicalName>,
     operation: &'a AdmittedComponentOperation,
 ) -> Result<&'a AdmittedComponentPort, WiringCompatibilityError> {
     match authored_port {
         Some(name) => operation
             .input_ports
             .iter()
-            .find(|port| port.name == name)
+            .find(|port| &port.name == name)
             .ok_or_else(|| {
                 WiringCompatibilityError::new(
                     WiringCompatibilityErrorType::UnknownInputPort,
@@ -426,7 +428,7 @@ mod tests {
 
     fn component(
         name: &str,
-        operation: &str,
+        operation: &CanonicalName,
         input_name: &str,
         input_schema: serde_json::Value,
         output_name: &str,
@@ -434,20 +436,20 @@ mod tests {
     ) -> AdmittedComponent {
         AdmittedComponent {
             target: target(),
-            component: name.to_string(),
-            interface_version: "0.1.0".to_string(),
+            component: name.parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
-                operation.to_string(),
+                operation.clone(),
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: None,
                     host_transaction: false,
                     input_ports: vec![AdmittedComponentPort {
-                        name: input_name.to_string(),
+                        name: input_name.parse().unwrap(),
                         schema: schema(input_schema),
                     }],
                     output_ports: vec![AdmittedComponentPort {
-                        name: output_name.to_string(),
+                        name: output_name.parse().unwrap(),
                         schema: schema(output_schema),
                     }],
                     parameters: Vec::new(),
@@ -466,7 +468,7 @@ mod tests {
 
     fn operation_mut<'a>(
         component: &'a mut AdmittedComponent,
-        operation: &str,
+        operation: &CanonicalName,
     ) -> &'a mut AdmittedComponentOperation {
         component
             .operations
@@ -484,38 +486,38 @@ mod tests {
 
     fn wiring() -> WiringDocument {
         WiringDocument::new(
-            "orders",
+            "orders".parse().unwrap(),
             1,
-            "source",
+            "source".parse().unwrap(),
             BTreeMap::from([
                 (
-                    "source".to_string(),
+                    "source".parse().unwrap(),
                     WiringNode {
-                        component: "source".to_string(),
-                        interface_version: "0.1.0".to_string(),
-                        operation: "read".to_string(),
+                        component: "source".parse().unwrap(),
+                        interface_version: "0.1.0".parse().unwrap(),
+                        operation: "read".parse().unwrap(),
                         operation_dependency: None,
                         params: BTreeMap::new(),
                         terminal: None,
                     },
                 ),
                 (
-                    "target".to_string(),
+                    "target".parse().unwrap(),
                     WiringNode {
-                        component: "target".to_string(),
-                        interface_version: "0.1.0".to_string(),
-                        operation: "write".to_string(),
+                        component: "target".parse().unwrap(),
+                        interface_version: "0.1.0".parse().unwrap(),
+                        operation: "write".parse().unwrap(),
                         operation_dependency: None,
-                        params: BTreeMap::from([("relation".to_string(), json!("orders"))]),
+                        params: BTreeMap::from([("relation".parse().unwrap(), json!("orders"))]),
                         terminal: Some(WiringTerminal::Respond),
                     },
                 ),
             ]),
             vec![WiringEdge {
-                from: "source".to_string(),
-                from_port: "record".to_string(),
-                to: "target".to_string(),
-                to_port: Some("record".to_string()),
+                from: "source".parse().unwrap(),
+                from_port: "record".parse().unwrap(),
+                to: "target".parse().unwrap(),
+                to_port: Some("record".parse().unwrap()),
             }],
         )
         .expect("fixture wiring is structurally valid")
@@ -525,19 +527,29 @@ mod tests {
         let record = json!({"type": "object", "required": ["id"]});
         let mut source = component(
             "source",
-            "read",
+            &"read".parse().unwrap(),
             "request",
             json!({}),
             "record",
             record.clone(),
         );
-        operation_mut(&mut source, "read").input_ports.clear();
-        let mut target = component("target", "write", "record", record, "main", json!({}));
-        operation_mut(&mut target, "write").parameters = vec![AdmittedComponentParameter {
-            name: "relation".to_string(),
-            schema: schema(json!({"type": "string"})),
-            required: true,
-        }];
+        operation_mut(&mut source, &"read".parse().unwrap())
+            .input_ports
+            .clear();
+        let mut target = component(
+            "target",
+            &"write".parse().unwrap(),
+            "record",
+            record,
+            "main",
+            json!({}),
+        );
+        operation_mut(&mut target, &"write".parse().unwrap()).parameters =
+            vec![AdmittedComponentParameter {
+                name: "relation".parse().unwrap(),
+                schema: schema(json!({"type": "string"})),
+                required: true,
+            }];
         vec![source, target]
     }
 
@@ -545,29 +557,31 @@ mod tests {
     fn response_commit_selection_requires_the_selected_admitted_promise() {
         let mut wiring = wiring();
         wiring.response = Some(crate::WiringResponse {
-            node: "target".to_owned(),
+            node: "target".parse().unwrap(),
             schema: json!({"type": "array"}),
-            committed_result: Some("source".to_owned()),
+            committed_result: Some("source".parse().unwrap()),
         });
         let mut facts = components();
         assert!(validate_wiring_compatibility(&wiring, &target(), &facts).is_err());
-        let operation = operation_mut(&mut facts[0], "read");
+        let operation = operation_mut(&mut facts[0], &"read".parse().unwrap());
         operation.committed_result_schema = Some(schema(json!({"type": "object"})));
         assert!(validate_wiring_compatibility(&wiring, &target(), &facts).is_err());
         let registered = "app:order/read@1.0.0";
         let mut operation = facts[0].operations.remove("read").unwrap();
         operation.registered_operation = Some(registered.parse().unwrap());
-        facts[0].operations.insert(registered.to_owned(), operation);
-        wiring.nodes.get_mut("source").unwrap().operation = registered.to_owned();
+        facts[0]
+            .operations
+            .insert(registered.parse().unwrap(), operation);
+        wiring.nodes.get_mut("source").unwrap().operation = registered.parse().unwrap();
         validate_wiring_compatibility(&wiring, &target(), &facts)
             .expect("response and edge schemas remain separate");
         let resolved = BTreeMap::from([
-            ("source".to_owned(), facts[0].clone()),
-            ("target".to_owned(), facts[1].clone()),
+            ("source".parse().unwrap(), facts[0].clone()),
+            ("target".parse().unwrap(), facts[1].clone()),
         ]);
         validate_resolved_wiring_compatibility(&wiring, &resolved)
             .expect("release resolution enforces the same admitted promise");
-        wiring.response.as_mut().unwrap().committed_result = Some("target".to_owned());
+        wiring.response.as_mut().unwrap().committed_result = Some("target".parse().unwrap());
         assert!(validate_resolved_wiring_compatibility(&wiring, &resolved).is_err());
     }
 
@@ -583,8 +597,8 @@ mod tests {
         facts[1].target.package_id = "base".parse().unwrap();
         facts[1].target.package_version = "3.1.0".parse().unwrap();
         let resolved = BTreeMap::from([
-            ("source".to_owned(), facts[0].clone()),
-            ("target".to_owned(), facts[1].clone()),
+            ("source".parse().unwrap(), facts[0].clone()),
+            ("target".parse().unwrap(), facts[1].clone()),
         ]);
 
         validate_resolved_wiring_compatibility(&wiring(), &resolved)
@@ -604,7 +618,7 @@ mod tests {
     #[test]
     fn either_endpoint_digest_or_port_drift_refuses() {
         let mut source_digest = components();
-        operation_mut(&mut source_digest[0], "read").output_ports[0].schema =
+        operation_mut(&mut source_digest[0], &"read".parse().unwrap()).output_ports[0].schema =
             schema(json!({"type": "string"}));
         assert_eq!(
             validate_wiring_compatibility(&wiring(), &target(), &source_digest)
@@ -614,7 +628,7 @@ mod tests {
         );
 
         let mut target_digest = components();
-        operation_mut(&mut target_digest[1], "write").input_ports[0].schema =
+        operation_mut(&mut target_digest[1], &"write".parse().unwrap()).input_ports[0].schema =
             schema(json!({"type": "array"}));
         assert_eq!(
             validate_wiring_compatibility(&wiring(), &target(), &target_digest)
@@ -624,7 +638,7 @@ mod tests {
         );
 
         let mut wrong_port = wiring();
-        wrong_port.edges[0].to_port = Some("missing".to_string());
+        wrong_port.edges[0].to_port = Some("missing".parse().unwrap());
         assert_eq!(
             validate_wiring_compatibility(&wrong_port, &target(), &components())
                 .unwrap_err()
@@ -646,7 +660,7 @@ mod tests {
 
         let mut invalid = wiring();
         invalid.nodes.get_mut("target").unwrap().params =
-            BTreeMap::from([("relation".to_string(), json!(42))]);
+            BTreeMap::from([("relation".parse().unwrap(), json!(42))]);
         assert_eq!(
             validate_wiring_compatibility(&invalid, &target(), &components())
                 .unwrap_err()
@@ -667,7 +681,8 @@ mod tests {
     #[test]
     fn equality_has_no_structural_subtyping_fallback() {
         let mut structurally_wider = components();
-        operation_mut(&mut structurally_wider[1], "write").input_ports[0].schema = schema(json!({
+        operation_mut(&mut structurally_wider[1], &"write".parse().unwrap()).input_ports[0]
+            .schema = schema(json!({
             "type": "object",
             "required": ["id"],
             "additionalProperties": true
@@ -683,11 +698,11 @@ mod tests {
     #[test]
     fn error_edges_validate_the_target_without_fabricating_a_component_output_schema() {
         let mut error = wiring();
-        error.edges[0].from_port = crate::ERROR_PORT.to_string();
+        error.edges[0].from_port = crate::ERROR_PORT.parse().unwrap();
         validate_wiring_compatibility(&error, &target(), &components())
             .expect("the router-owned error payload has no component output schema");
 
-        error.edges[0].to_port = Some("missing".to_string());
+        error.edges[0].to_port = Some("missing".parse().unwrap());
         assert_eq!(
             validate_wiring_compatibility(&error, &target(), &components())
                 .unwrap_err()
@@ -699,32 +714,32 @@ mod tests {
     fn publication_checks_the_declared_jsonata_input_and_output_schemas() {
         let mut jsonata = component(
             "jsonata",
-            "wamn:node/handler@0.1.0",
+            &"wamn:node/handler@0.1.0".parse().unwrap(),
             "input",
             json!({}),
             "main",
             json!({}),
         );
         jsonata.target = crate::palette_target(&jsonata.target.project_env_key);
-        operation_mut(&mut jsonata, "wamn:node/handler@0.1.0")
+        operation_mut(&mut jsonata, &"wamn:node/handler@0.1.0".parse().unwrap())
             .input_ports
             .push(AdmittedComponentPort {
-                name: "items".into(),
+                name: "items".parse().unwrap(),
                 schema: schema(json!({"type": "array"})),
             });
-        operation_mut(&mut jsonata, "wamn:node/handler@0.1.0").parameters = vec![
+        operation_mut(&mut jsonata, &"wamn:node/handler@0.1.0".parse().unwrap()).parameters = vec![
             AdmittedComponentParameter {
-                name: "expression".into(),
+                name: "expression".parse().unwrap(),
                 schema: schema(json!({"type": "string"})),
                 required: true,
             },
             AdmittedComponentParameter {
-                name: "input-schema".into(),
+                name: "input-schema".parse().unwrap(),
                 schema: schema(json!({})),
                 required: true,
             },
             AdmittedComponentParameter {
-                name: "output-schema".into(),
+                name: "output-schema".parse().unwrap(),
                 schema: schema(json!({})),
                 required: true,
             },
@@ -741,7 +756,7 @@ mod tests {
         .unwrap();
         let sink = component(
             "sink",
-            "consume",
+            &"consume".parse().unwrap(),
             "input",
             json!({"type": "integer"}),
             "main",
@@ -749,19 +764,19 @@ mod tests {
         );
         let source = component(
             "source",
-            "read",
+            &"read".parse().unwrap(),
             "input",
             json!({}),
             "main",
             document.nodes["map"].params["input-schema"].clone(),
         );
         let components = BTreeMap::from([
-            ("source".to_owned(), source),
-            ("map".to_owned(), jsonata),
-            ("consume".to_owned(), sink),
+            ("source".parse().unwrap(), source),
+            ("map".parse().unwrap(), jsonata),
+            ("consume".parse().unwrap(), sink),
         ]);
         for port in ["input", "items"] {
-            document.edges[0].to_port = Some(port.into());
+            document.edges[0].to_port = Some(port.parse().unwrap());
             validate_resolved_wiring_compatibility(&document, &components)
                 .expect("both JSONata inputs use the declared schema");
         }
@@ -770,7 +785,7 @@ mod tests {
             .get_mut("map")
             .unwrap()
             .params
-            .insert("input-schema".into(), json!({"type": "string"}))
+            .insert("input-schema".parse().unwrap(), json!({"type": "string"}))
             .unwrap();
         assert_eq!(
             validate_resolved_wiring_compatibility(&document, &components)
@@ -783,13 +798,11 @@ mod tests {
             .get_mut("map")
             .unwrap()
             .params
-            .insert("input-schema".into(), input);
-        document
-            .nodes
-            .get_mut("map")
-            .unwrap()
-            .params
-            .insert("expression".into(), json!("flag ? 42 : \"wrong\""));
+            .insert("input-schema".parse().unwrap(), input);
+        document.nodes.get_mut("map").unwrap().params.insert(
+            "expression".parse().unwrap(),
+            json!("flag ? 42 : \"wrong\""),
+        );
         let error = validate_resolved_wiring_compatibility(&document, &components).unwrap_err();
         assert_eq!(
             error.error_type(),

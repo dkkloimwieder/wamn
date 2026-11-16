@@ -14,7 +14,11 @@ use wamn_registry::Triple;
 pub type Declarations = BTreeMap<String, Vec<ManagedRole>>;
 
 /// Fixed bootstrap credentials precede every org and project row.
-pub fn platform(namespace: &str, cluster: &str, database: &str) -> anyhow::Result<Declarations> {
+pub fn platform(
+    namespace: &wamn_registry::OrgId,
+    cluster: &str,
+    database: &str,
+) -> anyhow::Result<Declarations> {
     Ok(BTreeMap::from([(
         cluster.to_owned(),
         vec![
@@ -26,7 +30,7 @@ pub fn platform(namespace: &str, cluster: &str, database: &str) -> anyhow::Resul
             MigrationDatabase::System.managed_role(database),
             managed_role(
                 wamn_control_provision::identity_role::identity_issuer_login(
-                    &crate::platform::identity::issuer(namespace),
+                    &crate::platform::identity::issuer(namespace.as_str()),
                 )?,
                 wamn_control_provision::identity_role::IDENTITY_ISSUER_ROLE,
                 "wamn-identity-db".into(),
@@ -36,11 +40,14 @@ pub fn platform(namespace: &str, cluster: &str, database: &str) -> anyhow::Resul
 }
 
 /// Rebuild the whole org declaration; installed Helm role values are never read.
-pub async fn registered(registry_input: &str, namespace: &str) -> anyhow::Result<Declarations> {
+pub async fn registered(
+    registry_input: &str,
+    namespace: &wamn_registry::OrgId,
+) -> anyhow::Result<Declarations> {
     type ProjectFact = (
-        String,
-        String,
-        String,
+        wamn_registry::OrgId,
+        wamn_registry::ProjectId,
+        wamn_registry::EnvName,
         wamn_registry::instance_suffix::InstanceSuffix,
         String,
         Option<String>,
@@ -55,7 +62,7 @@ pub async fn registered(registry_input: &str, namespace: &str) -> anyhow::Result
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *snapshot)
         .await?;
-    let orgs: Vec<String> = sqlx::query_scalar(wamn_registry::sql::INSTALL_ORGS)
+    let orgs: Vec<wamn_registry::OrgId> = sqlx::query_scalar(wamn_registry::sql::INSTALL_ORGS)
         .bind(namespace)
         .fetch_all(&mut *snapshot)
         .await?;
@@ -95,7 +102,7 @@ pub async fn registered(registry_input: &str, namespace: &str) -> anyhow::Result
         };
         let org = wamn_control_provision::Org { id: org, placement };
         let project_cluster = wamn_control_provision::cluster_of(&org, &policy).name;
-        let triple = Triple::new(org.id, environment.parse()?, project_name);
+        let triple = Triple::new(org.id, environment, project_name);
         project(
             &mut declarations,
             &triple,

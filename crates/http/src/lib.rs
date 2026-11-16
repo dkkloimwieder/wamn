@@ -263,7 +263,11 @@ impl ConnectionHttp {
         request: &Request,
         rejected: Option<&str>,
     ) -> Result<Attempt, ConnectionError> {
-        if request.requirement.is_empty() || request.method.is_empty() {
+        let requirement: wamn_catalog::canonical_name::CanonicalName = request
+            .requirement
+            .parse()
+            .map_err(|_| ConnectionError::Incompatible)?;
+        if request.method.is_empty() {
             return Err(ConnectionError::Incompatible);
         }
         let target = normalize_portable_http_target(&request.path_and_query).map_err(|error| {
@@ -279,16 +283,13 @@ impl ConnectionHttp {
             .ok_or(ConnectionError::AttestationInvalid)?;
         let facts = &context.connections;
         let environment = facts.environment();
-        let snapshot = wamn_sql::connection_binding::resolve(
-            &self.postgres,
-            component_id,
-            &request.requirement,
-        )
-        .await
-        .map_err(|error| {
-            tracing::warn!(%error, "HTTP connection authority refused");
-            ConnectionError::AttestationInvalid
-        })?;
+        let snapshot =
+            wamn_sql::connection_binding::resolve(&self.postgres, component_id, &requirement)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(%error, "HTTP connection authority refused");
+                    ConnectionError::AttestationInvalid
+                })?;
         authorize_snapshot(&snapshot, &ConnectionTypeDescriptor::http_v1())?;
         authorize_method(snapshot.read_only, &request.method)?;
 
@@ -331,11 +332,11 @@ impl ConnectionHttp {
         let identity = ClientIdentity {
             connection: ConnectionIdentity {
                 project_env_key: facts.project_env_key().clone(),
-                project: facts.project().into(),
+                project: facts.project().as_str().into(),
                 environment: environment.clone(),
                 instance: connection.to_string().into(),
             },
-            package: invocation.package_id.clone().into(),
+            package: invocation.package_id.clone(),
             component_digest: invocation.component_digest,
             requirement: request.requirement.clone().into(),
             binding_hash: snapshot
@@ -970,7 +971,10 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
                     .and_then(|identity| identity.project_env_key.as_ref()),
                 project: identity
                     .as_ref()
-                    .and_then(|identity| identity.project.as_deref())
+                    .and_then(|identity| identity
+                        .project
+                        .as_ref()
+                        .map(wamn_registry::ProjectId::as_str))
                     .unwrap_or(""),
                 component: component_id,
             },
@@ -1090,7 +1094,13 @@ impl<T: 'static + Send> http::HostWithStore<T> for SharedCtx {
                     .postgres
                     .scopes
                     .read::<wamn_sql::invocation::Authority, _>(&component_id, |record| {
-                        record_duration(record.identity.project.as_deref().unwrap_or(""));
+                        record_duration(
+                            record
+                                .identity
+                                .project
+                                .as_ref()
+                                .map_or("", wamn_registry::ProjectId::as_str),
+                        );
                     })
                     .is_none()
                 {
@@ -1182,7 +1192,7 @@ mod tests {
         let binding = CandidateConnectionBinding {
             read_only: snapshot.read_only,
             component_digest: admitted.component_digest,
-            store_alias: "erp".into(),
+            store_alias: "erp".parse().unwrap(),
             requirement_hash: snapshot.requirement_hash.unwrap(),
             instance_id: snapshot.instance_id.clone().unwrap(),
             instance_revision: snapshot.instance_revision.unwrap(),
@@ -1227,7 +1237,7 @@ mod tests {
             change(&mut changed);
             assert!(authorize_candidate_closure(&admitted, &changed, &binding).is_err());
         }
-        admitted.origin.operation = "another-operation".into();
+        admitted.origin.operation = "another-operation".parse().unwrap();
         assert!(authorize_candidate_closure(&admitted, &snapshot, &binding).is_err());
     }
 
@@ -1310,8 +1320,8 @@ mod tests {
             manifest_digest: digest('c'),
             environment: "prod".parse().unwrap(),
             wiring_hash: digest('b'),
-            component: "notifier".to_string(),
-            interface_version: "0.1".to_string(),
+            component: "notifier".parse().unwrap(),
+            interface_version: "0.1".parse().unwrap(),
             binding_world: Arc::new(
                 CandidateBindingWorld::from_json(serde_json::json!([])).expect("empty world"),
             ),
@@ -1332,7 +1342,7 @@ mod tests {
 
         let mut unrelated = manifest.components.first().expect("root").clone();
         unrelated.package_id = "package_b".parse().unwrap();
-        unrelated.descriptor.component = "unrelated".to_string();
+        unrelated.descriptor.component = "unrelated".parse().unwrap();
         unrelated.descriptor.component_digest = digest('e');
         manifest.release.packages.insert(
             PackageCoordinate::new("package_b".parse().unwrap(), "1.0.0".parse().unwrap())
@@ -1523,7 +1533,7 @@ mod tests {
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
             &"org-a--dev--project".parse().unwrap(),
-            "project-a",
+            &"project-a".parse().unwrap(),
             &"dev".parse().unwrap(),
         ));
         let release = test_release(&"org-a--dev--project".parse().unwrap());

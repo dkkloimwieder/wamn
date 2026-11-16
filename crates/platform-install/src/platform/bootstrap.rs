@@ -92,7 +92,7 @@ fn organization_job(document: &ClusterDocument, image: &str) -> Value {
         &[
             "provision-org",
             "--org",
-            &document.org,
+            document.org.as_str(),
             "--template",
             "trials",
             "--pool",
@@ -109,9 +109,9 @@ fn issuer_credential_job(document: &ClusterDocument, image: &str) -> Value {
         &[
             "provision-identity-issuer",
             "--issuer",
-            &super::identity::issuer(&document.org),
+            &super::identity::issuer(document.org.as_str()),
             "--namespace",
-            &document.org,
+            document.org.as_str(),
         ],
     )
 }
@@ -129,27 +129,27 @@ pub async fn initialize(
     directory: &Path,
 ) -> anyhow::Result<()> {
     let target = Target {
-        namespace: document.org.clone(),
+        namespace: document.org.to_string(),
         ..target.clone()
     };
     let image = chart.image("ctl")?;
     let mut system = system_job(document, image);
-    administrator(&mut system, &document.org)?;
+    administrator(&mut system, document.org.as_str())?;
     registry(&mut system, document);
     job::run(&target, directory, &mut system, &mut []).await?;
     let mut org = organization_job(document, image);
-    administrator(&mut org, &document.org)?;
+    administrator(&mut org, document.org.as_str())?;
     registry(&mut org, document);
     job::run(&target, directory, &mut org, &mut []).await?;
 
     let mut issuer = issuer_credential_job(document, image);
-    administrator(&mut issuer, &document.org)?;
+    administrator(&mut issuer, document.org.as_str())?;
     registry(&mut issuer, document);
     job::run(&target, directory, &mut issuer, &mut []).await?;
     let control = crate::credentials::configuration(
-        &document.org,
+        document.org.as_str(),
         "wamn-pg",
-        database_host(&document.org),
+        database_host(document.org.as_str()),
         5432,
         "wamn_system".into(),
         wamn_control_provision::workload_login(
@@ -165,7 +165,7 @@ pub async fn initialize(
     kubectl::apply(
         &target.kubeconfig,
         &target.context,
-        &document.org,
+        document.org.as_str(),
         &configuration,
     )
     .await?;

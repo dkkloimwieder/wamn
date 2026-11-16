@@ -70,14 +70,14 @@ fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
 
     let (org, project, env) = ("acme", "billing", "dev");
     let db = project_env_database_name(
-        org,
-        project,
+        &org.parse().unwrap(),
+        &project.parse().unwrap(),
         &env.parse().unwrap(),
         &INSTANCE.parse().unwrap(),
     );
     let cdc = cdc_object_name(
-        org,
-        project,
+        &org.parse().unwrap(),
+        &project.parse().unwrap(),
         &env.parse().unwrap(),
         &INSTANCE.parse().unwrap(),
     );
@@ -189,14 +189,14 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_project_env_key
 
     let (org, project, env) = ("acme", "narrowing", "dev");
     let db = project_env_database_name(
-        org,
-        project,
+        &org.parse().unwrap(),
+        &project.parse().unwrap(),
         &env.parse().unwrap(),
         &INSTANCE.parse().unwrap(),
     );
     let cdc = cdc_object_name(
-        org,
-        project,
+        &org.parse().unwrap(),
+        &project.parse().unwrap(),
         &env.parse().unwrap(),
         &INSTANCE.parse().unwrap(),
     );

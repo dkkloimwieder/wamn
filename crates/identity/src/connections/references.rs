@@ -93,8 +93,8 @@ pub async fn remove_projection(
 pub async fn project_administration(
     system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     environment: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Result<AuthDrops, ConnectionError> {
     crate::connection_projection::project(system, environment, org, project, env)

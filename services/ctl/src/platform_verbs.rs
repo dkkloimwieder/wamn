@@ -178,7 +178,7 @@ async fn deploy(
         let target = Target {
             kubeconfig,
             context,
-            namespace: document.org.clone(),
+            namespace: document.org.to_string(),
         };
         Ok(
             wamn_platform_install::platform::installed::InstalledPlatform::read(&target)

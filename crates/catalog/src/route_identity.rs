@@ -44,13 +44,19 @@ pub fn route_path(path_prefix: &str, model: &str, action: &str) -> String {
 /// The attachment id `<id_prefix>-<model>-<action>-http`, or
 /// `<model>-<action>-http` when the prefix is empty. The model is written in
 /// kebab case.
-pub fn route_attachment_id(id_prefix: &str, model: &str, action: &str) -> String {
+pub fn route_attachment_id(
+    id_prefix: &str,
+    model: &str,
+    action: &str,
+) -> crate::canonical_name::CanonicalName {
     let model = model.replace('_', "-");
-    if id_prefix.is_empty() {
+    let text = if id_prefix.is_empty() {
         format!("{model}-{action}-http")
     } else {
         format!("{id_prefix}-{model}-{action}-http")
-    }
+    };
+    text.parse()
+        .expect("validated route parts make a canonical attachment name")
 }
 
 /// The compiler's description of one operation in the compiled package document.

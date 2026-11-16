@@ -1,5 +1,6 @@
 //! Compiled release facts, immutable catalog identities, and definition hashing.
 
+pub mod canonical_name;
 pub mod client_package_name;
 mod component_artifact_reference;
 mod component_facts;
@@ -118,12 +119,6 @@ pub enum CatalogIdentityError {
         field: &'static str,
         id: String,
     },
-    EmptyIdentity {
-        field: &'static str,
-    },
-    NonCanonicalIdentity {
-        field: &'static str,
-    },
     ZeroVersion {
         field: &'static str,
     },
@@ -135,10 +130,10 @@ pub enum CatalogIdentityError {
         requested: String,
     },
     InvalidAttachmentAuthPolicy {
-        attachment_id: String,
+        attachment_id: canonical_name::CanonicalName,
     },
     UnauthenticatedRegisteredOperation {
-        attachment_id: String,
+        attachment_id: canonical_name::CanonicalName,
     },
     UnresolvableManifestWiring {
         package_id: crate::PackageName,
@@ -155,10 +150,10 @@ pub enum CatalogIdentityError {
         limit: usize,
     },
     UnresolvedWiringNode {
-        node_id: String,
+        node_id: canonical_name::CanonicalName,
     },
     UnresolvedWiringEntry {
-        node_id: String,
+        node_id: canonical_name::CanonicalName,
     },
 }
 
@@ -167,10 +162,6 @@ impl fmt::Display for CatalogIdentityError {
         match self {
             Self::DuplicateMember { field, id } => {
                 write!(formatter, "{field} member {id:?} is duplicated")
-            }
-            Self::EmptyIdentity { field } => write!(formatter, "{field} is empty"),
-            Self::NonCanonicalIdentity { field } => {
-                write!(formatter, "{field} is not in canonical form")
             }
             Self::ZeroVersion { field } => write!(formatter, "{field} must be greater than zero"),
             Self::InvalidDefinition { message } => write!(formatter, "{message}"),
@@ -237,16 +228,6 @@ impl fmt::Display for CatalogIdentityError {
 }
 
 impl std::error::Error for CatalogIdentityError {}
-
-fn validate_text(value: &str, field: &'static str) -> Result<(), CatalogIdentityError> {
-    if value.is_empty() {
-        return Err(CatalogIdentityError::EmptyIdentity { field });
-    }
-    if value.trim() != value || value.as_bytes().contains(&0) {
-        return Err(CatalogIdentityError::NonCanonicalIdentity { field });
-    }
-    Ok(())
-}
 
 /// An attachment exposure type.
 ///

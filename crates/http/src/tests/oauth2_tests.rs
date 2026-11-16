@@ -208,8 +208,11 @@ async fn cache_separates_project_connection_and_active_generation() {
                 .is_some()
         );
     }
-    let project_env_key =
-        wamn_registry::project_env_key("acme", "project-b", &"dev".parse().unwrap());
+    let project_env_key = wamn_registry::project_env_key(
+        &"acme".parse().unwrap(),
+        &"project-b".parse().unwrap(),
+        &"dev".parse().unwrap(),
+    );
     plugin.release = Arc::new(
         LoadedRelease::load_canonical_bytes(
             &plugin.release.manifest().canonical_bytes(),
@@ -225,10 +228,15 @@ async fn cache_separates_project_connection_and_active_generation() {
         ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
             Publisher::default(),
-            Arc::new(fixture.credentials.reader("project-b").await),
+            Arc::new(
+                fixture
+                    .credentials
+                    .reader(&"project-b".parse().unwrap())
+                    .await,
+            ),
             &plugin.postgres,
             &plugin.release.target().project_env_key,
-            "project-b",
+            &"project-b".parse().unwrap(),
             &plugin.release.target().environment,
         )
         .with_oauth_encryption(Some(Arc::new(
@@ -631,7 +639,7 @@ async fn credential_rotation_waits_for_refresh_and_removes_the_old_token() {
             .await
             .map(drop)
             .unwrap();
-        let result = wamn_platform_identity::connections::administration::execute_with_store(&mut tx,"acme","connection.set_credential",
+        let result = wamn_platform_identity::connections::administration::execute_with_store(&mut tx,&"acme".parse().unwrap(),"connection.set_credential",
             &serde_json::json!({"project":"project-a","env":"dev","name":"handle","credential":r#"{"client_secret":"rotated-secret"}"#}).to_string(),
             &mut wamn_broker::auth_changes::AuthDrops::default(),
             &mut wamn_broker::connection_changes::ConnectionDrops::default(),Some(store.as_ref())).await.unwrap();
@@ -792,7 +800,7 @@ impl Fixture {
             .unwrap();
         let context = wamn_platform_identity::connections::administration::configure(
             &mut tx,
-            "acme",
+            &"acme".parse().unwrap(),
             "connection.authorize",
             &serde_json::json!({"project":"project-a","env":"dev","name":"handle"}),
         )
@@ -834,7 +842,7 @@ impl Fixture {
             .unwrap();
         let context = wamn_platform_identity::connections::administration::configure(
             &mut tx,
-            "acme",
+            &"acme".parse().unwrap(),
             "connection.get",
             &serde_json::json!({"project":"project-a","env":"dev","name":"handle"}),
         )
@@ -852,7 +860,7 @@ impl Fixture {
         };
         wamn_platform_identity::connections::administration::execute_with_store(
             &mut tx,
-            "acme",
+            &"acme".parse().unwrap(),
             operation,
             &request.to_string(),
             &mut wamn_broker::auth_changes::AuthDrops::default(),
@@ -918,7 +926,11 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
         .finish();
     for _ in 0..2 {
         oauth
-            .callback(&mut fixture.credentials.admin, "acme", &callback)
+            .callback(
+                &mut fixture.credentials.admin,
+                &"acme".parse().unwrap(),
+                &callback,
+            )
             .await
             .expect_err("provider refusal leaves authorization available for retry");
     }
@@ -940,11 +952,19 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
         0
     );
     oauth
-        .callback(&mut fixture.credentials.admin, "acme", &callback)
+        .callback(
+            &mut fixture.credentials.admin,
+            &"acme".parse().unwrap(),
+            &callback,
+        )
         .await
         .unwrap();
     oauth
-        .callback(&mut fixture.credentials.admin, "acme", &callback)
+        .callback(
+            &mut fixture.credentials.admin,
+            &"acme".parse().unwrap(),
+            &callback,
+        )
         .await
         .expect_err("authorization refuses");
     fixture.send(&plugin, "handle").await.unwrap();
@@ -1038,14 +1058,18 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
     oauth
         .callback(
             &mut fixture.credentials.admin,
-            "acme",
+            &"acme".parse().unwrap(),
             &format!("state={state}&error=access_denied"),
         )
         .await
         .expect_err("authorization refuses");
     sqlx::query("UPDATE identity.oauth_authorization SET expires_at=clock_timestamp()-interval '1 second' WHERE state=$1").bind(&state).execute(&mut fixture.credentials.admin).await.map(|result| result.rows_affected()).unwrap();
     oauth
-        .callback(&mut fixture.credentials.admin, "acme", &callback)
+        .callback(
+            &mut fixture.credentials.admin,
+            &"acme".parse().unwrap(),
+            &callback,
+        )
         .await
         .expect_err("authorization refuses");
     assert_eq!(
@@ -1074,7 +1098,7 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
     oauth
         .callback(
             &mut fixture.credentials.admin,
-            "acme",
+            &"acme".parse().unwrap(),
             &format!("state={state}&code=unused"),
         )
         .await
@@ -1083,7 +1107,7 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
     oauth
         .callback(
             &mut fixture.credentials.admin,
-            "acme",
+            &"acme".parse().unwrap(),
             &format!("state={state}&code=unused"),
         )
         .await
@@ -1307,7 +1331,7 @@ async fn token_authority_authorization_code_exchange_and_refresh_refuse_other_or
         let result = oauth
             .callback(
                 &mut fixture.credentials.admin,
-                "acme",
+                &"acme".parse().unwrap(),
                 &format!("state={}&code=code", query["state"]),
             )
             .await;

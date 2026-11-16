@@ -122,8 +122,8 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
     }
     let migration_input = wamn_control_provision::test_database::package_migration_input(
         database.as_str(),
-        "apply-drops",
-        "fixture",
+        &"apply-drops".parse().unwrap(),
+        &"fixture".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await
@@ -177,8 +177,8 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop(pool: 
         component_source: crate::apply_package::component_source_from_env(None).unwrap(),
         package: wamn_publish::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: owner_url.to_string(),
-        org: "apply-drops".into(),
-        project: "fixture".into(),
+        org: "apply-drops".parse().unwrap(),
+        project: "fixture".parse().unwrap(),
         environment: "dev".parse().unwrap(),
         changes,
     })

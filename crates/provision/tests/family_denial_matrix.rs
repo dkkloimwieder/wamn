@@ -186,19 +186,19 @@ fn generation(family: WorkloadRoleFamily) -> wamn_identity_protocol::LoginName {
             database: DATABASE,
         },
         WorkloadRoleIdentityType::ProjectEnvironment => WorkloadRoleIdentity::ProjectEnvironment {
-            org: ORG,
-            project: PROJECT,
+            org: &ORG.parse().unwrap(),
+            project: &PROJECT.parse().unwrap(),
             environment: &ENVIRONMENT.parse().unwrap(),
             database: DATABASE,
         },
         WorkloadRoleIdentityType::Control => WorkloadRoleIdentity::Control {
-            org: ORG,
-            project: PROJECT,
+            org: &ORG.parse().unwrap(),
+            project: &PROJECT.parse().unwrap(),
             environment: &ENVIRONMENT.parse().unwrap(),
             database: CONTROL_DATABASE,
         },
         WorkloadRoleIdentityType::Org => WorkloadRoleIdentity::Org {
-            org: ORG,
+            org: &ORG.parse().unwrap(),
             database: CONTROL_DATABASE,
         },
     };

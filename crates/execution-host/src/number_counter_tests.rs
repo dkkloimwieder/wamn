@@ -33,8 +33,8 @@ impl Live {
         let generation = workload_login(
             WorkloadRoleFamily::Administration,
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: "org",
-                project: "project",
+                org: &"org".parse().expect("fixed identifier"),
+                project: &"project".parse().expect("fixed identifier"),
                 environment: &"dev".parse().unwrap(),
                 database: database.path().trim_start_matches('/'),
             },
@@ -121,7 +121,7 @@ impl Live {
     ) -> Result<i64, CounterSetError> {
         super::set_number_counter(
             &self.plugin,
-            wamn_sql::DEFAULT_PROJECT,
+            &wamn_sql::DEFAULT_PROJECT,
             &PROJECT_ENV_KEY.parse().unwrap(),
             &LIVE_PRINCIPAL
                 .parse::<wamn_identity_protocol::PrincipalId>()

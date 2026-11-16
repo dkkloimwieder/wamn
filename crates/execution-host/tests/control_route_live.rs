@@ -122,7 +122,7 @@ async fn call(
                 if_none_match: None,
             },
             Some(AuthenticatedCaller::new(
-                id,
+                id.clone(),
                 caller,
                 CredentialType::Session,
                 false,
@@ -253,7 +253,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     invite_member(
         &mut admin,
         &boss,
-        ORG,
+        &ORG.parse().unwrap(),
         &MemberGrants {
             org_admin: true,
             ..MemberGrants::default()
@@ -289,7 +289,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
             control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: Some(identity.config.clone()),
-            org: ORG.to_owned(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::default(),
         },
     );
@@ -464,8 +464,8 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
             wamn_platform_identity::control::is_project_admin(
                 &mut admin,
                 &ann,
-                ORG,
-                project,
+                &ORG.parse().unwrap(),
+                &project.parse().unwrap(),
                 env.as_ref()
             )
             .await?
@@ -485,8 +485,8 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
             !wamn_platform_identity::control::is_project_admin(
                 &mut admin,
                 &ann,
-                ORG,
-                project,
+                &ORG.parse().unwrap(),
+                &project.parse().unwrap(),
                 env.as_ref()
             )
             .await?
@@ -575,7 +575,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             "cat@example.test",
             "Cat",
             MemberGrants {
-                project_admins: vec!["billing".to_owned()],
+                project_admins: vec!["billing".parse().unwrap()],
                 ..MemberGrants::default()
             },
         ),
@@ -584,7 +584,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         let user = create_or_reuse_user(&mut admin, email, name)
             .await?
             .principal_id;
-        invite_member(&mut admin, &user, ORG, &grants).await?;
+        invite_member(&mut admin, &user, &ORG.parse().unwrap(), &grants).await?;
         ids.push(user);
     }
     let [boss, cat, ann]: [PrincipalId; 3] = ids.try_into().expect("three users");
@@ -596,7 +596,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
-            org: ORG.to_owned(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::default(),
         },
     );
@@ -733,8 +733,12 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     let members = call(&delivery, "member/list", cat, json!({"project": "billing"}))
         .await
         .expect("project members");
-    let expected_members =
-        wamn_platform_identity::org::project_members(&mut admin, ORG, "billing").await?;
+    let expected_members = wamn_platform_identity::org::project_members(
+        &mut admin,
+        &ORG.parse().unwrap(),
+        &"billing".parse().unwrap(),
+    )
+    .await?;
     let returned_members = members["members"].as_array().expect("members");
     assert_eq!(returned_members.len(), expected_members.len());
     assert_eq!(
@@ -986,7 +990,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         invite_member(
             &mut admin,
             principal,
-            ORG,
+            &ORG.parse().unwrap(),
             &MemberGrants {
                 org_admin,
                 ..MemberGrants::default()
@@ -1002,7 +1006,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             administration: Some(logins.clone()),
-            org: ORG.to_owned(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::default(),
         },
     );
@@ -1065,7 +1069,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
 
     // System state stays authoritative if a later application write fails.
     let shop_key = logins.join(wamn_control_provision::control_administration_key(
-        "shop",
+        &"shop".parse().unwrap(),
         &"dev".parse().unwrap(),
     ));
     let shop_login = std::fs::read_to_string(&shop_key)?;
@@ -1148,11 +1152,11 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             project_admins: if org_admin {
                 Vec::new()
             } else {
-                vec!["billing".to_owned()]
+                vec!["billing".parse().unwrap()]
             },
             ..MemberGrants::default()
         };
-        invite_member(&mut admin, &user, ORG, &grants).await?;
+        invite_member(&mut admin, &user, &ORG.parse().unwrap(), &grants).await?;
         ids.push(user);
     }
     let [boss, ann]: [PrincipalId; 2] = ids.try_into().expect("two users");
@@ -1164,7 +1168,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             administration: Some(logins.clone()),
-            org: ORG.to_owned(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::default(),
         },
     );
@@ -1294,7 +1298,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
 
     // Activation commits the registry first. A later projection can fail independently.
     let shop_key = logins.join(wamn_control_provision::control_administration_key(
-        "shop",
+        &"shop".parse().unwrap(),
         &"dev".parse().unwrap(),
     ));
     let shop_login = std::fs::read_to_string(&shop_key)?;
@@ -1318,7 +1322,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
 
     // Inactivation commits the registry only after all project writes succeed.
     let billing_key = logins.join(wamn_control_provision::control_administration_key(
-        "billing",
+        &"billing".parse().unwrap(),
         &"dev".parse().unwrap(),
     ));
     std::fs::write(&billing_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
@@ -1407,7 +1411,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             "cat@example.test",
             "Cat",
             MemberGrants {
-                project_admins: vec!["billing".to_owned()],
+                project_admins: vec!["billing".parse().unwrap()],
                 ..MemberGrants::default()
             },
         ),
@@ -1415,7 +1419,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
         let user = create_or_reuse_user(&mut admin, email, name)
             .await?
             .principal_id;
-        invite_member(&mut admin, &user, ORG, &grants).await?;
+        invite_member(&mut admin, &user, &ORG.parse().unwrap(), &grants).await?;
         ids.push(user);
     }
     let [boss, dee, cat]: [PrincipalId; 3] = ids.try_into().expect("three users");
@@ -1427,7 +1431,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
-            org: ORG.to_owned(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::default(),
         },
     );
@@ -1536,14 +1540,24 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     for principal in admins {
         assert!(
             wamn_platform_identity::control::is_project_admin(
-                &mut admin, &principal, ORG, "ledger", None
+                &mut admin,
+                &principal,
+                &ORG.parse().unwrap(),
+                &"ledger".parse().unwrap(),
+                None
             )
             .await?
         );
     }
     assert!(
-        !wamn_platform_identity::control::is_project_admin(&mut admin, &cat, ORG, "ledger", None)
-            .await?
+        !wamn_platform_identity::control::is_project_admin(
+            &mut admin,
+            &cat,
+            &ORG.parse().unwrap(),
+            &"ledger".parse().unwrap(),
+            None
+        )
+        .await?
     );
     assert_eq!(
         call(
@@ -1566,7 +1580,12 @@ struct FixedStatus;
 
 #[async_trait::async_trait]
 impl wamn_execution_host::environment_status::StatusSource for FixedStatus {
-    async fn read(&self, _: &str, _: &str, _: &wamn_registry::EnvName) -> anyhow::Result<Value> {
+    async fn read(
+        &self,
+        _: &wamn_registry::OrgId,
+        _: &wamn_registry::ProjectId,
+        _: &wamn_registry::EnvName,
+    ) -> anyhow::Result<Value> {
         Ok(
             json!({"digest": wamn_digest::Digest::from([1; 32]), "rollout": {"replicas": 1}, "workloads": [], "live": []}),
         )
@@ -1588,7 +1607,7 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
     invite_member(
         &mut admin,
         &principal,
-        ORG,
+        &ORG.parse().unwrap(),
         &MemberGrants {
             org_admin: true,
             ..MemberGrants::default()
@@ -1606,9 +1625,9 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
         invite_member(
             &mut admin,
             &user,
-            ORG,
+            &ORG.parse().unwrap(),
             &MemberGrants {
-                memberships: [("billing".into(), "dev".parse().unwrap())].into(),
+                memberships: [("billing".parse().unwrap(), "dev".parse().unwrap())].into(),
                 ..MemberGrants::default()
             },
         )
@@ -1648,7 +1667,7 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
             control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
-            org: ORG.to_owned(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::default(),
         },
     );
@@ -1715,7 +1734,7 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
         if missing_credential {
             std::fs::remove_file(
                 logins.join(wamn_control_provision::control_administration_key(
-                    "billing",
+                    &"billing".parse().unwrap(),
                     &"dev".parse().unwrap(),
                 )),
             )?;
@@ -1776,7 +1795,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     invite_member(
         &mut admin,
         &boss,
-        ORG,
+        &ORG.parse().unwrap(),
         &MemberGrants {
             org_admin: true,
             ..MemberGrants::default()
@@ -1793,7 +1812,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(writer)),
             identity: None,
-            org: ORG.to_owned(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::new(nats),
         },
     );
@@ -1918,8 +1937,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
         .parse::<wamn_digest::Digest>()
         .unwrap();
-    sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&wamn_registry::project_env_key(ORG,"billing", &"dev".parse().unwrap())).bind(&digest).bind(&b"{}".as_slice()).execute(&mut billing).await.map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)").bind(&wamn_registry::project_env_key(ORG,"billing", &"dev".parse().unwrap())).bind(&digest).bind(&identity).execute(&mut billing).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&wamn_registry::project_env_key(&ORG.parse().unwrap(),&"billing".parse().unwrap(), &"dev".parse().unwrap())).bind(&digest).bind(&b"{}".as_slice()).execute(&mut billing).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)").bind(&wamn_registry::project_env_key(&ORG.parse().unwrap(),&"billing".parse().unwrap(), &"dev".parse().unwrap())).bind(&digest).bind(&identity).execute(&mut billing).await.map(|result| result.rows_affected())?;
     sqlx::raw_sql("COMMIT")
         .execute(&mut billing)
         .await
@@ -1969,7 +1988,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         url::Url::parse(
             std::fs::read_to_string(logins.join(
                 wamn_control_provision::control_administration_key(
-                    "billing",
+                    &"billing".parse().unwrap(),
                     &"dev".parse().unwrap(),
                 ),
             ))?

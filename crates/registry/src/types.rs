@@ -2,13 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// An organization id — a lowercase slug. It embeds into cluster / Secret /
-/// subdomain names, so it follows the platform slug discipline (see
-/// the provisioning boundary, mirroring `wamn-control-provision` / wi4 / 66x).
-pub type OrgId = String;
-
-/// A project id — a lowercase slug, unique within its org.
-pub type ProjectId = String;
+use crate::{OrgId, ProjectId};
 
 /// The control-plane identity triple `(org, env, project)` — the key every
 /// subsystem speaks (registry rows, provisioning, subdomain routing, dispatcher
@@ -23,12 +17,8 @@ pub struct Triple {
 }
 
 impl Triple {
-    pub fn new(org: impl Into<String>, env: crate::EnvName, project: impl Into<String>) -> Self {
-        Self {
-            org: org.into(),
-            project: project.into(),
-            env,
-        }
+    pub fn new(org: OrgId, env: crate::EnvName, project: ProjectId) -> Self {
+        Self { org, env, project }
     }
 }
 

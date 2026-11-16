@@ -48,7 +48,11 @@ mod event_batch {
             .await
             .unwrap();
         let broker = async_nats::jetstream::new(client.clone());
-        let coordinate = Triple::new("schedule-live", ENVIRONMENT.parse().unwrap(), PROJECT);
+        let coordinate = Triple::new(
+            "schedule-live".parse().unwrap(),
+            ENVIRONMENT.parse().unwrap(),
+            PROJECT.parse().unwrap(),
+        );
         let source =
             wamn_broker::events::source_stream_config(&coordinate, 1, Duration::from_secs(120));
         let advisory = wamn_broker::events::advisory_stream_config(&coordinate, 1);
@@ -79,8 +83,8 @@ mod event_batch {
         .await
         .unwrap();
         let subject = wamn_registry::name::event_subject(
-            "schedule-live",
-            PROJECT,
+            &"schedule-live".parse().unwrap(),
+            &PROJECT.parse().unwrap(),
             &ENVIRONMENT.parse().unwrap(),
             "order.insert",
         );
@@ -95,7 +99,7 @@ mod event_batch {
         ] {
             let body = envelope("insert", txid, lsn);
             let id = wamn_event_wire::msg_id(
-                PROJECT,
+                &PROJECT.parse().unwrap(),
                 &ENVIRONMENT.parse().unwrap(),
                 &wamn_event_wire::CdcIdentity {
                     system_id: 1,
@@ -124,7 +128,7 @@ mod event_batch {
             wamn_workflow::event_admission::admit_application_events(
                 &events,
                 &fixture.postgres,
-                PROJECT,
+                &PROJECT.parse().unwrap(),
                 &"billing".parse().expect("valid name"),
                 &billing,
             )
@@ -165,7 +169,7 @@ mod event_batch {
                 assert!(
                     wamn_workflow::event_admission::admit_event_batch(
                         &fixture.postgres,
-                        PROJECT,
+                        &PROJECT.parse().unwrap(),
                         &retired,
                         &admission
                     )
@@ -175,7 +179,7 @@ mod event_batch {
                 );
                 wamn_workflow::event_admission::admit_event_batch(
                     &fixture.postgres,
-                    PROJECT,
+                    &PROJECT.parse().unwrap(),
                     loaded,
                     &admission,
                 )
@@ -188,23 +192,24 @@ mod event_batch {
                 wamn_workflow::event_admission::admit_application_events(
                     &events,
                     &fixture.postgres,
-                    PROJECT,
+                    &PROJECT.parse().unwrap(),
                     &APP.parse().expect("valid fixture name"),
                     &retired,
                 )
                 .await
                 .unwrap();
             } else if lsn == 41 {
+                let project = PROJECT.parse().unwrap();
                 let (old, new) = tokio::join!(
                     wamn_workflow::event_admission::admit_event_batch(
                         &fixture.postgres,
-                        PROJECT,
+                        &project,
                         &fixture.release,
                         &admission
                     ),
                     wamn_workflow::event_admission::admit_event_batch(
                         &fixture.postgres,
-                        PROJECT,
+                        &project,
                         &upgraded,
                         &admission
                     ),
@@ -219,7 +224,7 @@ mod event_batch {
                 wamn_workflow::event_admission::admit_application_events(
                     &events,
                     &fixture.postgres,
-                    PROJECT,
+                    &PROJECT.parse().unwrap(),
                     &APP.parse().expect("valid fixture name"),
                     &upgraded,
                 )
@@ -229,7 +234,7 @@ mod event_batch {
                 wamn_workflow::event_admission::admit_application_events(
                     &events,
                     &fixture.postgres,
-                    PROJECT,
+                    &PROJECT.parse().unwrap(),
                     &APP.parse().expect("valid fixture name"),
                     loaded,
                 )
@@ -245,7 +250,7 @@ mod event_batch {
             };
             wamn_workflow::event_admission::admit_event_batch(
                 &fixture.postgres,
-                PROJECT,
+                &PROJECT.parse().unwrap(),
                 &upgraded,
                 &replay,
             )
@@ -302,8 +307,16 @@ async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<
         .unwrap();
     let broker = async_nats::jetstream::new(client);
     let project = format!("p{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
-    let target = Triple::new("reset", "dev".parse().unwrap(), &project);
-    let other = Triple::new("reset", "other".parse().unwrap(), &project);
+    let target = Triple::new(
+        "reset".parse().unwrap(),
+        "dev".parse().unwrap(),
+        project.parse().unwrap(),
+    );
+    let other = Triple::new(
+        "reset".parse().unwrap(),
+        "other".parse().unwrap(),
+        project.parse().unwrap(),
+    );
     let mut streams = Vec::new();
     for coordinate in [&target, &other] {
         wamn_broker::streams::provision(&broker, coordinate, 1, Duration::from_secs(120), &[])

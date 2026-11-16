@@ -175,7 +175,7 @@ impl ComponentAdmission {
     }
 
     /// Package-local component name bound to the admitted bytes.
-    pub fn component(&self) -> &str {
+    pub fn component(&self) -> &wamn_catalog::canonical_name::CanonicalName {
         &self.component.component
     }
 
@@ -271,7 +271,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
 
 #[derive(Debug)]
 struct ExpectedOperationContract {
-    component: String,
+    component: wamn_catalog::canonical_name::CanonicalName,
     public: bool,
 }
 
@@ -425,15 +425,15 @@ mod tests {
             serde_json::json!("secondary");
         let manifest: wamn_compiler::manifest::PackageManifest =
             serde_json::from_value(document).expect("two-component manifest parses");
-        let operation = "observer-fixture:audit/observe@3.0.0".to_owned();
+        let operation = "observer-fixture:audit/observe@3.0.0".parse().unwrap();
         let component = AdmittedComponent {
             target: wamn_catalog::ComponentPackageCoordinate {
                 project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: manifest.package.id.clone(),
                 package_version: manifest.package.version.clone(),
             },
-            component: primary.to_owned(),
-            interface_version: "0.1.0".to_owned(),
+            component: primary.parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
                 operation,
                 AdmittedComponentOperation {
@@ -473,7 +473,9 @@ mod tests {
         declaration.type_ = wamn_compiler::manifest::CustomOperationType::Projection;
         declaration.visibility = wamn_compiler::manifest::OperationVisibility::Public;
         declaration.permission = Some("audit.observe".parse().unwrap());
-        declaration.errors.push("permission_denied".into());
+        declaration
+            .errors
+            .push("permission_denied".parse().unwrap());
         declaration.result = Some(
             serde_json::from_value(serde_json::json!({
                 "class": "one", "fields": [{"path": "document", "type": "uuid", "nullable": false}],
@@ -491,12 +493,14 @@ mod tests {
         operation
             .output_ports
             .push(wamn_catalog::AdmittedComponentPort {
-                name: "main".into(),
+                name: "main".parse().unwrap(),
                 schema: wamn_catalog::ComponentSchema {
                     schema: serde_json::json!({"type": "array"}),
                 },
             });
-        component.operations.insert(export.to_string(), operation);
+        component
+            .operations
+            .insert(export.clone().into(), operation);
         super::bind_signed_file_results(&mut component, &manifest).unwrap();
         let reads = wamn_catalog::signed_file_reads(&component.operations[export.as_str()])
             .unwrap()
@@ -550,10 +554,10 @@ mod tests {
                 package_id: manifest.package.id.clone(),
                 package_version: manifest.package.version.clone(),
             },
-            component: name.to_owned(),
-            interface_version: "0.1.0".to_owned(),
+            component: name.parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
-                "wamn:node/handler@0.1.0".to_owned(),
+                "wamn:node/handler@0.1.0".parse().unwrap(),
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: registered.cloned(),
@@ -676,10 +680,10 @@ mod tests {
                         package_id: "orders".parse().unwrap(),
                         package_version: "1.0.0".parse().unwrap(),
                     },
-                    component: "round-trip".to_owned(),
-                    interface_version: "0.1.0".to_owned(),
+                    component: "round-trip".parse().unwrap(),
+                    interface_version: "0.1.0".parse().unwrap(),
                     operations: BTreeMap::from([(
-                        operation.to_owned(),
+                        operation.parse().unwrap(),
                         ComponentOperationDeclaration {
                             committed_result_schema: None,
                             registered_operation: None,

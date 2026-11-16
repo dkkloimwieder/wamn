@@ -16,6 +16,8 @@
 //! Authoring, enable and the host's `workflow.start` admission all condition
 //! through this one owner.
 
+use crate::canonical_name::CanonicalName;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
@@ -65,7 +67,7 @@ pub fn resolve_workflow_components(
     application_packages: &BTreeSet<crate::PackageName>,
     manifest: &ServingManifest,
     document: &WiringDocument,
-) -> Result<BTreeMap<String, AdmittedComponent>, WorkflowConditionError> {
+) -> Result<BTreeMap<CanonicalName, AdmittedComponent>, WorkflowConditionError> {
     let versions: BTreeMap<&crate::PackageName, &crate::package_version::PackageVersion> = manifest
         .release
         .packages
@@ -136,7 +138,7 @@ pub fn resolve_workflow_components(
     Ok(resolved)
 }
 
-fn ambiguous(node_id: &str) -> WorkflowConditionError {
+fn ambiguous(node_id: &CanonicalName) -> WorkflowConditionError {
     WorkflowConditionError::new(format!(
         "workflow node {node_id:?} resolves to more than one component of the release"
     ))
@@ -214,9 +216,9 @@ mod tests {
                 package_id: package.to_owned(),
                 package_version: "1.0.0".parse().unwrap(),
             },
-            component: name.to_owned(),
-            interface_version: "0.1".to_owned(),
-            operations: BTreeMap::from([(op.to_owned(), operation(op, registered))]),
+            component: name.parse().unwrap(),
+            interface_version: "0.1".parse().unwrap(),
+            operations: BTreeMap::from([(op.parse().unwrap(), operation(op, registered))]),
             component_digest: format!("sha256:{}", digest.to_string().repeat(64))
                 .parse()
                 .unwrap(),
@@ -248,15 +250,15 @@ mod tests {
 
     fn document(name: &str, op: &str) -> WiringDocument {
         WiringDocument::new(
-            "nightly",
+            "nightly".parse().unwrap(),
             1,
-            "node",
+            "node".parse().unwrap(),
             BTreeMap::from([(
-                "node".to_owned(),
+                "node".parse().unwrap(),
                 WiringNode {
-                    component: name.to_owned(),
-                    interface_version: "0.1".to_owned(),
-                    operation: op.to_owned(),
+                    component: name.parse().unwrap(),
+                    interface_version: "0.1".parse().unwrap(),
+                    operation: op.parse().unwrap(),
                     operation_dependency: None,
                     params: BTreeMap::new(),
                     terminal: Some(WiringTerminal::Respond),

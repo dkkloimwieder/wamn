@@ -103,7 +103,7 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
 fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() -> anyhow::Result<()>
 {
     let template = wamn_control_provision::Template::standard();
-    let (org, _) = template.stamp("acme", "wamn-pg");
+    let (org, _) = template.stamp("acme".parse().unwrap(), "wamn-pg");
     let mut values = wamn_platform_install::org::values(&org, &template.policies)?;
     let cluster = values["clusters"][0]["name"].as_str().unwrap().to_owned();
     let role = wamn_control_provision::connection::managed_role(
@@ -115,7 +115,7 @@ fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() ->
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut entry = wamn_platform_install::environment::entry(
         &repository.join("deploy/charts/org"),
-        &org.id,
+        org.id.as_str(),
         "org-acme",
         values,
     )?;
@@ -146,7 +146,7 @@ fn org_chart_uses_each_recovery_owners_policy_and_preserves_role_references() ->
                 object["kind"] == "Cluster" && object["metadata"]["name"] == input["name"]
             })
             .unwrap();
-        assert_eq!(cluster["metadata"]["namespace"], org.id);
+        assert_eq!(cluster["metadata"]["namespace"], org.id.as_str());
         assert_eq!(cluster["spec"]["instances"], input["policy"]["instances"]);
         assert_eq!(
             cluster["spec"]["storage"]["size"],

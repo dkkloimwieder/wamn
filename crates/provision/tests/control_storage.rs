@@ -70,11 +70,17 @@ async fn system_schema_applies_and_enforces_invariants_on_postgres(pool: sqlx::P
         stamp = wamn_registry::sql::stamp_env_policy_sql(),
     )
     .expect("writing to a String cannot fail");
-    script.push_str(&stamp_statements("demo", &Template::trials()));
+    script.push_str(&stamp_statements(
+        &"demo".parse().unwrap(),
+        &Template::trials(),
+    ));
     script.push_str(
         "UPDATE registry.env_policies SET storage='42Gi' WHERE org='demo' AND name='dev';\n",
     );
-    script.push_str(&stamp_statements("demo", &Template::trials()));
+    script.push_str(&stamp_statements(
+        &"demo".parse().unwrap(),
+        &Template::trials(),
+    ));
     script.push_str(
         "DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.env_policies WHERE org='demo')=2,\n\
@@ -265,7 +271,7 @@ async fn system_schema_applies_and_enforces_invariants_on_postgres(pool: sqlx::P
 /// `provision-org` would (the `Template` policies through the real
 /// `stamp_env_policy_sql` builder). None of the shipped values contain a single
 /// quote, so plain `'{}'` quoting is exact.
-fn stamp_statements(org: &str, template: &Template) -> String {
+fn stamp_statements(org: &wamn_registry::OrgId, template: &Template) -> String {
     let mut s = String::new();
     for p in &template.policies {
         let recovery = serde_json::to_string(&p.recovery_domain).expect("recovery json");
@@ -352,7 +358,7 @@ fn identifier_cases() -> String {
     };
     for id in &org_ids {
         case(
-            wamn_registry::identifiers::valid_project(id),
+            id.parse::<wamn_registry::OrgId>().is_ok(),
             format!(
                 "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
                  VALUES ('{id}','dedicated',NULL)"
@@ -386,7 +392,7 @@ fn identifier_cases() -> String {
     }
     for id in &project_ids {
         case(
-            wamn_registry::identifiers::valid_project(id),
+            id.parse::<wamn_registry::ProjectId>().is_ok(),
             format!("INSERT INTO registry.projects (org, id) VALUES ('probe','{id}')"),
             format!("DELETE FROM registry.projects WHERE org='probe' AND id='{id}'"),
             id,

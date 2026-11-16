@@ -13,7 +13,7 @@ use tokio::process::Command;
 #[derive(Debug, ClapArgs)]
 pub struct Args {
     credentials: PathBuf,
-    project: String,
+    project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
     application: wamn_catalog::ApplicationName,
     host_url: String,

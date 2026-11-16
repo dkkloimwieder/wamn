@@ -322,8 +322,8 @@ pub async fn targeted_postgres(admin: &mut Client, url: &str) -> (Arc<WamnPostgr
             }
         } else {
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: PROJECT_ENV_KEY,
-                project: PROJECT,
+                org: &PROJECT_ENV_KEY.parse().unwrap(),
+                project: &PROJECT.parse().unwrap(),
                 environment: &ENVIRONMENT.parse().unwrap(),
                 database: &database,
             }
@@ -403,8 +403,8 @@ impl Fixture {
         author_workflow_in_databases(
             &self.url,
             &AuthorWorkflowRequest {
-                org: "schedule-live",
-                project: "default",
+                org: &"schedule-live".parse().unwrap(),
+                project: &"default".parse().unwrap(),
                 environment: &ENVIRONMENT.parse().unwrap(),
                 application: &APP.parse().unwrap(),
                 declared,
@@ -424,14 +424,18 @@ impl Fixture {
     pub async fn enable(&mut self, id: &str, enabler: &str) -> Result<(), WorkflowLifecycleError> {
         enable_workflow(
             &self.url,
-            &Triple::new("acme", ENVIRONMENT.parse().unwrap(), APPLICATION),
+            &Triple::new(
+                "acme".parse().unwrap(),
+                ENVIRONMENT.parse().unwrap(),
+                APPLICATION.parse().unwrap(),
+            ),
             &mut self.admin,
             &WorkflowVersion {
-                org: "schedule-live",
-                project: "default",
+                org: &"schedule-live".parse().unwrap(),
+                project: &"default".parse().unwrap(),
                 environment: &ENVIRONMENT.parse().unwrap(),
                 application: &APP.parse().unwrap(),
-                workflow_id: id,
+                workflow_id: &id.parse().unwrap(),
                 version: 1,
             },
             &enabler
@@ -447,14 +451,18 @@ impl Fixture {
     pub async fn disable(&mut self, id: &str) -> Result<(), WorkflowLifecycleError> {
         disable_workflow(
             &self.url,
-            &Triple::new("acme", ENVIRONMENT.parse().unwrap(), APPLICATION),
+            &Triple::new(
+                "acme".parse().unwrap(),
+                ENVIRONMENT.parse().unwrap(),
+                APPLICATION.parse().unwrap(),
+            ),
             &mut self.admin,
             &WorkflowVersion {
-                org: "schedule-live",
-                project: "default",
+                org: &"schedule-live".parse().unwrap(),
+                project: &"default".parse().unwrap(),
                 environment: &ENVIRONMENT.parse().unwrap(),
                 application: &APP.parse().unwrap(),
-                workflow_id: id,
+                workflow_id: &id.parse().unwrap(),
                 version: 1,
             },
         )
@@ -492,10 +500,10 @@ impl Fixture {
     pub async fn admit(&self, id: &str, at: &str) -> ScheduleRunAdmitted {
         wamn_workflow::admission::admit_schedule_run(
             &self.postgres,
-            PROJECT,
+            &PROJECT.parse().unwrap(),
             &self.release,
             &APP.parse().expect("valid fixture name"),
-            id,
+            &id.parse().unwrap(),
             due(at),
         )
         .await
@@ -539,7 +547,7 @@ impl Fixture {
                         .as_str()
                         .parse()
                         .unwrap(),
-                    PROJECT,
+                    &PROJECT.parse().unwrap(),
                     &self.release.target().environment,
                 )),
                 Arc::clone(&self.logging),
@@ -547,7 +555,7 @@ impl Fixture {
                 Arc::clone(&self.release),
                 Arc::new(LocalComponentSource::new(self.scratch.path().to_owned())),
                 OperationHostConfig {
-                    project: PROJECT.to_owned(),
+                    project: PROJECT.parse().unwrap(),
                     schema: Some("application_data".to_owned()),
                     owner_prefix: "schedule-live".to_owned(),
                     warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
@@ -565,7 +573,7 @@ impl Fixture {
             ),
             &self.release,
             QueueServiceConfig {
-                project: PROJECT.to_owned(),
+                project: PROJECT.parse().unwrap(),
                 runner: "schedule-live".to_owned(),
                 lease_ttl_ms: 30_000,
             },
@@ -628,7 +636,7 @@ pub async fn admit(
 ) -> Result<(), wamn_run_state::run_store::ProductionLeaseError> {
     wamn_workflow::event_admission::admit_event_batch(
         &fixture.postgres,
-        PROJECT,
+        &PROJECT.parse().unwrap(),
         &fixture.release,
         &EventBatchAdmission {
             application: &APP.parse().expect("valid fixture name"),
@@ -637,7 +645,7 @@ pub async fn admit(
             envelope,
             sequence,
             source_event_id: &wamn_event_wire::msg_id(
-                PROJECT,
+                &PROJECT.parse().unwrap(),
                 &ENVIRONMENT.parse().unwrap(),
                 &wamn_event_wire::CdcIdentity {
                     system_id: 1,

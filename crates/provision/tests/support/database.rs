@@ -60,10 +60,14 @@ pub async fn system(database: &str) {
 }
 
 /// Seed one named organization, project and environment for authority tests.
-pub fn seed_org_project_env_sql(org: &str, project: &str, env: &wamn_registry::EnvName) -> String {
+pub fn seed_org_project_env_sql(
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
+    env: &wamn_registry::EnvName,
+) -> String {
     use postgres_protocol::escape::escape_literal;
-    let org = escape_literal(org);
-    let project = escape_literal(project);
+    let org = escape_literal(org.as_str());
+    let project = escape_literal(project.as_str());
     let env = escape_literal(env.as_str());
     let actor = crate::PlatformComponent::Provisioning.principal_id();
     format!(
@@ -79,8 +83,8 @@ pub fn seed_org_project_env_sql(org: &str, project: &str, env: &wamn_registry::E
 /// Arrange a restricted package login for a local PostgreSQL fixture.
 pub async fn package_migration_input(
     input: impl AsRef<str>,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
 ) -> anyhow::Result<String> {
     let input = input.as_ref();

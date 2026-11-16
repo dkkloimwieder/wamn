@@ -392,7 +392,7 @@ pub(crate) async fn connect_project(url: &str) -> anyhow::Result<Client> {
 
 pub(crate) async fn read_policy(
     system: &mut Client,
-    org: &str,
+    org: &wamn_registry::OrgId,
     name: &wamn_registry::EnvName,
 ) -> anyhow::Result<Policy> {
     let row =
@@ -535,7 +535,7 @@ async fn read_release(
         .components
         .iter()
         .flat_map(|component| &component.descriptor.connections)
-        .filter_map(|connection| connection.store_alias.name().map(str::to_owned))
+        .filter_map(|connection| connection.store_alias.name().map(ToString::to_string))
         .collect();
     Ok(ReleaseFacts {
         digest: digest.to_owned(),

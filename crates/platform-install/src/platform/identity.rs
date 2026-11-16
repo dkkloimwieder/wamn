@@ -139,15 +139,15 @@ pub async fn mail(target: &Target, document: &ClusterDocument) -> anyhow::Result
             kubectl::apply(
                 &target.kubeconfig,
                 &target.context,
-                &document.org,
-                &resend_secret(&document.org, &key)?,
+                document.org.as_str(),
+                &resend_secret(document.org.as_str(), &key)?,
             )
             .await?;
         }
         let owner = kubectl::get(
             &target.kubeconfig,
             &target.context,
-            &document.org,
+            document.org.as_str(),
             "secret",
             "identity-resend",
         )
@@ -166,22 +166,22 @@ pub async fn initialize(
     let identity = Target {
         kubeconfig: target.kubeconfig.clone(),
         context: target.context.clone(),
-        namespace: document.org.clone(),
+        namespace: document.org.to_string(),
     };
     let image = chart.image("identity")?;
     let active = keys(&identity, directory, image).await?;
     let ca: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
-        &document.org,
+        document.org.as_str(),
         "secret",
         "identity-tls",
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    let (mut probe, files) = endpoint_job(&secret_text(&ca, "ca.crt")?, &document.org);
+    let (mut probe, files) = endpoint_job(&secret_text(&ca, "ca.crt")?, document.org.as_str());
     let hosts = Target {
-        namespace: document.org.clone(),
+        namespace: document.org.to_string(),
         ..identity
     };
     let result = job::run(&hosts, directory, &mut probe, &mut [files]).await?;
@@ -206,7 +206,7 @@ pub async fn initialize(
 
 async fn owner_invitation<'a>(
     connection: &'a mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
     email: &str,
 ) -> anyhow::Result<sqlx::Transaction<'a, sqlx::Postgres>> {
     sqlx::raw_sql("SET ROLE wamn_system")
@@ -239,11 +239,12 @@ async fn invite_owner(
     ca: &SecretData,
 ) -> anyhow::Result<()> {
     let platform = Target {
-        namespace: document.org.clone(),
+        namespace: document.org.to_string(),
         ..target.clone()
     };
     let forward =
-        super::database::forward(&platform, &document.org, "wamn-pg", "wamn_system").await?;
+        super::database::forward(&platform, document.org.as_str(), "wamn-pg", "wamn_system")
+            .await?;
     let mut connection = wamn_postgres::connect(&forward.input).await?;
     let mut transaction =
         owner_invitation(&mut connection, &document.org, &document.owner_email).await?;
@@ -256,9 +257,9 @@ async fn invite_owner(
     let operator: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
-        &document.org,
+        document.org.as_str(),
         "secret",
-        &wamn_registry::name::resource_suffix("operator", &document.org),
+        &wamn_registry::name::resource_suffix("operator", document.org.as_str()),
     )
     .await?
     .context("missing identity operator Secret")?;
@@ -323,7 +324,7 @@ fn operator_job(
             "Content-Type: application/json",
             "--data",
             &body.to_string(),
-            &format!("{}/{route}", issuer(&document.org)),
+            &format!("{}/{route}", issuer(document.org.as_str())),
         ],
     );
     let files = job::files(
@@ -348,10 +349,10 @@ pub(super) fn platform_chart_input(
     let mut entry = chart_input(&ChartInput {
         chart,
         name: "identity",
-        namespace: &document.org,
+        namespace: document.org.as_str(),
         image,
         pull_policy: "IfNotPresent",
-        issuer: &issuer(&document.org),
+        issuer: &issuer(document.org.as_str()),
         database_secret: "wamn-identity-db",
         tls_secret: "identity-tls",
         operator_ca_secret: "identity-operator-ca",
@@ -391,13 +392,13 @@ pub(super) fn resource_entry(
 /// Refuses missing or unreadable state within the complete call time limit.
 pub async fn require_keys(
     input: &str,
-    org: &str,
+    org: &wamn_registry::OrgId,
     limit: std::time::Duration,
 ) -> anyhow::Result<()> {
     tokio::time::timeout(limit, async {
         let mut connection=wamn_postgres::connect(input).await?;
         let active: bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.session_signing_state s JOIN identity.session_keys k ON (k.issuer,k.kid)=(s.issuer,s.active_kid) WHERE s.issuer=$1 AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL)")
-            .bind(issuer(org)).fetch_one(&mut connection).await?;
+            .bind(issuer(org.as_str())).fetch_one(&mut connection).await?;
         ensure!(active,"identity has no active signing key");
         anyhow::Ok(())
     }).await.context("inspect identity signing state within the call limit")?
@@ -524,8 +525,8 @@ mod tests {
         let mut setup = crate::transaction::provisioning_transaction(&mut first).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             wamn_control_provision::test_database::seed_org_project_env_sql(
-                "acme",
-                "app",
+                &"acme".parse().unwrap(),
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
             ),
         ))
@@ -536,10 +537,12 @@ mod tests {
                 .await?;
         setup.commit().await?;
 
-        let mut transaction = owner_invitation(&mut first, "acme", "owner@example.test").await?;
+        let mut transaction =
+            owner_invitation(&mut first, &"acme".parse().unwrap(), "owner@example.test").await?;
         {
             let mut second = wamn_postgres::connect(database.as_str()).await?;
-            let waiting = owner_invitation(&mut second, "acme", "other@example.test");
+            let org = "acme".parse().unwrap();
+            let waiting = owner_invitation(&mut second, &org, "other@example.test");
             tokio::pin!(waiting);
             assert!(
                 tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiting)
@@ -549,7 +552,7 @@ mod tests {
             wamn_platform_identity::org::invite_member(
                 &mut transaction,
                 &owner.principal_id,
-                "acme",
+                &"acme".parse().unwrap(),
                 &wamn_platform_identity::org::MemberGrants {
                     org_admin: true,
                     ..Default::default()
@@ -564,7 +567,7 @@ mod tests {
             );
         }
         // The same owner can resume an incomplete bootstrap, including folded email spelling.
-        owner_invitation(&mut first, "acme", " Owner@Example.test ")
+        owner_invitation(&mut first, &"acme".parse().unwrap(), " Owner@Example.test ")
             .await?
             .rollback()
             .await?;

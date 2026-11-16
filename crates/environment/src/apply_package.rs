@@ -49,8 +49,8 @@ pub struct ApplyPackageRequest {
     /// Direct restricted migration login; never the catalog owner's credential.
     pub migration_database_url: String,
 
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
 }
 
@@ -162,12 +162,6 @@ async fn apply_request(
     request: ApplyPackageRequest,
     advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
-    ensure!(
-        ![&request.org, &request.project]
-            .iter()
-            .any(|part| part.is_empty()),
-        "org, project and environment must not be empty"
-    );
     let mut package = prepare_package(&request.package).await?;
     if package.directory.artifact_digest.is_none() {
         return Err(ApplyPackageError::artifact_required(&format!(

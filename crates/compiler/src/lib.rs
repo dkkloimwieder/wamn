@@ -37,6 +37,7 @@ pub mod kcl;
 mod key;
 pub mod manifest;
 mod manifest_error;
+pub mod source_name;
 pub use manifest_error::{ManifestError, ManifestErrorType};
 mod materialize;
 mod output;

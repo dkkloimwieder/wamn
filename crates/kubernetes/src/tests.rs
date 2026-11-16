@@ -112,7 +112,11 @@ async fn credentials_retry_conflicts_without_losing_concurrent_values() {
         (200, secret(3, &concurrent)),
     ])
     .await;
-    let target = Triple::new("acme", "dev".parse().unwrap(), "app");
+    let target = Triple::new(
+        "acme".parse().unwrap(),
+        "dev".parse().unwrap(),
+        "app".parse().unwrap(),
+    );
     let id = uuid::Uuid::new_v4();
     let stored = fixture.store.put(&target, id, &[3]).await.unwrap();
     assert_eq!(uuid::Uuid::parse_str(&stored.version).unwrap(), id);
@@ -148,7 +152,11 @@ async fn failed_or_redirected_writes_never_return_a_reference() {
             fixture
                 .store
                 .put(
-                    &Triple::new("acme", "dev".parse().unwrap(), "app"),
+                    &Triple::new(
+                        "acme".parse().unwrap(),
+                        "dev".parse().unwrap(),
+                        "app".parse().unwrap()
+                    ),
                     uuid::Uuid::new_v4(),
                     &[1]
                 )

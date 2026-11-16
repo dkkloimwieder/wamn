@@ -261,7 +261,7 @@ fn routing(
 async fn accepted(route: &FlowHttpRouting, body: &Value) -> AuthenticatedCaller {
     route
         .authenticate_authorization_for_test(
-            ATTACHMENT,
+            &ATTACHMENT.parse().unwrap(),
             Some(&format!("Bearer {}", signed(&header(), body))),
         )
         .await
@@ -324,8 +324,8 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     let generation = workload_login(
         WorkloadRoleFamily::HttpAdmitter,
         WorkloadRoleIdentity::ProjectEnvironment {
-            org: ORG,
-            project: PROJECT,
+            org: &ORG.parse().unwrap(),
+            project: &PROJECT.parse().unwrap(),
             environment: &"dev".parse().unwrap(),
             database: &database,
         },
@@ -382,8 +382,8 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         wamn_test_postgres::transaction(&mut admin, &actor, "admin:seed-session-authority").await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::test_database::seed_org_project_env_sql(
-            ORG,
-            PROJECT,
+            &ORG.parse().unwrap(),
+            &PROJECT.parse().unwrap(),
             &"dev".parse().unwrap(),
         ),
     ))
@@ -477,7 +477,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     assert_eq!(
         route
             .authenticate_authorization_for_test(
-                ATTACHMENT,
+                &ATTACHMENT.parse().unwrap(),
                 Some(&format!("Bearer {}", signed(&header(), &empty)))
             )
             .await
@@ -531,7 +531,10 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         signed(&header(), &carried)
     );
     let by_cookie = route
-        .authenticate_headers_for_test(WRITE_ROUTE, &[("cookie", &cookie), ("x-wamn-csrf", csrf)])
+        .authenticate_headers_for_test(
+            &WRITE_ROUTE.parse().unwrap(),
+            &[("cookie", &cookie), ("x-wamn-csrf", csrf)],
+        )
         .await
         .expect("a cookie with its CSRF header is admitted")
         .expect("host-owned caller");
@@ -547,7 +550,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     assert!(by_cookie.permits(READ) && by_cookie.permits(WRITE));
     assert_eq!(
         route
-            .authenticate_headers_for_test(WRITE_ROUTE, &[("cookie", &cookie)])
+            .authenticate_headers_for_test(&WRITE_ROUTE.parse().unwrap(), &[("cookie", &cookie)])
             .await
             .unwrap_err(),
         (401, "unauthorized".into()),
@@ -563,14 +566,14 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     // A read route skips the CSRF header, because a read changes nothing. A
     // write route still requires it.
     let read = route
-        .authenticate_headers_for_test(READ_ROUTE, &[("cookie", &cookie)])
+        .authenticate_headers_for_test(&READ_ROUTE.parse().unwrap(), &[("cookie", &cookie)])
         .await
         .expect("a cookie read without its CSRF header is admitted")
         .expect("host-owned caller");
     assert_eq!(read.credential_type(), CredentialType::Session);
     assert_eq!(
         route
-            .authenticate_headers_for_test(WRITE_ROUTE, &[("cookie", &cookie)])
+            .authenticate_headers_for_test(&WRITE_ROUTE.parse().unwrap(), &[("cookie", &cookie)])
             .await
             .unwrap_err(),
         (401, "unauthorized".into()),
@@ -614,7 +617,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     assert_eq!(
         route
             .authenticate_authorization_for_test(
-                ATTACHMENT,
+                &ATTACHMENT.parse().unwrap(),
                 Some(&format!("Bearer {}", signed(&header(), &first)))
             )
             .await
@@ -663,7 +666,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         assert_eq!(
             route
                 .authenticate_authorization_for_test(
-                    ATTACHMENT,
+                    &ATTACHMENT.parse().unwrap(),
                     Some(&format!("Bearer {}", signed(&header(), &first)))
                 )
                 .await
@@ -681,7 +684,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     assert_eq!(
         route
             .authenticate_authorization_for_test(
-                ATTACHMENT,
+                &ATTACHMENT.parse().unwrap(),
                 Some(&format!("Bearer {}", signed(&header(), &wrong_login)))
             )
             .await
@@ -695,7 +698,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     assert_eq!(
         route
             .authenticate_authorization_for_test(
-                ATTACHMENT,
+                &ATTACHMENT.parse().unwrap(),
                 Some(&format!("Bearer {}", signed(&header(), &first)))
             )
             .await
@@ -725,7 +728,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         assert_eq!(
             route
                 .authenticate_authorization_for_test(
-                    ATTACHMENT,
+                    &ATTACHMENT.parse().unwrap(),
                     Some(&format!("Bearer {}", signed(&header(), &bad)))
                 )
                 .await
@@ -740,7 +743,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         assert_eq!(
             mixed
                 .authenticate_authorization_for_test(
-                    ATTACHMENT,
+                    &ATTACHMENT.parse().unwrap(),
                     Some(&format!("Bearer {}", signed(&bad, &first)))
                 )
                 .await
@@ -752,7 +755,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     assert_eq!(
         route
             .authenticate_authorization_for_test(
-                ATTACHMENT,
+                &ATTACHMENT.parse().unwrap(),
                 Some(&format!("Bearer {}", signed(&header(), &first)))
             )
             .await
@@ -769,8 +772,9 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         .await
         .map(drop)?;
     let authorization = format!("Bearer {}", signed(&header(), &first));
+    let attachment = ATTACHMENT.parse().unwrap();
     let (result, released) = tokio::join!(
-        route.authenticate_authorization_for_test(ATTACHMENT, Some(&authorization)),
+        route.authenticate_authorization_for_test(&attachment, Some(&authorization)),
         async {
             tokio::time::timeout(Duration::from_secs(3), async {
                 loop {
@@ -817,8 +821,9 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         .execute(&mut admin)
         .await
         .map(drop)?;
+    let attachment = ATTACHMENT.parse().unwrap();
     let (result, released) = tokio::join!(
-        route.authenticate_authorization_for_test(ATTACHMENT, Some(&authorization)),
+        route.authenticate_authorization_for_test(&attachment, Some(&authorization)),
         async {
             tokio::time::timeout(Duration::from_secs(3), async {
                 loop {
@@ -863,7 +868,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     server.queue(Reply::keys(&[]));
     assert_eq!(
         route
-            .authenticate_authorization_for_test(ATTACHMENT, Some(&authorization))
+            .authenticate_authorization_for_test(&ATTACHMENT.parse().unwrap(), Some(&authorization))
             .await
             .unwrap_err(),
         (401, "unauthorized".into())

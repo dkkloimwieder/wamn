@@ -9,10 +9,13 @@ pub(super) const DEFAULT_HOP_LIMIT: u64 = 10_000;
 
 pub(crate) struct Wiring {
     document: WiringDocument,
-    out: HashMap<String, Vec<usize>>,
-    inferred_ports: HashMap<usize, String>,
-    input_schemas: HashMap<String, HashMap<String, PortSchema>>,
-    output_schemas: HashMap<String, PortSchema>,
+    out: HashMap<wamn_catalog::canonical_name::CanonicalName, Vec<usize>>,
+    inferred_ports: HashMap<usize, wamn_catalog::canonical_name::CanonicalName>,
+    input_schemas: HashMap<
+        wamn_catalog::canonical_name::CanonicalName,
+        HashMap<wamn_catalog::canonical_name::CanonicalName, PortSchema>,
+    >,
+    output_schemas: HashMap<wamn_catalog::canonical_name::CanonicalName, PortSchema>,
 }
 
 struct PortSchema {
@@ -23,9 +26,10 @@ struct PortSchema {
 impl Wiring {
     pub(crate) fn compile(
         document: WiringDocument,
-        components: &BTreeMap<String, AdmittedComponent>,
+        components: &BTreeMap<wamn_catalog::canonical_name::CanonicalName, AdmittedComponent>,
     ) -> anyhow::Result<Self> {
-        let mut out: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut out: HashMap<wamn_catalog::canonical_name::CanonicalName, Vec<usize>> =
+            HashMap::new();
         let mut inferred_ports = HashMap::new();
         for (index, edge) in document.edges.iter().enumerate() {
             out.entry(edge.from.clone()).or_default().push(index);
@@ -70,13 +74,16 @@ impl Wiring {
         })
     }
 
-    pub(super) fn validates_output(&self, node: &str) -> bool {
+    pub(super) fn validates_output(
+        &self,
+        node: &wamn_catalog::canonical_name::CanonicalName,
+    ) -> bool {
         self.output_schemas.contains_key(node)
     }
 
     pub(super) fn validate_output(
         &self,
-        node: &str,
+        node: &wamn_catalog::canonical_name::CanonicalName,
         payload: &serde_json::Value,
     ) -> Result<(), super::ErrorDetail> {
         let Some(schema) = self.output_schemas.get(node) else {
@@ -95,8 +102,8 @@ impl Wiring {
 
     pub(super) fn validate_input(
         &self,
-        node: &str,
-        port: Option<&str>,
+        node: &wamn_catalog::canonical_name::CanonicalName,
+        port: Option<&wamn_catalog::canonical_name::CanonicalName>,
         payload: &serde_json::Value,
     ) -> Result<(), super::ErrorDetail> {
         let ports = &self.input_schemas[node];
@@ -126,29 +133,37 @@ impl Wiring {
             })
     }
 
-    pub(super) fn entry(&self) -> &str {
+    pub(super) fn entry(&self) -> &wamn_catalog::canonical_name::CanonicalName {
         &self.document.entry
     }
-    pub(super) fn node(&self, id: &str) -> Option<&WiringNode> {
+    pub(super) fn node(
+        &self,
+        id: &wamn_catalog::canonical_name::CanonicalName,
+    ) -> Option<&WiringNode> {
         self.document.nodes.get(id)
     }
     pub(super) fn successors<'a>(
         &'a self,
-        node: &str,
-        port: &'a str,
-    ) -> impl Iterator<Item = (&'a WiringEdge, &'a str)> {
+        node: &wamn_catalog::canonical_name::CanonicalName,
+        port: &'a wamn_catalog::canonical_name::CanonicalName,
+    ) -> impl Iterator<
+        Item = (
+            &'a WiringEdge,
+            &'a wamn_catalog::canonical_name::CanonicalName,
+        ),
+    > {
         self.out
             .get(node)
             .into_iter()
             .flatten()
             .filter_map(move |index| {
                 let edge = &self.document.edges[*index];
-                (edge.from_port == port).then(|| {
+                (&edge.from_port == port).then(|| {
                     (
                         edge,
                         edge.to_port
-                            .as_deref()
-                            .unwrap_or_else(|| self.inferred_ports[index].as_str()),
+                            .as_ref()
+                            .unwrap_or_else(|| &self.inferred_ports[index]),
                     )
                 })
             })

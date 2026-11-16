@@ -13,7 +13,7 @@ pub struct WorkflowRun {
     pub run_id: String,
     #[serde(rename = "package_id")]
     pub application: wamn_catalog::ApplicationName,
-    pub wiring_id: String,
+    pub wiring_id: wamn_catalog::canonical_name::CanonicalName,
     pub wiring_version: u32,
     pub trigger_source: Option<String>,
     pub status: RunStatus,

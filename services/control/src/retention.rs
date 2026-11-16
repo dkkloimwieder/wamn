@@ -9,7 +9,7 @@ use crate::Configuration;
 #[derive(Debug, Args)]
 pub struct Target {
     #[arg(long)]
-    project: String,
+    project: wamn_registry::ProjectId,
     #[arg(long)]
     environment: wamn_registry::EnvName,
 }

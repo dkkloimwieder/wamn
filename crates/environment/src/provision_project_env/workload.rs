@@ -102,7 +102,7 @@ pub(crate) async fn provision(
             &platform.system_database_url,
             &platform.target.kubeconfig,
             &platform.target.context,
-            namespace,
+            &document.org,
             role_cluster,
             &managed_role(username.clone(), family.acl_role(), secret.clone()),
         )
@@ -137,7 +137,7 @@ pub(crate) async fn provision(
                 .unwrap_or_else(|| format!("{role_cluster}-rw.{namespace}.svc.cluster.local"))
         };
         let config = configuration(
-            namespace,
+            document.org.as_str(),
             role_cluster,
             host,
             platform.database_port,

@@ -276,8 +276,8 @@ mod tests {
 
     fn input() -> ValuesInput {
         ValuesInput {
-            org: "acme".into(),
-            project: "wms".into(),
+            org: "acme".parse().unwrap(),
+            project: "wms".parse().unwrap(),
             env: "prod".parse().unwrap(),
             manifest_digest: DIGEST.parse().unwrap(),
             artifact_base: "registry.example/releases".into(),

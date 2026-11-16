@@ -2,27 +2,28 @@
 use crate::{ProvisionError, validate_project_env};
 
 pub fn environment_resource_name(
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Result<String, ProvisionError> {
     validate_project_env(org, project, env)?;
-    Ok(
-        wamn_registry::name::environment_resource_name(org, project, env)
-            .expect("validated coordinates"),
-    )
+    Ok(wamn_registry::name::environment_resource_name(
+        org, project, env,
+    ))
 }
 pub fn application_release_name(
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
 ) -> Result<String, ProvisionError> {
     validate_project_env(org, project, env)?;
-    Ok(
-        wamn_catalog::resource_names::application_release_name(org, project, env, application)
-            .expect("validated coordinates"),
-    )
+    Ok(wamn_catalog::resource_names::application_release_name(
+        org,
+        project,
+        env,
+        application,
+    ))
 }
 #[cfg(test)]
 mod tests {
@@ -30,11 +31,23 @@ mod tests {
     #[test]
     fn application_names_are_bounded_and_refuse_invalid_coordinates() {
         let env = "a".repeat(30).try_into().unwrap();
-        let name = application_release_name("a", "wms", &env, &"orders".parse().unwrap()).unwrap();
+        let name = application_release_name(
+            &"a".parse().unwrap(),
+            &"wms".parse().unwrap(),
+            &env,
+            &"orders".parse().unwrap(),
+        )
+        .unwrap();
         assert!(name.len() <= 47);
         assert_ne!(
             name,
-            application_release_name("a", "wms", &env, &"receiving".parse().unwrap()).unwrap()
+            application_release_name(
+                &"a".parse().unwrap(),
+                &"wms".parse().unwrap(),
+                &env,
+                &"receiving".parse().unwrap()
+            )
+            .unwrap()
         );
     }
 }
@@ -42,7 +55,7 @@ mod tests {
 /// Event coordinates supplied by environment provisioning and its chart consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventIdentity {
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
 }

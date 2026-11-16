@@ -248,7 +248,7 @@ pub trait CredentialProvider: Send + Sync {
     /// minted for someone else.
     fn resolve(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         class: AuthorityClass,
         project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> anyhow::Result<Option<ResolvedCredential>>;
@@ -265,22 +265,25 @@ pub trait CredentialProvider: Send + Sync {
 /// it made an unprovisioned project indistinguishable from a provisioned one.
 #[derive(Debug, Default)]
 pub struct StaticCredentialProvider {
-    projects: HashMap<String, ProjectConfig>,
+    projects: HashMap<wamn_registry::ProjectId, ProjectConfig>,
 }
 
 impl StaticCredentialProvider {
     /// `default`, when present, is registered under [`DEFAULT_PROJECT`] rather
     /// than acting as a fallback for every unlisted project.
-    pub fn new(projects: HashMap<String, ProjectConfig>, default: Option<ProjectConfig>) -> Self {
+    pub fn new(
+        projects: HashMap<wamn_registry::ProjectId, ProjectConfig>,
+        default: Option<ProjectConfig>,
+    ) -> Self {
         let mut projects = projects;
         if let Some(cfg) = default {
-            projects.entry(DEFAULT_PROJECT.to_string()).or_insert(cfg);
+            projects.entry((*DEFAULT_PROJECT).clone()).or_insert(cfg);
         }
         Self { projects }
     }
 
     /// Register a project's explicit credentials without changing other projects.
-    pub fn insert(&mut self, project: String, config: ProjectConfig) {
+    pub fn insert(&mut self, project: wamn_registry::ProjectId, config: ProjectConfig) {
         self.projects.insert(project, config);
     }
 
@@ -304,19 +307,20 @@ impl StaticCredentialProvider {
     pub fn projects_from_json(
         text: &str,
         base: &WamnPostgresConfig,
-    ) -> anyhow::Result<HashMap<String, ProjectConfig>> {
+    ) -> anyhow::Result<HashMap<wamn_registry::ProjectId, ProjectConfig>> {
         let v: serde_json::Value = serde_json::from_str(text).context("parse projects json")?;
         let obj = v
             .as_object()
             .context("projects json must be a JSON object")?;
         let mut out = HashMap::new();
         for (name, entry) in obj {
+            let name: wamn_registry::ProjectId = name.parse().context("project identifier")?;
             anyhow::ensure!(
                 entry.get("pool_max_size").is_none(),
                 "project {name:?} uses retired \"pool_max_size\"; configure \
                  \"guest_pool_max_size\" and \"platform_pool_max_size\" separately"
             );
-            let credentials = class_credentials_from_json(name, entry)?;
+            let credentials = class_credentials_from_json(&name, entry)?;
             let u64_or = |k: &str, d: u64| {
                 entry
                     .get(k)
@@ -360,7 +364,7 @@ impl StaticCredentialProvider {
 /// unrecognised key is refused rather than ignored — silently dropping it would
 /// leave the operator believing a class was configured when it was not.
 fn class_credentials_from_json(
-    name: &str,
+    name: &wamn_registry::ProjectId,
     entry: &serde_json::Value,
 ) -> anyhow::Result<ClassCredentials> {
     anyhow::ensure!(
@@ -409,7 +413,7 @@ impl CredentialProvider for StaticCredentialProvider {
     /// handed back — never on a different class's login.
     fn resolve(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         class: AuthorityClass,
         project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
@@ -447,14 +451,17 @@ impl CredentialProvider for StaticCredentialProvider {
 /// A pool belongs to one project and authenticated login.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct PoolKey {
-    project: Box<str>,
+    project: wamn_registry::ProjectId,
     login: wamn_identity_protocol::LoginName,
 }
 
 impl PoolKey {
-    pub(super) fn new(project: &str, login: wamn_identity_protocol::LoginName) -> Self {
+    pub(super) fn new(
+        project: &wamn_registry::ProjectId,
+        login: wamn_identity_protocol::LoginName,
+    ) -> Self {
         Self {
-            project: project.into(),
+            project: project.clone(),
             login,
         }
     }
@@ -567,7 +574,11 @@ mod tests {
             .into_iter()
             .filter(|class| *class != AuthorityClass::GuestSql)
         {
-            assert!(provider.resolve("billing", class, None).is_err());
+            assert!(
+                provider
+                    .resolve(&"billing".parse().unwrap(), class, None)
+                    .is_err()
+            );
         }
     }
 
@@ -605,13 +616,13 @@ mod tests {
             ),
         );
         let mut projects = HashMap::new();
-        projects.insert("billing".to_string(), project_config(credentials));
+        projects.insert("billing".parse().unwrap(), project_config(credentials));
         let provider = StaticCredentialProvider::new(projects, None);
 
         assert!(
             provider
                 .resolve(
-                    "billing",
+                    &"billing".parse().unwrap(),
                     AuthorityClass::GuestSql,
                     Some(&"acme--dev--project".parse().unwrap())
                 )
@@ -623,7 +634,7 @@ mod tests {
         assert!(
             provider
                 .resolve(
-                    "billing",
+                    &"billing".parse().unwrap(),
                     AuthorityClass::GuestSql,
                     Some(&"evil--dev--project".parse().unwrap())
                 )
@@ -632,14 +643,18 @@ mod tests {
         );
         assert!(
             provider
-                .resolve("billing", AuthorityClass::GuestSql, None)
+                .resolve(&"billing".parse().unwrap(), AuthorityClass::GuestSql, None)
                 .is_err(),
             "guest resolution without a project has no authority to validate"
         );
         // The platform class is restricted to a project-environment: no project binding.
         assert!(
             provider
-                .resolve("billing", AuthorityClass::ExecutorPlatform, None)
+                .resolve(
+                    &"billing".parse().unwrap(),
+                    AuthorityClass::ExecutorPlatform,
+                    None
+                )
                 .expect("platform resolution needs no project")
                 .is_some()
         );
@@ -658,7 +673,7 @@ mod tests {
     fn an_unlisted_project_does_not_borrow_another_projects_credential() {
         let mut projects = HashMap::new();
         projects.insert(
-            "billing".to_string(),
+            "billing".parse().unwrap(),
             config("postgres://wamn_app_billing:pw@db/billing"),
         );
         let provider =
@@ -666,14 +681,22 @@ mod tests {
 
         assert!(
             provider
-                .resolve("billing", AuthorityClass::ExecutorPlatform, None)
+                .resolve(
+                    &"billing".parse().unwrap(),
+                    AuthorityClass::ExecutorPlatform,
+                    None
+                )
                 .expect("resolve billing")
                 .is_some(),
             "a listed project must still resolve"
         );
         assert!(
             provider
-                .resolve("not-provisioned", AuthorityClass::ExecutorPlatform, None)
+                .resolve(
+                    &"not-provisioned".parse().unwrap(),
+                    AuthorityClass::ExecutorPlatform,
+                    None
+                )
                 .expect("resolve unlisted")
                 .is_none(),
             "an unlisted project must FAIL, not fall back onto the default              project's credential"
@@ -688,14 +711,18 @@ mod tests {
             StaticCredentialProvider::default_only(Some(config("postgres://wamn_app_d:pw@db/d")));
         assert!(
             provider
-                .resolve(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
+                .resolve(&DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
                 .expect("resolve default")
                 .is_some(),
             "the default project must resolve, or single-DB deployments break"
         );
         assert!(
             provider
-                .resolve("somethingelse", AuthorityClass::ExecutorPlatform, None)
+                .resolve(
+                    &"somethingelse".parse().unwrap(),
+                    AuthorityClass::ExecutorPlatform,
+                    None
+                )
                 .expect("resolve other")
                 .is_none(),
             "registering the default must not resurrect the catch-all"

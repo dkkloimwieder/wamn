@@ -12,8 +12,8 @@ use wamn_registry::Triple;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentConfiguration {
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
     pub target: String,
     pub policy: wamn_registry::EnvName,
@@ -243,7 +243,7 @@ fn database_seconds(seconds: u32) -> Result<i32, sqlx::Error> {
 /// Returns database errors or an invalid argument when the policy changes placement.
 pub async fn require_placement(
     connection: &mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
     policy: &wamn_registry::EnvName,
 ) -> Result<(), sqlx::Error> {

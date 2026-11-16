@@ -66,8 +66,8 @@ fn fixture() -> Fixture {
     let args = PublishReleaseRequest {
         applications: serde_json::from_value(serde_json::json!({"netsuite": {"packages": ["wamn_integration", "netsuite", "rest_consumer_fixture"]}})).unwrap(),
         application: None,
-        org: "rest".into(),
-        project: "publication".into(),
+        org: "rest".parse().unwrap(),
+        project: "publication".parse().unwrap(),
         environment: "test".parse().unwrap(),
         packages: ["wamn_integration", "netsuite", "rest_consumer_fixture"]
             .into_iter()
@@ -130,7 +130,7 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
         .iter_mut()
         .find(|edge| edge.from == "rows")
         .unwrap()
-        .from_port = "main".into();
+        .from_port = "main".parse().unwrap();
     assert!(condition_documents(&args, &assembled.published.manifest, &wrong_port).is_err());
     // Environment workflows resolve the node operation against the release,
     // not the package-local operation-dependency alias.
@@ -140,7 +140,7 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
         .nodes
         .get_mut("record")
         .unwrap()
-        .operation = "rest-consumer-fixture:item/other@0.1.0".into();
+        .operation = "rest-consumer-fixture:item/other@0.1.0".parse().unwrap();
     assert!(condition_documents(&args, &assembled.published.manifest, &wrong_dependency).is_err());
 }
 

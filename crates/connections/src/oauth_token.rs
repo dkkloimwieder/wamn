@@ -164,7 +164,7 @@ pub struct Request<'a> {
     pub reader: &'a ConnectionCredentials,
     /// The host-attested executing principal of this call.
     pub principal: wamn_identity_protocol::PrincipalId,
-    pub project: &'a str,
+    pub project: &'a wamn_registry::ProjectId,
     pub environment: &'a wamn_registry::EnvName,
     pub connection: uuid::Uuid,
     pub generation: i64,

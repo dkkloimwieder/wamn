@@ -172,7 +172,7 @@ pub struct OperationHost {
     allowed_hosts: Arc<[AllowedHost]>,
     pub release: Arc<LoadedRelease>,
     pub source: Arc<dyn ArtifactSource>,
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
     schema: Option<String>,
     owner_prefix: String,
     warm_reuse: WarmReuse,
@@ -230,7 +230,7 @@ impl fmt::Debug for OperationHost {
 /// The process-owned facts of an [`OperationHost`], outside its services.
 #[derive(Debug, Clone)]
 pub struct OperationHostConfig {
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
     pub schema: Option<String>,
     pub owner_prefix: String,
     pub warm_reuse: WarmReuse,
@@ -262,7 +262,7 @@ impl OperationHost {
             target.owner_prefix
         );
         anyhow::ensure!(
-            target.project == facts.project(),
+            &target.project == facts.project(),
             "operation project authority mismatch"
         );
         Ok(Self {
@@ -471,7 +471,7 @@ impl OperationHost {
             Arc::clone(&self.engine),
             NativeWorkloadSpec {
                 id: next_scope("wamn-application").into(),
-                namespace: self.project.clone(),
+                namespace: self.project.to_string(),
                 name: self.owner_prefix.clone(),
                 components,
                 warm_reuse: self.warm_reuse.clone(),
@@ -503,7 +503,7 @@ impl ApplicationHost for OperationHost {
 /// The connection invocation of one admitted component at one entry.
 pub fn component_invocation(
     component: &AdmittedComponent,
-    operation: &str,
+    operation: &wamn_catalog::canonical_name::CanonicalName,
     entry: InvocationEntry,
     closure: ConnectionExecutionClosure,
     effects: Option<EffectEvidence>,
@@ -584,7 +584,7 @@ impl wamn_sql::OperationInvoker for OperationHost {
     async fn invoke(
         &self,
         authority: Arc<wamn_sql::invocation::AuthorizedInvocation>,
-        operation: String,
+        operation: wamn_catalog::canonical_name::CanonicalName,
         context: node_types::NodeContext,
         input: String,
     ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
@@ -631,7 +631,7 @@ impl wamn_sql::OperationInvoker for OperationHost {
     async fn sign_result(
         &self,
         authority: Arc<wamn_sql::invocation::AuthorizedInvocation>,
-        operation: String,
+        operation: wamn_catalog::canonical_name::CanonicalName,
         payload: String,
     ) -> anyhow::Result<String> {
         use wamn_engine::operation::InvocationPolicy as _;

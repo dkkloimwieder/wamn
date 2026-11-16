@@ -59,13 +59,13 @@ pub(super) fn static_sql_rows(operation: &CustomOperationDeclaration) -> Vec<Rus
         .statements
         .iter()
         .map(|(name, statement)| RustRow {
-            name: format!("{}Row", rust_type_identifier(name)),
+            name: format!("{}Row", rust_type_identifier(name.as_str())),
             visibility: RustVisibility::Public,
             fields: statement
                 .row
                 .iter()
                 .map(|field| RustMember {
-                    name: rust_identifier(&field.name)
+                    name: rust_identifier(field.name.as_str())
                         .expect("static SQL value names were validated for Rust"),
                     rust_type: projected_rust_type(field.ty, field.nullable),
                     statement_type: field.ty,
@@ -83,14 +83,16 @@ pub(super) fn static_sql_accessors(
         .statements
         .iter()
         .map(|(name, statement)| StaticSqlAccessor {
-            name: name.clone(),
-            statement_constant: format!("{}_STATEMENT", name.to_ascii_uppercase()),
-            row: format!("{}Row", rust_type_identifier(name)),
+            name: name.to_string(),
+            statement_constant: format!("{}_STATEMENT", name.as_str().to_ascii_uppercase()),
+            row: format!("{}Row", rust_type_identifier(name.as_str())),
             fetch: statement.fetch,
             binds: statement
                 .parameters
                 .iter()
-                .map(|parameter| accessor_bind(&parameter.name, parameter.ty, parameter.nullable))
+                .map(|parameter| {
+                    accessor_bind(parameter.name.as_str(), parameter.ty, parameter.nullable)
+                })
                 .collect(),
         })
         .collect()
@@ -117,7 +119,7 @@ pub(super) fn emit_static_sql_projection(
         writeln!(
             source,
             "pub(crate) const {}_STATEMENT: &str = include_str!({:?});",
-            name.to_ascii_uppercase(),
+            name.as_str().to_ascii_uppercase(),
             sql_include_path(paths, module_name, &statement.path)
         )
         .expect("writing to a String cannot fail");
@@ -207,12 +209,12 @@ fn static_sql_accessor_result_type(accessor: &StaticSqlAccessor) -> String {
 
 pub(super) fn wamn_api(
     catalog: &CatalogIr,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
     operation_sql: &BTreeMap<String, Vec<String>>,
 ) -> WamnApi {
-    let model_row = format!("{}Row", rust_type_identifier(model_name));
+    let model_row = format!("{}Row", rust_type_identifier(model_name.as_str()));
     let mut mutation_constraints = Vec::new();
     let mut operation_rows = Vec::new();
     let mut accessors = Vec::new();
@@ -480,7 +482,11 @@ fn filter_binds(operation: &OperationDeclaration) -> Vec<AccessorBind> {
 ///
 /// Both statements return one outer row even when no model row matched, so
 /// every column is nullable (`crate::sql::query`, `crate::sql::changes`).
-fn feed_rows(model_name: &str, model: &ModelDeclaration, table: &Table) -> Vec<RustRow> {
+fn feed_rows(
+    model_name: &crate::source_name::SourceName,
+    model: &ModelDeclaration,
+    table: &Table,
+) -> Vec<RustRow> {
     if !model.feed_enabled() {
         return Vec::new();
     }
@@ -496,7 +502,7 @@ fn feed_rows(model_name: &str, model: &ModelDeclaration, table: &Table) -> Vec<R
         statement_type: column.column_type(),
         nullable: true,
     });
-    let model_type = rust_type_identifier(model_name);
+    let model_type = rust_type_identifier(model_name.as_str());
     let mut fields = table
         .columns()
         .iter()
@@ -553,7 +559,7 @@ fn feed_rows(model_name: &str, model: &ModelDeclaration, table: &Table) -> Vec<R
 }
 
 fn operation_result_row(
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,
@@ -600,7 +606,7 @@ fn operation_result_row(
     RustRow {
         name: format!(
             "{}{}Row",
-            rust_type_identifier(model_name),
+            rust_type_identifier(model_name.as_str()),
             rust_type_identifier(action.as_str())
         ),
         visibility: RustVisibility::Public,
@@ -649,7 +655,7 @@ pub(super) fn emit_projection(
         source.push_str("use wamn_postgres_statements::Connection;\n\n");
     }
     let model_row = RustRow {
-        name: format!("{}Row", rust_type_identifier(model_name)),
+        name: format!("{}Row", rust_type_identifier(model_name.as_str())),
         visibility: RustVisibility::Public,
         fields: table
             .columns
@@ -673,7 +679,7 @@ pub(super) fn emit_projection(
                 "{} const {}: &str = include_str!({:?});",
                 api.statement_visibility.source(),
                 statement_constant_name(action, index, sql_paths.len()),
-                sql_include_path(paths, model_name, path)
+                sql_include_path(paths, model_name.as_str(), path)
             )
             .expect("writing to a String cannot fail");
         }

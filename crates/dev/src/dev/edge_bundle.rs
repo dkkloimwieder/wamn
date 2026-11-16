@@ -27,8 +27,8 @@ use wamn_publish::publish_release::{
 /// The `project_env_key` of the release is [`project_env_key`] of the three.
 #[derive(Debug, Clone, Copy)]
 pub struct EdgeTarget<'a> {
-    pub org: &'a str,
-    pub project: &'a str,
+    pub org: &'a wamn_registry::OrgId,
+    pub project: &'a wamn_registry::ProjectId,
     pub environment: &'a wamn_registry::EnvName,
 }
 
@@ -45,7 +45,7 @@ impl EdgeTarget<'_> {
 /// It admits the bytes and assembles the release without a database or session.
 pub fn write_package(
     package: &Path,
-    component: &str,
+    component: &wamn_catalog::canonical_name::CanonicalName,
     bytes: &Path,
     ingress: &Path,
     target: &EdgeTarget<'_>,

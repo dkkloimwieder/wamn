@@ -293,7 +293,7 @@ pub struct HostArgs {
 
     /// Organization owning this environment host.
     #[arg(long, env = "WAMN_ORG")]
-    pub org: Option<String>,
+    pub org: Option<wamn_registry::OrgId>,
 
     /// Trusted HTTPS issuer for session routes, never discovered from a token.
     #[arg(long, env = "WAMN_SESSION_ISSUER", requires = "session_jwks_ca")]
@@ -481,19 +481,22 @@ fn host_credentials(
 fn session_verifier(
     args: &HostArgs,
     environment: &wamn_registry::EnvName,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     suffix: &wamn_registry::instance_suffix::InstanceSuffix,
     http_admitter_url: &str,
 ) -> anyhow::Result<SessionVerifier<IssuerKeys>> {
     let org = args
         .org
-        .as_deref()
+        .as_ref()
         .context("a session route requires --org/WAMN_ORG")?;
     let issuer = args
         .session_issuer
         .as_deref()
         .context("a session route requires --session-issuer")?;
-    let audience = session_audience(&Triple::new(org, environment.clone(), project), suffix)?;
+    let audience = session_audience(
+        &Triple::new(org.clone(), environment.clone(), project.clone()),
+        suffix,
+    )?;
     let database = project_env_database_name(org, project, environment, suffix);
     // Compare trusted deployment coordinates, not anything carried by a token.
     // Parsing failures never attach the credential-bearing URL to diagnostics.
@@ -511,7 +514,8 @@ fn session_verifier(
     endpoint.set_path("/.well-known/jwks.json");
     endpoint.set_query(None);
     let keys = IssuerKeys::new(IssuerKeysConfig::new(issuer, endpoint.as_str(), &ca)?);
-    SessionVerifier::new(keys, org, &audience).context("configure the host session verifier")
+    SessionVerifier::new(keys, org.as_str(), &audience)
+        .context("configure the host session verifier")
 }
 
 /// The tracing target of the scheduler client's events. The `wasmcloud:nats`
@@ -1875,7 +1879,7 @@ host:
             let error = session_verifier(
                 &cli.args,
                 &"dev".parse().unwrap(),
-                "widgets",
+                &"widgets".parse().unwrap(),
                 &"k3m9x2p7".parse().unwrap(),
                 &format!("postgres://reader:secret@localhost/{database}"),
             )
@@ -1892,8 +1896,11 @@ host:
             ServingRoute,
         };
 
-        let mut descriptor =
-            ComponentDescriptor::named("http-request", "0.1", RELEASE_DIGEST.parse().unwrap());
+        let mut descriptor = ComponentDescriptor::named(
+            "http-request".parse().unwrap(),
+            "0.1".parse().unwrap(),
+            RELEASE_DIGEST.parse().unwrap(),
+        );
         descriptor.connections = connections;
         ServingManifest::new(
             ServingRelease {
@@ -1909,7 +1916,7 @@ host:
                 descriptor: {
                     let mut descriptor = descriptor;
                     descriptor.operations = BTreeMap::from([(
-                        "request".into(),
+                        "request".parse().unwrap(),
                         AdmittedComponentOperation {
                             host_transaction: false,
                             input_ports: Vec::new(),
@@ -1924,21 +1931,21 @@ host:
             }]),
             BTreeSet::from([ServingRoute {
                 package_id: "cat".parse().unwrap(),
-                component: "http-request".into(),
-                operation: "request".into(),
+                component: "http-request".parse().unwrap(),
+                operation: "request".parse().unwrap(),
                 type_: OperationType::Command,
                 reads: BTreeSet::new(),
                 revision: None,
                 idempotency: None,
             }]),
             BTreeMap::from([(
-                "orders".into(),
+                "orders".parse().unwrap(),
                 ServingAttachment {
                     type_: AttachmentType::Http,
                     package_id: "cat".parse().unwrap(),
                     target: AttachmentTarget::Route {
-                        component: "http-request".into(),
-                        operation: "request".into(),
+                        component: "http-request".parse().unwrap(),
+                        operation: "request".parse().unwrap(),
                     },
                     definition_hash: (RELEASE_DIGEST).parse::<wamn_digest::Digest>().unwrap(),
                     definition: serde_json::json!({

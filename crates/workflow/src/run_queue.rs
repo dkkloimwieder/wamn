@@ -6,7 +6,7 @@ use wamn_sql::WamnPostgres;
 /// Read restart pins through this project's executor credential.
 pub async fn unfinished_releases(
     postgres: &WamnPostgres,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
 ) -> anyhow::Result<Vec<(wamn_catalog::ApplicationName, wamn_digest::Digest, String)>> {
@@ -20,7 +20,7 @@ pub async fn unfinished_releases(
 /// Load immutable catalog bytes through the owning project's executor credential.
 pub async fn release_bytes(
     postgres: &WamnPostgres,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     project_env_key: &wamn_registry::ProjectEnvKey,
     digest: &wamn_digest::Digest,
 ) -> anyhow::Result<Vec<u8>> {

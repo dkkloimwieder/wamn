@@ -16,7 +16,7 @@ pub fn validate_context(
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         identity.project_env_key.as_ref() == Some(&context.release.target().project_env_key)
-            && identity.project.as_deref() == Some(context.connections.project())
+            && identity.project.as_ref() == Some(context.connections.project())
             && identity.release.as_ref()
                 == Some(&wamn_authority::identity::ReleaseIdentity::from_loaded(
                     &context.release

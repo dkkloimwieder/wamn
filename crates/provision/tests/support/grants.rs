@@ -48,19 +48,19 @@ pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture
             database,
         },
         WorkloadRoleIdentityType::ProjectEnvironment => WorkloadRoleIdentity::ProjectEnvironment {
-            org: "acme",
-            project: "billing",
+            org: &"acme".parse().unwrap(),
+            project: &"billing".parse().unwrap(),
             environment: &"dev".parse().unwrap(),
             database,
         },
         WorkloadRoleIdentityType::Control => WorkloadRoleIdentity::Control {
-            org: "acme",
-            project: "billing",
+            org: &"acme".parse().unwrap(),
+            project: &"billing".parse().unwrap(),
             environment: &"dev".parse().unwrap(),
             database,
         },
         WorkloadRoleIdentityType::Org => WorkloadRoleIdentity::Org {
-            org: "acme",
+            org: &"acme".parse().unwrap(),
             database,
         },
     };

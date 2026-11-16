@@ -261,7 +261,9 @@ async fn executor_platform_surface_live(pool: sqlx::PgPool) -> anyhow::Result<()
     )?;
     plugin.set_operation(
         COMPONENT,
-        &wamn_control_provision::PlatformComponent::Executor.principal_name(),
+        &wamn_control_provision::PlatformComponent::Executor
+            .principal_name()
+            .parse()?,
     )?;
     plugin.set_project_env_key(COMPONENT, &PROJECT_ENV_KEY.parse().unwrap());
     plugin.set_schema(COMPONENT, "wamn_run")?;

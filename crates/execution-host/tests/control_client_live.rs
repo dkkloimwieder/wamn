@@ -30,10 +30,10 @@ use http_body_util::BodyExt as _;
 mod session_fixture;
 use session_fixture::{ISSUER, ORG, Server, claims, header, signed};
 
-#[path = "support/session_authority.rs"]
-mod session_authority;
 #[path = "support/application_fixture.rs"]
 mod application_fixture;
+#[path = "support/session_authority.rs"]
+mod session_authority;
 use application_fixture::{ApplicationHost, MEMBER, PROJECT, application_host};
 
 #[path = "support/control_fixture.rs"]
@@ -133,7 +133,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
     let admin_url = test_database.url();
     let mut admin = control_fixture::connect(admin_url).await?;
     let control_url = control_fixture::install(&mut admin, admin_url).await?;
-    let audience = wamn_platform_identity::control::control_audience(ORG)?;
+    let audience = wamn_platform_identity::control::control_audience(&ORG.parse().unwrap())?;
 
     let mut setup = wamn_test_postgres::transaction(
         &mut admin,
@@ -168,14 +168,14 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         (
             &cat,
             MemberGrants {
-                project_admins: vec!["billing".to_owned()],
+                project_admins: vec!["billing".parse().unwrap()],
                 ..MemberGrants::default()
             },
         ),
         (&ann, MemberGrants::default()),
     ];
     for (principal, grants) in &grants {
-        invite_member(&mut setup, principal, ORG, grants).await?;
+        invite_member(&mut setup, principal, &ORG.parse().unwrap(), grants).await?;
     }
     for principal in [&boss, &cat] {
         sqlx::query("INSERT INTO identity.password_logins \
@@ -210,7 +210,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
             control,
             writer,
             identity: None,
-            org: ORG.to_owned(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::default(),
         },
     ));

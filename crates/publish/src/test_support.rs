@@ -38,10 +38,10 @@ pub fn closure_component(
             package_id: "base".parse().unwrap(),
             package_version: "1.0.0".parse().unwrap(),
         },
-        component: component.to_owned(),
-        interface_version: "0.1.0".to_owned(),
+        component: component.parse().unwrap(),
+        interface_version: "0.1.0".parse().expect("fixed identifier"),
         operations: BTreeMap::from([(
-            operation.to_owned(),
+            operation.parse().unwrap(),
             AdmittedComponentOperation {
                 committed_result_schema: None,
                 registered_operation: registered_operation.cloned(),

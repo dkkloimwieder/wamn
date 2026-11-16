@@ -58,7 +58,7 @@ impl Fixture {
         let mut admin = connect(database.as_str()).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE wamn_system; BEGIN; {} {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",
             bind_platform_principal_sql(PlatformComponent::Provisioning),
-            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", &"dev".parse().unwrap())))).execute(&mut admin).await.map(drop)?;
+            wamn_control_provision::test_database::seed_org_project_env_sql(&"acme".parse().unwrap(), &"one".parse().unwrap(), &"dev".parse().unwrap())))).execute(&mut admin).await.map(drop)?;
         let registry = local_registry::LocalRegistry::start("exclusive-resources");
         registry.ready().await;
         let auth = scratch.path().join("auth.json");
@@ -90,10 +90,10 @@ impl Fixture {
             .execute(&mut *tx)
             .await
             .map(drop)?;
-            wamn_test_infrastructure::credentials::define(&mut tx, "acme", &json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":authority}}), &store).await?;
+            wamn_test_infrastructure::credentials::define(&mut tx, &"acme".parse().unwrap(), &json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":authority}}), &store).await?;
             wamn_platform_identity::connections::administration::execute_with_store(
                 &mut tx,
-                "acme",
+                &"acme".parse().unwrap(),
                 "connection.disable",
                 &json!({"project":"one","env":"dev","name":name}).to_string(),
                 &mut wamn_broker::auth_changes::AuthDrops::default(),
@@ -138,7 +138,7 @@ impl Fixture {
         let mut writer = package.clone();
         writer.package.id = "observer_fixture".parse().expect("valid name");
         writer.connections.insert(
-            "registers".into(),
+            "registers".parse().unwrap(),
             wamn_compiler::manifest::ConnectionDeclaration {
                 interface: "wamn:modbus/write@1.0.0".into(),
                 mode: wamn_compiler::manifest::ConnectionMode::Write,
@@ -166,10 +166,10 @@ impl Fixture {
         reader_url.set_password(Some("fixture")).unwrap();
         let credentials = Arc::new(ConnectionCredentials::from_database(
             wamn_postgres::pool(reader_url.as_str(), 4).await?,
-            "acme",
+            &"acme".parse().unwrap(),
         ));
         let postgres = Arc::new(wamn_sql::WamnPostgres::from_env_for_project(
-            "one",
+            &"one".parse().unwrap(),
             Some(wamn_sql::ClassCredentials::every_class(
                 project_database.as_str().to_owned(),
             )),
@@ -217,7 +217,7 @@ impl Fixture {
         let mut drops = ConnectionDrops::default();
         wamn_platform_identity::connections::administration::execute_with_store(
             &mut tx,
-            "acme",
+            &"acme".parse().unwrap(),
             operation,
             &json!({"project":"one","env":"dev","name":name}).to_string(),
             &mut wamn_broker::auth_changes::AuthDrops::default(),
@@ -289,14 +289,14 @@ impl Fixture {
             Arc::clone(&self.credentials),
             &self.postgres,
             &"acme--dev--one".parse().unwrap(),
-            "one",
+            &"one".parse().unwrap(),
             &"dev".parse().unwrap(),
         ));
         let integrations = Integrations::new(
             Arc::clone(&facts),
             &self.release,
             self.postgres.as_ref(),
-            "one",
+            &"one".parse().unwrap(),
             self.registry.clone(),
             self.registry_credentials.clone(),
         )
@@ -307,7 +307,7 @@ impl Fixture {
             facts,
             &writer_release,
             self.postgres.as_ref(),
-            "one",
+            &"one".parse().unwrap(),
             self.registry.clone(),
             self.registry_credentials.clone(),
         )

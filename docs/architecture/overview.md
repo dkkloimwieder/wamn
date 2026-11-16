@@ -157,7 +157,8 @@ The hierarchy is org, environment, project, application.
 Applications are releases under those project deployments.
 Environment coordinates contain org and environment.
 Project database coordinates also contain the project.
-`wamn_registry::EnvName` owns environment names. `wamn_registry::ProjectEnvKey` owns composed deployment keys.
+`wamn_registry::OrgId`, `ProjectId`, and `EnvName` own the three coordinate names.
+`wamn_registry::ProjectEnvKey` owns composed deployment keys.
 Their constructors parse external strings. Internal calls carry the types, and wire formats keep strings.
 SQL decoding uses the same constructors and refuses invalid stored values.
 The catalog holds no second environment identity table.

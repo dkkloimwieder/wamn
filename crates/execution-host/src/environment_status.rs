@@ -14,8 +14,8 @@ pub trait StatusSource: Send + Sync + std::fmt::Debug {
     /// Read the current runtime status of the named environment.
     async fn read(
         &self,
-        org: &str,
-        project: &str,
+        org: &wamn_registry::OrgId,
+        project: &wamn_registry::ProjectId,
         env: &wamn_registry::EnvName,
     ) -> anyhow::Result<Value>;
 }
@@ -28,8 +28,8 @@ pub struct KubernetesSource;
 impl StatusSource for KubernetesSource {
     async fn read(
         &self,
-        org: &str,
-        project: &str,
+        org: &wamn_registry::OrgId,
+        project: &wamn_registry::ProjectId,
         env: &wamn_registry::EnvName,
     ) -> anyhow::Result<Value> {
         let api = KubernetesApi::in_cluster()?;
@@ -39,7 +39,7 @@ impl StatusSource for KubernetesSource {
             |path| api.get(path),
         )
         .await?;
-        let group = wamn_registry::name::environment_host_name(org, env)?;
+        let group = wamn_registry::name::environment_host_name(org, env);
         let mut summary = wamn_kubernetes::environment_state::environment_state(&observed, &group);
         summary.workloads = observed.workloads["items"]
             .as_array()

@@ -5,8 +5,8 @@ use anyhow::Context as _;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentDocument {
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
     /// The immutable deployment target name.
     pub target: String,
@@ -228,7 +228,7 @@ impl EnvironmentDocument {
 
     /// The coordinate.
     pub fn triple(&self) -> Triple {
-        Triple::new(self.org.as_str(), self.env.clone(), self.project.as_str())
+        Triple::new(self.org.clone(), self.env.clone(), self.project.clone())
     }
 
     /// The canonical bytes: RFC 8785 JSON.

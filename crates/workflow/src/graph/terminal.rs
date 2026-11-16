@@ -23,7 +23,10 @@ pub enum Verdict {
     /// frontier empties: responding early and continuing to work is a wiring's
     /// prerogative, and the caller's answer is this payload, not whatever the
     /// last node happened to produce.
-    Respond { payload: Value, node_id: String },
+    Respond {
+        payload: Value,
+        node_id: wamn_catalog::canonical_name::CanonicalName,
+    },
     /// Publish `event` into the boundary under `dedup_id`, using only the
     /// selector copied from the admitted terminal occurrence. `node_id` is the
     /// exact wiring node that declared [`wamn_catalog::WiringTerminal::Emit`], copied from the
@@ -34,9 +37,9 @@ pub enum Verdict {
     Emit {
         event: Value,
         dedup_id: String,
-        entity: String,
+        entity: wamn_catalog::canonical_name::CanonicalName,
         operation: Op,
-        node_id: String,
+        node_id: wamn_catalog::canonical_name::CanonicalName,
     },
     /// Nothing to answer and nothing to publish: the frontier emptied with no
     /// caller attached and no terminal node reached.

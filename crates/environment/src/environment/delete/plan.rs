@@ -26,7 +26,7 @@ pub fn instance_roles(
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
     project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<Vec<wamn_identity_protocol::LoginName>> {
-    let (org, project, env) = (triple.org.as_str(), triple.project.as_str(), &triple.env);
+    let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let database = project_env_database_name(org, project, env, instance);
     let mut roles = vec![cdc_object_name(org, project, env, instance).parse()?];
     for family in instance_families() {

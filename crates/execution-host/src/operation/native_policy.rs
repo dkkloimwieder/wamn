@@ -38,7 +38,7 @@ pub(super) struct NativePolicyResources {
     pub(super) blobstore: Arc<WamnBlobstore>,
     pub(super) context: Arc<wamn_connections::invocation::ReleaseContext>,
     pub(super) release: Arc<LoadedRelease>,
-    pub(super) project: String,
+    pub(super) project: wamn_registry::ProjectId,
 }
 
 impl std::fmt::Debug for NativePolicyResources {
@@ -57,9 +57,10 @@ impl std::fmt::Debug for NativePolicyResources {
 #[derive(Debug)]
 struct ComponentPolicy {
     fact: AdmittedComponent,
-    reads: BTreeSet<String>,
+    reads: BTreeSet<wamn_catalog::canonical_name::CanonicalName>,
     /// Signing authority comes only from the release-pinned descriptor.
-    signed_results: BTreeMap<String, wamn_catalog::SignedFileReads>,
+    signed_results:
+        BTreeMap<wamn_catalog::canonical_name::CanonicalName, wamn_catalog::SignedFileReads>,
     runtime_schema: Option<String>,
     /// The environment map name of the application that holds this component, which
     /// every call binds as `app.application`.
@@ -212,7 +213,7 @@ impl NativePolicy {
     fn admit(
         &self,
         component_id: &str,
-        operation: &str,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
         facts: &NativeFacts,
     ) -> anyhow::Result<Arc<ComponentPolicy>> {
         let acquisition = &facts.acquisition;
@@ -228,8 +229,8 @@ impl NativePolicy {
         let fact = &component.fact;
         anyhow::ensure!(
             Some(&fact.target.project_env_key) == acquisition.identity.project_env_key.as_ref()
-                && acquisition.invocation.operation == operation
-                && acquisition.identity.project.as_deref() == Some(self.resources.project.as_str())
+                && &acquisition.invocation.operation == operation
+                && acquisition.identity.project.as_ref() == Some(&self.resources.project)
                 && acquisition.identity.release.as_ref()
                     == Some(&wamn_authority::identity::ReleaseIdentity::from_loaded(
                         &self.resources.release
@@ -250,7 +251,7 @@ impl InvocationPolicy for NativePolicy {
     async fn prepare(
         &self,
         component_id: &str,
-        operation: &str,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
         facts: &NativeFacts,
     ) -> anyhow::Result<NativeFacts> {
         let component = self.admit(component_id, operation, facts)?;
@@ -261,7 +262,7 @@ impl InvocationPolicy for NativePolicy {
                 .session_identity(authority.id())
                 .context("invocation scope was revoked")?;
             anyhow::ensure!(
-                identity.operation.as_deref() == Some(operation)
+                identity.operation.as_ref() == Some(operation)
                     && self.resources.postgres.invocation(authority.id()).as_ref()
                         == Some(&facts.acquisition.invocation),
                 "prepared invocation authority differs from the call"
@@ -302,7 +303,8 @@ impl InvocationPolicy for NativePolicy {
         .await
         .map_err(|error| {
             if error.downcast_ref::<UnprovisionedPrincipal>().is_some() {
-                OperationRefusal::new(OperationRefusalType::PermissionDenied, operation).into()
+                OperationRefusal::new(OperationRefusalType::PermissionDenied, operation.as_str())
+                    .into()
             } else {
                 error
             }
@@ -470,7 +472,7 @@ impl InvocationPolicy for NativePolicy {
     async fn finish_result(
         &self,
         component_id: &str,
-        operation: &str,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
         facts: &NativeFacts,
         outcome: super::native_call::NativeOutcome,
     ) -> anyhow::Result<super::native_call::NativeOutcome> {
@@ -545,7 +547,7 @@ impl NativePolicy {
                 {
                     interface
                         .config
-                        .insert("project".to_owned(), self.resources.project.clone());
+                        .insert("project".to_owned(), self.resources.project.to_string());
                 }
                 interface
             })

@@ -58,7 +58,7 @@ impl RouteAuthenticator for EdgeAuthenticator {
             require_csrf(required, claims.csrf.as_ref(), request.headers)?;
         }
         Ok(Some(AuthenticatedCaller::new(
-            request.attachment_id,
+            request.attachment_id.clone(),
             claims.sub,
             CredentialType::Session,
             false,
@@ -146,8 +146,8 @@ mod tests {
                 attachment: RouteAttachment {
                     type_: AttachmentType::Http,
                     package_id: "scale".parse().unwrap(),
-                    component: "device".into(),
-                    operation: crate::release::test_util::OPERATION.into(),
+                    component: "device".parse().unwrap(),
+                    operation: crate::release::test_util::OPERATION.parse().unwrap(),
                     definition_hash: wamn_digest::bytes_sha256(b"route"),
                     definition: json!({}),
                     auth_policy: json!({"modes":["session"]}),
@@ -180,7 +180,7 @@ mod tests {
                 .authenticate(AuthenticationRequest {
                     manifest: release.manifest(),
                     target: release.target(),
-                    attachment_id: "record-http",
+                    attachment_id: &"record-http".parse().unwrap(),
                     attachment: ServedAttachment::Authored(AttachmentRef::Route(&self.attachment)),
                     policy: AttachmentAuthPolicy::Session,
                     headers,

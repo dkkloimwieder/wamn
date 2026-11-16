@@ -14,10 +14,10 @@ use crate::execution::Execution;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
-    project: String,
+    project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
     application: Option<wamn_catalog::ApplicationName>,
-    workflow_id: Option<String>,
+    workflow_id: Option<wamn_catalog::canonical_name::CanonicalName>,
     version: Option<u32>,
     run_id: Option<String>,
     limit: Option<u32>,
@@ -26,7 +26,7 @@ struct Request {
     execution_role: Option<String>,
     schedule: Option<String>,
     source_package: Option<wamn_catalog::PackageName>,
-    entity: Option<String>,
+    entity: Option<wamn_catalog::canonical_name::CanonicalName>,
     #[serde(default)]
     ops: Vec<wamn_catalog::WiringEventOperation>,
     condition: Option<String>,
@@ -35,17 +35,21 @@ struct Request {
 impl Execution {
     pub(crate) async fn workflow(
         &self,
-        operation: &str,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
         caller: &PrincipalId,
         payload: &str,
     ) -> anyhow::Result<Value> {
         let request: Request = serde_json::from_str(payload)?;
         let platform = &self.platform;
         let database = self.application_database(&request.project, &request.env)?;
-        let triple = wamn_registry::Triple::new(&self.org, request.env.clone(), &request.project);
+        let triple = wamn_registry::Triple::new(
+            self.org.clone(),
+            request.env.clone(),
+            request.project.clone(),
+        );
         let key = wamn_registry::project_env_key(&self.org, &request.project, &request.env);
         if matches!(
-            operation,
+            operation.as_str(),
             "workflow.park" | "workflow.release" | "workflow.runs"
         ) {
             let workflows = PostgresWorkflows::new(
@@ -54,7 +58,7 @@ impl Execution {
                 key,
                 request.env,
             );
-            return Ok(match operation {
+            return Ok(match operation.as_str() {
                 "workflow.park" => {
                     workflows
                         .park(request.run_id.as_deref().context("run_id is absent")?)
@@ -118,7 +122,7 @@ impl Execution {
                 (Some(schedule), None) => WorkflowTrigger::Schedule(schedule),
                 (None, Some(source_package)) => WorkflowTrigger::Event {
                     source_package,
-                    entity: request.entity.as_deref().context("entity is absent")?,
+                    entity: request.entity.as_ref().context("entity is absent")?,
                     ops: &request.ops,
                     condition: request.condition.as_deref(),
                 },
@@ -152,11 +156,11 @@ impl Execution {
             application: name,
             workflow_id: request
                 .workflow_id
-                .as_deref()
+                .as_ref()
                 .context("workflow_id is absent")?,
             version: request.version.context("version is absent")?,
         };
-        match operation {
+        match operation.as_str() {
             "workflow.enable" => {
                 let (digest, declared) = wamn_environment::environment::show::serving_application(
                     platform, &triple, name,

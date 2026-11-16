@@ -2,7 +2,7 @@ use super::{CompositionError, PackageInput, PathBuf, SelectedComponentArtifact};
 
 pub(super) fn component_entry<'a>(
     package: &PackageInput,
-    component: &str,
+    component: &wamn_compiler::source_name::SourceName,
     build_record: &'a wamn_compiler::build_record::BuildRecord,
 ) -> Result<(PathBuf, &'a wamn_compiler::build_record::BuildComponent), CompositionError> {
     let output = wamn_compiler::output_root(&package.root);
@@ -10,7 +10,7 @@ pub(super) fn component_entry<'a>(
         .outputs
         .components
         .iter()
-        .find(|entry| entry.name == component)
+        .find(|entry| entry.name.as_str() == component.as_str())
         .ok_or_else(|| {
             CompositionError::invalid(
                 "select component artifact",
@@ -26,7 +26,7 @@ pub(super) fn component_entry<'a>(
 
 pub(super) fn built_component(
     package: &PackageInput,
-    component: &str,
+    component: &wamn_compiler::source_name::SourceName,
     path: PathBuf,
     entry: &wamn_compiler::build_record::BuildComponent,
     bytes: &[u8],
@@ -45,13 +45,15 @@ pub(super) fn built_component(
     Ok(SelectedComponentArtifact {
         package_id: package.manifest.package.id.clone(),
         package_version: package.manifest.package.version.clone(),
-        component: component.into(),
+        component: component.clone().into(),
         path,
         digest,
     })
 }
 
-pub(super) fn selected_component(package: &PackageInput) -> Result<&str, CompositionError> {
+pub(super) fn selected_component(
+    package: &PackageInput,
+) -> Result<&wamn_compiler::source_name::SourceName, CompositionError> {
     if package.manifest.components.len() != 1 {
         return Err(CompositionError::invalid(
             "select package component artifact",

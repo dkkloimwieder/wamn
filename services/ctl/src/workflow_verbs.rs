@@ -41,7 +41,7 @@ pub struct WorkflowTarget {
     pub target: WorkflowDatabase,
     /// Project whose environment owns the workflow or run.
     #[arg(long)]
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
 }
 
 /// The identity a run executes as.

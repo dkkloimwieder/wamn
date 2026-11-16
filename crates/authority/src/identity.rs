@@ -63,7 +63,7 @@ pub struct SessionIdentity {
     pub project_env_key: Option<wamn_registry::ProjectEnvKey>,
     /// Which project database this session resolves against. `None` ⇒ the
     /// default project.
-    pub project: Option<String>,
+    pub project: Option<wamn_registry::ProjectId>,
     /// `SET LOCAL search_path`. `None` ⇒ the server's own search_path.
     pub schema: Option<String>,
     /// `app.runner` — the durable-queue lease owner.
@@ -76,7 +76,7 @@ pub struct SessionIdentity {
     pub user_id: Option<wamn_identity_protocol::PrincipalId>,
     /// `app.operation`: the executing operation token, or `wamn:<component>`
     /// for a platform component outside a registered operation.
-    pub operation: Option<String>,
+    pub operation: Option<wamn_catalog::canonical_name::CanonicalName>,
     /// `app.application`: the environment map name of the application that
     /// holds the operation's package.
     pub application: Option<wamn_catalog::ApplicationName>,
@@ -99,9 +99,9 @@ pub enum ConnectionEntryLookup<'a> {
 /// One node of an exact wiring version.
 #[derive(Debug, Clone, Copy)]
 pub struct WiringLookup<'a> {
-    pub wiring_id: &'a str,
+    pub wiring_id: &'a wamn_catalog::canonical_name::CanonicalName,
     pub wiring_version: i32,
-    pub node_id: &'a str,
+    pub node_id: &'a wamn_catalog::canonical_name::CanonicalName,
 }
 
 /// Host-only identity used to load one HTTP effect authorization snapshot.
@@ -110,16 +110,16 @@ pub struct ConnectionEffectLookup<'a> {
     pub entry: ConnectionEntryLookup<'a>,
     pub origin_package_id: &'a wamn_catalog::PackageName,
     pub origin_component_digest: &'a wamn_digest::Digest,
-    pub origin_component: &'a str,
-    pub origin_interface_version: &'a str,
-    pub origin_operation: &'a str,
+    pub origin_component: &'a wamn_catalog::canonical_name::CanonicalName,
+    pub origin_interface_version: &'a wamn_catalog::canonical_name::CanonicalName,
+    pub origin_operation: &'a wamn_catalog::canonical_name::CanonicalName,
     pub package_id: &'a wamn_catalog::PackageName,
-    pub operation: &'a str,
+    pub operation: &'a wamn_catalog::canonical_name::CanonicalName,
     /// The release the effect runs under, as its manifest digest.
     pub manifest_digest: &'a wamn_digest::Digest,
     pub environment: &'a wamn_registry::EnvName,
     pub component_digest: &'a wamn_digest::Digest,
-    pub store_alias: &'a str,
+    pub store_alias: &'a wamn_catalog::canonical_name::CanonicalName,
     pub candidate_binding: Option<&'a CandidateConnectionBinding>,
 }
 
@@ -129,7 +129,7 @@ pub struct ConnectionEffectLookup<'a> {
 pub struct CandidateConnectionBinding {
     pub read_only: bool,
     pub component_digest: wamn_digest::Digest,
-    pub store_alias: String,
+    pub store_alias: wamn_catalog::canonical_name::CanonicalName,
     pub requirement_hash: wamn_digest::Digest,
     pub instance_id: String,
     pub instance_revision: i64,
@@ -144,8 +144,7 @@ pub struct CandidateConnectionBinding {
 
 impl CandidateConnectionBinding {
     fn is_complete(&self) -> bool {
-        !self.store_alias.is_empty()
-            && !self.instance_id.is_empty()
+        !self.instance_id.is_empty()
             && self.instance_revision >= 0
             && !self.requirement_type.is_empty()
             && !self.contract.is_empty()
@@ -201,10 +200,10 @@ impl CandidateBindingWorld {
     pub fn binding(
         &self,
         component_digest: &wamn_digest::Digest,
-        store_alias: &str,
+        store_alias: &wamn_catalog::canonical_name::CanonicalName,
     ) -> Option<&CandidateConnectionBinding> {
         self.0.iter().find(|binding| {
-            binding.component_digest == *component_digest && binding.store_alias == store_alias
+            binding.component_digest == *component_digest && &binding.store_alias == store_alias
         })
     }
 }
@@ -220,9 +219,9 @@ pub struct ConnectionEffectSnapshot {
     pub read_only: bool,
     /// `None` for a route, which has no wiring.
     pub wiring_hash: Option<wamn_digest::Digest>,
-    pub component: Option<String>,
-    pub interface_version: Option<String>,
-    pub operation: Option<String>,
+    pub component: Option<wamn_catalog::canonical_name::CanonicalName>,
+    pub interface_version: Option<wamn_catalog::canonical_name::CanonicalName>,
+    pub operation: Option<wamn_catalog::canonical_name::CanonicalName>,
     pub registered_operation: Option<wamn_catalog::registered_operation::RegisteredOperation>,
     pub requirement_json: Option<serde_json::Value>,
     pub requirement_hash: Option<wamn_digest::Digest>,

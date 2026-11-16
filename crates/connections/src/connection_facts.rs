@@ -66,7 +66,7 @@ pub struct ConnectionFacts {
     reader: Arc<ConnectionCredentials>,
     postgres: std::sync::Weak<dyn ProjectDatabase>,
     project_env_key: wamn_registry::ProjectEnvKey,
-    project: String,
+    project: wamn_registry::ProjectId,
     environment: wamn_registry::EnvName,
     generations: Cache<(uuid::Uuid, i64), Arc<ConnectionGeneration>>,
     versions:
@@ -94,7 +94,7 @@ impl ConnectionFacts {
         reader: Arc<ConnectionCredentials>,
         postgres: &Arc<impl ProjectDatabase + 'static>,
         project_env_key: &wamn_registry::ProjectEnvKey,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
     ) -> Self {
         let database = Arc::downgrade(postgres);
@@ -139,7 +139,7 @@ impl ConnectionFacts {
         &self.environment
     }
 
-    pub fn project(&self) -> &str {
+    pub fn project(&self) -> &wamn_registry::ProjectId {
         &self.project
     }
 

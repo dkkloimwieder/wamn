@@ -31,14 +31,14 @@ const IDLE_POLL_MS: u64 = 250;
 struct QueueTarget {
     invocation: String,
     project_env_key: wamn_registry::ProjectEnvKey,
-    project: String,
+    project: wamn_registry::ProjectId,
     applications: Vec<wamn_catalog::ApplicationName>,
     environment: wamn_registry::EnvName,
 }
 
 #[derive(Debug, Clone)]
 pub struct QueueServiceConfig {
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
     pub runner: String,
     pub lease_ttl_ms: u64,
 }
@@ -97,7 +97,12 @@ impl QueueService {
                     runner: Some(config.runner),
                     role: None,
                     user_id: Some(PlatformComponent::Executor.principal_id()),
-                    operation: Some(PlatformComponent::Executor.principal_name().clone()),
+                    operation: Some(
+                        PlatformComponent::Executor
+                            .principal_name()
+                            .parse()
+                            .expect("platform operation"),
+                    ),
                     // The queue serves every application of the release.
                     application: None,
                     release: Some(ReleaseIdentity::from_loaded(release)),
@@ -162,7 +167,7 @@ fn queue_delivery_span(
     target: &QueueTarget,
     application: &wamn_catalog::ApplicationName,
     run_id: &str,
-    wiring_id: &str,
+    wiring_id: &wamn_catalog::canonical_name::CanonicalName,
     wiring_version: u32,
 ) -> tracing::Span {
     tracing::info_span!(

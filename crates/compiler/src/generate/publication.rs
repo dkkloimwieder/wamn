@@ -27,7 +27,7 @@ pub(super) fn emit_package_publication(
                 ));
             }
         }
-        components.insert(component.clone(), json!({
+        components.insert(component.to_string(), json!({
             "target": {"package-id": manifest.package.id, "package-version": manifest.package.version},
             "component": component, "interface-version": "0.1.0", "operations": declaration.exports,
             "connections": manifest.component_connections(component)?,
@@ -69,7 +69,7 @@ pub(super) fn emit_package_publication(
         let input = input_schema(description);
         let result = result_schema(description);
         let declaration = components
-            .get_mut(component)
+            .get_mut(component.as_str())
             .expect("validated component owner");
         if declaration["operations"].get(identity).is_some() {
             return Err(crate::ManifestError::new(
@@ -115,7 +115,7 @@ pub(super) fn emit_package_publication(
                 path,
                 method: "POST".to_owned(),
             },
-            &id,
+            id.as_str(),
         )
         .map_err(|source| {
             crate::ManifestError::new(

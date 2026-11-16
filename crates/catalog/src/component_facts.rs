@@ -1,5 +1,7 @@
 //! Pure component facts produced by byte admission.
 
+use crate::canonical_name::CanonicalName;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -116,7 +118,7 @@ impl<'de> Deserialize<'de> for ComponentPackageCoordinate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentPortDeclaration {
-    pub name: String,
+    pub name: CanonicalName,
     pub schema: Value,
 }
 
@@ -124,7 +126,7 @@ pub struct ComponentPortDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentParameterDeclaration {
-    pub name: String,
+    pub name: CanonicalName,
     pub schema: Value,
     pub required: bool,
 }
@@ -157,23 +159,18 @@ impl ComponentConnectionType {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum ComponentConnectionAlias {
-    Name(String),
-    Configuration { parameter: String },
+    Name(CanonicalName),
+    Configuration { parameter: CanonicalName },
 }
 
-impl From<String> for ComponentConnectionAlias {
-    fn from(name: String) -> Self {
+impl From<CanonicalName> for ComponentConnectionAlias {
+    fn from(name: CanonicalName) -> Self {
         Self::Name(name)
-    }
-}
-impl From<&str> for ComponentConnectionAlias {
-    fn from(name: &str) -> Self {
-        Self::Name(name.to_owned())
     }
 }
 impl ComponentConnectionAlias {
     /// The static alias, when the declaration does not read node configuration.
-    pub fn name(&self) -> Option<&str> {
+    pub fn name(&self) -> Option<&CanonicalName> {
         match self {
             Self::Name(name) => Some(name),
             Self::Configuration { .. } => None,
@@ -184,7 +181,6 @@ impl ComponentConnectionAlias {
             Self::Name(name) => name,
             Self::Configuration { parameter } => parameter,
         };
-        validate_identity(name, "connection alias declaration")?;
         if name == "__STORE_ALIAS__" {
             return Err(ComponentFactError::new(
                 ComponentFactErrorType::NonCanonicalIdentity,
@@ -194,17 +190,17 @@ impl ComponentConnectionAlias {
         Ok(())
     }
     /// Resolve a declaration against the host-owned node configuration.
-    pub fn resolve<'a>(&'a self, configuration: &'a BTreeMap<String, Value>) -> Option<&'a str> {
+    pub fn resolve(&self, configuration: &BTreeMap<CanonicalName, Value>) -> Option<CanonicalName> {
         match self {
-            Self::Name(name) => Some(name),
+            Self::Name(name) => Some(name.clone()),
             Self::Configuration { parameter } => configuration
                 .get(parameter)?
                 .as_str()
-                .filter(|name| !name.is_empty()),
+                .and_then(|name| name.parse().ok()),
         }
     }
     /// Whether an application alias can supply this declaration's binding.
-    pub fn accepts(&self, name: &str) -> bool {
+    pub fn accepts(&self, name: &CanonicalName) -> bool {
         match self {
             Self::Name(declared) => declared == name,
             Self::Configuration { .. } => true,
@@ -219,11 +215,11 @@ pub enum ConnectionMode {
     Read,
     Write,
     /// Modes of configured palette aliases, indexed by package and alias.
-    ByBinding(BTreeMap<crate::PackageName, BTreeMap<String, ConnectionMode>>),
+    ByBinding(BTreeMap<crate::PackageName, BTreeMap<CanonicalName, ConnectionMode>>),
 }
 impl ConnectionMode {
     /// Read the sealed mode of one concrete binding. Nested maps are refused.
-    pub fn read_only(&self, package: &crate::PackageName, alias: &str) -> Option<bool> {
+    pub fn read_only(&self, package: &crate::PackageName, alias: &CanonicalName) -> Option<bool> {
         let mode = match self {
             Self::ByBinding(packages) => packages.get(package)?.get(alias)?,
             mode => mode,
@@ -274,9 +270,9 @@ pub struct ComponentOperationDeclaration {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentDeclaration {
     pub target: ComponentPackageCoordinate,
-    pub component: String,
-    pub interface_version: String,
-    pub operations: BTreeMap<String, ComponentOperationDeclaration>,
+    pub component: CanonicalName,
+    pub interface_version: CanonicalName,
+    pub operations: BTreeMap<CanonicalName, ComponentOperationDeclaration>,
     /// External connections available to every operation of this component.
     #[serde(default)]
     pub connections: Vec<ComponentConnection>,
@@ -293,7 +289,7 @@ pub struct ComponentSchema {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponentPort {
-    pub name: String,
+    pub name: CanonicalName,
     pub schema: ComponentSchema,
 }
 
@@ -301,7 +297,7 @@ pub struct AdmittedComponentPort {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponentParameter {
-    pub name: String,
+    pub name: CanonicalName,
     pub schema: ComponentSchema,
     pub required: bool,
 }
@@ -318,7 +314,7 @@ pub struct AdmittedComponentParameter {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponentEffect {
-    pub package: String,
+    pub package: CanonicalName,
     pub provenance: ComponentEffectProvenance,
     pub interfaces: Vec<String>,
 }
@@ -366,9 +362,9 @@ pub struct AdmittedComponentOperation {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponent {
     pub target: ComponentPackageCoordinate,
-    pub component: String,
-    pub interface_version: String,
-    pub operations: BTreeMap<String, AdmittedComponentOperation>,
+    pub component: CanonicalName,
+    pub interface_version: CanonicalName,
+    pub operations: BTreeMap<CanonicalName, AdmittedComponentOperation>,
     pub component_digest: wamn_digest::Digest,
     pub imports: Vec<String>,
     pub imports_fingerprint: wamn_digest::Digest,
@@ -377,7 +373,7 @@ pub struct AdmittedComponent {
 
 impl AdmittedComponent {
     /// Resolve one exact operation export without inferring authorization.
-    pub fn operation(&self, operation: &str) -> Option<&AdmittedComponentOperation> {
+    pub fn operation(&self, operation: &CanonicalName) -> Option<&AdmittedComponentOperation> {
         self.operations.get(operation)
     }
 }
@@ -407,10 +403,10 @@ fn imports_fingerprint(imports: &[String]) -> wamn_digest::Digest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentDescriptor {
-    pub component: String,
-    pub interface_version: String,
+    pub component: CanonicalName,
+    pub interface_version: CanonicalName,
     pub component_digest: wamn_digest::Digest,
-    pub operations: BTreeMap<String, AdmittedComponentOperation>,
+    pub operations: BTreeMap<CanonicalName, AdmittedComponentOperation>,
     pub imports: Vec<String>,
     pub imports_fingerprint: wamn_digest::Digest,
     pub effects: Vec<AdmittedComponentEffect>,
@@ -436,13 +432,13 @@ impl ComponentDescriptor {
     /// connection, for a test manifest.
     #[cfg(feature = "test-util")]
     pub fn named(
-        component: impl Into<String>,
-        interface_version: impl Into<String>,
+        component: CanonicalName,
+        interface_version: CanonicalName,
         component_digest: wamn_digest::Digest,
     ) -> Self {
         Self {
-            component: component.into(),
-            interface_version: interface_version.into(),
+            component,
+            interface_version,
             component_digest,
             operations: BTreeMap::new(),
             imports: Vec::new(),
@@ -473,7 +469,6 @@ impl ComponentDescriptor {
 /// Stable classification for component-fact normalization refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentFactErrorType {
-    EmptyIdentity,
     EmptyOperationSet,
     NonCanonicalIdentity,
     RegisteredOperationMismatch,
@@ -531,8 +526,6 @@ pub fn normalize_component_fact(
     imports: impl IntoIterator<Item = String>,
     effects: Vec<AdmittedComponentEffect>,
 ) -> Result<AdmittedComponentFacts, ComponentFactError> {
-    validate_identity(&declaration.component, "component")?;
-    validate_identity(&declaration.interface_version, "interface-version")?;
     if declaration.operations.is_empty() {
         return Err(ComponentFactError::new(
             ComponentFactErrorType::EmptyOperationSet,
@@ -542,7 +535,6 @@ pub fn normalize_component_fact(
 
     let mut operations = BTreeMap::new();
     for (export, operation) in declaration.operations {
-        validate_identity(&export, "operation export")?;
         validate_registered_operation_target(
             &declaration.target,
             &export,
@@ -622,7 +614,6 @@ pub fn verify_stored_effect_projection(
         ));
     }
     for (export, operation) in &component.operations {
-        validate_identity(export, "operation export")?;
         validate_registered_operation_target(
             &component.target,
             export,
@@ -642,7 +633,7 @@ pub fn verify_stored_effect_projection(
 
 fn validate_registered_operation_target(
     target: &ComponentPackageCoordinate,
-    export: &str,
+    export: &CanonicalName,
     operation: Option<&crate::registered_operation::RegisteredOperation>,
 ) -> Result<(), ComponentFactError> {
     let Some(operation) = operation else {
@@ -659,7 +650,7 @@ fn validate_registered_operation_target(
             error.to_string(),
         )
     })?;
-    if operation.as_str() != export {
+    if operation.as_str() != export.as_str() {
         return Err(ComponentFactError::new(
             ComponentFactErrorType::RegisteredOperationMismatch,
             format!("registered operation {operation:?} must equal exported operation {export:?}"),
@@ -719,7 +710,6 @@ fn normalize_effects(
 ) -> Result<Vec<AdmittedComponentEffect>, ComponentFactError> {
     let mut normalized = Vec::with_capacity(effects.len());
     for effect in effects {
-        validate_identity(&effect.package, "effect-package")?;
         let mut interfaces = effect.interfaces;
         interfaces.sort();
         interfaces.dedup();
@@ -819,7 +809,6 @@ fn normalize_ports(
     let mut seen = BTreeSet::new();
     let mut ports = Vec::with_capacity(declarations.len());
     for declaration in declarations {
-        validate_identity(&declaration.name, field)?;
         if !seen.insert(declaration.name.clone()) {
             return Err(ComponentFactError::new(
                 duplicate_type,
@@ -841,7 +830,6 @@ fn normalize_parameters(
     let mut seen = BTreeSet::new();
     let mut parameters = Vec::with_capacity(declarations.len());
     for declaration in declarations {
-        validate_identity(&declaration.name, "parameter")?;
         if !seen.insert(declaration.name.clone()) {
             return Err(ComponentFactError::new(
                 ComponentFactErrorType::DuplicateParameter,
@@ -931,22 +919,6 @@ fn has_remote_ref(value: &Value) -> bool {
     }
 }
 
-fn validate_identity(value: &str, field: &str) -> Result<(), ComponentFactError> {
-    if value.is_empty() {
-        return Err(ComponentFactError::new(
-            ComponentFactErrorType::EmptyIdentity,
-            format!("{field} is empty"),
-        ));
-    }
-    if value.trim() != value || value.as_bytes().contains(&0) {
-        return Err(ComponentFactError::new(
-            ComponentFactErrorType::NonCanonicalIdentity,
-            format!("{field} is not in canonical form"),
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -961,15 +933,15 @@ mod tests {
                 package_id: "orders".parse().unwrap(),
                 package_version: "1.2.0".parse().unwrap(),
             },
-            component: "transform".to_string(),
-            interface_version: "0.1.0".to_string(),
+            component: "transform".parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
-                "map".to_string(),
+                "map".parse().unwrap(),
                 ComponentOperationDeclaration {
                     committed_result_schema: None,
                     registered_operation: None,
                     input_ports: vec![ComponentPortDeclaration {
-                        name: "input".to_string(),
+                        name: "input".parse().unwrap(),
                         schema: json!({
                             "$schema": JSON_SCHEMA_2020_12,
                             "type": "object",
@@ -978,11 +950,11 @@ mod tests {
                         }),
                     }],
                     output_ports: vec![ComponentPortDeclaration {
-                        name: "main".to_string(),
+                        name: "main".parse().unwrap(),
                         schema: json!({"type": "object"}),
                     }],
                     parameters: vec![ComponentParameterDeclaration {
-                        name: "mapping".to_string(),
+                        name: "mapping".parse().unwrap(),
                         schema: json!({"type": "object"}),
                         required: true,
                     }],
@@ -1000,7 +972,7 @@ mod tests {
 
     fn postgres_effect() -> AdmittedComponentEffect {
         AdmittedComponentEffect {
-            package: "wamn:postgres".to_string(),
+            package: "wamn:postgres".parse().unwrap(),
             provenance: ComponentEffectProvenance::Imported,
             interfaces: vec!["wamn:postgres/client@0.1.0".to_string()],
         }
@@ -1023,7 +995,9 @@ mod tests {
         let fact = facts.component;
 
         assert_eq!(fact.target.package_version, "1.2.0".parse().unwrap());
-        let operation = fact.operation("map").expect("map operation is admitted");
+        let operation = fact
+            .operation(&"map".parse().unwrap())
+            .expect("map operation is admitted");
         assert_eq!(operation.registered_operation, None);
         assert_eq!(operation.input_ports[0].name, "input");
         assert_eq!(operation.output_ports[0].name, "main");
@@ -1051,7 +1025,10 @@ mod tests {
         )
         .expect("component fact normalizes");
         let connections = vec![ComponentConnection {
-            store_alias: "labels".into(),
+            store_alias: "labels"
+                .parse::<crate::canonical_name::CanonicalName>()
+                .unwrap()
+                .into(),
             requirement_type: ComponentConnectionType::Blobstore,
             mode: ConnectionMode::Write,
         }];
@@ -1141,7 +1118,9 @@ mod tests {
         let registered = "orders:widget/create@1.2.0";
         let mut operation = palette.operations.remove("map").unwrap();
         operation.registered_operation = Some(registered.parse().unwrap());
-        palette.operations.insert(registered.to_owned(), operation);
+        palette
+            .operations
+            .insert(registered.parse().unwrap(), operation);
         let facts = normalize_component_fact(
             palette.clone(),
             (format!("sha256:{}", "a".repeat(64)))
@@ -1198,7 +1177,7 @@ mod tests {
         operation.registered_operation = Some(registered.parse().unwrap());
         declared
             .operations
-            .insert(registered.to_string(), operation);
+            .insert(registered.parse().unwrap(), operation);
         let facts = normalize_component_fact(
             declared,
             (format!("sha256:{}", "a".repeat(64)))
@@ -1274,10 +1253,10 @@ mod tests {
                 package_id: "orders".parse().unwrap(),
                 package_version: "1.2.0".parse().unwrap(),
             },
-            component: "transform".to_string(),
-            interface_version: "0.1.0".to_string(),
+            component: "transform".parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
-                "map".to_string(),
+                "map".parse().unwrap(),
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: None,
@@ -1348,13 +1327,16 @@ mod tests {
     #[test]
     fn connections_and_effect_imports_must_account_for_each_other() {
         let http_effect = AdmittedComponentEffect {
-            package: "wamn:connection".to_string(),
+            package: "wamn:connection".parse().unwrap(),
             provenance: ComponentEffectProvenance::Imported,
             interfaces: vec!["wamn:connection/http@0.1.0".to_string()],
         };
         let imports = ["wamn:connection/http@0.1.0".to_string()];
         let connection = ComponentConnection {
-            store_alias: "erp".into(),
+            store_alias: "erp"
+                .parse::<crate::canonical_name::CanonicalName>()
+                .unwrap()
+                .into(),
             requirement_type: ComponentConnectionType::Http,
             mode: ConnectionMode::Write,
         };
@@ -1414,7 +1396,7 @@ mod tests {
                     .unwrap(),
                 imports,
                 vec![AdmittedComponentEffect {
-                    package: "wamn:connection".to_string(),
+                    package: "wamn:connection".parse().unwrap(),
                     provenance: ComponentEffectProvenance::Imported,
                     interfaces: vec!["wamn:connection/http@0.1.0".to_string()],
                 }],
@@ -1566,36 +1548,34 @@ mod connection_alias_tests {
     fn configuration_connections_follow_each_nodes_alias() {
         for parameter in ["store_alias", "requirement"] {
             let declaration = ComponentConnectionAlias::Configuration {
-                parameter: parameter.to_owned(),
+                parameter: parameter.parse().unwrap(),
             };
-            let first =
-                BTreeMap::from([(parameter.to_owned(), Value::String("labels".to_owned()))]);
-            let second =
-                BTreeMap::from([(parameter.to_owned(), Value::String("archive".to_owned()))]);
+            let first = BTreeMap::from([(
+                parameter.parse().unwrap(),
+                Value::String("labels".to_owned()),
+            )]);
+            let second = BTreeMap::from([(
+                parameter.parse().unwrap(),
+                Value::String("archive".to_owned()),
+            )]);
             let modes = ConnectionMode::ByBinding(BTreeMap::from([(
                 "package".parse().unwrap(),
                 BTreeMap::from([
-                    (
-                        declaration.resolve(&first).unwrap().into(),
-                        ConnectionMode::Read,
-                    ),
-                    (
-                        declaration.resolve(&second).unwrap().into(),
-                        ConnectionMode::Write,
-                    ),
+                    (declaration.resolve(&first).unwrap(), ConnectionMode::Read),
+                    (declaration.resolve(&second).unwrap(), ConnectionMode::Write),
                 ]),
             )]));
             assert_eq!(
                 modes.read_only(
                     &"package".parse().unwrap(),
-                    declaration.resolve(&first).unwrap()
+                    &declaration.resolve(&first).unwrap()
                 ),
                 Some(true)
             );
             assert_eq!(
                 modes.read_only(
                     &"package".parse().unwrap(),
-                    declaration.resolve(&second).unwrap()
+                    &declaration.resolve(&second).unwrap()
                 ),
                 Some(false)
             );
@@ -1603,7 +1583,7 @@ mod connection_alias_tests {
                 modes
                     .read_only(
                         &"absent".parse().unwrap(),
-                        declaration.resolve(&first).unwrap()
+                        &declaration.resolve(&first).unwrap()
                     )
                     .is_none()
             );
@@ -1612,7 +1592,7 @@ mod connection_alias_tests {
             assert!(declaration.resolve(&BTreeMap::new()).is_none());
         }
         assert!(
-            ComponentConnectionAlias::Name("__STORE_ALIAS__".into())
+            ComponentConnectionAlias::Name("__STORE_ALIAS__".parse().unwrap())
                 .validate()
                 .is_err()
         );

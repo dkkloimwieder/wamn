@@ -19,7 +19,11 @@ fn broker_permissions_confine_each_role_to_its_environment() -> anyhow::Result<(
     use wamn_test_infrastructure::{event_broker, scratch::ScratchRoot};
 
     let root = ScratchRoot::create()?;
-    let target = Triple::new("example", "dev".parse().unwrap(), "fixture");
+    let target = Triple::new(
+        "example".parse().unwrap(),
+        "dev".parse().unwrap(),
+        "fixture".parse().unwrap(),
+    );
     let source = source_stream_config(&target, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&target, 1);
     let consumer = event_consumer_config(
@@ -167,8 +171,16 @@ fn broker_permissions_confine_each_role_to_its_environment() -> anyhow::Result<(
             );
         }
         for foreign in [
-            Triple::new("example", "dev".parse().unwrap(), "other"),
-            Triple::new("example", "prod".parse().unwrap(), "fixture"),
+            Triple::new(
+                "example".parse().unwrap(),
+                "dev".parse().unwrap(),
+                "other".parse().unwrap(),
+            ),
+            Triple::new(
+                "example".parse().unwrap(),
+                "prod".parse().unwrap(),
+                "fixture".parse().unwrap(),
+            ),
         ] {
             let stream = source_stream_config(&foreign, 1, Duration::from_secs(120));
             let advisory = advisory_stream_config(&foreign, 1);
@@ -272,7 +284,11 @@ async fn retained_broker_advisory(type_: DeliveryAdvisoryType) -> anyhow::Result
         DeliveryAdvisoryType::MaxDeliver => "exhausted",
         DeliveryAdvisoryType::Terminated => "terminated",
     };
-    let target = Triple::new(format!("c-{name}"), "dev".parse().unwrap(), "app");
+    let target = Triple::new(
+        format!("c-{name}").parse()?,
+        "dev".parse().unwrap(),
+        "app".parse().unwrap(),
+    );
     let source_name = stream_name(&target.org, &target.project, &target.env);
     let advisory_name = delivery_advisory_stream(&source_name);
     let subject = wamn_registry::name::event_subject(
@@ -1215,9 +1231,21 @@ async fn targeted_broker_behavior(
     );
     std::fs::DirBuilder::new().mode(0o700).create(root.path())?;
     let targets = [
-        Triple::new("example", "dev".parse().unwrap(), "fixture"),
-        Triple::new("example", "dev".parse().unwrap(), "other"),
-        Triple::new("example", "prod".parse().unwrap(), "fixture"),
+        Triple::new(
+            "example".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "fixture".parse().unwrap(),
+        ),
+        Triple::new(
+            "example".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "other".parse().unwrap(),
+        ),
+        Triple::new(
+            "example".parse().unwrap(),
+            "prod".parse().unwrap(),
+            "fixture".parse().unwrap(),
+        ),
     ];
     let mut brokers = Vec::new();
     let mut declarations = Vec::new();

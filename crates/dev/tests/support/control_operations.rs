@@ -29,7 +29,7 @@ impl Control<'_> {
             .find(|(_, attachment)| attachment.route.operation == operation)
             .context("control operation contract")?;
         if attachment.route.authority == wamn_catalog::HostRouteAuthority::ProjectAdmin {
-            value["project"] = self.journey.project.into();
+            value["project"] = self.journey.project.as_str().into();
             value["env"] = serde_json::json!(self.journey.environment);
         }
         let mut session = self.session.lock().await;
@@ -114,7 +114,7 @@ impl Control<'_> {
         .context("operation Job deadline")??;
         let pods = get(
             self.journey.run,
-            &self.journey.run.document.org,
+            self.journey.run.document.org.as_str(),
             "pods",
             &format!("-l=job-name={name}"),
         )
@@ -278,7 +278,7 @@ pub(super) async fn exercise(
 async fn jobs(control: &Control<'_>) -> anyhow::Result<BTreeSet<String>> {
     let objects = get(
         control.journey.run,
-        &control.journey.run.document.org,
+        control.journey.run.document.org.as_str(),
         "jobs",
         "",
     )
@@ -386,7 +386,7 @@ async fn job_credentials(
     let org = &journey.run.document.org;
     let target = get(
         journey.run,
-        org,
+        org.as_str(),
         "configmap",
         &format!("{coordinate}-operations"),
     )
@@ -397,7 +397,7 @@ async fn job_credentials(
     let administrator = format!("{cluster}-superuser");
     let administration = get(
         journey.run,
-        org,
+        org.as_str(),
         "configmap",
         &wamn_registry::name::control_administration_secret_name(org),
     )

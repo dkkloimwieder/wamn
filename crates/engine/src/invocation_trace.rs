@@ -36,7 +36,7 @@ pub fn request_trace(headers: &[(String, String)]) -> InvocationTrace {
 #[derive(Debug)]
 pub struct InvocationSite<'a> {
     pub project_env_key: &'a wamn_registry::ProjectEnvKey,
-    pub project: &'a str,
+    pub project: &'a wamn_registry::ProjectId,
     pub environment: &'a wamn_registry::EnvName,
     pub wiring_id: &'a str,
     pub wiring_version: u32,

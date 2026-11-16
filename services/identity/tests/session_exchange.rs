@@ -165,7 +165,7 @@ async fn verify_response(
         .expect_redacted("key from actual public JWKS");
     let coordinate = Audience {
         issuer: ISSUER,
-        org: &target.triple().org,
+        org: target.triple().org.as_str(),
         audience: target.audience(),
     };
     let claims = verify(token, key, coordinate, unix_seconds())
@@ -246,15 +246,21 @@ async fn seed_user(client: &mut Client, principal: &Principal, role: &str) {
 async fn grant(
     system: &mut Client,
     principal: &Principal,
-    org: &str,
+    org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
 ) {
     wamn_platform_identity::org::activate_org_membership(system, principal.id(), org)
         .await
         .expect_redacted("active org membership fixture");
-    grant_project_env_membership(system, principal.id(), org, "widgets", env)
-        .await
-        .expect_redacted("explicit environment grant");
+    grant_project_env_membership(
+        system,
+        principal.id(),
+        org,
+        &"widgets".parse().unwrap(),
+        env,
+    )
+    .await
+    .expect_redacted("explicit environment grant");
 }
 
 async fn setup(raw: &str) -> Fixture {
@@ -277,16 +283,21 @@ async fn setup(raw: &str) -> Fixture {
     let mut targets = Vec::new();
     for (org, env) in TARGETS {
         let triple = Triple {
-            org: org.into(),
-            project: "widgets".into(),
+            org: org.parse().unwrap(),
+            project: "widgets".parse().unwrap(),
             env: env.parse().unwrap(),
         };
-        let name = project_env_database_name(org, "widgets", &triple.env, &SUFFIX.parse().unwrap());
+        let name = project_env_database_name(
+            &org.parse().unwrap(),
+            &"widgets".parse().unwrap(),
+            &triple.env,
+            &SUFFIX.parse().unwrap(),
+        );
         let role = workload_login(
             WorkloadRoleFamily::SessionRoleReader,
             WorkloadRoleIdentity::ProjectEnvironment {
-                org,
-                project: "widgets",
+                org: &org.parse().unwrap(),
+                project: &"widgets".parse().unwrap(),
                 environment: &triple.env,
                 database: &name,
             },
@@ -295,7 +306,11 @@ async fn setup(raw: &str) -> Fixture {
         let target = SessionTarget::new(
             &triple,
             &SUFFIX.parse().unwrap(),
-            &wamn_registry::project_env_key(org, "widgets", &triple.env),
+            &wamn_registry::project_env_key(
+                &org.parse().unwrap(),
+                &"widgets".parse().unwrap(),
+                &triple.env,
+            ),
             &login_url(&mut admin, &name, &role),
         )
         .expect_redacted("production target connection");
@@ -617,7 +632,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     grant(
         &mut fixture.system.client,
         &alice,
-        "demo",
+        &"demo".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await;
@@ -704,8 +719,8 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     revoke_project_env_membership(
         &mut fixture.system.client,
         alice.id(),
-        "demo",
-        "widgets",
+        &"demo".parse().unwrap(),
+        &"widgets".parse().unwrap(),
         &"dev".parse().unwrap(),
         &mut AuthDrops::default(),
     )
@@ -722,7 +737,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     grant(
         &mut fixture.system.client,
         &alice,
-        "demo",
+        &"demo".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await;
@@ -858,7 +873,7 @@ async fn password_environment_discovery_requires_current_authority() {
     grant(
         &mut fixture.system.client,
         &alice,
-        "demo",
+        &"demo".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await;
@@ -866,7 +881,7 @@ async fn password_environment_discovery_requires_current_authority() {
     grant(
         &mut fixture.system.client,
         &alice,
-        "demo",
+        &"demo".parse().unwrap(),
         &"prod".parse().unwrap(),
     )
     .await;
@@ -874,7 +889,7 @@ async fn password_environment_discovery_requires_current_authority() {
     grant(
         &mut fixture.system.client,
         &alice,
-        "other",
+        &"other".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await;
@@ -882,8 +897,8 @@ async fn password_environment_discovery_requires_current_authority() {
     revoke_project_env_membership(
         &mut fixture.system.client,
         alice.id(),
-        "other",
-        "widgets",
+        &"other".parse().unwrap(),
+        &"widgets".parse().unwrap(),
         &"dev".parse().unwrap(),
         &mut AuthDrops::default(),
     )
@@ -949,8 +964,8 @@ async fn password_environment_discovery_requires_current_authority() {
     revoke_project_env_membership(
         &mut fixture.system.client,
         alice.id(),
-        "demo",
-        "widgets",
+        &"demo".parse().unwrap(),
+        &"widgets".parse().unwrap(),
         &"dev".parse().unwrap(),
         &mut AuthDrops::default(),
     )

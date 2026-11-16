@@ -77,7 +77,7 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                 };
                 if let Some(connection) = authorities
                     .connections
-                    .get(&super::super::bindings::key(application, alias))
+                    .get(&super::super::bindings::key(application, alias.as_str()))
                     && !matches!(
                         (connection.requirement_type, requirement.requirement_type),
                         (
@@ -108,7 +108,7 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                     ));
                     continue;
                 };
-                let key = super::super::bindings::key(application, alias);
+                let key = super::super::bindings::key(application, alias.as_str());
                 if !authorities.connections.contains_key(&key)
                     && !authorities.artifact_bindings.contains(&key)
                 {

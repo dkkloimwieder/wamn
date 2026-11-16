@@ -43,9 +43,9 @@ pub(super) struct Resources {
     pub allowed_hosts: Arc<[AllowedHost]>,
     pub configuration: OperationHostConfig,
     pub target: ReleaseTarget,
-    pub org: String,
+    pub org: wamn_registry::OrgId,
     pub connection_reader: Option<sqlx::PgPool>,
-    pub identity: Option<(sqlx::PgPool, String)>,
+    pub identity: Option<(sqlx::PgPool, wamn_registry::OrgId)>,
     pub administration_url: Option<String>,
     pub changes: Publisher,
     pub jetstream: Arc<WamnJetstream>,
@@ -154,7 +154,7 @@ impl Releases {
         application: &wamn_catalog::ApplicationName,
         digest: &wamn_digest::Digest,
     ) -> anyhow::Result<Arc<ResidentRelease>> {
-        let key = (application.to_owned(), digest.to_owned());
+        let key = (application.clone(), digest.to_owned());
         let loading = {
             let mut loading = self
                 .loading
@@ -200,7 +200,7 @@ impl Releases {
             .map(|package| package.package_id().to_owned())
             .collect();
         let applications = BTreeMap::from([(
-            application.to_owned(),
+            application.clone(),
             ApplicationDefinition {
                 packages,
                 ..ApplicationDefinition::default()
@@ -346,8 +346,8 @@ impl Releases {
                     .context("release projection is absent")?;
                 let projection: serde_json::Value = serde_json::from_str(json)?;
                 anyhow::ensure!(
-                    projection["org"].as_str() == Some(&r.org)
-                        && projection["project"].as_str() == Some(&r.configuration.project),
+                    projection["org"].as_str() == Some(r.org.as_str())
+                        && projection["project"].as_str() == Some(r.configuration.project.as_str()),
                     "release projection belongs to another deployment"
                 );
                 let digest = projection["digest"]
@@ -369,10 +369,10 @@ impl Releases {
                     }
                     if selected.contains_key(&application) {
                         selected.remove(&application);
-                        ambiguous.insert(application.to_owned());
+                        ambiguous.insert(application.clone());
                         tracing::warn!(%application, "application has multiple current selections; its admission is paused");
                     } else {
-                        selected.insert(application.to_owned(), projection);
+                        selected.insert(application.clone(), projection);
                     }
                 }
                 Err(error) => {
@@ -641,7 +641,7 @@ impl Releases {
                 }
                 let rows = wamn_workflow::schedule::PostgresSchedules::new(
                     Arc::clone(&self.resources.postgres),
-                    &self.resources.configuration.project,
+                    self.resources.configuration.project.clone(),
                     application.clone(),
                     selection.release.subscribe(),
                 );

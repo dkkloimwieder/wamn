@@ -81,7 +81,11 @@ esac
         .execute(&mut system)
         .await
         .map(drop)?;
-    let triple = Triple::new("acme", "dev".parse().unwrap(), "app");
+    let triple = Triple::new(
+        "acme".parse().unwrap(),
+        "dev".parse().unwrap(),
+        "app".parse().unwrap(),
+    );
     let mut transaction = provisioning_transaction(&mut system).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::seed_org_project_env_sql(
@@ -256,8 +260,16 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         .execute(&mut system)
         .await
         .map(drop)?;
-    let triple = Triple::new("acme", "dev".parse().unwrap(), "app");
-    let other = Triple::new("acme", "prod".parse().unwrap(), "app");
+    let triple = Triple::new(
+        "acme".parse().unwrap(),
+        "dev".parse().unwrap(),
+        "app".parse().unwrap(),
+    );
+    let other = Triple::new(
+        "acme".parse().unwrap(),
+        "prod".parse().unwrap(),
+        "app".parse().unwrap(),
+    );
     let mut transaction = provisioning_transaction(&mut system).await?;
     for target in [&triple, &other] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -291,7 +303,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
     ] {
         administration::execute_with_store(
             &mut transaction,
-            "acme",
+            &"acme".parse().unwrap(),
             operation,
             &request.to_string(),
             &mut auth,

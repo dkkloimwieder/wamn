@@ -14,7 +14,7 @@ use wamn_scalar::SqlValueType;
 
 use super::{BTreeMap, CatalogIr, Table, column, relation};
 use crate::key::primary_key;
-use crate::manifest::{CrudAction, ModelDeclaration, PackageManifest, validate_identifier};
+use crate::manifest::{CrudAction, ModelDeclaration, PackageManifest};
 use crate::manifest::{FieldRole, Target};
 use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
@@ -46,7 +46,7 @@ pub(super) fn validate_numbering(
                 model,
                 table,
                 field,
-                sequence,
+                sequence.as_str(),
                 &patterns[sequence],
             )?;
         }
@@ -55,26 +55,27 @@ pub(super) fn validate_numbering(
 }
 
 /// Each sequence's parsed pattern, by name.
-fn sequence_patterns(manifest: &PackageManifest) -> Result<BTreeMap<&str, Pattern>, GenerateError> {
+fn sequence_patterns(
+    manifest: &PackageManifest,
+) -> Result<BTreeMap<&crate::source_name::SourceName, Pattern>, GenerateError> {
     manifest
         .sequences
         .iter()
         .map(|(name, declaration)| {
-            validate_identifier(name, "sequence")?;
             let pattern = wamn_number_pattern::parse(&declaration.pattern).map_err(|source| {
                 GenerateError::new(
                     GenerateErrorType::InvalidManifest,
                     format!("sequence {name} has an invalid pattern: {source}"),
                 )
             })?;
-            Ok((name.as_str(), pattern))
+            Ok((name, pattern))
         })
         .collect()
 }
 
 fn validate_model_fields(
     manifest: &PackageManifest,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
@@ -139,7 +140,7 @@ fn validate_model_fields(
 
 /// A numbered field is separate from the row id.
 fn validate_numbered_field(
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
     field: &str,
@@ -248,18 +249,17 @@ fn refuse_supplied_fields(manifest: &PackageManifest) -> Result<(), GenerateErro
             }
         }
         for (operation_name, operation) in &manifest.custom_operations {
-            for written in operation
-                .relations
-                .iter()
-                .filter(|written| written.schema == model.schema && written.table == model.table)
-            {
+            for written in operation.relations.iter().filter(|written| {
+                written.schema.as_str() == model.schema.as_str()
+                    && written.table.as_str() == model.table.as_str()
+            }) {
                 if let Some(field) = written
                     .insert_fields
                     .iter()
                     .chain(&written.update_fields)
                     .find(|field| filled.contains(&field.as_str()))
                 {
-                    return Err(supplied(operation_name, model_name, field));
+                    return Err(supplied(operation_name, model_name, field.as_str()));
                 }
             }
         }
@@ -269,7 +269,7 @@ fn refuse_supplied_fields(manifest: &PackageManifest) -> Result<(), GenerateErro
 
 fn supplied(
     operation: &wamn_catalog::local_operation::LocalOperation,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     field: &str,
 ) -> GenerateError {
     GenerateError::new(

@@ -146,7 +146,7 @@ fn refused() -> IdentityError {
 pub async fn session_is_active(
     client: &mut sqlx::PgConnection,
     claims: &SessionClaims,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
 ) -> Result<bool, IdentityError> {
     let SessionAuthority::Login(login) = &claims.authority;

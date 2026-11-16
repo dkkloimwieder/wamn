@@ -64,8 +64,8 @@ struct LiveRelease {
     clients: BTreeMap<String, wamn_catalog::PackageName>,
     webs: BTreeMap<String, wamn_digest::Digest>,
     platform_ui: Option<wamn_digest::Digest>,
-    org: String,
-    project: String,
+    org: wamn_registry::OrgId,
+    project: wamn_registry::ProjectId,
 }
 
 impl LiveRelease {
@@ -195,9 +195,7 @@ impl Web {
         };
         let config = file == "config.json";
         let file = if config {
-            ensure!(segment(&row.org), "invalid web org");
             let target = if row.platform_ui.is_none() {
-                ensure!(segment(&row.project), "invalid web project");
                 serde_json::json!({"org":row.org,"project":row.project,
                     "release":row.digest,"web":row.webs[host]})
             } else {
@@ -595,8 +593,8 @@ mod tests {
             )]
             .into(),
             platform_ui: None,
-            org: "acme".into(),
-            project: "app".into(),
+            org: "acme".parse().unwrap(),
+            project: "app".parse().unwrap(),
         }
     }
 
@@ -746,7 +744,7 @@ mod tests {
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
         );
-        row.org = "acme".into();
+        row.org = "acme".parse().unwrap();
         let root = row.root(&row.host).unwrap();
         row.webs.clear();
         put(&store, &root, "index.html", "platform").await;
@@ -756,7 +754,7 @@ mod tests {
             .await
             .unwrap();
         let config: serde_json::Value = serde_json::from_slice(&body(config).await).unwrap();
-        assert_eq!(config["org"], row.org);
+        assert_eq!(config["org"], row.org.as_str());
         assert!(config.get("project").is_none());
         let original_root = root;
         row.platform_ui = Some(

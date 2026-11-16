@@ -204,13 +204,13 @@ pub struct ProjectResidency {
 }
 
 /// Project names partition the environment host's residency report.
-pub type Residency = BTreeMap<String, ProjectResidency>;
+pub type Residency = BTreeMap<wamn_registry::ProjectId, ProjectResidency>;
 
 /// Read every live environment host through the Kubernetes pod proxy.
 /// An unreadable host leaves residency unknown instead of implying an empty host.
 pub async fn residency<F, Fut>(
     namespace: &str,
-    org: &str,
+    org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
     mut get: F,
 ) -> anyhow::Result<Vec<Residency>>
@@ -219,7 +219,7 @@ where
     Fut: Future<Output = anyhow::Result<Value>>,
 {
     use anyhow::Context as _;
-    let name = wamn_registry::name::environment_host_name(org, env)?;
+    let name = wamn_registry::name::environment_host_name(org, env);
     let pods = get(list_path(
         &format!("/api/v1/namespaces/{namespace}/pods"),
         "labelSelector",
@@ -250,7 +250,7 @@ where
 /// Merge one project's reports while preserving application ownership and run pins.
 pub fn project_residency(
     reports: Vec<Residency>,
-    project: &str,
+    project: &wamn_registry::ProjectId,
 ) -> anyhow::Result<Vec<ReleaseResidency>> {
     let mut releases: BTreeMap<
         (wamn_catalog::ApplicationName, wamn_digest::Digest),
@@ -298,7 +298,7 @@ mod tests {
             };
         let report = BTreeMap::from([
             (
-                "orders".into(),
+                "orders".parse().unwrap(),
                 ProjectResidency {
                     releases: vec![
                         row(&"first".parse().unwrap(), true, "run-a"),
@@ -308,14 +308,18 @@ mod tests {
                 },
             ),
             (
-                "billing".into(),
+                "billing".parse().unwrap(),
                 ProjectResidency {
                     releases: vec![],
                     error: Some("unavailable".into()),
                 },
             ),
         ]);
-        let releases = project_residency(vec![report.clone(), report.clone()], "orders").unwrap();
+        let releases = project_residency(
+            vec![report.clone(), report.clone()],
+            &"orders".parse().unwrap(),
+        )
+        .unwrap();
         for row in &report["orders"].releases {
             let actual = releases
                 .iter()
@@ -327,8 +331,8 @@ mod tests {
             assert_eq!(actual.loaded, row.loaded);
             assert_eq!(actual.runs, row.runs);
         }
-        assert!(project_residency(vec![report.clone()], "billing").is_err());
-        assert!(project_residency(vec![report], "foreign").is_err());
+        assert!(project_residency(vec![report.clone()], &"billing".parse().unwrap()).is_err());
+        assert!(project_residency(vec![report], &"foreign".parse().unwrap()).is_err());
     }
     fn wamn_digest_for_test() -> wamn_digest::Digest {
         wamn_digest::bytes_sha256(b"residency")

@@ -32,7 +32,7 @@ use crate::control_route::{ControlRoutes, Refusal, control_page};
 pub trait ControlExecution: Send + Sync + fmt::Debug {
     async fn execute(
         &self,
-        operation: &str,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
         caller: &PrincipalId,
         payload: &str,
     ) -> anyhow::Result<Value>;
@@ -43,11 +43,11 @@ pub enum HostRouteHandlers {
     /// The application administration routes of one project environment.
     Application {
         postgres: Arc<WamnPostgres>,
-        project: String,
+        project: wamn_registry::ProjectId,
         /// The identity reader of `wamn_system` and the org of the host, for
         /// the covering test of an `admin` revoke. A host without an
         /// authenticated route has none.
-        identity: Option<(sqlx::PgPool, String)>,
+        identity: Option<(sqlx::PgPool, wamn_registry::OrgId)>,
         /// Publishes each role or permission change.
         changes: Publisher,
     },
@@ -65,7 +65,7 @@ pub enum HostRouteHandlers {
         administration: Option<std::path::PathBuf>,
         /// The runtime status source selected by the serving mode.
         status: Arc<dyn crate::environment_status::StatusSource>,
-        org: String,
+        org: wamn_registry::OrgId,
         /// Publishes each user row and status change of an environment.
         changes: Publisher,
     },
@@ -136,7 +136,14 @@ impl HostRouteDelivery {
         self
     }
 
-    fn attachments(&self) -> impl Iterator<Item = (&'static str, &'static HostAttachment)> + '_ {
+    fn attachments(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &'static wamn_catalog::canonical_name::CanonicalName,
+            &'static HostAttachment,
+        ),
+    > + '_ {
         self.release
             .manifest()
             .host_routes
@@ -241,7 +248,7 @@ impl HostRouteDelivery {
                         project,
                         &self.release.target().project_env_key,
                         principal,
-                        attachment.operation.as_str(),
+                        &attachment.operation.clone().into(),
                     )
                     .await
                     .map_err(Refusal::Failed)?;
@@ -268,7 +275,11 @@ impl HostRouteDelivery {
                         &mut transaction,
                         principal,
                         org,
-                        page.after(0),
+                        page.after(0)
+                            .map(str::parse::<wamn_registry::ProjectId>)
+                            .transpose()
+                            .map_err(anyhow::Error::from)?
+                            .as_ref(),
                         page.read_limit(),
                     )
                     .await?
@@ -284,7 +295,8 @@ impl HostRouteDelivery {
                             &mut transaction,
                             principal,
                             org,
-                            project.as_str().expect("project name"),
+                            &serde_json::from_value::<wamn_registry::ProjectId>(project.clone())
+                                .map_err(anyhow::Error::from)?,
                             None,
                         )
                         .await?;
@@ -309,9 +321,7 @@ impl HostRouteDelivery {
                     project,
                     changes,
                     release: &self.release,
-                    identity: identity
-                        .as_ref()
-                        .map(|(client, org)| (client, org.as_str())),
+                    identity: identity.as_ref().map(|(client, org)| (client, org)),
                 }
                 .start_workflow(caller, payload)
                 .await
@@ -330,9 +340,7 @@ impl HostRouteDelivery {
                     project,
                     changes,
                     release: &self.release,
-                    identity: identity
-                        .as_ref()
-                        .map(|(client, org)| (client, org.as_str())),
+                    identity: identity.as_ref().map(|(client, org)| (client, org)),
                 }
                 .handle(attachment, principal, request_id, payload)
                 .await

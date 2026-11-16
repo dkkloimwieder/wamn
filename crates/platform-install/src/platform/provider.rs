@@ -386,7 +386,7 @@ fn resend_arguments(document: &ClusterDocument) -> [&str; 8] {
         "--secret",
         RESEND_SECRET,
         "--project",
-        &document.project_id,
+        document.project_id.as_str(),
     ]
 }
 
@@ -399,7 +399,7 @@ fn gcp_arguments(document: &ClusterDocument) -> [&str; 8] {
         "--zone",
         &document.zone,
         "--project",
-        &document.project_id,
+        document.project_id.as_str(),
     ]
 }
 
@@ -528,7 +528,7 @@ mod tests {
             project_id: "test-project".into(),
             zone: "us-central1-a".into(),
             cluster_name: "install-test".into(),
-            org: "test".into(),
+            org: "test".parse().unwrap(),
             owner_email: "owner@example.com".into(),
             registry: "localhost:5000".into(),
             buckets: Buckets {

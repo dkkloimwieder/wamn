@@ -32,9 +32,9 @@ impl TryFrom<String> for ProjectEnvKey {
             return Err(ParseProjectEnvKeyError);
         };
         if parts.next().is_some()
-            || !crate::identifiers::valid_project(org)
+            || org.parse::<crate::OrgId>().is_err()
             || env.parse::<EnvName>().is_err()
-            || !crate::identifiers::valid_project(project)
+            || project.parse::<crate::ProjectId>().is_err()
             || org.len() + env.len() + project.len() > 41
         {
             return Err(ParseProjectEnvKeyError);
@@ -66,7 +66,11 @@ impl ProjectEnvKey {
         let org = parts.next().expect("a key contains an organization");
         let env = parts.next().expect("a key contains an environment");
         let project = parts.next().expect("a key contains a project");
-        Triple::new(org, EnvName::from_key_component(env), project)
+        Triple::new(
+            org.parse().expect("a key contains a valid organization"),
+            EnvName::from_key_component(env),
+            project.parse().expect("a key contains a valid project"),
+        )
     }
 }
 impl fmt::Display for ProjectEnvKey {

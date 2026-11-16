@@ -228,8 +228,8 @@ async fn development_identity_survives_schema_reset() {
     grant_project_env_membership(
         &mut admin,
         &user,
-        ORG,
-        PROJECT,
+        &ORG.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
         &ENVIRONMENT.parse().unwrap(),
     )
     .await
@@ -238,8 +238,8 @@ async fn development_identity_survives_schema_reset() {
     assign_project_role(
         &mut admin,
         &user,
-        ORG,
-        PROJECT,
+        &ORG.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
         "admin",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
@@ -292,13 +292,17 @@ async fn development_identity_survives_schema_reset() {
         &application_url,
         &wamn_control_provision::test_database::package_migration_input(
             &application_url,
-            "acme",
-            "receiving",
+            &"acme".parse().unwrap(),
+            &"receiving".parse().unwrap(),
             &"dev".parse().unwrap(),
         )
         .await
         .unwrap(),
-        &wamn_registry::Triple::new("acme", "dev".parse().unwrap(), "receiving"),
+        &wamn_registry::Triple::new(
+            "acme".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "receiving".parse().unwrap(),
+        ),
     )
     .await
     .unwrap();

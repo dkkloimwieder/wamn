@@ -14,8 +14,8 @@ use wamn_platform_identity::application::{
 /// Explicit authorities and authored grants for one API service.
 /// Database credentials never appear in diagnostics.
 pub struct Request {
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
     pub name: String,
     pub display_name: String,

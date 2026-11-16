@@ -64,7 +64,7 @@ pub(crate) async fn compile_components(
             &rustflags,
             &Guest {
                 manifest: workspace.join("Cargo.toml"),
-                package: name.replace('_', "-"),
+                package: name.as_str().replace('_', "-"),
                 target_directory: None,
             },
         )
@@ -80,7 +80,7 @@ pub(crate) async fn compile_components(
         let path = format!("{COMPONENTS}/{name}.wasm");
         fs::write(output.join(&path), &bytes)?;
         components.push(BuildComponent {
-            name: name.clone(),
+            name: name.clone().into(),
             path,
             sha256: bytes_sha256(&bytes),
         });
@@ -317,13 +317,13 @@ pub(crate) fn base_components(
 fn component_file(
     output: &Path,
     build_record: &BuildRecord,
-    name: &str,
+    name: &wamn_compiler::source_name::SourceName,
 ) -> Result<(PathBuf, wamn_digest::Digest)> {
     let entry = build_record
         .outputs
         .components
         .iter()
-        .find(|entry| entry.name == name)
+        .find(|entry| entry.name.as_str() == name.as_str())
         .with_context(|| {
             format!(
                 "the build of {} records no component {name}",
@@ -341,7 +341,7 @@ fn component_file(
                 path.display(),
                 build_record.package.id
             ),
-            name,
+            name.as_str(),
         )
         .into());
     }
@@ -408,7 +408,7 @@ mod tests {
                 manifest: bytes_sha256(&fs::read(output.join(COMPILED_MANIFEST_NAME)).unwrap()),
                 files: BTreeMap::new(),
                 components: vec![BuildComponent {
-                    name: "base".into(),
+                    name: "base".parse().unwrap(),
                     path: "components/base.wasm".into(),
                     sha256: bytes_sha256(&bytes),
                 }],

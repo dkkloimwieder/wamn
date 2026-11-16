@@ -27,8 +27,8 @@ pub const MISSING_SLOT_REASON: &str = "missing";
 /// Inputs of one capture gap recovery.
 #[derive(Debug)]
 pub struct RecoverCaptureGapRequest {
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
 
     /// Owning connection of the system database: the instance suffix, the reader
@@ -45,8 +45,8 @@ pub struct RecoverCaptureGapRequest {
 /// Inputs of one capture gap close.
 #[derive(Debug)]
 pub struct CloseCaptureGapRequest {
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
 
     /// Owning connection of the system database.
@@ -82,7 +82,7 @@ pub async fn recover_capture_gap(
 ) -> anyhow::Result<RecoveredCaptureGap> {
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
-    let triple = Triple::new(&args.org, args.env.clone(), &args.project);
+    let triple = Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
     let slot = cdc_object_name(&args.org, &args.project, &args.env, instance);
     let database = project_env_database_name(&args.org, &args.project, &args.env, instance);
 
@@ -221,7 +221,7 @@ pub async fn recover_capture_gap(
 
 /// Close the newest gap, retaining its original resynchronization time on retry.
 pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<ClosedCaptureGap> {
-    let triple = Triple::new(&args.org, args.env.clone(), &args.project);
+    let triple = Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
     let mut system = connect_system(&args.system_database_url).await?;
     let env = &triple.env;
     let mut transaction = provisioning_transaction(&mut system).await?;
@@ -268,7 +268,7 @@ pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<
 async fn last_cdc_event(
     broker: &async_nats::jetstream::Context,
     stream: &str,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> anyhow::Result<Option<(u64, DateTime<Utc>)>> {
     let source = broker

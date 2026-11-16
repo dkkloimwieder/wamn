@@ -50,8 +50,8 @@ pub struct CredentialReference {
 /// Returns database errors.
 pub async fn fact(
     connection: &mut PgConnection,
-    org: &str,
-    project: &str,
+    org: &crate::OrgId,
+    project: &crate::ProjectId,
     env: &crate::EnvName,
     id: &Uuid,
 ) -> Result<Option<ConnectionFact>, sqlx::Error> {
@@ -70,8 +70,8 @@ pub async fn fact(
 /// Returns database errors.
 pub async fn generation(
     connection: &mut PgConnection,
-    org: &str,
-    project: &str,
+    org: &crate::OrgId,
+    project: &crate::ProjectId,
     env: &crate::EnvName,
     id: &Uuid,
     generation: i64,
@@ -90,8 +90,8 @@ pub async fn generation(
 /// Returns database errors.
 pub async fn credential(
     connection: &mut PgConnection,
-    org: &str,
-    project: &str,
+    org: &crate::OrgId,
+    project: &crate::ProjectId,
     env: &crate::EnvName,
     id: &Uuid,
 ) -> Result<Option<CredentialReference>, sqlx::Error> {
@@ -120,8 +120,8 @@ pub async fn credential(
 /// Returns database errors.
 pub async fn environment(
     connection: &mut PgConnection,
-    org: &str,
-    project: &str,
+    org: &crate::OrgId,
+    project: &crate::ProjectId,
     env: &crate::EnvName,
 ) -> Result<BTreeMap<String, Uuid>, sqlx::Error> {
     Ok(sqlx::query_as::<_, (String, Uuid)>(
@@ -161,8 +161,8 @@ pub async fn integration_version(
 /// Returns database errors.
 pub async fn projection(
     connection: &mut PgConnection,
-    org: &str,
-    project: &str,
+    org: &crate::OrgId,
+    project: &crate::ProjectId,
     env: &crate::EnvName,
 ) -> Result<Value, sqlx::Error> {
     sqlx::query_scalar("SELECT registry.connection_projection($1,$2,$3)")

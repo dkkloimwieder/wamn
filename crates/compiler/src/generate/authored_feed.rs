@@ -12,12 +12,12 @@ use crate::manifest::{
     StaticSqlFetch, StaticSqlStatementDeclaration, StaticSqlValueDeclaration, custom_artifact_stem,
 };
 
-fn value(name: &str, ty: SqlValueType, nullable: bool) -> StaticSqlValueDeclaration {
-    StaticSqlValueDeclaration {
-        name: name.to_owned(),
-        ty,
-        nullable,
-    }
+fn value(
+    name: crate::source_name::SourceName,
+    ty: SqlValueType,
+    nullable: bool,
+) -> StaticSqlValueDeclaration {
+    StaticSqlValueDeclaration { name, ty, nullable }
 }
 
 /// Add the snapshot statements and the host data function for one authored read.
@@ -43,7 +43,7 @@ pub(super) fn prepare_sql(
     let fields = statement
         .row
         .iter()
-        .map(|field| field.name.clone())
+        .map(|field| field.name.to_string())
         .collect::<Vec<_>>();
     let key = &operation
         .lists
@@ -80,21 +80,25 @@ pub(super) fn prepare_sql(
     let nullable = statement
         .row
         .iter()
-        .map(|field| value(&field.name, field.ty, true))
+        .map(|field| value(field.name.clone(), field.ty, true))
         .collect::<Vec<_>>();
     prepared.statements.insert(
-        "feed_page".to_owned(),
+        "feed_page".parse().expect("fixed identifier"),
         StaticSqlStatementDeclaration {
             path: page_path,
             fetch: StaticSqlFetch::BoundedList,
             parameters: statement.parameters.clone(),
-            row: std::iter::once(value("feed_cursor", SqlValueType::Int64, true))
-                .chain(nullable.clone())
-                .collect(),
+            row: std::iter::once(value(
+                "feed_cursor".parse().expect("fixed identifier"),
+                SqlValueType::Int64,
+                true,
+            ))
+            .chain(nullable.clone())
+            .collect(),
         },
     );
     prepared.statements.insert(
-        "feed_changes".to_owned(),
+        "feed_changes".parse().expect("fixed identifier"),
         StaticSqlStatementDeclaration {
             path: changes_path,
             fetch: StaticSqlFetch::BoundedList,
@@ -103,17 +107,49 @@ pub(super) fn prepare_sql(
                 .iter()
                 .cloned()
                 .chain([
-                    value("cursor_transaction", SqlValueType::Int64, true),
-                    value("cursor_id", key_type, true),
-                    value("feed_limit", SqlValueType::Int64, false),
+                    value(
+                        "cursor_transaction".parse().expect("fixed identifier"),
+                        SqlValueType::Int64,
+                        true,
+                    ),
+                    value(
+                        "cursor_id".parse().expect("fixed identifier"),
+                        key_type,
+                        true,
+                    ),
+                    value(
+                        "feed_limit".parse().expect("fixed identifier"),
+                        SqlValueType::Int64,
+                        false,
+                    ),
                 ])
                 .collect(),
             row: [
-                value("feed_end", SqlValueType::Int64, true),
-                value("expired", SqlValueType::Boolean, true),
-                value("change_id", key_type, true),
-                value("change_transaction", SqlValueType::Int64, true),
-                value("present", SqlValueType::Boolean, true),
+                value(
+                    "feed_end".parse().expect("fixed identifier"),
+                    SqlValueType::Int64,
+                    true,
+                ),
+                value(
+                    "expired".parse().expect("fixed identifier"),
+                    SqlValueType::Boolean,
+                    true,
+                ),
+                value(
+                    "change_id".parse().expect("fixed identifier"),
+                    key_type,
+                    true,
+                ),
+                value(
+                    "change_transaction".parse().expect("fixed identifier"),
+                    SqlValueType::Int64,
+                    true,
+                ),
+                value(
+                    "present".parse().expect("fixed identifier"),
+                    SqlValueType::Boolean,
+                    true,
+                ),
             ]
             .into_iter()
             .chain(nullable)
@@ -182,7 +218,7 @@ fn emit_data(
             write!(
                 fields,
                 "pub {}: {},",
-                member(&field.name),
+                member(field.name.as_str()),
                 if field.nullable {
                     format!("Option<{ty}>")
                 } else {
@@ -196,15 +232,19 @@ fn emit_data(
         .parameters
         .iter()
         .fold(String::new(), |mut binds, field| {
-            let field_name = member(&field.name);
+            let field_name = member(field.name.as_str());
             let parsed = if field.nullable {
-                let parsed = super::data::parse(field.ty, "value", &field.name);
+                let parsed = super::data::parse(field.ty, "value", field.name.as_str());
                 parsed.strip_suffix('?').map_or_else(
                     || format!("input.{field_name}"),
                     |parsed| format!("input.{field_name}.map(|value| {parsed}).transpose()?"),
                 )
             } else {
-                super::data::parse(field.ty, &format!("input.{field_name}"), &field.name)
+                super::data::parse(
+                    field.ty,
+                    &format!("input.{field_name}"),
+                    field.name.as_str(),
+                )
             };
             writeln!(binds, "let {field_name} = {parsed};")
                 .expect("writing to a String cannot fail");
@@ -213,7 +253,7 @@ fn emit_data(
     let args = statement
         .parameters
         .iter()
-        .map(|field| member(&field.name))
+        .map(|field| member(field.name.as_str()))
         .collect::<Vec<_>>()
         .join(", ");
     let args = if args.is_empty() {
@@ -344,8 +384,8 @@ fn emit_component(
             write!(
                 inputs,
                 "{}: request.{}{},",
-                member(&field.name),
-                crate::manifest::binding_identifier(&field.name).expect("validated input"),
+                member(field.name.as_str()),
+                crate::manifest::binding_identifier(field.name.as_str()).expect("validated input"),
                 if field.ty == SqlValueType::Json {
                     if field.nullable {
                         ".map(|value| value.encoded_json)"

@@ -31,7 +31,7 @@ pub async fn deploy(
     let mut target = Target {
         kubeconfig,
         context: context.unwrap_or_default(),
-        namespace: document.org.clone(),
+        namespace: document.org.to_string(),
     };
     let installed = if existing {
         InstalledPlatform::read(&target).await?
@@ -115,8 +115,8 @@ pub async fn deploy(
         )
         .await?;
     }
-    let org_name = wamn_registry::name::resource_suffix("org", &document.org);
-    let org_values = resources::release_values(target, &document.org, &org_name).await?;
+    let org_name = wamn_registry::name::resource_suffix("org", document.org.as_str());
+    let org_values = resources::release_values(target, document.org.as_str(), &org_name).await?;
     let mut entry = installation::organization_entry(document, chart, org_values)?;
     let declarations = crate::roles::platform(&document.org, "wamn-pg", "wamn_system")?;
     crate::credentials::prepare(target, &declarations).await?;
@@ -125,7 +125,7 @@ pub async fn deploy(
     wamn_kubernetes::kubectl::wait(
         &target.kubeconfig,
         &target.context,
-        &document.org,
+        document.org.as_str(),
         "cluster.postgresql.cnpg.io",
         "wamn-pg",
         "condition=Ready",
@@ -198,7 +198,7 @@ pub async fn update(
         anyhow::ensure!(coordinate.0 == document.org, "host belongs to another org");
         let lock = LifecycleLock::acquire_environment(
             wamn_postgres::connect(registry).await?,
-            coordinate.0,
+            &coordinate.0,
             &coordinate.1,
         )
         .await?;
@@ -266,10 +266,10 @@ async fn initialize(
     Ok(())
 }
 
-fn host_target<'a>(
-    values: &'a Value,
+fn host_target(
+    values: &Value,
     name: &str,
-) -> anyhow::Result<(&'a str, wamn_registry::EnvName)> {
+) -> anyhow::Result<(wamn_registry::OrgId, wamn_registry::EnvName)> {
     let group = values["runtime-operator"]["runtime"]["hostGroups"]
         .as_array()
         .context("installed release has no host groups")?
@@ -282,7 +282,8 @@ fn host_target<'a>(
         .iter()
         .find(|variable| variable["name"] == "WAMN_ORG")
         .and_then(|variable| variable["value"].as_str())
-        .context("host has no org")?;
+        .context("host has no org")?
+        .parse::<wamn_registry::OrgId>()?;
     let env = group["extraArgs"]
         .as_array()
         .context("host has no arguments")?
@@ -292,7 +293,7 @@ fn host_target<'a>(
         .context("host has no environment")?
         .parse::<wamn_registry::EnvName>()?;
     anyhow::ensure!(
-        wamn_registry::name::environment_host_name(org, &env)? == name,
+        wamn_registry::name::environment_host_name(&org, &env) == name,
         "host group differs from its environment owner"
     );
     Ok((org, env))

@@ -338,12 +338,12 @@ mod tests {
                 package_id: "cat".parse().unwrap(),
                 descriptor: {
                     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
-                        "transform",
-                        "0.1",
+                        "transform".parse().unwrap(),
+                        "0.1".parse().unwrap(),
                         COMPONENT.parse().unwrap(),
                     );
                     descriptor.operations = BTreeMap::from([(
-                        "map".into(),
+                        "map".parse().unwrap(),
                         AdmittedComponentOperation {
                             host_transaction: false,
                             input_ports: Vec::new(),
@@ -585,10 +585,10 @@ mod tests {
                 package_id: "cat".parse().unwrap(),
                 package_version: "1.0.0".parse().unwrap(),
             },
-            component: "transform".into(),
-            interface_version: "0.1".into(),
+            component: "transform".parse().unwrap(),
+            interface_version: "0.1".parse().unwrap(),
             operations: BTreeMap::from([(
-                "map".into(),
+                "map".parse().unwrap(),
                 wamn_catalog::AdmittedComponentOperation {
                     registered_operation: None,
                     committed_result_schema: None,
@@ -628,10 +628,12 @@ mod tests {
                         .parse()
                         .unwrap();
             }),
-            ("another component", |fact| fact.component = "other".into()),
+            ("another component", |fact| {
+                fact.component = "other".parse().unwrap()
+            }),
             ("another operation", |fact| {
                 let operation = fact.operations["map"].clone();
-                fact.operations.insert("reduce".into(), operation);
+                fact.operations.insert("reduce".parse().unwrap(), operation);
             }),
         ];
         for (change, mutate) in mutations {

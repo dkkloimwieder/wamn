@@ -163,12 +163,17 @@ fn registry_definition() -> serde_json::Value {
 #[tokio::test]
 #[ignore = "requires: postgres"]
 async fn file_connection_lookup_refuses_wrong_login_and_forged_target() -> anyhow::Result<()> {
-    let mut registry = files::registry("file-org", "project", registry_definition()).await?;
+    let mut registry = files::registry(
+        &"file-org".parse().unwrap(),
+        &"project".parse().unwrap(),
+        registry_definition(),
+    )
+    .await?;
     assert_eq!(
         files::active_file_connections(
             &registry.reader,
-            "file-org",
-            "project",
+            &"file-org".parse().unwrap(),
+            &"project".parse().unwrap(),
             Some(&registry.connection_id)
         )
         .await?
@@ -184,17 +189,22 @@ async fn file_connection_lookup_refuses_wrong_login_and_forged_target() -> anyho
         (&mut registry.unenabled, "file-org", "unenabled"),
     ] {
         assert!(
-            files::active_file_connections(client, org, project, Some(&registry.connection_id))
-                .await?
-                .is_empty()
+            files::active_file_connections(
+                client,
+                &org.parse().unwrap(),
+                &project.parse().unwrap(),
+                Some(&registry.connection_id)
+            )
+            .await?
+            .is_empty()
         );
     }
     for (org, project) in [("other-org", "project"), ("file-org", "unenabled")] {
         assert!(
             files::active_file_connections(
                 &registry.reader,
-                org,
-                project,
+                &org.parse().unwrap(),
+                &project.parse().unwrap(),
                 Some(&registry.connection_id)
             )
             .await?
@@ -218,7 +228,12 @@ async fn file_connection_lookup_refuses_wrong_login_and_forged_target() -> anyho
 #[ignore = "requires: postgres"]
 async fn file_connection_lookup_requires_an_active_connection_and_integration() -> anyhow::Result<()>
 {
-    let mut registry = files::registry("file-org", "project", registry_definition()).await?;
+    let mut registry = files::registry(
+        &"file-org".parse().unwrap(),
+        &"project".parse().unwrap(),
+        registry_definition(),
+    )
+    .await?;
     registry
         .configure(
             "connection.disable",
@@ -228,8 +243,8 @@ async fn file_connection_lookup_requires_an_active_connection_and_integration() 
     assert!(
         files::active_file_connections(
             &registry.reader,
-            "file-org",
-            "project",
+            &"file-org".parse().unwrap(),
+            &"project".parse().unwrap(),
             Some(&registry.connection_id)
         )
         .await?
@@ -248,8 +263,8 @@ async fn file_connection_lookup_requires_an_active_connection_and_integration() 
     assert!(
         files::active_file_connections(
             &registry.reader,
-            "file-org",
-            "project",
+            &"file-org".parse().unwrap(),
+            &"project".parse().unwrap(),
             Some(&registry.connection_id)
         )
         .await?
@@ -453,14 +468,19 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
 async fn file_reads_select_the_active_generation_and_refuse_another_connection()
 -> anyhow::Result<()> {
     let original = registry_definition();
-    let mut registry = files::registry("file-org", "project", original.clone()).await?;
+    let mut registry = files::registry(
+        &"file-org".parse().unwrap(),
+        &"project".parse().unwrap(),
+        original.clone(),
+    )
+    .await?;
     let mut changed = original;
     changed["cdn_host"] = serde_json::json!("https://files.example");
     registry.move_store(&changed).await?;
     let rows = files::active_file_connections(
         &registry.reader,
-        "file-org",
-        "project",
+        &"file-org".parse().unwrap(),
+        &"project".parse().unwrap(),
         Some(&registry.connection_id),
     )
     .await?;
@@ -470,8 +490,8 @@ async fn file_reads_select_the_active_generation_and_refuse_another_connection()
     assert!(
         files::active_file_connections(
             &registry.reader,
-            "file-org",
-            "project",
+            &"file-org".parse().unwrap(),
+            &"project".parse().unwrap(),
             Some("00000000-0000-0000-0000-000000000001")
         )
         .await?

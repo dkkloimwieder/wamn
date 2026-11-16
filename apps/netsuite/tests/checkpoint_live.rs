@@ -45,7 +45,7 @@ pub async fn invoke(
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(
             HashMap::from([(
-                "test".into(),
+                "test".parse().unwrap(),
                 ProjectConfig {
                     credentials: ClassCredentials::default()
                         .with_class(AuthorityClass::GuestSql, &guest_url)
@@ -72,7 +72,7 @@ pub async fn invoke(
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
             &PROJECT_ENV_KEY.parse().unwrap(),
-            "test",
+            &"test".parse().unwrap(),
             &"test".parse().unwrap(),
         )),
         Arc::new(TracingLogger::default()),
@@ -80,7 +80,7 @@ pub async fn invoke(
         release,
         Arc::new(LocalComponentSource::new(PathBuf::new())),
         OperationHostConfig {
-            project: "test".into(),
+            project: "test".parse().unwrap(),
             schema: Some("wamn_integration".into()),
             owner_prefix: "netsuite-checkpoint-live".into(),
             warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
@@ -150,7 +150,7 @@ pub async fn invoke(
     wamn_engine::native_routes::authorize_registered_operation(Some(&caller), registered.as_ref())?;
     let without = workflow_host
         .workflow_node_caller(
-            "test",
+            &"test".parse().unwrap(),
             &PROJECT_ENV_KEY.parse().unwrap(),
             &wamn_identity_protocol::workflow_user_id(),
             "netsuite-pull-without-record",
@@ -180,7 +180,7 @@ pub async fn invoke(
                 component,
                 operation: &write.operation,
                 context: node_types::NodeContext {
-                    wiring_id: wiring.wiring_id.clone(),
+                    wiring_id: wiring.wiring_id.to_string(),
                     wiring_version: wiring.version,
                     node_id: "write".into(),
                     delivery_id: due.into(),
@@ -208,7 +208,7 @@ pub async fn invoke(
                                 wiring_hash: wiring.wiring_hash(),
                                 wiring_id: wiring.wiring_id.clone(),
                                 wiring_version: wiring.version,
-                                node_id: "write".into(),
+                                node_id: "write".parse().unwrap(),
                                 occurrence: 0,
                             }),
                             ConnectionExecutionClosure::Released,

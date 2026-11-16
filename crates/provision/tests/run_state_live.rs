@@ -178,7 +178,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
         application: &"cat".parse().unwrap(),
         manifest_digest: &digest,
         environment: &"prod".parse().unwrap(),
-        workflow_id: "workflow",
+        workflow_id: &"workflow".parse().unwrap(),
         workflow_version: 1,
         wiring_hash: &digest,
         execution_principal_id: &actor,
@@ -432,7 +432,7 @@ async fn run_state_live(pool: sqlx::PgPool) -> anyhow::Result<()> {
     }
     for (id, version, hash) in [("", 1, digest), ("workflow", 0, digest)] {
         let invalid = RunAdmission {
-            workflow_id: id,
+            workflow_id: &id.parse().unwrap(),
             workflow_version: version,
             wiring_hash: &hash,
             idempotency_key: "invalid-workflow",

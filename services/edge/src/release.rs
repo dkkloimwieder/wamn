@@ -294,11 +294,11 @@ pub(crate) mod test_util {
                 package_id: "scale".parse().unwrap(),
                 package_version: "1.0.0".parse().unwrap(),
             },
-            component: "device".into(),
-            interface_version: "0.1".into(),
+            component: "device".parse().unwrap(),
+            interface_version: "0.1".parse().unwrap(),
             component_digest: bytes_sha256(b"device"),
             operations: BTreeMap::from([(
-                OPERATION.into(),
+                OPERATION.parse().unwrap(),
                 AdmittedComponentOperation {
                     registered_operation: Some(OPERATION.parse().unwrap()),
                     committed_result_schema: None,
@@ -324,9 +324,13 @@ pub(crate) mod test_util {
                 runtime_schema: None,
                 package_id: "scale".parse().unwrap(),
                 descriptor: {
-                    let mut descriptor =
-                        ComponentDescriptor::named("device", "0.1", fact.component_digest);
-                    descriptor.operations = BTreeMap::from([(OPERATION.into(), operation)]);
+                    let mut descriptor = ComponentDescriptor::named(
+                        "device".parse().unwrap(),
+                        "0.1".parse().unwrap(),
+                        fact.component_digest,
+                    );
+                    descriptor.operations =
+                        BTreeMap::from([(OPERATION.parse().unwrap(), operation)]);
                     descriptor
                 },
             }]),

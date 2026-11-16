@@ -1,5 +1,7 @@
 //! Operations exported by the components of one release.
 
+use crate::canonical_name::CanonicalName;
+
 use crate::ServingComponent;
 use serde::Serialize;
 
@@ -13,8 +15,8 @@ pub struct ReleaseProfile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OperationProfile {
     pub package: crate::PackageName,
-    pub component: String,
-    pub operation: String,
+    pub component: CanonicalName,
+    pub operation: CanonicalName,
 }
 
 /// List the exported operations of the released components.

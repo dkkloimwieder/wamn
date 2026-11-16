@@ -45,7 +45,7 @@ pub async fn provision_system(args: ProvisionSystemArgs) -> anyhow::Result<()> {
 #[derive(Debug, Args)]
 pub struct RecoverCaptureGapArgs {
     #[arg(long)]
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
     #[arg(long)]
     pub env: wamn_registry::EnvName,
 }
@@ -53,7 +53,7 @@ pub struct RecoverCaptureGapArgs {
 #[derive(Debug, Args)]
 pub struct CloseCaptureGapArgs {
     #[arg(long)]
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
     #[arg(long)]
     pub env: wamn_registry::EnvName,
 }
@@ -173,7 +173,7 @@ pub struct ProvisionOrgArgs {
     /// Org id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric). Names the
     /// derived `<org>-<owner>` clusters; the reserved `wamn` prefix is rejected.
     #[arg(long)]
-    pub org: String,
+    pub org: wamn_registry::OrgId,
 
     /// The template preset to stamp: `trials` (pooled, record-only), `standard`
     /// (dedicated, canary shared-with prod), or `dedicated` (canary own).

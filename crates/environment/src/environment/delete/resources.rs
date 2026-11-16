@@ -51,8 +51,8 @@ pub(super) async fn require_ownership(
     {
         let labels = &object["metadata"]["labels"];
         anyhow::ensure!(
-            labels["wamn.org"] == triple.org
-                && labels["wamn.project"] == triple.project
+            labels["wamn.org"] == triple.org.as_str()
+                && labels["wamn.project"] == triple.project.as_str()
                 && labels["wamn.env"] == triple.env.as_str()
                 && object["spec"]["dbname"] == database,
             "refused: Publication {database} does not belong to {triple}"

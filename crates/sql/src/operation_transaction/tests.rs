@@ -35,9 +35,9 @@ fn invocation(operation: &str, package_id: &wamn_catalog::PackageName) -> Connec
             component_digest: format!("sha256:{}", "a".repeat(64))
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
-            component: "overlay".into(),
-            interface_version: "0.1.0".into(),
-            operation: OWNER_OPERATION.into(),
+            component: "overlay".parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
+            operation: OWNER_OPERATION.parse().unwrap(),
         },
         entry: wamn_connections::connection::InvocationEntry::Wiring(
             wamn_connections::connection::WiringPosition {
@@ -46,9 +46,9 @@ fn invocation(operation: &str, package_id: &wamn_catalog::PackageName) -> Connec
                 wiring_hash: format!("sha256:{}", "a".repeat(64))
                     .parse::<wamn_digest::Digest>()
                     .unwrap(),
-                wiring_id: "widget".into(),
+                wiring_id: "widget".parse().unwrap(),
                 wiring_version: 1,
-                node_id: "record".into(),
+                node_id: "record".parse().unwrap(),
                 occurrence: 0,
             },
         ),
@@ -56,8 +56,8 @@ fn invocation(operation: &str, package_id: &wamn_catalog::PackageName) -> Connec
         component_digest: format!("sha256:{}", "b".repeat(64))
             .parse::<wamn_digest::Digest>()
             .unwrap(),
-        component: package_id.to_string(),
-        operation: operation.into(),
+        component: package_id.as_str().parse().unwrap(),
+        operation: operation.parse().unwrap(),
         closure: ConnectionExecutionClosure::Released,
         effects: None,
     }
@@ -205,7 +205,7 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it(pool:
             &SessionIdentity {
                 project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
                 user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
-                operation: Some(OWNER_OPERATION.into()),
+                operation: Some(OWNER_OPERATION.parse().unwrap()),
                 ..SessionIdentity::default()
             },
         )

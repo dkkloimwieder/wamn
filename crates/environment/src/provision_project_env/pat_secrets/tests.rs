@@ -78,8 +78,8 @@ async fn auth_drops_assign_project_role_records_the_changed_identity(pool: sqlx:
     assign_project_role(
         &mut tx,
         principal.id(),
-        "org",
-        "project",
+        &"org".parse().unwrap(),
+        &"project".parse().unwrap(),
         "project-author",
         &mut drops,
     )
@@ -94,10 +94,15 @@ async fn auth_drops_assign_project_role_records_the_changed_identity(pool: sqlx:
     );
     assert_eq!(drops, expected);
     assert_eq!(
-        wamn_platform_identity::project_roles(&mut client, principal.id(), "org", "project")
-            .await
-            .unwrap()
-            .len(),
+        wamn_platform_identity::project_roles(
+            &mut client,
+            principal.id(),
+            &"org".parse().unwrap(),
+            &"project".parse().unwrap()
+        )
+        .await
+        .unwrap()
+        .len(),
         1
     );
 }

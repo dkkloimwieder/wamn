@@ -787,12 +787,11 @@ pub async fn list_pats(
 pub async fn assign_project_role(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = require_target_segment("org", org)?;
     let service: bool = sqlx::query(
         "SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1 AND type='service')",
     )
@@ -802,15 +801,14 @@ pub async fn assign_project_role(
     .map_err(|error| database_error(&error))?
     .get(0);
     if !service {
-        org::active_member(client, principal_id, &org).await?;
+        org::active_member(client, principal_id, org).await?;
     }
 
-    let project = require_target_segment("project", project)?;
     let role = role.parse::<RoleName>()?.to_string();
     let written = sqlx::query(ASSIGN_PROJECT_ROLE_SQL)
         .bind(principal_id)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .bind(&role)
         .execute(&mut *client)
         .await
@@ -826,15 +824,13 @@ pub async fn assign_project_role(
 pub async fn project_roles(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
 ) -> Result<Vec<RoleName>, IdentityError> {
-    let org = require_target_segment("org", org)?;
-    let project = require_target_segment("project", project)?;
     let rows = sqlx::query(SELECT_PROJECT_ROLES_SQL)
         .bind(principal_id)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?;
@@ -857,16 +853,15 @@ fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<RoleName>, IdentityError> 
 pub async fn grant_project_env_membership(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Result<(), IdentityError> {
-    let org = org::active_member(client, principal_id, org).await?;
-    let project = require_target_segment("project", project)?;
+    org::active_member(client, principal_id, org).await?;
     sqlx::query(GRANT_PROJECT_ENV_MEMBERSHIP_SQL)
         .bind(principal_id)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .bind(env)
         .execute(&mut *client)
         .await
@@ -882,16 +877,14 @@ pub async fn grant_project_env_membership(
 pub async fn has_project_env_membership(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Result<bool, IdentityError> {
-    let org = require_target_segment("org", org)?;
-    let project = require_target_segment("project", project)?;
     sqlx::query(SELECT_PROJECT_ENV_MEMBERSHIP_SQL)
         .bind(principal_id)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .bind(env)
         .fetch_one(&mut *client)
         .await
@@ -904,18 +897,16 @@ pub async fn has_project_env_membership(
 pub async fn revoke_project_env_membership(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     drops: &mut AuthDrops,
 ) -> Result<bool, IdentityError> {
-    let org = require_target_segment("org", org)?;
-    org::lock_membership(client, principal_id, &org).await?;
-    let project = require_target_segment("project", project)?;
+    org::lock_membership(client, principal_id, org).await?;
     let removed = sqlx::query(REVOKE_PROJECT_ENV_MEMBERSHIP_SQL)
         .bind(principal_id)
-        .bind(&org)
-        .bind(&project)
+        .bind(org)
+        .bind(project)
         .bind(env)
         .execute(&mut *client)
         .await
@@ -1072,18 +1063,6 @@ pub fn require_user_contact(email: &str, display_name: &str) -> Result<(), Ident
     require_email(email)?;
     require_display_name(display_name)?;
     Ok(())
-}
-
-fn require_target_segment(name: &'static str, value: &str) -> Result<String, IdentityError> {
-    let value = value.trim();
-    if value.is_empty() || value.len() > 40 {
-        return Err(IdentityError::refused(
-            IdentityErrorType::InvalidInput,
-            IdentityRefusal::Invalid(name),
-            format!("{name} must contain 1 to 40 bytes"),
-        ));
-    }
-    Ok(value.to_owned())
 }
 
 fn database_error(error: &sqlx::Error) -> IdentityError {

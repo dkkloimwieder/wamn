@@ -216,7 +216,7 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
             .unwrap();
         assert!(matches!(
             transaction
-                .begin_opaque(OPERATION, key, vec![1])
+                .begin_opaque(&OPERATION.parse().unwrap(), key, vec![1])
                 .await
                 .unwrap(),
             crate::write_log::Claim::New
@@ -271,7 +271,7 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
         } else {
             assert!(matches!(result, Err(PgError::PermissionDenied)));
         }
-        transaction.finish_opaque(OPERATION, key, "null".into());
+        transaction.finish_opaque(&OPERATION.parse().unwrap(), key, "null".into());
         assert!(matches!(
             transaction.commit().await,
             Err(crate::PgCommitFailure::Uncertain(_))
@@ -299,7 +299,10 @@ async fn guest_commit_fails_host_finish_and_discards_the_connection(pool: sqlx::
             .bind(OPERATION).bind(key).execute(&pool).await.unwrap();
         let retry = postgres.begin_operation_transaction(SCOPE).await.unwrap();
         assert!(matches!(
-            retry.begin_opaque(OPERATION, key, vec![1]).await.unwrap(),
+            retry
+                .begin_opaque(&OPERATION.parse().unwrap(), key, vec![1])
+                .await
+                .unwrap(),
             crate::write_log::Claim::OutcomeUnknown
         ));
         retry.rollback().await.unwrap();

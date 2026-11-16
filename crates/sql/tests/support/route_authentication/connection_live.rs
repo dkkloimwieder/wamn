@@ -52,8 +52,8 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let role = workload_login(
         WorkloadRoleFamily::HttpAdmitter,
         WorkloadRoleIdentity::ProjectEnvironment {
-            org: "acme",
-            project: "host-project",
+            org: &"acme".parse().unwrap(),
+            project: &"host-project".parse().unwrap(),
             environment: &"prod".parse().unwrap(),
             database: database.path().trim_start_matches('/'),
         },
@@ -106,7 +106,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let applications = [&application];
     assert!(
         postgres
-            .configure_revocation("host-project", &applications)
+            .configure_revocation(&"host-project".parse().unwrap(), &applications)
             .await
             .is_err()
     );
@@ -125,7 +125,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .await
     .unwrap();
     postgres
-        .configure_revocation("host-project", &applications)
+        .configure_revocation(&"host-project".parse().unwrap(), &applications)
         .await
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -136,7 +136,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .unwrap();
     assert!(
         postgres
-            .configure_revocation("host-project", &applications)
+            .configure_revocation(&"host-project".parse().unwrap(), &applications)
             .await
             .is_err()
     );
@@ -144,10 +144,10 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
         Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
-        Arc::new(fixture.reader("host-project").await),
+        Arc::new(fixture.reader(&"host-project".parse().unwrap()).await),
         &postgres,
         &"acme--dev--host-project".parse().unwrap(),
-        "host-project",
+        &"host-project".parse().unwrap(),
         &"dev".parse().unwrap(),
     ));
     let authority = wamn_postgres::pool(fixture.database.as_str(), 4)
@@ -165,7 +165,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let signature = super::signature::signed(super::signature::BODY);
     let headers = [("X-Signature", signature.as_str())];
     let caller = routing
-        .authenticate_request_for_test("orders", &headers, super::signature::BODY)
+        .authenticate_request_for_test(&"orders".parse().unwrap(), &headers, super::signature::BODY)
         .await
         .unwrap()
         .unwrap();
@@ -183,7 +183,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .unwrap();
     postgres.auth_cache().clear();
     let caller = routing
-        .authenticate_request_for_test("orders", &headers, super::signature::BODY)
+        .authenticate_request_for_test(&"orders".parse().unwrap(), &headers, super::signature::BODY)
         .await
         .unwrap()
         .unwrap();
@@ -243,7 +243,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let bearer = format!("Bearer {}", pat.token());
     let pat_routing = super::routing(&json!(["pat"])).with_authenticator(authentication);
     let api = pat_routing
-        .authenticate_headers_for_test("orders", &[("Authorization", &bearer)])
+        .authenticate_headers_for_test(&"orders".parse().unwrap(), &[("Authorization", &bearer)])
         .await
         .unwrap()
         .unwrap();
@@ -260,7 +260,11 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     postgres.auth_cache().clear();
     assert_eq!(
         routing
-            .authenticate_request_for_test("orders", &headers, super::signature::BODY)
+            .authenticate_request_for_test(
+                &"orders".parse().unwrap(),
+                &headers,
+                super::signature::BODY
+            )
             .await
             .unwrap_err()
             .0,
@@ -281,7 +285,11 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     postgres.auth_cache().clear();
     assert!(
         routing
-            .authenticate_request_for_test("orders", &headers, super::signature::BODY)
+            .authenticate_request_for_test(
+                &"orders".parse().unwrap(),
+                &headers,
+                super::signature::BODY
+            )
             .await
             .is_err()
     );
@@ -336,8 +344,8 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     assign_project_role(
         &mut admin,
         principal.id(),
-        "org",
-        "project",
+        &"org".parse().unwrap(),
+        &"project".parse().unwrap(),
         "admin",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
@@ -361,8 +369,8 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         wamn_control_provision::workload_login(
             family,
             wamn_control_provision::WorkloadRoleIdentity::ProjectEnvironment {
-                org: "org",
-                project: "project",
+                org: &"org".parse().unwrap(),
+                project: &"project".parse().unwrap(),
                 environment: &"prod".parse().unwrap(),
                 database: project.path().trim_start_matches('/'),
             },
@@ -465,7 +473,8 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     )
     .await;
     let authorization = format!("Bearer {}", issued.token());
-    let request = || route.authenticate_authorization_for_test("orders", Some(&authorization));
+    let attachment = "orders".parse().unwrap();
+    let request = || route.authenticate_authorization_for_test(&attachment, Some(&authorization));
     let cached_at = std::time::Instant::now();
     let caller = request().await.unwrap().unwrap();
     assert_eq!(caller.principal_id(), principal.id());

@@ -131,7 +131,7 @@ pub(crate) fn derive(
         .as_ref()
         .and_then(|name| manifest.models.get(name))
         .ok_or_else(|| fail("lists must name a declared root model"))?;
-    let root = find_table(catalog, &model.schema, &model.table)
+    let root = find_table(catalog, model.schema.as_str(), model.table.as_str())
         .ok_or_else(|| fail("root table is absent from the catalog"))?;
     let [key] = lists.key_field.as_slice() else {
         return Err(fail("lists needs exactly one key field"));
@@ -840,7 +840,7 @@ mod tests {
             .unwrap()
             .row
             .push(crate::manifest::StaticSqlValueDeclaration {
-                name: "row_version".into(),
+                name: "row_version".parse().unwrap(),
                 ty: wamn_scalar::SqlValueType::Int64,
                 nullable: false,
             });
@@ -943,7 +943,7 @@ mod tests {
             .iter()
             .map(|table| {
                 (
-                    table.name().to_owned(),
+                    table.name().parse().unwrap(),
                     table
                         .columns()
                         .iter()

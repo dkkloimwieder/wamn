@@ -26,7 +26,7 @@ pub type NativeCallFailure = Arc<std::sync::Mutex<Option<anyhow::Error>>>;
 
 /// The request authority and absolute deadline carried into one native node call.
 pub struct NativeInvocation<P: InvocationPolicy> {
-    pub operation: String,
+    pub operation: wamn_catalog::canonical_name::CanonicalName,
     pub context: node_types::NodeContext,
     pub input: NativeInput,
     pub deadline: Instant,
@@ -126,7 +126,7 @@ impl<P: InvocationPolicy> Drop for CloseScope<P> {
 
 impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
     fn describe(&self) -> &str {
-        &self.request.operation
+        self.request.operation.as_str()
     }
 
     fn deadline(&self) -> Duration {
@@ -202,7 +202,7 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                 })?;
                 let run = accessor.with(|mut access| {
                     let handler = instance
-                        .get_export_index(&mut access, None, &request.operation)
+                        .get_export_index(&mut access, None, request.operation.as_str())
                         .context("component has no admitted operation export")?;
                     let export = instance
                         .get_export_index(&mut access, Some(&handler), "run")
@@ -324,13 +324,13 @@ impl GuestCall for ReadinessCall {
 
 /// Retire the native instance selected for a refused invocation.
 struct RefusedCall {
-    operation: String,
+    operation: wamn_catalog::canonical_name::CanonicalName,
     deadline: Instant,
 }
 
 impl GuestCall for RefusedCall {
     fn describe(&self) -> &str {
-        &self.operation
+        self.operation.as_str()
     }
 
     fn deadline(&self) -> Duration {
@@ -349,7 +349,7 @@ impl GuestCall for RefusedCall {
 pub(super) async fn prepare_invocation<P: InvocationPolicy>(
     application: &NativeApplication<P>,
     target: &DispatchTarget,
-    operation: &str,
+    operation: &wamn_catalog::canonical_name::CanonicalName,
     facts: &P::Facts,
     deadline: Instant,
 ) -> anyhow::Result<P::Facts> {

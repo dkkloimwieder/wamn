@@ -515,10 +515,10 @@ fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
                 .unwrap(),
             package_version: "1.0.0".parse().unwrap(),
         },
-        component: "node".into(),
-        interface_version: "0.1.0".into(),
+        component: "node".parse().unwrap(),
+        interface_version: "0.1.0".parse().unwrap(),
         operations: BTreeMap::from([(
-            operation.into(),
+            operation.parse().unwrap(),
             AdmittedComponentOperation {
                 registered_operation: registered.then(|| operation.parse().unwrap()),
                 committed_result_schema: None,
@@ -615,7 +615,7 @@ impl Fixture {
         }
         if members || matches!(case, Case::PostgresImport) {
             root.effects.push(wamn_catalog::AdmittedComponentEffect {
-                package: "wamn:postgres".into(),
+                package: "wamn:postgres".parse().unwrap(),
                 provenance: wamn_catalog::ComponentEffectProvenance::Imported,
                 interfaces: root
                     .imports
@@ -655,7 +655,7 @@ impl Fixture {
                 BTreeSet::from([wamn_catalog::ServingRoute {
                     package_id: root.target.package_id.clone(),
                     component: root.component.clone(),
-                    operation: ROOT.into(),
+                    operation: ROOT.parse().unwrap(),
                     type_: wamn_catalog::OperationType::Command,
                     idempotency: Some("value.key".into()),
                     reads: BTreeSet::new(),
@@ -696,7 +696,7 @@ impl Fixture {
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
             &PROJECT_ENV_KEY.parse().unwrap(),
-            "test",
+            &"test".parse().unwrap(),
             &release.target().environment,
         ));
         let policy = new_native_policy(
@@ -717,7 +717,7 @@ impl Fixture {
                 postgres,
                 logging: Arc::new(TracingLogger::default()),
                 release,
-                project: "test".into(),
+                project: "test".parse().unwrap(),
             },
         )
         .expect("prepare immutable component policy");
@@ -793,7 +793,7 @@ impl Fixture {
 
     fn request(&self, deadline: Instant) -> NativeInvocation<NativePolicy> {
         NativeInvocation {
-            operation: ROOT.into(),
+            operation: ROOT.parse().unwrap(),
             input: r#"[{"value":37}]"#.into(),
             deadline,
             application: Arc::clone(&self.application),
@@ -813,7 +813,7 @@ impl Fixture {
                 NodeAcquisition {
                     identity: SessionIdentity {
                         project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
-                        project: Some("test".into()),
+                        project: Some("test".parse().unwrap()),
                         release: Some(ReleaseIdentity::for_test(
                             self.policy.resources.release.manifest().digest(),
                         )),
@@ -823,9 +823,9 @@ impl Fixture {
                         origin: ConnectionOrigin {
                             package_id: "root".parse().unwrap(),
                             component_digest: self.root.component_digest,
-                            component: "node".into(),
+                            component: "node".parse().unwrap(),
                             interface_version: self.root.interface_version.clone(),
-                            operation: ROOT.into(),
+                            operation: ROOT.parse().unwrap(),
                         },
                         entry: wamn_connections::connection::InvocationEntry::Wiring(
                             wamn_connections::connection::WiringPosition {
@@ -834,16 +834,16 @@ impl Fixture {
                                 wiring_hash: (format!("sha256:{}", "a".repeat(64)))
                                     .parse::<wamn_digest::Digest>()
                                     .unwrap(),
-                                wiring_id: "trusted-wiring".into(),
+                                wiring_id: "trusted-wiring".parse().unwrap(),
                                 wiring_version: 1,
-                                node_id: "trusted-node".into(),
+                                node_id: "trusted-node".parse().unwrap(),
                                 occurrence: 0,
                             },
                         ),
                         package_id: "root".parse().unwrap(),
                         component_digest: self.root.component_digest,
-                        component: "node".into(),
-                        operation: ROOT.into(),
+                        component: "node".parse().unwrap(),
+                        operation: ROOT.parse().unwrap(),
                         closure: ConnectionExecutionClosure::Released,
                         effects: None,
                     },
@@ -993,7 +993,10 @@ async fn native_node_lifetime_revokes_invocation_authority(pool: sqlx::PgPool) {
                             "a callerless delivery binds its platform principal"
                         );
                         assert_eq!(
-                            identity.operation.as_deref(),
+                            identity
+                                .operation
+                                .as_ref()
+                                .map(|operation| operation.as_str()),
                             Some(ROOT),
                             "a callerless delivery binds the operation that it runs"
                         );

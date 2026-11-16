@@ -3,7 +3,10 @@
 use sqlx::Row as _;
 use wamn_kubernetes::Store as _;
 /// Collect retired values without changing the immutable credential metadata.
-pub async fn collect(client: &mut sqlx::PgConnection, org: &str) -> anyhow::Result<()> {
+pub async fn collect(
+    client: &mut sqlx::PgConnection,
+    org: &wamn_registry::OrgId,
+) -> anyhow::Result<()> {
     let rows = sqlx::query(wamn_registry::sql::EXECUTION_HOST_SRC_CREDENTIAL_CLEANUP_COLLECT)
         .bind(org)
         .fetch_all(&mut *client)

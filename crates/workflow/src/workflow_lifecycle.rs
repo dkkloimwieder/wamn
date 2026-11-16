@@ -382,7 +382,8 @@ async fn enable_in(
     let enable_sequence = if trigger == "event" {
         let source_package: wamn_catalog::PackageName =
             row.try_get(4).map_err(WorkflowLifecycleError::stored)?;
-        let entity: String = row.get(5);
+        let entity: wamn_catalog::canonical_name::CanonicalName =
+            row.try_get(5).map_err(WorkflowLifecycleError::stored)?;
         let stored_ops: Vec<String> = row.get(6);
         let ops = serde_json::from_value::<Vec<wamn_catalog::WiringEventOperation>>(
             serde_json::json!(stored_ops),
@@ -411,7 +412,7 @@ async fn enable_in(
             triple,
             workflow.application,
             &source_package,
-            &entity,
+            entity.as_str(),
         )
         .map_err(|error| {
             WorkflowLifecycleError::with_source(

@@ -65,23 +65,8 @@ pub fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::Result<
             invocation.closure,
             ConnectionExecutionClosure::Candidate { .. }
         ),
-        InvocationEntry::Wiring(position) => {
-            !position.wiring_id.is_empty()
-                && position.wiring_version > 0
-                && !position.node_id.is_empty()
-        }
+        InvocationEntry::Wiring(position) => position.wiring_version > 0,
     };
     anyhow::ensure!(entry_valid, "connection-http-invocation-invalid");
-    if let ConnectionExecutionClosure::Candidate {
-        component,
-        interface_version,
-        ..
-    } = &invocation.closure
-    {
-        anyhow::ensure!(
-            !component.is_empty() && !interface_version.is_empty(),
-            "connection-http-candidate-closure-invalid"
-        );
-    }
     Ok(())
 }

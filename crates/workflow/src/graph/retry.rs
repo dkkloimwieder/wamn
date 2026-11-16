@@ -50,7 +50,9 @@ impl RetryPolicy {
     /// optional). A missing object, a non-object config, or a `Null` config all
     /// yield [`RetryPolicy::DEFAULT`]; individual missing keys fall back per
     /// field.
-    pub fn from_config(config: &BTreeMap<String, Value>) -> RetryPolicy {
+    pub fn from_config(
+        config: &BTreeMap<wamn_catalog::canonical_name::CanonicalName, Value>,
+    ) -> RetryPolicy {
         let Some(retry) = config.get("retry").filter(|v| v.is_object()) else {
             return RetryPolicy::DEFAULT;
         };

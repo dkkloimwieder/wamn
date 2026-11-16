@@ -48,8 +48,8 @@ pub struct PruneRecordHistoryRequest {
     /// generation. The verb refuses any other login.
     pub database_url: String,
 
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
 }
 
@@ -78,12 +78,6 @@ pub struct PrunedHistory {
 pub async fn prune_expired_record_history(
     request: PruneRecordHistoryRequest,
 ) -> anyhow::Result<Vec<PrunedHistory>> {
-    if [&request.org, &request.project]
-        .iter()
-        .any(|part| part.trim().is_empty())
-    {
-        bail!("org, project and environment must be non-empty");
-    }
     let mut client = wamn_postgres::connect(&request.database_url)
         .await
         .context("audit retention credential connect")?;

@@ -155,7 +155,7 @@ pub fn authored_base_digests(
 /// Read one final component declaration and supply its deployment coordinate.
 pub fn render_package_declaration(
     package_root: &Path,
-    component: &str,
+    component: &wamn_catalog::canonical_name::CanonicalName,
     project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> Result<Value, ComponentDeclarationError> {
     let invalid = |source: String| {
@@ -211,7 +211,7 @@ pub fn declared_platform_packages(
         .map_err(|source| ComponentDeclarationError::parse(template, source))?;
     let mut packages = std::collections::BTreeSet::new();
     for operation in declaration.operations.keys() {
-        let (package, _) = operation.split_once('/').ok_or_else(|| {
+        let (package, _) = operation.as_str().split_once('/').ok_or_else(|| {
             ComponentDeclarationError::invalid(
                 ComponentDeclarationErrorType::TemplateInvalid,
                 template,

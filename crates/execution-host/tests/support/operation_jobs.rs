@@ -29,9 +29,9 @@ async fn operations_refuse_unrelated_project_authority_before_execution() -> any
         invite_member(
             &mut admin,
             principal,
-            ORG,
+            &ORG.parse().unwrap(),
             &MemberGrants {
-                project_admins: vec![project.into()],
+                project_admins: vec![project.parse().unwrap()],
                 ..MemberGrants::default()
             },
         )
@@ -47,7 +47,7 @@ async fn operations_refuse_unrelated_project_authority_before_execution() -> any
             control: wamn_postgres::pool(&control_url, 4).await?,
             writer,
             identity: None,
-            org: ORG.into(),
+            org: ORG.parse().unwrap(),
             changes: Publisher::new(nats),
         },
     );
@@ -91,7 +91,7 @@ async fn operations_refuse_unrelated_project_authority_before_execution() -> any
         let report = delivery
             .deliver(
                 DeliveryRequest {
-                    source: Source::Attachment(id.into()),
+                    source: Source::Attachment(id.clone()),
                     delivery_id: "authority".into(),
                     payload: json!([element]).to_string(),
                     caller: None,
@@ -100,7 +100,7 @@ async fn operations_refuse_unrelated_project_authority_before_execution() -> any
                     if_none_match: None,
                 },
                 Some(AuthenticatedCaller::new(
-                    id,
+                    id.clone(),
                     other,
                     CredentialType::Session,
                     false,

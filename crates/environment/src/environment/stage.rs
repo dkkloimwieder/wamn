@@ -605,11 +605,15 @@ mod tests {
     }
 
     fn component(name: &str, digest: &wamn_digest::Digest, aliases: &[&str]) -> ServingComponent {
-        let mut descriptor = ComponentDescriptor::named(name, "0.1", *digest);
+        let mut descriptor =
+            ComponentDescriptor::named(name.parse().unwrap(), "0.1".parse().unwrap(), *digest);
         descriptor.connections = aliases
             .iter()
             .map(|alias| ComponentConnection {
-                store_alias: (*alias).to_owned().into(),
+                store_alias: alias
+                    .parse::<wamn_catalog::canonical_name::CanonicalName>()
+                    .unwrap()
+                    .into(),
                 requirement_type: ComponentConnectionType::Blobstore,
                 mode: wamn_catalog::ConnectionMode::Write,
             })

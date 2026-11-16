@@ -13,9 +13,9 @@ const MAX_CAUSATION_DEPTH: u32 = 16;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventTrigger {
     pub application: wamn_catalog::ApplicationName,
-    pub workflow_id: String,
+    pub workflow_id: wamn_catalog::canonical_name::CanonicalName,
     pub source_package: wamn_catalog::PackageName,
-    pub entity: String,
+    pub entity: wamn_catalog::canonical_name::CanonicalName,
     pub ops: Vec<Op>,
     pub condition: Option<String>,
     pub enable_sequence: u64,
@@ -25,7 +25,7 @@ pub struct EventTrigger {
 #[derive(Debug)]
 pub struct TriggerMatchError {
     pub type_: TriggerMatchErrorType,
-    pub workflow_id: String,
+    pub workflow_id: wamn_catalog::canonical_name::CanonicalName,
     detail: String,
 }
 
@@ -109,9 +109,9 @@ mod tests {
         let packages = BTreeSet::from(["orders".parse().unwrap(), "other".parse().unwrap()]);
         let trigger = EventTrigger {
             application: "erp".parse().unwrap(),
-            workflow_id: "notify".into(),
+            workflow_id: "notify".parse().unwrap(),
             source_package: "orders".parse().unwrap(),
-            entity: "order".into(),
+            entity: "order".parse().unwrap(),
             ops: vec![Op::Update],
             condition: Some("old.status != new.status && new.status == 'open'".into()),
             enable_sequence: 41,
@@ -144,7 +144,7 @@ mod tests {
                 ..trigger.clone()
             },
             EventTrigger {
-                entity: "other".into(),
+                entity: "other".parse().unwrap(),
                 ..trigger.clone()
             },
             EventTrigger {
@@ -169,7 +169,7 @@ mod tests {
             );
         }
         let second = EventTrigger {
-            workflow_id: "audit".into(),
+            workflow_id: "audit".parse().unwrap(),
             ..trigger.clone()
         };
         assert_eq!(

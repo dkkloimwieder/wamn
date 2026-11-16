@@ -99,22 +99,31 @@ async fn recover_and_close_record_each_capture_gap() {
         .unwrap()
         .host;
     let nats = wamn_broker::nats::PlatformNats::from_env().unwrap();
-    validate_project_env_cdc(&org, PROJECT, &ENV.parse().unwrap()).expect("valid names");
+    validate_project_env_cdc(
+        &org.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
+        &ENV.parse().unwrap(),
+    )
+    .expect("valid names");
     let postgres = wamn_test_postgres::start(&[("wal_level", "logical")])
         .expect("start a PostgreSQL 18 server with wal_level=logical");
     let database = project_env_database_name(
-        &org,
-        PROJECT,
+        &org.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
         &ENV.parse().unwrap(),
         &INSTANCE.parse().unwrap(),
     );
     let slot = cdc_object_name(
-        &org,
-        PROJECT,
+        &org.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
         &ENV.parse().unwrap(),
         &INSTANCE.parse().unwrap(),
     );
-    let stream = wamn_event_wire::stream_name(&org, PROJECT, &ENV.parse().unwrap());
+    let stream = wamn_event_wire::stream_name(
+        &org.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
+        &ENV.parse().unwrap(),
+    );
     let super_url = postgres.database("postgres").unwrap().url().to_owned();
     let system_url = postgres.database(SYSTEM_DB).unwrap().url().to_owned();
     let admin_url = postgres.database(&database).unwrap().url().to_owned();
@@ -240,7 +249,11 @@ async fn recover_and_close_record_each_capture_gap() {
     let _ = js.delete_stream(&stream).await;
     js.create_stream(jetstream::stream::Config {
         name: stream.clone(),
-        subjects: vec![stream_subjects(&org, PROJECT, &ENV.parse().unwrap())],
+        subjects: vec![stream_subjects(
+            &org.parse().unwrap(),
+            &PROJECT.parse().unwrap(),
+            &ENV.parse().unwrap(),
+        )],
         ..Default::default()
     })
     .await
@@ -266,9 +279,15 @@ async fn recover_and_close_record_each_capture_gap() {
     };
     publish(
         &js,
-        subject(&org, PROJECT, &ENV.parse().unwrap(), "widget", Op::Insert),
+        subject(
+            &org.parse().unwrap(),
+            &PROJECT.parse().unwrap(),
+            &ENV.parse().unwrap(),
+            "widget",
+            Op::Insert,
+        ),
         &msg_id(
-            PROJECT,
+            &PROJECT.parse().unwrap(),
             &ENV.parse().unwrap(),
             &wamn_event_wire::CdcIdentity {
                 system_id: 1,
@@ -282,30 +301,43 @@ async fn recover_and_close_record_each_capture_gap() {
     .await;
     publish(
         &js,
-        subject(&org, PROJECT, &ENV.parse().unwrap(), "widget", Op::Update),
+        subject(
+            &org.parse().unwrap(),
+            &PROJECT.parse().unwrap(),
+            &ENV.parse().unwrap(),
+            "widget",
+            Op::Update,
+        ),
         "derived:00ff",
         b"{}".to_vec(),
     )
     .await;
 
     let recovery_request = |admin: &str| RecoverCaptureGapRequest {
-        org: org.clone(),
-        project: PROJECT.to_owned(),
+        org: org.clone().parse().unwrap(),
+        project: PROJECT.parse().unwrap(),
         env: ENV.parse().unwrap(),
         system_database_url: system_url.clone(),
         admin_database_url: admin.to_owned(),
         nats: nats.clone(),
     };
     let close_request = CloseCaptureGapRequest {
-        org: org.clone(),
-        project: PROJECT.to_owned(),
+        org: org.clone().parse().unwrap(),
+        project: PROJECT.parse().unwrap(),
         env: ENV.parse().unwrap(),
         system_database_url: system_url.clone(),
     };
 
-    let triple = wamn_registry::Triple::new(&org, ENV.parse().unwrap(), PROJECT);
-    let name =
-        wamn_control_provision::project_env_cdc_secret_name(&org, PROJECT, &ENV.parse().unwrap());
+    let triple = wamn_registry::Triple::new(
+        org.parse().unwrap(),
+        ENV.parse().unwrap(),
+        PROJECT.parse().unwrap(),
+    );
+    let name = wamn_control_provision::project_env_cdc_secret_name(
+        &org.parse().unwrap(),
+        &PROJECT.parse().unwrap(),
+        &ENV.parse().unwrap(),
+    );
     kubectl::apply(
         &target.kubeconfig,
         &target.context,
@@ -541,7 +573,13 @@ async fn recover_and_close_record_each_capture_gap() {
         .expect("purge the stream");
     publish(
         &js,
-        subject(&org, PROJECT, &ENV.parse().unwrap(), "widget", Op::Delete),
+        subject(
+            &org.parse().unwrap(),
+            &PROJECT.parse().unwrap(),
+            &ENV.parse().unwrap(),
+            "widget",
+            Op::Delete,
+        ),
         "derived:0100",
         b"{}".to_vec(),
     )

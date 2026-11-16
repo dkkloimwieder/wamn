@@ -221,10 +221,10 @@ impl PlatformRouteAuthenticator {
     /// the route requires the CSRF header, which a read route does not.
     async fn authenticate_session(
         &self,
-        attachment_id: &str,
+        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
         token: &str,
         cookie_headers: Option<(&[Header], bool)>,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
         environment: &wamn_registry::EnvName,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
@@ -294,7 +294,7 @@ impl PlatformRouteAuthenticator {
         .await?;
         let active_role = permissions.active_role();
         Ok(AuthenticatedCaller::new(
-            attachment_id,
+            attachment_id.clone(),
             principal,
             CredentialType::Session,
             permissions.admin,
@@ -327,7 +327,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         if coordinate.env != request.target.environment {
             return Err(authentication_unavailable());
         }
-        let project = coordinate.project.as_str();
+        let project = &coordinate.project;
         if let AttachmentAuthPolicy::Signature { header, credential } = request.policy {
             let principal = self
                 .authenticate_signature(
@@ -355,7 +355,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .await
                 .map_err(|_| authentication_unavailable())?;
             return Ok(Some(AuthenticatedCaller::new(
-                request.attachment_id,
+                request.attachment_id.clone(),
                 principal,
                 CredentialType::Connection,
                 permissions.admin,
@@ -462,7 +462,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             }
             let active_role = permissions.pat_role();
             Ok(Some(AuthenticatedCaller::new(
-                attachment_id,
+                attachment_id.clone(),
                 *principal.id(),
                 CredentialType::Pat,
                 permissions.admin,
@@ -507,7 +507,7 @@ impl ControlRouteAuthenticator {
     /// Authenticate an org control endpoint without an application release.
     pub async fn authenticate_control(
         &self,
-        attachment_id: &str,
+        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
         read: bool,
         headers: &[wamn_engine::flow_http_routing::Header],
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
@@ -552,7 +552,7 @@ impl ControlRouteAuthenticator {
         )
         .await?;
         Ok(Some(AuthenticatedCaller::new(
-            attachment_id,
+            attachment_id.clone(),
             principal,
             CredentialType::Session,
             false,

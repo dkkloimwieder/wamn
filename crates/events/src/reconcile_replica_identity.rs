@@ -2,6 +2,7 @@
 
 use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
+use wamn_catalog::canonical_name::CanonicalName;
 
 use crate::replica_identity::{
     ReplicaIdentity, ReplicaIdentityPlan, reconcile_replica_identity, select_replica_identity_sql,
@@ -21,7 +22,7 @@ pub async fn reconcile(
         .into_iter()
         .collect::<Vec<_>>();
     let current = read_current_identities(client, &schemas).await?;
-    let captured_schemas = sqlx::query("SELECT DISTINCT n.nspname::text FROM pg_publication_namespace p JOIN pg_namespace n ON n.oid = p.pnnspid").fetch_all(&mut *client).await.context("read captured schemas for replica identity")?.iter().map(|row| row.get(0)).collect::<BTreeSet<String>>();
+    let captured_schemas = sqlx::query("SELECT DISTINCT n.nspname::text FROM pg_publication_namespace p JOIN pg_namespace n ON n.oid = p.pnnspid").fetch_all(&mut *client).await.context("read captured schemas for replica identity")?.iter().map(|row| row.get(0)).collect::<BTreeSet<CanonicalName>>();
     let plan = reconcile_replica_identity(models, &current, &captured_schemas);
     if apply {
         for flip in &plan.flips {
@@ -37,8 +38,8 @@ pub async fn reconcile(
 
 async fn read_current_identities(
     client: &mut sqlx::PgConnection,
-    schemas: &[String],
-) -> anyhow::Result<BTreeMap<(String, String), ReplicaIdentity>> {
+    schemas: &[CanonicalName],
+) -> anyhow::Result<BTreeMap<(CanonicalName, CanonicalName), ReplicaIdentity>> {
     let rows = sqlx::query(sqlx::AssertSqlSafe(
         (select_replica_identity_sql()).to_string(),
     ))
@@ -48,8 +49,8 @@ async fn read_current_identities(
     .context("read pg_class.relreplident")?;
     let mut current = BTreeMap::new();
     for row in rows {
-        let schema: String = row.get(0);
-        let table: String = row.get(1);
+        let schema: CanonicalName = row.try_get(0)?;
+        let table: CanonicalName = row.try_get(1)?;
         let identity: String = row.get(2);
         current.insert(
             (schema, table),

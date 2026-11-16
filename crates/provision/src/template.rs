@@ -101,8 +101,8 @@ impl Template {
 
     /// Stamp the template for an org: the [`Org`] (placement) plus its per-org
     /// policy rows — "a placement + an env-policy set in one step".
-    pub fn stamp(&self, org_id: impl Into<String>, pool: &str) -> (Org, Vec<OrgEnvPolicy>) {
-        let id: String = org_id.into();
+    pub fn stamp(&self, org_id: wamn_registry::OrgId, pool: &str) -> (Org, Vec<OrgEnvPolicy>) {
+        let id = org_id;
         let rows = self
             .policies
             .iter()
@@ -170,7 +170,7 @@ mod tests {
     fn stamp_yields_the_placement_and_the_org_targeted_rows() {
         for name in Template::NAMES {
             let template = Template::by_name(name).unwrap();
-            let (org, rows) = template.stamp("acme", "wamn-pg");
+            let (org, rows) = template.stamp("acme".parse().unwrap(), "wamn-pg");
             assert_eq!(rows.len(), template.policies.len());
             assert!(rows.iter().all(|row| row.org == org.id));
             for (row, policy) in rows.iter().zip(&template.policies) {

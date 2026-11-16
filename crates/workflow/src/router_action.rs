@@ -15,9 +15,9 @@ pub(crate) enum ProductionRouterAction {
     Emit {
         event: serde_json::Value,
         dedup_id: String,
-        entity: String,
+        entity: wamn_catalog::canonical_name::CanonicalName,
         operation: wamn_catalog::WiringEventOperation,
-        node_id: String,
+        node_id: wamn_catalog::canonical_name::CanonicalName,
     },
     /// Cancellation is not a failure verdict; leave the lease to redelivery.
     Cancelled,
@@ -104,7 +104,7 @@ pub(crate) fn production_router_action(
                 ),
                 (
                     "node".to_owned(),
-                    serde_json::Value::String(failure.node.clone()),
+                    serde_json::Value::String(failure.node.to_string()),
                 ),
             ]);
             if let Some(data) = failure.detail.data.as_ref() {
@@ -148,7 +148,7 @@ mod tests {
             status: WalkStatus::Failed,
             result: serde_json::Value::Null,
             failure: Some(crate::graph::Failure {
-                node: "validate".into(),
+                node: "validate".parse().unwrap(),
                 type_: RouterFailureType::InvalidInput,
                 detail: crate::graph::ErrorDetail::coded("bad-order", "order is malformed"),
             }),
@@ -191,7 +191,7 @@ mod tests {
                 status,
                 result: serde_json::Value::Null,
                 failure: (status == WalkStatus::Failed).then(|| crate::graph::Failure {
-                    node: "later".into(),
+                    node: "later".parse().unwrap(),
                     type_: RouterFailureType::SecondVerdict,
                     detail: crate::graph::ErrorDetail::coded(
                         "second-verdict",
@@ -202,9 +202,9 @@ mod tests {
                 verdict: Some(Verdict::Emit {
                     event: serde_json::json!({"order": 42}),
                     dedup_id: "wiring-1:7:first:d1".into(),
-                    entity: "orders".into(),
+                    entity: "orders".parse().unwrap(),
                     operation: wamn_catalog::WiringEventOperation::Insert,
-                    node_id: "first".into(),
+                    node_id: "first".parse().unwrap(),
                 }),
             };
 

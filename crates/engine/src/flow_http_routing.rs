@@ -47,7 +47,7 @@ const ENVIRONMENT_INACTIVE_CODE: &str = "environment-inactive";
 /// delivery.
 #[derive(Clone)]
 pub struct AuthenticatedCaller {
-    attachment_id: Box<str>,
+    attachment_id: wamn_catalog::canonical_name::CanonicalName,
     principal_id: wamn_identity_protocol::PrincipalId,
     credential_type: CredentialType,
     admin: bool,
@@ -90,7 +90,7 @@ impl AuthenticatedCaller {
     /// `active_role` is the one role the caller acts with, when it has one
     /// (docs/architecture/execution.md#environment-workflows).
     pub fn new(
-        attachment_id: impl Into<Box<str>>,
+        attachment_id: wamn_catalog::canonical_name::CanonicalName,
         principal_id: wamn_identity_protocol::PrincipalId,
         credential_type: CredentialType,
         admin: bool,
@@ -98,7 +98,7 @@ impl AuthenticatedCaller {
         active_role: Option<Box<str>>,
     ) -> Self {
         Self {
-            attachment_id: attachment_id.into(),
+            attachment_id,
             principal_id,
             credential_type,
             admin,
@@ -108,7 +108,7 @@ impl AuthenticatedCaller {
     }
 
     /// Return the immutable attachment identity whose policy produced this caller record.
-    pub fn attachment_id(&self) -> &str {
+    pub fn attachment_id(&self) -> &wamn_catalog::canonical_name::CanonicalName {
         &self.attachment_id
     }
 
@@ -203,7 +203,7 @@ pub struct AuthenticationRequest<'a> {
     pub manifest: &'a ServingManifest,
     /// The project and environment of the host that serves the route.
     pub target: &'a ReleaseTarget,
-    pub attachment_id: &'a str,
+    pub attachment_id: &'a wamn_catalog::canonical_name::CanonicalName,
     pub attachment: ServedAttachment<'a>,
     /// The attachment's parsed policy. It is never `none`.
     pub policy: AttachmentAuthPolicy<'a>,
@@ -263,7 +263,7 @@ impl FlowHttpRouting {
     pub async fn authenticate(
         &self,
         loaded: &LoadedRelease,
-        attachment_id: &str,
+        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
         headers: &[Header],
         body: &[u8],
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
@@ -283,7 +283,7 @@ impl FlowHttpRouting {
     async fn authenticate_accepted(
         &self,
         loaded_release: &LoadedRelease,
-        attachment_id: &str,
+        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
         accepted: &Value,
         headers: &[Header],
         body: &[u8],
@@ -349,7 +349,7 @@ impl FlowHttpRouting {
     #[cfg(feature = "test-util")]
     pub async fn authenticate_authorization_for_test(
         &self,
-        attachment_id: &str,
+        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
         authorization: Option<&str>,
     ) -> Result<Option<AuthenticatedCaller>, (u16, String)> {
         let headers = authorization
@@ -372,7 +372,7 @@ impl FlowHttpRouting {
     #[cfg(feature = "test-util")]
     pub async fn authenticate_headers_for_test(
         &self,
-        attachment_id: &str,
+        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
         headers: &[(&str, &str)],
     ) -> Result<Option<AuthenticatedCaller>, (u16, String)> {
         self.authenticate_request_for_test(attachment_id, headers, &[])
@@ -383,7 +383,7 @@ impl FlowHttpRouting {
     #[cfg(feature = "test-util")]
     pub async fn authenticate_request_for_test(
         &self,
-        attachment_id: &str,
+        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<Option<AuthenticatedCaller>, (u16, String)> {
@@ -651,6 +651,11 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
         body: Vec<u8>,
     ) -> wash_runtime::wasmtime::Result<Result<Option<Resource<AuthenticatedCaller>>, AuthRejection>>
     {
+        let Ok(attachment_id) =
+            attachment_id.parse::<wamn_catalog::canonical_name::CanonicalName>()
+        else {
+            return Ok(Err(authentication_unavailable()));
+        };
         let (plugin, release, trace) = accessor.with(|mut access| {
             let ctx = access.get();
             let trace = crate::invocation_trace::request_trace(
@@ -819,7 +824,7 @@ mod tests {
     #[test]
     fn originating_caller_holds_its_references_or_admin() {
         let caller = AuthenticatedCaller {
-            attachment_id: "widget-http".into(),
+            attachment_id: "widget-http".parse().unwrap(),
             principal_id: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
             credential_type: CredentialType::Pat,
             admin: false,

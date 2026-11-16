@@ -79,7 +79,6 @@ use wamn_platform_identity::org::{
 };
 use wamn_platform_identity::paging::{ListPage, Order};
 use wamn_platform_identity::{IdentityError, IdentityRefusal, require_user_contact};
-use wamn_registry::identifiers::valid_project;
 use wamn_registry::project_env_key;
 
 /// Why an org route did not answer.
@@ -163,7 +162,7 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) execution: Option<&'a dyn crate::ControlExecution>,
     pub(crate) worker: Option<&'a wamn_kubernetes::job::Worker>,
     pub(crate) operation_jobs: Option<&'a wamn_kubernetes::kubernetes_api::KubernetesApi>,
-    pub(crate) org: &'a str,
+    pub(crate) org: &'a wamn_registry::OrgId,
     /// Publishes each user row and status change of an environment.
     pub(crate) changes: &'a Publisher,
     pub(crate) oauth: Option<&'a wamn_http::oauth_authorization::Authorization>,
@@ -179,7 +178,7 @@ struct PrincipalRequest {
 /// The project that a project route names, read before its own request.
 #[derive(Deserialize)]
 struct ProjectTarget {
-    project: String,
+    project: wamn_registry::ProjectId,
     env: Option<wamn_registry::EnvName>,
     source_env: Option<wamn_registry::EnvName>,
 }
@@ -188,7 +187,7 @@ struct ProjectTarget {
 /// environment that is not text.
 #[derive(Deserialize)]
 struct MemberListTarget {
-    project: String,
+    project: wamn_registry::ProjectId,
     #[serde(default)]
     environment: Value,
 }
@@ -196,20 +195,20 @@ struct MemberListTarget {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectRequest {
-    project: String,
+    project: wamn_registry::ProjectId,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectPrincipalRequest {
-    project: String,
+    project: wamn_registry::ProjectId,
     principal_id: wamn_identity_protocol::PrincipalId,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MemberRequest {
-    project: String,
+    project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
     principal_id: wamn_identity_protocol::PrincipalId,
 }
@@ -217,14 +216,14 @@ struct MemberRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EnvironmentRequest {
-    project: String,
+    project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReleaseRequest {
-    project: String,
+    project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
     digest: wamn_digest::Digest,
 }
@@ -237,7 +236,7 @@ struct InviteRequest {
     #[serde(default)]
     org_admin: bool,
     #[serde(default)]
-    project_admins: Vec<String>,
+    project_admins: Vec<wamn_registry::ProjectId>,
     #[serde(default)]
     memberships: Vec<MembershipRequest>,
 }
@@ -245,7 +244,7 @@ struct InviteRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MembershipRequest {
-    project: String,
+    project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
 }
 
@@ -263,7 +262,12 @@ impl ControlRoutes<'_> {
                 &mut writer,
                 attachment,
                 caller,
-                input["project"].as_str(),
+                input["project"]
+                    .as_str()
+                    .map(str::parse::<wamn_registry::ProjectId>)
+                    .transpose()
+                    .map_err(anyhow::Error::from)?
+                    .as_ref(),
                 input["env"]
                     .as_str()
                     .map(str::parse::<wamn_registry::EnvName>)
@@ -279,7 +283,11 @@ impl ControlRoutes<'_> {
         drop(writer);
         self.execution
             .context("native control execution is absent")?
-            .execute(attachment.route.operation, caller, payload)
+            .execute(
+                &attachment.route.operation.parse().expect("host operation"),
+                caller,
+                payload,
+            )
             .await
             .map_err(operation_refusal)
     }
@@ -750,12 +758,6 @@ impl ControlRoutes<'_> {
             }
             HostHandler::ProjectCreate => {
                 let request: ProjectRequest = parse(payload)?;
-                if !valid_project(&request.project) {
-                    return Err(Refusal::Declared {
-                        code: "invalid_input",
-                        detail: json!({ "field": "project" }),
-                    });
-                }
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 create_project(&mut transaction, self.org, &request.project).await?;
@@ -827,16 +829,14 @@ impl ControlRoutes<'_> {
         drops.identity(&user.principal_id);
         transaction.commit().await?;
         self.changes.publish(drops).await;
-        let mut environments: std::collections::BTreeSet<(String, wamn_registry::EnvName)> =
-            grants.memberships.into_iter().collect();
-        let admin_targets: Vec<Option<&str>> = if grants.org_admin {
+        let mut environments: std::collections::BTreeSet<(
+            wamn_registry::ProjectId,
+            wamn_registry::EnvName,
+        )> = grants.memberships.into_iter().collect();
+        let admin_targets: Vec<Option<&wamn_registry::ProjectId>> = if grants.org_admin {
             vec![None]
         } else {
-            grants
-                .project_admins
-                .iter()
-                .map(|p| Some(p.as_str()))
-                .collect()
+            grants.project_admins.iter().map(Some).collect()
         };
         for project in admin_targets {
             environments.extend(self.environments(caller, project).await?);
@@ -875,14 +875,14 @@ impl ControlRoutes<'_> {
         &self,
         attachment: &HostAttachment,
         caller: &PrincipalId,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         env: Option<&wamn_registry::EnvName>,
         status: EnvironmentStatus,
     ) -> Result<(), Refusal> {
         let mut writer = self.writer.lock().await;
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
         let envs = status_environments(&mut transaction, self.org, project, env).await?;
-        let environments: Vec<(String, wamn_registry::EnvName)> =
+        let environments: Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)> =
             sqlx::query_as(wamn_registry::sql::ENVIRONMENT_PROJECTS)
                 .bind(self.org)
                 .bind(&envs)
@@ -908,7 +908,7 @@ impl ControlRoutes<'_> {
         &self,
         attachment: &HostAttachment,
         caller: &PrincipalId,
-        environments: &[(String, wamn_registry::EnvName)],
+        environments: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
         status: EnvironmentStatus,
     ) -> Result<(), Refusal> {
         let logins = self.logins(environments)?;
@@ -920,7 +920,7 @@ impl ControlRoutes<'_> {
                 Err(error) => {
                     tracing::warn!(
                         error = format!("{error:#}"),
-                        project,
+                        %project,
                         %env,
                         reference = attachment.reference,
                         "an environment status write failed"
@@ -937,7 +937,7 @@ impl ControlRoutes<'_> {
     /// first write.
     fn logins(
         &self,
-        environments: &[(String, wamn_registry::EnvName)],
+        environments: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
     ) -> Result<Vec<String>, Refusal> {
         if environments.is_empty() {
             return Ok(Vec::new());
@@ -983,8 +983,8 @@ impl ControlRoutes<'_> {
     async fn environments(
         &self,
         caller: &PrincipalId,
-        project: Option<&str>,
-    ) -> Result<Vec<(String, wamn_registry::EnvName)>, Refusal> {
+        project: Option<&wamn_registry::ProjectId>,
+    ) -> Result<Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)>, Refusal> {
         self.read(caller, async |connection| {
             Ok(org_environments(connection, self.org, project).await?)
         })
@@ -998,7 +998,7 @@ impl ControlRoutes<'_> {
         attachment: &HostAttachment,
         caller: &PrincipalId,
         principal: &PrincipalId,
-        environments: &[(String, wamn_registry::EnvName)],
+        environments: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
     ) -> Result<(), Refusal> {
         let logins = self.logins(environments)?;
         let mut system = writer.begin().await?;
@@ -1020,7 +1020,7 @@ impl ControlRoutes<'_> {
                 Err(error) => {
                     tracing::warn!(
                         error = format!("{error:#}"),
-                        project,
+                        %project,
                         %env,
                         "an application projection failed"
                     );
@@ -1048,7 +1048,7 @@ impl ControlRoutes<'_> {
         writer: &'c mut Client,
         attachment: &HostAttachment,
         caller: &PrincipalId,
-        project: Option<&str>,
+        project: Option<&wamn_registry::ProjectId>,
     ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
         self.begin_in_environment(writer, attachment, caller, project, None)
             .await
@@ -1061,7 +1061,7 @@ impl ControlRoutes<'_> {
         writer: &'c mut Client,
         attachment: &HostAttachment,
         caller: &PrincipalId,
-        project: Option<&str>,
+        project: Option<&wamn_registry::ProjectId>,
         environment: Option<&wamn_registry::EnvName>,
     ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
         let mut transaction = writer.begin().await?;
@@ -1088,7 +1088,7 @@ impl ControlRoutes<'_> {
         &self,
         client: &mut sqlx::PgConnection,
         caller: &PrincipalId,
-        project: Option<&str>,
+        project: Option<&wamn_registry::ProjectId>,
     ) -> Result<bool, Refusal> {
         self.admits_environment(client, caller, project, None).await
     }
@@ -1097,7 +1097,7 @@ impl ControlRoutes<'_> {
         &self,
         client: &mut sqlx::PgConnection,
         caller: &PrincipalId,
-        project: Option<&str>,
+        project: Option<&wamn_registry::ProjectId>,
         environment: Option<&wamn_registry::EnvName>,
     ) -> Result<bool, Refusal> {
         if is_org_admin(client, caller, self.org).await? {
@@ -1139,7 +1139,7 @@ async fn application_counts(url: &str, caller: &PrincipalId) -> anyhow::Result<(
 }
 
 async fn optional_status_count<T>(
-    project: &str,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     source: &str,
     read: impl std::future::Future<Output = anyhow::Result<T>>,
@@ -1147,12 +1147,12 @@ async fn optional_status_count<T>(
     match tokio::time::timeout(STATUS_COUNTS_TIMEOUT, read).await {
         Ok(Ok(value)) => Some(value),
         Ok(Err(error)) => {
-            tracing::warn!(%error, project, %env, source, "environment status count read failed");
+            tracing::warn!(%error, %project, %env, source, "environment status count read failed");
             None
         }
         Err(_) => {
             tracing::warn!(
-                project,
+                %project,
                 %env,
                 source,
                 "environment status count read timed out"
@@ -1164,7 +1164,7 @@ async fn optional_status_count<T>(
 
 async fn status_with_counts(
     mut status: Value,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     application: impl std::future::Future<Output = anyhow::Result<(i32, i32)>>,
     memberships: impl std::future::Future<Output = anyhow::Result<i32>>,
@@ -1249,7 +1249,7 @@ async fn release_profile(
                 profile
                     .operations
                     .iter()
-                    .map(|each| each.operation.clone())
+                    .map(|each| each.operation.to_string())
                     .collect()
             } else {
                 permission_rows(&mut transaction, &role).await?
@@ -1302,8 +1302,8 @@ pub(crate) fn control_page(
     payload: &str,
     attachment: &HostAttachment,
     caller: &PrincipalId,
-    org: &str,
-    project: Option<&str>,
+    org: &wamn_registry::OrgId,
+    project: Option<&wamn_registry::ProjectId>,
     order: Order,
 ) -> Result<ListPage, Refusal> {
     let input: Value = parse(payload)?;
@@ -1357,7 +1357,11 @@ fn principal(payload: &str) -> Result<PrincipalId, Refusal> {
 
 /// The refusal of a write whose application rows stopped at `project/env`,
 /// with the environments that completed.
-fn incomplete(project: &str, env: &wamn_registry::EnvName, completed: &[String]) -> Refusal {
+fn incomplete(
+    project: &wamn_registry::ProjectId,
+    env: &wamn_registry::EnvName,
+    completed: &[String],
+) -> Refusal {
     Refusal::Declared {
         code: "application_write_incomplete",
         detail: json!({
@@ -1397,6 +1401,11 @@ mod tests {
             ),
             (HostHandler::ControlMine, Order::Project, None, "projects"),
         ] {
+            let project = project
+                .map(str::parse::<wamn_registry::ProjectId>)
+                .transpose()
+                .unwrap();
+            let project = project.as_ref();
             let attachment = wamn_catalog::HostRouteSet::Control
                 .attachments()
                 .find(|(_, attachment)| attachment.route.handler == handler)
@@ -1406,7 +1415,7 @@ mod tests {
                 "{\"limit\":1}",
                 attachment,
                 &principal,
-                "acme",
+                &"acme".parse().unwrap(),
                 project,
                 order,
             )
@@ -1420,7 +1429,15 @@ mod tests {
             assert!(first["total"].is_null());
             let request = json!({"cursor":first["next_cursor"]}).to_string();
             assert!(
-                control_page(&request, attachment, &principal, "other", project, order).is_err()
+                control_page(
+                    &request,
+                    attachment,
+                    &principal,
+                    &"other".parse().unwrap(),
+                    project,
+                    order
+                )
+                .is_err()
             );
             if project.is_some() {
                 assert!(
@@ -1428,16 +1445,23 @@ mod tests {
                         &request,
                         attachment,
                         &principal,
-                        "acme",
-                        Some("other"),
+                        &"acme".parse().unwrap(),
+                        Some(&"other".parse().unwrap()),
                         order
                     )
                     .is_err()
                 );
             }
-            let last = control_page(&request, attachment, &principal, "acme", project, order)
-                .unwrap()
-                .answer(wrapper, Vec::<Value>::new(), Clone::clone);
+            let last = control_page(
+                &request,
+                attachment,
+                &principal,
+                &"acme".parse().unwrap(),
+                project,
+                order,
+            )
+            .unwrap()
+            .answer(wrapper, Vec::<Value>::new(), Clone::clone);
             assert!(last["next_cursor"].is_null());
             assert!(last["total"].is_null());
             for (input, field) in [
@@ -1445,14 +1469,21 @@ mod tests {
                 ("{\"cursor\":\"bad\"}", "cursor"),
             ] {
                 assert!(
-                    matches!(control_page(input, attachment, &principal, "acme", project, order),
+                    matches!(control_page(input, attachment, &principal, &"acme".parse().unwrap(), project, order),
                     Err(Refusal::Declared {code: "invalid_input", detail}) if ({ let observed = &(detail); observed["field"] == serde_json::json!(field) }))
                 );
             }
             assert_eq!(
-                control_page("{}", attachment, &principal, "acme", project, order)
-                    .unwrap()
-                    .read_limit(),
+                control_page(
+                    "{}",
+                    attachment,
+                    &principal,
+                    &"acme".parse().unwrap(),
+                    project,
+                    order
+                )
+                .unwrap()
+                .read_limit(),
                 None
             );
         }
@@ -1474,8 +1505,8 @@ mod tests {
                 payload,
                 members,
                 &principal,
-                "acme",
-                Some("widgets"),
+                &"acme".parse().unwrap(),
+                Some(&"widgets".parse().unwrap()),
                 Order::Principal,
             )
         };
@@ -1505,8 +1536,8 @@ mod tests {
                 "{\"environment\":\"dev\"}",
                 attachment(HostHandler::EnvironmentList),
                 &principal,
-                "acme",
-                Some("widgets"),
+                &"acme".parse().unwrap(),
+                Some(&"widgets".parse().unwrap()),
                 Order::Environment,
             ),
             Err(Refusal::Delivery(DeliveryError::InvalidPayload))
@@ -1518,7 +1549,7 @@ mod tests {
         let status = json!({"digest": "sha256:live", "workloads": [], "live": [], "rollout": {"replicas": 1}});
         let answer = status_with_counts(
             status.clone(),
-            "billing",
+            &"billing".parse().unwrap(),
             &"dev".parse().unwrap(),
             async { anyhow::bail!("application unavailable") },
             async { anyhow::bail!("control unavailable") },
@@ -1537,7 +1568,7 @@ mod tests {
         let status = json!({"digest": "sha256:live"});
         let answer = status_with_counts(
             status.clone(),
-            "billing",
+            &"billing".parse().unwrap(),
             &"dev".parse().unwrap(),
             std::future::pending(),
             std::future::pending(),

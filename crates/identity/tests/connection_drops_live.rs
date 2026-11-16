@@ -67,7 +67,7 @@ async fn execute(
     let mut drops = ConnectionDrops::default();
     let result = administration::execute_with_store(
         &mut tx,
-        "acme",
+        &"acme".parse().unwrap(),
         operation,
         &request.to_string(),
         &mut AuthDrops::default(),
@@ -122,8 +122,8 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys(pool: sqlx:
     for env in ["dev", "prod"] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&wamn_control_provision::test_database::seed_org_project_env_sql(
-                "acme",
-                "app",
+                &"acme".parse().unwrap(),
+                &"app".parse().unwrap(),
                 &env.parse().unwrap(),
             ))
                 .to_string(),

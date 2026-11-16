@@ -125,7 +125,15 @@ pub async fn provision_apply(input: &str) -> anyhow::Result<()> {
         "wamn_db_owner",
         "wamn-apply".into(),
     );
-    crate::credentials::reconcile(input, &kubeconfig, "", &api.namespace, cluster, &role).await?;
+    crate::credentials::reconcile(
+        input,
+        &kubeconfig,
+        "",
+        &api.namespace.parse::<wamn_registry::OrgId>()?,
+        cluster,
+        &role,
+    )
+    .await?;
     crate::credentials::wait_role(&mut connection, &role.name).await?;
     sqlx::raw_sql(wamn_control_provision::apply::ensure_apply_role_sql())
         .execute(&mut connection)

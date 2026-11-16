@@ -51,7 +51,7 @@ pub fn recovery_values(
 /// Apply the complete registered policy set while retaining the system database and declared logins.
 pub async fn apply(
     registry_input: &str,
-    namespace: &str,
+    namespace: &wamn_registry::OrgId,
     values: &mut Value,
 ) -> anyhow::Result<()> {
     crate::credentials::with_chart_lock(registry_input, namespace, async {
@@ -60,7 +60,7 @@ pub async fn apply(
                 .map(std::path::PathBuf::from)
                 .unwrap_or_default(),
             context: String::new(),
-            namespace: namespace.into(),
+            namespace: namespace.to_string(),
         };
         let installed = crate::platform::installed::InstalledPlatform::read(&target)
             .await?
@@ -69,9 +69,9 @@ pub async fn apply(
             .as_str()
             .context("installed platform has no chart reference")?;
         let chart = crate::platform::artifact_plan::select(std::path::Path::new(reference))?;
-        let name = wamn_registry::name::resource_suffix("org", namespace);
+        let name = wamn_registry::name::resource_suffix("org", namespace.as_str());
         if let Some(mut previous) =
-            crate::platform::installed::release_values(&target, namespace, &name).await?
+            crate::platform::installed::release_values(&target, namespace.as_str(), &name).await?
         {
             for cluster in previous["clusters"]
                 .take()
@@ -91,7 +91,7 @@ pub async fn apply(
         values["platform"] = json!({"chart":reference});
         let mut entry = crate::environment::entry(
             &chart.directory().join("platform/org"),
-            namespace,
+            namespace.as_str(),
             &name,
             std::mem::take(values),
         )?;

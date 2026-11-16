@@ -201,25 +201,25 @@ pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
     fn auth_cache(&self) -> &Arc<wamn_authority::auth_cache::AuthCache>;
     async fn environment_inactive(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<bool>;
     async fn session_operation_permissions(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         key: &wamn_registry::ProjectEnvKey,
         roles: &[wamn_identity_protocol::RoleName],
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants>;
     async fn user_operation_permissions(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants>;
     async fn principal_grants(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<PrincipalGrants>;

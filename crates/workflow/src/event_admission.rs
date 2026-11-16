@@ -14,7 +14,7 @@ use wamn_sql::WamnPostgres;
 /// and queue entries before committing. Any refusal rolls back the batch.
 pub async fn admit_event_batch(
     postgres: &WamnPostgres,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     release: &LoadedRelease,
     admission: &EventBatchAdmission<'_>,
 ) -> Result<(), ProductionLeaseError> {
@@ -182,7 +182,7 @@ pub async fn admit_event_batch(
 pub async fn admit_application_events(
     jetstream: &wamn_events::WamnJetstream,
     postgres: &WamnPostgres,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     application: &wamn_catalog::ApplicationName,
     release: &LoadedRelease,
 ) -> anyhow::Result<()> {

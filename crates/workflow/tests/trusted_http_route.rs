@@ -127,12 +127,12 @@ impl TrustedHttpRoute {
                 project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
                 application: PACKAGE.parse().unwrap(),
                 environment: ENVIRONMENT.parse().unwrap(),
-                wiring_id: WIRING_ID.to_owned(),
+                wiring_id: WIRING_ID.parse().unwrap(),
                 wiring_version: WIRING_VERSION,
                 delivery_id: format!("reuse-{id}"),
                 payload: serde_json::json!({"id": id}),
                 wiring_hash: self.wiring_hash,
-                node_digests: BTreeMap::from([(NODE_ID.to_owned(), self.component_digest)]),
+                node_digests: BTreeMap::from([(NODE_ID.parse().unwrap(), self.component_digest)]),
                 identity: wamn_workflow::WorkflowIdentity {
                     principal_id: wamn_identity_protocol::workflow_user_id(),
                     role: "admin".to_owned(),
@@ -172,8 +172,8 @@ async fn credential_fixture(
         .map(drop)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::test_database::seed_org_project_env_sql(
-            "acme",
-            PROJECT,
+            &"acme".parse().unwrap(),
+            &PROJECT.parse().unwrap(),
             &ENVIRONMENT.parse().unwrap(),
         ),
     ))
@@ -200,12 +200,16 @@ async fn credential_fixture(
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
         let stored = credential_store
             .put(
-                &wamn_registry::Triple::new("acme", ENVIRONMENT.parse().unwrap(), PROJECT),
+                &wamn_registry::Triple::new(
+                    "acme".parse().unwrap(),
+                    ENVIRONMENT.parse().unwrap(),
+                    PROJECT.parse().unwrap(),
+                ),
                 uuid::Uuid::new_v4(),
                 secret.as_bytes(),
             )
             .await?;
-        wamn_test_infrastructure::credentials::define(&mut tx,"acme",&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":name,"integration_type":"http","auth_type":"http_basic","parameters":{"primary-authority":upstream,"tls-verification":"disabled"},"credential":secret}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await?;
+        wamn_test_infrastructure::credentials::define(&mut tx,&"acme".parse().unwrap(),&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":name,"integration_type":"http","auth_type":"http_basic","parameters":{"primary-authority":upstream,"tls-verification":"disabled"},"credential":secret}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await?;
     }
     tx.commit().await?;
     sqlx::raw_sql("RESET ROLE")
@@ -246,7 +250,7 @@ async fn credential_fixture(
     Ok((
         ConnectionCredentials::from_database(
             wamn_postgres::pool(&generation_url(database.as_str(), &role)?, 4).await?,
-            "acme",
+            &"acme".parse().unwrap(),
         )
         .with_store(credential_store),
         database,
@@ -346,7 +350,7 @@ async fn build_with_credentials(
         Arc::new(credentials),
         &postgres,
         &PROJECT_ENV_KEY.parse().unwrap(),
-        PROJECT,
+        &PROJECT.parse().unwrap(),
         &ENVIRONMENT.parse().unwrap(),
     ));
     let driver = Arc::new(RouterDriver::new(Arc::new(
@@ -362,7 +366,7 @@ async fn build_with_credentials(
             Arc::clone(&release),
             Arc::new(source),
             OperationHostConfig {
-                project: PROJECT.to_owned(),
+                project: PROJECT.parse().unwrap(),
                 schema: None,
                 owner_prefix: "trusted-http-route".to_owned(),
                 warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
@@ -403,24 +407,24 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
     WiringDocument {
         response: None,
         format_version: wamn_catalog::WIRING_DOCUMENT_FORMAT_VERSION.to_owned(),
-        wiring_id: WIRING_ID.to_owned(),
+        wiring_id: WIRING_ID.parse().unwrap(),
         version: WIRING_VERSION,
-        entry: NODE_ID.to_owned(),
+        entry: NODE_ID.parse().unwrap(),
         nodes: BTreeMap::from([(
-            NODE_ID.to_owned(),
+            NODE_ID.parse().unwrap(),
             WiringNode {
-                component: COMPONENT.to_owned(),
-                interface_version: INTERFACE_VERSION.to_owned(),
-                operation: OPERATION.to_owned(),
+                component: COMPONENT.parse().unwrap(),
+                interface_version: INTERFACE_VERSION.parse().unwrap(),
+                operation: OPERATION.parse().unwrap(),
                 operation_dependency: None,
                 params: BTreeMap::from([
                     (
-                        "requirement".to_owned(),
+                        "requirement".parse().unwrap(),
                         serde_json::Value::from(STORE_ALIAS),
                     ),
-                    ("method".to_owned(), serde_json::Value::from("POST")),
+                    ("method".parse().unwrap(), serde_json::Value::from("POST")),
                     (
-                        "path-and-query".to_owned(),
+                        "path-and-query".parse().unwrap(),
                         serde_json::Value::from(path_and_query),
                     ),
                 ]),
@@ -452,7 +456,7 @@ fn release_manifest(
             "descriptor": ComponentDescriptor::new(
                 component.clone(),
                 vec![ComponentConnection {
-                    store_alias: STORE_ALIAS.to_owned().into(),
+                    store_alias: STORE_ALIAS.parse::<wamn_catalog::canonical_name::CanonicalName>().unwrap().into(),
                     requirement_type: ComponentConnectionType::Http,
             mode: wamn_catalog::ConnectionMode::Write,
                 }],
@@ -964,7 +968,7 @@ mod tests {
             .map(drop)?;
         wamn_platform_identity::connections::administration::execute(
             &mut tx,
-            "acme",
+            &"acme".parse().unwrap(),
             if status == "disabled" {
                 "connection.disable"
             } else {
@@ -997,7 +1001,7 @@ mod tests {
             .execute(&mut *tx)
             .await
             .map(drop)?;
-        wamn_platform_identity::connections::administration::execute_with_store(&mut tx,"acme","connection.set_credential",&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":"upstream-v1","credential":if handle==CREDENTIAL_HANDLE {credential_secret()} else {serde_json::json!({"username":"fixture","password":"rotated-fixture-token"}).to_string()}}).to_string(),&mut wamn_broker::auth_changes::AuthDrops::default(), &mut wamn_broker::connection_changes::ConnectionDrops::default(),Some(&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored))).await?;
+        wamn_platform_identity::connections::administration::execute_with_store(&mut tx,&"acme".parse().unwrap(),"connection.set_credential",&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":"upstream-v1","credential":if handle==CREDENTIAL_HANDLE {credential_secret()} else {serde_json::json!({"username":"fixture","password":"rotated-fixture-token"}).to_string()}}).to_string(),&mut wamn_broker::auth_changes::AuthDrops::default(), &mut wamn_broker::connection_changes::ConnectionDrops::default(),Some(&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored))).await?;
         tx.commit().await?;
         let actual: i64=sqlx::query("SELECT c.active_generation FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.project=$1 AND i.name='upstream-v1'").bind(&PROJECT).fetch_one(&mut client).await?.get(0);
         assert_eq!(actual, generation);

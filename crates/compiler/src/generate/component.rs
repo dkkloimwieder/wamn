@@ -52,7 +52,7 @@ pub(super) fn emit_model_component(
 ) -> Result<(), GenerateError> {
     let model_name = compiled.name;
     let namespace = compiled.package.id.as_str();
-    let package = module_name(model_name);
+    let package = module_name(model_name.as_str());
     let mut source = String::from(HEADER);
     writeln!(
         source,
@@ -366,7 +366,7 @@ pub(super) fn emit_package_component(
 fn emit_package_world(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
-    models: &[(&String, &ModelDeclaration)],
+    models: &[(&crate::source_name::SourceName, &ModelDeclaration)],
 ) -> Result<(), GenerateError> {
     const POSTGRES: &str =
         "  import wamn:postgres/types@0.4.0;\n  import wamn:postgres/statements@0.4.0;\n";
@@ -413,8 +413,12 @@ fn emit_package_world(
             .iter()
             .find(|(_, dependency)| dependency.operations.iter().any(|name| name == local))
         {
-            writeln!(imports, "  import {};", sealed(&base(alias), local)?)
-                .expect("writing to a String cannot fail");
+            writeln!(
+                imports,
+                "  import {};",
+                sealed(&base(alias.as_str()), local)?
+            )
+            .expect("writing to a String cannot fail");
         }
         writeln!(exports, "  export {};", sealed(package, local)?)
             .expect("writing to a String cannot fail");

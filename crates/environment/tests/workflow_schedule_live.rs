@@ -330,14 +330,18 @@ async fn no_enabled_schedule_version_refuses_with_no_row(pool: sqlx::PgPool) {
         .expect("enable the schedule workflow");
     wamn_workflow::workflow_lifecycle::disable_workflow(
         &fixture.url,
-        &Triple::new("acme", ENVIRONMENT.parse().unwrap(), APPLICATION),
+        &Triple::new(
+            "acme".parse().unwrap(),
+            ENVIRONMENT.parse().unwrap(),
+            APPLICATION.parse().unwrap(),
+        ),
         &mut fixture.admin,
         &WorkflowVersion {
-            org: "schedule-live",
-            project: "default",
+            org: &"schedule-live".parse().unwrap(),
+            project: &"default".parse().unwrap(),
             environment: &ENVIRONMENT.parse().unwrap(),
             application: &APP.parse().unwrap(),
-            workflow_id: "nightly",
+            workflow_id: &"nightly".parse().unwrap(),
             version: 1,
         },
     )
@@ -369,7 +373,7 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
         .unwrap();
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
         Arc::clone(&fixture.postgres),
-        PROJECT,
+        PROJECT.parse().unwrap(),
         APP.parse().expect("valid fixture name"),
         tokio::sync::watch::channel(Some(Arc::clone(&fixture.release))).1,
     );
@@ -437,7 +441,7 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped(pool: sqlx::PgPool
     );
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
         postgres,
-        PROJECT,
+        PROJECT.parse().unwrap(),
         APP.parse().expect("valid fixture name"),
         tokio::sync::watch::channel(Some(Arc::clone(&fixture.release))).1,
     );
@@ -511,7 +515,7 @@ async fn applications_schedule_independently_across_upgrade_and_rollback(pool: s
     );
     let b = PostgresSchedules::new(
         Arc::clone(&fixture.postgres),
-        PROJECT,
+        PROJECT.parse().unwrap(),
         "billing".parse().expect("valid name"),
         tokio::sync::watch::channel(Some(Arc::clone(&billing))).1,
     );
@@ -530,7 +534,7 @@ async fn applications_schedule_independently_across_upgrade_and_rollback(pool: s
     ] {
         let a = PostgresSchedules::new(
             Arc::clone(&fixture.postgres),
-            PROJECT,
+            PROJECT.parse().unwrap(),
             APP.parse().expect("valid fixture name"),
             tokio::sync::watch::channel(Some(Arc::clone(release))).1,
         );
@@ -597,7 +601,7 @@ async fn schedule_ticks_use_the_environment_time_zone(pool: sqlx::PgPool) {
         .execute(&mut fixture.admin).await.unwrap();
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
         Arc::clone(&fixture.postgres),
-        PROJECT,
+        PROJECT.parse().unwrap(),
         APP.parse().expect("valid fixture name"),
         tokio::sync::watch::channel(Some(Arc::clone(&fixture.release))).1,
     );

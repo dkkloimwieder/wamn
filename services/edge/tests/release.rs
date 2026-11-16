@@ -40,10 +40,13 @@ fn manifest() -> ServingManifest {
             runtime_schema: None,
             package_id: PACKAGE.parse().unwrap(),
             descriptor: {
-                let mut descriptor =
-                    ComponentDescriptor::named(COMPONENT, "0.1", bytes_sha256(BODY));
+                let mut descriptor = ComponentDescriptor::named(
+                    COMPONENT.parse().unwrap(),
+                    "0.1".parse().unwrap(),
+                    bytes_sha256(BODY),
+                );
                 descriptor.operations = BTreeMap::from([(
-                    OPERATION.into(),
+                    OPERATION.parse().unwrap(),
                     AdmittedComponentOperation {
                         host_transaction: false,
                         input_ports: Vec::new(),
@@ -69,10 +72,10 @@ fn fact() -> AdmittedComponent {
             package_id: PACKAGE.parse().unwrap(),
             package_version: VERSION.parse().unwrap(),
         },
-        component: COMPONENT.into(),
-        interface_version: "0.1".into(),
+        component: COMPONENT.parse().unwrap(),
+        interface_version: "0.1".parse().unwrap(),
         operations: BTreeMap::from([(
-            OPERATION.into(),
+            OPERATION.parse().unwrap(),
             AdmittedComponentOperation {
                 registered_operation: Some(PERMISSION.parse().unwrap()),
                 committed_result_schema: None,
@@ -226,7 +229,7 @@ async fn component_facts_must_match_the_manifest_one_to_one() {
         ..Bundle::valid()
     };
     let mut other = fact();
-    other.component = "another".into();
+    other.component = "another".parse().unwrap();
     let foreign = Bundle {
         components: serde_json::to_vec(&[fact(), other]).expect("facts"),
         ..Bundle::valid()

@@ -80,8 +80,8 @@ impl SessionConnection {
 #[serde(deny_unknown_fields)]
 struct TargetDocument {
     audience: String,
-    org: String,
-    project: String,
+    org: wamn_registry::OrgId,
+    project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
     instance_suffix: InstanceSuffix,
     project_env_key: wamn_registry::ProjectEnvKey,
@@ -215,15 +215,23 @@ mod tests {
 
     #[test]
     fn session_connections_keep_their_target_for_cluster_and_local_inputs() {
-        let triple = Triple::new("acme", "dev".parse().unwrap(), "orders");
+        let triple = Triple::new(
+            "acme".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "orders".parse().unwrap(),
+        );
         let instance = &"aaaaaaa1".parse::<InstanceSuffix>().unwrap();
-        let database =
-            project_env_database_name("acme", "orders", &"dev".parse().unwrap(), instance);
+        let database = project_env_database_name(
+            &"acme".parse().unwrap(),
+            &"orders".parse().unwrap(),
+            &"dev".parse().unwrap(),
+            instance,
+        );
         let username = crate::workload_login(
             crate::WorkloadRoleFamily::SessionRoleReader,
             crate::WorkloadRoleIdentity::ProjectEnvironment {
-                org: "acme",
-                project: "orders",
+                org: &"acme".parse().unwrap(),
+                project: &"orders".parse().unwrap(),
                 environment: &"dev".parse().unwrap(),
                 database: &database,
             },
@@ -243,7 +251,11 @@ mod tests {
                 name: "database-ca".into(),
             },
         };
-        let key = wamn_registry::project_env_key("acme", "orders", &"dev".parse().unwrap());
+        let key = wamn_registry::project_env_key(
+            &"acme".parse().unwrap(),
+            &"orders".parse().unwrap(),
+            &"dev".parse().unwrap(),
+        );
         let explicit = format!("postgres://{username}:password@localhost/{database}");
         for input in [native.to_json().unwrap(), explicit] {
             let target = SessionTarget::new(&triple, instance, &key, &input).unwrap();

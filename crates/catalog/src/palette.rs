@@ -17,7 +17,7 @@ pub struct PalettePin {
     pub descriptor: ComponentDescriptor,
 }
 
-pub type Palette = BTreeMap<String, PalettePin>;
+pub type Palette = BTreeMap<crate::canonical_name::CanonicalName, PalettePin>;
 
 /// Supply only the deployment coordinate when reading a sealed descriptor.
 pub fn palette_target(
@@ -98,19 +98,19 @@ mod tests {
                         .parse()
                         .expect("platform palette coordinates"),
                 ),
-                component: "transform".into(),
-                interface_version: "0.1.0".into(),
+                component: "transform".parse().unwrap(),
+                interface_version: "0.1.0".parse().unwrap(),
                 operations: BTreeMap::from([(
-                    "wamn:node/handler@0.1.0".into(),
+                    "wamn:node/handler@0.1.0".parse().unwrap(),
                     ComponentOperationDeclaration {
                         registered_operation: None,
                         committed_result_schema: None,
                         input_ports: vec![ComponentPortDeclaration {
-                            name: "input".into(),
+                            name: "input".parse().unwrap(),
                             schema: json!({}),
                         }],
                         output_ports: vec![ComponentPortDeclaration {
-                            name: "main".into(),
+                            name: "main".parse().unwrap(),
                             schema: json!({}),
                         }],
                         parameters: vec![],

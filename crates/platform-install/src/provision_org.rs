@@ -15,7 +15,7 @@ use wamn_control_provision::{EnvPolicy, Org, OrgEnvPolicy, Template};
 pub struct ProvisionOrgRequest {
     /// Org id: a lowercase slug `[a-z0-9-]` (start/end alphanumeric). Names the
     /// derived `<org>-<owner>` clusters; the reserved `wamn` prefix is rejected.
-    pub org: String,
+    pub org: wamn_registry::OrgId,
 
     /// The preset to stamp: its placement shape and its env-policy set.
     pub template: Template,
@@ -180,25 +180,14 @@ mod tests {
         for name in Template::NAMES {
             let t = Template::by_name(name).expect("a shipped preset");
             assert_eq!(t.name, name);
-            assert!(plan::stamped_org(&t, "acme", "wamn-pg").is_ok());
+            assert!(plan::stamped_org(&t, &"acme".parse().unwrap(), "wamn-pg").is_ok());
         }
-    }
-
-    #[test]
-    fn reserved_org_id_is_rejected() {
-        // The `provision-org` id path runs through the same validator the registry
-        // uses, so a reserved-prefix org id is refused before any effect.
-        assert!(plan::stamped_org(&Template::standard(), "wamn-corp", "wamn-pg").is_err());
-        assert!(
-            plan::stamped_org(&Template::standard(), "Acme", "wamn-pg").is_err(),
-            "an uppercase id is not a slug"
-        );
     }
 }
 
 async fn read_env_policies(
     client: &mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
 ) -> anyhow::Result<Vec<EnvPolicy>> {
     let rows = sqlx::query(sqlx::AssertSqlSafe(
         wamn_registry::sql::select_env_policies_sql(),

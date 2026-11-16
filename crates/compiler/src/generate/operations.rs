@@ -53,26 +53,33 @@ impl ModelShape<'_> {
 #[derive(Debug)]
 pub(super) struct ModelDescription<'a> {
     pub package: &'a crate::manifest::PackageIdentity,
-    pub name: &'a str,
+    pub name: &'a crate::source_name::SourceName,
     pub min_lengths: &'a BTreeMap<String, u32>,
     pub shape: ModelShape<'a>,
     pub operations: BTreeMap<CrudAction, ModelOperation<'a>>,
     pub api: WamnApi,
     pub paths: &'a BTreeMap<String, Vec<String>>,
     pub feed: bool,
-    pub number: Option<(&'a str, &'a str, wamn_number_pattern::Pattern)>,
+    pub number: Option<(
+        &'a str,
+        &'a crate::source_name::SourceName,
+        wamn_number_pattern::Pattern,
+    )>,
 }
 
 /// The shared input of every authored-operation guest emitter.
 #[derive(Debug)]
 pub(super) struct CustomDescription<'a> {
     pub declaration: &'a CustomOperationDeclaration,
-    pub statements: &'a BTreeMap<String, crate::manifest::StaticSqlStatementDeclaration>,
+    pub statements: &'a BTreeMap<
+        crate::source_name::SourceName,
+        crate::manifest::StaticSqlStatementDeclaration,
+    >,
     pub request: Vec<crate::client_ir::FieldIr>,
     pub request_root: &'static str,
     pub feed_key: Option<SqlValueType>,
     pub result: Option<std::borrow::Cow<'a, CustomOperationResultDeclaration>>,
-    pub refusals: BTreeMap<String, OperationErrorDetailDeclaration>,
+    pub refusals: BTreeMap<crate::source_name::SourceName, OperationErrorDetailDeclaration>,
     pub revision: Option<SqlValueType>,
     pub rows: Vec<super::RustRow>,
     pub accessors: Vec<super::StaticSqlAccessor>,
@@ -94,7 +101,7 @@ pub(super) fn emit_model(
     operation_sql: &BTreeMap<String, Vec<String>>,
     catalog: &CatalogIr,
     manifest: &PackageManifest,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
@@ -166,7 +173,7 @@ pub(super) fn compile_custom<'a>(
         .map(|literal| {
             (
                 literal.clone(),
-                crate::manifest::custom_operation_error_detail(operation, literal),
+                crate::manifest::custom_operation_error_detail(operation, literal.as_str()),
             )
         })
         .collect();
@@ -191,7 +198,7 @@ pub(super) fn compile_custom<'a>(
             });
         }
         refusals
-            .entry("cursor_expired".to_owned())
+            .entry("cursor_expired".parse().expect("fixed identifier"))
             .or_insert_with(|| {
                 crate::manifest::custom_operation_error_detail(operation, "cursor_expired")
             });
@@ -305,25 +312,24 @@ fn describe_custom_operation(
     let operation_id = canonical_operation_identity(&manifest.package, operation_name)?;
     let grant = (operation.visibility == crate::manifest::OperationVisibility::Public)
         .then(|| operation_id.clone());
-    let statements =
-        compiled
-            .statements
-            .iter()
-            .map(|(name, statement)| {
-                statement_contract(
-                    name,
-                    &statement.path,
-                    sql_corpus,
-                    transactional,
-                    statement.parameters.iter().map(|value| {
-                        statement_value_contract(&value.name, value.ty, value.nullable)
-                    }),
-                    statement.row.iter().map(|value| {
-                        statement_value_contract(&value.name, value.ty, value.nullable)
-                    }),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+    let statements = compiled
+        .statements
+        .iter()
+        .map(|(name, statement)| {
+            statement_contract(
+                name.as_str(),
+                &statement.path,
+                sql_corpus,
+                transactional,
+                statement.parameters.iter().map(|value| {
+                    statement_value_contract(value.name.as_str(), value.ty, value.nullable)
+                }),
+                statement.row.iter().map(|value| {
+                    statement_value_contract(value.name.as_str(), value.ty, value.nullable)
+                }),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let operation_contract = wamn_catalog::OperationContract {
         type_: match operation.type_ {
             crate::manifest::CustomOperationType::Command => wamn_catalog::OperationType::Command,
@@ -471,15 +477,16 @@ fn custom_operation_error_contract(catalog: &CatalogIr, compiled: &CustomDescrip
                 .iter()
                 .find_map(|(constraint, mapped)| (mapped == literal).then_some(constraint));
             let mut case = if let Some(constraint) = constraint {
-                let origin = custom_operation_constraint_origin(catalog, operation, constraint)
-                    .expect("custom constraint mapping was validated");
+                let origin =
+                    custom_operation_constraint_origin(catalog, operation, constraint.as_str())
+                        .expect("custom constraint mapping was validated");
                 json!({
                     "literal": literal,
                     "from": origin,
                     "constraint": constraint,
                 })
             } else {
-                custom_operation_error_origin(operation, literal)
+                custom_operation_error_origin(operation, literal.as_str())
             };
             let detail = compiled.refusals[literal].clone();
             let case_members = case
@@ -582,7 +589,7 @@ fn error_detail_contract(
 
 pub(super) fn emit_operation_sql(
     sql_corpus: &mut BTreeMap<String, Vec<u8>>,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,
@@ -669,7 +676,7 @@ fn describe_model_operation<'a>(
     sql_corpus: &super::SqlCorpus,
     transactional: &StatementTransactionality,
     manifest: &PackageManifest,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
     action: CrudAction,
@@ -720,7 +727,7 @@ fn describe_model_operation<'a>(
         .iter()
         .map(|accessor| {
             let statement_columns =
-                if accessor.row == format!("{}Row", rust_type_identifier(model_name)) {
+                if accessor.row == format!("{}Row", rust_type_identifier(model_name.as_str())) {
                     model_columns.clone()
                 } else {
                     operation_row_columns(wamn_api, &accessor.row)
@@ -904,7 +911,7 @@ fn column_reference(
     manifest: &PackageManifest,
     table: &Table,
     column: &str,
-) -> Option<(String, String)> {
+) -> Option<(crate::source_name::SourceName, String)> {
     let (schema, referenced, key) = table.constraints().iter().find_map(|constraint| {
         let ConstraintType::ForeignKey {
             columns,
@@ -1306,7 +1313,7 @@ pub(super) fn required_schema_contract(
     for model in manifest.models.values() {
         let table = relation(catalog, model).expect("validation resolved relation");
         let entry = consumed
-            .entry((model.schema.clone(), model.table.clone()))
+            .entry((model.schema.to_string(), model.table.to_string()))
             .or_insert_with(|| (Some(table), BTreeSet::new(), BTreeSet::new()));
         entry.1.extend(
             table
@@ -1328,7 +1335,7 @@ pub(super) fn required_schema_contract(
             .find(|table| table.schema() == relation.schema && table.name() == relation.table)
             .expect("internal-relation validation resolved relation");
         consumed
-            .entry((relation.schema.clone(), relation.table.clone()))
+            .entry((relation.schema.to_string(), relation.table.to_string()))
             .or_insert_with(|| (Some(table), BTreeSet::new(), BTreeSet::new()));
     }
     for operation in manifest.custom_operations.values() {
@@ -1338,7 +1345,7 @@ pub(super) fn required_schema_contract(
                 .iter()
                 .find(|table| table.schema() == relation.schema && table.name() == relation.table);
             let entry = consumed
-                .entry((relation.schema.clone(), relation.table.clone()))
+                .entry((relation.schema.to_string(), relation.table.to_string()))
                 .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
             entry.1.extend(
                 relation
@@ -1346,9 +1353,11 @@ pub(super) fn required_schema_contract(
                     .iter()
                     .chain(&relation.insert_fields)
                     .chain(&relation.update_fields)
-                    .cloned(),
+                    .map(ToString::to_string),
             );
-            entry.2.extend(relation.constraints.iter().cloned());
+            entry
+                .2
+                .extend(relation.constraints.iter().map(ToString::to_string));
         }
     }
     let tables = consumed
@@ -1449,11 +1458,15 @@ pub(crate) fn generated_relation_access(
     action: CrudAction,
     operation: &OperationDeclaration,
     fields: &[String],
-) -> Result<StaticSqlRelationDeclaration, GenerateError> {
+) -> Result<StaticSqlRelationDeclaration<wamn_catalog::canonical_name::CanonicalName>, GenerateError>
+{
     let mut access = StaticSqlRelationDeclaration {
-        schema: model.schema.clone(),
-        table: model.table.clone(),
-        select_fields: fields.to_vec(),
+        schema: model.schema.clone().into(),
+        table: model.table.clone().into(),
+        select_fields: fields
+            .iter()
+            .map(|field| field.parse())
+            .collect::<Result<_, _>>()?,
         insert_fields: Vec::new(),
         update_fields: Vec::new(),
         delete: false,
@@ -1463,8 +1476,14 @@ pub(crate) fn generated_relation_access(
     match action {
         CrudAction::Get | CrudAction::Query => {}
         CrudAction::Create => {
-            access.insert_fields.clone_from(&operation.writable_fields);
-            access.insert_fields.push("id".to_owned());
+            access.insert_fields = operation
+                .writable_fields
+                .iter()
+                .map(|field| field.parse())
+                .collect::<Result<_, _>>()?;
+            access
+                .insert_fields
+                .push("id".parse().expect("fixed identifier"));
             // The generated insert also writes the numbered and actor fields.
             access.insert_fields.extend(
                 model
@@ -1472,18 +1491,27 @@ pub(crate) fn generated_relation_access(
                     .map(|(field, _)| field)
                     .into_iter()
                     .chain(model.actor_fields())
-                    .map(str::to_owned),
+                    .map(str::parse)
+                    .collect::<Result<Vec<_>, _>>()?,
             );
         }
         CrudAction::Update => {
-            access.update_fields.clone_from(&operation.writable_fields);
-            access
-                .update_fields
-                .extend(operation.revision_field.iter().cloned());
+            access.update_fields = operation
+                .writable_fields
+                .iter()
+                .map(|field| field.parse())
+                .collect::<Result<_, _>>()?;
+            access.update_fields.extend(
+                operation
+                    .revision_field
+                    .iter()
+                    .map(|field| field.parse())
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
             // The generated update also fills the updated_by actor field.
             access
                 .update_fields
-                .extend(model.update_actor_field().map(str::to_owned));
+                .extend(model.update_actor_field().map(str::parse).transpose()?);
             access.lock = true;
         }
         // A hard delete removes the row, so the relation carries
@@ -1497,9 +1525,13 @@ pub(crate) fn generated_relation_access(
             // UPDATE privilege, which the revision column supplies for a
             // hard delete and the marker pair supplies for a tombstone.
             Some(DeleteMode::Hard) => {
-                access
-                    .update_fields
-                    .extend(operation.revision_field.iter().cloned());
+                access.update_fields.extend(
+                    operation
+                        .revision_field
+                        .iter()
+                        .map(|field| field.parse())
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
                 access.lock = true;
                 access.delete = true;
             }
@@ -1507,7 +1539,7 @@ pub(crate) fn generated_relation_access(
                 access.update_fields.extend(
                     TombstoneColumn::ALL
                         .into_iter()
-                        .map(|column| column.as_str().to_owned()),
+                        .map(|column| column.as_str().parse().expect("fixed deletion column")),
                 );
                 access.lock = true;
             }

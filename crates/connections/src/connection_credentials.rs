@@ -39,7 +39,7 @@ pub async fn read_secret(
 /// Connection credentials targeted by the authenticated reader login.
 #[derive(Clone)]
 pub struct ConnectionCredentials {
-    org: Option<String>,
+    org: Option<wamn_registry::OrgId>,
     store: Option<Arc<dyn wamn_kubernetes::Store>>,
     database: Option<sqlx::PgPool>,
 }
@@ -55,7 +55,7 @@ impl std::fmt::Debug for ConnectionCredentials {
 
 impl ConnectionCredentials {
     /// Use a dedicated system reader whose login fixes its org and project.
-    pub fn from_database(client: sqlx::PgPool, org: &str) -> Self {
+    pub fn from_database(client: sqlx::PgPool, org: &wamn_registry::OrgId) -> Self {
         Self {
             org: Some(org.to_owned()),
             store: None,
@@ -74,8 +74,8 @@ impl ConnectionCredentials {
             .context("open OAuth transaction connection")
     }
 
-    pub fn org(&self) -> anyhow::Result<&str> {
-        self.org.as_deref().context("connection reader has no org")
+    pub fn org(&self) -> anyhow::Result<&wamn_registry::OrgId> {
+        self.org.as_ref().context("connection reader has no org")
     }
 
     /// Supply the environment store, including isolated test fixtures.
@@ -97,7 +97,7 @@ impl ConnectionCredentials {
     pub fn connection_handle(&self, name: &str, generation: i64) -> anyhow::Result<String> {
         let org = self
             .org
-            .as_deref()
+            .as_ref()
             .context("connection credentials unavailable")?;
         let handle = format!("org:{org}:{name}@{generation}");
         self.connection_name(&handle)?;
@@ -109,9 +109,9 @@ impl ConnectionCredentials {
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
         let configured_org = self
             .org
-            .as_deref()
+            .as_ref()
             .context("connection credentials unavailable")?;
-        anyhow::ensure!(configured_org == org, "credential org mismatch");
+        anyhow::ensure!(configured_org == &org, "credential org mismatch");
         Ok(name)
     }
 }
@@ -121,17 +121,19 @@ impl ConnectionCredentials {
 /// [`ConnectionCredentials::env_connections`] returns rows that never change
 /// under their keys.
 impl ConnectionCredentials {
-    async fn reader(&self) -> anyhow::Result<(sqlx::pool::PoolConnection<sqlx::Postgres>, &str)> {
+    async fn reader(
+        &self,
+    ) -> anyhow::Result<(
+        sqlx::pool::PoolConnection<sqlx::Postgres>,
+        &wamn_registry::OrgId,
+    )> {
         let client = self
             .database
             .as_ref()
             .context("connection reader unavailable")?
             .acquire()
             .await?;
-        let org = self
-            .org
-            .as_deref()
-            .context("connection reader has no org")?;
+        let org = self.org.as_ref().context("connection reader has no org")?;
         Ok((client, org))
     }
 
@@ -139,7 +141,7 @@ impl ConnectionCredentials {
     /// connection of the environment.
     pub async fn connection_fact(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
         id: &uuid::Uuid,
     ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
@@ -166,7 +168,7 @@ impl ConnectionCredentials {
     /// One generation of one connection of the environment.
     pub async fn connection_generation(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
         id: &uuid::Uuid,
         generation: i64,
@@ -187,7 +189,7 @@ impl ConnectionCredentials {
     /// The secret of one credential of a connection of the environment.
     pub async fn credential_secret(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
         credential: &uuid::Uuid,
     ) -> anyhow::Result<Option<String>> {
@@ -217,7 +219,7 @@ impl ConnectionCredentials {
     /// The map from integration name to connection id of the environment.
     pub async fn env_connections(
         &self,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
     ) -> anyhow::Result<std::collections::BTreeMap<String, uuid::Uuid>> {
         let (mut client, org) = self.reader().await?;
@@ -256,20 +258,20 @@ mod tests {
         fixture.put("erp", "first", &["project-a"]).await;
         fixture.put("erp", "other", &["project-b"]).await;
         fixture.put("erp", "current", &["project-a"]).await;
-        let reader = fixture.reader("project-a").await;
+        let reader = fixture.reader(&"project-a".parse().unwrap()).await;
         let id = reader
-            .env_connections("project-a", &"dev".parse().unwrap())
+            .env_connections(&"project-a".parse().unwrap(), &"dev".parse().unwrap())
             .await
             .unwrap()["erp"];
         let fact = reader
-            .connection_fact("project-a", &"dev".parse().unwrap(), &id)
+            .connection_fact(&"project-a".parse().unwrap(), &"dev".parse().unwrap(), &id)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(
             reader
                 .credential_secret(
-                    "project-a",
+                    &"project-a".parse().unwrap(),
                     &"dev".parse().unwrap(),
                     &fact.credential_id.unwrap()
                 )
@@ -280,7 +282,7 @@ mod tests {
         );
         assert!(
             reader
-                .env_connections("project-b", &"dev".parse().unwrap())
+                .env_connections(&"project-b".parse().unwrap(), &"dev".parse().unwrap())
                 .await
                 .unwrap()
                 .is_empty()
@@ -309,7 +311,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             reader
-                .connection_fact("project-a", &"dev".parse().unwrap(), &id)
+                .connection_fact(&"project-a".parse().unwrap(), &"dev".parse().unwrap(), &id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -328,9 +330,9 @@ mod tests {
         let mut fixture = Fixture::new(wamn_test_postgres::url(&pool)).await;
         fixture.put_store("files", "first", &["project-a"]).await;
         fixture.put("erp", "http", &["project-a"]).await;
-        let reader = fixture.reader("project-a").await;
+        let reader = fixture.reader(&"project-a".parse().unwrap()).await;
         let map = reader
-            .env_connections("project-a", &"dev".parse().unwrap())
+            .env_connections(&"project-a".parse().unwrap(), &"dev".parse().unwrap())
             .await
             .unwrap();
         assert_eq!(
@@ -339,7 +341,11 @@ mod tests {
         );
         let store = map["files"];
         let first = reader
-            .connection_fact("project-a", &"dev".parse().unwrap(), &store)
+            .connection_fact(
+                &"project-a".parse().unwrap(),
+                &"dev".parse().unwrap(),
+                &store,
+            )
             .await
             .unwrap()
             .unwrap();
@@ -347,7 +353,11 @@ mod tests {
         let first_credential = first.credential_id.unwrap();
         fixture.put_store("files", "current", &["project-a"]).await;
         let current = reader
-            .connection_fact("project-a", &"dev".parse().unwrap(), &store)
+            .connection_fact(
+                &"project-a".parse().unwrap(),
+                &"dev".parse().unwrap(),
+                &store,
+            )
             .await
             .unwrap()
             .unwrap();
@@ -356,7 +366,7 @@ mod tests {
         // A generation and a credential never change under their ids.
         let generation = reader
             .connection_generation(
-                "project-a",
+                &"project-a".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &store,
                 first.active_generation,
@@ -370,7 +380,11 @@ mod tests {
         assert_eq!(generation.parameters["container"], "files");
         assert_eq!(
             reader
-                .credential_secret("project-a", &"dev".parse().unwrap(), &first_credential)
+                .credential_secret(
+                    &"project-a".parse().unwrap(),
+                    &"dev".parse().unwrap(),
+                    &first_credential
+                )
                 .await
                 .unwrap()
                 .as_deref(),
@@ -379,7 +393,7 @@ mod tests {
         assert_eq!(
             reader
                 .credential_secret(
-                    "project-a",
+                    &"project-a".parse().unwrap(),
                     &"dev".parse().unwrap(),
                     &current.credential_id.unwrap()
                 )
@@ -391,14 +405,22 @@ mod tests {
         // Another project of the login reads nothing.
         assert!(
             reader
-                .connection_fact("project-b", &"dev".parse().unwrap(), &store)
+                .connection_fact(
+                    &"project-b".parse().unwrap(),
+                    &"dev".parse().unwrap(),
+                    &store
+                )
                 .await
                 .unwrap()
                 .is_none()
         );
         assert!(
             reader
-                .credential_secret("project-b", &"dev".parse().unwrap(), &first_credential)
+                .credential_secret(
+                    &"project-b".parse().unwrap(),
+                    &"dev".parse().unwrap(),
+                    &first_credential
+                )
                 .await
                 .unwrap()
                 .is_none()
@@ -410,7 +432,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             reader
-                .connection_fact("project-a", &"dev".parse().unwrap(), &store)
+                .connection_fact(
+                    &"project-a".parse().unwrap(),
+                    &"dev".parse().unwrap(),
+                    &store
+                )
                 .await
                 .unwrap()
                 .unwrap()
@@ -435,19 +461,19 @@ mod tests {
                 ("oauth2_client_credentials", parameters.clone()),
             )
             .await;
-        let reader = fixture.reader("project-a").await;
+        let reader = fixture.reader(&"project-a".parse().unwrap()).await;
         let id = reader
-            .env_connections("project-a", &"dev".parse().unwrap())
+            .env_connections(&"project-a".parse().unwrap(), &"dev".parse().unwrap())
             .await
             .unwrap()["erp"];
         let fact = reader
-            .connection_fact("project-a", &"dev".parse().unwrap(), &id)
+            .connection_fact(&"project-a".parse().unwrap(), &"dev".parse().unwrap(), &id)
             .await
             .unwrap()
             .unwrap();
         let generation = reader
             .connection_generation(
-                "project-a",
+                &"project-a".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &id,
                 fact.active_generation,
@@ -461,7 +487,7 @@ mod tests {
         assert_eq!(
             reader
                 .credential_secret(
-                    "project-a",
+                    &"project-a".parse().unwrap(),
                     &"dev".parse().unwrap(),
                     &fact.credential_id.unwrap()
                 )
@@ -482,7 +508,11 @@ mod tests {
     async fn an_absent_reader_is_unavailable() {
         assert!(
             ConnectionCredentials::empty()
-                .connection_fact("project-a", &"dev".parse().unwrap(), &uuid::Uuid::new_v4())
+                .connection_fact(
+                    &"project-a".parse().unwrap(),
+                    &"dev".parse().unwrap(),
+                    &uuid::Uuid::new_v4()
+                )
                 .await
                 .is_err()
         );

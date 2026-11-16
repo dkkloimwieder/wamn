@@ -81,9 +81,9 @@ struct EnvironmentsRequest {
     email: String,
     password: String,
     #[serde(default)]
-    org: Option<String>,
+    org: Option<wamn_registry::OrgId>,
     #[serde(default)]
-    project: Option<String>,
+    project: Option<wamn_registry::ProjectId>,
     #[serde(default, deserialize_with = "present")]
     limit: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "present")]
@@ -114,17 +114,14 @@ impl EnvironmentsRequest {
 /// project, so the org alone selects it.
 #[derive(Default)]
 struct ProjectFilter {
-    org: Option<String>,
-    project: Option<String>,
+    org: Option<wamn_registry::OrgId>,
+    project: Option<wamn_registry::ProjectId>,
 }
 
 impl ProjectFilter {
-    fn holds(&self, org: &str, project: &str) -> bool {
-        self.org.as_deref().is_none_or(|wanted| wanted == org)
-            && self
-                .project
-                .as_deref()
-                .is_none_or(|wanted| wanted == project)
+    fn holds(&self, org: &wamn_registry::OrgId, project: &wamn_registry::ProjectId) -> bool {
+        self.org.as_ref().is_none_or(|wanted| wanted == org)
+            && self.project.as_ref().is_none_or(|wanted| wanted == project)
     }
 }
 
@@ -143,7 +140,7 @@ fn discovery_page(
 
 /// Where a discovery page's control orgs start and how many it reads.
 /// Control audiences come first. None means the cursor is past them.
-fn control_window(page: &ListPage) -> Option<(Option<&str>, Option<i64>)> {
+fn control_window(page: &ListPage) -> Option<(Option<wamn_registry::OrgId>, Option<i64>)> {
     match page.after_type() {
         Some(1) => None,
         Some(_) => Some((
@@ -167,9 +164,9 @@ fn application_after(page: &ListPage) -> std::ops::Bound<&str> {
 #[derive(Serialize)]
 struct Environment<'a> {
     aud: std::borrow::Cow<'a, str>,
-    org: &'a str,
+    org: &'a wamn_registry::OrgId,
     #[serde(skip_serializing_if = "Option::is_none")]
-    project: Option<&'a str>,
+    project: Option<&'a wamn_registry::ProjectId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     env: Option<&'a wamn_registry::EnvName>,
 }
@@ -505,8 +502,8 @@ async fn handle(
                     Some((after_org, limit)) => match control_orgs_page(
                         &mut tx,
                         principal.principal().id(),
-                        filter.org.as_deref(),
-                        after_org,
+                        filter.org.as_ref(),
+                        after_org.as_ref(),
                         limit,
                     )
                     .await
@@ -1144,21 +1141,23 @@ mod tests {
     #[test]
     fn a_filter_lists_only_its_org_and_project() {
         let filter = ProjectFilter {
-            org: Some("dkk".to_owned()),
-            project: Some("wms".to_owned()),
+            org: Some("dkk".parse().unwrap()),
+            project: Some("wms".parse().unwrap()),
         };
-        assert!(filter.holds("dkk", "wms"));
-        assert!(!filter.holds("dkk", "receiving"));
-        assert!(!filter.holds("other", "wms"));
-        assert!(ProjectFilter::default().holds("dkk", "receiving"));
+        assert!(filter.holds(&"dkk".parse().unwrap(), &"wms".parse().unwrap()));
+        assert!(!filter.holds(&"dkk".parse().unwrap(), &"receiving".parse().unwrap()));
+        assert!(!filter.holds(&"other".parse().unwrap(), &"wms".parse().unwrap()));
+        assert!(
+            ProjectFilter::default().holds(&"dkk".parse().unwrap(), &"receiving".parse().unwrap())
+        );
     }
 
     #[test]
     fn discovery_pages_bind_principal_filters_and_preserve_complete_totals() {
         let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
         let filter = ProjectFilter {
-            org: Some("acme".into()),
-            project: Some("widgets".into()),
+            org: Some("acme".parse().unwrap()),
+            project: Some("widgets".parse().unwrap()),
         };
         let rows = vec![
             json!([0, "urn:wamn:control:acme"]),
@@ -1218,7 +1217,7 @@ mod tests {
         assert_eq!(control.after_type(), Some(0));
         assert_eq!(
             control.after(1).and_then(control_audience_org),
-            Some("acme")
+            Some("acme".parse().unwrap())
         );
         assert!(discovery_page(&input, &principal, &ProjectFilter::default()).is_err());
         assert!(
@@ -1240,7 +1239,7 @@ mod tests {
     fn discovery_steps_from_control_orgs_to_application_audiences_across_a_page_boundary() {
         let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
         let filter = ProjectFilter {
-            org: Some("acme".into()),
+            org: Some("acme".parse().unwrap()),
             project: None,
         };
         let key = |entry: &serde_json::Value| entry.clone();
@@ -1265,7 +1264,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(second.after_type(), Some(0));
-        assert_eq!(control_window(&second), Some((Some("acme"), Some(2))));
+        assert_eq!(
+            control_window(&second),
+            Some((Some("acme".parse().unwrap()), Some(2)))
+        );
         assert_eq!(application_after(&second), std::ops::Bound::Unbounded);
         let answer = second.answer("environments", vec![app.clone()], key);
         {

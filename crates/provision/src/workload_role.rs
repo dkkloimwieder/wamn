@@ -338,19 +338,19 @@ pub enum WorkloadRoleIdentity<'a> {
         database: &'a str,
     },
     ProjectEnvironment {
-        org: &'a str,
-        project: &'a str,
+        org: &'a wamn_registry::OrgId,
+        project: &'a wamn_registry::ProjectId,
         environment: &'a wamn_registry::EnvName,
         database: &'a str,
     },
     Control {
-        org: &'a str,
-        project: &'a str,
+        org: &'a wamn_registry::OrgId,
+        project: &'a wamn_registry::ProjectId,
         environment: &'a wamn_registry::EnvName,
         database: &'a str,
     },
     Org {
-        org: &'a str,
+        org: &'a wamn_registry::OrgId,
         database: &'a str,
     },
 }
@@ -449,13 +449,13 @@ pub fn workload_role_identity_hash(
             environment,
             database,
         } => {
-            push_field(&mut preimage, "org", org);
-            push_field(&mut preimage, "project", project);
+            push_field(&mut preimage, "org", org.as_str());
+            push_field(&mut preimage, "project", project.as_str());
             push_field(&mut preimage, "environment", environment.as_str());
             push_field(&mut preimage, "database", database);
         }
         WorkloadRoleIdentity::Org { org, database } => {
-            push_field(&mut preimage, "org", org);
+            push_field(&mut preimage, "org", org.as_str());
             push_field(&mut preimage, "database", database);
         }
     }

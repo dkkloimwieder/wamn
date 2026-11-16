@@ -15,7 +15,7 @@ pub async fn reconcile(
     registry_input: &str,
     kubeconfig: &Path,
     context: &str,
-    namespace: &str,
+    namespace: &wamn_registry::OrgId,
     cluster: &str,
     declaration: &ManagedRole,
 ) -> anyhow::Result<()> {
@@ -36,7 +36,7 @@ pub async fn remove_roles(
     registry_input: &str,
     kubeconfig: &Path,
     context: &str,
-    namespace: &str,
+    namespace: &wamn_registry::OrgId,
     cluster: &str,
     names: &[wamn_identity_protocol::LoginName],
 ) -> anyhow::Result<()> {
@@ -51,7 +51,7 @@ pub async fn remove_roles(
     )
     .await?;
     let observer = configuration(
-        namespace,
+        namespace.as_str(),
         cluster,
         format!("{cluster}-rw.{namespace}.svc.cluster.local"),
         5432,
@@ -82,7 +82,7 @@ async fn refresh(
     registry_input: &str,
     kubeconfig: &Path,
     context: &str,
-    namespace: &str,
+    namespace: &wamn_registry::OrgId,
     cluster: &str,
     required: Option<&ManagedRole>,
     removing: &[wamn_identity_protocol::LoginName],
@@ -111,7 +111,7 @@ async fn refresh(
         let object: Value = kubectl::get(
             kubeconfig,
             context,
-            namespace,
+            namespace.as_str(),
             "cluster.postgresql.cnpg.io",
             cluster,
         )
@@ -254,7 +254,7 @@ pub async fn wait_role(
 /// Create a managed control-database login and publish its public configuration.
 pub async fn provision_control_role(
     input: &str,
-    namespace: &str,
+    namespace: &wamn_registry::OrgId,
     family: WorkloadRoleFamily,
 ) -> anyhow::Result<()> {
     let options = wamn_postgres::connect_options(input).await?;
@@ -300,7 +300,7 @@ pub async fn provision_control_role(
     .execute(&mut connection)
     .await?;
     let config = configuration(
-        namespace,
+        namespace.as_str(),
         cluster,
         options.get_host().into(),
         options.get_port(),
@@ -310,7 +310,7 @@ pub async fn provision_control_role(
     );
     let name = wamn_registry::name::control_administration_secret_name(namespace);
     let object = json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":namespace},"data":{"control.json":config.to_json()?}});
-    kubectl::apply(&kubeconfig, "", namespace, &object).await?;
+    kubectl::apply(&kubeconfig, "", namespace.as_str(), &object).await?;
     Ok(())
 }
 
@@ -336,7 +336,10 @@ pub async fn provision_platform_migration(
         registry_input,
         &kubeconfig,
         "",
-        &config.credentials.namespace,
+        &config
+            .credentials
+            .namespace
+            .parse::<wamn_registry::OrgId>()?,
         cluster,
         &role,
     )
@@ -356,7 +359,7 @@ pub async fn provision_platform_migration(
 /// Serialize org chart writes and cancel Helm if the registry session is lost.
 pub(crate) async fn with_chart_lock<T>(
     registry_input: &str,
-    namespace: &str,
+    namespace: &wamn_registry::OrgId,
     work: impl std::future::Future<Output = anyhow::Result<T>>,
 ) -> anyhow::Result<T> {
     let mut connection = wamn_postgres::connect(registry_input).await?;

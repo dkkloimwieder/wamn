@@ -55,7 +55,7 @@ pub(super) fn mint_instance_suffix() -> anyhow::Result<InstanceSuffix> {
 /// through [`cluster_of`]. The caller supplies a registry reader credential.
 pub async fn resolve_cluster(
     system_url: &str,
-    org: &str,
+    org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
 ) -> anyhow::Result<String> {
     let mut client = wamn_postgres::connect(system_url)
@@ -70,7 +70,7 @@ pub async fn resolve_cluster(
 /// Resolve placement through the supplied system database connection.
 pub(crate) async fn resolve_cluster_on(
     client: &mut sqlx::PgConnection,
-    org: &str,
+    org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
 ) -> anyhow::Result<String> {
     let mut transaction = wamn_platform_identity::transaction::read_connection(
@@ -96,7 +96,7 @@ pub(crate) async fn resolve_cluster_on(
         other => anyhow::bail!("unknown placement_type {other:?} for org {org:?}"),
     };
     let org_obj = Org {
-        id: org.to_string(),
+        id: org.clone(),
         placement,
     };
     // The env must name a policy in the ORG's own set (8df.4 — its recovery

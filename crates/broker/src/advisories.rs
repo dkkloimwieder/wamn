@@ -226,7 +226,11 @@ mod tests {
         use crate::events::{consumer_config_matches, stream_config_matches};
         use async_nats::jetstream::consumer::IntoConsumerConfig as _;
 
-        let target = Triple::new("example", "dev".parse().unwrap(), "fixture");
+        let target = Triple::new(
+            "example".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "fixture".parse().unwrap(),
+        );
         let source = source_stream_config(&target, 1, Duration::from_secs(120));
         assert!(stream_config_matches(&source, &source));
         let changed = async_nats::jetstream::stream::Config {

@@ -1,14 +1,12 @@
 use super::{OrgEnvPolicy, Template};
 use wamn_control_provision::{Org, RecoveryDomain};
-use wamn_registry::identifiers;
 
 pub(super) fn stamped_org(
     template: &Template,
-    org_id: &str,
+    org_id: &wamn_registry::OrgId,
     pool: &str,
 ) -> anyhow::Result<(Org, Vec<OrgEnvPolicy>)> {
-    anyhow::ensure!(identifiers::valid_project(org_id), "invalid org id");
-    let (org, policies) = template.stamp(org_id, pool);
+    let (org, policies) = template.stamp(org_id.clone(), pool);
     if let Some(pool) = org.placement.pool() {
         anyhow::ensure!(
             pool.len() <= 63

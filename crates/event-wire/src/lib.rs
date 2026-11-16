@@ -30,7 +30,7 @@ pub struct Causation {
 #[serde(deny_unknown_fields)]
 pub struct DerivedEvent {
     pub project_env_key: wamn_registry::ProjectEnvKey,
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
     #[serde(rename = "package_id")]
     pub application: wamn_catalog::ApplicationName,
@@ -50,7 +50,7 @@ impl DerivedEvent {
     )]
     pub fn new(
         project_env_key: wamn_registry::ProjectEnvKey,
-        project: impl Into<String>,
+        project: wamn_registry::ProjectId,
         environment: wamn_registry::EnvName,
         application: wamn_catalog::ApplicationName,
         entity: impl Into<String>,
@@ -61,7 +61,7 @@ impl DerivedEvent {
     ) -> Self {
         Self {
             project_env_key,
-            project: project.into(),
+            project,
             environment,
             application,
             entity: entity.into(),
@@ -122,7 +122,11 @@ impl Envelope {
 }
 
 /// The broker identity of a captured row in one project environment.
-pub fn msg_id(project: &str, env: &wamn_registry::EnvName, identity: &CdcIdentity) -> String {
+pub fn msg_id(
+    project: &wamn_registry::ProjectId,
+    env: &wamn_registry::EnvName,
+    identity: &CdcIdentity,
+) -> String {
     format!(
         "cdc:{project}:{env}:{}:{}:{}:{}",
         identity.system_id, identity.timeline, identity.commit_lsn, identity.row_ordinal
@@ -140,7 +144,7 @@ pub fn msg_id(project: &str, env: &wamn_registry::EnvName, identity: &CdcIdentit
 /// between target fields.
 pub fn derived_msg_id(
     project_env_key: &wamn_registry::ProjectEnvKey,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
     entity: &str,
@@ -153,7 +157,7 @@ pub fn derived_msg_id(
     digest.update(b"wamn.event.derived-msg-id.v0.1\0");
     for field in [
         project_env_key.as_str(),
-        project,
+        project.as_str(),
         env.as_str(),
         application.as_str(),
         entity,
@@ -175,8 +179,8 @@ pub fn derived_msg_id(
 
 /// The subject of one event in its project deployment.
 pub fn subject(
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     entity: &str,
     op: Op,
@@ -205,8 +209,8 @@ pub fn subject_token(raw: &str) -> &str {
 
 /// The filter for one captured entity.
 pub fn entity_filter(
-    org: &str,
-    project: &str,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
     entity: &str,
 ) -> String {
@@ -230,7 +234,7 @@ mod tests {
             commit_lsn: 42,
             row_ordinal: 0,
         };
-        let id = msg_id("app", &"dev".parse().unwrap(), &identity);
+        let id = msg_id(&"app".parse().unwrap(), &"dev".parse().unwrap(), &identity);
         for other in [
             CdcIdentity {
                 system_id: 2,
@@ -249,10 +253,23 @@ mod tests {
                 ..identity
             },
         ] {
-            assert_ne!(id, msg_id("app", &"dev".parse().unwrap(), &other));
+            assert_ne!(
+                id,
+                msg_id(&"app".parse().unwrap(), &"dev".parse().unwrap(), &other)
+            );
         }
-        assert_ne!(id, msg_id("app", &"prod".parse().unwrap(), &identity));
-        assert_ne!(id, msg_id("other", &"dev".parse().unwrap(), &identity));
+        assert_ne!(
+            id,
+            msg_id(&"app".parse().unwrap(), &"prod".parse().unwrap(), &identity)
+        );
+        assert_ne!(
+            id,
+            msg_id(
+                &"other".parse().unwrap(),
+                &"dev".parse().unwrap(),
+                &identity
+            )
+        );
         let mut body = serde_json::json!({
             "type":"cdc", "op":"insert", "new":{"id":"7"},
             "package_id":"orders", "entity":"order", "table":"orders",
@@ -263,7 +280,7 @@ mod tests {
             source
                 .identity(
                     &"project--dev--project".parse().unwrap(),
-                    "app",
+                    &"app".parse().unwrap(),
                     &"dev".parse().unwrap(),
                     &[&id]
                 )
@@ -273,7 +290,7 @@ mod tests {
             source
                 .identity(
                     &"project--dev--project".parse().unwrap(),
-                    "app",
+                    &"app".parse().unwrap(),
                     &"dev".parse().unwrap(),
                     &[&id, &id]
                 )
@@ -288,7 +305,7 @@ mod tests {
     fn derived_msg_id_is_host_targeted_and_keeps_the_author_operand() {
         let id = derived_msg_id(
             &"acme--dev--project".parse().unwrap(),
-            "app",
+            &"app".parse().unwrap(),
             &"dev".parse().unwrap(),
             &"orders".parse().unwrap(),
             "orders",
@@ -299,7 +316,7 @@ mod tests {
         assert_ne!(
             derived_msg_id(
                 &"acme--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "orders",
@@ -307,7 +324,7 @@ mod tests {
                 "42"
             ),
             msg_id(
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &CdcIdentity {
                     system_id: 1,
@@ -321,7 +338,7 @@ mod tests {
         assert_ne!(
             derived_msg_id(
                 &"acme--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "orders",
@@ -330,7 +347,7 @@ mod tests {
             ),
             derived_msg_id(
                 &"other--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "orders",
@@ -341,7 +358,7 @@ mod tests {
         assert_ne!(
             derived_msg_id(
                 &"a--dev--project".parse().unwrap(),
-                "bc",
+                &"bc".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "orders",
@@ -350,7 +367,7 @@ mod tests {
             ),
             derived_msg_id(
                 &"ab--dev--project".parse().unwrap(),
-                "c",
+                &"c".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "orders",
@@ -362,7 +379,7 @@ mod tests {
         assert_ne!(
             derived_msg_id(
                 &"acme--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "orders",
@@ -371,7 +388,7 @@ mod tests {
             ),
             derived_msg_id(
                 &"acme--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "receipts",
@@ -383,7 +400,7 @@ mod tests {
         assert_ne!(
             derived_msg_id(
                 &"acme--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "orders",
@@ -392,7 +409,7 @@ mod tests {
             ),
             derived_msg_id(
                 &"acme--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "orders",
@@ -404,7 +421,7 @@ mod tests {
         assert_ne!(
             derived_msg_id(
                 &"acme--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "receipt",
@@ -413,7 +430,7 @@ mod tests {
             ),
             derived_msg_id(
                 &"acme--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"overlay".parse().unwrap(),
                 "receipt",
@@ -425,7 +442,7 @@ mod tests {
         assert_eq!(
             derived_msg_id(
                 &"acme--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "orders",
@@ -434,7 +451,7 @@ mod tests {
             ),
             derived_msg_id(
                 &"acme--dev--project".parse().unwrap(),
-                "app",
+                &"app".parse().unwrap(),
                 &"dev".parse().unwrap(),
                 &"orders".parse().unwrap(),
                 "orders",
@@ -448,16 +465,28 @@ mod tests {
     #[test]
     fn stream_names_keep_all_declared_coordinates_distinct() {
         assert_ne!(
-            stream_name("acme", "receiving", &"dev".parse().unwrap()),
-            stream_name("acme", "wms", &"dev".parse().unwrap())
+            stream_name(
+                &"acme".parse().unwrap(),
+                &"receiving".parse().unwrap(),
+                &"dev".parse().unwrap()
+            ),
+            stream_name(
+                &"acme".parse().unwrap(),
+                &"wms".parse().unwrap(),
+                &"dev".parse().unwrap()
+            )
         );
         assert_ne!(
-            stream_name("acme", "receiving", &"dev".parse().unwrap()),
-            stream_name("acme", "receiving", &"prod".parse().unwrap())
-        );
-        assert_ne!(
-            stream_name("a_b", "c", &"dev".parse().unwrap()),
-            stream_name("a", "b_c", &"dev".parse().unwrap())
+            stream_name(
+                &"acme".parse().unwrap(),
+                &"receiving".parse().unwrap(),
+                &"dev".parse().unwrap()
+            ),
+            stream_name(
+                &"acme".parse().unwrap(),
+                &"receiving".parse().unwrap(),
+                &"prod".parse().unwrap()
+            )
         );
     }
 
@@ -520,7 +549,7 @@ mod tests {
     fn source_decoding_requires_an_event_type_and_safe_source_names() {
         let event = DerivedEvent::new(
             "acme--dev--app".parse().unwrap(),
-            "app",
+            "app".parse().unwrap(),
             "dev".parse().unwrap(),
             "orders".parse().unwrap(),
             "order",
@@ -570,7 +599,7 @@ impl VerifiedSourceEventId {
 
 /// Accept exactly one `Nats-Msg-Id` matching the envelope's source coordinate.
 pub fn verified_source_event_id(
-    project: &str,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
     envelope: &Envelope,
     message_ids: &[&str],
@@ -588,13 +617,13 @@ pub fn verified_source_event_id(
 /// foreign project/project/environment cannot borrow the local header identity.
 pub fn verified_derived_source_event_id(
     project_env_key: &wamn_registry::ProjectEnvKey,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     environment: &wamn_registry::EnvName,
     event: &DerivedEvent,
     message_ids: &[&str],
 ) -> Option<VerifiedSourceEventId> {
     if &event.project_env_key != project_env_key
-        || event.project != project
+        || &event.project != project
         || &event.environment != environment
     {
         return None;
@@ -652,7 +681,7 @@ impl SourceEvent {
     pub fn identity(
         &self,
         project_env_key: &wamn_registry::ProjectEnvKey,
-        project: &str,
+        project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
         headers: &[&str],
     ) -> Option<VerifiedSourceEventId> {

@@ -66,9 +66,13 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     )
     .await
     .expect("create user principal");
-    wamn_platform_identity::org::activate_org_membership(&mut client, user.id(), "demo")
-        .await
-        .expect("active org membership fixture");
+    wamn_platform_identity::org::activate_org_membership(
+        &mut client,
+        user.id(),
+        &"demo".parse().unwrap(),
+    )
+    .await
+    .expect("active org membership fixture");
     assert_eq!(user.principal_type(), PrincipalType::User);
     assert_eq!(user.subject(), "author@example.com");
     assert_eq!(user.status(), PrincipalStatus::Active);
@@ -113,8 +117,8 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     assign_project_role(
         &mut client,
         user.id(),
-        "demo",
-        "widgets",
+        &"demo".parse().unwrap(),
+        &"widgets".parse().unwrap(),
         "project-author",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
@@ -123,16 +127,21 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     assign_project_role(
         &mut client,
         user.id(),
-        "demo",
-        "widgets",
+        &"demo".parse().unwrap(),
+        &"widgets".parse().unwrap(),
         "project-promoter",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("assign promoter role");
-    let roles = project_roles(&mut client, user.id(), "demo", "widgets")
-        .await
-        .expect("read project roles");
+    let roles = project_roles(
+        &mut client,
+        user.id(),
+        &"demo".parse().unwrap(),
+        &"widgets".parse().unwrap(),
+    )
+    .await
+    .expect("read project roles");
     assert_eq!(
         roles
             .iter()
@@ -231,8 +240,8 @@ async fn project_delete_removes_its_roles_and_memberships(
     assign_project_role(
         client,
         user.id(),
-        "demo",
-        "inventory",
+        &"demo".parse().unwrap(),
+        &"inventory".parse().unwrap(),
         "project-author",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
@@ -241,13 +250,16 @@ async fn project_delete_removes_its_roles_and_memberships(
     grant_project_env_membership(
         client,
         user.id(),
-        "demo",
-        "inventory",
+        &"demo".parse().unwrap(),
+        &"inventory".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await
     .expect("grant a membership on the project to delete");
-    async fn rows(client: &mut sqlx::PgConnection, project: &str) -> (i64, i64) {
+    async fn rows(
+        client: &mut sqlx::PgConnection,
+        project: &wamn_registry::ProjectId,
+    ) -> (i64, i64) {
         sqlx::query(
             "SELECT (SELECT count(*) FROM identity.project_roles \
                          WHERE org = 'demo' AND project = $1), \
@@ -260,15 +272,15 @@ async fn project_delete_removes_its_roles_and_memberships(
         .map(|row| (row.get::<i64, _>(0), row.get::<i64, _>(1)))
         .expect("count project roles and memberships")
     }
-    let widgets = rows(client, "widgets").await;
-    assert_eq!(rows(client, "inventory").await, (1, 1));
+    let widgets = rows(client, &"widgets".parse().unwrap()).await;
+    assert_eq!(rows(client, &"inventory".parse().unwrap()).await, (1, 1));
     sqlx::query("DELETE FROM registry.projects WHERE org = 'demo' AND id = 'inventory'")
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
         .expect("delete the project");
-    assert_eq!(rows(client, "inventory").await, (0, 0));
-    assert_eq!(rows(client, "widgets").await, widgets);
+    assert_eq!(rows(client, &"inventory".parse().unwrap()).await, (0, 0));
+    assert_eq!(rows(client, &"widgets".parse().unwrap()).await, widgets);
 }
 
 async fn project_environment_membership_round_trip(
@@ -312,16 +324,20 @@ async fn project_environment_membership_round_trip(
     .await
     .expect("create another user");
     for (principal, org) in [(user, "demo"), (user, "other"), (&other_user, "demo")] {
-        wamn_platform_identity::org::activate_org_membership(client, principal.id(), org)
-            .await
-            .expect("active org membership fixture");
+        wamn_platform_identity::org::activate_org_membership(
+            client,
+            principal.id(),
+            &org.parse().unwrap(),
+        )
+        .await
+        .expect("active org membership fixture");
     }
     assert!(
         !has_project_env_membership(
             client,
             user.id(),
-            "demo",
-            "widgets",
+            &"demo".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"dev".parse().unwrap()
         )
         .await
@@ -333,8 +349,8 @@ async fn project_environment_membership_round_trip(
         grant_project_env_membership(
             client,
             user.id(),
-            "demo",
-            "widgets",
+            &"demo".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"dev".parse().unwrap(),
         )
         .await
@@ -365,8 +381,8 @@ async fn project_environment_membership_round_trip(
         has_project_env_membership(
             client,
             user.id(),
-            "demo",
-            "widgets",
+            &"demo".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"dev".parse().unwrap()
         )
         .await
@@ -379,9 +395,15 @@ async fn project_environment_membership_round_trip(
         ("demo", "widgets", "prod"),
     ] {
         assert!(
-            !has_project_env_membership(client, user.id(), org, project, &env.parse().unwrap())
-                .await
-                .unwrap(),
+            !has_project_env_membership(
+                client,
+                user.id(),
+                &org.parse().unwrap(),
+                &project.parse().unwrap(),
+                &env.parse().unwrap()
+            )
+            .await
+            .unwrap(),
             "the prepared PAT query accepted another environment"
         );
     }
@@ -396,8 +418,8 @@ async fn project_environment_membership_round_trip(
             !has_project_env_membership(
                 client,
                 principal.id(),
-                org,
-                project,
+                &org.parse().unwrap(),
+                &project.parse().unwrap(),
                 &env.parse().unwrap()
             )
             .await
@@ -408,8 +430,8 @@ async fn project_environment_membership_round_trip(
         grant_project_env_membership(
             client,
             service.id(),
-            "demo",
-            "widgets",
+            &"demo".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"dev".parse().unwrap()
         )
         .await
@@ -438,8 +460,8 @@ async fn project_environment_membership_round_trip(
         grant_project_env_membership(
             client,
             user.id(),
-            "demo",
-            "widgets",
+            &"demo".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"missing".parse().unwrap()
         )
         .await
@@ -449,16 +471,22 @@ async fn project_environment_membership_round_trip(
     );
 
     for (principal, org, project, env) in other_memberships {
-        grant_project_env_membership(client, principal.id(), org, project, &env.parse().unwrap())
-            .await
-            .expect("grant independent memberships before revocation");
+        grant_project_env_membership(
+            client,
+            principal.id(),
+            &org.parse().unwrap(),
+            &project.parse().unwrap(),
+            &env.parse().unwrap(),
+        )
+        .await
+        .expect("grant independent memberships before revocation");
     }
     assert!(
         revoke_project_env_membership(
             client,
             user.id(),
-            "demo",
-            "widgets",
+            &"demo".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"dev".parse().unwrap(),
             &mut AuthDrops::default()
         )
@@ -469,8 +497,8 @@ async fn project_environment_membership_round_trip(
         !has_project_env_membership(
             client,
             user.id(),
-            "demo",
-            "widgets",
+            &"demo".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"dev".parse().unwrap()
         )
         .await
@@ -481,8 +509,8 @@ async fn project_environment_membership_round_trip(
         !revoke_project_env_membership(
             client,
             user.id(),
-            "demo",
-            "widgets",
+            &"demo".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"dev".parse().unwrap(),
             &mut AuthDrops::default()
         )
@@ -491,17 +519,23 @@ async fn project_environment_membership_round_trip(
     );
     for (principal, org, project, env) in other_memberships {
         assert!(
-            has_project_env_membership(client, principal.id(), org, project, &env.parse().unwrap())
-                .await
-                .expect("revocation preserves every other principal and environment")
+            has_project_env_membership(
+                client,
+                principal.id(),
+                &org.parse().unwrap(),
+                &project.parse().unwrap(),
+                &env.parse().unwrap()
+            )
+            .await
+            .expect("revocation preserves every other principal and environment")
         );
     }
 
     grant_project_env_membership(
         client,
         user.id(),
-        "demo",
-        "widgets",
+        &"demo".parse().unwrap(),
+        &"widgets".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await
@@ -522,8 +556,8 @@ async fn project_environment_membership_round_trip(
         !has_project_env_membership(
             client,
             user.id(),
-            "demo",
-            "widgets",
+            &"demo".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"dev".parse().unwrap()
         )
         .await
@@ -534,8 +568,8 @@ async fn project_environment_membership_round_trip(
     grant_project_env_membership(
         client,
         other_user.id(),
-        "demo",
-        "widgets",
+        &"demo".parse().unwrap(),
+        &"widgets".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await
@@ -550,8 +584,8 @@ async fn project_environment_membership_round_trip(
         !has_project_env_membership(
             client,
             other_user.id(),
-            "demo",
-            "widgets",
+            &"demo".parse().unwrap(),
+            &"widgets".parse().unwrap(),
             &"dev".parse().unwrap()
         )
         .await

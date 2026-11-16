@@ -16,7 +16,8 @@ pub struct ResolvedActiveWiring {
     pub graph_hash: wamn_digest::Digest,
     pub document: WiringDocument,
     /// Complete admitted facts selected by each exact wiring node.
-    pub node_components: Arc<BTreeMap<String, AdmittedComponent>>,
+    pub node_components:
+        Arc<BTreeMap<wamn_catalog::canonical_name::CanonicalName, AdmittedComponent>>,
     pub components: Arc<[AdmittedComponent]>,
 }
 
@@ -30,13 +31,14 @@ pub struct WorkflowRunKey<'a> {
     pub application: &'a wamn_catalog::ApplicationName,
     /// The packages the environment declares for `application`.
     pub application_packages: &'a BTreeSet<wamn_catalog::PackageName>,
-    pub workflow_id: &'a str,
+    pub workflow_id: &'a wamn_catalog::canonical_name::CanonicalName,
     pub version: u32,
     /// The release the run pins.
     pub manifest_digest: &'a wamn_digest::Digest,
     pub wiring_hash: &'a wamn_digest::Digest,
     /// The component digest admission froze for each node.
-    pub node_digests: &'a BTreeMap<String, wamn_digest::Digest>,
+    pub node_digests:
+        &'a BTreeMap<wamn_catalog::canonical_name::CanonicalName, wamn_digest::Digest>,
 }
 
 /// Stable predicate that refused one workflow resolution.
@@ -109,7 +111,7 @@ pub fn resolve_workflow_in_release(
             ),
         ));
     }
-    if document.wiring_id != run.workflow_id || document.version != run.version {
+    if &document.wiring_id != run.workflow_id || document.version != run.version {
         return Err(WorkflowResolutionError::new(
             WorkflowResolutionErrorType::Definition,
             format!(
@@ -177,7 +179,7 @@ pub fn resolve_workflow_in_release(
 /// Resolve the pinned graph under the release already loaded by this host.
 pub async fn resolve_workflow(
     postgres: &WamnPostgres,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     release: &wamn_engine::release_manifest::LoadedRelease,
     run: &WorkflowRunKey<'_>,
 ) -> anyhow::Result<ResolvedActiveWiring> {
@@ -227,6 +229,8 @@ mod tests {
     use wamn_catalog::{ComponentPackageCoordinate, ServingManifest};
 
     use super::*;
+    static WORKFLOW_ID: std::sync::LazyLock<wamn_catalog::canonical_name::CanonicalName> =
+        std::sync::LazyLock::new(|| "nightly".parse().unwrap());
 
     const APPLICATION: &str = "orders";
     const ORDERS_GET: &str = "orders:order/get@1.0.0";
@@ -253,10 +257,10 @@ mod tests {
                 package_id: APPLICATION.parse().unwrap(),
                 package_version: "1.0.0".parse().unwrap(),
             },
-            component: "data".to_owned(),
-            interface_version: "0.1".to_owned(),
+            component: "data".parse().unwrap(),
+            interface_version: "0.1".parse().unwrap(),
             operations: BTreeMap::from([(
-                ORDERS_GET.to_owned(),
+                ORDERS_GET.parse().unwrap(),
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: Some(ORDERS_GET.parse().unwrap()),
@@ -290,15 +294,15 @@ mod tests {
 
     fn document() -> WiringDocument {
         WiringDocument::new(
-            "nightly",
+            "nightly".parse().unwrap(),
             1,
-            "node",
+            "node".parse().unwrap(),
             BTreeMap::from([(
-                "node".to_owned(),
+                "node".parse().unwrap(),
                 WiringNode {
-                    component: "data".to_owned(),
-                    interface_version: "0.1".to_owned(),
-                    operation: ORDERS_GET.to_owned(),
+                    component: "data".parse().unwrap(),
+                    interface_version: "0.1".parse().unwrap(),
+                    operation: ORDERS_GET.parse().unwrap(),
                     operation_dependency: None,
                     params: BTreeMap::new(),
                     terminal: Some(WiringTerminal::Respond),
@@ -311,7 +315,10 @@ mod tests {
 
     fn run<'a>(
         hash: &'a wamn_digest::Digest,
-        node_digests: &'a BTreeMap<String, wamn_digest::Digest>,
+        node_digests: &'a BTreeMap<
+            wamn_catalog::canonical_name::CanonicalName,
+            wamn_digest::Digest,
+        >,
     ) -> WorkflowRunKey<'a> {
         static PACKAGES: std::sync::LazyLock<BTreeSet<wamn_catalog::PackageName>> =
             std::sync::LazyLock::new(|| BTreeSet::from([APPLICATION.parse().unwrap()]));
@@ -326,7 +333,7 @@ mod tests {
             environment: &ENV,
             application: &APPLICATION_NAME,
             application_packages: &PACKAGES,
-            workflow_id: "nightly",
+            workflow_id: &WORKFLOW_ID,
             version: 1,
             manifest_digest: &RELEASE,
             wiring_hash: hash,
@@ -338,7 +345,7 @@ mod tests {
     fn a_run_resolves_each_node_to_its_frozen_digest() {
         let document = document();
         let hash = document.wiring_hash();
-        let digests = BTreeMap::from([("node".to_owned(), *DIGEST)]);
+        let digests = BTreeMap::from([("node".parse().unwrap(), *DIGEST)]);
         let resolved = resolve_workflow_in_release(
             &run(&hash, &digests),
             &manifest()
@@ -359,9 +366,12 @@ mod tests {
         let document = document();
         let hash = document.wiring_hash();
         for digests in [
-            BTreeMap::from([("node".to_owned(), *OTHER)]),
+            BTreeMap::from([("node".parse().unwrap(), *OTHER)]),
             BTreeMap::new(),
-            BTreeMap::from([("node".to_owned(), *DIGEST), ("extra".to_owned(), *DIGEST)]),
+            BTreeMap::from([
+                ("node".parse().unwrap(), *DIGEST),
+                ("extra".parse().unwrap(), *DIGEST),
+            ]),
         ] {
             let refusal = resolve_workflow_in_release(
                 &run(&hash, &digests),
@@ -384,7 +394,7 @@ mod tests {
     fn a_hash_mismatch_refuses() {
         let document = document();
         let hash = document.wiring_hash();
-        let digests = BTreeMap::from([("node".to_owned(), *DIGEST)]);
+        let digests = BTreeMap::from([("node".parse().unwrap(), *DIGEST)]);
         // The stored row carries another hash than the run.
         let refusal = resolve_workflow_in_release(
             &run(&OTHER, &digests),

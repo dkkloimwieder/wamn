@@ -5,10 +5,10 @@ use std::path::PathBuf;
 #[serde(deny_unknown_fields)]
 pub struct ReaderConfig {
     /// Organization id.
-    pub org: String,
+    pub org: wamn_registry::OrgId,
 
     /// Project id.
-    pub project: String,
+    pub project: wamn_registry::ProjectId,
 
     /// Environment slug.
     pub env: wamn_registry::EnvName,

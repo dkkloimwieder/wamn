@@ -24,8 +24,8 @@ pub struct ConnectionInvocation {
     pub entry: InvocationEntry,
     pub package_id: wamn_catalog::PackageName,
     pub component_digest: wamn_digest::Digest,
-    pub component: String,
-    pub operation: String,
+    pub component: wamn_catalog::canonical_name::CanonicalName,
+    pub operation: wamn_catalog::canonical_name::CanonicalName,
     pub closure: ConnectionExecutionClosure,
     /// Optional bounded failure evidence owned by this invocation.
     pub effects: Option<EffectEvidence>,
@@ -36,7 +36,7 @@ impl ConnectionInvocation {
     pub fn connection<'a>(
         &self,
         manifest: &'a ServingManifest,
-        alias: &str,
+        alias: &wamn_catalog::canonical_name::CanonicalName,
     ) -> Option<&'a wamn_catalog::ComponentConnection> {
         let component = manifest.components.iter().find(|component| {
             component.package_id == self.package_id
@@ -52,6 +52,7 @@ impl ConnectionInvocation {
             connection.store_alias.name() == Some(alias)
                 || configuration
                     .and_then(|configuration| connection.store_alias.resolve(configuration))
+                    .as_ref()
                     == Some(alias)
         })
     }
@@ -75,8 +76,8 @@ impl ConnectionInvocation {
             node_id,
             occurrence,
             component_digest: Some(&self.component_digest),
-            component_name: &self.component,
-            operation: &self.operation,
+            component_name: self.component.as_str(),
+            operation: self.operation.as_str(),
         }
     }
 }
@@ -107,11 +108,13 @@ pub struct WiringPosition {
     pub wiring_hash: wamn_digest::Digest,
     /// The application that owns the wiring.
     pub application: wamn_catalog::ApplicationName,
-    pub wiring_id: String,
+    pub wiring_id: wamn_catalog::canonical_name::CanonicalName,
     pub wiring_version: u32,
-    pub node_id: String,
+    pub node_id: wamn_catalog::canonical_name::CanonicalName,
     pub occurrence: u32,
-    pub configuration: Arc<std::collections::BTreeMap<String, serde_json::Value>>,
+    pub configuration: Arc<
+        std::collections::BTreeMap<wamn_catalog::canonical_name::CanonicalName, serde_json::Value>,
+    >,
 }
 
 /// Host-attested root identity for an effect's exact dependency path.
@@ -119,9 +122,9 @@ pub struct WiringPosition {
 pub struct ConnectionOrigin {
     pub package_id: wamn_catalog::PackageName,
     pub component_digest: wamn_digest::Digest,
-    pub component: String,
-    pub interface_version: String,
-    pub operation: String,
+    pub component: wamn_catalog::canonical_name::CanonicalName,
+    pub interface_version: wamn_catalog::canonical_name::CanonicalName,
+    pub operation: wamn_catalog::canonical_name::CanonicalName,
 }
 
 /// Host-owned authority closure for one component invocation.
@@ -135,8 +138,8 @@ pub enum ConnectionExecutionClosure {
         manifest_digest: wamn_digest::Digest,
         environment: wamn_registry::EnvName,
         wiring_hash: wamn_digest::Digest,
-        component: String,
-        interface_version: String,
+        component: wamn_catalog::canonical_name::CanonicalName,
+        interface_version: wamn_catalog::canonical_name::CanonicalName,
         binding_world: Arc<CandidateBindingWorld>,
     },
 }
@@ -277,14 +280,14 @@ pub fn authorize_release_closure(
 /// the entry's invocation identity.
 fn released_operation_reachable(
     root: &ServingComponent,
-    root_operation: &str,
+    root_operation: &wamn_catalog::canonical_name::CanonicalName,
     invocation: &ConnectionInvocation,
 ) -> bool {
     root.descriptor.operations.contains_key(root_operation)
         && root.package_id == invocation.package_id
         && root.descriptor.component == invocation.component
         && root.descriptor.component_digest == invocation.component_digest
-        && root_operation == invocation.operation
+        && root_operation == &invocation.operation
 }
 
 /// Require the snapshot to carry the wiring hash, component and interface
@@ -311,10 +314,10 @@ pub fn authorize_candidate_closure(
         || invocation.component_digest != invocation.origin.component_digest
         || invocation.component != invocation.origin.component
         || invocation.operation != invocation.origin.operation
-        || snapshot.operation.as_deref() != Some(invocation.operation.as_str())
+        || snapshot.operation.as_ref() != Some(&invocation.operation)
         || snapshot.wiring_hash.as_ref() != Some(wiring_hash)
-        || snapshot.component.as_deref() != Some(component.as_str())
-        || snapshot.interface_version.as_deref() != Some(interface_version.as_str())
+        || snapshot.component.as_ref() != Some(component)
+        || snapshot.interface_version.as_ref() != Some(interface_version)
         || !binding.matches_snapshot(snapshot)
     {
         return Err(ConnectionError::AttestationInvalid);

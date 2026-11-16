@@ -470,7 +470,13 @@ where
                 .postgres
                 .scopes
                 .read::<wamn_sql::invocation::Authority, _>(&component_id, |record| {
-                    record_duration(record.identity.project.as_deref().unwrap_or(""));
+                    record_duration(
+                        record
+                            .identity
+                            .project
+                            .as_ref()
+                            .map_or("", wamn_registry::ProjectId::as_str),
+                    );
                 })
                 .is_none()
             {
@@ -515,7 +521,10 @@ where
             return Err(super::binding::BindingError::unauthorized());
         }
     };
-    plugin.container_for(&component_id, store_alias).await
+    let store_alias = store_alias
+        .parse()
+        .map_err(|_| super::binding::BindingError::unauthorized())?;
+    plugin.container_for(&component_id, &store_alias).await
 }
 
 #[cfg(test)]

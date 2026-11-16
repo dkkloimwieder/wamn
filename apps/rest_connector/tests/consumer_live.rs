@@ -116,8 +116,8 @@ pub async fn workflow_host(
         let role = workload_login(
             family,
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: PROJECT_ENV_KEY,
-                project: "test",
+                org: &PROJECT_ENV_KEY.parse().unwrap(),
+                project: &"test".parse().unwrap(),
                 environment: &"test".parse().unwrap(),
                 database: database.path().trim_start_matches('/'),
             },
@@ -142,7 +142,7 @@ pub async fn workflow_host(
     Ok(Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(
             HashMap::from([(
-                "test".into(),
+                "test".parse().unwrap(),
                 ProjectConfig {
                     credentials,
                     guest_pool_max_size: 1,
@@ -212,8 +212,8 @@ pub async fn schedule_run(
     author_workflow_in_databases(
         database.as_str(),
         &AuthorWorkflowRequest {
-            org: "rest",
-            project: "publication",
+            org: &"rest".parse().unwrap(),
+            project: &"publication".parse().unwrap(),
             environment: &"test".parse().unwrap(),
             application,
             declared: &declared,
@@ -229,11 +229,15 @@ pub async fn schedule_run(
     .await?;
     enable_workflow(
         database.as_str(),
-        &wamn_registry::Triple::new("rest", "test".parse().unwrap(), application.as_str()),
+        &wamn_registry::Triple::new(
+            "rest".parse().unwrap(),
+            "test".parse().unwrap(),
+            application.as_str().parse().unwrap(),
+        ),
         &mut project,
         &WorkflowVersion {
-            org: "rest",
-            project: "publication",
+            org: &"rest".parse().unwrap(),
+            project: &"publication".parse().unwrap(),
             environment: &"test".parse().unwrap(),
             application,
             workflow_id: &document.wiring_id,
@@ -255,7 +259,7 @@ pub async fn schedule_run(
     )?;
     match admit_schedule_run(
         host,
-        "test",
+        &"test".parse().unwrap(),
         &release,
         application,
         &document.wiring_id,
@@ -290,7 +294,7 @@ pub async fn run_caller(
         "the schedule run executes as {principal} with {execution_role}, not the workflow user with {role}"
     );
     host.workflow_node_caller(
-        "test",
+        &"test".parse().unwrap(),
         &PROJECT_ENV_KEY.parse().unwrap(),
         &principal,
         &execution_role,
@@ -343,8 +347,8 @@ pub async fn install(
         .collect::<anyhow::Result<Vec<_>>>()?;
     let migration_database_url = wamn_control_provision::test_database::package_migration_input(
         database.as_str(),
-        "rest",
-        "publication",
+        &"rest".parse().unwrap(),
+        &"publication".parse().unwrap(),
         &"test".parse().unwrap(),
     )
     .await?;
@@ -356,8 +360,8 @@ pub async fn install(
             changes: wamn_broker::Publisher::default(),
             package: package.clone(),
             database_url: database.as_str().into(),
-            org: "rest".into(),
-            project: "publication".into(),
+            org: "rest".parse().unwrap(),
+            project: "publication".parse().unwrap(),
             environment: "test".parse().unwrap(),
         })
         .await?;
@@ -509,7 +513,7 @@ pub async fn invoke(
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(
             HashMap::from([(
-                "test".into(),
+                "test".parse().unwrap(),
                 ProjectConfig {
                     credentials: ClassCredentials::default()
                         .with_class(AuthorityClass::GuestSql, guest_url)
@@ -536,7 +540,7 @@ pub async fn invoke(
             Arc::new(ConnectionCredentials::empty()),
             &postgres,
             &PROJECT_ENV_KEY.parse().unwrap(),
-            "test",
+            &"test".parse().unwrap(),
             &"test".parse().unwrap(),
         )),
         Arc::new(TracingLogger::default()),
@@ -544,7 +548,7 @@ pub async fn invoke(
         release,
         Arc::new(LocalComponentSource::new(PathBuf::new())),
         OperationHostConfig {
-            project: "test".into(),
+            project: "test".parse().unwrap(),
             schema: Some("wamn_integration".into()),
             owner_prefix: "consumer-live".into(),
             warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
@@ -641,11 +645,11 @@ pub async fn invoke(
         let call = OperationCall {
             closure: OperationClosure::Candidate(application),
             component,
-            operation,
+            operation: &operation.parse().unwrap(),
             context: node_types::NodeContext {
                 wiring_id: "rest_item".into(),
                 wiring_version: 1,
-                node_id: if finishing { "finish" } else { "record" }.into(),
+                node_id: if finishing { "finish" } else { "record" }.parse().unwrap(),
                 delivery_id: run.clone(),
                 input_port: None,
                 occurrence: 0,
@@ -664,16 +668,16 @@ pub async fn invoke(
                     ),
                     invocation: wamn_execution_host::component_invocation(
                         component,
-                        operation,
+                        &operation.parse().unwrap(),
                         InvocationEntry::Wiring(WiringPosition {
                             configuration: Default::default(),
                             application: "rest_connector".parse().expect("valid name"),
                             wiring_hash: (format!("sha256:{}", "a".repeat(64)))
                                 .parse::<wamn_digest::Digest>()
                                 .unwrap(),
-                            wiring_id: "rest_item".into(),
+                            wiring_id: "rest_item".parse().unwrap(),
                             wiring_version: 1,
-                            node_id: if finishing { "finish" } else { "record" }.into(),
+                            node_id: if finishing { "finish" } else { "record" }.parse().unwrap(),
                             occurrence: 0,
                         }),
                         ConnectionExecutionClosure::Released,

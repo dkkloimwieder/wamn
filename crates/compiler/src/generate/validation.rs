@@ -10,7 +10,7 @@ use crate::manifest::StaticSqlRelationDeclaration;
 use crate::manifest::{
     AuthoredSqlDeclaration, CrudAction, CursorDirection, CustomOperationDeclaration, DeleteMode,
     ModelDeclaration, OperationDeclaration, PackageManifest, RecordHistoryColumn, ResultClass,
-    SortDeclaration, TombstoneColumn, rust_identifier, validate_identifier,
+    SortDeclaration, TombstoneColumn, rust_identifier,
 };
 use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_record_history::HISTORY_COLUMNS;
@@ -54,7 +54,7 @@ pub(super) fn validate(
 fn validate_model(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
 ) -> Result<(), GenerateError> {
     if let Some(query) = model.operations.get(&CrudAction::Query)
@@ -72,9 +72,7 @@ fn validate_model(
             )));
         }
     }
-    validate_identifier(model_name, "model")?;
-    validate_identifier(&model.schema, "schema")?;
-    validate_identifier(&model.table, "table")?;
+
     let table = relation(catalog, model).ok_or_else(|| {
         GenerateError::for_object(
             GenerateErrorType::UnknownRelation,
@@ -104,7 +102,12 @@ fn validate_model(
                 .map(|dependency| &dependency.package),
         )
         .collect::<BTreeSet<_>>();
-    validate_definition_owner(model_name, "relation", &model.owner, &admitted_owners)?;
+    validate_definition_owner(
+        model_name.as_str(),
+        "relation",
+        &model.owner,
+        &admitted_owners,
+    )?;
     if model.client_field_extensible && model.owner != manifest.package.id {
         return Err(GenerateError::new(
             GenerateErrorType::InvalidModel,
@@ -115,7 +118,7 @@ fn validate_model(
     }
     for (field, owner) in &model.field_owners {
         validate_field(table, model_name, field)?;
-        validate_definition_owner(model_name, field, owner, &admitted_owners)?;
+        validate_definition_owner(model_name.as_str(), field, owner, &admitted_owners)?;
     }
     for (constraint, owner) in &model.constraint_owners {
         if !table
@@ -133,7 +136,7 @@ fn validate_model(
                 format!("{}.{}.{}", model.schema, model.table, constraint),
             ));
         }
-        validate_definition_owner(model_name, constraint, owner, &admitted_owners)?;
+        validate_definition_owner(model_name.as_str(), constraint, owner, &admitted_owners)?;
     }
     let mut seen = BTreeSet::new();
     for field in &model.server_owned_fields {
@@ -230,7 +233,7 @@ fn validate_definition_owner(
 }
 
 fn validate_operation(
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
     action: CrudAction,
@@ -469,7 +472,7 @@ fn require_column(
 /// keeps a log has a primary key, because each entry keys the row by it.
 fn validate_audit_log_columns(
     manifest: &PackageManifest,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
@@ -532,7 +535,7 @@ fn validate_audit_log_columns(
 /// declaration answers for it.
 fn validate_tombstone_columns(
     manifest: &PackageManifest,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
@@ -576,7 +579,7 @@ fn validate_tombstone_columns(
 
 fn validate_query(
     model: &ModelDeclaration,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     table: &Table,
     operation: &OperationDeclaration,
 ) -> Result<(), GenerateError> {
@@ -804,7 +807,7 @@ fn validate_static_sql_relation_fields(
     operation: &wamn_catalog::local_operation::LocalOperation,
     relation: &crate::manifest::StaticSqlRelationDeclaration,
     columns: &BTreeSet<&str>,
-    fields: &[String],
+    fields: &[crate::source_name::SourceName],
 ) -> Result<(), GenerateError> {
     if let Some(field) = fields
         .iter()
@@ -825,13 +828,15 @@ fn validate_constraint_error_mappings(
     declaration: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
     for name in declaration.constraint_errors.keys() {
-        custom_operation_constraint_origin(catalog, declaration, name).ok_or_else(|| {
-            GenerateError::for_object(
-                GenerateErrorType::InvalidOperation,
-                format!("{operation} maps undeclared constraint {name}"),
-                name.clone(),
-            )
-        })?;
+        custom_operation_constraint_origin(catalog, declaration, name.as_str()).ok_or_else(
+            || {
+                GenerateError::for_object(
+                    GenerateErrorType::InvalidOperation,
+                    format!("{operation} maps undeclared constraint {name}"),
+                    name.to_string(),
+                )
+            },
+        )?;
     }
     Ok(())
 }
@@ -885,7 +890,7 @@ pub(super) fn derive_relation_access(
     let schemas = relations
         .schemas
         .iter()
-        .map(String::as_str)
+        .map(wamn_catalog::canonical_name::CanonicalName::as_str)
         .collect::<BTreeSet<_>>();
     let (owners, relation_fields) = (&relations.owners, &relations.fields);
     let mut derived = BTreeMap::<String, DerivedRelation>::new();
@@ -966,7 +971,7 @@ pub(super) fn derive_relation_access(
 /// The relations of the package's own schemas that its SQL can name: each
 /// relation's schema and columns, keyed by name, as SQL analysis reads them.
 struct PackageRelations {
-    schemas: Vec<String>,
+    schemas: Vec<wamn_catalog::canonical_name::CanonicalName>,
     owners: BTreeMap<String, String>,
     fields: BTreeMap<String, BTreeSet<String>>,
 }
@@ -981,7 +986,10 @@ fn package_relations(
     let schemas = crate::materialize::application_schemas(manifest)?;
     let mut owners = BTreeMap::<String, String>::new();
     let mut relation_fields = BTreeMap::<String, BTreeSet<String>>::new();
-    let schema_set = schemas.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let schema_set = schemas
+        .iter()
+        .map(wamn_catalog::canonical_name::CanonicalName::as_str)
+        .collect::<BTreeSet<_>>();
     let tables = catalog
         .tables()
         .iter()
@@ -1105,37 +1113,58 @@ pub(super) fn derive_relations(
         ));
     }
     for name in declaration.constraint_errors.keys() {
-        defining_relation(catalog, &mut derived, name)
+        defining_relation(catalog, &mut derived, name.as_str())
             .ok_or_else(|| {
                 GenerateError::for_object(
                     GenerateErrorType::InvalidOperation,
                     format!(
                         "{operation} maps constraint {name}, which no relation its SQL reaches defines"
                     ),
-                    name.clone(),
+                    name.to_string(),
                 )
             })?
             .constraints
-            .insert(name.clone());
+            .insert(name.to_string());
     }
-    Ok(derived
+    derived
         .into_iter()
-        .map(|(table, relation)| StaticSqlRelationDeclaration {
-            schema: relation.schema,
-            table,
-            select_fields: relation.access.select_fields.into_iter().collect(),
-            insert_fields: relation.access.insert_fields.into_iter().collect(),
-            update_fields: relation.access.update_fields.into_iter().collect(),
-            delete: relation.access.delete,
-            lock: relation.access.lock,
-            constraints: relation.constraints.into_iter().collect(),
+        .map(|(table, relation)| {
+            Ok(StaticSqlRelationDeclaration {
+                schema: relation.schema.try_into()?,
+                table: table.try_into()?,
+                select_fields: relation
+                    .access
+                    .select_fields
+                    .into_iter()
+                    .map(crate::source_name::SourceName::try_from)
+                    .collect::<Result<_, _>>()?,
+                insert_fields: relation
+                    .access
+                    .insert_fields
+                    .into_iter()
+                    .map(crate::source_name::SourceName::try_from)
+                    .collect::<Result<_, _>>()?,
+                update_fields: relation
+                    .access
+                    .update_fields
+                    .into_iter()
+                    .map(crate::source_name::SourceName::try_from)
+                    .collect::<Result<_, _>>()?,
+                delete: relation.access.delete,
+                lock: relation.access.lock,
+                constraints: relation
+                    .constraints
+                    .into_iter()
+                    .map(crate::source_name::SourceName::try_from)
+                    .collect::<Result<_, _>>()?,
+            })
         })
-        .collect())
+        .collect::<Result<_, GenerateError>>()
 }
 
 fn validate_sort_field(
     table: &Table,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     context: &str,
     field: &str,
 ) -> Result<(), GenerateError> {
@@ -1340,7 +1369,7 @@ fn refuse_generator_owned_queries(
                         !crate::sql_analysis::groups_or_windows(source.bytes)
                             && crate::sql_analysis::relation_access(source.bytes, &relations.fields)
                                 .is_ok_and(|access| {
-                                    access.len() == 1 && access.contains_key(&model.table)
+                                    access.len() == 1 && access.contains_key(model.table.as_str())
                                 })
                     })
             });
@@ -1403,7 +1432,7 @@ pub(super) fn authored_sql_map(
 
 fn validate_field<'a>(
     table: &'a Table,
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     field: &str,
 ) -> Result<&'a Column, GenerateError> {
     column(table, field).ok_or_else(|| {

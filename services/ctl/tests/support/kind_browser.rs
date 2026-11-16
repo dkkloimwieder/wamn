@@ -39,7 +39,7 @@ impl Fixture {
         let mut target = Target {
             kubeconfig: root.join("kubeconfig"),
             context: String::new(),
-            namespace: cluster.org.clone(),
+            namespace: cluster.org.to_string(),
         };
         target.context = provider::existing_kubeconfig(&cluster, &target.kubeconfig).await?;
         let output = wamn_kubernetes::kubectl::kubectl(
@@ -86,7 +86,10 @@ impl Fixture {
         })
     }
 
-    pub async fn browser_environment(&self, project: &str) -> anyhow::Result<()> {
+    pub async fn browser_environment(
+        &self,
+        project: &wamn_registry::ProjectId,
+    ) -> anyhow::Result<()> {
         let mut environment = self.environment.clone();
         environment.project = project.to_owned();
         environment.applications.clear();
@@ -106,7 +109,7 @@ impl Fixture {
         let deployment = wamn_kubernetes::kubectl::kubectl(
             &self.target.kubeconfig,
             &self.target.context,
-            &self.cluster.org,
+            self.cluster.org.as_str(),
             &["get", "deployment", "identity", "-o", "json"],
             None,
         )
@@ -127,7 +130,7 @@ impl Fixture {
         let mail = wamn_kubernetes::kubectl::kubectl(
             &self.target.kubeconfig,
             &self.target.context,
-            &self.cluster.org,
+            self.cluster.org.as_str(),
             &[
                 "exec",
                 "deployment/identity",

@@ -51,7 +51,7 @@ async fn a_401_after_a_write_retries_once_with_the_new_basic_credential() {
                     .unwrap();
                 let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
                 wamn_platform_identity::connections::administration::execute_with_store(
-                    &mut tx, "acme", "connection.write",
+                    &mut tx, &"acme".parse().unwrap(), "connection.write",
                     &serde_json::json!({
                         "project":"project-a", "env":"dev", "name":"handle",
                         "parameters":{"primary-authority":fixture.base,"tls-verification":"disabled","auth":{}},

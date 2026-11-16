@@ -23,6 +23,8 @@
 //! [`ServingManifest::from_canonical_bytes`] rejects bytes whose order or JSON
 //! encoding differs from that canonical representation.
 
+use crate::canonical_name::CanonicalName;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -31,7 +33,7 @@ use serde_json::Value;
 use crate::{
     AdmittedComponent, AttachmentType, CatalogIdentityError, ComponentConnection,
     ComponentDescriptor, HostAttachment, HostRouteSet, PackageCoordinate,
-    package::validate_canonical_operation_for_package, validate_text,
+    package::validate_canonical_operation_for_package,
 };
 
 /// The only serving-manifest format admitted by this revision.
@@ -259,8 +261,8 @@ impl OperationType {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingRoute {
     pub package_id: crate::PackageName,
-    pub component: String,
-    pub operation: String,
+    pub component: CanonicalName,
+    pub operation: CanonicalName,
     #[serde(rename = "type")]
     pub type_: OperationType,
     /// The model relations that a read of this route reads, from the
@@ -293,8 +295,8 @@ pub struct ServingRelation {
 pub enum AttachmentTarget {
     /// One component export of the attachment's package, through a route.
     Route {
-        component: String,
-        operation: String,
+        component: CanonicalName,
+        operation: CanonicalName,
     },
 }
 
@@ -326,9 +328,9 @@ struct AttachmentWire {
     type_: AttachmentType,
     package_id: crate::PackageName,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    component: Option<String>,
+    component: Option<CanonicalName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    operation: Option<String>,
+    operation: Option<CanonicalName>,
     definition_hash: wamn_digest::Digest,
     definition: Value,
     auth_policy: Value,
@@ -377,7 +379,9 @@ impl From<ServingAttachment> for AttachmentWire {
 
 impl ServingAttachment {
     /// Project authored route attachments into the manifest.
-    pub fn routes(authored: BTreeMap<String, Self>) -> BTreeMap<String, RouteAttachment> {
+    pub fn routes(
+        authored: BTreeMap<CanonicalName, Self>,
+    ) -> BTreeMap<CanonicalName, RouteAttachment> {
         authored
             .into_iter()
             .map(|(id, attachment)| {
@@ -435,8 +439,8 @@ pub struct RouteAttachment {
     #[serde(rename = "type")]
     pub type_: AttachmentType,
     pub package_id: crate::PackageName,
-    pub component: String,
-    pub operation: String,
+    pub component: CanonicalName,
+    pub operation: CanonicalName,
     pub definition_hash: wamn_digest::Digest,
     pub definition: Value,
     pub auth_policy: Value,
@@ -558,7 +562,7 @@ pub fn parse_workflow_schedule(text: &str) -> Result<croner::Cron, CatalogIdenti
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingEntryMember {
     pub package_id: crate::PackageName,
-    pub component: String,
+    pub component: CanonicalName,
     pub digest: wamn_digest::Digest,
 }
 
@@ -587,7 +591,7 @@ pub struct ServingManifest {
     pub composed_entry: Option<ServingComposedEntry>,
     pub routes: BTreeSet<ServingRoute>,
     /// The attachments that call a route.
-    pub attachments: BTreeMap<String, RouteAttachment>,
+    pub attachments: BTreeMap<CanonicalName, RouteAttachment>,
     /// The fixed host route sets this release serves
     /// (docs/architecture/execution.md#host-run-routes). The platform builds
     /// their routes, so the manifest names only the sets.
@@ -633,13 +637,13 @@ impl ServingManifest {
     pub fn signs_file_results(
         &self,
         package: &crate::PackageName,
-        component: &str,
-        operation: &str,
+        component: &CanonicalName,
+        operation: &CanonicalName,
     ) -> bool {
         self.components
             .iter()
             .find(|served| {
-                &served.package_id == package && served.descriptor.component == component
+                &served.package_id == package && &served.descriptor.component == component
             })
             .and_then(|served| served.descriptor.operations.get(operation))
             .is_some_and(|operation| {
@@ -661,7 +665,7 @@ impl ServingManifest {
         release: ServingRelease,
         components: BTreeSet<ServingComponent>,
         routes: BTreeSet<ServingRoute>,
-        attachments: BTreeMap<String, ServingAttachment>,
+        attachments: BTreeMap<CanonicalName, ServingAttachment>,
     ) -> Result<Self, CatalogIdentityError> {
         let attachments = ServingAttachment::routes(attachments);
         let manifest = Self {
@@ -679,7 +683,7 @@ impl ServingManifest {
     }
 
     /// One route attachment by id.
-    pub fn attachment(&self, id: &str) -> Option<AttachmentRef<'_>> {
+    pub fn attachment(&self, id: &CanonicalName) -> Option<AttachmentRef<'_>> {
         self.attachments.get(id).map(AttachmentRef::Route)
     }
 
@@ -733,31 +737,31 @@ impl ServingManifest {
     pub fn route(
         &self,
         package_id: &crate::PackageName,
-        component: &str,
-        operation: &str,
+        component: &CanonicalName,
+        operation: &CanonicalName,
     ) -> Option<&ServingRoute> {
         self.routes.iter().find(|route| {
             &route.package_id == package_id
-                && route.component == component
-                && route.operation == operation
+                && &route.component == component
+                && &route.operation == operation
         })
     }
 
     /// Every route attachment of the release, in id order.
-    pub fn every_attachment(&self) -> impl Iterator<Item = (&str, AttachmentRef<'_>)> {
+    pub fn every_attachment(&self) -> impl Iterator<Item = (&CanonicalName, AttachmentRef<'_>)> {
         self.attachments
             .iter()
-            .map(|(id, attachment)| (id.as_str(), AttachmentRef::Route(attachment)))
+            .map(|(id, attachment)| (id, AttachmentRef::Route(attachment)))
     }
 
     /// One host route of a set this release serves, by attachment id.
-    pub fn host_attachment(&self, id: &str) -> Option<&'static HostAttachment> {
+    pub fn host_attachment(&self, id: &CanonicalName) -> Option<&'static HostAttachment> {
         self.host_routes.iter().find_map(|set| set.attachment(id))
     }
 
     /// One attachment that this release serves: an authored attachment or
     /// a host route.
-    pub fn served_attachment(&self, id: &str) -> Option<ServedAttachment<'_>> {
+    pub fn served_attachment(&self, id: &CanonicalName) -> Option<ServedAttachment<'_>> {
         self.attachment(id)
             .map(ServedAttachment::Authored)
             .or_else(|| self.host_attachment(id).map(ServedAttachment::Host))
@@ -765,7 +769,9 @@ impl ServingManifest {
 
     /// Every attachment this release serves: the authored attachments, then
     /// the host routes of its sets.
-    pub fn every_served_attachment(&self) -> impl Iterator<Item = (&str, ServedAttachment<'_>)> {
+    pub fn every_served_attachment(
+        &self,
+    ) -> impl Iterator<Item = (&CanonicalName, ServedAttachment<'_>)> {
         let authored = self
             .every_attachment()
             .map(|(id, attachment)| (id, ServedAttachment::Authored(attachment)));
@@ -926,8 +932,6 @@ impl ServingManifest {
                 validate_package_member(&package_versions, &component.package_id)?;
             }
             let descriptor = &component.descriptor;
-            validate_text(&descriptor.component, "component")?;
-            validate_text(&descriptor.interface_version, "interface-version")?;
 
             if component.descriptor.operations.is_empty() {
                 return invalid("a serving component must export at least one operation");
@@ -940,7 +944,6 @@ impl ServingManifest {
                 })?;
             }
             for (export, operation) in &component.descriptor.operations {
-                validate_text(export, "component-operation")?;
                 validate_registered_operation(
                     &package_versions,
                     &component.package_id,
@@ -949,7 +952,7 @@ impl ServingManifest {
                 if operation
                     .registered_operation
                     .as_ref()
-                    .is_some_and(|registered| registered.as_str() != export)
+                    .is_some_and(|registered| registered.as_str() != export.as_str())
                 {
                     return invalid(format!(
                         "component export {export:?} and registered operation {:?} differ",
@@ -968,8 +971,7 @@ impl ServingManifest {
         let mut routes = BTreeSet::new();
         for route in &self.routes {
             validate_package_member(&package_versions, &route.package_id)?;
-            validate_text(&route.component, "component")?;
-            validate_text(&route.operation, "operation")?;
+
             if route.type_ == OperationType::EventHandler {
                 return invalid(format!(
                     "route {}::{} operation {:?} is an event handler, and an event handler is not a route",
@@ -1007,7 +1009,6 @@ impl ServingManifest {
         }
 
         for (attachment_id, attachment) in &self.attachments {
-            validate_text(attachment_id, "attachment-id")?;
             validate_package_member(&package_versions, &attachment.package_id)?;
             validate_route_target(&routes, attachment_id, attachment)?;
             validate_attachment(
@@ -1040,13 +1041,12 @@ fn validate_format_version(document: &Value) -> Result<(), CatalogIdentityError>
 
 fn validate_route_target(
     routes: &BTreeSet<(&str, &str, &str)>,
-    attachment_id: &str,
+    attachment_id: &CanonicalName,
     attachment: &RouteAttachment,
 ) -> Result<(), CatalogIdentityError> {
     let component = attachment.component.as_str();
     let operation = attachment.operation.as_str();
-    validate_text(component, "component")?;
-    validate_text(operation, "operation")?;
+
     if !routes.contains(&(attachment.package_id.as_str(), component, operation)) {
         return Err(CatalogIdentityError::UnresolvableManifestRoute {
             package_id: attachment.package_id.clone(),
@@ -1070,7 +1070,7 @@ fn validate_route_target(
 /// The tests that every attachment passes, whatever it targets.
 fn validate_attachment(
     package_versions: &BTreeMap<&crate::PackageName, &crate::package_version::PackageVersion>,
-    attachment_id: &str,
+    attachment_id: &CanonicalName,
     package_id: &crate::PackageName,
     definition: &Value,
     auth_policy: &Value,
@@ -1195,7 +1195,7 @@ mod tests {
             package_id: package.parse().unwrap(),
             descriptor: ComponentDescriptor {
                 operations: BTreeMap::from([(
-                    operation.into(),
+                    operation.parse().unwrap(),
                     crate::AdmittedComponentOperation {
                         registered_operation: Some(operation.parse().unwrap()),
                         committed_result_schema: None,
@@ -1205,7 +1205,11 @@ mod tests {
                         parameters: Vec::new(),
                     },
                 )]),
-                ..ComponentDescriptor::named(component, "0.1", digest.parse().unwrap())
+                ..ComponentDescriptor::named(
+                    component.parse().unwrap(),
+                    "0.1".parse().unwrap(),
+                    digest.parse().unwrap(),
+                )
             },
         })
         .collect()
@@ -1214,8 +1218,8 @@ mod tests {
     fn routes() -> BTreeSet<ServingRoute> {
         BTreeSet::from([ServingRoute {
             package_id: "base".parse().unwrap(),
-            component: "http-request".into(),
-            operation: "base:widget/get@1.0.0".into(),
+            component: "http-request".parse().unwrap(),
+            operation: "base:widget/get@1.0.0".parse().unwrap(),
             type_: OperationType::Get,
             reads: BTreeSet::new(),
             revision: None,
@@ -1226,8 +1230,8 @@ mod tests {
     fn route_attachment() -> ServingAttachment {
         ServingAttachment {
             target: AttachmentTarget::Route {
-                component: "http-request".into(),
-                operation: "base:widget/get@1.0.0".into(),
+                component: "http-request".parse().unwrap(),
+                operation: "base:widget/get@1.0.0".parse().unwrap(),
             },
             ..attachment()
         }
@@ -1238,8 +1242,8 @@ mod tests {
             type_: AttachmentType::Http,
             package_id: "base".parse().unwrap(),
             target: AttachmentTarget::Route {
-                component: "http-request".into(),
-                operation: "base:widget/get@1.0.0".into(),
+                component: "http-request".parse().unwrap(),
+                operation: "base:widget/get@1.0.0".parse().unwrap(),
             },
             definition_hash: DEFINITION
                 .parse()
@@ -1260,8 +1264,8 @@ mod tests {
             components(),
             routes(),
             BTreeMap::from([
-                ("orders".to_string(), attachment()),
-                ("widget-get".to_string(), route_attachment()),
+                ("orders".parse().unwrap(), attachment()),
+                ("widget-get".parse().unwrap(), route_attachment()),
             ]),
         )
         .expect("fixture manifest is valid")
@@ -1275,7 +1279,7 @@ mod tests {
                 .unwrap(),
             application: ServingEntryMember {
                 package_id: "overlay".parse().unwrap(),
-                component: "transform".into(),
+                component: "transform".parse().unwrap(),
                 digest: COMPONENT_B.parse().unwrap(),
             },
             members: manifest
@@ -1416,7 +1420,7 @@ mod tests {
                 }
                 _ => {
                     let mut member = entry.members.first().unwrap().clone();
-                    member.component = "outside-release".into();
+                    member.component = "outside-release".parse().unwrap();
                     entry.members.insert(member);
                 }
             }
@@ -1474,7 +1478,7 @@ mod tests {
         assert_eq!(loaded, pinned);
         assert_ne!(digest, original.digest());
         let mut conflicting = pinned.components.first().unwrap().clone();
-        conflicting.descriptor.component = "another".into();
+        conflicting.descriptor.component = "another".parse().unwrap();
         conflicting.runtime_schema = Some("other_schema".into());
         pinned.components.insert(conflicting);
         assert!(ServingManifest::from_canonical_bytes(&pinned.canonical_bytes()).is_err());
@@ -1498,8 +1502,8 @@ mod tests {
             components().into_iter().rev().collect(),
             routes().into_iter().rev().collect(),
             BTreeMap::from([
-                ("widget-get".to_string(), route_attachment()),
-                ("orders".to_string(), attachment()),
+                ("widget-get".parse().unwrap(), route_attachment()),
+                ("orders".parse().unwrap(), attachment()),
             ]),
         )
         .expect("reordered fixture is valid");
@@ -1553,7 +1557,7 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                BTreeMap::from([("orders".to_string(), mismatched)]),
+                BTreeMap::from([("orders".parse().unwrap(), mismatched)]),
             )
             .expect_err("attachment operation must match its selected package coordinate");
         }
@@ -1617,13 +1621,13 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                BTreeMap::from([("orders".into(), signed)]),
+                BTreeMap::from([("orders".parse().unwrap(), signed)]),
             )
         };
         assert_eq!(
             build(signed.clone()),
             Err(CatalogIdentityError::UnauthenticatedRegisteredOperation {
-                attachment_id: "orders".into(),
+                attachment_id: "orders".parse().unwrap(),
             })
         );
         signed.registered_operation = None;
@@ -1665,10 +1669,10 @@ mod tests {
                     release(),
                     components(),
                     routes(),
-                    BTreeMap::from([("orders".to_string(), malformed)]),
+                    BTreeMap::from([("orders".parse().unwrap(), malformed)]),
                 ),
                 Err(CatalogIdentityError::InvalidAttachmentAuthPolicy {
-                    attachment_id: "orders".into(),
+                    attachment_id: "orders".parse().unwrap(),
                 })
             );
         }
@@ -1684,7 +1688,7 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                BTreeMap::from([("orders".to_string(), authenticated)]),
+                BTreeMap::from([("orders".parse().unwrap(), authenticated)]),
             )
             .expect("authenticated modes admit a registered operation");
         }
@@ -1696,10 +1700,10 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                BTreeMap::from([("orders".to_string(), anonymous)]),
+                BTreeMap::from([("orders".parse().unwrap(), anonymous)]),
             ),
             Err(CatalogIdentityError::UnauthenticatedRegisteredOperation {
-                attachment_id: "orders".into(),
+                attachment_id: "orders".parse().unwrap(),
             })
         );
     }
@@ -1762,8 +1766,8 @@ mod tests {
     fn route_attachment_targets_are_exact() {
         let mut absent = route_attachment();
         absent.target = AttachmentTarget::Route {
-            component: "http-request".into(),
-            operation: "base:widget/list@1.0.0".into(),
+            component: "http-request".parse().unwrap(),
+            operation: "base:widget/list@1.0.0".parse().unwrap(),
         };
         absent.registered_operation = None;
         assert_eq!(
@@ -1771,7 +1775,7 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                BTreeMap::from([("widget-get".to_string(), absent)]),
+                BTreeMap::from([("widget-get".parse().unwrap(), absent)]),
             ),
             Err(CatalogIdentityError::UnresolvableManifestRoute {
                 package_id: "base".parse().unwrap(),
@@ -1788,7 +1792,7 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                BTreeMap::from([("widget-get".to_string(), other_package)]),
+                BTreeMap::from([("widget-get".parse().unwrap(), other_package)]),
             ),
             Err(CatalogIdentityError::UnresolvableManifestRoute { .. })
         ));
@@ -1799,7 +1803,7 @@ mod tests {
             release(),
             components(),
             routes(),
-            BTreeMap::from([("widget-get".to_string(), mismatched)]),
+            BTreeMap::from([("widget-get".parse().unwrap(), mismatched)]),
         )
         .expect_err("a route attachment cannot grant another operation");
     }
@@ -1808,7 +1812,7 @@ mod tests {
     fn a_route_resolves_to_one_release_component_export() {
         let route = routes().pop_first().expect("fixture has a route");
         let unexported = ServingRoute {
-            operation: "base:widget/list@1.0.0".into(),
+            operation: "base:widget/list@1.0.0".parse().unwrap(),
             ..route.clone()
         };
         let handler = ServingRoute {

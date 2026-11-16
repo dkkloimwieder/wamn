@@ -125,8 +125,8 @@ pub struct EdgeConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetConfig {
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
 }
 
@@ -160,7 +160,7 @@ pub struct SessionConfig {
     /// The session issuer that signs the keys.
     pub issuer: String,
     /// The organization a session must name. It also partitions every operation claim.
-    pub org: String,
+    pub org: wamn_registry::OrgId,
     /// The project-environment identity a session must name.
     pub audience: String,
 }
@@ -199,7 +199,7 @@ impl HttpConfig {
 pub struct DeviceConfig {
     /// The attachment whose operation the loop calls. Its route must change
     /// records and must name no idempotency key.
-    pub attachment: String,
+    pub attachment: wamn_catalog::canonical_name::CanonicalName,
     /// The fixed local principal of every device call.
     pub principal: wamn_identity_protocol::PrincipalId,
     /// The role in `grants.json` whose permissions the principal holds.
@@ -354,7 +354,11 @@ mod tests {
         assert_eq!(
             from_variables.target.release_target(),
             ReleaseTarget::new(
-                wamn_registry::project_env_key("org-a", "plant", &"edge".parse().unwrap()),
+                wamn_registry::project_env_key(
+                    &"org-a".parse().unwrap(),
+                    &"plant".parse().unwrap(),
+                    &"edge".parse().unwrap()
+                ),
                 "edge".parse().unwrap()
             )
         );

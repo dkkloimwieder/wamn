@@ -45,8 +45,8 @@ async fn seed(client: &mut sqlx::PgConnection) {
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::seed_org_project_env_sql(
-            "acme",
-            "one",
+            &"acme".parse().unwrap(),
+            &"one".parse().unwrap(),
             &"dev".parse().unwrap(),
         ))
             .to_string(),
@@ -73,7 +73,7 @@ async fn seed(client: &mut sqlx::PgConnection) {
     .map(drop)
     .unwrap();
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
-    wamn_test_infrastructure::credentials::define(&mut tx,"acme",&json!({"project":"one","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}),&store).await.unwrap();
+    wamn_test_infrastructure::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
 }
 
@@ -214,7 +214,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: 
         .unwrap();
     administration::execute(
         &mut tx,
-        "acme",
+        &"acme".parse().unwrap(),
         "connection.disable",
         &json!({"project":"one","env":"dev","name":"erp"}).to_string(),
         &mut AuthDrops::default(),
@@ -256,7 +256,9 @@ async fn two_packages_can_bind_distinct_names_to_one_connection_without_authorit
     let mut second = first.clone();
     second.package.id = "other".parse().expect("valid name");
     let declaration = second.connections.remove("upstream").unwrap();
-    second.connections.insert("second".into(), declaration);
+    second
+        .connections
+        .insert("second".parse().unwrap(), declaration);
     sqlx::raw_sql("SET ROLE wamn_db_owner")
         .execute(&mut client)
         .await
@@ -306,7 +308,7 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate(pool: sqlx:
     .map(drop)
     .unwrap();
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
-    wamn_test_infrastructure::credentials::define(&mut tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"127.0.0.1:502"}}),&store).await.unwrap();
+    wamn_test_infrastructure::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"127.0.0.1:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
     sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,write_interfaces,published_at) SELECT integration_type,2,digest,'{\"type\":\"object\",\"properties\":{\"authority\":{\"type\":\"string\"},\"unit\":{\"type\":\"integer\"}},\"required\":[\"authority\",\"unit\"]}',operations,exports,write_interfaces,now() FROM registry.integration_type_version WHERE integration_type='modbus' AND version=1; SET ROLE wamn_db_owner").execute(&mut client).await.map(drop).unwrap();
     let mut doc = document();
@@ -427,7 +429,7 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
     let result = administration::execute_in_environment(
         &mut source,
         &mut target,
-        "acme",
+        &"acme".parse().unwrap(),
         "connection.write",
         &request,
         &mut AuthDrops::default(),
@@ -479,7 +481,7 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
     administration::execute_in_environment(
         &mut source,
         &mut target,
-        "acme",
+        &"acme".parse().unwrap(),
         "connection.write",
         &request,
         &mut AuthDrops::default(),
@@ -526,7 +528,7 @@ async fn blobstore_interfaces_accept_another_storage_provider(pool: sqlx::PgPool
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     wamn_test_infrastructure::credentials::define(
         &mut tx,
-        "acme",
+        &"acme".parse().unwrap(),
         &json!({"project":"one","env":"dev","name":"labels",
         "integration_type":"gcs","auth_type":"custom","parameters":{
             "provider":"gcs","container":"labels","prefix":"labels/"}}),
@@ -595,7 +597,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface(pool: sqlx::PgPo
     .map(drop)
     .unwrap();
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
-    wamn_test_infrastructure::credentials::define(&mut tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"192.168.1.2:502"}}),&store).await.unwrap();
+    wamn_test_infrastructure::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"192.168.1.2:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
     sqlx::raw_sql("SET ROLE wamn_db_owner")
         .execute(&mut client)
@@ -670,7 +672,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: 
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     wamn_test_infrastructure::credentials::define(
         &mut tx,
-        "acme",
+        &"acme".parse().unwrap(),
         &json!({"project":"one","env":"dev","name":"meter",
             "integration_type":"modbus","auth_type":"none",
             "parameters":{"authority":"192.168.1.2:502"}}),

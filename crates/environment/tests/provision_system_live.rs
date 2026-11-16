@@ -116,8 +116,8 @@ async fn provision_system_repeats_without_changing_the_platform_domain(pool: sql
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&wamn_control_provision::test_database::seed_org_project_env_sql(
-            "applyprobe",
-            "existing",
+            &"applyprobe".parse().unwrap(),
+            &"existing".parse().unwrap(),
             &"dev".parse().unwrap(),
         ))
             .to_string(),
@@ -237,8 +237,8 @@ async fn provision_system_repeats_without_changing_the_platform_domain(pool: sql
         wamn_environment::apply_package::ApplyPackageRequest {
             migration_database_url: wamn_control_provision::test_database::package_migration_input(
                 &wamn_postgres::database_configuration(&url, &recorded.database).unwrap(),
-                &"applyprobe",
-                &"created",
+                &"applyprobe".parse().unwrap(),
+                &"created".parse().unwrap(),
                 &"dev".parse().unwrap(),
             )
             .await
@@ -253,8 +253,8 @@ async fn provision_system_repeats_without_changing_the_platform_domain(pool: sql
             },
             changes: wamn_broker::Publisher::default(),
             database_url: project_apply.to_string(),
-            org: "applyprobe".into(),
-            project: "created".into(),
+            org: "applyprobe".parse().unwrap(),
+            project: "created".parse().unwrap(),
             environment: "dev".parse().unwrap(),
         },
     )

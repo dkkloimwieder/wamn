@@ -27,7 +27,7 @@ pub enum ProductionLeaseResult {
         application: wamn_catalog::ApplicationName,
         payload: serde_json::Value,
         lease_generation: i64,
-        wiring_id: String,
+        wiring_id: wamn_catalog::canonical_name::CanonicalName,
         wiring_version: i32,
         workflow: Box<ProductionWorkflow>,
     },
@@ -41,7 +41,10 @@ pub struct ProductionWorkflow {
     pub wiring_hash: wamn_digest::Digest,
     pub execution_principal_id: wamn_identity_protocol::PrincipalId,
     pub execution_role: String,
-    pub node_digests: std::collections::BTreeMap<String, wamn_digest::Digest>,
+    pub node_digests: std::collections::BTreeMap<
+        wamn_catalog::canonical_name::CanonicalName,
+        wamn_digest::Digest,
+    >,
     pub causation: Option<wamn_event_wire::Causation>,
 }
 
@@ -67,7 +70,7 @@ struct SelectedLease {
     had_prior_lease: bool,
     status: RunStatus,
     payload: serde_json::Value,
-    wiring_id: String,
+    wiring_id: wamn_catalog::canonical_name::CanonicalName,
     wiring_version: i32,
     workflow: Box<ProductionWorkflow>,
 }
@@ -81,7 +84,7 @@ struct ExhaustedLease {
 
 #[derive(Debug)]
 struct ExhaustedExecutionIdentity {
-    wiring_id: String,
+    wiring_id: wamn_catalog::canonical_name::CanonicalName,
     wiring_version: i32,
 }
 
@@ -358,10 +361,11 @@ pub async fn reap_exhausted(
             format!("unknown run status {status_text:?}"),
         )
     })?;
-    let wiring_id: Option<String> = row_value(&row, 3, "exhausted wiring id")?;
+    let wiring_id: Option<wamn_catalog::canonical_name::CanonicalName> =
+        row_value(&row, 3, "exhausted wiring id")?;
     let wiring_version: Option<i32> = row_value(&row, 4, "exhausted wiring version")?;
     let identity = match (wiring_id, wiring_version) {
-        (Some(wiring_id), Some(wiring_version)) if !wiring_id.is_empty() && wiring_version > 0 => {
+        (Some(wiring_id), Some(wiring_version)) if wiring_version > 0 => {
             ExhaustedExecutionIdentity {
                 wiring_id,
                 wiring_version,
@@ -501,11 +505,11 @@ fn decode_selected_lease(row: &Row) -> Result<SelectedLease, ProductionLeaseErro
 }
 
 fn decode_wiring_identity(
-    wiring_id: Option<String>,
+    wiring_id: Option<wamn_catalog::canonical_name::CanonicalName>,
     wiring_version: Option<i32>,
-) -> Result<(String, i32), ProductionLeaseError> {
+) -> Result<(wamn_catalog::canonical_name::CanonicalName, i32), ProductionLeaseError> {
     let (wiring_id, wiring_version) = match (wiring_id, wiring_version) {
-        (Some(wiring_id), Some(wiring_version)) if !wiring_id.is_empty() && wiring_version > 0 => {
+        (Some(wiring_id), Some(wiring_version)) if wiring_version > 0 => {
             (wiring_id, wiring_version)
         }
         (None, None) => {
@@ -635,10 +639,9 @@ mod tests {
         );
 
         for corrupt in [
-            decode_wiring_identity(Some("orders".into()), None),
+            decode_wiring_identity(Some("orders".parse().unwrap()), None),
             decode_wiring_identity(None, Some(1)),
-            decode_wiring_identity(Some(String::new()), Some(1)),
-            decode_wiring_identity(Some("orders".into()), Some(0)),
+            decode_wiring_identity(Some("orders".parse().unwrap()), Some(0)),
         ] {
             let error = corrupt.unwrap_err();
             assert_eq!(error.error_type(), ProductionLeaseErrorType::WiringIdentity);

@@ -78,7 +78,11 @@ async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPoo
     test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str(), Some("wamn_system")).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&test_database::seed_org_project_env_sql("acme", "billing", &"dev".parse().unwrap()))
+        (&test_database::seed_org_project_env_sql(
+            &"acme".parse().unwrap(),
+            &"billing".parse().unwrap(),
+            &"dev".parse().unwrap(),
+        ))
             .to_string(),
     ))
     .execute(&mut client)
@@ -96,14 +100,14 @@ async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPoo
     .id();
 
     // The org writers.
-    activate_org_membership(&mut client, &alice, "acme")
+    activate_org_membership(&mut client, &alice, &"acme".parse().unwrap())
         .await
         .unwrap();
     grant_member(
         &mut client,
         &alice,
-        "acme",
-        "billing",
+        &"acme".parse().unwrap(),
+        &"billing".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await
@@ -112,8 +116,8 @@ async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPoo
     revoke_member(
         &mut client,
         &alice,
-        "acme",
-        "billing",
+        &"acme".parse().unwrap(),
+        &"billing".parse().unwrap(),
         &"dev".parse().unwrap(),
         &mut drops,
     )
@@ -121,24 +125,37 @@ async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPoo
     .unwrap();
     assert_eq!(changes(&drops), identity(&alice), "revoke_member");
 
-    grant_project_admin(&mut client, &alice, "acme", "billing")
-        .await
-        .unwrap();
+    grant_project_admin(
+        &mut client,
+        &alice,
+        &"acme".parse().unwrap(),
+        &"billing".parse().unwrap(),
+    )
+    .await
+    .unwrap();
     let mut drops = AuthDrops::default();
-    revoke_project_admin(&mut client, &alice, "acme", "billing", &mut drops)
-        .await
-        .unwrap();
+    revoke_project_admin(
+        &mut client,
+        &alice,
+        &"acme".parse().unwrap(),
+        &"billing".parse().unwrap(),
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), identity(&alice), "revoke_project_admin");
 
-    grant_org_admin(&mut client, &alice, "acme").await.unwrap();
+    grant_org_admin(&mut client, &alice, &"acme".parse().unwrap())
+        .await
+        .unwrap();
     let mut drops = AuthDrops::default();
-    revoke_org_admin(&mut client, &alice, "acme", &mut drops)
+    revoke_org_admin(&mut client, &alice, &"acme".parse().unwrap(), &mut drops)
         .await
         .unwrap();
     assert_eq!(changes(&drops), identity(&alice), "revoke_org_admin");
 
     let mut drops = AuthDrops::default();
-    deactivate_org_membership(&mut client, &alice, "acme", &mut drops)
+    deactivate_org_membership(&mut client, &alice, &"acme".parse().unwrap(), &mut drops)
         .await
         .unwrap();
     assert_eq!(
@@ -147,14 +164,14 @@ async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPoo
         "deactivate_org_membership"
     );
 
-    activate_org_membership(&mut client, &alice, "acme")
+    activate_org_membership(&mut client, &alice, &"acme".parse().unwrap())
         .await
         .unwrap();
     grant_project_env_membership(
         &mut client,
         &alice,
-        "acme",
-        "billing",
+        &"acme".parse().unwrap(),
+        &"billing".parse().unwrap(),
         &"dev".parse().unwrap(),
     )
     .await
@@ -163,8 +180,8 @@ async fn every_identity_writer_records_a_drop_of_its_principal(pool: sqlx::PgPoo
     revoke_project_env_membership(
         &mut client,
         &alice,
-        "acme",
-        "billing",
+        &"acme".parse().unwrap(),
+        &"billing".parse().unwrap(),
         &"dev".parse().unwrap(),
         &mut drops,
     )

@@ -3,7 +3,7 @@ use super::{PackageContract, PublishManifestError, PublishManifestErrorType, Ser
 pub(super) fn package_route(
     contracts: Vec<PackageContract>,
     package_id: &wamn_catalog::PackageName,
-    component: &str,
+    component: &wamn_catalog::canonical_name::CanonicalName,
     operation: &wamn_catalog::registered_operation::RegisteredOperation,
 ) -> Result<ServingRoute, PublishManifestError> {
     let contract = contracts
@@ -21,7 +21,7 @@ pub(super) fn package_route(
     Ok(ServingRoute {
         package_id: package_id.to_owned(),
         component: component.to_owned(),
-        operation: operation.to_string(),
+        operation: operation.clone().into(),
         type_: contract.type_,
         reads: contract.reads,
         revision: contract.revision,

@@ -41,8 +41,8 @@ pub struct PruneRunHistoryRequest {
     /// success.
     pub schema: String,
 
-    pub org: String,
-    pub project: String,
+    pub org: wamn_registry::OrgId,
+    pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
 
     /// Prune terminal runs whose `created_at` is older than this many days.
@@ -69,12 +69,6 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
             "the schema must be a bare identifier [a-z_][a-z0-9_]*: {:?}",
             request.schema
         );
-    }
-    if [&request.org, &request.project]
-        .iter()
-        .any(|part| part.trim().is_empty())
-    {
-        bail!("the project must be non-empty (it is the project the delete is bound to)");
     }
 
     let mut client = wamn_postgres::connect(&request.database_url)

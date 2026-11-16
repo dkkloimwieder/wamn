@@ -1,6 +1,7 @@
 //! Reconcile captured models to PostgreSQL REPLICA IDENTITY FULL.
 
 use std::collections::{BTreeMap, BTreeSet};
+use wamn_catalog::canonical_name::CanonicalName;
 use wamn_catalog::package_schema::ManagedModel;
 
 /// A table's modeled REPLICA IDENTITY target.
@@ -35,9 +36,9 @@ impl ReplicaIdentity {
 /// One idempotent relation flip derived from a package model key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplicaIdentityFlip {
-    pub model_id: String,
-    pub schema: String,
-    pub table: String,
+    pub model_id: CanonicalName,
+    pub schema: CanonicalName,
+    pub table: CanonicalName,
     pub from: ReplicaIdentity,
     pub to: ReplicaIdentity,
     pub sql: String,
@@ -46,7 +47,7 @@ pub struct ReplicaIdentityFlip {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReplicaIdentityPlan {
     pub flips: Vec<ReplicaIdentityFlip>,
-    pub unchanged: Vec<(String, ReplicaIdentity)>,
+    pub unchanged: Vec<(CanonicalName, ReplicaIdentity)>,
     pub skipped_absent: Vec<String>,
 }
 
@@ -74,8 +75,8 @@ impl ReplicaIdentityPlan {
 /// own physical schema. Only a differing observed identity emits a flip.
 pub fn reconcile_replica_identity(
     models: &[ManagedModel],
-    current: &BTreeMap<(String, String), ReplicaIdentity>,
-    captured_schemas: &BTreeSet<String>,
+    current: &BTreeMap<(CanonicalName, CanonicalName), ReplicaIdentity>,
+    captured_schemas: &BTreeSet<CanonicalName>,
 ) -> ReplicaIdentityPlan {
     let mut plan = ReplicaIdentityPlan::default();
     for model in models {
@@ -105,11 +106,15 @@ pub fn reconcile_replica_identity(
     plan
 }
 
-pub fn alter_replica_identity_sql(schema: &str, table: &str, to: ReplicaIdentity) -> String {
+pub fn alter_replica_identity_sql(
+    schema: &CanonicalName,
+    table: &CanonicalName,
+    to: ReplicaIdentity,
+) -> String {
     format!(
         "ALTER TABLE {}.{} REPLICA IDENTITY {}",
-        postgres_protocol::escape::escape_identifier(schema),
-        postgres_protocol::escape::escape_identifier(table),
+        postgres_protocol::escape::escape_identifier(schema.as_str()),
+        postgres_protocol::escape::escape_identifier(table.as_str()),
         to.keyword(),
     )
 }

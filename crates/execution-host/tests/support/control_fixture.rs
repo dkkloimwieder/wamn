@@ -60,7 +60,7 @@ pub(super) async fn install(admin: &mut Client, admin_url: &str) -> anyhow::Resu
     let role = workload_login(
         WorkloadRoleFamily::Control,
         WorkloadRoleIdentity::Org {
-            org: ORG,
+            org: &ORG.parse().unwrap(),
             database: &database,
         },
     )?;
@@ -93,13 +93,13 @@ pub(super) async fn project_database(
     admin: &mut Client,
     admin_url: &str,
     system_url: &str,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
     logins: &std::path::Path,
 ) -> anyhow::Result<Client> {
     use wamn_environment::provision_project_env;
     let mut database = wamn_control_provision::project_env_database_name(
-        ORG,
+        &ORG.parse().unwrap(),
         project,
         &"dev".parse().unwrap(),
         instance,
@@ -181,7 +181,7 @@ pub(super) async fn project_database(
     let login = wamn_test_infrastructure::credentials::database_login(
         system_url,
         Some(target_url.as_str()),
-        ORG,
+        &ORG.parse().unwrap(),
         project,
         &"dev".parse().unwrap(),
         WorkloadRoleFamily::Administration,
@@ -214,7 +214,7 @@ pub(super) async fn environments(
         admin,
         admin_url,
         admin_url,
-        "billing",
+        &"billing".parse().unwrap(),
         &"aaaaaaa1".parse()?,
         &logins,
     )
@@ -223,7 +223,7 @@ pub(super) async fn environments(
         admin,
         admin_url,
         admin_url,
-        "shop",
+        &"shop".parse().unwrap(),
         &"aaaaaaa2".parse()?,
         &logins,
     )

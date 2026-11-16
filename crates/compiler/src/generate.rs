@@ -346,7 +346,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
 #[derive(Debug)]
 pub(crate) struct SqlCorpus {
     pub(crate) statements: BTreeMap<String, Vec<u8>>,
-    model_paths: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    model_paths: BTreeMap<crate::source_name::SourceName, BTreeMap<String, Vec<String>>>,
     custom_operations: BTreeMap<
         wamn_catalog::local_operation::LocalOperation,
         crate::manifest::CustomOperationDeclaration,
@@ -489,7 +489,12 @@ pub(crate) fn logged_history_tables(
         .models
         .values()
         .filter(|model| model.log_retention().is_some())
-        .map(|model| (model.schema.as_str(), history_table_name(&model.table)))
+        .map(|model| {
+            (
+                model.schema.as_str(),
+                history_table_name(model.table.as_str()),
+            )
+        })
 }
 
 /// The `from` literal for the constraint a custom operation maps, whether the
@@ -935,7 +940,7 @@ fn complete_enum_fields(
 /// authored list equal to the CHECK's set is the derived set stated again, and
 /// one that names a value outside it widens it: both refuse.
 fn model_enum_fields(
-    model_name: &str,
+    model_name: &crate::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<BTreeMap<String, Vec<String>>, GenerateError> {
@@ -1275,7 +1280,8 @@ mod tests {
             "operations": {},
         }))
         .expect("model");
-        let error = model_enum_fields("widget", &model, &table).expect_err("refused");
+        let error =
+            model_enum_fields(&"widget".parse().unwrap(), &model, &table).expect_err("refused");
         assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
     }
 }

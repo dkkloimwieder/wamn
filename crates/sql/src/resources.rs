@@ -173,8 +173,18 @@ const DB_OPERATION: &str = "db.operation";
 
 /// Record one guest DB call's wall time on [`QUERY_DURATION_MS`]. `op` matches
 /// the `db_span` operation; `project` is the executing component's project.
-pub(super) fn record_query_ms(op: &'static str, project: &str, elapsed: std::time::Duration) {
-    record_effect_ms(&QUERY_DURATION_MS, DB_OPERATION, op, project, elapsed);
+pub(super) fn record_query_ms(
+    op: &'static str,
+    project: &wamn_registry::ProjectId,
+    elapsed: std::time::Duration,
+) {
+    record_effect_ms(
+        &QUERY_DURATION_MS,
+        DB_OPERATION,
+        op,
+        project.as_str(),
+        elapsed,
+    );
 }
 
 /// [9.1] A `wamn.postgres` span over one guest DB call, enriched host-side with
@@ -195,7 +205,7 @@ pub(super) fn record_query_ms(op: &'static str, project: &str, elapsed: std::tim
 pub(super) fn db_span_for_project(
     plugin: &WamnPostgres,
     component_id: &str,
-    project: &str,
+    project: &wamn_registry::ProjectId,
     op: &'static str,
 ) -> tracing::Span {
     let project_env_key = plugin.project_env_key_for(component_id);
@@ -204,7 +214,7 @@ pub(super) fn db_span_for_project(
         "wamn.postgres",
         EffectIdentity {
             project_env_key: project_env_key.as_ref(),
-            project,
+            project: project.as_str(),
             component: component_id,
         },
         run.as_ref().map(|run| EffectRun {
@@ -227,7 +237,7 @@ pub(super) fn db_span_for_project(
 pub(super) async fn prepare_statement_transaction(
     plugin: &WamnPostgres,
     component_id: &str,
-    project: &str,
+    project: &wamn_registry::ProjectId,
 ) -> Result<
     (
         PgTransaction,
@@ -254,7 +264,7 @@ pub(super) async fn prepare_statement_transaction(
         runner.as_deref(),
         role.as_deref(),
         user_id.as_ref(),
-        operation.as_deref(),
+        operation.as_ref(),
         application.as_ref(),
         None,
         policy.statement_timeout_ms,
