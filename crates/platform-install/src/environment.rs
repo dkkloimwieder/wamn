@@ -2,7 +2,7 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
-use wamn_release_control::release_chart::Target;
+use wamn_kubernetes::Target;
 
 pub async fn apply(
     target: &Target,
@@ -70,7 +70,7 @@ pub async fn connection(
     .bind(&placement.policy_name)
     .fetch_one(&mut client)
     .await?;
-    let policy = wamn_release_control::env_policies::env_policy_from_row(&policy)?;
+    let policy = wamn_control_provision::env_policies::env_policy_from_row(&policy)?;
     let instance = placement.instance_suffix;
     let placement = match placement.placement_type.as_str() {
         "pooled" => wamn_control_provision::Placement::Pooled {
@@ -208,5 +208,5 @@ pub async fn remove_database(
         "600s",
     )
     .await?;
-    wamn_release_control::release_chart::uninstall(target, &name).await
+    wamn_kubernetes::helm::uninstall(target, &name).await
 }

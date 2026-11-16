@@ -13,3 +13,5 @@ pub mod roles;
 
 #[cfg(test)]
 mod chart_tests;
+
+pub mod release_chart;

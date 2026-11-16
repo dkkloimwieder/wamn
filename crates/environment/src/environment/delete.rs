@@ -42,7 +42,7 @@ use super::analyse::application_releases;
 use super::ensure::{kubectl, management_author_pat_name, project_url};
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_postgres::connect;
-use wamn_release_control::release_chart;
+use wamn_kubernetes::helm;
 
 /// Delete the environment. With `data`, the database and its roles are
 /// dropped too, and a stranded run does not stop the delete. The caller
@@ -134,7 +134,7 @@ async fn delete_locked(
         );
     }
     for name in applications.values() {
-        release_chart::uninstall(&platform.target, name).await?;
+        helm::uninstall(&platform.target, name).await?;
         lines.push(format!("uninstalled {name}"));
     }
     super::ensure::suspend_project(platform, triple).await?;

@@ -74,7 +74,7 @@ pub async fn registered(
         .bind(&policy_name)
         .fetch_one(&mut *snapshot)
         .await?;
-        let policy = wamn_release_control::env_policies::env_policy_from_row(&policy)?;
+        let policy = wamn_control_provision::env_policies::env_policy_from_row(&policy)?;
         let placement = match placement.as_str() {
             "pooled" => wamn_control_provision::Placement::Pooled {
                 pool: pool.context("registered org pool")?,

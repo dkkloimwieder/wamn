@@ -1,5 +1,6 @@
 //! Package and guest build orchestration shared by xtask and its command clients.
 mod components;
+pub mod composer;
 pub mod eject;
 mod guest_workspace;
 pub mod kcl;

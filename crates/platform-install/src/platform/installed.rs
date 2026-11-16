@@ -1,7 +1,7 @@
 //! Installed Helm values are the authority for platform configuration.
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
-use wamn_release_control::release_chart::Target;
+use wamn_kubernetes::Target;
 
 #[derive(Debug)]
 pub struct InstalledPlatform {

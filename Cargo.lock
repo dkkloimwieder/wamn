@@ -5529,13 +5529,18 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml 1.1.6+spec-1.1.0",
+ "wac-graph",
  "wamn-catalog",
  "wamn-compiler",
- "wamn-component-composer",
+ "wamn-component-policy",
  "wamn-digest",
  "wamn-engine",
  "wamn-registry",
+ "wasm-encoder 0.261.0",
+ "wasmparser 0.261.0",
  "wat",
+ "wit-component 0.254.2",
+ "wit-parser 0.254.2",
 ]
 
 [[package]]
@@ -5640,20 +5645,6 @@ dependencies = [
  "wash-runtime",
  "wasmtime",
  "wat",
-]
-
-[[package]]
-name = "wamn-component-composer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "wac-graph",
- "wamn-component-policy",
- "wasm-encoder 0.261.0",
- "wasmparser 0.261.0",
- "wat",
- "wit-component 0.254.2",
- "wit-parser 0.254.2",
 ]
 
 [[package]]
@@ -5810,7 +5801,6 @@ dependencies = [
  "wamn-postgres",
  "wamn-publish",
  "wamn-registry",
- "wamn-release-control",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wit-component 0.254.2",
@@ -5854,7 +5844,6 @@ dependencies = [
  "wamn-postgres",
  "wamn-publish",
  "wamn-registry",
- "wamn-release-control",
  "wamn-run-state",
  "wamn-test-infrastructure",
  "wit-component 0.254.2",
@@ -5992,7 +5981,6 @@ dependencies = [
  "wamn-postgres",
  "wamn-publish",
  "wamn-registry",
- "wamn-release-control",
  "wamn-run-state",
  "wamn-schema-introspection",
  "wamn-sql",
@@ -6095,7 +6083,6 @@ dependencies = [
  "wamn-catalog",
  "wamn-compiler",
  "wamn-component-artifact",
- "wamn-component-composer",
  "wamn-connections",
  "wamn-control-provision",
  "wamn-digest",
@@ -6115,7 +6102,6 @@ dependencies = [
  "wamn-postgres",
  "wamn-publish",
  "wamn-registry",
- "wamn-release-control",
  "wamn-sql",
  "wamn-test-application",
  "wamn-test-infrastructure",
@@ -6452,7 +6438,6 @@ dependencies = [
  "wamn-platform-install",
  "wamn-postgres",
  "wamn-registry",
- "wamn-release-control",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
 ]
@@ -6503,7 +6488,6 @@ dependencies = [
  "wamn-catalog",
  "wamn-compiler",
  "wamn-component-artifact",
- "wamn-component-composer",
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
@@ -6552,7 +6536,6 @@ dependencies = [
  "wamn-catalog",
  "wamn-cdc-reader",
  "wamn-compiler",
- "wamn-component-composer",
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
@@ -6566,7 +6549,6 @@ dependencies = [
  "wamn-publish",
  "wamn-record-history",
  "wamn-registry",
- "wamn-release-control",
  "wamn-run-state",
  "wamn-schema-introspection",
  "wamn-sql",
@@ -6599,29 +6581,6 @@ dependencies = [
  "uuid",
  "wamn-digest",
  "wamn-identity-protocol",
-]
-
-[[package]]
-name = "wamn-release-control"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "oci-client",
- "serde",
- "serde_json",
- "serde_yaml",
- "sqlx",
- "tokio",
- "wamn-catalog",
- "wamn-control-provision",
- "wamn-digest",
- "wamn-kubernetes",
- "wamn-package-artifact",
- "wamn-platform-identity",
- "wamn-postgres",
- "wamn-registry",
- "wamn-test-infrastructure",
- "wamn-test-postgres",
 ]
 
 [[package]]
@@ -6847,7 +6806,6 @@ dependencies = [
  "wamn-postgres",
  "wamn-publish",
  "wamn-registry",
- "wamn-release-control",
  "wamn-test-application",
  "wamn-test-infrastructure",
 ]
@@ -8232,7 +8190,6 @@ dependencies = [
  "wamn-postgres",
  "wamn-publish",
  "wamn-registry",
- "wamn-release-control",
  "wash-runtime",
 ]
 

@@ -10,7 +10,7 @@
 
 use anyhow::Context as _;
 use wamn_control_provision::EnvPolicy;
-use wamn_release_control::env_policies::env_policy_from_row;
+use wamn_control_provision::env_policies::env_policy_from_row;
 
 /// Read an org's whole env-policy set from the system DB, ordered by
 /// `promotion_rank`. Empty for an org with no stamped policies yet.

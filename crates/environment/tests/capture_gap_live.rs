@@ -94,7 +94,7 @@ async fn recover_and_close_record_each_capture_gap() {
         namespace: org.clone(),
     };
     let chart = std::path::PathBuf::from(std::env::var_os("WAMN_RELEASE_CHART").unwrap());
-    let image = wamn_release_control::release_chart::image_set(&chart)
+    let image = wamn_platform_install::release_chart::image_set(&chart)
         .await
         .unwrap()
         .host;

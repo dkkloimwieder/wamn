@@ -8,6 +8,7 @@ pub mod apply;
 pub mod audit_retention;
 pub mod connection;
 pub mod environment_names;
+pub mod env_policies;
 mod error;
 pub mod identity_role;
 pub mod migration;

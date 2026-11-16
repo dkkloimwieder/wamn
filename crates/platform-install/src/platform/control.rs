@@ -6,7 +6,7 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 
 use wamn_kubernetes::kubectl;
-use wamn_release_control::release_chart::Target;
+use wamn_kubernetes::Target;
 
 use super::artifact_plan::SelectedChart;
 use super::document::ClusterDocument;

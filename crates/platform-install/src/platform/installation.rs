@@ -4,7 +4,7 @@ use super::{artifact_plan::SelectedChart, document::ClusterDocument, resources};
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
-use wamn_release_control::release_chart::Target;
+use wamn_kubernetes::Target;
 
 pub async fn infrastructure(
     target: &Target,

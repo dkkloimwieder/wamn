@@ -64,7 +64,6 @@ serde_yaml = { workspace = true }
 # `wamn_catalog::fixture_graph` is conditioned behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-publish = { workspace = true, features = ["test-util"] }
-wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true, features = ["ops", "test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-authority = { workspace = true, features = ["test-util"] }
@@ -76,7 +75,6 @@ wamn-authentication = { workspace = true, features = ["test-util"] }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
-wamn-component-composer = { workspace = true }
 wasmparser = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }

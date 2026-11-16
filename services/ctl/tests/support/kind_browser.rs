@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use wamn_environment::environment::document::EnvironmentDocument;
 use wamn_environment::platform::document::ClusterDocument;
-use wamn_release_control::release_chart::Target;
+use wamn_kubernetes::Target;
 
 pub fn required(name: &str) -> anyhow::Result<String> {
     std::env::var(name).with_context(|| format!("set {name} for the installed browser fixture"))

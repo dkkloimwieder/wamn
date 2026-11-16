@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/jsonata", "crates/events", "crates/event-wire", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/package-artifact", "crates/execution-host", "crates/run-state", "crates/workflow", "crates/compiler", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/component-composer", "crates/engine", "crates/authority", "crates/connections", "crates/sql", "crates/http", "crates/blobstore", "crates/authentication", "crates/component-artifact", "crates/publish", "crates/release", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker"]
+members = ["crates/jsonata", "crates/events", "crates/event-wire", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/package-artifact", "crates/execution-host", "crates/run-state", "crates/workflow", "crates/compiler", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connections", "crates/sql", "crates/http", "crates/blobstore", "crates/authentication", "crates/component-artifact", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker"]
 default-members = [
   "crates/catalog",
   "crates/execution-host",
@@ -112,7 +112,7 @@ jmespath = "0.5.0"
 wamn-postgres = { path = "crates/postgres", version = "0.1.0" }
 
 quote = "1"
-wamn-build = { path = "xtask/build", version = "0.1.0" }
+wamn-build = { path = "crates/build", version = "0.1.0" }
 wamn-broker = { path = "crates/broker", version = "0.1.0" }
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 wamn-digest = { path = "crates/digest", version = "0.1.0" }
@@ -231,9 +231,7 @@ wamn-package-artifact = { path = "crates/package-artifact", version = "0.1.0" }
 wamn-fixture-package = { path = "test-support/fixtures/package", version = "0.1.0" }
 wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
 wamn-component-policy = { path = "crates/component-policy", version = "0.1.0" }
-wamn-component-composer = { path = "crates/component-composer", version = "0.1.0" }
 wamn-publish = { path = "crates/publish", version = "0.1.0" }
-wamn-release-control = { path = "crates/release", version = "0.1.0" }
 wamn-platform-install = { path = "crates/platform-install", version = "0.1.0" }
 wamn-environment = { path = "crates/environment", version = "0.1.0" }
 wamn-dev = { path = "crates/dev", version = "0.1.0" }

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_release_control::release_chart::Target;
+use wamn_kubernetes::Target;
 
 use super::document::ClusterDocument;
 use wamn_kubernetes::kubectl;
@@ -14,7 +14,7 @@ pub fn chart_input(chart: &Path, image: &str, document: &ClusterDocument) -> any
     let bucket = &document.buckets.web;
     Ok(json!({
         "chart":chart,
-        "version":wamn_release_control::release_chart::read_platform_version(&chart.join("Chart.yaml"))?,
+        "version":crate::release_chart::read_platform_version(&chart.join("Chart.yaml"))?,
         "name":"wamn-edge", "namespace":"hosts",
         "values":{
             "tlsSecret":"wamn-edge-tls", "identityCaConfigMap":"identity-ca",

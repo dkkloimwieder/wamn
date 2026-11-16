@@ -1,4 +1,5 @@
 //! The shared Helm command runner.
+pub(super) mod plan;
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use std::{ffi::OsStr, process::Stdio};
@@ -239,10 +240,99 @@ pub async fn upgrade(
     .map(drop)
 }
 
+use crate::Target;
+use plan::{Recovery, recovery};
+
+/// Clear a pending operation on one application's release (wamn-jovpg).
+///
+/// Only the apply of this application writes its release, and it holds the
+/// install lock, so a pending operation here belongs to a writer that died,
+/// for example an install Job deleted while Helm waited. Helm refuses every
+/// later upgrade with "another operation (install/upgrade/rollback) is in
+/// progress" until the pending revision is cleared.
+///
+/// # Errors
+///
+/// When Helm fails.
+pub async fn recover_pending(target: &Target, name: &str) -> anyhow::Result<()> {
+    let filter = format!("^{name}$");
+    let listed = run_text(&[
+        "list".as_ref(),
+        "--pending".as_ref(),
+        "--filter".as_ref(),
+        filter.as_ref(),
+        "-o".as_ref(),
+        "json".as_ref(),
+        "--kubeconfig".as_ref(),
+        target.kubeconfig.as_os_str(),
+        "--kube-context".as_ref(),
+        target.context.as_ref(),
+        "--namespace".as_ref(),
+        target.namespace.as_ref(),
+    ])
+    .await?;
+    let releases: Vec<serde_json::Value> =
+        serde_json::from_str(&listed).context("decode helm list")?;
+    let Some(status) = releases
+        .iter()
+        .find(|release| release["name"] == name)
+        .and_then(|release| release["status"].as_str())
+    else {
+        return Ok(());
+    };
+    match recovery(status) {
+        Some(Recovery::Uninstall) => uninstall(target, name).await,
+        Some(Recovery::Rollback) => run_text(&[
+            "rollback".as_ref(),
+            name.as_ref(),
+            "--kubeconfig".as_ref(),
+            target.kubeconfig.as_os_str(),
+            "--kube-context".as_ref(),
+            target.context.as_ref(),
+            "--namespace".as_ref(),
+            target.namespace.as_ref(),
+            "--wait".as_ref(),
+        ])
+        .await
+        .map(drop),
+        None => Ok(()),
+    }
+}
+
+/// Uninstall one application's release and wait for its objects to go.
+pub async fn uninstall(target: &Target, name: &str) -> anyhow::Result<()> {
+    run_text(&[
+        "uninstall".as_ref(),
+        name.as_ref(),
+        "--kubeconfig".as_ref(),
+        target.kubeconfig.as_os_str(),
+        "--kube-context".as_ref(),
+        target.context.as_ref(),
+        "--namespace".as_ref(),
+        target.namespace.as_ref(),
+        "--wait".as_ref(),
+    ])
+    .await
+    .map(drop)
+}
+
+pub async fn run_text(arguments: &[&std::ffi::OsStr]) -> anyhow::Result<String> {
+    String::from_utf8(run(arguments).await?).context("helm wrote text")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_a_pending_operation_is_recovered() {
+        assert_eq!(recovery("pending-install"), Some(Recovery::Uninstall));
+        assert_eq!(recovery("pending-upgrade"), Some(Recovery::Rollback));
+        assert_eq!(recovery("pending-rollback"), Some(Recovery::Rollback));
+        assert_eq!(recovery("deployed"), None);
+        assert_eq!(recovery("failed"), None);
+    }
 
     #[tokio::test]
     async fn references_use_rendered_config_and_require_external_secret_keys() -> anyhow::Result<()>

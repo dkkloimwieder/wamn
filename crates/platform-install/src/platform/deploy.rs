@@ -3,14 +3,14 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use wamn_release_control::release_chart::Target;
+use wamn_kubernetes::Target;
 
 use super::artifact_plan::{self, SelectedChart};
 use super::document::{ClusterDocument, UpgradeTarget};
 use super::{control, identity, installation, installed::InstalledPlatform, resources};
 use serde_json::Value;
 use wamn_catalog::lifecycle_lock::LifecycleLock;
-use wamn_release_control::release_chart;
+use wamn_kubernetes::helm;
 
 /// Prepare an update of one existing owner without entering installation.
 ///
@@ -47,7 +47,7 @@ pub async fn update(
         )
         .await?;
         let result = lock.protect(async {
-            release_chart::recover_pending(&owner, &name).await?;
+            helm::recover_pending(&owner, &name).await?;
             let installed = installed_values(&owner, &name).await?;
             anyhow::ensure!(
                 host_target(&installed, group)? == coordinate,

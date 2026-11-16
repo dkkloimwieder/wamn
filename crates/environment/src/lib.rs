@@ -22,3 +22,5 @@ mod publish_release_tests;
 
 #[cfg(test)]
 mod web_artifact_tests;
+
+pub mod release_chart;

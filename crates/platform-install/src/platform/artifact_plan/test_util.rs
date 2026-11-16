@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use wamn_release_control::release_chart::{self, ImageSet};
+use crate::release_chart::{self, ImageSet};
 
 #[derive(Debug)]
 pub struct Chart(pub PathBuf);

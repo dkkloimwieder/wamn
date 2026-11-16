@@ -191,7 +191,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
             .context("parse strict package manifest before component publication")?;
     let component_bytes = std::fs::read(&args.component_bytes)
         .with_context(|| format!("read component bytes {}", args.component_bytes.display()))?;
-    wamn_component_composer::validate_application_member(&component_bytes)
+    wamn_build::composer::validate_application_member(&component_bytes)
         .context("refuse application-owned entry authority")?;
     let declaration_bytes = std::fs::read(&args.declaration)
         .with_context(|| format!("read component declaration {}", args.declaration.display()))?;
