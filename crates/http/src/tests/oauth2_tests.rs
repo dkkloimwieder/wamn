@@ -781,6 +781,36 @@ async fn authorization_code_requires_a_row_and_keeps_or_replaces_the_refresh_tok
 }
 
 impl Fixture {
+    async fn callback_connection(&self) -> sqlx::PgConnection {
+        use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
+
+        let mut database = self.credentials.database.clone();
+        let name = database.path().trim_start_matches('/');
+        let role = workload_login(
+            WorkloadRoleFamily::Control,
+            WorkloadRoleIdentity::Org {
+                org: &"acme".parse().unwrap(),
+                database: name,
+            },
+        )
+        .unwrap();
+        let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::test_database::login_sql(
+                WorkloadRoleFamily::Control,
+                name,
+                &role,
+                "oauth2-test-password",
+            ),
+        ))
+        .execute(&mut admin)
+        .await
+        .unwrap();
+        database.set_username(role.as_str()).unwrap();
+        database.set_password(Some("oauth2-test-password")).unwrap();
+        wamn_postgres::connect(database.as_str()).await.unwrap()
+    }
+
     async fn authorize(&mut self, oauth: &crate::oauth_authorization::Authorization) -> url::Url {
         let mut tx = self.credentials.admin.begin().await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -911,6 +941,7 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
         &fixture.credentials.store,
     ));
     let url = fixture.authorize(&oauth).await;
+    let mut control = fixture.callback_connection().await;
     let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
     assert_eq!(query["audience"], "existing+value");
     assert_eq!(query["response_type"], "code");
@@ -926,11 +957,7 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
         .finish();
     for _ in 0..2 {
         oauth
-            .callback(
-                &mut fixture.credentials.admin,
-                &"acme".parse().unwrap(),
-                &callback,
-            )
+            .callback(&mut control, &"acme".parse().unwrap(), &callback)
             .await
             .expect_err("provider refusal leaves authorization available for retry");
     }
@@ -952,19 +979,11 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
         0
     );
     oauth
-        .callback(
-            &mut fixture.credentials.admin,
-            &"acme".parse().unwrap(),
-            &callback,
-        )
+        .callback(&mut control, &"acme".parse().unwrap(), &callback)
         .await
         .unwrap();
     oauth
-        .callback(
-            &mut fixture.credentials.admin,
-            &"acme".parse().unwrap(),
-            &callback,
-        )
+        .callback(&mut control, &"acme".parse().unwrap(), &callback)
         .await
         .expect_err("authorization refuses");
     fixture.send(&plugin, "handle").await.unwrap();
@@ -1048,6 +1067,7 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
         &fixture.credentials.store,
     ));
     let url = fixture.authorize(&oauth).await;
+    let mut control = fixture.callback_connection().await;
     let state = url
         .query_pairs()
         .find(|(key, _)| key == "state")
@@ -1057,7 +1077,7 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
     let callback = format!("state={state}&code=unused");
     oauth
         .callback(
-            &mut fixture.credentials.admin,
+            &mut control,
             &"acme".parse().unwrap(),
             &format!("state={state}&error=access_denied"),
         )
@@ -1065,11 +1085,7 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
         .expect_err("authorization refuses");
     sqlx::query("UPDATE identity.oauth_authorization SET expires_at=clock_timestamp()-interval '1 second' WHERE state=$1").bind(&state).execute(&mut fixture.credentials.admin).await.map(|result| result.rows_affected()).unwrap();
     oauth
-        .callback(
-            &mut fixture.credentials.admin,
-            &"acme".parse().unwrap(),
-            &callback,
-        )
+        .callback(&mut control, &"acme".parse().unwrap(), &callback)
         .await
         .expect_err("authorization refuses");
     assert_eq!(
@@ -1097,7 +1113,7 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
         .unwrap();
     oauth
         .callback(
-            &mut fixture.credentials.admin,
+            &mut control,
             &"acme".parse().unwrap(),
             &format!("state={state}&code=unused"),
         )
@@ -1106,7 +1122,7 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
     fixture.rewrite(None).await;
     oauth
         .callback(
-            &mut fixture.credentials.admin,
+            &mut control,
             &"acme".parse().unwrap(),
             &format!("state={state}&code=unused"),
         )
@@ -1326,11 +1342,12 @@ async fn token_authority_authorization_code_exchange_and_refresh_refuse_other_or
         ))
         .with_transport(Arc::clone(&endpoint.transport));
         let url = fixture.authorize(&oauth).await;
+        let mut control = fixture.callback_connection().await;
         assert_eq!(url.host_str(), Some("browser.example"));
         let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
         let result = oauth
             .callback(
-                &mut fixture.credentials.admin,
+                &mut control,
                 &"acme".parse().unwrap(),
                 &format!("state={}&code=code", query["state"]),
             )
