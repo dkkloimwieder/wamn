@@ -1,8 +1,7 @@
 //! Organization chart inputs come from the organization and its complete policy set.
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_control_provision::{EnvPolicy, Org, Placement};
-use wamn_registry::EnvName;
 
 pub fn values(org: &Org, policies: &[EnvPolicy]) -> anyhow::Result<Value> {
     let mut clusters = Vec::new();
@@ -21,31 +20,6 @@ pub fn values(org: &Org, policies: &[EnvPolicy]) -> anyhow::Result<Value> {
         }
     }
     Ok(json!({"org":org.id,"clusters":clusters}))
-}
-
-pub fn recovery_values(
-    org: &Org,
-    owner: &EnvName,
-    policies: &[EnvPolicy],
-    target: &str,
-    target_time: Option<&str>,
-) -> anyhow::Result<Value> {
-    ensure!(
-        org.placement == Placement::Dedicated,
-        "a shared PostgreSQL cluster cannot be recovered as an organization cluster"
-    );
-    let source = wamn_registry::name::cluster(&org.id, owner);
-    ensure!(
-        source != target,
-        "recovery must use a different cluster name"
-    );
-    let policy = policies
-        .iter()
-        .find(|policy| &policy.name == owner)
-        .context("recovery owner has no environment policy")?;
-    Ok(
-        json!({"org":org.id,"clusters":[{"name":target,"policy":policy,"recovery":{"source":source,"targetTime":target_time}}]}),
-    )
 }
 
 /// Apply the complete registered policy set while retaining the system database and declared logins.

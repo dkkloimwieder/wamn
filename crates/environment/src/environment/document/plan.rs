@@ -217,15 +217,6 @@ impl EnvironmentDocument {
             .collect()
     }
 
-    /// The release used by the existing environment-wide consumer.
-    pub fn legacy_release(&self) -> &DeclaredRelease {
-        // DEP2-03 replaces the single release consumer with application publication.
-        self.applications
-            .values()
-            .next()
-            .map_or(&DeclaredRelease::None, |app| &app.current)
-    }
-
     /// The coordinate.
     pub fn triple(&self) -> Triple {
         Triple::new(self.org.clone(), self.env.clone(), self.project.clone())

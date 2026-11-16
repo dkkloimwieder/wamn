@@ -1,15 +1,10 @@
 //! Export canonical environment selections and observed serving membership.
 
 pub(super) mod plan;
-use super::{Platform, analyse::read_revision, document::EnvironmentDocument};
+use super::{Platform, analyse::read_revision};
 use anyhow::Context as _;
 use plan::revision_applications;
 use wamn_registry::Triple;
-
-/// Export the canonical document without substituting successful Helm revisions.
-pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<EnvironmentDocument> {
-    EnvironmentDocument::read(platform, triple).await
-}
 
 /// Read the target application's release and membership from the same successful revision.
 pub async fn serving_application(

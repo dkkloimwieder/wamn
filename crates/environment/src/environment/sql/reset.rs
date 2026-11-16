@@ -128,9 +128,7 @@ pub async fn reset_deployed(
     credentials: &Credentials,
 ) -> anyhow::Result<Value> {
     let document = EnvironmentDocument::read_serving(platform, triple).await?;
-    let private = ensure::PrivateDirectory::create()?;
-    let mut platform = platform.clone();
-    super::super::runtime::resolve_target(&mut platform, &document, &private.path(".")).await?;
+    let platform = platform.clone();
     let lock = wamn_catalog::lifecycle_lock::LifecycleLock::acquire_wait(
         wamn_postgres::connect(&platform.system_database_url).await?,
         &document.triple(),
@@ -292,11 +290,6 @@ async fn stop_users(platform: &Platform, document: &EnvironmentDocument) -> anyh
 
 async fn resume_users(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
     use super::super::{readiness, write};
-    let control = crate::platform::installed::InstalledPlatform::read(&platform.target)
-        .await?
-        .context("installed platform")?
-        .values;
-    ensure::provision_environment_host(platform, &control, document).await?;
     // Restore every selected release before readers or hosts can admit work.
     let actor = wamn_identity_protocol::PlatformComponent::Provisioning.principal_id();
     let mut applications = Vec::new();

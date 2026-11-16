@@ -5,7 +5,6 @@ pub mod apply_package;
 pub mod env_policies;
 pub mod environment;
 pub mod ident;
-pub mod identity_issuer;
 pub mod migrations;
 pub mod org_connection;
 pub use wamn_platform_install::platform;
@@ -26,5 +25,3 @@ mod publish_release_tests;
 
 #[cfg(test)]
 mod web_artifact_tests;
-
-mod kcl;

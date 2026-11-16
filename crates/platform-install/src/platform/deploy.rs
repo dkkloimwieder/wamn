@@ -8,9 +8,7 @@ use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::{self, SelectedChart};
 use super::document::{ClusterDocument, UpgradeTarget};
-use super::{
-    bootstrap, control, identity, installation, installed::InstalledPlatform, provider, resources,
-};
+use super::{control, identity, installation, installed::InstalledPlatform, provider, resources};
 use serde_json::Value;
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_release_control::release_chart;
@@ -28,7 +26,7 @@ pub async fn deploy(
     let kubeconfig = directory.join("kubeconfig");
     let context = provider::available_kubeconfig(document, &kubeconfig).await?;
     let existing = context.is_some();
-    let mut target = Target {
+    let target = Target {
         kubeconfig,
         context: context.unwrap_or_default(),
         namespace: document.org.to_string(),
@@ -84,21 +82,17 @@ pub async fn deploy(
         identity_chart.directory().display()
     )?;
     output.flush()?;
-    target.context = document
-        .provider
-        .kubeconfig(document, &target.kubeconfig)
-        .await?;
     let target = &target;
     let chart = &platform_chart;
     anyhow::ensure!(
         chart.reference().starts_with("oci://"),
         "platform installation requires a published chart digest"
     );
-    installation::infrastructure(target, document, chart, directory).await?;
+    installation::infrastructure(target, chart, directory).await?;
     // Broker credentials are explicit and never enter Helm values.
     let users =
         wamn_broker::authorization::update_authorization(target, &document.org, None).await?;
-    let mut values = installation::values(document, chart).await?;
+    let mut values = installation::values(document, chart)?;
     resources::merge(&mut values, crate::environment::broker_certificates(users));
     if let Some(installed) = &installed {
         for component in ["control", "identity", "edge"] {
@@ -106,15 +100,6 @@ pub async fn deploy(
         }
     }
     installation::apply(target, chart, &mut values, directory).await?;
-    if document.provider == super::document::Provider::Kind && control_values.is_none() {
-        let auth_file = std::env::var_os("WAMN_REGISTRY_AUTH_FILE")
-            .context("set WAMN_REGISTRY_AUTH_FILE for the platform registry credential")?;
-        resources::apply_object(
-            target,
-            &control::registry_pull_secret(document, Path::new(&auth_file))?,
-        )
-        .await?;
-    }
     let org_name = wamn_registry::name::resource_suffix("org", document.org.as_str());
     let org_values = resources::release_values(target, document.org.as_str(), &org_name).await?;
     let mut entry = installation::organization_entry(document, chart, org_values)?;
@@ -132,17 +117,12 @@ pub async fn deploy(
         "600s",
     )
     .await?;
-    if control_values.is_none() {
-        initialize(document, chart, target, directory, output).await?;
-    }
-    identity::mail(target, document).await?;
     values["identity"] = identity::resource_entry(document, &identity_chart)?["values"].take();
     values["identity"]["enabled"] = true.into();
     values["identity"]["name"] = "identity".into();
     values["identity"]["namespace"] = document.org.as_str().into();
     installation::apply(target, chart, &mut values, directory).await?;
     if control_values.is_none() {
-        identity::initialize(target, document, &identity_chart, directory).await?;
         control::initialize(target, document).await?;
     }
     values["control"] =
@@ -244,26 +224,6 @@ pub async fn update(
     let entry = installation::platform_entry(chart, values)?;
     resources::require_inputs(target, &entry).await?;
     resources::apply_release(target, &entry, directory).await
-}
-
-async fn initialize(
-    document: &ClusterDocument,
-    chart: &SelectedChart,
-    target: &Target,
-    directory: &Path,
-    output: &mut impl Write,
-) -> anyhow::Result<()> {
-    let initialization = bootstrap::initialize(target, document, chart, directory).await;
-    let public_result = directory.join("jobs/platform-system.log");
-    let printed = (|| -> anyhow::Result<()> {
-        if public_result.exists() {
-            writeln!(output, "{}", std::fs::read_to_string(public_result)?)?;
-        }
-        Ok(())
-    })();
-    initialization?;
-    printed?;
-    Ok(())
 }
 
 fn host_target(

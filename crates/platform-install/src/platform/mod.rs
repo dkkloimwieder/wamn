@@ -1,9 +1,7 @@
 //! Platform configuration, deployment resources, and service helpers.
 
 pub mod artifact_plan;
-pub mod bootstrap;
 pub mod control;
-mod database;
 pub mod deploy;
 pub mod document;
 pub mod edge;

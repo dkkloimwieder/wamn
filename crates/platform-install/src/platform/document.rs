@@ -159,30 +159,6 @@ impl ClusterDocument {
                 && registry.all(|part| token(part, "._-")),
             "registry is not a registry host and optional repository path"
         );
-        if self.provider == Provider::Gcp {
-            ensure!(
-                self.project_id.len() >= 6 && name(self.project_id.as_str(), 30),
-                "project_id is not a GCP project id"
-            );
-            let zone: Vec<_> = self.zone.split('-').collect();
-            ensure!(
-                zone.len() == 3 && lower(zone[0]) && zone[2].len() == 1 && lower(zone[2]) && {
-                    let region = zone[1].trim_end_matches(|c: char| c.is_ascii_digit());
-                    lower(region) && region.len() < zone[1].len()
-                },
-                "zone is not a GCP zone"
-            );
-            for (field, value) in [
-                ("web", &self.buckets.web),
-                ("otel", &self.buckets.otel),
-                ("state", &self.buckets.state),
-            ] {
-                ensure!(
-                    (3..=63).contains(&value.len()) && dns_name(value),
-                    "buckets.{field} is not a lowercase bucket name"
-                );
-            }
-        }
         ensure!(
             dns_name(&self.route_hosts.control),
             "route_hosts.control is not a lowercase DNS name"

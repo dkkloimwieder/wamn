@@ -1,18 +1,12 @@
 //! Identity service rendering and key setup.
 
 use std::path::Path;
-use wamn_kubernetes::job;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 
-use wamn_kubernetes::kubectl;
-use wamn_release_control::release_chart::Target;
-
 use super::artifact_plan::SelectedChart;
-use super::bootstrap::{SecretData, secret_text};
-use super::document::{ClusterDocument, Provider, UpgradeTarget};
-use wamn_kubernetes::job::Secret;
+use super::document::{ClusterDocument, UpgradeTarget};
 
 /// The platform broker Service used by in-cluster clients.
 pub const NATS_URL: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";
@@ -20,12 +14,6 @@ pub const NATS_URL: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";
 pub(crate) fn issuer(namespace: &str) -> String {
     format!("https://identity.{namespace}.svc.cluster.local")
 }
-const LOCAL_MAIL: &str = "/var/run/wamn-identity/mail/outbox";
-const RESEND_COMMAND: &str = "kubectl -n identity create secret generic identity-resend --from-literal=api-key=\"$(tr -d '[:space:]' < <file>)\"";
-const RESEND_SECRET_MANAGER: &str = "gcloud secrets versions access latest --secret identity-resend --project <project> must print a nonempty key with no whitespace; see gcp.md section 1";
-const CURL_IMAGE: &str =
-    "curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777";
-
 /// The identity endpoints enabled by this chart input.
 #[derive(Debug)]
 pub enum Mode {
@@ -96,257 +84,12 @@ pub fn chart_input(input: &ChartInput<'_>) -> anyhow::Result<Value> {
     )
 }
 
-fn valid_key(key: &str) -> bool {
-    !key.is_empty() && !key.chars().any(char::is_whitespace)
-}
-
-fn resend(secret: Option<&SecretData>) -> anyhow::Result<()> {
-    let valid = secret
-        .and_then(|secret| secret_text(secret, "api-key").ok())
-        .is_some_and(|key| valid_key(&key));
-    ensure!(
-        valid,
-        "owner input: Secret identity/identity-resend needs a nonempty api-key with no whitespace; run the section 1 command:\n{RESEND_COMMAND}"
-    );
-    Ok(())
-}
-
-/// The cluster Secret that carries a key read from the provider's key store.
-fn resend_secret(namespace: &str, key: &str) -> anyhow::Result<Value> {
-    ensure!(valid_key(key), "owner input: {RESEND_SECRET_MANAGER}");
-    Ok(json!({
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {"name": "identity-resend", "namespace": namespace},
-        "type": "Opaque",
-        "stringData": {"api-key": key},
-    }))
-}
-
-/// Write the mail Secret that the identity release mounts, before that release starts.
-///
-/// # Errors
-/// Returns an error if the provider key or the cluster Secret is absent or invalid.
-pub async fn mail(target: &Target, document: &ClusterDocument) -> anyhow::Result<()> {
-    // Where the provider keeps the key, the verb writes the cluster Secret
-    // from it, so a teardown loses nothing the owner made (wamn-ie1j2).
-    if document.provider == Provider::Kind {
-        tracing::warn!(
-            "email delivery is disabled for kind. Identity writes invitations to its local mail file"
-        );
-    } else {
-        if let Some(key) = document.provider.resend_key(document).await? {
-            kubectl::apply(
-                &target.kubeconfig,
-                &target.context,
-                document.org.as_str(),
-                &resend_secret(document.org.as_str(), &key)?,
-            )
-            .await?;
-        }
-        let owner = kubectl::get(
-            &target.kubeconfig,
-            &target.context,
-            document.org.as_str(),
-            "secret",
-            "identity-resend",
-        )
-        .await?;
-        resend(owner.as_ref())?;
-    }
-    Ok(())
-}
-
-pub async fn initialize(
-    target: &Target,
-    document: &ClusterDocument,
-    chart: &SelectedChart,
-    directory: &Path,
-) -> anyhow::Result<()> {
-    let identity = Target {
-        kubeconfig: target.kubeconfig.clone(),
-        context: target.context.clone(),
-        namespace: document.org.to_string(),
-    };
-    let image = chart.image("identity")?;
-    let active = keys(&identity, directory, image).await?;
-    let ca: SecretData = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        document.org.as_str(),
-        "secret",
-        "identity-tls",
-    )
-    .await?
-    .context("missing Secret identity/identity-tls")?;
-    let (mut probe, files) = endpoint_job(&secret_text(&ca, "ca.crt")?, document.org.as_str());
-    let hosts = Target {
-        namespace: document.org.to_string(),
-        ..identity
-    };
-    let result = job::run(&hosts, directory, &mut probe, &mut [files]).await?;
-    let jwks: Value = serde_json::from_str(&result).context("decode identity public keys")?;
-    ensure!(
-        jwks["keys"].as_array().is_some_and(|keys| keys
-            .iter()
-            .any(|key| key["kid"] == active["kid"] && key["x"] == active["x"])),
-        "identity does not serve its active session key"
-    );
-    invite_owner(target, document, directory, &ca).await?;
-    if document.provider == Provider::Kind {
-        println!(
-            "Local access: run kind export kubeconfig --name {} first.\nLocal invitation file (no email delivery): kubectl --context '{}' -n {} exec deployment/identity -c identity -- cat {LOCAL_MAIL}",
-            document.cluster_name,
-            target.context.replace('\'', "'\\''"),
-            document.org,
-        );
-    }
-    Ok(())
-}
-
-async fn owner_invitation<'a>(
-    connection: &'a mut sqlx::PgConnection,
-    org: &wamn_registry::OrgId,
-    email: &str,
-) -> anyhow::Result<sqlx::Transaction<'a, sqlx::Postgres>> {
-    sqlx::raw_sql("SET ROLE wamn_system")
-        .execute(&mut *connection)
-        .await?;
-    let mut transaction = crate::transaction::provisioning_transaction(connection).await?;
-    wamn_registry::deployment::lock_org(&mut transaction, org).await?;
-    let has_admin: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT FROM identity.org_roles r \
-         JOIN identity.org_memberships m USING (principal_id, org) \
-         JOIN identity.principals p ON p.id=r.principal_id \
-         WHERE r.org=$1 AND r.role='org-admin' AND m.status='active' \
-         AND p.status='active' AND p.email<>lower(btrim($2)))",
-    )
-    .bind(org)
-    .bind(email)
-    .fetch_one(&mut *transaction)
-    .await?;
-    ensure!(
-        !has_admin,
-        "org {org} already has an active org admin; use user.invite"
-    );
-    Ok(transaction)
-}
-
-async fn invite_owner(
-    target: &Target,
-    document: &ClusterDocument,
-    directory: &Path,
-    ca: &SecretData,
-) -> anyhow::Result<()> {
-    let platform = Target {
-        namespace: document.org.to_string(),
-        ..target.clone()
-    };
-    let forward =
-        super::database::forward(&platform, document.org.as_str(), "wamn-pg", "wamn_system")
-            .await?;
-    let mut connection = wamn_postgres::connect(&forward.input).await?;
-    let mut transaction =
-        owner_invitation(&mut connection, &document.org, &document.owner_email).await?;
-    let enrolled:bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.principals p WHERE p.type='user' AND p.email=lower(btrim($1)) AND (EXISTS(SELECT FROM identity.password_credentials c WHERE c.principal_id=p.id) OR EXISTS(SELECT FROM identity.password_tokens t WHERE t.principal_id=p.id AND t.purpose='invitation' AND t.consumed_at IS NULL AND t.expires_at>clock_timestamp())))")
-        .bind(&document.owner_email).fetch_one(&mut *transaction).await?;
-    if enrolled {
-        transaction.commit().await?;
-        return Ok(());
-    }
-    let operator: SecretData = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        document.org.as_str(),
-        "secret",
-        &wamn_registry::name::resource_suffix("operator", document.org.as_str()),
-    )
-    .await?
-    .context("missing identity operator Secret")?;
-    let (mut user, files) = operator_job(
-        document,
-        "users",
-        &json!({"email":document.owner_email,"display_name":document.owner_email}),
-        &operator,
-        ca,
-    )?;
-    let response = job::run(&platform, directory, &mut user, &mut [files]).await?;
-    let user: wamn_identity_protocol::wire::UserResponse =
-        serde_json::from_str(&response).context("decode the initial owner's identity")?;
-    wamn_platform_identity::org::invite_member(
-        &mut transaction,
-        &user.principal_id,
-        &document.org,
-        &wamn_platform_identity::org::MemberGrants {
-            org_admin: true,
-            ..Default::default()
-        },
-    )
-    .await?;
-    transaction.commit().await?;
-    drop(connection);
-    drop(forward);
-    if !user.enrolled {
-        let (mut invitation, files) = operator_job(
-            document,
-            "invitations",
-            &json!({"principal_id":user.principal_id}),
-            &operator,
-            ca,
-        )?;
-        job::run(&platform, directory, &mut invitation, &mut [files]).await?;
-    }
-    Ok(())
-}
-
-fn operator_job(
-    document: &ClusterDocument,
-    route: &str,
-    body: &Value,
-    operator: &SecretData,
-    ca: &SecretData,
-) -> anyhow::Result<(Value, Secret)> {
-    let mut job = job::manifest(
-        &format!("platform-owner-{route}-{}", document.org),
-        CURL_IMAGE,
-        &["curl"],
-        &[
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--cacert",
-            "/inputs/ca.crt",
-            "--cert",
-            "/inputs/tls.crt",
-            "--key",
-            "/inputs/tls.key",
-            "--header",
-            "Content-Type: application/json",
-            "--data",
-            &body.to_string(),
-            &format!("{}/{route}", issuer(document.org.as_str())),
-        ],
-    );
-    let files = job::files(
-        &mut job,
-        [
-            ("tls.crt".into(), secret_text(operator, "tls.crt")?),
-            ("tls.key".into(), secret_text(operator, "tls.key")?),
-            ("ca.crt".into(), secret_text(ca, "ca.crt")?),
-        ]
-        .into(),
-    );
-    job["spec"]["template"]["spec"]["securityContext"] = json!({"runAsUser":0});
-    Ok((job, files))
-}
-
 pub(super) fn platform_chart_input(
     chart: &Path,
     document: &ClusterDocument,
     image: &str,
 ) -> anyhow::Result<Value> {
-    let mail = document.provider != Provider::Kind;
-    let mut entry = chart_input(&ChartInput {
+    let entry = chart_input(&ChartInput {
         chart,
         name: "identity",
         namespace: document.org.as_str(),
@@ -356,19 +99,14 @@ pub(super) fn platform_chart_input(
         database_secret: "wamn-identity-db",
         tls_secret: "identity-tls",
         operator_ca_secret: "identity-operator-ca",
-        resend_secret: if mail { "identity-resend" } else { "" },
-        resend_from: if mail { &document.resend_from } else { "" },
-        invite_url: &if mail {
-            format!("https://{}", document.route_hosts.control)
-        } else {
-            String::new()
-        },
+        resend_secret: "",
+        resend_from: "",
+        invite_url: "",
         mode: Mode::Session {
             targets: Vec::new(),
             nats: Some((NATS_URL.into(), "wamn-identity-nats".into())),
         },
     })?;
-    entry["values"]["localMail"] = if mail { "" } else { LOCAL_MAIL }.into();
     Ok(entry)
 }
 
@@ -402,196 +140,4 @@ pub async fn require_keys(
         ensure!(active,"identity has no active signing key");
         anyhow::Ok(())
     }).await.context("inspect identity signing state within the call limit")?
-}
-
-// Initial platform bootstrap alone uses the explicit administrator connection.
-async fn key_state(target: &Target) -> anyhow::Result<Value> {
-    let forward =
-        super::database::forward(target, &target.namespace, "wamn-pg", "wamn_system").await?;
-    let mut connection = wamn_postgres::connect(&forward.input).await?;
-    Ok(sqlx::query_scalar("SELECT json_build_object('active',(SELECT json_build_object('kid',k.kid::text,'x',translate(rtrim(encode(k.public_key,'base64'),'='),'+/','-_')) FROM identity.session_signing_state s JOIN identity.session_keys k ON (k.issuer,k.kid)=(s.issuer,s.active_kid) WHERE s.issuer=$1 AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL),'published',(SELECT kid::text FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL ORDER BY published_at,kid LIMIT 1))")
-        .bind(issuer(&target.namespace)).fetch_one(&mut connection).await?)
-}
-
-async fn keys(identity: &Target, directory: &Path, identity_image: &str) -> anyhow::Result<Value> {
-    let mut state = key_state(identity).await?;
-    if state["active"].is_object() {
-        return Ok(state["active"].take());
-    }
-    let config: Value = kubectl::get(
-        &identity.kubeconfig,
-        &identity.context,
-        &identity.namespace,
-        "configmap",
-        "wamn-identity-db-configuration",
-    )
-    .await?
-    .context("identity connection configuration is absent")?;
-    let connection = config["data"]["connection.json"]
-        .as_str()
-        .context("identity connection data is absent")?;
-    let kid = if let Some(kid) = state["published"].as_str() {
-        kid.to_owned()
-    } else {
-        let mut publish = key_publish_job(identity_image, &identity.namespace);
-        publish["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
-        job::environment(&mut publish, &[("WAMN_IDENTITY_DATABASE_URL", connection)]);
-        let result = job::run(identity, directory, &mut publish, &mut []).await?;
-        let public: Value = serde_json::from_str(&result)?;
-        public["kid"]
-            .as_str()
-            .context("published key has no id")?
-            .to_owned()
-    };
-    let mut activate = key_activate_job(identity_image, &kid, &identity.namespace);
-    activate["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
-    job::environment(&mut activate, &[("WAMN_IDENTITY_DATABASE_URL", connection)]);
-    job::run(identity, directory, &mut activate, &mut []).await?;
-    let mut state = key_state(identity).await?;
-    ensure!(
-        state["active"].is_object(),
-        "identity key activation did not persist"
-    );
-    Ok(state["active"].take())
-}
-
-fn endpoint_job(ca: &str, namespace: &str) -> (Value, Secret) {
-    let mut job = job::manifest(
-        "platform-identity-probe",
-        CURL_IMAGE,
-        &["curl"],
-        &[
-            "--fail",
-            "--fail-early",
-            "--silent",
-            "--show-error",
-            "--cacert",
-            "/inputs/ca.crt",
-            "--output",
-            "/dev/null",
-            &format!("{}/healthz", issuer(namespace)),
-            "--next",
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--cacert",
-            "/inputs/ca.crt",
-            &format!("{}/.well-known/jwks.json", issuer(namespace)),
-        ],
-    );
-    let files = job::files(&mut job, [("ca.crt".into(), ca.into())].into());
-    job["spec"]["template"]["spec"]["securityContext"] = json!({"runAsUser":0});
-    (job, files)
-}
-
-fn key_publish_job(image: &str, namespace: &str) -> Value {
-    let mut job = job::manifest(
-        "platform-session-key-publish",
-        image,
-        &["/usr/local/bin/wamn-identity"],
-        &["publish"],
-    );
-    job::environment(&mut job, &[("WAMN_IDENTITY_ISSUER", &issuer(namespace))]);
-    job
-}
-
-fn key_activate_job(image: &str, kid: &str, namespace: &str) -> Value {
-    let mut job = job::manifest(
-        "platform-session-key-activate",
-        image,
-        &["/usr/local/bin/wamn-identity"],
-        &["activate", "--kid", kid],
-    );
-    job::environment(&mut job, &[("WAMN_IDENTITY_ISSUER", &issuer(namespace))]);
-    job
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-
-    #[sqlx::test(migrations = false)]
-    async fn owner_invitation_serializes_and_refuses_a_different_active_admin(
-        pool: sqlx::PgPool,
-    ) -> anyhow::Result<()> {
-        let _lock = wamn_test_postgres::lock();
-        let database = wamn_test_postgres::url(&pool);
-        wamn_control_provision::test_database::system(database.as_str()).await;
-        let mut first = wamn_postgres::connect(database.as_str()).await?;
-        sqlx::raw_sql("SET ROLE wamn_system")
-            .execute(&mut first)
-            .await?;
-        let mut setup = crate::transaction::provisioning_transaction(&mut first).await?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::test_database::seed_org_project_env_sql(
-                &"acme".parse().unwrap(),
-                &"app".parse().unwrap(),
-                &"dev".parse().unwrap(),
-            ),
-        ))
-        .execute(&mut *setup)
-        .await?;
-        let owner =
-            wamn_platform_identity::create_or_reuse_user(&mut setup, "owner@example.test", "Owner")
-                .await?;
-        setup.commit().await?;
-
-        let mut transaction =
-            owner_invitation(&mut first, &"acme".parse().unwrap(), "owner@example.test").await?;
-        {
-            let mut second = wamn_postgres::connect(database.as_str()).await?;
-            let org = "acme".parse().unwrap();
-            let waiting = owner_invitation(&mut second, &org, "other@example.test");
-            tokio::pin!(waiting);
-            assert!(
-                tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiting)
-                    .await
-                    .is_err()
-            );
-            wamn_platform_identity::org::invite_member(
-                &mut transaction,
-                &owner.principal_id,
-                &"acme".parse().unwrap(),
-                &wamn_platform_identity::org::MemberGrants {
-                    org_admin: true,
-                    ..Default::default()
-                },
-            )
-            .await?;
-            transaction.commit().await?;
-            assert!(
-                tokio::time::timeout(std::time::Duration::from_secs(5), waiting)
-                    .await?
-                    .is_err()
-            );
-        }
-        // The same owner can resume an incomplete bootstrap, including folded email spelling.
-        owner_invitation(&mut first, &"acme".parse().unwrap(), " Owner@Example.test ")
-            .await?
-            .rollback()
-            .await?;
-        Ok(())
-    }
-
-    #[test]
-    fn a_secret_manager_key_refuses_empty_and_whitespace_without_printing_it() {
-        for key in ["", "re_key\n", "re key"] {
-            assert!(resend_secret("acme", key).is_err());
-        }
-        assert!(resend_secret("acme", "re_key").is_ok());
-    }
-
-    #[test]
-    fn resend_refuses_missing_empty_and_whitespace_without_printing_values() {
-        assert!(resend(None).is_err());
-        for value in ["", "private key", "private\n", "\tprivate", "private\u{a0}"] {
-            let secret =
-                serde_json::from_value(json!({"data":{"api-key":STANDARD.encode(value)}})).unwrap();
-            assert!(resend(Some(&secret)).is_err());
-        }
-        let secret =
-            serde_json::from_value(json!({"data":{"api-key":STANDARD.encode("private")}})).unwrap();
-        assert!(resend(Some(&secret)).is_ok());
-    }
 }

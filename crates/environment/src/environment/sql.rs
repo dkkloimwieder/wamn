@@ -3,10 +3,10 @@
 pub mod reset;
 pub mod schema;
 
-use anyhow::{Context as _, ensure};
+use anyhow::ensure;
 
-use super::document::{DeclaredRelease, EnvironmentDocument};
-use super::{Platform, analyse, ensure, stage};
+use super::document::EnvironmentDocument;
+use super::{Platform, ensure};
 
 /// Database identities resolved before a Job starts, compared under its own lock.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -57,59 +57,6 @@ impl ExpectedDatabase {
         }
         Ok(lock)
     }
-}
-
-/// Initialize project state and absent package baselines after CNPG creates the database.
-/// Platform and package SQL each use their separately authenticated migration connection.
-/// Committed package records survive a later failure and prevent SQL replay.
-pub async fn initialize(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    admin_url: &str,
-    platform_migration_database_url: &str,
-    migration_database_url: &str,
-    application: Option<&wamn_catalog::ApplicationName>,
-) -> anyhow::Result<()> {
-    let document = analyse::select_application(document, application)?;
-    let DeclaredRelease::Digest(digest) = document.legacy_release() else {
-        anyhow::bail!("initialization requires an application release");
-    };
-    let manifest = analyse::pull_release_manifest(platform, digest).await?;
-    let packages = analyse::read_release_packages(platform, &manifest).await?;
-    let project_url = ensure::project_url(platform, &document.triple()).await?;
-    let database = wamn_postgres::identity(&project_url)?.1;
-    let mut admin = wamn_postgres::connect(admin_url).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        crate::provision_project_env::privilege_sql(&database),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .context("set the database base privileges after CNPG")?;
-    ensure::ensure_project_database(
-        platform,
-        &document,
-        &packages,
-        &mut admin,
-        admin_url,
-        platform_migration_database_url,
-    )
-    .await?;
-    let drops =
-        super::bindings::project_authority(&platform.system_database_url, &project_url, &document)
-            .await?;
-    platform.auth_changes().await?.publish(drops).await;
-    let installed = stage::installed(platform, &document).await?;
-    stage::initialize(
-        platform,
-        &document,
-        &installed,
-        &manifest,
-        &project_url,
-        migration_database_url,
-    )
-    .await?;
-    Ok(())
 }
 
 /// Inputs for one project substrate operation in the selected image.

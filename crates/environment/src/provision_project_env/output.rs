@@ -104,19 +104,6 @@ pub(crate) fn write_output(path: Option<&Path>, text: &str) -> anyhow::Result<()
     Ok(())
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "carries minted PATs and password-bearing URLs; no derived formatter may print them"
-)]
-pub struct ProvisionedRoute {
-    pub database_url: String,
-    pub token: String,
-    pub token_prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
-    pub principal_subject: wamn_identity_protocol::PrincipalId,
-    pub management_token: Option<String>,
-    pub management_principal_subject: Option<wamn_identity_protocol::PrincipalId>,
-}
-
 pub fn read_json(path: &Path) -> anyhow::Result<Value> {
     serde_json::from_slice(
         &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,

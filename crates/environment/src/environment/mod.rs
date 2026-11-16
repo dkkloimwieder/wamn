@@ -14,15 +14,13 @@ pub mod lifecycle;
 pub mod operation;
 pub mod readiness;
 pub mod retention;
-pub mod rollback;
 pub mod runtime;
 pub mod show;
 pub mod sql;
 pub mod stage;
-pub mod status;
 pub mod write;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Context as _;
 
@@ -30,9 +28,6 @@ use analyse::Analysis;
 use document::EnvironmentDocument;
 use wamn_identity_client::PatIssuerConfig;
 use wamn_release_control::release_chart;
-
-/// The namespace of the release chart when `WAMN_RELEASE_NAMESPACE` is unset.
-const DEFAULT_NAMESPACE: &str = "hosts";
 
 /// The platform inputs of the lifecycle verbs.
 #[derive(Debug, Clone)]
@@ -75,146 +70,11 @@ pub struct Platform {
     /// The event broker for application capture and entity consumers.
     pub events: Option<wamn_broker::EventBroker>,
     /// The scheduler NATS the verbs publish their auth changes on.
-    /// [`Platform::from_env`] requires it. A test without hosts sets `None`.
+    /// A test without hosts sets `None`.
     pub auth_nats: Option<wamn_broker::nats::PlatformNats>,
 }
 
 impl Platform {
-    /// Read the platform inputs: `WAMN_CONTROL_DATABASE_URL`, `KUBECONFIG`
-    /// and its current context, `WAMN_RELEASE_NAMESPACE` (default
-    /// `hosts`), `WAMN_RELEASE_CHART`, `WAMN_RELEASE_ARTIFACT_BASE`,
-    /// `WAMN_REGISTRY_AUTH_FILE` and `WAMN_OCI_CA_PATHS` (colon-separated).
-    ///
-    /// # Errors
-    ///
-    /// When a required variable is unset, or the kubeconfig has no current context.
-    pub fn from_env() -> anyhow::Result<Self> {
-        Self::from_database_env("WAMN_CONTROL_DATABASE_URL")
-    }
-
-    /// Read the restricted environment apply inputs.
-    pub fn apply_from_env() -> anyhow::Result<Self> {
-        Self::from_database_env("WAMN_APPLY_DATABASE_URL")
-    }
-
-    fn from_database_env(database_variable: &str) -> anyhow::Result<Self> {
-        Self::from_inputs(
-            database_variable,
-            kubernetes_target(
-                std::env::var("WAMN_RELEASE_NAMESPACE")
-                    .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned()),
-            )?,
-            std::env::var_os("WAMN_RELEASE_CHART").map_or_default(PathBuf::from),
-            false,
-        )
-    }
-
-    /// Read SQL Job inputs without invoking Kubernetes or requiring a release chart.
-    pub fn sql_from_env() -> anyhow::Result<Self> {
-        Self::from_inputs(
-            "WAMN_APPLY_DATABASE_URL",
-            release_chart::Target {
-                kubeconfig: PathBuf::new(),
-                context: String::new(),
-                namespace: std::env::var("WAMN_RELEASE_NAMESPACE")
-                    .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned()),
-            },
-            PathBuf::new(),
-            false,
-        )
-    }
-
-    /// Read only database inputs for a project substrate SQL Job.
-    pub fn project_schema_from_env() -> anyhow::Result<Self> {
-        Self::from_inputs(
-            "WAMN_APPLY_DATABASE_URL",
-            release_chart::Target {
-                kubeconfig: PathBuf::new(),
-                context: String::new(),
-                namespace: std::env::var("WAMN_RELEASE_NAMESPACE")
-                    .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned()),
-            },
-            PathBuf::new(),
-            true,
-        )
-    }
-
-    fn from_inputs(
-        database_variable: &str,
-        target: release_chart::Target,
-        chart: PathBuf,
-        project_schema: bool,
-    ) -> anyhow::Result<Self> {
-        let variable = |name: &str| {
-            std::env::var(name).with_context(|| format!("set {name} for wamn-ctl env"))
-        };
-        let registry_token_metadata =
-            std::env::var("WAMN_REGISTRY_TOKEN_METADATA").as_deref() == Ok("true");
-        let host_group = if project_schema {
-            None
-        } else {
-            std::env::var_os("WAMN_RELEASE_HOST_GROUP").map(PathBuf::from)
-        };
-        let insecure_registry = match &host_group {
-            Some(path) => runtime::insecure_registry(&serde_yaml::from_slice(
-                &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
-            )?),
-            None => false,
-        };
-        Ok(Self {
-            insecure_registry,
-            system_database_url: variable(database_variable)?,
-            chart,
-            chart_download: None,
-            release_artifact_base: if project_schema {
-                String::new()
-            } else {
-                variable("WAMN_RELEASE_ARTIFACT_BASE")?
-            },
-            registry_token_metadata,
-            registry_auth_file: if project_schema || registry_token_metadata {
-                PathBuf::new()
-            } else {
-                PathBuf::from(variable("WAMN_REGISTRY_AUTH_FILE")?)
-            },
-            oci_ca_paths: std::env::var("WAMN_OCI_CA_PATHS").map_or_default(|paths| {
-                paths
-                    .split(':')
-                    .filter(|path| !path.is_empty())
-                    .map(PathBuf::from)
-                    .collect()
-            }),
-            package_artifact_base: std::env::var("WAMN_PACKAGE_ARTIFACT_BASE").ok(),
-            component_artifact_base: std::env::var("WAMN_COMPONENT_ARTIFACT_BASE").ok(),
-            database_namespace: std::env::var("WAMN_DATABASE_NAMESPACE")
-                .unwrap_or_else(|_| target.namespace.clone()),
-            database_host: std::env::var("WAMN_DATABASE_HOST").ok(),
-            database_port: std::env::var("WAMN_DATABASE_PORT")
-                .ok()
-                .map(|port| port.parse().context("WAMN_DATABASE_PORT is not a port"))
-                .transpose()?
-                .unwrap_or(5432),
-            host_group,
-            pat_issuer: PatIssuerConfig {
-                endpoint: std::env::var("WAMN_IDENTITY_URL").ok(),
-                client_cert: std::env::var_os("WAMN_IDENTITY_CLIENT_CERT").map(PathBuf::from),
-                client_key: std::env::var_os("WAMN_IDENTITY_CLIENT_KEY").map(PathBuf::from),
-                server_ca: std::env::var_os("WAMN_IDENTITY_SERVER_CA").map(PathBuf::from),
-            },
-            events: if project_schema {
-                None
-            } else {
-                event_broker_from_env()?
-            },
-            auth_nats: if project_schema {
-                None
-            } else {
-                Some(wamn_broker::nats::PlatformNats::from_env()?)
-            },
-            target,
-        })
-    }
-
     pub(crate) async fn registry(
         &self,
         base: &str,
@@ -268,130 +128,6 @@ impl Platform {
     }
 }
 
-/// Read the current Kubernetes target without database or artifact inputs.
-pub fn kubernetes_target(namespace: String) -> anyhow::Result<release_chart::Target> {
-    let kubeconfig = match std::env::var_os("KUBECONFIG") {
-        Some(path) => PathBuf::from(path),
-        None => PathBuf::from(std::env::var_os("HOME").context("set HOME or KUBECONFIG")?)
-            .join(".kube/config"),
-    };
-    Ok(release_chart::Target {
-        context: wamn_kubernetes::kubectl::current_context(&kubeconfig)?,
-        kubeconfig,
-        namespace,
-    })
-}
-
-/// `env apply <file> --dry-run`: analyse without the lock and return the
-/// plan. The plan describes this moment only.
-///
-/// # Errors
-///
-/// When the document is refused, or an authority cannot be read.
-pub async fn dry_run(
-    platform: &Platform,
-    file: &Path,
-    application: Option<&wamn_catalog::ApplicationName>,
-) -> anyhow::Result<Analysis> {
-    let mut document = EnvironmentDocument::compile(file)?;
-    let private = ensure::PrivateDirectory::create()?;
-    let mut resolved = platform.clone();
-    runtime::resolve_target(&mut resolved, &document, &private.path(".")).await?;
-    let mut system = wamn_postgres::connect(&resolved.system_database_url).await?;
-    if let Some(configuration) =
-        document::read_configuration(&mut system, &document.triple()).await?
-    {
-        for (name, application) in configuration.applications {
-            if let Some(selection) = document.applications.get_mut(&name) {
-                selection.current = application.release.map_or(
-                    document::DeclaredRelease::None,
-                    document::DeclaredRelease::Digest,
-                );
-            }
-        }
-    }
-    document.resolve_releases(&resolved).await?;
-    analyse::analyse(&resolved, &document, application).await
-}
-
-/// Apply explicit environment configuration and reapply one recorded application selection.
-///
-/// # Errors
-///
-/// When the document is refused or an operation fails. The error
-/// names the operation.
-pub async fn apply(
-    platform: &Platform,
-    file: &Path,
-    application: &wamn_catalog::ApplicationName,
-) -> anyhow::Result<Analysis> {
-    let document = EnvironmentDocument::compile(file)?;
-    let mut platform = platform.clone();
-    let control = runtime::resolve_platform(&mut platform, &document.org).await?;
-    wamn_catalog::lifecycle_lock::LifecycleLock::hold(
-        wamn_postgres::connect(&platform.system_database_url).await?,
-        &document.triple(),
-        async |lock| {
-            wamn_catalog::configuration::require_placement(
-                &mut *lock.client().await,
-                &document.org,
-                &document.env,
-                &document.policy,
-            )
-            .await?;
-            if ensure::resources_in_place(&platform, &document).await? {
-                let cluster = sql::reset::recorded_cluster(&platform, &document).await?;
-                let triple = document.triple();
-                let instance = crate::provision_project_env::read_project_env_instance(
-                    &platform.system_database_url,
-                    &triple,
-                )
-                .await?;
-                let database = wamn_control_provision::project_env_database_name(
-                    &document.org,
-                    &document.project,
-                    &document.env,
-                    &instance,
-                );
-                crate::platform::operations::provision(
-                    &platform.target,
-                    &platform.chart,
-                    &triple,
-                    &cluster,
-                    &database,
-                )
-                .await?;
-            } else {
-                let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL")
-                    .context("set WAMN_SYSTEM_ADMIN_URL for environment provisioning")?;
-                Box::pin(ensure::provision_resources(
-                    &platform,
-                    &control,
-                    &document,
-                    &[],
-                    &admin,
-                ))
-                .await?;
-            }
-            let mut connection = lock.client().await;
-            let mut transaction =
-                crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-            document.save(&mut transaction).await?;
-            transaction.commit().await?;
-            Ok(())
-        },
-    )
-    .await?;
-    apply_selection(
-        &platform,
-        &document.triple(),
-        application,
-        document::ReleaseChange::Configure,
-        None,
-    )
-    .await
-}
-
 /// Deploy a published release to the named application. Membership comes from its manifest.
 pub async fn deploy(
     platform: &Platform,
@@ -433,9 +169,8 @@ async fn apply_selection(
     change: document::ReleaseChange<'_>,
     actor: Option<&wamn_identity_protocol::PrincipalId>,
 ) -> anyhow::Result<Analysis> {
-    let private = ensure::PrivateDirectory::create()?;
     let mut platform = platform.clone();
-    let control = runtime::resolve_platform(&mut platform, &triple.org).await?;
+    runtime::resolve_platform(&mut platform, &triple.org).await?;
     let lock = wamn_catalog::lifecycle_lock::LifecycleLock::acquire_application(
         wamn_postgres::connect(&platform.system_database_url).await?,
         triple,
@@ -483,15 +218,12 @@ async fn apply_selection(
                         .expect("application was declared")
                         .current = document::DeclaredRelease::None;
                 }
-                document::ReleaseChange::Configure => {}
             }
             crate::provision_project_env::registry::require_connected(
                 &mut *lock.client().await,
                 triple,
             )
             .await?;
-            runtime::resolve_application(&mut platform, &document, &private.path("."), &control)
-                .await?;
             let mut analysis = analyse::analyse(&platform, &document, Some(application)).await?;
             if let Some(actor) = actor {
                 analysis.actor = actor.to_string();
@@ -513,27 +245,6 @@ async fn apply_selection(
             expand::expand(&platform, &document, &analysis, publisher)
                 .await
                 .context("prepare application control records")?;
-            let selection = &document.applications[application];
-            let release = match &selection.current {
-                document::DeclaredRelease::None => None,
-                document::DeclaredRelease::Digest(digest) => Some(digest),
-            };
-            let mut connection = lock.client().await;
-            let mut transaction =
-                crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-            anyhow::ensure!(
-                wamn_catalog::configuration::write_selection(
-                    &mut transaction,
-                    triple,
-                    application,
-                    release,
-                    selection.client.as_ref()
-                )
-                .await?,
-                "application configuration disappeared"
-            );
-            transaction.commit().await?;
-            drop(connection);
             if let Some(prepared) = prepared {
                 let written = write::write(
                     &platform,
@@ -568,24 +279,4 @@ async fn apply_selection(
         .await;
     lock.release().await;
     result
-}
-
-/// Read event broker inputs for both deployed and local workflow verbs.
-pub fn event_broker_from_env() -> anyhow::Result<Option<wamn_broker::EventBroker>> {
-    Ok(match std::env::var_os("WAMN_NATS_URL") {
-        None => None,
-        Some(_) => Some(wamn_broker::EventBroker {
-            nats: wamn_broker::nats::PlatformNats::from_env()?,
-            stream_replicas: std::env::var("WAMN_EVENT_STREAM_REPLICAS")
-                .ok()
-                .map(|count| count.parse().context("WAMN_EVENT_STREAM_REPLICAS"))
-                .transpose()?
-                .unwrap_or(1),
-            dup_window_secs: std::env::var("WAMN_EVENT_DUP_WINDOW_SECS")
-                .ok()
-                .map(|seconds| seconds.parse().context("WAMN_EVENT_DUP_WINDOW_SECS"))
-                .transpose()?
-                .unwrap_or(120),
-        }),
-    })
 }

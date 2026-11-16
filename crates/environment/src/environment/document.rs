@@ -32,15 +32,7 @@ impl EnvironmentDocument {
     ///
     /// When KCL refuses the file, or when the JSON is not a valid document.
     pub fn compile(file: &Path) -> anyhow::Result<Self> {
-        let bytes = if file
-            .extension()
-            .is_some_and(|extension| extension == "json")
-        {
-            std::fs::read(file)?
-        } else {
-            crate::kcl::compile(file, "environment")?
-        };
-        Self::from_json(&bytes)
+        Self::from_json(&std::fs::read(file)?)
             .with_context(|| format!("{} is not a valid environment", file.display()))
     }
 }
@@ -91,7 +83,6 @@ pub async fn write_revocation_configuration(
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ReleaseChange<'a> {
     Deploy(&'a wamn_digest::Digest),
-    Configure,
     Stop,
     Rollback(Option<&'a wamn_digest::Digest>),
 }
@@ -320,161 +311,6 @@ mod tests {
             read.schema.mode = None;
             assert_eq!(read.schema_mode(disposable), expected);
         }
-        Ok(())
-    }
-
-    #[sqlx::test(migrations = false)]
-    async fn registry_configuration_round_trip(pool: sqlx::PgPool) -> anyhow::Result<()> {
-        use wamn_catalog::configuration;
-        let _lock = wamn_test_postgres::lock();
-        let database = wamn_test_postgres::url(&pool);
-        wamn_control_provision::test_database::system(database.as_str()).await;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::test_database::seed_org_project_env_sql(
-                &"acme".parse().unwrap(),
-                &"wms".parse().unwrap(),
-                &"prod".parse().unwrap(),
-            ),
-        ))
-        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
-        .await?;
-        let triple = Triple::new(
-            "acme".parse().unwrap(),
-            "prod".parse().unwrap(),
-            "wms".parse().unwrap(),
-        );
-        let mut connection = wamn_postgres::connect(database.as_str()).await?;
-        assert!(
-            read_configuration(&mut connection, &triple)
-                .await?
-                .is_none()
-        );
-        let mut expected =
-            EnvironmentDocument::from_json(&serde_json::to_vec(&configuration())?)?.configuration();
-        expected.revocation_seconds = 3600;
-        expected
-            .applications
-            .get_mut("wms")
-            .unwrap()
-            .revocation_seconds = 0;
-        let mut second = expected.applications["wms"].clone();
-        second.hostname = "second.example".into();
-        second.revocation_seconds = 3600;
-        second.connections.get_mut("erp").unwrap().version = Some(1);
-        expected
-            .applications
-            .insert("second".parse().expect("valid name"), second);
-        {
-            let batches: &[&str] = &[
-                "CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
-                wamn_control_provision::apply::APPLY_GRANTS_SQL,
-            ];
-            let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
-            for batch in batches {
-                sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
-                    .execute(&mut setup_connection)
-                    .await?;
-            }
-        }
-        sqlx::raw_sql("SET ROLE wamn_apply")
-            .execute(&mut connection)
-            .await?;
-        let mut transaction =
-            crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-        assert!(configuration::write(&mut transaction, &expected).await?);
-        transaction.commit().await?;
-        sqlx::raw_sql("SET ROLE wamn_control")
-            .execute(&mut connection)
-            .await?;
-        assert_eq!(
-            read_configuration(&mut connection, &triple).await?.as_ref(),
-            Some(&expected)
-        );
-        sqlx::raw_sql("SET ROLE wamn_apply")
-            .execute(&mut connection)
-            .await?;
-        let release = wamn_digest::bytes_sha256(b"selected release");
-        let restored = Client {
-            package: "wamn_wms".parse().unwrap(),
-            web: wamn_digest::bytes_sha256(b"restored web"),
-        };
-        let mut transaction =
-            crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-        assert!(
-            configuration::write_selection(
-                &mut transaction,
-                &triple,
-                &"wms".parse().expect("valid name"),
-                Some(&release),
-                Some(&restored)
-            )
-            .await?
-        );
-        transaction.commit().await?;
-        let application = expected.applications.get_mut("wms").unwrap();
-        application.release = Some(release);
-        application.client = Some(restored);
-        assert_eq!(
-            read_configuration(&mut connection, &triple).await?.as_ref(),
-            Some(&expected)
-        );
-        // A settings write keeps desired releases and replaces obsolete child rows.
-        expected.schema.mode = None;
-        expected.applications.remove("second");
-        expected
-            .applications
-            .get_mut("wms")
-            .unwrap()
-            .connections
-            .clear();
-        expected.integrations.clear();
-        let mut transaction =
-            crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-        assert!(configuration::write(&mut transaction, &expected).await?);
-        transaction.commit().await?;
-        assert_eq!(
-            read_configuration(&mut connection, &triple).await?.as_ref(),
-            Some(&expected)
-        );
-        let mut transaction =
-            crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-        assert!(
-            configuration::write_selection(
-                &mut transaction,
-                &triple,
-                &"wms".parse().expect("valid name"),
-                None,
-                None
-            )
-            .await?
-        );
-        assert!(
-            !configuration::write_selection(
-                &mut transaction,
-                &triple,
-                &"missing".parse().expect("valid name"),
-                None,
-                None
-            )
-            .await?
-        );
-        transaction.commit().await?;
-        let application = expected.applications.get_mut("wms").unwrap();
-        application.release = None;
-        application.client = None;
-        assert_eq!(
-            read_configuration(&mut connection, &triple).await?.as_ref(),
-            Some(&expected)
-        );
-        expected.applications.clear();
-        let mut transaction =
-            crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-        assert!(configuration::write(&mut transaction, &expected).await?);
-        transaction.commit().await?;
-        assert_eq!(
-            read_configuration(&mut connection, &triple).await?.as_ref(),
-            Some(&expected)
-        );
         Ok(())
     }
 

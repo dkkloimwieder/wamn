@@ -350,27 +350,3 @@ pub async fn write(
     transaction.commit().await?;
     Ok(true)
 }
-
-/// Record the desired release and client before writing its Helm revision.
-/// The caller owns the application lifecycle lock and binds the provisioning actor.
-///
-/// # Errors
-/// Returns database errors. A missing application returns false.
-pub async fn write_selection(
-    connection: &mut sqlx::PgConnection,
-    triple: &Triple,
-    application: &crate::ApplicationName,
-    release: Option<&wamn_digest::Digest>,
-    client: Option<&Client>,
-) -> Result<bool, sqlx::Error> {
-    sqlx::query(
-        "WITH parent AS (UPDATE registry.environment_projects p SET revocation_seconds=p.revocation_seconds \
-         WHERE org=$1 AND env=$2 AND project=$3 AND EXISTS (SELECT FROM registry.environment_applications a \
-         WHERE (a.org,a.env,a.project)=(p.org,p.env,p.project) AND a.application=$4) RETURNING org,env,project) \
-         UPDATE registry.environment_applications a SET release_digest=$5, client_package=$6, client_web=$7 \
-         FROM parent p WHERE (a.org,a.env,a.project)=(p.org,p.env,p.project) AND a.application=$4",
-    )
-    .bind(&triple.org).bind(&triple.env).bind(&triple.project).bind(application).bind(release)
-    .bind(client.map(|client| &client.package)).bind(client.map(|client| &client.web))
-    .execute(connection).await.map(|result| result.rows_affected() == 1)
-}

@@ -166,34 +166,6 @@ pub async fn assign_pat_role(
     Ok(drops)
 }
 
-/// Mint a management-author PAT for a recorded environment without writing it.
-///
-/// # Errors
-///
-/// Returns an error if the environment, principal, role, or issuance is invalid.
-pub async fn mint_management_author_pat(
-    system_url: &str,
-    issuer: &wamn_identity_client::PatIssuerConfig,
-    triple: &Triple,
-    changes: &Publisher,
-) -> anyhow::Result<wamn_identity_protocol::wire::PatResponse> {
-    let pat_client = PatClient::new(issuer)?;
-    super::validate_project_env(&triple.org, &triple.project, &triple.env)?;
-    super::read_project_env_instance(system_url, triple).await?;
-    let mut client = wamn_postgres::connect(system_url)
-        .await
-        .context("system db connect for PAT issuance")?;
-
-    let result = async {
-        let (_, pat) =
-            mint_pat(&mut client, &pat_client, triple, MANAGEMENT_AUTHOR, changes).await?;
-        Ok(pat)
-    }
-    .await;
-    drop(client);
-    result
-}
-
 pub async fn resolve_or_create_service(
     client: &mut Client,
     subject: &str,

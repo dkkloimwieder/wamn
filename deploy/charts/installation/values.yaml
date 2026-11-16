@@ -156,6 +156,5 @@ platform:
   chart: ''
 edgeDnsNames: []
 hostEnvironment: {}
-hostConfiguration: {}
 
 brokerCertificates: []

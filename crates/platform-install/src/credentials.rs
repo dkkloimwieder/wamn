@@ -312,46 +312,6 @@ pub async fn provision_control_role(
     Ok(())
 }
 
-/// Reconcile the platform scope's own CNPG login and return its public connection configuration.
-pub async fn provision_platform_migration(
-    registry_input: &str,
-    input: &str,
-    scope: wamn_control_provision::migrations::MigrationDatabase,
-) -> anyhow::Result<String> {
-    let source = wamn_postgres::configuration(input)?;
-    let config: ConnectionConfig = serde_json::from_str(&source)
-        .context("explicit platform initialization requires a separate migration connection")?;
-    let cluster = config
-        .server_ca
-        .name
-        .strip_suffix("-ca")
-        .context("CNPG CA Secret must identify its cluster")?;
-    let role = scope.managed_role(&config.database);
-    let kubeconfig = std::env::var_os("KUBECONFIG").map_or_default(std::path::PathBuf::from);
-    reconcile(
-        registry_input,
-        &kubeconfig,
-        "",
-        &config
-            .credentials
-            .namespace
-            .parse::<wamn_registry::OrgId>()?,
-        cluster,
-        &role,
-    )
-    .await?;
-    let mut admin = wamn_postgres::connect(input).await?;
-    wait_role(&mut admin, &role.name).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "GRANT CONNECT ON DATABASE {} TO {}",
-        postgres_protocol::escape::escape_identifier(&config.database),
-        postgres_protocol::escape::escape_identifier(role.name.as_str())
-    )))
-    .execute(&mut admin)
-    .await?;
-    scope.configuration(input)
-}
-
 /// Serialize org chart writes and cancel Helm if the registry session is lost.
 pub(crate) async fn with_chart_lock<T>(
     registry_input: &str,
