@@ -549,7 +549,7 @@ An absent history row or actor leaves the invoking user null.
 A former event handler runs as a one-node workflow under a run row.
 `list`, `park`, and `release` operate on these event runs.
 
-A package declares no schedule (docs/plan/workflows.md R9).
+A package declares no schedule.
 A schedule workflow is a row of `catalog.workflows` with trigger `schedule` and a five-field cron, parsed by `croner`.
 The cron uses the project `timezone` setting in the environment database.
 An absent setting uses UTC. A setting with an invalid type or zone refuses that tick.
@@ -687,7 +687,7 @@ Park acts on the queue row only. The run status stays `dispatched`, so the retir
 
 The node is a std guest at `guests/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its parameter `expression` holds the JSONata text. The required `input-schema` and `output-schema` declare its input and result contracts. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
 
-The `shape` node turns the row event into the item array that `label-render` takes, with `packaging_id` and `location_id`, and the label key `{packaging_id}/{row_version}`. Epic 25 (`docs/history/wms-inventory-spec.md`) moved the trigger from the movement insert to the packaging update. One move therefore stores one label, and a redelivered event overwrites it. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
+The `shape` node turns the row event into the item array that `label-render` takes, with `packaging_id` and `location_id`, and the label key `{packaging_id}/{row_version}`. Epic 25 moved the trigger from the movement insert to the packaging update. One move therefore stores one label, and a redelivered event overwrites it. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
 
 A PAT-authenticated service can start an invoker workflow with its own held role.
 The host derives that role from current grants, with the existing single-role or held-admin selection rule.
@@ -802,7 +802,6 @@ A host without the bucket keeps no fact either, and reads every request from Pos
 
 Every function that writes one of these facts takes an [`AuthDrops`](../../crates/broker/src/auth_changes.rs) and records the change in it.
 Its caller deletes the keys of the list after the commit. `wamn-broker::Publisher` publishes both authorization and connection changes through one client.
-[`auth_drops_live`](../../crates/identity/tests/auth_drops_live.rs) runs each writer once and makes sure of the drop it records.
 A change of a user row or a user role deletes the key of the principal.
 A change of a role, a permission or the environment status deletes every key of the project.
 A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal delete the identity key of the principal.
@@ -1004,7 +1003,6 @@ An integration delete deletes no key, because it refuses while the integration h
 An integration disable or enable deletes the key of each of its connections, in every environment of the project.
 An `environment::apply` deletes the release key of each release whose connection rows changed.
 An `env delete` deletes every key of the environment.
-[`connection_drops_live`](../../crates/identity/tests/connection_drops_live.rs) runs each administration writer once and makes sure of the keys it deletes.
 
 ### Control sessions
 
@@ -1490,7 +1488,7 @@ The [native alignment page](native-alignment.md#current-limits) retains the unre
 ## Change feed
 
 A generated `query` with history defaults to a change feed.
-Its operation can opt out with `feed = false` ([wamn offline and sync](../plan/wamn-sync.md)).
+Its operation can opt out with `feed = false`.
 Authored reads do not support feeds yet.
 The feed is the `query` operation with its feed part, `feed: { cursor, limit }`, on the same GET route, so it has the list's grant and no permission row of its own.
 Its value is `{ rows, next_cursor, complete }`. Each row carries `id`, `row_version` and `deleted`, and a row that is not deleted carries `data`.

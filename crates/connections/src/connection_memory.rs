@@ -5,7 +5,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
-use wamn_broker::Publisher;
 
 use wamn_broker::kv_memory::CONNECTION_MEMORY_TTL;
 
@@ -86,7 +85,6 @@ pub struct EnvConnections {
 /// The connection facts one host keeps.
 pub struct ConnectionMemory {
     pub oauth_tokens: Arc<crate::oauth_token::Cache>,
-    pub resource_leases: Arc<crate::resource_lease::ResourceLeases>,
 }
 
 impl Default for ConnectionMemory {
@@ -108,19 +106,7 @@ impl ConnectionMemory {
     pub fn with_ttl(_ttl: Duration) -> Self {
         Self {
             oauth_tokens: Arc::default(),
-            resource_leases: Arc::new(
-                crate::resource_lease::ResourceLeases::new(None).expect("no lease database URL"),
-            ),
         }
-    }
-
-    /// Give this host's leases the same login as its connection reader.
-    pub fn with_resource_leases(
-        mut self,
-        leases: Arc<crate::resource_lease::ResourceLeases>,
-    ) -> Self {
-        self.resource_leases = leases;
-        self
     }
 
     /// Whether the host watches the bucket, and so keeps facts.
@@ -145,14 +131,6 @@ impl ConnectionMemory {
         _fact: ConnectionFact,
     ) {
     }
-}
-
-pub fn replicate(
-    _client: &async_nats::Client,
-    _project_env_key: Option<&wamn_registry::ProjectEnvKey>,
-    _holder: Arc<ConnectionMemory>,
-) -> Publisher {
-    Publisher::default()
 }
 
 #[cfg(test)]

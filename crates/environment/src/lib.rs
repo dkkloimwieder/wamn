@@ -9,7 +9,6 @@ pub mod migrations;
 pub mod org_connection;
 pub use wamn_platform_install::platform;
 pub mod platform_migrations;
-pub use wamn_platform_install::provision_org;
 pub mod provision_project_env;
 mod prune_dev_tags;
 pub use wamn_platform_install::provision_system;

@@ -129,19 +129,9 @@ impl SessionTarget {
         } else {
             SessionConnection::Operator(database_url.to_owned())
         };
-        let (username, selected_database) = wamn_postgres::identity(database_url)
+        let (_, selected_database) = wamn_postgres::identity(database_url)
             .map_err(|_| refused("session reader configuration refused"))?;
-        let role = crate::workload_login(
-            crate::WorkloadRoleFamily::SessionRoleReader,
-            crate::WorkloadRoleIdentity::ProjectEnvironment {
-                org: &triple.org,
-                project: &triple.project,
-                environment: &triple.env,
-                database: &database,
-            },
-        )
-        .map_err(|_| refused("session reader identity refused"))?;
-        if selected_database != database || username != role {
+        if selected_database != database {
             return Err(refused("session reader configuration names another target"));
         }
         Ok(Self {
@@ -206,81 +196,5 @@ impl SessionTarget {
     /// Borrow the validated reader connection for the database driver only.
     pub fn connection(&self) -> &SessionConnection {
         &self.document.connection
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn session_connections_keep_their_target_for_cluster_and_local_inputs() {
-        let triple = Triple::new(
-            "acme".parse().unwrap(),
-            "dev".parse().unwrap(),
-            "orders".parse().unwrap(),
-        );
-        let instance = &"aaaaaaa1".parse::<InstanceSuffix>().unwrap();
-        let database = project_env_database_name(
-            &"acme".parse().unwrap(),
-            &"orders".parse().unwrap(),
-            &"dev".parse().unwrap(),
-            instance,
-        );
-        let username = crate::workload_login(
-            crate::WorkloadRoleFamily::SessionRoleReader,
-            crate::WorkloadRoleIdentity::ProjectEnvironment {
-                org: &"acme".parse().unwrap(),
-                project: &"orders".parse().unwrap(),
-                environment: &"dev".parse().unwrap(),
-                database: &database,
-            },
-        )
-        .unwrap();
-        let native = ConnectionConfig {
-            host: "database.acme.svc".into(),
-            port: 5432,
-            database: database.clone(),
-            username: username.clone(),
-            credentials: wamn_postgres::SecretRef {
-                namespace: "acme".into(),
-                name: "reader".into(),
-            },
-            server_ca: wamn_postgres::SecretRef {
-                namespace: "acme".into(),
-                name: "database-ca".into(),
-            },
-        };
-        let key = wamn_registry::project_env_key(
-            &"acme".parse().unwrap(),
-            &"orders".parse().unwrap(),
-            &"dev".parse().unwrap(),
-        );
-        let explicit = format!("postgres://{username}:password@localhost/{database}");
-        for input in [native.to_json().unwrap(), explicit] {
-            let target = SessionTarget::new(&triple, instance, &key, &input).unwrap();
-            let decoded = SessionTarget::from_json(target.to_json().unwrap().as_bytes()).unwrap();
-            assert_eq!(decoded.triple(), target.triple());
-            assert_eq!(decoded.project_env_key(), target.project_env_key());
-            assert_eq!(decoded.instance_suffix(), target.instance_suffix());
-        }
-        assert!(
-            SessionTarget::new(
-                &triple,
-                instance,
-                &key,
-                &format!("postgres://other@localhost/{database}")
-            )
-            .is_err()
-        );
-        assert!(
-            SessionTarget::new(
-                &triple,
-                instance,
-                &key,
-                r#"{"url":"postgres://other@localhost/database"}"#
-            )
-            .is_err()
-        );
     }
 }

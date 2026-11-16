@@ -92,7 +92,6 @@ fn credential(
 pub(crate) struct Transport {
     pub http: crate::transport::HttpTransport,
     pub decision: wamn_authority::connection_authority::AuthorityDecision,
-    pub identity: Option<crate::transport::ClientIdentity>,
 }
 
 impl<'c> oauth2::AsyncHttpClient<'c> for Transport {
@@ -104,14 +103,7 @@ impl<'c> oauth2::AsyncHttpClient<'c> for Transport {
         Box::pin(async move {
             let (parts, body) = request.into_parts();
             let request = hyper::Request::from_parts(parts, body.as_slice());
-            let response = match &self.identity {
-                Some(identity) => {
-                    self.http
-                        .execute(identity.clone(), &self.decision, request)
-                        .await?
-                }
-                None => self.http.send_once(&self.decision, request).await?,
-            };
+            let response = self.http.send_once(&self.decision, request).await?;
             Ok(response.map(|bytes| bytes.to_vec()))
         })
     }

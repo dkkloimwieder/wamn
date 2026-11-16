@@ -26,7 +26,6 @@ pub mod test_database;
 
 pub mod application;
 pub mod configuration;
-pub mod connection_projection;
 pub mod connections;
 pub mod control;
 pub mod org;

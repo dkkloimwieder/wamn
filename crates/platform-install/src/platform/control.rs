@@ -177,17 +177,9 @@ pub(super) fn resource_entry(
     chart: &SelectedChart,
     _installed: Option<&Value>,
 ) -> anyhow::Result<Value> {
-    use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity};
     let org = &document.org;
     let name = wamn_registry::name::control_resource(org);
     let configuration = format!("{name}-configuration");
-    let login = wamn_control_provision::workload_login(
-        WorkloadRoleFamily::Control,
-        WorkloadRoleIdentity::Org {
-            org,
-            database: "wamn_system",
-        },
-    )?;
     let connection = |username, secret| {
         crate::credentials::configuration(
             org.as_str(),
@@ -207,7 +199,6 @@ pub(super) fn resource_entry(
         .map(str::parse::<wamn_digest::Digest>)
         .transpose()?;
     let config = json!({"org":org,"http_addr":"0.0.0.0:80",
-        "database":connection(login,wamn_control_provision::org_workload_secret_name(WorkloadRoleFamily::Control,org)),
         "apply_database":connection("wamn_apply".parse::<wamn_identity_protocol::LoginName>()?,"wamn-apply".into()),
         "session_issuer":super::identity::issuer(org.as_str()),"session_jwks_ca":"/etc/identity-ca/ca.crt",
         "administration_dir":"/etc/wamn/control-administration","worker":{"image":chart.image("control")?,"configuration":configuration,"service_account":wamn_registry::name::operation(org)},

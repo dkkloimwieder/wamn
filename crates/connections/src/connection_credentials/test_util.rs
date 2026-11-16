@@ -141,25 +141,6 @@ impl Fixture {
             .await
             .unwrap();
         let role = format!("c35_{}", uuid::Uuid::new_v4().simple());
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&format!(
-                "BEGIN; {} {}",
-                wamn_control_provision::bind_platform_principal_sql(
-                    wamn_control_provision::PlatformComponent::Provisioning
-                ),
-                wamn_control_provision::test_database::login_sql(
-                    wamn_control_provision::WorkloadRoleFamily::ConnectionReader,
-                    self.database.path().trim_start_matches('/'),
-                    &role.parse().unwrap(),
-                    "fixture-password"
-                )
-            ))
-                .to_string(),
-        ))
-        .execute(&mut admin)
-        .await
-        .map(drop)
-        .unwrap();
         sqlx::query(sqlx::AssertSqlSafe(
             (wamn_control_provision::sql::upsert_control_author_project_env_key_mapping_sql())
                 .to_string(),

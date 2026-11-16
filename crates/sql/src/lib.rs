@@ -401,9 +401,8 @@ pub use session_identity::valid_runner;
 
 pub(crate) use session_identity::validate_identity;
 
-pub mod connection_binding;
 pub mod invocation;
 
 use wamn_authority::identity::{
-    ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, SessionIdentity,
+    ReleaseIdentity, SessionIdentity,
 };

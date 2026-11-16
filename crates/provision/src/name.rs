@@ -27,11 +27,6 @@ pub fn workload_secret_name(
     wamn_registry::name::workload_secret_name(&family.secret_prefix(), org, project, env)
 }
 
-/// Use the registry name for an org workload credential.
-pub fn org_workload_secret_name(family: WorkloadRoleFamily, org: &wamn_registry::OrgId) -> String {
-    wamn_registry::name::org_workload_secret_name(&family.secret_prefix(), org)
-}
-
 /// Use the application workload name for guest SQL credentials.
 pub fn project_env_guest_secret_name(
     org: &wamn_registry::OrgId,

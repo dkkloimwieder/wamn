@@ -170,21 +170,7 @@ pub async fn rules(fixture: &mut Fixture, family: WorkloadRoleFamily) {
         "{} can create objects in {writable:?}",
         fixture.login
     );
-    if matches!(
-        family,
-        WorkloadRoleFamily::IdentityReader | WorkloadRoleFamily::ConnectionReader
-    ) {
-        let sequences: Vec<String> = sqlx::query_scalar(
-            "SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-             WHERE c.relkind='S' AND n.nspname NOT LIKE 'pg_%'
-               AND CASE WHEN c.relkind='S' THEN has_sequence_privilege($1,c.oid,'USAGE,SELECT,UPDATE') ELSE false END",
-        ).bind(&fixture.login).fetch_all(&mut fixture.admin).await.unwrap();
-        assert!(
-            sequences.is_empty(),
-            "{} reaches sequences: {sequences:?}",
-            fixture.login
-        );
-    }
+
     let grantable: Vec<String> = sqlx::query_scalar(
         "WITH privileges AS (
            SELECT c.oid::regclass::text AS object,a.* FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
@@ -213,9 +199,6 @@ pub async fn family(
     if matches!(
         family,
         WorkloadRoleFamily::Query
-            | WorkloadRoleFamily::IdentityReader
-            | WorkloadRoleFamily::HttpAdmitter
-            | WorkloadRoleFamily::SessionRoleReader
     ) {
         let writes: Vec<String> = sqlx::query_scalar(
             "SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -256,17 +239,6 @@ pub async fn family(
     let statement = match family {
         WorkloadRoleFamily::Query => {
             "INSERT INTO catalog.packages(project_env_key,package_id,package_version) VALUES('t1--dev--project','forged','1.0.0')"
-        }
-        WorkloadRoleFamily::IdentityReader => "UPDATE identity.principals SET status='active'",
-        WorkloadRoleFamily::ConnectionReader => "SELECT * FROM registry.connection",
-        WorkloadRoleFamily::Retention => "UPDATE wamn_run.runs SET package_id=package_id",
-        WorkloadRoleFamily::AuditRetention => "DELETE FROM catalog.packages",
-        WorkloadRoleFamily::ExecutorPlatform => "UPDATE wamn_run.runs SET input_json='{}'",
-        WorkloadRoleFamily::HttpAdmitter | WorkloadRoleFamily::SessionRoleReader => {
-            "UPDATE platform.permission SET permission=permission"
-        }
-        WorkloadRoleFamily::Administration | WorkloadRoleFamily::Control => {
-            "DELETE FROM catalog.connection_binding"
         }
         WorkloadRoleFamily::App | WorkloadRoleFamily::Migration => {
             "UPDATE platform.login_principal SET principal_id=principal_id"

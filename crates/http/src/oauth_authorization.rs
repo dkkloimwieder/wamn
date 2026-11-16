@@ -244,7 +244,6 @@ impl Authorization {
             .send(&crate::oauth::Transport {
                 http: (*self.transport).clone(),
                 decision,
-                identity: None,
             })
             .await
             .map_err(|error| failed("invalid provider token response", error))?;

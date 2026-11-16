@@ -17,12 +17,9 @@ import {
 } from "./generated/wamn_control_org/index.js";
 import {
   createTransport,
-  deleteDatabase,
   keepSession,
   offlineSettings,
   opensOffline,
-  outboxDatabase,
-  rowsDatabase,
   savedUser,
   savedView,
   type OfflineSettings,
@@ -251,8 +248,6 @@ function saved(aud: string) {
     /** Delete the user's saved rows and outbox. */
     clear: (userId: string) =>
       Promise.all([
-        deleteDatabase(outboxDatabase(application, environment, userId)),
-        deleteDatabase(rowsDatabase(application, environment, userId)),
       ]),
   };
 }

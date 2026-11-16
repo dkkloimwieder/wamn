@@ -5,7 +5,6 @@ use sqlx::Row as _;
 use wamn_kubernetes::Store as _;
 
 use super::{ConnectionError, refuse};
-use wamn_broker::auth_changes::AuthDrops;
 
 fn projection_relation(group: &str) -> Result<&'static str, ConnectionError> {
     match group {
@@ -87,23 +86,6 @@ pub async fn remove_projection(
     .await
     .map(|result| result.rows_affected())?;
     Ok(())
-}
-
-/// Push the project's administration rows into one environment database.
-pub async fn project_administration(
-    system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    environment: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
-    env: &wamn_registry::EnvName,
-) -> Result<AuthDrops, ConnectionError> {
-    crate::connection_projection::project(system, environment, org, project, env)
-        .await
-        .map_err(|source| ConnectionError {
-            code: "database_error",
-            field: "projection",
-            source: Some(Box::new(source)),
-        })
 }
 
 /// Destroy every private object after the connection and projected rows disappear.

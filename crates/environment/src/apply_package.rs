@@ -258,16 +258,6 @@ async fn apply(
         crate::migrations::run(&mut executor, package.migrations, table).await?;
     let mut tx = migration::begin(client, project_env_key).await?;
     entity_maps::reconcile_entity_maps(&mut tx, &plan, &package.manifest).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::grant_executor_history_reads_sql(),
-    ))
-    .execute(&mut *tx)
-    .await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql(),
-    ))
-    .execute(&mut *tx)
-    .await?;
     changed |= package_version::record_package_schema(
         &mut tx,
         project_env_key,

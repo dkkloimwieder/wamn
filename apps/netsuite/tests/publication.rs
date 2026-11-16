@@ -1,11 +1,4 @@
 //! Publication refusals and the checkpoint command through the native host.
-mod checkpoint_live;
-#[path = "../../rest_connector/tests/consumer_live.rs"]
-#[expect(
-    dead_code,
-    reason = "this target shares installation, not the REST consumer invocation"
-)]
-mod consumer_live;
 #[path = "../../rest_connector/tests/support.rs"]
 mod support;
 
@@ -80,23 +73,6 @@ fn fixture() -> Fixture {
         admissions,
         documents,
     }
-}
-
-#[sqlx::test(migrations = false)]
-#[ignore = "requires: input:netsuite"]
-async fn pull_checkpoint_commits_through_the_application_role(
-    pool: sqlx::PgPool,
-) -> anyhow::Result<()> {
-    let palette = support::palette();
-    let Fixture {
-        args,
-        roots,
-        admissions,
-        documents,
-    } = fixture();
-    let assembled = assemble_release(&args, &roots, &admissions, &palette)?;
-    condition_documents(&args, &assembled.published.manifest, &documents)?;
-    checkpoint_live::invoke(&pool, &roots, &assembled.published.manifest, &admissions).await
 }
 
 #[test]

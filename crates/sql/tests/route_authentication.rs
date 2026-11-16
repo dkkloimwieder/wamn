@@ -15,8 +15,6 @@ const UNAUTHORIZED: (u16, &str) = (401, "unauthorized");
 const UNAVAILABLE: (u16, &str) = (503, "authentication-unavailable");
 
 use self::test_util::{routing, routing_policy};
-#[path = "support/route_authentication/connection_live.rs"]
-mod connection_live;
 #[path = "support/route_authentication/signature.rs"]
 mod signature;
 

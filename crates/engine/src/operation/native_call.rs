@@ -39,7 +39,6 @@ pub struct NativeInvocation<P: InvocationPolicy> {
 #[derive(Debug)]
 pub enum NativeInput {
     Encoded(String),
-    Typed(Val),
 }
 
 impl From<String> for NativeInput {
@@ -57,14 +56,12 @@ impl From<&str> for NativeInput {
 #[derive(Debug)]
 pub enum NativeOutcome {
     Json(Result<node_types::Emission, node_types::NodeError>),
-    Typed(Val),
 }
 
 impl NativeOutcome {
     pub fn into_json(self) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
         match self {
             Self::Json(value) => Ok(value),
-            Self::Typed(_) => anyhow::bail!("typed operation returned to a JSON-only caller"),
         }
     }
 }
@@ -211,9 +208,7 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                         .get_func(&mut access, export)
                         .context("typed entrypoint is not a function")
                 })?;
-                let encoded = matches!(&request.input, NativeInput::Encoded(_));
                 let input = match request.input {
-                    NativeInput::Typed(value) => Ok(value),
                     NativeInput::Encoded(input) => {
                         let ty = accessor
                             .with(|mut access| {
@@ -240,13 +235,7 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                             .context("native invocation ended")?
                             .map_err(anyhow::Error::from)
                             .context("typed operation trapped")?;
-                        if encoded {
-                            NativeOutcome::Json(super::json::emission(&results[0])?)
-                        } else {
-                            NativeOutcome::Typed(
-                                results.into_iter().next().expect("one operation result"),
-                            )
-                        }
+                        NativeOutcome::Json(super::json::emission(&results[0])?)
                     }
                     Err(error) => NativeOutcome::Json(Err(node_types::NodeError::InvalidInput(
                         node_types::ErrorDetail {
@@ -273,7 +262,6 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                 };
                 let refused = match &outcome {
                     NativeOutcome::Json(value) => value.is_err(),
-                    NativeOutcome::Typed(value) => matches!(value, Val::Result(Err(_))),
                 }
                 .then_some("handler");
                 reply

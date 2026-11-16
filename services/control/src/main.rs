@@ -17,10 +17,6 @@ enum Command {
     Operation(wamn_control::Operation),
     #[command(hide = true)]
     Platform { request: String },
-    #[command(hide = true)]
-    PruneRecordHistory(wamn_control::retention::Target),
-    #[command(hide = true)]
-    PruneRunHistory(wamn_control::retention::Runs),
 }
 
 #[tokio::main]
@@ -47,10 +43,6 @@ async fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
-        Some(Command::PruneRecordHistory(target)) => {
-            wamn_control::retention::records(config, target).await
-        }
-        Some(Command::PruneRunHistory(args)) => wamn_control::retention::runs(config, args).await,
         Some(Command::Operation(operation)) => {
             println!("{}", wamn_control::execute(&config, operation).await?);
             Ok(())

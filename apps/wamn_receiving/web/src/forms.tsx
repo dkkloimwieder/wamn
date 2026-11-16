@@ -4,12 +4,10 @@ import { FormView } from "@wfe/generator";
 import { DashboardPanel } from "@wfe/components/layout";
 import { FieldError } from "@wfe/components";
 import { filledValues, type ScreenProps } from "@wamn/platform-ui";
-import { newIdempotencyKey, newRequestId, occurredAt, uuidv7 } from "@wamn/web-runtime";
+import { newIdempotencyKey, newRequestId, occurredAt } from "@wamn/web-runtime";
 import * as purchase from "./generated/wamn_receiving/purchase_order.js";
-import * as supplier from "./generated/wamn_receiving/supplier.js";
 import * as receiving from "./generated/wamn_receiving/receiving.js";
 import { PurchaseOrderUpdateForm } from "./generated/wamn_receiving/components/purchase_order.js";
-import { SupplierCreateForm } from "./generated/wamn_receiving/components/supplier.js";
 import {
   ReceivingRecordReceiptForm,
   type ReceivingRecordReceiptFormValues,
@@ -19,41 +17,6 @@ import { invoke, Refusal, type RecordValue } from "./data";
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-export function SupplierForm(props: ScreenProps) {
-  const initial = { name: filledValues<{ name?: string }>(props.search).name ?? "" };
-  const [values, setValues] = createSignal(initial);
-  let intent: { name: string; key: string; id: string } | undefined;
-  const form = createForm({
-    values,
-    defaults: () => initial,
-    onValuesChange: setValues,
-    validate: (snapshot) => (snapshot.name.trim() ? {} : { fields: { name: "Enter a value." } }),
-    onSubmit: async (snapshot, { signal }) => {
-      if (intent?.name !== snapshot.name) intent = { name: snapshot.name, key: newIdempotencyKey(), id: uuidv7() };
-      try {
-        await invoke(props.transport, supplier.SUPPLIER_CREATE_ROUTE, {
-          ...snapshot,
-          id: intent.id,
-          idempotency_key: intent.key,
-          request_id: newRequestId(),
-        });
-        if (!signal.aborted) props.open("suppliers");
-        return { ok: true };
-      } catch (error) {
-        return { ok: false, errors: { form: message(error) } };
-      }
-    },
-  });
-  return (
-    <DashboardPanel>
-      <FormView
-        description={{ ...SupplierCreateForm, actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }] }}
-        bindings={{ form, actions: { cancel: { run: () => props.open("suppliers") } } }}
-      />
-    </DashboardPanel>
-  );
 }
 
 export function PurchaseOrderForm(props: ScreenProps) {

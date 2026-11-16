@@ -8,14 +8,11 @@ use std::sync::atomic::AtomicU64;
 use anyhow::Context as _;
 use tracing::Instrument as _;
 
-use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_identity_protocol::AuthorityClass;
 
-#[cfg(test)]
-use wamn_authority::identity::CandidateBindingWorld;
 use wamn_authority::identity::{
-    ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, SessionIdentity,
+    ReleaseIdentity, SessionIdentity,
 };
 use wamn_connections::connection::ConnectionInvocation;
 
@@ -96,9 +93,6 @@ pub struct WamnPostgres {
     pub(super) destroyed: Arc<AtomicU64>,
     /// How many times each half of the un-fused workload bind has run.
     pub(super) bind_counters: super::BindCounters,
-    /// The auth facts this host keeps
-    /// (docs/architecture/execution.md#auth-memory).
-    auth: Arc<wamn_authority::auth_cache::AuthCache>,
 }
 
 /// The bound principal has no `platform."user"` row in the project_env_key it identity
@@ -213,45 +207,7 @@ impl WamnPostgres {
             operation_metrics: super::operation::OperationMetrics::default(),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
-            auth: Arc::default(),
         }
-    }
-
-    /// Read the revocation bounds stated by this project and its applications.
-    /// Shared auth facts use the shortest bound, so every application stays within its contract.
-    pub async fn configure_revocation(
-        &mut self,
-        project: &wamn_registry::ProjectId,
-        applications: &[&wamn_catalog::ApplicationName],
-    ) -> anyhow::Result<()> {
-        let (mut connection, _) = self
-            .checkout_platform(project, AuthorityClass::CallableHttp)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let mut bound = std::time::Duration::MAX;
-        for (target_type, target_id) in std::iter::once(("project", project.as_str())).chain(
-            applications
-                .iter()
-                .map(|application| ("application", application.as_str())),
-        ) {
-            let row = sqlx::query(sqlx::AssertSqlSafe(("SELECT value::text FROM platform.setting WHERE target_type=$1 AND target_id=$2 AND key='revocation-seconds'").to_string())).bind(target_type).bind(target_id).fetch_optional(&mut *connection).await.context("read revocation configuration")?
-                .with_context(|| format!("{target_type} {target_id} must state revocation-seconds"))?;
-            let value: String = row.try_get(0)?;
-            let seconds: u64 = serde_json::from_str(&value).with_context(|| {
-                format!(
-                    "{target_type} {target_id} revocation-seconds must be a nonnegative integer"
-                )
-            })?;
-            bound = bound.min(std::time::Duration::from_secs(seconds));
-        }
-        drop(connection);
-        self.auth = Arc::new(wamn_authority::auth_cache::AuthCache::with_ttl(bound));
-        Ok(())
-    }
-
-    /// The auth facts this host keeps.
-    pub fn auth_cache(&self) -> &Arc<wamn_authority::auth_cache::AuthCache> {
-        &self.auth
     }
 
     /// Build from the deployment's configuration: the default project from the
@@ -533,7 +489,6 @@ impl WamnPostgres {
         invocation: ConnectionInvocation,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(!component_id.is_empty(), "component id must be present");
-        wamn_connections::invocation::validate_invocation(&invocation)?;
         self.scopes
             .update::<wamn_connections::invocation::Scope, _>(component_id, |record| {
                 anyhow::ensure!(record.invocation.is_none(), "invocation is already bound");
@@ -720,231 +675,6 @@ impl WamnPostgres {
             .write()
             .expect("operation workloads lock poisoned")
             .retain(|scope, _| !scope.starts_with(workload_id));
-    }
-
-    /// Resolve immutable component facts from the loaded release and current connection facts.
-    pub async fn connection_effect_snapshot(
-        &self,
-        component_id: &str,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        lookup: &ConnectionEffectLookup<'_>,
-        facts: &wamn_connections::connection_facts::ConnectionFacts,
-        loaded: &LoadedRelease,
-    ) -> anyhow::Result<Option<ConnectionEffectSnapshot>> {
-        let refusal = |message: String| SessionIdentityError {
-            type_: SessionIdentityErrorType::Authorization,
-            context: "connection authority identity",
-            source: anyhow::anyhow!(message),
-        };
-        let registered = self.project_env_key_for(component_id).ok_or_else(|| {
-            refusal(format!(
-                "scope {component_id:?} has no bound environment identity"
-            ))
-        })?;
-        if &registered != project_env_key {
-            return Err(refusal(format!(
-                "scope {component_id:?} belongs to another environment"
-            ))
-            .into());
-        }
-        let invocation = self
-            .invocation(component_id)
-            .context("no admitted connection invocation")?;
-        let manifest = loaded.manifest();
-        let application = wamn_connections::connection::released_invocation_application(
-            manifest,
-            loaded.target(),
-            &invocation,
-        )
-        .context("release does not authorize this invocation")?;
-        let packages = &loaded.target().applications[application].packages;
-        let component = manifest
-            .components
-            .iter()
-            .find(|component| {
-                &component.package_id == lookup.package_id
-                    && component.descriptor.component_digest == *lookup.component_digest
-                    && component.descriptor.component == invocation.component
-            })
-            .context("release does not carry the executing component")?;
-        let operation = component
-            .descriptor
-            .operations
-            .get(lookup.operation)
-            .context("release does not carry the executing operation")?;
-        let entry_matches = match (&invocation.entry, lookup.entry) {
-            (
-                wamn_connections::connection::InvocationEntry::Route,
-                wamn_authority::identity::ConnectionEntryLookup::Route { package_id },
-            ) => package_id == &invocation.origin.package_id,
-            (
-                wamn_connections::connection::InvocationEntry::Wiring(position),
-                wamn_authority::identity::ConnectionEntryLookup::Wiring {
-                    application,
-                    wiring,
-                },
-            ) => {
-                application == &position.application
-                    && wiring.wiring_id == &position.wiring_id
-                    && u32::try_from(wiring.wiring_version).ok() == Some(position.wiring_version)
-                    && wiring.node_id == &position.node_id
-            }
-            _ => false,
-        };
-        if !entry_matches
-            || lookup.package_id != &invocation.package_id
-            || *lookup.component_digest != invocation.component_digest
-            || lookup.operation != &invocation.operation
-            || lookup.origin_package_id != &invocation.origin.package_id
-            || *lookup.origin_component_digest != invocation.origin.component_digest
-            || lookup.origin_component != &invocation.origin.component
-            || lookup.origin_interface_version != &invocation.origin.interface_version
-            || lookup.origin_operation != &invocation.origin.operation
-        {
-            return Ok(None);
-        }
-        let declaration = invocation
-            .connection(manifest, lookup.store_alias)
-            .context("component declares no such connection alias")?;
-        anyhow::ensure!(
-            facts.project_env_key() == project_env_key,
-            "HTTP effect authorization project_env_key {project_env_key:?} disagrees with the connection facts"
-        );
-        let release = facts.release(lookup.manifest_digest).await?;
-        let mut bindings = release.bindings.iter().filter(|binding| {
-            binding.component_digest == *lookup.component_digest
-                && binding.name == lookup.store_alias.as_str()
-                && packages.contains(&binding.package_id)
-                && (lookup.package_id.as_str() == wamn_catalog::PALETTE_PACKAGE_ID
-                    || &binding.package_id == lookup.package_id)
-        });
-        let binding = bindings.next();
-        let read_only = match binding {
-            Some(binding) => declaration
-                .mode
-                .read_only(&binding.package_id, lookup.store_alias)
-                .context("loaded release has no mode for this binding")?,
-            None => true,
-        };
-        for other in bindings {
-            anyhow::ensure!(
-                binding.is_some_and(|binding| binding.connection_id == other.connection_id
-                    && binding.version == other.version)
-                    && declaration
-                        .mode
-                        .read_only(&other.package_id, lookup.store_alias)
-                        == Some(read_only),
-                "connection alias has conflicting binding selections"
-            );
-        }
-        let (fact, generation) = match binding {
-            Some(binding) => match facts.connection(&binding.connection_id).await? {
-                Some(fact) => {
-                    let generation = facts
-                        .generation(&binding.connection_id, fact.active_generation)
-                        .await?;
-                    (Some(fact), Some(generation))
-                }
-                None => (None, None),
-            },
-            None => (None, None),
-        };
-        let integration_type = generation
-            .as_ref()
-            .map(|generation| &generation.integration_type);
-        let descriptor = integration_type
-            .and_then(wamn_catalog::RequirementType::for_integration)
-            .filter(|type_| {
-                matches!(
-                    (type_, declaration.requirement_type),
-                    (
-                        wamn_catalog::RequirementType::Http,
-                        wamn_catalog::ComponentConnectionType::Http
-                    ) | (
-                        wamn_catalog::RequirementType::Blobstore,
-                        wamn_catalog::ComponentConnectionType::Blobstore
-                    )
-                )
-            })
-            .map(wamn_catalog::RequirementType::descriptor);
-        let requirement = descriptor.as_ref().map(|descriptor| {
-            wamn_catalog::ComponentConnectionRequirement::new(
-                *lookup.component_digest,
-                lookup.store_alias.clone(),
-                descriptor.clone(),
-            )
-        });
-        let active_generation = fact.as_ref().map(|fact| fact.active_generation);
-        let definition = generation
-            .as_ref()
-            .map(|generation| generation.parameters.clone());
-        let definition_hash = definition
-            .as_ref()
-            .map(wamn_connections::connection_generation::definition_hash);
-        let requirement_hash = requirement
-            .as_ref()
-            .map(wamn_catalog::ComponentConnectionRequirement::requirement_hash);
-        let validation_hash = descriptor
-            .as_ref()
-            .zip(requirement_hash.as_ref())
-            .zip(definition_hash.as_ref())
-            .map(|((descriptor, requirement), definition)| {
-                wamn_connections::connection_generation::definition_hash(
-                    &wamn_connections::connection_generation::binding_validation_subject(
-                        descriptor,
-                        requirement,
-                        definition,
-                    ),
-                )
-            });
-        let name = generation
-            .as_ref()
-            .map(|generation| generation.name.clone());
-        let credential_handle = if integration_type.is_some_and(|code| code.as_str() == "gcs") {
-            None
-        } else {
-            name.as_deref()
-                .zip(active_generation)
-                .map(|(name, generation)| facts.credential_handle(name, generation))
-                .transpose()?
-        };
-        Ok(Some(ConnectionEffectSnapshot {
-            read_only,
-            connection_name: name,
-            wiring_hash: invocation
-                .entry
-                .wiring()
-                .map(|position| position.wiring_hash),
-            component: Some(component.descriptor.component.clone()),
-            interface_version: Some(component.descriptor.interface_version.clone()),
-            operation: Some(lookup.operation.to_owned()),
-            registered_operation: operation.registered_operation.clone(),
-            requirement_json: requirement
-                .map(|requirement| serde_json::to_value(requirement).expect("requirement JSON")),
-            requirement_hash,
-            node_permitted: true,
-            binding_active: fact.is_some(),
-            binding_valid: descriptor.is_some(),
-            instance_id: fact
-                .as_ref()
-                .and(binding)
-                .map(|binding| binding.connection_id.to_string()),
-            validation_hash,
-            requirement_type: descriptor
-                .as_ref()
-                .map(|descriptor| descriptor.requirement_type.clone()),
-            contract: descriptor.map(|descriptor| descriptor.contract),
-            instance_enabled: fact.as_ref().is_some_and(|fact| {
-                fact.status == wamn_connections::connection_memory::ConnectionStatus::Active
-            }),
-            active_generation,
-            pinned_generation: lookup.candidate_binding.map(|binding| binding.generation),
-            instance_revision: active_generation,
-            generation: active_generation,
-            definition,
-            definition_hash,
-            credential_handle,
-        }))
     }
 
     /// The grants of the signed roles of a verified session that the active
@@ -1227,18 +957,6 @@ pub(crate) fn validate_identity(identity: &SessionIdentity) -> anyhow::Result<()
         "invalid role"
     );
     Ok(())
-}
-
-#[cfg(feature = "test-util")]
-impl WamnPostgres {
-    /// Supply isolated auth memory for host service boundary fixtures.
-    pub fn with_auth_cache_for_test(
-        mut self,
-        auth: Arc<wamn_authority::auth_cache::AuthCache>,
-    ) -> Self {
-        self.auth = auth;
-        self
-    }
 }
 
 #[async_trait::async_trait]

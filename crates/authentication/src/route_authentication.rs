@@ -36,20 +36,13 @@ async fn admit_session<T>(
     permissions: impl AsyncFnOnce(
         &wamn_identity_protocol::token::SessionClaims,
     ) -> Result<T, AuthRejection>,
-    live: impl AsyncFnOnce(&wamn_identity_protocol::token::SessionClaims) -> Result<bool, AuthRejection>,
 ) -> Result<(wamn_identity_protocol::PrincipalId, T), AuthRejection> {
     let session = verifier.verify(token).await.map_err(|_| unauthorized())?;
     if let Some((headers, requires_csrf)) = cookie_headers {
         require_csrf(requires_csrf, session.claims().csrf.as_ref(), headers)?;
     }
     let permissions = permissions(session.claims()).await?;
-    let active = tokio::time::timeout(std::time::Duration::from_secs(5), live(session.claims()))
-        .await
-        .map_err(|_| authentication_unavailable())??;
-    if !active {
-        return Err(unauthorized());
-    }
-    // Permission and liveness I/O cannot extend the evidence that admits a request.
+    // Permission I/O cannot extend the evidence that admits a request.
     if session.require_admission().is_err() {
         verifier.verify(token).await.map_err(|_| unauthorized())?;
     }
@@ -217,13 +210,11 @@ impl PlatformRouteAuthenticator {
         cookie_headers: Option<(&[Header], bool)>,
         project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
-        environment: &wamn_registry::EnvName,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
         let verifier = self
             .verifiers
             .get(project_env_key)
             .ok_or_else(unauthorized)?;
-        let identity_reader = self.identity_reader.as_ref().ok_or_else(unauthorized)?;
         let (principal, permissions) = admit_session(
             verifier,
             token,
@@ -246,25 +237,6 @@ impl PlatformRouteAuthenticator {
                             authentication_unavailable()
                         }
                     })
-            },
-            async |claims| {
-                let mut transaction =
-                    wamn_platform_identity::transaction::read_pool(identity_reader, &claims.sub)
-                        .await
-                        .map_err(|_| authentication_unavailable())?;
-                let active = wamn_platform_identity::session_token::session_is_active(
-                    &mut transaction,
-                    claims,
-                    project,
-                    environment,
-                )
-                .await
-                .map_err(|_| authentication_unavailable())?;
-                transaction
-                    .commit()
-                    .await
-                    .map_err(|_| authentication_unavailable())?;
-                Ok(active)
             },
         )
         .await?;
@@ -353,7 +325,6 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     csrf.map(|required| (headers, required)),
                     project,
                     &target.project_env_key,
-                    &target.environment,
                 )
                 .await
                 .map(Some);
@@ -445,14 +416,8 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
 /// Admits a request to a route of the control serving root
 /// (docs/architecture/execution.md#control-sessions).
 ///
-/// Only a browser login session of the host's control audience passes. Every
-/// request tests again, through the `control` login, that the login is live and
-/// that its principal still holds a control role in the token's org, so a
-/// revoked role takes effect on the next request. The caller holds no
-/// application role and no operation grant.
 pub struct ControlRouteAuthenticator {
     verifier: SessionVerifier<IssuerKeys>,
-    control: sqlx::PgPool,
 }
 
 impl std::fmt::Debug for ControlRouteAuthenticator {
@@ -465,8 +430,8 @@ impl std::fmt::Debug for ControlRouteAuthenticator {
 
 impl ControlRouteAuthenticator {
     /// `verifier` is bound to the org and its control audience.
-    pub fn new(verifier: SessionVerifier<IssuerKeys>, control: sqlx::PgPool) -> Self {
-        Self { verifier, control }
+    pub fn new(verifier: SessionVerifier<IssuerKeys>) -> Self {
+        Self { verifier }
     }
 }
 
@@ -496,26 +461,6 @@ impl ControlRouteAuthenticator {
             token,
             csrf.map(|required| (headers, required)),
             async |_| Ok(()),
-            async |claims| {
-                let mut transaction =
-                    wamn_platform_identity::transaction::read_pool(&self.control, &claims.sub)
-                        .await
-                        .map_err(|_| authentication_unavailable())?;
-                let active = wamn_platform_identity::control::control_session_is_active(
-                    &mut transaction,
-                    claims,
-                )
-                .await
-                .map_err(|error| {
-                    tracing::warn!(error = %error, "control authority unavailable");
-                    authentication_unavailable()
-                })?;
-                transaction
-                    .commit()
-                    .await
-                    .map_err(|_| authentication_unavailable())?;
-                Ok(active)
-            },
         )
         .await?;
         Ok(Some(AuthenticatedCaller::new(

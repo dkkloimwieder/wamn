@@ -101,16 +101,7 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
     )
     .execute(&mut *client)
     .await?;
-    for family in [
-        wamn_control_provision::WorkloadRoleFamily::Retention,
-        wamn_control_provision::WorkloadRoleFamily::AuditRetention,
-    ] {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::sql::ensure_workload_acl_role_sql(family),
-        ))
-        .execute(&mut *client)
-        .await?;
-    }
+
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_control_provision::sql::ensure_platform_group_role_sql(),
     ))

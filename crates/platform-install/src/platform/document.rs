@@ -18,7 +18,6 @@ use serde_json::Value;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterDocument {
-    pub provider: Provider,
     /// GCP-only inputs are empty strings for kind.
     pub project_id: String,
     pub zone: String,
@@ -37,14 +36,6 @@ pub struct ClusterDocument {
 
 fn default_build_cloud_cap_usd() -> f64 {
     3.0
-}
-
-/// The cluster provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Provider {
-    Gcp,
-    Kind,
 }
 
 /// One existing Helm owner selected for a platform code upgrade.

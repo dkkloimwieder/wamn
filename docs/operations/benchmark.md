@@ -36,7 +36,7 @@ The newest local result is [`local-0.1.102.json`](../../tests/bench/local-0.1.10
 `cargo xtask bench-pg-minimum` runs the replays of `cargo xtask bench-local --pg-minimum` against `wamn-pg-1` on GCP tier 2.
 PostgreSQL runs alone on pool `pg`. The pgbench client runs in the Job `xtask/bench/pg-minimum/gcp-client.yaml` on pool `bench`.
 The runner installs Receiving into its own database `wamn_pg_minimum`. The environment databases keep the Cluster statistics settings.
-The newest result is [`gcp-pg-0.1.36-c8a5v.2.json`](../history/evidence/bench/gcp-pg-0.1.36-c8a5v.2.json). Each call ran at concurrency 16 for 60 seconds with 0 errors.
+Each call ran at concurrency 16 for 60 seconds with 0 errors.
 The row "update, triggers off" is the update replay with both record-history triggers disabled. It ran after the update replay on the same data.
 
 | Script | TPS | p50 | p95 | p99 |

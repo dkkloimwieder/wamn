@@ -435,7 +435,6 @@ Loopback registries use HTTP.
 [Building](building.md#platform-artifacts) describes artifact production.
 
 [Deployment](deployment.md#local-platform) describes prepared chart deployment, status, access, and cleanup on kind.
-The deployment plan defines the remaining GCP integration work. [Deployment plan](../plan/deploy.md)
 Public ingress, web uploads, telemetry, and production policies still need cloud verification.
 The operations below use the external cloud credentials described above.
 

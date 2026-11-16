@@ -212,7 +212,6 @@ mod tests {
         let application: Arc<NativeApplication<EdgePolicy>> = load_native_application(
             Arc::new(wamn_engine::build_engine(&[]).unwrap()),
             NativeWorkloadSpec {
-                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
                 id: "edge-policy-test".into(),
                 namespace: "test".into(),
                 name: "test".into(),

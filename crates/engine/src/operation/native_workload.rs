@@ -36,7 +36,6 @@ pub struct NativeComponent {
 /// The immutable release or candidate workload selected by the owning driver.
 #[derive(Debug)]
 pub struct NativeWorkloadSpec {
-    pub warm_reuse: crate::warm_reuse::WarmReuse,
     pub id: String,
     pub namespace: String,
     pub name: String,
@@ -252,14 +251,13 @@ pub(super) async fn load_native_workload(
             );
             continue;
         }
-        let mut component = Component {
+        let component = Component {
             name: name.clone(),
             bytes: input.bytes.into(),
             digest: Some(input.fact.component_digest.to_string()),
             local_resources: spec.local_resources.clone(),
             ..Component::default()
         };
-        spec.warm_reuse.apply(&mut component);
         components.push(component);
         facts_by_name.insert(name, input.fact);
     }

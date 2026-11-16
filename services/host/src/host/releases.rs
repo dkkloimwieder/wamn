@@ -1,23 +1,17 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 
 use super::projects::StatePoisoned;
 use anyhow::Context as _;
-use tokio::sync::{Mutex, watch};
+use tokio::sync::Mutex;
 use wamn_broker::Publisher;
 use wamn_catalog::{ApplicationDefinition, ServingManifest};
 use wamn_connections::connection_facts::ConnectionFacts;
-use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
 };
-use wamn_http::transport::HttpTransport;
 use wamn_sql::WamnPostgres;
-use wash_runtime::engine::Engine;
-use wash_runtime::host::allowed_hosts::AllowedHost;
-use wash_runtime::plugin::wasi_logging::TracingLogger;
 
 // Entries are independent cells. Initialization happens outside the map lock,
 // and insertion or eviction cannot invalidate another digest's bytes. Every
@@ -28,14 +22,9 @@ pub(super) type ManifestCache =
 type ReleaseKey = (wamn_catalog::ApplicationName, wamn_digest::Digest);
 
 pub(super) struct Resources {
-    pub engine: Arc<Engine>,
     pub postgres: Arc<WamnPostgres>,
     pub blobstore: Arc<wamn_blobstore::plugin::WamnBlobstore>,
-    pub transport: Arc<HttpTransport>,
     pub facts: Arc<ConnectionFacts>,
-    pub logging: Arc<TracingLogger>,
-    pub source: Arc<dyn ArtifactSource>,
-    pub allowed_hosts: Arc<[AllowedHost]>,
     pub configuration: OperationHostConfig,
     pub target: ReleaseTarget,
     pub org: wamn_registry::OrgId,
@@ -43,19 +32,12 @@ pub(super) struct Resources {
     pub identity: Option<(sqlx::PgPool, wamn_registry::OrgId)>,
     pub administration_url: Option<String>,
     pub changes: Publisher,
-    pub registry: Option<(
-        wamn_package_artifact::PackageRegistry,
-        wamn_package_artifact::registry_credentials::RegistryCredentialSource,
-    )>,
-    pub leases: Arc<wamn_connections::resource_lease::ResourceLeases>,
 }
 
 pub(super) struct ResidentRelease {
     pub operations: Arc<OperationHost>,
     pub handlers: Arc<HostRouteDelivery>,
-    pub files: Arc<wamn_execution_host::file_route::FileRoutes>,
     _manifest: Arc<[u8]>,
-    stop: watch::Sender<bool>,
 }
 
 pub(super) struct Releases {
@@ -66,14 +48,6 @@ pub(super) struct Releases {
 }
 
 impl Releases {
-    pub fn new(resources: Resources, bytes: ManifestCache) -> Self {
-        Self {
-            resources,
-            resident: RwLock::default(),
-            loading: std::sync::Mutex::default(),
-            bytes,
-        }
-    }
 
     /// Retain the selected deployment through the workload's stop and active calls.
     pub async fn for_workload(
@@ -162,30 +136,10 @@ impl Releases {
             target,
         )?);
         let operations = Arc::new(OperationHost::new(
-            Arc::clone(&r.engine),
-            Arc::clone(&r.postgres),
-            Arc::clone(&r.blobstore),
-            Arc::clone(&r.transport),
             Arc::clone(&r.facts),
-            Arc::clone(&r.logging),
-            Arc::clone(&r.allowed_hosts),
             Arc::clone(&release),
-            Arc::clone(&r.source),
             r.configuration.clone(),
         )?);
-        if let Some((registry, credentials)) = &r.registry {
-            operations.set_integrations(Arc::new(
-                wamn_connections::integrations::Integrations::new(
-                    Arc::clone(&r.facts),
-                    &release,
-                    r.postgres.as_ref(),
-                    &r.configuration.project,
-                    registry.clone(),
-                    credentials.clone(),
-                )
-                .await?,
-            ))?;
-        }
         let connections = Arc::new(wamn_execution_host::file_route::RegistryFileConnections {
             client: r.connection_reader.clone(),
             release: Arc::clone(&release),
@@ -202,8 +156,6 @@ impl Releases {
             r.configuration.project.clone(),
             r.administration_url.clone(),
         ));
-        operations.set_file_routes(Arc::clone(&files))?;
-        wamn_execution_host::prepare_release(&operations).await?;
         let handlers = Arc::new(
             HostRouteDelivery::new(
                 Arc::clone(&release),
@@ -219,9 +171,7 @@ impl Releases {
         let resident = Arc::new(ResidentRelease {
             operations,
             handlers,
-            files,
             _manifest: Arc::clone(bytes),
-            stop: watch::channel(false).0,
         });
         self.resident
             .write()
@@ -230,77 +180,4 @@ impl Releases {
         Ok(resident)
     }
 
-    pub async fn serve(
-        self: &Arc<Self>,
-        mut stopping: watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
-        let mut collectors = tokio::task::JoinSet::new();
-        let mut collector_tasks = BTreeSet::new();
-        let mut ticks = tokio::time::interval(Duration::from_secs(1));
-        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! {
-                biased;
-                _ = stopping.changed() => break,
-                _ = ticks.tick() => {},
-            }
-            for (key, resident) in self
-                .resident
-                .read()
-                .map_err(|_| StatePoisoned("resident releases"))?
-                .iter()
-            {
-                if collector_tasks.insert(key.clone()) {
-                    let files = Arc::clone(&resident.files);
-                    let stopped = resident.stop.subscribe();
-                    let key = key.clone();
-                    collectors.spawn(async move {
-                        collect_files(files, stopped).await;
-                        key
-                    });
-                }
-            }
-            while let Some(result) = collectors.try_join_next() {
-                match result {
-                    Ok(key) => {
-                        collector_tasks.remove(&key);
-                    }
-                    Err(error) => tracing::warn!(%error, "file collector task failed"),
-                }
-            }
-        }
-        collectors.shutdown().await;
-        for resident in self
-            .resident
-            .read()
-            .map_err(|_| StatePoisoned("resident releases"))?
-            .values()
-        {
-            resident.stop.send_replace(true);
-        }
-        self.resources.leases.shutdown().await;
-        Ok(())
-    }
-}
-
-async fn collect_files(
-    files: Arc<wamn_execution_host::file_route::FileRoutes>,
-    mut stopped: watch::Receiver<bool>,
-) {
-    let mut ticks = tokio::time::interval(wamn_execution_host::file_collector::COLLECTION_INTERVAL);
-    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        tokio::select! {
-            biased;
-            _ = stopped.changed() => return,
-            _ = ticks.tick() => {},
-        }
-        tokio::select! {
-            biased;
-            _ = stopped.changed() => return,
-            collected = files.collect_orphan_files() => {
-                if let Err(error) = collected { tracing::warn!(%error, "host file orphan collection failed"); }
-            }
-        }
-    }
 }

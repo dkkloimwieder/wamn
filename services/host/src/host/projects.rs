@@ -1,34 +1,21 @@
 //! Project resources share the runtime, never their database or event authority.
 
-use super::{HostArgs, RegistryPullCredential, host_credentials, releases, session_verifier};
+use super::{HostArgs, releases};
 use anyhow::Context as _;
 use std::collections::HashMap;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::time::Duration;
-use tokio::sync::watch;
 use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
-use wamn_connections::connection_credentials::ConnectionCredentials;
-use wamn_connections::connection_facts::ConnectionFacts;
-use wamn_connections::connection_memory::ConnectionMemory;
-use wamn_control_provision::{SystemReader, project_env_database_name, system_reader_login};
-use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::flow_http_routing::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, RouteAuthenticator,
     authentication_unavailable,
 };
-use wamn_engine::release_manifest::ReleaseTarget;
-use wamn_execution_host::OperationHostConfig;
-use wamn_http::transport::HttpTransport;
-use wamn_registry::project_env_key;
 use wamn_sql::AuthorityClass;
 use wamn_sql::WamnPostgres;
 use wamn_sql::{
-    CredentialProvider, ProjectConfig, ResolvedCredential, StaticCredentialProvider,
-    WamnPostgresConfig,
+    CredentialProvider, ResolvedCredential, StaticCredentialProvider,
 };
-use wash_runtime::plugin;
 
 #[derive(Debug)]
 pub(super) struct StatePoisoned(pub(super) &'static str);
@@ -68,11 +55,6 @@ impl Projects {
         self.entries().get(project).map(Arc::clone)
     }
 
-    fn entry(&self, project: &wamn_registry::ProjectId) -> Arc<RwLock<Project>> {
-        // As with reads, recovery exposes only intact handles, never project data.
-        let mut projects = self.0.write().unwrap_or_else(|error| error.into_inner());
-        Arc::clone(projects.entry(project.to_owned()).or_default())
-    }
 }
 
 pub(super) struct Credentials(pub(super) Arc<Projects>);
@@ -126,14 +108,8 @@ impl RouteAuthenticator for Authentication {
 
 pub(super) struct Environment {
     pub args: Arc<HostArgs>,
-    pub engine: Arc<wash_runtime::engine::Engine>,
     pub postgres: Arc<WamnPostgres>,
-    pub transport: Arc<HttpTransport>,
-    pub logging: Arc<plugin::wasi_logging::TracingLogger>,
-    pub source: Arc<dyn ArtifactSource>,
-    pub router_owner: String,
     projects: Arc<Projects>,
-    bytes: releases::ManifestCache,
 }
 impl std::fmt::Debug for Environment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -152,23 +128,12 @@ impl Environment {
     pub fn new(
         args: Arc<HostArgs>,
         projects: Arc<Projects>,
-        engine: Arc<wash_runtime::engine::Engine>,
         postgres: Arc<WamnPostgres>,
-        transport: Arc<HttpTransport>,
-        logging: Arc<plugin::wasi_logging::TracingLogger>,
-        source: Arc<dyn ArtifactSource>,
-        router_owner: String,
     ) -> Self {
         Self {
             args,
             projects,
-            engine,
             postgres,
-            transport,
-            logging,
-            source,
-            router_owner,
-            bytes: Arc::default(),
         }
     }
 
@@ -213,274 +178,6 @@ impl Environment {
         project.for_workload(annotations).await
     }
 
-    async fn prepare(
-        &self,
-        project: &wamn_registry::ProjectId,
-    ) -> anyhow::Result<Arc<releases::Releases>> {
-        let args = &self.args;
-        let org = args
-            .org
-            .as_ref()
-            .context("environment host requires an org")?;
-        let environment = args
-            .environment
-            .as_ref()
-            .context("environment host requires an environment")?;
-        let directory = args
-            .projects
-            .as_ref()
-            .context("missing project projection")?
-            .parent()
-            .context("project projection directory")?
-            .join(project.as_str());
-        let read = |family: wamn_control_provision::WorkloadRoleFamily| -> anyhow::Result<String> {
-            std::fs::read_to_string(directory.join(format!("{}.json", family.component_stem())))
-                .context("read projected project connection")
-        };
-        use wamn_control_provision::WorkloadRoleFamily as Family;
-        let app = std::fs::read_to_string(directory.join("app.json"))
-            .context("read project application connection")?;
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct ApplicationConnections {
-            compiled: wamn_postgres::ConnectionConfig,
-            dynamic: wamn_postgres::ConnectionConfig,
-        }
-        let app: ApplicationConnections =
-            serde_json::from_str(&app).context("decode project application connections")?;
-        let compiled = app.compiled.to_json()?;
-        let dynamic = app.dynamic.to_json()?;
-        let executor = read(Family::ExecutorPlatform)?;
-        let http = read(Family::HttpAdmitter)?;
-        let administration = read(Family::Administration)?;
-        let identity = read(Family::IdentityReader)?;
-        let connection = read(Family::ConnectionReader)?;
-        for (input, reader) in [
-            (&identity, SystemReader::Identity),
-            (&connection, SystemReader::Connection),
-        ] {
-            let (login, database) = wamn_postgres::identity(input)?;
-            anyhow::ensure!(
-                login == system_reader_login(reader, org, project, environment, &database),
-                "project reader targets another deployment"
-            );
-        }
-        let suffix = std::fs::read_to_string(directory.join("instance"))
-            .context("read project database instance")?;
-        let suffix = suffix.trim().parse()?;
-        let database = project_env_database_name(org, project, environment, &suffix);
-        for input in [&compiled, &dynamic, &executor, &http, &administration] {
-            anyhow::ensure!(
-                wamn_postgres::identity(input)?.1 == database,
-                "project credential targets another database instance"
-            );
-        }
-        let cfg = WamnPostgresConfig::from_env();
-        let project_state = self.projects.entry(project);
-        project_state
-            .write()
-            .map_err(|_| StatePoisoned("project credentials"))?
-            .credentials
-            .insert(
-                project.to_owned(),
-                ProjectConfig {
-                    credentials: host_credentials(
-                        Some((compiled, dynamic)),
-                        Some(executor),
-                        Some(http.clone()),
-                        Some(administration.clone()),
-                    ),
-                    guest_pool_max_size: cfg.guest_pool_max_size,
-                    platform_pool_max_size: cfg.platform_pool_max_size,
-                    wait_timeout_ms: cfg.wait_timeout_ms,
-                    statement_timeout_ms: cfg.statement_timeout_ms,
-                },
-            );
-        let key = project_env_key(org, project, environment);
-        let reader = wamn_postgres::pool(&connection, 4).await?;
-        let identity = wamn_postgres::pool(&identity, 4).await?;
-        let target = ReleaseTarget::new(key.clone(), environment.clone());
-        let base = args
-            .component_artifact_base
-            .as_deref()
-            .context("missing component registry")?;
-        let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
-        let registry_credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {
-            RegistryPullCredential::AuthFile(path) => wamn_package_artifact::registry_credentials::RegistryCredentialSource::Fixed(wamn_package_artifact::registry_credentials::read_registry_credentials(path, registry_name.registry())?),
-            RegistryPullCredential::TokenMetadata => wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer,
-        };
-        let envelope = args
-            .oauth_encryption
-            .as_deref()
-            .map(|value| -> anyhow::Result<_> {
-                Ok(Arc::new(
-                    wamn_connections::oauth_encryption::Envelope::open(&serde_json::from_str(
-                        value,
-                    )?)?,
-                ))
-            })
-            .transpose()?;
-        let verifier = if args.session_issuer.is_some() {
-            Some(session_verifier(
-                args,
-                environment,
-                project,
-                &suffix,
-                &http,
-            )?)
-        } else {
-            None
-        };
-        let allowed_hosts = args
-            .allowed_hosts
-            .iter()
-            .map(|value| value.parse())
-            .collect::<Result<Vec<_>, _>>()?
-            .into();
-        let warm_reuse = wamn_engine::warm_reuse::WarmReuse::new(
-            &args.trusted_warm_component_digest,
-            args.component_pool_size,
-            args.component_reclaim_window_seconds,
-        )?;
-        let leases = Arc::new(wamn_connections::resource_lease::ResourceLeases::new(
-            Some(&connection),
-        )?);
-        let memory =
-            Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&leases)));
-        let credentials = Arc::new(ConnectionCredentials::from_database(reader.clone(), org));
-        let facts = Arc::new(
-            ConnectionFacts::new(
-                memory,
-                wamn_broker::Publisher::default(),
-                credentials,
-                &self.postgres,
-                &key,
-                project,
-                environment,
-            )
-            .with_oauth_encryption(envelope),
-        );
-        let authenticator = Arc::new(PlatformRouteAuthenticator::new(
-            Arc::clone(&self.postgres),
-            [Arc::clone(&facts)],
-            Some((
-                identity.clone(),
-                verifier
-                    .into_iter()
-                    .map(|verifier| (key.clone(), verifier))
-                    .collect(),
-            )),
-        ));
-        let manager = Arc::new(releases::Releases::new(
-            releases::Resources {
-                engine: Arc::clone(&self.engine),
-                postgres: Arc::clone(&self.postgres),
-                blobstore: Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
-                    &self.postgres,
-                ))),
-                transport: Arc::clone(&self.transport),
-                facts,
-                logging: Arc::clone(&self.logging),
-                source: Arc::clone(&self.source),
-                allowed_hosts,
-                configuration: OperationHostConfig {
-                    project: project.to_owned(),
-                    schema: args.schema.clone(),
-                    owner_prefix: self.router_owner.clone(),
-                    warm_reuse,
-                },
-                target,
-                org: org.to_owned(),
-                connection_reader: Some(reader),
-                identity: Some((identity, org.to_owned())),
-                administration_url: Some(administration),
-                changes: wamn_broker::Publisher::default(),
-                registry: Some((
-                    wamn_package_artifact::PackageRegistry {
-                        artifact_base: base.to_owned(),
-                        credentials: None,
-                        registry_auth_file: args.registry_auth_file.clone().unwrap_or_default(),
-                        insecure_registry: args.allow_insecure_registries,
-                        oci_ca_paths: args.oci_ca_paths.clone(),
-                    },
-                    registry_credentials,
-                )),
-                leases,
-            },
-            Arc::clone(&self.bytes),
-        ));
-        let mut state = project_state
-            .write()
-            .map_err(|_| StatePoisoned("project resources"))?;
-        state.authentication = Some((key, authenticator));
-        state.releases = Some(Arc::clone(&manager));
-        Ok(manager)
-    }
-
-    pub async fn serve(
-        self: &Arc<Self>,
-        mut stopping: watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
-        let mut initializers = tokio::task::JoinSet::<(
-            wamn_registry::ProjectId,
-            anyhow::Result<Arc<releases::Releases>>,
-        )>::new();
-        let mut initializing = HashSet::<wamn_registry::ProjectId>::new();
-        let mut managers = tokio::task::JoinSet::new();
-        let mut stops = HashMap::<wamn_registry::ProjectId, watch::Sender<bool>>::new();
-        let mut ticks = tokio::time::interval(Duration::from_secs(1));
-        loop {
-            tokio::select! {
-                _ = stopping.changed() => break,
-                Some(prepared) = initializers.join_next(), if !initializers.is_empty() => {
-                    match prepared {
-                        Ok((project, result)) => {
-                            initializing.remove(&project);
-                            match result {
-                                Ok(manager) => {
-                                    let (stop, stopped) = watch::channel(false);
-                                    stops.insert(project.clone(), stop);
-                                    managers.spawn(async move { (project, manager.serve(stopped).await) });
-                                }
-                                Err(error) => tracing::warn!(%project, error = %format_args!("{error:#}"), "project preparation failed; other projects remain available"),
-                            }
-                        }
-                        Err(error) => tracing::warn!(%error, "project preparation task failed"),
-                    }
-                }
-                Some(result) = managers.join_next(), if !managers.is_empty() => {
-                    if let Ok((project, result)) = result {
-                        if let Some(state) = self.projects.get(&project) {
-                            match state.write().map_err(|_| StatePoisoned("project releases")) {
-                                Ok(mut state) => state.releases = None,
-                                Err(error) => tracing::warn!(%project, %error, "project removal failed"),
-                            }
-                        }
-                        stops.remove(&project);
-                        tracing::warn!(%project, ?result, "project execution stopped");
-                    }
-                }
-                _ = ticks.tick() => {
-                    let declared = match self.declared() { Ok(declared) => declared, Err(error) => {tracing::warn!(%error, "project projection unavailable"); continue;} };
-                    // Cache entries initialize independently; interrupted eviction
-                    // only retains extra reusable bytes and cannot corrupt a cell.
-                    self.bytes.lock().unwrap_or_else(|error| error.into_inner()).retain(|_, cell| Arc::strong_count(cell) > 1 || cell.get().is_some_and(|bytes| Arc::strong_count(bytes) > 1));
-                    for project in declared {
-                        if !stops.contains_key(&project) && initializing.insert(project.clone()) {
-                            let environment = Arc::clone(self);
-                            initializers.spawn(async move { let result = environment.prepare(&project).await; (project,result) });
-                        }
-                    }
-                }
-            }
-        }
-        initializers.shutdown().await;
-        for stop in stops.values() {
-            stop.send_replace(true);
-        }
-        while managers.join_next().await.is_some() {}
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]

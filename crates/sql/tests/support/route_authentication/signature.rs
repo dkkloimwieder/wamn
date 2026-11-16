@@ -33,14 +33,6 @@ impl Fixture {
         let coordinate = project_server.create_database("project").await.unwrap();
         let database = url::Url::parse(coordinate.url()).unwrap();
         wamn_platform_identity::test_database::project_platform(database.as_str()).await;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::sql::ensure_workload_acl_role_sql(
-                wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
-            ),
-        ))
-        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
-        .await
-        .unwrap();
         Self {
             credentials,
             database,
@@ -112,12 +104,6 @@ impl Fixture {
             project,
             &"dev".parse().unwrap(),
         ));
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::sql::grant_identity_reader_surface_sql(),
-        ))
-        .execute(&mut self.credentials.admin)
-        .await
-        .unwrap();
         let identity_reader = sqlx::postgres::PgPoolOptions::new()
             .after_connect(|connection, _| {
                 Box::pin(async move {
@@ -375,18 +361,14 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     use wamn_authority::auth_cache::test_util::{nats, until};
     use wamn_broker::auth_changes::AuthDrops;
     use wamn_broker::connection_changes::ConnectionDrops;
-    use wamn_connections::connection_memory::replicate;
+
     use wamn_platform_identity::connections::administration;
 
     const PROJECT_ENV_KEY: &str = "acme--dev--host-project";
     let _lock = wamn_test_postgres::lock();
-    let (_server, mut client) = nats().await;
+    let (_server, _client) = nats().await;
     let mut fixture = Fixture::new().await;
-    fixture.changes = replicate(
-        &mut client,
-        Some(&PROJECT_ENV_KEY.parse().unwrap()),
-        Arc::clone(&fixture.memory),
-    );
+    fixture.changes = wamn_broker::Publisher::default();
     until("the connection watch runs", || fixture.memory.watched()).await;
     let routing = fixture.valid_plugin().await;
     let signature = signed(BODY);

@@ -11,7 +11,7 @@ import * as receiving from "./generated/wamn_receiving/receiving.js";
 import * as supplier from "./generated/wamn_receiving/supplier.js";
 import * as descriptions from "./generated/wamn_receiving/components/index.js";
 import { Actions, Records, type NavigationAction } from "./table";
-import { PurchaseOrderForm, ReceiptForm, SupplierForm } from "./forms";
+import { PurchaseOrderForm, ReceiptForm } from "./forms";
 import { invoke, type RecordValue } from "./data";
 import { displayRecord, referenceLabels } from "./references";
 
@@ -173,19 +173,12 @@ export const SECTIONS: readonly ShellSection[] = [
         path: "suppliers",
         operation: d.SupplierQueryTable.id,
         label: d.SupplierQueryTable.title,
-        actions: [{ label: d.SupplierCreateForm.title, path: "suppliers/new", operation: d.SupplierCreateForm.id }],
         component: (props) => (
           <Records screen={props} description={d.SupplierQueryTable} route={supplier.SUPPLIER_QUERY_ROUTE} />
         ),
       },
     ],
     routes: [
-      {
-        path: "suppliers/new",
-        operation: d.SupplierCreateForm.id,
-        label: d.SupplierCreateForm.title,
-        component: SupplierForm,
-      },
     ],
   },
   {

@@ -10,7 +10,6 @@ pub mod installation;
 pub mod installed;
 pub mod oauth;
 pub mod operations;
-pub mod provider;
 pub mod resources;
 pub mod status;
 

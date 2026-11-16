@@ -7,7 +7,6 @@ It does not compile source, build JavaScript, publish packages, or select applic
 A fresh platform contains zero application environments and zero application releases.
 
 [Building](building.md#local-platform-artifacts) owns artifact production.
-[The deployment plan](../plan/deploy.md) owns application schema rules and the deferred GCP work.
 [Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites) remain external inputs. GCP deployment integration is unfinished.
 
 ## Local platform
@@ -451,7 +450,6 @@ A secret-only `set-credential` retains the refresh token and forces refresh with
 The control host writes credential values through the environment store.
 Postgres keeps their references and display hints.
 The baseline schema owns fresh installations.
-[Integration and connection schema](../plan/integration-schema.md) defines administration, bindings, and version selection.
 
 The control routes use project administrator authority.
 The `external_system.*`, `integration.*`, and `connection.*` routes manage their respective identities.

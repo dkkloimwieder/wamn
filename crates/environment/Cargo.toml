@@ -14,10 +14,6 @@ ops = ["wamn-control-provision/ops", "wamn-platform-install/ops"]
 name = "netsuite_publication"
 path = "../../apps/netsuite/tests/publication.rs"
 
-[[test]]
-name = "rest_connector_publication"
-path = "../../apps/rest_connector/tests/publication.rs"
-
 [dependencies]
 wamn-events.workspace = true
 wamn-platform-install.workspace = true

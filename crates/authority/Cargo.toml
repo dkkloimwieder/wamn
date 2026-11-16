@@ -16,7 +16,6 @@ anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream", "kv"] }
 futures-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
-moka = { workspace = true, features = ["sync"] }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -25,17 +24,14 @@ tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
-wamn-broker = { workspace = true }
 wamn-catalog = { workspace = true, features = ["sqlx"] }
 wamn-engine = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-platform-identity = { workspace = true }
 wamn-registry = { workspace = true }
 wash-runtime = { workspace = true }
 
 [dev-dependencies]
 wamn-authority = { path = ".", features = ["test-util"] }
-wamn-broker = { workspace = true, features = ["test-util"] }
 
 hyper = { workspace = true, features = ["server"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
@@ -43,7 +39,6 @@ tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true, features = ["test-util"] }
-wamn-platform-identity = { workspace = true, features = ["test-util"] }
 wat = "=1.254.2"
 
 [lints]

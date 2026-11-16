@@ -73,28 +73,13 @@ impl ConnectionDispatch for ComponentReads {
             .facts
             .release(&self.resources.manifest_digest)
             .await?;
-        let Some(binding) = release.binding(&self.component, &self.package, name) else {
+        let Some(_) = release.binding(&self.component, &self.package, name) else {
             return Ok(None);
-        };
-        let guard = match self
-            .resources
-            .facts
-            .exclusive_call(binding.connection_id)
-            .await
-        {
-            Ok(guard) => guard,
-            Err(error) => {
-                tracing::warn!(connection = %binding.connection_id, %error, "connection unavailable");
-                return Ok(None);
-            }
         };
         let Some(instance) = self.resolve(name).await? else {
             return Ok(None);
         };
         let values = instance.call(interface, function, parameters).await;
-        if guard.as_ref().is_some_and(|guard| !guard.held()) {
-            return Ok(None);
-        }
         Ok(Some(values))
     }
 

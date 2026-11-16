@@ -243,32 +243,11 @@ impl ControlRoutes<'_> {
         transaction.commit().await?;
         self.changes.publish(drops).await;
         self.changes.publish(connection_drops).await;
-        let mut source = self
-            .begin_in_environment(
-                writer,
-                attachment,
-                caller,
-                Some(&project),
-                target.env.as_ref(),
-            )
-            .await?;
         let mut completed = Vec::new();
-        let mut projected_drops = Vec::new();
         for (mut target, (project, env)) in targets.into_iter().zip(&environments) {
             let projected = async {
                 if let Some(id) = &identity {
                     references::remove_projection(&mut target, group, id).await?;
-                } else {
-                    projected_drops.push(
-                        references::project_administration(
-                            &mut source,
-                            &mut target,
-                            self.org,
-                            project,
-                            env,
-                        )
-                        .await?,
-                    );
                 }
                 target.commit().await?;
                 Ok::<_, ConnectionError>(())
@@ -279,10 +258,6 @@ impl ControlRoutes<'_> {
                 return Err(incomplete(project, env, &completed));
             }
             completed.push(format!("{project}/{env}"));
-        }
-        source.commit().await?;
-        for drops in projected_drops {
-            self.changes.publish(drops).await;
         }
         if let Some(credentials) = credentials {
             references::destroy_credentials(&credentials).await?;

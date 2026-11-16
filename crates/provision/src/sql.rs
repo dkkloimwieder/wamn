@@ -7,15 +7,10 @@
 //! `wamn_app` role name is a pinned constant. Values that vary (a probed role
 //! name, a role password) travel as `$n` params or quoted literals.
 
-use crate::project_key::{PROJECT_KEY_FUNCTION, PROJECT_KEY_SCHEMA};
-
 mod cdc;
 mod credentials;
 mod database;
 mod database_grants;
-
-#[doc(inline)]
-use std::fmt::Write as _;
 
 pub use database::{
     PLATFORM_EXTENSIONS, create_database_named_sql, drop_database_named_sql,
@@ -43,8 +38,7 @@ pub use cdc::{
 
 use crate::name::{APP_ROLE, DB_OWNER_ROLE};
 use crate::workload_role::{
-    ADMINISTRATION_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, PLATFORM_GROUP_ROLE,
-    SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
+    PLATFORM_GROUP_ROLE, WorkloadRoleFamily,
 };
 pub(crate) use postgres_protocol::escape::escape_identifier;
 use postgres_protocol::escape::escape_literal;
@@ -291,117 +285,6 @@ pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
     )
 }
 
-/// `GRANT EXECUTE` on the project-key derivation for one stable ACL role.
-///
-/// # A WRITER needs this, not only a reader of the predicate
-///
-/// Every governed relation carries a `<table>_tkey` EXPRESSION INDEX over
-/// `wamn_authority.project_key(text)`, and PostgreSQL evaluates that expression
-/// while inserting or updating the row. So a family holding a COMPLETE table
-/// grant set and the `wamn_platform` base policy arm still fails its INSERT with
-/// 42501 `permission denied for function project_key` unless it holds this
-/// (`wamn-0h0g.22.28`). Measured on PostgreSQL 18.6 as a login asserted NOT
-/// (`rolsuper` OR `rolbypassrls`): with the grant the row lands, without it the
-/// statement raises 42501 and the post-state is zero rows.
-///
-/// # Exactly this, and nothing beside it
-///
-/// * NOT `USAGE` on `wamn_authority`. An index expression is a stored, already
-///   resolved node tree, so no name resolution happens at insert time and only
-///   the function's EXECUTE ACL is validated. Measured: EXECUTE alone, with
-///   `has_schema_privilege(role, 'wamn_authority', 'USAGE') = false`, inserts.
-/// * NOT `current_project_key()`. That derivation is called only by the project
-///   base policy, which `wamn-0h0g.22.17` narrowed `TO wamn_app`; a non-guest
-///   family matches the permissive `TO wamn_platform` arm, whose `USING (true)`
-///   calls nothing. Measured: the INSERT above succeeds with
-///   `has_function_privilege(role, 'wamn_authority.current_project_key()',
-///   'EXECUTE') = false`.
-/// * NOT to [`PLATFORM_GROUP_ROLE`]. That group carries POLICY MEMBERSHIP only
-///   and holds no privilege of its own; granting function EXECUTE to it would
-///   hand the derivation to every member, including the families that never
-///   write. It is granted here, beside the one family's own grant set, so the
-///   surface stays the measured production surface.
-fn grant_project_key_execute_sql(role: &str) -> String {
-    format!(
-        "GRANT EXECUTE ON FUNCTION {schema}.project_key(text) TO {role};",
-        schema = escape_identifier(crate::project_key::PROJECT_KEY_SCHEMA),
-        role = escape_identifier(role),
-    )
-}
-
-fn quoted_column_list(columns: &[&str]) -> String {
-    columns
-        .iter()
-        .map(|column| escape_identifier(column))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Converge the stable callable-HTTP admitter role to its exact read surface
-/// (`wamn-0h0g.22.37`).
-///
-/// The connection-effect snapshot and fresh operation-permission reads use
-/// [`HTTP_ADMITTER_CATALOG_RELATIONS`] and the three platform relations of
-/// [`http_admitter_relations`].
-/// User permission reads join the active application user to its role grants;
-/// service permission reads continue to read `platform.permission` alone.
-/// A read route's ETag reads the WAL position without a table grant.
-/// `USAGE` on those two schemas plus eight `SELECT`s and the column `SELECT`
-/// of [`HTTP_ADMITTER_WORKFLOW_COLUMNS`] on `catalog.workflows` is the
-/// family's authority.
-///
-/// # What it deliberately does NOT hold
-///
-/// * NO `wamn_run` anything. The admitter authorizes an effect; it does not
-///   admit, lease or terminalize a run. `schema` is therefore the REVOKE
-///   target and never a grant target — an environment where someone handed this
-///   family a run-plane privilege converges back on the next apply.
-/// * NO write of any grain, so no `wamn_authority.project_key(text)` EXECUTE
-///   either. That grant exists for the families whose INSERT or UPDATE makes
-///   PostgreSQL evaluate a `<table>_tkey` expression index; a pure reader never
-///   forms an index entry, and these statements carry no predicate over the
-///   derivation for the planner to evaluate.
-/// * NO function EXECUTE at all. The statement calls only built-ins.
-///
-/// Run connected to the project-environment database as a principal owning both
-/// schemas (the database owner or the cluster superuser), AFTER
-/// `wamn_catalog::CATALOG_SCHEMA_SQL` and the run-plane files have been applied —
-/// the `REVOKE`/`GRANT` name relations that must already exist.
-pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
-    let role = escape_identifier(HTTP_ADMITTER_ROLE);
-    let schema = escape_identifier(schema);
-    let schemas = HTTP_ADMITTER_SCHEMAS.join(", ");
-    let mut sql = format!(
-        "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {schemas}, {schema} \
-         FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA {schemas}, {schema} \
-         FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA {schemas}, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA {schemas} TO {role};",
-        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::HttpAdmitter),
-    );
-    for (schema, relation) in http_admitter_relations() {
-        write!(
-            sql,
-            " GRANT SELECT ON TABLE {schema}.{relation} TO {role};",
-            relation = escape_identifier(relation),
-        )
-        .expect("writing to a String cannot fail");
-    }
-    let columns = HTTP_ADMITTER_WORKFLOW_COLUMNS
-        .iter()
-        .map(|column| escape_identifier(column))
-        .collect::<Vec<_>>()
-        .join(", ");
-    write!(
-        sql,
-        " GRANT SELECT ({columns}) ON TABLE catalog.\"workflows\" TO {role};"
-    )
-    .expect("writing to a String cannot fail");
-    sql
-}
-
 /// The application authorization relations the administration family reads and
 /// writes (docs/architecture/data-access.md#actors), the environment status
 /// that the status routes mirror
@@ -423,197 +306,6 @@ pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
     "number_sequence",
     "setting",
 ];
-
-/// Converge the stable administration role to its exact surface
-/// (`wamn-a40n.2`).
-///
-/// The role reads and writes [`ADMINISTRATION_RELATIONS`]. The grant goes to
-/// this one family, not to [`PLATFORM_GROUP_ROLE`], which every platform
-/// family inherits (owner correction of 2026-09-30). A write of one of them
-/// also appends the entry of its `<table>_history` table and renders it
-/// through `wamn_history.row_image` with the writer's authority, so the role holds `INSERT` on the entry
-/// columns of those history tables, `USAGE` on `wamn_history`, `EXECUTE` on
-/// `row_image`. On the catalog it
-/// reads `catalog.releases` only, for the control host's `release.profile`.
-/// It holds nothing on the run plane. `schema` is the run-plane revoke target.
-pub fn grant_administration_surface_sql(schema: &str) -> String {
-    let role = escape_identifier(ADMINISTRATION_ROLE);
-    let schema = escape_identifier(schema);
-    let mut sql = format!(
-        "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_history, {schema} \
-         FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_history, {schema} FROM {role}; \
-         REVOKE EXECUTE ON FUNCTION {PROJECT_KEY_FUNCTION}(text) FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog, platform, wamn_history TO {role}; \
-         GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role}; \
-         GRANT SELECT ON TABLE catalog.releases TO {role}; \
-         GRANT SELECT ON TABLE catalog.connection_requirement, catalog.release_connection, catalog.connection_binding TO {role};",
-        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::Administration),
-    );
-    for relation in ADMINISTRATION_RELATIONS {
-        write!(
-            sql,
-            " GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE platform.{} TO {role};",
-            escape_identifier(relation)
-        )
-        .expect("writing to a String cannot fail");
-        if !["external_system", "integration", "connection"].contains(&relation) {
-            write!(sql, " GRANT INSERT (row_key, type, operation, changed_by, changed_at, transaction_id, before, after) ON TABLE platform.{} TO {role};", escape_identifier(&format!("{relation}_history")))
-                .expect("writing to a String cannot fail");
-        }
-    }
-
-    sql
-}
-
-/// Converge the session role reader onto four columns and no execution authority.
-///
-/// Apply after the project schemas exist. The connection selects the environment database for these reads. Revoke column
-/// ACLs as well as table ACLs so replay removes a widened read or write.
-pub fn grant_session_role_reader_surface_sql() -> String {
-    let role = escape_identifier(SESSION_ROLE_READER_ROLE);
-    format!(
-        "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, wamn_run, {PROJECT_KEY_SCHEMA} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_run, {PROJECT_KEY_SCHEMA} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_run, {PROJECT_KEY_SCHEMA} FROM {role}; \
-         DO $session_column_acl$ DECLARE target record; BEGIN \
-           FOR target IN \
-             SELECT n.nspname, c.relname, a.attname \
-               FROM pg_catalog.pg_attribute a \
-               JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
-               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-              WHERE n.nspname IN ('catalog', 'platform', 'wamn_run', '{PROJECT_KEY_SCHEMA}') \
-                AND c.relkind IN ('r', 'p', 'v', 'm', 'f') \
-                AND a.attnum > 0 AND NOT a.attisdropped AND a.attacl IS NOT NULL \
-           LOOP \
-             EXECUTE format('REVOKE ALL PRIVILEGES (%I) ON TABLE %I.%I FROM %I', \
-               target.attname, target.nspname, target.relname, {role_literal}); \
-           END LOOP; \
-         END $session_column_acl$; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_run, {PROJECT_KEY_SCHEMA} FROM {role}; \
-         GRANT USAGE ON SCHEMA platform TO {role}; \
-         GRANT SELECT (id, status) ON TABLE platform.\"user\" TO {role}; \
-         GRANT SELECT (user_id, role_name) ON TABLE platform.user_role TO {role};",
-        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::SessionRoleReader),
-        role_literal = escape_literal(SESSION_ROLE_READER_ROLE),
-    )
-}
-
-/// Converge the stable executor-platform role to its exact lease surface
-/// (`wamn-0h0g.22.37`).
-///
-/// The production queries that select `AuthorityClass::ExecutorPlatform` live
-/// in `wamn_sql::production_lease` and its
-/// `wiring_resolution` sibling.
-///
-/// # The grains, and why each is the one it is
-///
-/// * `catalog`: `USAGE` plus TABLE-grain `SELECT` on
-///   [`EXECUTOR_PLATFORM_CATALOG_RELATIONS`]. No write of any type.
-/// * `runs`: TABLE-grain `SELECT` because `transitions::FENCED_PREFIX` locks the
-///   row with `SELECT r.*`, and COLUMN-grain `UPDATE` over
-///   [`EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS`]. The admission pins, the wiring
-///   identity and the input cannot be updated by this role. The shared
-///   `TO wamn_platform` policy uses `USING (true)`, so a table-wide `UPDATE`
-///   would let the role rewrite other environments.
-/// * `run_queue`: TABLE-grain `SELECT` (`SELECT q.*` in the same fence) and
-///   `DELETE` (PostgreSQL has no column-grain DELETE), plus COLUMN-grain
-///   `UPDATE` over [`EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS`] — the lease and
-///   the crash counter, never the FIFO position.
-/// * `runs` and `run_queue` INSERT, column grain over
-///   [`EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS`] and
-///   [`EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS`]. The host admits event and schedule runs
-///   under the declaring release.
-/// * `wamn_authority.project_key(text)`: MEASURED, and not optional. `runs`
-///   carries the `runs_tkey` EXPRESSION INDEX over that function, and
-///   PostgreSQL evaluates an index expression while forming the new index entry
-///   an UPDATE requires. Four of the six `runs` writes change `status`, which
-///   participates in the partial-index predicates on `runs`, so those updates
-///   can never take the HOT path that would skip index maintenance: the
-///   evaluation — and therefore the EXECUTE test — is unconditional for them,
-///   exactly as it is for the management admitter's INSERT (`wamn-0h0g.22.28`).
-///   Schema `USAGE` on `wamn_authority` is NOT granted and is NOT needed: an
-///   index expression is a stored, already-resolved node tree, so no name
-///   resolution happens and only the function's EXECUTE ACL is validated.
-///
-/// Blanket revocation over BOTH schemas precedes every grant, so a replay
-/// NARROWS as well as grants. A table-level `REVOKE` carries that table's
-/// column-level ACL entries with it, which is what makes the column-exact
-/// `UPDATE` sets convergent rather than merely additive.
-pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
-    let role = escape_identifier(EXECUTOR_PLATFORM_ROLE);
-    let schema = escape_identifier(schema);
-    let mut sql = format!(
-        "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog, platform, {schema} TO {role};",
-        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::ExecutorPlatform),
-    );
-    for relation in EXECUTOR_PLATFORM_CATALOG_RELATIONS {
-        write!(
-            sql,
-            " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
-            relation = escape_identifier(relation),
-        )
-        .expect("writing to a String cannot fail");
-    }
-    for relation in ["connection", "integration"] {
-        write!(
-            sql,
-            " GRANT SELECT ON TABLE platform.{} TO {role};",
-            escape_identifier(relation)
-        )
-        .expect("writing to a String cannot fail");
-    }
-    let run_update = quoted_column_list(&EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS);
-    let queue_update = quoted_column_list(&EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS);
-    let run_insert = quoted_column_list(&EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS);
-    let queue_insert = quoted_column_list(&EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS);
-    write!(
-        sql,
-        " GRANT SELECT ON TABLE {schema}.\"runs\" TO {role}; \
-         GRANT UPDATE ({run_update}) ON TABLE {schema}.\"runs\" TO {role}; \
-         GRANT INSERT ({run_insert}) ON TABLE {schema}.\"runs\" TO {role}; \
-         GRANT SELECT, DELETE ON TABLE {schema}.\"run_queue\" TO {role}; \
-         GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
-         GRANT INSERT ({queue_insert}) ON TABLE {schema}.\"run_queue\" TO {role}; \
-         GRANT SELECT (id, type, status, email) ON TABLE platform.\"user\" TO {role}; \
-         GRANT SELECT (target_type, target_id, key, value) ON TABLE platform.\"setting\" TO {role};"
-    )
-    .expect("writing to a String cannot fail");
-    // `runs` carries `runs_tkey`, so the column-exact UPDATE above is dead
-    // without this on every write that changes an indexed column.
-    sql.push(' ');
-    sql.push_str(&grant_project_key_execute_sql(EXECUTOR_PLATFORM_ROLE));
-    sql.push_str(&grant_executor_history_reads_sql());
-    sql
-}
-
-/// Grant event admission the entity maps and actor lookup columns of model histories.
-/// Run again after package history tables are installed.
-pub fn grant_executor_history_reads_sql() -> String {
-    format!(
-        " DO $event_history$ DECLARE s record; h record; BEGIN \
-         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_name}) THEN RETURN; END IF; \
-         FOR s IN SELECT n.nspname FROM pg_namespace n JOIN pg_class c ON c.relnamespace = n.oid \
-             WHERE c.relname = 'wamn_entities' AND c.relkind = 'r' LOOP \
-           EXECUTE format('GRANT USAGE ON SCHEMA %I TO {role}', s.nspname); \
-           EXECUTE format('GRANT SELECT ON TABLE %I.wamn_entities TO {role}', s.nspname); \
-           FOR h IN EXECUTE format('SELECT DISTINCT c.relname FROM %I.wamn_entities m \
-               JOIN pg_class c ON c.relnamespace = %L::regnamespace \
-               AND c.relname = m.table_name || ''_history''', s.nspname, s.nspname) LOOP \
-             EXECUTE format('GRANT SELECT (row_key, type, transaction_id, position, changed_by) ON TABLE %I.%I TO {role}', s.nspname, h.relname); \
-           END LOOP; \
-         END LOOP; END $event_history$;",
-        role = escape_identifier(EXECUTOR_PLATFORM_ROLE),
-        role_name = escape_literal(EXECUTOR_PLATFORM_ROLE),
-    )
-}
 
 // --- T1 control-database read surfaces (wamn-0h0g.12.116, wamn-0h0g.12.67) ---
 //
@@ -660,92 +352,6 @@ pub const IDENTITY_READER_RELATIONS: [&str; 5] = [
 /// session admission tests the active org membership (`wamn-ms1sn.2`).
 pub const IDENTITY_READER_COLUMNS: [(&str, &[&str]); 1] =
     [("org_memberships", &["principal_id", "org", "status"])];
-
-/// Converge one system-plane reader's stable ACL role to exactly `SELECT` on
-/// `relations` inside `schema`, and nothing anywhere else in the control plane.
-///
-/// Table-level rather than column-exact: these roles hold no write privilege, so a
-/// column list would withhold only timestamps and labels while making a query
-/// that reads one more column fail in production instead of at review.
-///
-/// Run connected to the control database as a principal that owns the system
-/// schemas or the cluster superuser, AFTER `deploy/sql/system-schema.sql` has
-/// been applied — the `REVOKE`/`GRANT` name relations that must already exist.
-/// `CREATE ROLE` needs an admin principal, so the whole batch is an admin batch
-/// exactly as the other families' are.
-fn grant_system_reader_surface_sql(
-    family: WorkloadRoleFamily,
-    schema: &str,
-    relations: &[&str],
-) -> String {
-    debug_assert!(
-        SYSTEM_PLANE_SCHEMAS.contains(&schema),
-        "a system-plane reader grants inside a system-plane schema"
-    );
-    let role = escape_identifier(family.acl_role());
-    let plane = SYSTEM_PLANE_SCHEMAS
-        .iter()
-        .map(|name| escape_identifier(name))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let schema = escape_identifier(schema);
-    let mut sql = format!(
-        "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {plane} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA {plane} FROM {role}; \
-         GRANT USAGE ON SCHEMA {schema}, platform, wamn_authority TO {role}; \
-         REVOKE ALL ON platform.tx_identity, platform.login_principal FROM {role}; \
-         GRANT INSERT ON platform.tx_identity TO {role}; \
-         GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO {role};",
-        ensure = ensure_workload_acl_role_sql(family),
-    );
-    for relation in relations {
-        write!(
-            sql,
-            " GRANT SELECT ON TABLE {schema}.{relation} TO {role};",
-            relation = escape_identifier(relation),
-        )
-        .expect("writing to a String cannot fail");
-    }
-    sql
-}
-
-/// Grant identity reads and INSERT only on the transaction caller table.
-/// The reader cannot insert or update identity records.
-pub fn grant_identity_reader_surface_sql() -> String {
-    let mut sql = grant_system_reader_surface_sql(
-        WorkloadRoleFamily::IdentityReader,
-        "identity",
-        &IDENTITY_READER_RELATIONS,
-    );
-    for (relation, columns) in IDENTITY_READER_COLUMNS {
-        write!(
-            sql,
-            " GRANT SELECT ({}) ON identity.{relation} TO wamn_identity_reader;",
-            columns.join(", "),
-        )
-        .expect("writing to a String cannot fail");
-    }
-    sql.push_str(" GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_identity_reader;");
-    sql.push_str(&wamn_registry::sql::grant_control_policy_execute_sql(
-        &escape_identifier(WorkloadRoleFamily::IdentityReader.acl_role()),
-    ));
-    sql
-}
-
-/// Grant the host its environment readers and encrypted OAuth storage.
-pub fn grant_connection_reader_surface_sql() -> String {
-    let mut sql =
-        grant_system_reader_surface_sql(WorkloadRoleFamily::ConnectionReader, "registry", &[]);
-    let role = escape_identifier(WorkloadRoleFamily::ConnectionReader.acl_role());
-    sql.push_str(
-        &wamn_registry::sql::control_provision_src_sql_grant_connection_reader_surface_sql(&role),
-    );
-    write!(sql, " GRANT USAGE ON SCHEMA identity TO {role}; GRANT SELECT, INSERT, UPDATE, DELETE ON identity.oauth_token, identity.oauth_authorization TO {role};")
-        .expect("writing to a String cannot fail");
-    sql.push_str(&wamn_registry::sql::grant_control_policy_execute_sql(&role));
-    sql
-}
 
 /// Non-secret connection functions available to the control host.
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
@@ -803,77 +409,6 @@ pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 1] =
 /// The schemas of [`CONTROL_SURFACE`], in which the control role holds `USAGE`.
 pub const CONTROL_SCHEMAS: [&str; 2] = ["identity", "registry"];
 
-/// Converge the stable control role to exactly [`CONTROL_SURFACE`] and
-/// [`CONTROL_COLUMN_SURFACE`] in the
-/// control database. The role is not a [`PLATFORM_GROUP_ROLE`] member and
-/// holds nothing else.
-pub fn grant_control_surface_sql() -> String {
-    format!(
-        "{} {}",
-        ensure_workload_acl_role_sql(WorkloadRoleFamily::Control),
-        control_surface_grants_sql()
-    )
-}
-
-/// The grants of [`grant_control_surface_sql`] without the role bootstrap.
-///
-/// The control owner can apply these grants without permission to create roles.
-pub fn control_surface_grants_sql() -> String {
-    let role = escape_identifier(WorkloadRoleFamily::Control.acl_role());
-    let plane = SYSTEM_PLANE_SCHEMAS
-        .iter()
-        .map(|name| escape_identifier(name))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let schemas = CONTROL_SCHEMAS
-        .iter()
-        .map(|name| escape_identifier(name))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let mut sql = format!(
-        "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {plane} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA {plane} FROM {role}; \
-         GRANT USAGE ON SCHEMA {schemas}, platform, wamn_authority TO {role}; \
-         GRANT INSERT ON platform.tx_identity TO {role}; \
-         GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), \
-           wamn_authority.current_principal_id(), wamn_authority.current_role(), \
-           wamn_authority.current_application() TO {role};"
-    );
-    for (schema, relation, privileges) in CONTROL_SURFACE {
-        write!(
-            sql,
-            " GRANT {privileges} ON TABLE {schema}.{relation} TO {role};",
-            privileges = privileges.join(", "),
-            schema = escape_identifier(schema),
-            relation = escape_identifier(relation),
-        )
-        .expect("writing to a String cannot fail");
-    }
-    for (schema, relation, privilege, columns) in CONTROL_COLUMN_SURFACE {
-        write!(
-            sql,
-            " GRANT {privilege} ({columns}) ON TABLE {schema}.{relation} TO {role};",
-            columns = columns
-                .iter()
-                .map(|column| escape_identifier(column))
-                .collect::<Vec<_>>()
-                .join(", "),
-            schema = escape_identifier(schema),
-            relation = escape_identifier(relation),
-        )
-        .expect("writing to a String cannot fail");
-    }
-    for signature in CONTROL_CONNECTION_FUNCTIONS {
-        sql.push_str(
-            &wamn_registry::sql::control_provision_src_sql_control_surface_grants_sql_2(
-                &role, signature,
-            ),
-        );
-    }
-    sql.push_str(wamn_registry::sql::CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL);
-    sql
-}
-
 /// The family-specific privilege batch that converges one family's STABLE ACL
 /// role to its exact grant set, when this crate owns that convergence.
 ///
@@ -883,21 +418,7 @@ pub fn control_surface_grants_sql() -> String {
 /// a family stays per-family (`wamn-0h0g.22.16`).
 pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
     match family {
-        WorkloadRoleFamily::AuditRetention => Some(format!(
-            "{} {}",
-            ensure_workload_acl_role_sql(family),
-            crate::audit_retention::reconcile_audit_retention_grants_sql()
-        )),
         WorkloadRoleFamily::Query => Some(grant_dynamic_sql_surface_sql()),
-        WorkloadRoleFamily::ExecutorPlatform => {
-            Some(grant_executor_platform_surface_sql("wamn_run"))
-        }
-        WorkloadRoleFamily::HttpAdmitter => Some(grant_http_admitter_surface_sql("wamn_run")),
-        WorkloadRoleFamily::SessionRoleReader => Some(grant_session_role_reader_surface_sql()),
-        WorkloadRoleFamily::IdentityReader => Some(grant_identity_reader_surface_sql()),
-        WorkloadRoleFamily::ConnectionReader => Some(grant_connection_reader_surface_sql()),
-        WorkloadRoleFamily::Administration => Some(grant_administration_surface_sql("wamn_run")),
-        WorkloadRoleFamily::Control => Some(grant_control_surface_sql()),
         _ => None,
     }
 }

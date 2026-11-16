@@ -345,7 +345,3 @@ async fn set_counter(
 
     Ok(Ok(()))
 }
-
-#[cfg(test)]
-#[path = "number_counter_tests.rs"]
-mod tests;

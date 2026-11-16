@@ -62,10 +62,6 @@ impl ComponentConnectionRequirement {
         serde_json::to_vec(self).expect("portable component connection requirement serializes")
     }
 
-    /// SHA-256 of [`Self::canonical_bytes`].
-    pub fn requirement_hash(&self) -> wamn_digest::Digest {
-        wamn_digest::bytes_sha256(&self.canonical_bytes())
-    }
 }
 
 /// Shape version for portable connection-type descriptors.
