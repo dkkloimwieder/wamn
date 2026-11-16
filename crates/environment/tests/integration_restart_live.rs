@@ -110,6 +110,16 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
         repository.join("apps/Cargo.lock"),
         root.join("apps/Cargo.lock"),
     )?;
+    let metadata = std::process::Command::new("cargo")
+        .args(["metadata", "--offline", "--format-version", "1"])
+        .arg("--manifest-path")
+        .arg(root.join("apps/Cargo.toml"))
+        .output()?;
+    anyhow::ensure!(
+        metadata.status.success(),
+        "resolve the reduced guest workspace: {}",
+        String::from_utf8_lossy(&metadata.stderr)
+    );
     Ok(())
 }
 

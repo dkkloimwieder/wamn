@@ -150,6 +150,10 @@ impl GuestWorkspace {
             metadata.workspace_root.join("Cargo.lock"),
             directory.join("Cargo.lock"),
         )?;
+        cargo_metadata::MetadataCommand::new()
+            .manifest_path(directory.join("Cargo.toml"))
+            .other_options(vec!["--offline".into()])
+            .exec()?;
         Ok(Self {
             directory,
             _lock: lock,

@@ -239,7 +239,7 @@ fn validate_resolved_edges(
             return Err(WiringCompatibilityError::new(
                 WiringCompatibilityErrorType::SchemaMismatch,
                 format!(
-                    "wiring edge {:?}.{:?} -> {:?}.{:?} has schemas {} and {}",
+                    "wiring edge {}.{} -> {}.{} has schemas {} and {}",
                     edge.from,
                     edge.from_port,
                     edge.to,
