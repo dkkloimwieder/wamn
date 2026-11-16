@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use sqlx::PgConnection as Client;
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_environment::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
@@ -35,18 +35,20 @@ pub async fn execution_role(
     operations: &[&str],
 ) -> anyhow::Result<Client> {
     let mut project = wamn_postgres::connect(database.as_str()).await?;
+    let mut transaction =
+        wamn_environment::provision_project_env::provisioning_transaction(&mut project).await?;
 
     sqlx::query(
         "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', 'enabler@example.test') ON CONFLICT (id) DO NOTHING",
     )
     .bind(&ENABLER)
-    .execute(&mut project)
+    .execute(&mut *transaction)
     .await
     .map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO platform.role (name) VALUES ($1)")
         .bind(&role)
-        .execute(&mut project)
+        .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())?;
     for operation in operations {
@@ -56,7 +58,7 @@ pub async fn execution_role(
         )
         .bind(&role)
         .bind(operation)
-        .execute(&mut project)
+        .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())?;
     }
@@ -73,25 +75,22 @@ pub async fn execution_role(
         )
         .bind(&user)
         .bind(&role)
-        .execute(&mut project)
+        .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())?;
     }
+    transaction.commit().await?;
     Ok(project)
 }
 
-/// Install the run plane, the environment policy and `manifest` as the
-/// serving release, and return the host's platform database access under the
-/// targeted logins of its families: the executor for admission, and the
-/// admitter for the per-node grant read. The host's credential test refuses
-/// any other login, the superuser included.
+/// Cache `manifest` as the serving release and prepare the host's credentials.
+/// The executor admits schedules. The application login reads per-node grants.
 pub async fn workflow_host(
     admin: &mut Client,
     database: &url::Url,
+    guest_url: &str,
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
-    wamn_environment::platform_migrations::install_project(admin).await?;
-
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     wamn_environment::environment::stage::write_release(
@@ -106,7 +105,8 @@ pub async fn workflow_host(
         .parse::<wamn_registry::ProjectEnvKey>()
         .unwrap()
         .triple();
-    let mut credentials = ClassCredentials::default();
+    let mut credentials =
+        ClassCredentials::default().with_class(AuthorityClass::GuestSql, guest_url);
     for (family, class) in [
         (
             WorkloadRoleFamily::ExecutorPlatform,
@@ -233,11 +233,10 @@ pub async fn schedule_run(
     .await?;
     enable_workflow(
         database.as_str(),
-        &wamn_registry::Triple::new(
-            "rest".parse().unwrap(),
-            "test".parse().unwrap(),
-            application.as_str().parse().unwrap(),
-        ),
+        &PROJECT_ENV_KEY
+            .parse::<wamn_registry::ProjectEnvKey>()
+            .unwrap()
+            .triple(),
         &mut project,
         &WorkflowVersion {
             org: &"rest".parse().unwrap(),
@@ -313,29 +312,7 @@ pub async fn install(
     roots: &[PathBuf],
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<String> {
-    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::ensure_app_acl_role_sql()))
-        .execute(&mut *admin)
-        .await
-        .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (sql::ensure_db_owner_role_sql()).to_string(),
-    ))
-    .execute(&mut *admin)
-    .await
-    .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(("DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $$").to_string())).execute(&mut *admin).await.map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (wamn_catalog::CATALOG_SCHEMA_SQL).to_string(),
-    ))
-    .execute(&mut *admin)
-    .await
-    .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (include_str!("../../../deploy/sql/app-schema.sql")).to_string(),
-    ))
-    .execute(&mut *admin)
-    .await
-    .map(drop)?;
+    wamn_environment::platform_migrations::install_project(admin).await?;
     let packages = roots
         .iter()
         .map(|root| {
@@ -562,7 +539,7 @@ pub async fn invoke(
     let document: wamn_catalog::WiringDocument = serde_json::from_slice(&std::fs::read(
         super::support::repository().join("apps/rest_connector/tests/workflows/rest_item.json"),
     )?)?;
-    let workflow_host = workflow_host(&mut admin, database, manifest).await?;
+    let workflow_host = workflow_host(&mut admin, database, guest_url, manifest).await?;
     let run = schedule_run(
         database,
         &workflow_host,
