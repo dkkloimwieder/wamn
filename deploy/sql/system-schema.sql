@@ -815,7 +815,6 @@ CREATE TABLE registry.environment_applications (
         CHECK (revocation_seconds BETWEEN 0 AND 3600),
     client_package text CHECK (client_package <> ''),
     client_web text CHECK (client_web ~ '^sha256:[0-9a-f]{64}$'),
-    release_digest text CHECK (release_digest ~ '^sha256:[0-9a-f]{64}$'),
     PRIMARY KEY (org, env, project, application),
     FOREIGN KEY (org, env, project)
         REFERENCES registry.environment_projects (org, env, project) ON DELETE CASCADE,

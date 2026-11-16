@@ -1107,68 +1107,6 @@ pub trait ResidencyReader: Send + Sync {
     async fn residency(&self) -> wamn_kubernetes::environment_state::Residency;
 }
 
-/// Serve native file requests independently of component workloads.
-/// Serve file requests through the current application selection for their host.
-pub async fn serve_selected(
-    listener: tokio::net::TcpListener,
-    select: impl Fn(&str) -> anyhow::Result<Option<Arc<FileRoutes>>> + Send + Sync + 'static,
-    routing: Arc<FlowHttpRouting>,
-    residency: Option<Arc<dyn ResidencyReader>>,
-) -> std::io::Result<()> {
-    let select = Arc::new(select);
-    let mut connections = tokio::task::JoinSet::new();
-    loop {
-        tokio::select! {
-            Some(result) = connections.join_next(), if !connections.is_empty() => {
-                if let Err(error) = result {
-                    tracing::warn!(%error, "native file connection task failed");
-                }
-            }
-            accepted = listener.accept() => {
-                let (stream, peer) = accepted?;
-                let select = Arc::clone(&select);
-                let routing = Arc::clone(&routing);
-                let residency = residency.as_ref().map(Arc::clone);
-                connections.spawn(async move {
-                    let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
-                        let files = request.headers().get(hyper::header::HOST).and_then(|host| host.to_str().ok()).map(|host| select(host)).transpose().map(Option::flatten);
-                        let routing = Arc::clone(&routing);
-                        let residency = residency.as_ref().map(Arc::clone);
-                        async move {
-                            if request.method() == hyper::Method::GET && request.uri().path() == "/_wamn/residency" {
-                                let response = match residency {
-                                    Some(reader) => response(200, &serde_json::to_value(reader.residency().await).expect("residency is JSON")),
-                                    None => hyper::Response::builder().status(404).body(WasiBody::default()).expect("valid response"),
-                                };
-                                return Ok::<_, std::convert::Infallible>(response);
-                            }
-                            let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
-                            let response = match files {
-                                Ok(Some(files)) => files.http(&routing, request).await,
-                                Ok(None) => None,
-                                Err(error) => Some(error_response(&failed("selection", error))),
-                            }.unwrap_or_else(|| {
-                                let mut response = hyper::Response::new(WasiBody::default());
-                                *response.status_mut() = hyper::StatusCode::NOT_FOUND;
-                                response
-                            });
-                            Ok::<_, std::convert::Infallible>(response)
-                        }
-                    });
-                    // One request holds one slot through the streamed response body.
-                    if let Err(error) = hyper::server::conn::http1::Builder::new()
-                        .keep_alive(false)
-                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-                        .await
-                    {
-                        tracing::debug!(%peer, %error, "native file connection failed");
-                    }
-                });
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1182,11 +1120,8 @@ mod tests {
     use wamn_connections::connection_credentials::ConnectionCredentials;
     use wamn_connections::connection_facts::ConnectionFacts;
     use wamn_connections::connection_memory::ConnectionMemory;
-    use wamn_engine::flow_http_routing::{
-        AuthRejection, AuthenticationRequest, RouteAuthenticator, unauthorized,
-    };
+    use wamn_engine::flow_http_routing::AuthenticationRequest;
     use wamn_engine::release_manifest::ReleaseTarget;
-    use wamn_package_artifact::http_client::HttpClient;
     use wamn_sql::WamnPostgresConfig;
 
     fn release() -> Arc<LoadedRelease> {
@@ -1331,25 +1266,6 @@ mod tests {
             "project".parse().unwrap(),
             None,
         )
-    }
-    #[derive(Debug)]
-    struct SessionWithoutGrant;
-    #[async_trait::async_trait]
-    impl RouteAuthenticator for SessionWithoutGrant {
-        async fn authenticate(
-            &self,
-            request: AuthenticationRequest<'_>,
-        ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-            if request
-                .headers
-                .iter()
-                .any(|header| header.name == "authorization")
-            {
-                Ok(Some(caller(None, false, CredentialType::Session)))
-            } else {
-                Err(unauthorized())
-            }
-        }
     }
 
     #[test]
@@ -1545,117 +1461,6 @@ mod tests {
             signed_lifetime(Duration::from_secs(901)).unwrap(),
             Duration::from_mins(15)
         );
-    }
-
-    #[tokio::test]
-    async fn native_residency_reports_loaded_releases_and_run_pins() {
-        struct Reader;
-        #[async_trait::async_trait]
-        impl ResidencyReader for Reader {
-            async fn residency(&self) -> wamn_kubernetes::environment_state::Residency {
-                [(
-                    "orders".parse().unwrap(),
-                    wamn_kubernetes::environment_state::ProjectResidency {
-                        releases: vec![wamn_kubernetes::environment_state::ReleaseResidency {
-                            application: "orders".parse().unwrap(),
-                            manifest_digest: (format!("sha256:{}", "a".repeat(64)))
-                                .parse::<wamn_digest::Digest>()
-                                .unwrap(),
-                            loaded: true,
-                            runs: vec!["unfinished".into()],
-                        }],
-                        error: None,
-                    },
-                )]
-                .into()
-            }
-        }
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let task = tokio::spawn(serve_selected(
-            listener,
-            |_| Ok(None),
-            Arc::new(FlowHttpRouting::new(Arc::default())),
-            Some(Arc::new(Reader)),
-        ));
-        let response = HttpClient::builder()
-            .build()
-            .unwrap()
-            .get(format!("http://{address}/_wamn/residency"))
-            .send()
-            .await
-            .unwrap();
-        assert!(response.status().is_success());
-        let reports: wamn_kubernetes::environment_state::Residency = response.json().await.unwrap();
-        let releases = wamn_kubernetes::environment_state::project_residency(
-            vec![reports],
-            &"orders".parse().unwrap(),
-        )
-        .unwrap();
-        assert!(
-            releases
-                .iter()
-                .any(|release| release.loaded && !release.runs.is_empty())
-        );
-        task.abort();
-        let _ = task.await;
-    }
-
-    #[tokio::test]
-    async fn native_listener_uses_shared_authentication_and_preserves_file_paths() {
-        let files = Arc::new(files());
-        let routing = Arc::new(
-            FlowHttpRouting::for_test(Some(Arc::clone(&files.release)))
-                .with_authenticator(Arc::new(SessionWithoutGrant)),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let task = tokio::spawn(serve_selected(
-            listener,
-            move |host| Ok((host == "orders.example.com").then(|| Arc::clone(&files))),
-            routing,
-            None,
-        ));
-        let client = HttpClient::builder().build().expect("HTTP client");
-        for (method, path) in [
-            (
-                hyper::Method::POST,
-                "/api/orders/files?binding=documents&name=test.txt".into(),
-            ),
-            (
-                hyper::Method::GET,
-                format!("/api/orders/files/{}", Uuid::new_v4()),
-            ),
-        ] {
-            for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {
-                let mut request = client
-                    .request(method.clone(), format!("http://{address}{path}"))
-                    .header("Host", "orders.example.com");
-                if let Some(value) = authorization {
-                    request = request.header("Authorization", value);
-                }
-                assert_eq!(request.send().await.unwrap().status().as_u16(), status);
-            }
-        }
-        for (host, path) in [
-            ("billing.example.com", "/api/orders/files"),
-            ("orders.example.com", "/other"),
-        ] {
-            let response = client
-                .get(format!("http://{address}{path}"))
-                .header("Host", host)
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(response.status().as_u16(), 404);
-            assert!(response.bytes().await.unwrap().is_empty());
-        }
-        assert!(matches!(
-            native_route("/api/orders/files/not-a-uuid"),
-            Some(NativeRoute::Invalid)
-        ));
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
     }
 
     #[tokio::test]
