@@ -138,6 +138,8 @@ Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path; 3.3 id
 
 ## Epic 1: phase 1 deletion
 
+Merged to main.
+
 Rules: done means `cargo build` and `cargo clippy` pass; deletion plus the smallest caller edit only; a test that stops compiling is deleted; an issue edits only the files it owns; a symbol with callers in a file another wave-1 issue owns becomes an empty no-op in wave 1 and is deleted in wave 2.
 
 Decisions: `AuthDrops`/`ConnectionDrops` become no-ops (parameters removed in phase 2); only the publication side of the release document goes (`ServingManifest`, `LoadedRelease` go in 3.2); the edge keeps the component loader; `build.json`, the component media types and the package layers wait for phase 3; `lock()` calls go in 3.8; `wamn_app_owner` is the parent role of every migration login (`workload_role.rs::acl_role`), so it goes in 3.1 with T2 and S; `cluster.k` and `ClusterDocument` stay until 3.6 (read by `services/ctl`, `services/control`, `xtask` and `test-support`), and Epic 1 deletes only the `project.k` chain.
@@ -165,6 +167,10 @@ Wave 2 (in sequence, after wave 1):
 - Checks in phase 3: Helm values size for the largest application (3.2); each KCL `check:` rule also in Rust or SQL (3.5); `/_wamn/residency` goes unless 3.5 needs it; 3.5 creates the operation service account and application principals.
 - wasip3: needed by the workflow service. wash-runtime 2.12.1 has `p3` on by default with p3 service tests; Rust 1.100 has `wasm32-wasip3`.
 - Deferred: the edge device after the restructure; the four workflow behaviours.
+- 3.5: `catalog/configuration.rs::read` still selects the dropped column `registry.environment_applications.release_digest`. Its callers (`control_route/operations.rs`, `environment/document.rs`) fail at that read until 3.5 replaces them with the Helm revision.
+- 3.5: publish has no append check since Epic 1 deleted the check over all versions. 3.5 adds the check against the previous version only.
+- 3.8: these tests compile but use SQL on tables Epic 1 dropped (`catalog.releases`, `catalog.wiring_tombstones`): `crates/provision/tests/{deploy_sql_authority,family_denial_matrix,record_history}.rs`, `crates/provision/tests/fixtures/catalog_record_history.sql`, `crates/identity/tests/fixtures/connections.sql`.
+- Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
 
 # Part 2: Review log
 
