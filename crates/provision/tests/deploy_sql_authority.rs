@@ -1,19 +1,4 @@
-//! The hand-written DDL's project base grants derives from `current_user`.
-//!
-//! `wamn-0h0g.22.6.3` established the guest project base grants across four artifacts;
-//! every guest-readable project relation uses the login-derived project key:
-//! `wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()`,
-//! each with the expression index that keeps the predicate sargable.
-//!
-//! `wamn-0h0g.22.17` gave every governed relation a SECOND arm. The minimum is the GUEST
-//! minimum, narrowed `TO wamn_app`; PostgreSQL default-denies when RLS is enabled
-//! and no policy matches the connected role, so that narrowing LOCKS OUT every
-//! platform principal rather than exempting it — and locks it out at zero rows,
-//! not at an error. One permissive arm `TO wamn_platform` per relation is what
-//! admits them, and their table grants stay the thing that limits them.
-//!
-//! The tests apply the authored artifacts and assert the server's answer from
-//! `pg_policy`, `pg_index`, ACL catalogs, and authenticated sessions.
+//! Schema grants and record-history authority on authenticated database sessions.
 //!
 //! The record-history cases (`wamn-emtx.2`) apply `deploy/sql/record-history.sql`
 //! through `CATALOG_SCHEMA_SQL` and write as the production `wamn_app` guest.
@@ -157,153 +142,6 @@ fn reset(admin_url: &str) {
             ),
         );
     }
-}
-
-/// THE MINIMUM, AS THE SERVER SEES IT.
-///
-/// Applies the real files to a fresh cluster and then asks `pg_policy`,
-/// `pg_index` and `has_table_privilege` — never the file text — three things:
-/// no guest-reachable relation is still on a settable identity, every re-keyed
-/// relation carries its expression index, and a minted guest reads its own
-/// project and only its own.
-#[test]
-#[ignore = "requires: postgres, bin:psql"]
-fn the_swept_minimum_admits_only_the_connected_guest_on_postgres() {
-    let (_database, admin) = shared_server();
-
-    // HERMETIC, and it has to be: `postgres-init.sql` carries a bare
-    // `CREATE DATABASE wamn`, and a run that found the database already
-    // populated would be asserting against LAST run's schema, not this build's.
-    // Roles are cluster-wide, so this case holds the shared server lock.
-    reset(&admin);
-    apply(&admin, POSTGRES_INIT);
-    let base = admin.rsplit_once('/').expect("url names a database").0;
-    let db_url = format!("{base}/wamn");
-    assert_query(
-        &db_url,
-        "SELECT NOT (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolinherit OR rolreplication OR rolpassword IS NOT NULL) FROM pg_authid WHERE rolname='wamn_app'",
-    );
-    for sql in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
-        apply(&db_url, sql);
-    }
-
-    // 1. NOTHING guest-reachable is still on a settable identity.
-    assert_query(
-        &db_url,
-        "SELECT NOT EXISTS (SELECT FROM pg_class c WHERE c.relrowsecurity AND has_table_privilege('wamn_app',c.oid,'SELECT') AND NOT EXISTS (SELECT FROM pg_policy p JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=p.oid WHERE p.polrelid=c.oid AND d.refclassid='pg_proc'::regclass AND d.refobjid='wamn_authority.current_project_key()'::regprocedure))",
-    );
-
-    // The remaining relation with the identity holds no guest privilege.
-    // This assertion also refuses a guest grant on that relation.
-    assert_query(
-        &db_url,
-        "SELECT NOT has_table_privilege('wamn_app','wamn_run.run_queue','SELECT')",
-    );
-
-    // 2. EVERY re-keyed relation carries its expression index. Without it the
-    //    predicate sequential-scans, which is the cliff option (c) had to
-    //    answer for. wamn-0h0g.22.15 makes this a standing denial-acceptance-test arm.
-    assert_query(
-        &db_url,
-        "SELECT NOT EXISTS (SELECT FROM pg_class c WHERE EXISTS (SELECT FROM pg_policy p JOIN pg_depend d ON d.classid='pg_policy'::regclass AND d.objid=p.oid WHERE p.polrelid=c.oid AND d.refclassid='pg_proc'::regclass AND d.refobjid='wamn_authority.current_project_key()'::regprocedure) AND NOT EXISTS (SELECT FROM pg_index i JOIN pg_depend d ON d.classid='pg_class'::regclass AND d.objid=i.indexrelid WHERE i.indrelid=c.oid AND d.refclassid='pg_proc'::regclass AND d.refobjid='wamn_authority.project_key(text)'::regprocedure))",
-    );
-
-    let guest = record_history_guest();
-    apply(
-        &admin,
-        &format!("CREATE ROLE \"{guest}\" NOLOGIN; GRANT wamn_app TO \"{guest}\";"),
-    );
-    let seed = r#"
-DO $$ DECLARE project text; BEGIN
-    FOREACH project IN ARRAY ARRAY['t1--dev--project','t2--dev--project'] LOOP
-        INSERT INTO s2.bench(project_id,g,a,b,c,num,ts,payload)
-            VALUES (project,1,1,1,1,1,now(),'isolation');
-        INSERT INTO s2.rls_secrets(project_id,secret) VALUES (project,'isolation');
-        INSERT INTO s2.scratch(project_id,k) VALUES (project,'isolation');
-        INSERT INTO s2.fkchild(project_id,parent_id)
-            SELECT project,id FROM s2.scratch WHERE project_id=project AND k='isolation';
-        INSERT INTO catalog.packages(project_env_key,package_id,package_version)
-            VALUES(project,'platform_fixture','1.0.0');
-        INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes)
-            VALUES(project,'sha256:' || encode(sha256('{}'::bytea),'hex'),'{}');
-        INSERT INTO catalog.connection_requirement
-            VALUES(project,'sha256:'||repeat('a',64),'platform_fixture','fixture','fixture','read');
-        INSERT INTO catalog.wiring_tombstones(project_env_key,package_id,environment,wiring_id,reason)
-            VALUES(project,'platform_fixture','dev','fixture','isolation');
-        INSERT INTO catalog.workflows(project_env_key,environment,application,workflow_id,version,
-            graph_json,wiring_hash,trigger,execution_type,created_by)
-            VALUES(project,'dev','fixture','fixture',1,'{}','sha256:'||repeat('a',64),
-                'manual','invoker','00000000-0000-4000-8000-00000000000a');
-        INSERT INTO wamn_run.runs(project_env_key,run_id,package_id,environment,wiring_id,
-            wiring_version,wiring_hash,trigger_source,execution_principal_id,execution_role,
-            invoked_by,invoked_by_user_id,node_digests_json,manifest_digest)
-            VALUES(project,'isolation','platform_fixture','dev','fixture',1,'sha256:'||repeat('a',64),
-                'manual','00000000-0000-4000-8000-00000000000a','viewer','manual',
-                '00000000-0000-4000-8000-00000000000a','{}',
-                'sha256:' || encode(sha256('{}'::bytea),'hex'));
-    END LOOP;
-    INSERT INTO platform.integration(id,integration_type,name,status)
-        VALUES('00000000-0000-4000-8000-000000000001','fixture','fixture','active');
-    INSERT INTO platform.connection(id,integration_id,integration_type,status)
-        VALUES('00000000-0000-4000-8000-000000000002',
-            '00000000-0000-4000-8000-000000000001','fixture','active');
-    INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version)
-        SELECT project_env_key,manifest_digest,'00000000-0000-4000-8000-000000000002',1
-        FROM catalog.releases;
-    INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,
-        package_id,name,connection_id)
-        SELECT project_env_key,manifest_digest,'sha256:'||repeat('a',64),
-            'platform_fixture','fixture',connection_id FROM catalog.release_connection;
-END $$;
-"#;
-    apply(
-        &db_url,
-        &format!(
-            "BEGIN; {} {seed} COMMIT;",
-            wamn_provision::bind_platform_principal_sql(
-                wamn_provision::PlatformComponent::Provisioning
-            )
-        ),
-    );
-    // Derive the covered relations from project columns and guest privileges. Every relation
-    // must contain both projects, so an empty fixture cannot pass the refusal.
-    apply(
-        &db_url,
-        &format!(
-            r#"
-BEGIN;
-INSERT INTO platform.tx_identity(principal_id,role,application)
-    VALUES ('{ACTOR_A}','viewer','fixture');
-DO $$ DECLARE target record; own boolean; foreign_rows boolean; BEGIN
-    FOR target IN
-        SELECT c.oid::regclass AS relation, a.attname AS project_column
-        FROM pg_class c JOIN pg_attribute a ON a.attrelid=c.oid
-            AND a.attname IN ('project_id','project_env_key') AND NOT a.attisdropped
-        WHERE c.relkind IN ('r','p') AND has_any_column_privilege('wamn_app', c.oid, 'SELECT')
-    LOOP
-        EXECUTE format('SELECT EXISTS(SELECT FROM %s WHERE %I = ''t1--dev--project'') AND '
-            'EXISTS(SELECT FROM %s WHERE %I = ''t2--dev--project'')',
-            target.relation,target.project_column,target.relation,target.project_column) INTO own;
-        ASSERT own, 'missing isolation fixture for ' || target.relation;
-        SET LOCAL ROLE "{guest}";
-        PERFORM set_config('app.user_id','{ACTOR_B}',true);
-        PERFORM set_config('app.role','admin',true);
-        EXECUTE format('SELECT EXISTS(SELECT FROM %s WHERE %I = ''t1--dev--project''), '
-            'EXISTS(SELECT FROM %s WHERE %I <> ''t1--dev--project'')',
-            target.relation,target.project_column,target.relation,target.project_column)
-            INTO own,foreign_rows;
-        RESET ROLE;
-        ASSERT own AND NOT foreign_rows, 'cross-project access on ' || target.relation;
-    END LOOP;
-END $$;
-COMMIT;
-"#
-        ),
-    );
-    apply(
-        &admin,
-        &format!("DROP OWNED BY \"{guest}\"; DROP ROLE \"{guest}\";"),
-    );
 }
 
 /// The catalog and `platform` schemas name no installing role (`wamn-txmd`,
@@ -1798,8 +1636,8 @@ fn a_project_policy_refuses_without_a_transaction_identity() {
         &database,
         &format!(
             "BEGIN; {} \
-        INSERT INTO catalog.packages(project_env_key,package_id,package_version) \
-        VALUES('t1--dev--project','platform_fixture','1.0.0'); COMMIT;",
+        INSERT INTO catalog.packages(package_id,package_version) \
+        VALUES('platform_fixture','1.0.0'); COMMIT;",
             wamn_provision::bind_platform_principal_sql(
                 wamn_provision::PlatformComponent::Provisioning
             )

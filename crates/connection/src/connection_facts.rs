@@ -195,8 +195,8 @@ impl ConnectionFacts {
             .upgrade()
             .context("project database authority was unloaded")?;
         let mut connection = database.read_connection(&self.project).await?;
-        let rows = sqlx::query("SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) WHERE b.project_env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3").bind(&self.project_env_key).bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection map")?;
-        let versions = sqlx::query("SELECT connection_id,version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2").bind(&self.project_env_key).bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection versions")?;
+        let rows = sqlx::query("SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(manifest_digest,connection_id) WHERE b.manifest_digest=$1 ORDER BY 1,2,3").bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection map")?;
+        let versions = sqlx::query("SELECT connection_id,version FROM catalog.release_connection WHERE manifest_digest=$1").bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection versions")?;
         let fact = crate::connection_memory::ReleaseFact {
             versions: versions
                 .into_iter()
@@ -296,13 +296,13 @@ impl ConnectionFacts {
 const RELEASE_COMPONENT_BINDINGS_READY_SQL: &str = "\
 SELECT NOT EXISTS ( \
     SELECT FROM catalog.connection_requirement requirement \
-     WHERE requirement.project_env_key=$1 AND requirement.component_digest=ANY($3::text[]) \
+     WHERE requirement.component_digest=ANY($2::text[]) \
        AND NOT EXISTS ( \
         SELECT FROM catalog.connection_binding binding \
-        JOIN catalog.release_connection selected USING(project_env_key,manifest_digest,connection_id) \
+        JOIN catalog.release_connection selected USING(manifest_digest,connection_id) \
         JOIN platform.connection connection ON connection.id=selected.connection_id \
         JOIN platform.integration integration ON integration.id=connection.integration_id \
-        WHERE binding.project_env_key=requirement.project_env_key AND binding.manifest_digest=$2 \
+        WHERE binding.manifest_digest=$1 \
           AND binding.component_digest=requirement.component_digest AND binding.package_id=requirement.package_id \
           AND binding.name=requirement.name AND connection.status='active' AND integration.status='active' \
        ) \
@@ -329,7 +329,6 @@ impl ConnectionFacts {
             .context("project database authority was unloaded")?;
         let mut connection = database.read_connection(&self.project).await?;
         let ready = sqlx::query(RELEASE_COMPONENT_BINDINGS_READY_SQL)
-            .bind(&self.project_env_key)
             .bind(manifest_digest)
             .bind(component_digests)
             .fetch_one(connection.connection())

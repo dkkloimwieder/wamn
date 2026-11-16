@@ -119,7 +119,7 @@ impl ControlRoutes<'_> {
                 if let Some(digest) = status["digest"].as_str() {
                     let digest: wamn_digest::Digest =
                         digest.parse().map_err(anyhow::Error::from)?;
-                    selected = sqlx::query("SELECT version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2 AND connection_id=$3::text::uuid").bind(wamn_registry::project_env_key(self.org,&project,env)).bind(digest).bind(connection).fetch_optional(&mut *transaction).await?.map(|row|row.get(0));
+                    selected = sqlx::query("SELECT version FROM catalog.release_connection WHERE manifest_digest=$1 AND connection_id=$2::text::uuid").bind(digest).bind(connection).fetch_optional(&mut *transaction).await?.map(|row|row.get(0));
                 }
             }
             transaction.rollback().await?;

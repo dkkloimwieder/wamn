@@ -4,7 +4,6 @@
 -- provisioning bind wamn:provisioning. Release connections and bindings also log history.
 
 CREATE TABLE catalog.packages (
-    project_env_key            text        NOT NULL CHECK (project_env_key <> ''),
     package_id         text        NOT NULL,
     package_version    text        NOT NULL,
     registered_at      timestamptz NOT NULL DEFAULT now(),
@@ -15,7 +14,7 @@ CREATE TABLE catalog.packages (
     created_by         uuid        NOT NULL,
     updated_at         timestamptz NOT NULL,
     updated_by         uuid        NOT NULL,
-    CONSTRAINT packages_pkey PRIMARY KEY (project_env_key, package_id),
+    CONSTRAINT packages_pkey PRIMARY KEY (package_id),
     CONSTRAINT packages_package_id_check
         CHECK (package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     CONSTRAINT packages_package_version_check CHECK (
@@ -39,8 +38,8 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF ROW(NEW.project_env_key, NEW.package_id, NEW.registered_at)
-       IS DISTINCT FROM ROW(OLD.project_env_key, OLD.package_id, OLD.registered_at) THEN
+    IF ROW(NEW.package_id, NEW.registered_at)
+       IS DISTINCT FROM ROW(OLD.package_id, OLD.registered_at) THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-baseline-immutable';
     END IF;
     RETURN NEW;
@@ -81,17 +80,15 @@ GRANT USAGE ON SCHEMA platform TO wamn_app;
 GRANT SELECT ON platform.external_system, platform.integration, platform.connection TO wamn_app;
 
 CREATE TABLE catalog.connection_requirement (
-    project_env_key text NOT NULL,
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     package_id text NOT NULL,
     name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),
     interface text NOT NULL,
     mode text NOT NULL CHECK (mode IN ('read', 'write')),
-    PRIMARY KEY (project_env_key, component_digest, package_id, name)
+    PRIMARY KEY (component_digest, package_id, name)
 );
 
 CREATE TABLE catalog.release_connection (
-    project_env_key text NOT NULL,
     manifest_digest text NOT NULL,
     connection_id uuid NOT NULL,
     version integer NOT NULL,
@@ -99,12 +96,11 @@ CREATE TABLE catalog.release_connection (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    PRIMARY KEY (project_env_key, manifest_digest, connection_id),
+    PRIMARY KEY (manifest_digest, connection_id),
     FOREIGN KEY (connection_id) REFERENCES platform.connection (id)
 );
 
 CREATE TABLE catalog.connection_binding (
-    project_env_key text NOT NULL,
     manifest_digest text NOT NULL,
     component_digest text NOT NULL,
     package_id text NOT NULL,
@@ -114,11 +110,11 @@ CREATE TABLE catalog.connection_binding (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    PRIMARY KEY (project_env_key, manifest_digest, component_digest, package_id, name),
-    FOREIGN KEY (project_env_key, manifest_digest, connection_id)
-        REFERENCES catalog.release_connection (project_env_key, manifest_digest, connection_id),
-    FOREIGN KEY (project_env_key, component_digest, package_id, name)
-        REFERENCES catalog.connection_requirement (project_env_key, component_digest, package_id, name)
+    PRIMARY KEY (manifest_digest, component_digest, package_id, name),
+    FOREIGN KEY (manifest_digest, connection_id)
+        REFERENCES catalog.release_connection (manifest_digest, connection_id),
+    FOREIGN KEY (component_digest, package_id, name)
+        REFERENCES catalog.connection_requirement (component_digest, package_id, name)
 );
 
 DO $connection_history$
@@ -138,7 +134,6 @@ END $connection_history$;
 -- against the serving release. A version row is immutable except `enabled`,
 -- and at most one version of a workflow is enabled.
 CREATE TABLE catalog.workflows (
-    project_env_key        text        NOT NULL CHECK (project_env_key <> ''),
     environment    text        NOT NULL CHECK (environment <> ''),
     application    text        NOT NULL CHECK (application <> ''),
     workflow_id    text        NOT NULL CHECK (workflow_id <> ''),
@@ -159,7 +154,7 @@ CREATE TABLE catalog.workflows (
     created_by     uuid        NOT NULL,
     created_at     timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT workflows_pkey
-        PRIMARY KEY (project_env_key, environment, application, workflow_id, version),
+        PRIMARY KEY (environment, application, workflow_id, version),
     CONSTRAINT workflows_execution_identity_check
         CHECK ((execution_type = 'role') = (execution_role IS NOT NULL)),
     CONSTRAINT workflows_schedule_check
@@ -180,7 +175,7 @@ CREATE TABLE catalog.workflows (
             AND ops IS NULL AND condition IS NULL AND enable_sequence IS NULL))
 );
 CREATE UNIQUE INDEX workflows_one_enabled
-    ON catalog.workflows (project_env_key, environment, application, workflow_id)
+    ON catalog.workflows (environment, application, workflow_id)
     WHERE enabled;
 
 CREATE FUNCTION catalog.guard_workflow_update()
@@ -188,12 +183,12 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF ROW(NEW.project_env_key, NEW.environment, NEW.application, NEW.workflow_id,
+    IF ROW(NEW.environment, NEW.application, NEW.workflow_id,
            NEW.version, NEW.graph_json, NEW.wiring_hash, NEW.trigger, NEW.schedule,
            NEW.source_package, NEW.entity, NEW.ops, NEW.condition,
            NEW.execution_type, NEW.execution_role, NEW.created_by, NEW.created_at)
        IS DISTINCT FROM
-       ROW(OLD.project_env_key, OLD.environment, OLD.application, OLD.workflow_id,
+       ROW(OLD.environment, OLD.application, OLD.workflow_id,
            OLD.version, OLD.graph_json, OLD.wiring_hash, OLD.trigger, OLD.schedule,
            OLD.source_package, OLD.entity, OLD.ops, OLD.condition,
            OLD.execution_type, OLD.execution_role, OLD.created_by, OLD.created_at) THEN
@@ -229,16 +224,12 @@ BEGIN
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE catalog.%I FORCE ROW LEVEL SECURITY', relation_name);
         EXECUTE format(
-            'CREATE POLICY %I ON catalog.%I TO wamn_app, wamn_query USING (wamn_authority.project_key(project_env_key) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_role()) IS NOT NULL) WITH CHECK (wamn_authority.project_key(project_env_key) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_role()) IS NOT NULL)',
-            relation_name || '_project', relation_name
+            'CREATE POLICY %I ON catalog.%I TO wamn_app, wamn_query USING ((SELECT wamn_authority.current_role()) IS NOT NULL) WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL)',
+            relation_name || '_identity', relation_name
         );
         EXECUTE format(
             'CREATE POLICY %I ON catalog.%I AS PERMISSIVE FOR ALL TO wamn_platform USING ((SELECT wamn_authority.current_role()) IS NOT NULL) WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL)',
             relation_name || '_platform', relation_name
-        );
-        EXECUTE format(
-            'CREATE INDEX %I ON catalog.%I ((wamn_authority.project_key(project_env_key)))',
-            relation_name || '_tkey', relation_name
         );
     END LOOP;
 END
@@ -251,7 +242,6 @@ DECLARE
     relation_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'releases',
         'connection_requirement'
     ] LOOP
         EXECUTE format(

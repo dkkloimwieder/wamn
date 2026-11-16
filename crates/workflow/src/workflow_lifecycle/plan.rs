@@ -3,19 +3,10 @@ use super::{WorkflowLifecycleError, WorkflowLifecycleErrorType};
 /// The key of one workflow version.
 #[derive(Clone, Copy, Debug)]
 pub struct WorkflowVersion<'a> {
-    pub org: &'a wamn_registry::OrgId,
-    pub project: &'a wamn_registry::ProjectId,
     pub environment: &'a wamn_registry::EnvName,
     pub application: &'a wamn_catalog::ApplicationName,
     pub workflow_id: &'a wamn_catalog::canonical_name::CanonicalName,
     pub version: u32,
-}
-
-impl WorkflowVersion<'_> {
-    /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
-        wamn_registry::project_env_key(self.org, self.project, self.environment)
-    }
 }
 
 impl WorkflowVersion<'_> {

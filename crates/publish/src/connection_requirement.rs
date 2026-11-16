@@ -12,7 +12,6 @@ use wamn_catalog::manifest::PackageManifest;
 
 pub async fn install(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     root: &Path,
     manifest: &PackageManifest,
     source: Option<
@@ -28,7 +27,7 @@ pub async fn install(
     ))
     .await?
     {
-        written += write(tx, project_env_key, manifest, &digest, &connections, &bytes).await?;
+        written += write(tx, manifest, &digest, &connections, &bytes).await?;
     }
     Ok(written)
 }
@@ -137,11 +136,11 @@ pub async fn prepare_release(
                         wamn_catalog::manifest::ConnectionMode::Read => "read",
                         wamn_catalog::manifest::ConnectionMode::Write => "write",
                     };
-                    sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING")
-                    .bind(project_env_key).bind(component.descriptor.component_digest).bind(owner)
+                    sqlx::query("INSERT INTO catalog.connection_requirement(component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING")
+                    .bind(component.descriptor.component_digest).bind(owner)
                     .bind(alias).bind(&interface).bind(mode).execute(&mut **tx).await?;
-                    let exact: bool = sqlx::query("SELECT EXISTS(SELECT FROM catalog.connection_requirement WHERE project_env_key=$1 AND component_digest=$2 AND package_id=$3 AND name=$4 AND interface=$5 AND mode=$6)")
-                    .bind(project_env_key).bind(component.descriptor.component_digest).bind(owner)
+                    let exact: bool = sqlx::query("SELECT EXISTS(SELECT FROM catalog.connection_requirement WHERE component_digest=$1 AND package_id=$2 AND name=$3 AND interface=$4 AND mode=$5)")
+                    .bind(component.descriptor.component_digest).bind(owner)
                     .bind(alias).bind(&interface).bind(mode).fetch_one(&mut **tx).await?.get(0);
                     ensure!(
                         exact,
@@ -174,7 +173,6 @@ pub async fn prepare_release(
         let bytes = source.pull_verified(&admitted.component).await?;
         write(
             tx,
-            project_env_key,
             package,
             &component.descriptor.component_digest,
             names,
@@ -188,7 +186,6 @@ pub async fn prepare_release(
 /// Insert or reuse exact requirements from digest-verified component bytes.
 pub async fn write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     manifest: &PackageManifest,
     digest: &wamn_digest::Digest,
     connections: &[wamn_catalog::canonical_name::CanonicalName],
@@ -236,10 +233,10 @@ pub async fn write(
             wamn_catalog::manifest::ConnectionMode::Read => "read",
             wamn_catalog::manifest::ConnectionMode::Write => "write",
         };
-        written += sqlx::query("INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode) \
-             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(project_env_key).bind(digest).bind(&manifest.package.id).bind(name).bind(&interface).bind(mode).execute(&mut **tx).await.map(|result| result.rows_affected())?;
-        let exact: bool = sqlx::query("SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE project_env_key=$1 AND component_digest=$2 \
-             AND package_id=$3 AND name=$4 AND interface=$5 AND mode=$6)").bind(project_env_key).bind(digest).bind(&manifest.package.id).bind(name).bind(&interface).bind(mode).fetch_one(&mut **tx).await?.get(0);
+        written += sqlx::query("INSERT INTO catalog.connection_requirement (component_digest,package_id,name,interface,mode) \
+             VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(digest).bind(&manifest.package.id).bind(name).bind(&interface).bind(mode).execute(&mut **tx).await.map(|result| result.rows_affected())?;
+        let exact: bool = sqlx::query("SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE component_digest=$1 \
+             AND package_id=$2 AND name=$3 AND interface=$4 AND mode=$5)").bind(digest).bind(&manifest.package.id).bind(name).bind(&interface).bind(mode).fetch_one(&mut **tx).await?.get(0);
         ensure!(
             exact,
             "package {} connection {name} differs from its installed requirement",

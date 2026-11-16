@@ -51,8 +51,7 @@ pub async fn drain(
     let residency = observe(platform, &document.triple()).await?;
     let live = loaded(&residency);
     let project_url = super::ensure::project_url(platform, &document.triple()).await?;
-    let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
-    let stranded = stranded(&project_url, &key, &document.env, None, &live).await?;
+    let stranded = stranded(&project_url, &document.env, None, &live).await?;
     if !stranded.is_empty() {
         bail!(
             "{}; restore their releases to resume them",
@@ -113,11 +112,11 @@ pub async fn wait_stopped(platform: &Platform, name: &str) -> anyhow::Result<()>
 /// The stranded-run query: runs pinned to a release with no loaded release.
 const STRANDED_SQL: &str = "\
 SELECT run_id, manifest_digest FROM wamn_run.runs \
- WHERE project_env_key = $1 AND environment = $2 \
+ WHERE environment = $1 \
    AND status NOT IN ('completed', 'failed', 'infrastructure-failure') \
    AND manifest_digest IS NOT NULL \
-   AND ($4::text[] IS NULL OR package_id = ANY($4)) \
-   AND NOT EXISTS (SELECT FROM unnest($3::text[], $5::text[]) \
+   AND ($3::text[] IS NULL OR package_id = ANY($3)) \
+   AND NOT EXISTS (SELECT FROM unnest($2::text[], $4::text[]) \
        AS loaded(application, digest) WHERE loaded.application = runs.package_id \
        AND loaded.digest = runs.manifest_digest) \
  ORDER BY manifest_digest, run_id";
@@ -136,7 +135,6 @@ pub struct Stranded {
 /// When the project database cannot be read.
 pub async fn stranded(
     project_url: &str,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     applications: Option<&[wamn_catalog::ApplicationName]>,
     live: &BTreeMap<(wamn_catalog::ApplicationName, wamn_digest::Digest), usize>,
@@ -151,7 +149,6 @@ pub async fn stranded(
         .await
         .context("begin the stranded-run read")?;
     let stranded = sqlx::query(STRANDED_SQL)
-        .bind(project_env_key)
         .bind(environment)
         .bind(&loaded_applications)
         .bind(applications)

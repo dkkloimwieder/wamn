@@ -34,7 +34,6 @@ impl Execution {
             request.env.clone(),
             request.project.clone(),
         );
-        let key = wamn_registry::project_env_key(&self.org, &request.project, &request.env);
         let mut application = wamn_postgres::connect(&database).await?;
         if operation == "workflow.list" {
             let mut tx = application
@@ -45,8 +44,8 @@ impl Execution {
             sqlx::query("SET TRANSACTION READ ONLY")
                 .execute(&mut *tx)
                 .await?;
-            let rows = sqlx::query("SELECT to_jsonb(w) AS document FROM catalog.workflows w WHERE project_env_key=$1 AND environment=$2 ORDER BY application, workflow_id, version")
-                .bind(&key).bind(&request.env).fetch_all(&mut *tx).await?;
+            let rows = sqlx::query("SELECT to_jsonb(w) AS document FROM catalog.workflows w WHERE environment=$1 ORDER BY application, workflow_id, version")
+                .bind(&request.env).fetch_all(&mut *tx).await?;
             let rows: Vec<Value> = rows.into_iter().map(|row| row.get("document")).collect();
             tx.commit().await?;
             return Ok(json!(rows));
@@ -56,8 +55,6 @@ impl Execution {
             .as_ref()
             .context("application is absent")?;
         let version = WorkflowVersion {
-            org: &self.org,
-            project: &request.project,
             environment: &request.env,
             application: name,
             workflow_id: request

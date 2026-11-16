@@ -37,16 +37,14 @@ use crate::{FailType, RunStatus};
 /// own backlog (docs/architecture/execution.md#process-lifecycle). [`grant_production_lease_sql`] tests again the pin.
 pub fn select_production_lease_sql() -> String {
     "WITH candidate AS MATERIALIZED ( \
-             SELECT q.project_env_key, q.run_id, \
+             SELECT q.run_id, \
                     q.lease_expires_at IS NOT NULL AS had_prior_lease \
                FROM run_queue AS q \
                JOIN runs AS selected_run \
-                 ON selected_run.project_env_key = q.project_env_key \
-                AND selected_run.run_id = q.run_id \
-              WHERE q.project_env_key = $1::text \
-                AND selected_run.package_id = ANY($2::text[]) \
-                AND selected_run.environment = $3 \
-                AND selected_run.manifest_digest = $4::text \
+                 ON selected_run.run_id = q.run_id \
+              WHERE selected_run.package_id = ANY($1::text[]) \
+                AND selected_run.environment = $2 \
+                AND selected_run.manifest_digest = $3::text \
                 AND q.available_at <= now() \
                 AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
                 AND ( \
@@ -65,11 +63,11 @@ pub fn select_production_lease_sql() -> String {
                 r.node_digests_json::text, r.event_root_run_id, r.event_depth \
            FROM candidate \
            JOIN runs AS r \
-             ON r.project_env_key = candidate.project_env_key AND r.run_id = candidate.run_id"
+             ON r.run_id = candidate.run_id"
         .to_owned()
 }
 
-/// Replace the abandoned attempt's run-level state. `$2` is the selected run id.
+/// Replace the abandoned attempt's run-level state. `$1` is the selected run id.
 ///
 /// `state_json` is the only run column changed; immutable tables and the
 /// already-materialized resolution map are preserved. The release digest is
@@ -78,14 +76,14 @@ pub fn select_production_lease_sql() -> String {
 pub fn clear_pre_effect_state_sql() -> String {
     "UPDATE runs \
         SET state_json = NULL \
-      WHERE project_env_key = $1::text AND run_id = $2 \
+      WHERE run_id = $1 \
       RETURNING run_id"
         .to_string()
 }
 
 /// Count an expired lease against the shared retry budget.
 ///
-/// `$2` is the selected run id. This is deliberately its OWN statement, taken
+/// `$1` is the selected run id. This is deliberately its OWN statement, taken
 /// BEFORE the lease grant and OUTSIDE the grant's subtransaction: the grant can
 /// abort (a database guard on the run row refuses the write), and an increment
 /// that shared the aborted statement rolled back with it — so the run could
@@ -99,8 +97,7 @@ pub fn advance_lease_attempts_sql() -> String {
     "UPDATE run_queue AS q \
         SET attempts = q.attempts \
             + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
-      WHERE q.project_env_key = $1::text \
-        AND q.run_id = $2 \
+      WHERE q.run_id = $1 \
       RETURNING q.attempts"
         .to_string()
 }
@@ -120,21 +117,20 @@ pub fn grant_production_lease_sql() -> String {
     format!(
         "WITH leased AS ( \
              UPDATE run_queue AS q \
-                SET lease_owner = $3, \
+                SET lease_owner = $2, \
                     lease_expires_at = statement_timestamp() \
-                        + ($4::bigint * interval '1 millisecond'), \
+                        + ($3::bigint * interval '1 millisecond'), \
                     lease_generation = q.lease_generation + 1 \
-              WHERE q.project_env_key = $1::text \
-                AND q.run_id = $2 \
-              RETURNING q.project_env_key, q.run_id, q.lease_generation \
+              WHERE q.run_id = $1 \
+              RETURNING q.run_id, q.lease_generation \
          ), \
          marked AS ( \
              UPDATE runs AS r \
                 SET status = '{running}' \
                FROM leased \
-              WHERE r.project_env_key = leased.project_env_key AND r.run_id = leased.run_id \
+              WHERE r.run_id = leased.run_id \
                 AND r.status IN ('{dispatched}', '{running}') \
-                AND r.manifest_digest = $5 \
+                AND r.manifest_digest = $4 \
               RETURNING r.run_id \
          ) \
          SELECT leased.lease_generation \
@@ -152,11 +148,10 @@ pub fn grant_production_lease_sql() -> String {
 pub fn renew_production_lease_sql() -> String {
     "UPDATE run_queue AS q \
         SET lease_expires_at = statement_timestamp() \
-            + ($5::bigint * interval '1 millisecond') \
-      WHERE q.project_env_key = $1::text \
-        AND q.run_id = $2 \
-        AND q.lease_owner = $3 \
-        AND q.lease_generation = $4 \
+            + ($4::bigint * interval '1 millisecond') \
+      WHERE q.run_id = $1 \
+        AND q.lease_owner = $2 \
+        AND q.lease_generation = $3 \
         AND q.lease_expires_at > statement_timestamp() \
       RETURNING q.lease_expires_at"
         .to_string()
@@ -164,23 +159,21 @@ pub fn renew_production_lease_sql() -> String {
 
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
 ///
-/// `$2` is the grace period in milliseconds; `$3` is the exact package-id set
-/// in the mounted release and `$4` is the environment target.
+/// `$1` is the grace period in milliseconds; `$2` is the exact package-id set
+/// in the mounted release and `$3` is the environment target.
 pub fn select_exhausted_production_sql() -> String {
     format!(
-        "SELECT q.project_env_key, q.run_id, selected_run.status, \
+        "SELECT q.run_id, selected_run.status, \
                 selected_run.wiring_id, \
                 selected_run.wiring_version \
            FROM run_queue AS q \
            JOIN runs AS selected_run \
-             ON selected_run.project_env_key = q.project_env_key \
-            AND selected_run.run_id = q.run_id \
-          WHERE q.project_env_key = $1::text \
-            AND selected_run.package_id = ANY($3::text[]) \
-            AND selected_run.environment = $4 \
+             ON selected_run.run_id = q.run_id \
+          WHERE selected_run.package_id = ANY($2::text[]) \
+            AND selected_run.environment = $3 \
                 AND q.lease_expires_at IS NOT NULL \
                 AND q.lease_expires_at \
-                    + ($2::bigint * interval '1 millisecond') <= now() \
+                    + ($1::bigint * interval '1 millisecond') <= now() \
                 AND q.attempts >= q.max_attempts \
             AND selected_run.status IN ('{dispatched}', '{running}') \
           ORDER BY q.available_at, q.run_id \
@@ -210,16 +203,15 @@ fn terminalize_exhausted_sql(status: RunStatus, fail_type: Option<FailType>) -> 
             UPDATE runs AS r \
             SET status = '{status}', terminal_reason = '{terminal_reason}', \
                 fail_type = {fail_type_sql}, \
-                result_json = $3::text::jsonb, \
-                updated_at = $4::timestamptz \
-           WHERE r.project_env_key = $1::text \
-             AND r.run_id = $2 \
+                result_json = $2::text::jsonb, \
+                updated_at = $3::timestamptz \
+           WHERE r.run_id = $1 \
              AND r.status IN ('{dispatched}', '{running}') \
-           RETURNING r.project_env_key, r.run_id, r.status \
+           RETURNING r.run_id, r.status \
          ), \
          dequeued AS ( \
              DELETE FROM run_queue AS q USING updated \
-              WHERE q.project_env_key = updated.project_env_key AND q.run_id = updated.run_id \
+              WHERE q.run_id = updated.run_id \
               RETURNING q.run_id \
          ) \
          SELECT updated.status FROM updated \

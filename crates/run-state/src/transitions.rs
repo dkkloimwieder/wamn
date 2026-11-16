@@ -12,20 +12,19 @@ static FENCED_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| 
     format!(
         "\
 WITH input AS ( \
-    SELECT $1::text AS project_env_key, \
-           $2::text AS target_run_id, $3::text AS authority_run_id, \
-           $4::text AS lease_owner, $5::bigint AS lease_generation \
+    SELECT $1::text AS target_run_id, $2::text AS authority_run_id, \
+           $3::text AS lease_owner, $4::bigint AS lease_generation \
 ), \
 locked_run AS MATERIALIZED ( \
     SELECT r.* FROM runs AS r, input AS i \
      WHERE i.target_run_id = i.authority_run_id \
-       AND r.project_env_key = i.project_env_key AND r.run_id = i.target_run_id \
+       AND r.run_id = i.target_run_id \
      FOR UPDATE OF r \
 ), \
 locked_queue AS MATERIALIZED ( \
     SELECT q.* FROM run_queue AS q \
       JOIN locked_run AS r \
-        ON r.project_env_key = q.project_env_key AND r.run_id = q.run_id \
+        ON r.run_id = q.run_id \
      FOR UPDATE OF q \
 ), \
 authority AS ( \
@@ -40,7 +39,7 @@ authority AS ( \
                THEN 'fence-lost' \
              ELSE 'ready' \
            END AS result_code, \
-           r.project_env_key, r.run_id, r.status \
+           r.run_id, r.status \
       FROM input AS i \
       LEFT JOIN locked_run AS r ON true \
       LEFT JOIN locked_queue AS q ON true \
@@ -87,9 +86,9 @@ impl TerminalizeResult {
 pub fn record_deadline_adjustments_sql() -> String {
     format!(
         "{prefix}, recorded AS ( \
-             UPDATE runs AS r SET deadline_adjustments_json = $6::text::jsonb \
+             UPDATE runs AS r SET deadline_adjustments_json = $5::text::jsonb \
                FROM authority AS a WHERE a.result_code = 'ready' \
-                AND r.project_env_key = a.project_env_key AND r.run_id = a.run_id \
+                AND r.run_id = a.run_id \
              RETURNING r.run_id \
          ) SELECT EXISTS (SELECT 1 FROM recorded)",
         prefix = *FENCED_PREFIX,
@@ -109,17 +108,17 @@ pub fn terminalize_sql() -> String {
         "{prefix}, \
          terminalized AS ( \
              UPDATE runs AS r \
-                SET status = $6, terminal_reason = $7, \
-                    result_json = $8::text::jsonb, fail_type = $9, \
-                    updated_at = $10::timestamptz \
+                SET status = $5, terminal_reason = $6, \
+                    result_json = $7::text::jsonb, fail_type = $8, \
+                    updated_at = $9::timestamptz \
                FROM authority AS c \
               WHERE c.result_code = 'ready' \
-                AND r.project_env_key = c.project_env_key AND r.run_id = c.run_id \
-             RETURNING r.project_env_key, r.run_id, r.status \
+                AND r.run_id = c.run_id \
+             RETURNING r.run_id, r.status \
          ), \
          dequeued AS ( \
              DELETE FROM run_queue AS q USING terminalized AS t \
-              WHERE q.project_env_key = t.project_env_key AND q.run_id = t.run_id \
+              WHERE q.run_id = t.run_id \
              RETURNING q.run_id \
          ) \
          SELECT CASE WHEN t.run_id IS NOT NULL THEN 'terminalized' ELSE c.result_code END \

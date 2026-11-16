@@ -97,8 +97,8 @@ pub async fn database_state(
 ) -> anyhow::Result<State> {
     let mut client = analyse::connect_project(url).await?;
     let mut packages = BTreeMap::new();
-    for row in sqlx::query("SELECT package_id, package_version, artifact_digest FROM catalog.packages WHERE project_env_key=$1")
-        .bind(project_env_key).fetch_all(&mut client).await? {
+    for row in sqlx::query("SELECT package_id, package_version, artifact_digest FROM catalog.packages")
+        .fetch_all(&mut client).await? {
         let id: wamn_catalog::PackageName = row.try_get(0)?;
         packages.insert(id.clone(), AppliedPackage {
             coordinate: wamn_catalog::PackageCoordinate::new(id, row.try_get::<wamn_catalog::package_version::PackageVersion, _>(1)?)?,

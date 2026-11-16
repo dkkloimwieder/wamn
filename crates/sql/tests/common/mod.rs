@@ -127,20 +127,19 @@ pub async fn seed_run(
 ) -> anyhow::Result<()> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (project_env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
+                   (run_id,wiring_hash,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,input_json,trigger_source, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json) \
-                 VALUES ($1,$2,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
+                 VALUES ($1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','dispatched',$2,'{POD_MANIFEST_DIGEST}','test',$3,$4, \
                          '{{\"input\":true}}','manual','00000000-0000-0000-0000-000000000001','admin','manual','00000000-0000-0000-0000-000000000001','{{}}')"
-            ))).bind(&PROJECT_ENV_KEY).bind(&run_id).bind(&application).bind(&WIRING_ID).bind(&WIRING_VERSION).execute(&mut *client).await.map(|result| result.rows_affected())?;
+            ))).bind(&run_id).bind(&application).bind(&WIRING_ID).bind(&WIRING_VERSION).execute(&mut *client).await.map(|result| result.rows_affected())?;
     sqlx::query(sqlx::AssertSqlSafe(
         (&format!(
             "INSERT INTO {SCHEMA}.run_queue \
-                   (project_env_key,run_id,available_at) \
-                 VALUES ($1,$2,'2000-01-01 00:00:00+00')"
+                   (run_id,available_at) \
+                 VALUES ($1,'2000-01-01 00:00:00+00')"
         ))
             .to_string(),
     ))
-    .bind(&PROJECT_ENV_KEY)
     .bind(&run_id)
     .execute(&mut *client)
     .await
@@ -152,11 +151,10 @@ pub async fn expire_effect_run(client: &mut Client, run_id: &str) -> anyhow::Res
     sqlx::query(sqlx::AssertSqlSafe(
         (&format!(
             "UPDATE {SCHEMA}.run_queue SET lease_expires_at='2000-01-01' \
-                  WHERE project_env_key=$1 AND run_id=$2"
+                  WHERE run_id=$1"
         ))
             .to_string(),
     ))
-    .bind(&PROJECT_ENV_KEY)
     .bind(&run_id)
     .execute(&mut *client)
     .await
@@ -171,11 +169,10 @@ pub async fn seed_exhausted_run(client: &mut Client, run_id: &str) -> anyhow::Re
             "UPDATE {SCHEMA}.run_queue \
                     SET lease_owner='dead', lease_expires_at='2000-01-01', \
                         attempts=max_attempts \
-                  WHERE project_env_key=$1 AND run_id=$2"
+                  WHERE run_id=$1"
         ))
             .to_string(),
     ))
-    .bind(&PROJECT_ENV_KEY)
     .bind(&run_id)
     .execute(&mut *client)
     .await
@@ -187,11 +184,10 @@ pub async fn seed_exhausted_run(client: &mut Client, run_id: &str) -> anyhow::Re
 pub async fn queue_attempts(client: &mut Client, run_id: &str) -> anyhow::Result<i32> {
     Ok(sqlx::query(sqlx::AssertSqlSafe(
         (&format!(
-            "SELECT attempts FROM {SCHEMA}.run_queue WHERE project_env_key=$1 AND run_id=$2"
+            "SELECT attempts FROM {SCHEMA}.run_queue WHERE run_id=$1"
         ))
             .to_string(),
     ))
-    .bind(&PROJECT_ENV_KEY)
     .bind(&run_id)
     .fetch_one(&mut *client)
     .await?
@@ -203,11 +199,10 @@ pub async fn release_record(client: &mut Client, run_id: &str) -> anyhow::Result
     let row = sqlx::query(sqlx::AssertSqlSafe(
         (&format!(
             "SELECT manifest_digest \
-                   FROM {SCHEMA}.runs WHERE project_env_key=$1 AND run_id=$2"
+                   FROM {SCHEMA}.runs WHERE run_id=$1"
         ))
             .to_string(),
     ))
-    .bind(&PROJECT_ENV_KEY)
     .bind(&run_id)
     .fetch_one(&mut *client)
     .await?;
@@ -223,12 +218,11 @@ pub async fn assert_terminal_status_dequeued(
         (&format!(
             "SELECT status, NOT EXISTS ( \
                     SELECT 1 FROM {SCHEMA}.run_queue q \
-                     WHERE q.project_env_key=r.project_env_key AND q.run_id=r.run_id) \
-                   FROM {SCHEMA}.runs r WHERE project_env_key=$1 AND run_id=$2"
+                     WHERE q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE run_id=$1"
         ))
             .to_string(),
     ))
-    .bind(&PROJECT_ENV_KEY)
     .bind(&run_id)
     .fetch_one(&mut *client)
     .await?;

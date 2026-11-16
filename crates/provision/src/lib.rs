@@ -16,8 +16,6 @@ pub mod migrations;
 mod name;
 pub mod operation_grants;
 pub mod platform_principals;
-/// The pure derivation guest RLS uses to reach a project from `current_user`.
-pub mod project_key;
 /// The two T1 control-database read consumers' targeted credential contract.
 pub mod session_target;
 pub mod sql;

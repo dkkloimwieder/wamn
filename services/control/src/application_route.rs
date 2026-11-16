@@ -188,7 +188,6 @@ impl ApplicationRoutes<'_> {
             .executor_read(self.project, async |connection| {
                 wamn_events::admission::enabled_workflow(
                     connection,
-                    project_env_key,
                     &target.environment,
                     application,
                     &request.workflow_id,
@@ -246,7 +245,6 @@ impl ApplicationRoutes<'_> {
             .executor_write(self.project, async |connection| {
                 wamn_events::admission::admit_manual_run(
                     connection,
-                    project_env_key,
                     &ManualRunAdmission {
                         application: application,
                         manifest_digest: &self.release.release().manifest_digest,

@@ -73,8 +73,7 @@ pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 4] = [
 /// The `catalog.workflows` columns that callable-HTTP connection authorization
 /// reads: the key of one workflow version and its graph. The admitter gets
 /// these columns only, not the whole table.
-pub const HTTP_ADMITTER_WORKFLOW_COLUMNS: [&str; 6] = [
-    "project_env_key",
+pub const HTTP_ADMITTER_WORKFLOW_COLUMNS: [&str; 5] = [
     "environment",
     "application",
     "workflow_id",
@@ -183,8 +182,7 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 5] = [
 /// node digests (`wamn_run_state::queue::insert_manual_run_sql`). The list
 /// reaches no binding world, legacy flow, capture or
 /// caller-outcome column.
-pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 19] = [
-    "project_env_key",
+pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 18] = [
     "package_id",
     "manifest_digest",
     "environment",
@@ -207,7 +205,7 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 19] = [
 
 /// The `run_queue` columns an event or schedule admission writes. The FIFO position, the
 /// crash budget and the lease take their defaults.
-pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 2] = ["project_env_key", "run_id"];
+pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 1] = ["run_id"];
 /// Idempotently create or harden [`PLATFORM_GROUP_ROLE`], the shared NOLOGIN
 /// group every non-guest project-base-grants arm targets (`wamn-0h0g.22.17`).
 ///

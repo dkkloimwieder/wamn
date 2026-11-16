@@ -3,16 +3,15 @@ use wamn_catalog::package_schema::AppliedPackage;
 
 pub(super) async fn record_package_schema(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     coordinate: &wamn_catalog::PackageCoordinate,
     artifact_digest: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<bool> {
-    Ok(sqlx::query("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest) \
-        VALUES ($1,$2,$3,$4) ON CONFLICT (project_env_key,package_id) DO UPDATE \
+    Ok(sqlx::query("INSERT INTO catalog.packages (package_id, package_version, artifact_digest) \
+        VALUES ($1,$2,$3) ON CONFLICT (package_id) DO UPDATE \
         SET package_version=EXCLUDED.package_version, artifact_digest=EXCLUDED.artifact_digest \
         WHERE ROW(catalog.packages.package_version, catalog.packages.artifact_digest) \
         IS DISTINCT FROM ROW(EXCLUDED.package_version, EXCLUDED.artifact_digest)")
-        .bind(project_env_key).bind(coordinate.package_id()).bind(coordinate.package_version()).bind(artifact_digest)
+        .bind(coordinate.package_id()).bind(coordinate.package_version()).bind(artifact_digest)
         .execute(&mut **tx).await?.rows_affected() != 0)
 }
 
@@ -21,40 +20,34 @@ pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextende
 
 pub async fn load_applied_package(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     package_id: &wamn_catalog::PackageName,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     read_package(
         tx,
-        project_env_key,
         package_id,
-        "SELECT artifact_digest, package_version FROM catalog.packages WHERE project_env_key=$1 AND package_id=$2 FOR UPDATE",
+        "SELECT artifact_digest, package_version FROM catalog.packages WHERE package_id=$1 FOR UPDATE",
     )
     .await
 }
 
 pub async fn read_applied_package(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     package_id: &wamn_catalog::PackageName,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     read_package(
         tx,
-        project_env_key,
         package_id,
-        "SELECT artifact_digest, package_version FROM catalog.packages WHERE project_env_key=$1 AND package_id=$2",
+        "SELECT artifact_digest, package_version FROM catalog.packages WHERE package_id=$1",
     )
     .await
 }
 
 async fn read_package(
     tx: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     package_id: &wamn_catalog::PackageName,
     query: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(query.to_owned()))
-        .bind(project_env_key)
         .bind(package_id)
         .fetch_optional(tx)
         .await?

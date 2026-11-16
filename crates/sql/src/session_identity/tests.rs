@@ -525,12 +525,6 @@ pub(crate) async fn live_guest_url(
         .await
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::project_key::authority_derivations_bootstrap_sql(),
-    ))
-    .execute(&mut admin)
-    .await
-    .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_provision::sql::grant_dynamic_sql_surface_sql(),
     ))
     .execute(&mut admin)
@@ -591,46 +585,28 @@ async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
     }
 }
 
-/// SCAFFOLDING MINIMUM, NOT THE PRODUCTION ONE. Production keys the permissive
-/// minimum on `current_user` through `wamn_authority.project_key`
-/// (`wamn-0h0g.22.6`), which needs the authority derivations installed — and
-/// those are built by the provisioner, which the shipped runtime
-/// deliberately does not link. The minimum is not this fixture's subject: the
-/// RESTRICTIVE per-role and per-user layer is, and that is a different identity
-/// class item 2 leaves alone. The production minimum is shown live by
-/// `crates/provision/tests/deploy_sql_authority.rs` and the static
-/// `deploy/sql/app-schema.sql` contract.
-///
-/// The 3.2 project_env_key minimum plus the row-ownership rule documented by
-/// `deploy/sql/app-schema.sql`, over a table the probe role does not own so
-/// RLS applies to it.
-fn rls_fixture_sql(
-    schema: &str,
-    probe: &str,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    u1: &str,
-    u2: &str,
-) -> String {
+/// Protected caller identity and row ownership over a table the probe role
+/// does not own, so RLS applies to it.
+fn rls_fixture_sql(schema: &str, probe: &str, u1: &str, u2: &str) -> String {
     let query = query_fixture_sql(probe, probe);
     let identity = include_str!("../../../../deploy/sql/record-history.sql");
-    let authority = wamn_provision::project_key::authority_derivations_bootstrap_sql();
     format!(
         "DROP SCHEMA IF EXISTS {schema} CASCADE; \
              DROP ROLE IF EXISTS {probe}; \
-             {ENSURE_GUEST_ACL_ROLE_SQL} {identity} {authority} \
+             {ENSURE_GUEST_ACL_ROLE_SQL} {identity} \
              CREATE ROLE {probe} LOGIN PASSWORD '{probe}' NOSUPERUSER NOBYPASSRLS; \
              GRANT wamn_app TO {probe}; \
              CREATE SCHEMA {schema}; \
              CREATE TABLE {schema}.dispositions ( \
-                 project_env_key text NOT NULL, id int NOT NULL, inspector_id uuid NOT NULL); \
+                 id int NOT NULL, inspector_id uuid NOT NULL); \
              ALTER TABLE {schema}.dispositions ENABLE ROW LEVEL SECURITY; \
-             CREATE POLICY dispositions_project ON {schema}.dispositions \
-                 USING (project_env_key = '{project_env_key}'); \
+             CREATE POLICY dispositions_identity ON {schema}.dispositions \
+                 USING ((SELECT wamn_authority.current_role()) IS NOT NULL); \
              CREATE POLICY \"dispositions_owner_0\" ON {schema}.dispositions AS RESTRICTIVE \
                  FOR ALL \
                  USING (COALESCE((SELECT wamn_authority.current_role()), '') IN ('supervisor', 'admin') \
                         OR \"inspector_id\" = NULLIF((SELECT wamn_authority.current_principal_id())::text, '')::uuid); \
-             INSERT INTO {schema}.dispositions VALUES ('{project_env_key}', 1, '{u1}'), ('{project_env_key}', 2, '{u2}'); \
+             INSERT INTO {schema}.dispositions VALUES (1, '{u1}'), (2, '{u2}'); \
              GRANT USAGE ON SCHEMA {schema} TO {probe}; \
              GRANT SELECT ON {schema}.dispositions TO {probe}; {query}"
     )
@@ -666,7 +642,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller(pool: sqlx::P
     let _ = suffix;
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&rls_fixture_sql(&schema, &probe, &PROJECT_ENV_KEY.parse().unwrap(), U1, U2)).to_string(),
+        (&rls_fixture_sql(&schema, &probe, U1, U2)).to_string(),
     ))
     .execute(&mut admin)
     .await
@@ -732,13 +708,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller(pool: sqlx::P
     .expect("drop the per-user RLS fixture");
 }
 
-// wamn-0h0g.23.1 — the SET-override refusal, on the two identity the fix now
-// injects. `reject_identity_mutation` (wamn-cjv.2) is the mechanism the project_env_key
-// identity already carries and it is GUC-agnostic, so it covers these the moment
-// they exist — but coverage that is never exercised is not coverage, and a
-// binding WITHOUT refusal turns a silent-deny bug into privilege escalation.
-// The CONTROL below shows the escalation is real, so the refusal that
-// follows is load-bearing rather than vacuous.
+// Guest session settings cannot replace the protected transaction caller.
 #[sqlx::test(migrations = false)]
 async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sqlx::PgPool) {
     const PROJECT_ENV_KEY: &str = "test--dev--rls-override-live";
@@ -767,7 +737,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_identity(pool: sql
     let _ = suffix;
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&rls_fixture_sql(&schema, &probe, &PROJECT_ENV_KEY.parse().unwrap(), U1, U2)).to_string(),
+        (&rls_fixture_sql(&schema, &probe, U1, U2)).to_string(),
     ))
     .execute(&mut admin)
     .await
@@ -903,68 +873,32 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     assert_eq!(asked, vec![AuthorityClass::CallableHttp]);
 }
 
-/// The project_env_key minimum over rows belonging to TWO project_env_keys, keyed on
-/// `current_user` — the shape `wamn-0h0g.22.6` put in production.
-///
-/// The literal role names stand in for `wamn_authority.project_key`, which
-/// this crate cannot install (the derivations are built by the provisioner,
-/// which the shipped runtime deliberately does not link). What the fixture
-/// reproduces faithfully is the thing under test: the row filter reads the
-/// CONNECTED ROLE, so a session cannot talk its way into another project_env_key's
-/// rows — there is no identity to rewrite.
-fn two_project_env_key_rls_fixture_sql(
-    schema: &str,
-    role_a: &str,
-    role_b: &str,
-    a: &str,
-    b: &str,
-) -> String {
-    let query_a = role_a.replacen("wamn_app_", "wamn_query_", 1);
-    let query_b = role_b.replacen("wamn_app_", "wamn_query_", 1);
-    let query = format!(
-        "{} {}",
-        query_fixture_sql(role_a, "live-guest"),
-        query_fixture_sql(role_b, "live-guest")
-    );
+/// Project database rows used to verify refusal of another project's credential.
+fn credential_refusal_fixture_sql(schema: &str, role_a: &str) -> String {
+    let query = query_fixture_sql(role_a, "live-guest");
     let identity = include_str!("../../../../deploy/sql/record-history.sql");
-    let authority = wamn_provision::project_key::authority_derivations_bootstrap_sql();
     format!(
         "DROP SCHEMA IF EXISTS {schema} CASCADE; \
              DO $reset$ BEGIN \
                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role_a}') THEN \
                  DROP OWNED BY {role_a}; DROP ROLE {role_a}; END IF; \
-               IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role_b}') THEN \
-                 DROP OWNED BY {role_b}; DROP ROLE {role_b}; END IF; \
              END $reset$; \
-             {ENSURE_GUEST_ACL_ROLE_SQL} {identity} {authority} \
+             {ENSURE_GUEST_ACL_ROLE_SQL} {identity} \
              CREATE ROLE {role_a} LOGIN PASSWORD 'live-guest' NOSUPERUSER NOBYPASSRLS; \
-             CREATE ROLE {role_b} LOGIN PASSWORD 'live-guest' NOSUPERUSER NOBYPASSRLS; \
-             GRANT wamn_app TO {role_a}, {role_b}; \
+             GRANT wamn_app TO {role_a}; \
              CREATE SCHEMA {schema}; \
-             CREATE TABLE {schema}.dispositions (project_env_key text NOT NULL, id int NOT NULL); \
+             CREATE TABLE {schema}.dispositions (id int NOT NULL); \
              ALTER TABLE {schema}.dispositions ENABLE ROW LEVEL SECURITY; \
-             CREATE POLICY dispositions_project ON {schema}.dispositions \
-                 USING ((project_env_key = '{a}' AND current_user IN ('{role_a}','{query_a}')) \
-                     OR (project_env_key = '{b}' AND current_user IN ('{role_b}','{query_b}'))); \
-             INSERT INTO {schema}.dispositions \
-                 VALUES ('{a}', 1), ('{a}', 2), ('{b}', 3); \
-             GRANT USAGE ON SCHEMA {schema} TO {role_a}, {role_b}; \
-             GRANT SELECT ON {schema}.dispositions TO {role_a}, {role_b}; {query} {dynamic}",
+             CREATE POLICY dispositions_identity ON {schema}.dispositions \
+                 USING ((SELECT wamn_authority.current_role()) IS NOT NULL); \
+             INSERT INTO {schema}.dispositions VALUES (1), (2); \
+             GRANT USAGE ON SCHEMA {schema} TO {role_a}; \
+             GRANT SELECT ON {schema}.dispositions TO {role_a}; {query} {dynamic}",
         dynamic = wamn_provision::sql::grant_dynamic_sql_surface_sql(),
     )
 }
 
-/// *** THE ADVERSARIAL ARM, RE-EXPRESSED ON THE NEW MECHANISM. ***
-///
-/// This test used to show that two interleaved IDENTITY sets each saw only
-/// their own rows. That subject is retired: after `wamn-0h0g.22.6` a guest's
-/// project_env_key is its LOGIN, and under the owner ruling on `wamn-0h0g.22.6.7` a
-/// host holds ONE guest credential per project-environment. So the property
-/// worth showing is stronger and simpler — a second project_env_key is REFUSED rather
-/// than quietly served the credential the host does hold.
-///
-/// The logins are NOSUPERUSER NOBYPASSRLS, so the server cannot be talked
-/// out of the minimum either.
+/// A host with one project's credential refuses another project before reading rows.
 #[sqlx::test(migrations = false)]
 async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_project_env_keys_rows(
     pool: sqlx::PgPool,
@@ -984,25 +918,14 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
         "wamn_app_{}",
         wamn_registry::app_identity_hash(&PROJECT_ENV_KEY_A.parse().unwrap(), &mut database)
     );
-    let role_b = format!(
-        "wamn_app_{}",
-        wamn_registry::app_identity_hash(&PROJECT_ENV_KEY_B.parse().unwrap(), &mut database)
-    );
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&two_project_env_key_rls_fixture_sql(
-            &schema,
-            &role_a,
-            &role_b,
-            PROJECT_ENV_KEY_A,
-            PROJECT_ENV_KEY_B,
-        ))
-            .to_string(),
+        (&credential_refusal_fixture_sql(&schema, &role_a)).to_string(),
     ))
     .execute(&mut admin)
     .await
     .map(drop)
-    .expect("seed the two-project_env_key RLS fixture as the superuser owner");
+    .expect("seed the credential refusal fixture as the superuser owner");
 
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let mut url = url::Url::parse(admin_url).expect("parse the live test url");
@@ -1089,8 +1012,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "DROP SCHEMA {schema} CASCADE; \
-                 DROP OWNED BY {role_a}; DROP ROLE {role_a}; \
-                 DROP OWNED BY {role_b}; DROP ROLE {role_b};"
+                 DROP OWNED BY {role_a}; DROP ROLE {role_a};"
         ))
             .to_string(),
     ))
