@@ -1,6 +1,6 @@
 //! Keyset queries against an owned, disposable PostgreSQL server.
 
-use wamn_platform_identity::{control, create_or_reuse_user, org};
+use wamn_identity::{control, create_or_reuse_user, org};
 
 #[tokio::test]
 #[ignore = "requires: postgres"]
@@ -14,9 +14,9 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         .await
         .map(drop)
         .unwrap();
-    wamn_control_provision::test_database::system_schema(database.url()).await;
+    wamn_provision::test_database::system_schema(database.url()).await;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .bind(wamn_provision::PlatformComponent::Provisioning.principal_id())
         .execute(&mut client).await.unwrap();
     sqlx::raw_sql("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES
            ('acme', 'pooled', 'wamn-pg'), ('other', 'pooled', 'wamn-pg');
@@ -37,7 +37,7 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
             .await
             .unwrap();
         for environment in ["a", "b", "c"] {
-            wamn_platform_identity::grant_project_env_membership(
+            wamn_identity::grant_project_env_membership(
                 &mut client,
                 &principal,
                 &"acme".parse().unwrap(),

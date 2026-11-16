@@ -102,8 +102,8 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
         &triple.env,
     )];
     removed.extend(
-        wamn_control_provision::WorkloadRoleFamily::project_env_families().map(|family| {
-            wamn_control_provision::workload_secret_name(
+        wamn_provision::WorkloadRoleFamily::project_env_families().map(|family| {
+            wamn_provision::workload_secret_name(
                 family,
                 &triple.org,
                 &triple.project,
@@ -131,7 +131,7 @@ pub async fn installed_manifests(
     let mut manifests = Vec::new();
     for (id, baseline) in super::stage::installed(platform, document).await? {
         let package = super::stage::open(platform, &id, &baseline.current).await?;
-        let path = wamn_compiler::package_manifest_path(package.root());
+        let path = wamn_codegen::package_manifest_path(package.root());
         manifests.push(wamn_catalog::manifest::PackageManifest::from_slice(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )?);
@@ -225,7 +225,7 @@ pub(super) async fn project_url(platform: &Platform, triple: &Triple) -> anyhow:
     let instance = read_project_env_instance(&platform.system_database_url, triple).await?;
     wamn_postgres::database_configuration(
         &platform.system_database_url,
-        &wamn_control_provision::project_env_database_name(
+        &wamn_provision::project_env_database_name(
             &triple.org,
             &triple.project,
             &triple.env,
@@ -260,7 +260,7 @@ pub(super) async fn prepare_cdc_with_connection(
 ) -> anyhow::Result<()> {
     let instance =
         read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
-    let role: wamn_identity_protocol::LoginName = wamn_control_provision::cdc_object_name(
+    let role: wamn_identity_protocol::LoginName = wamn_provision::cdc_object_name(
         &document.org,
         &document.project,
         &document.env,
@@ -269,11 +269,11 @@ pub(super) async fn prepare_cdc_with_connection(
     .parse()?;
     let mut connection = connect(capture).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::create_failover_slot_sql(role.as_str()),
+        wamn_provision::sql::create_failover_slot_sql(role.as_str()),
     ))
     .execute(&mut connection)
     .await?;
-    let name = wamn_control_provision::project_env_cdc_secret_name(
+    let name = wamn_provision::project_env_cdc_secret_name(
         &document.org,
         &document.project,
         &document.env,

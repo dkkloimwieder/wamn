@@ -86,7 +86,7 @@ async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
 async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('fixture','wasm',false)").execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap()).await.unwrap();
     let fixture = fixture();
     let (_registry, configuration) = registry(fixture.path(), "integration").await;
@@ -198,7 +198,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
 async fn publish_refuses_an_unknown_integration_without_creating_catalog_rows(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
     let fixture = fixture();
     let (_registry, configuration) = registry(fixture.path(), "unknown-integration").await;

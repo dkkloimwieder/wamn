@@ -29,7 +29,7 @@ pub(super) fn read_package_attachments(
             .and_then(std::path::Path::parent)
             .unwrap_or_else(|| std::path::Path::new(""));
         let attachments =
-            wamn_compiler::publication::read_package_attachments(root).map_err(|error| {
+            wamn_codegen::publication::read_package_attachments(root).map_err(|error| {
                 PublishManifestError {
                     source: Some(error.into()),
                     ..PublishManifestError::new(
@@ -39,7 +39,7 @@ pub(super) fn read_package_attachments(
                 }
             })?;
         documents.push((
-            wamn_compiler::output_root(root).join("publication/attachments.json"),
+            wamn_codegen::output_root(root).join("publication/attachments.json"),
             attachments,
         ));
     }

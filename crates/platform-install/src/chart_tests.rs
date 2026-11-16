@@ -128,7 +128,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         assert_eq!(account["metadata"]["namespace"], document.org.as_str());
         let name = account["metadata"]["name"].as_str().unwrap();
         let privileged = name.ends_with("-sql");
-        let capture = wamn_control_provision::project_env_cdc_secret_name(
+        let capture = wamn_provision::project_env_cdc_secret_name(
             &document.org,
             &document.project,
             &document.env,

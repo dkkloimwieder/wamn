@@ -24,7 +24,7 @@ const INSTANCE_SUFFIX_REJECT_AT: usize = 256 - 256 % INSTANCE_SUFFIX_ALPHABET.le
 /// uniqueness mechanism: no naming registry, no collision-retry loop, no
 /// derivation from the triple (an owner ruling of wamn-0h0g.13.57).
 ///
-/// The mint lives HERE and not in `wamn-control-provision` because that crate is
+/// The mint lives HERE and not in `wamn-provision` because that crate is
 /// deliberately pure — no DB, no K8s client, no clock, and no entropy. It takes
 /// the suffix as a parameter and derives names from it.
 pub(super) fn mint_instance_suffix() -> anyhow::Result<InstanceSuffix> {
@@ -73,9 +73,9 @@ pub(crate) async fn resolve_cluster_on(
     org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
 ) -> anyhow::Result<String> {
-    let mut transaction = wamn_platform_identity::transaction::read_connection(
+    let mut transaction = wamn_identity::transaction::read_connection(
         client,
-        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     let row = wamn_registry::deployment::org_placement(&mut transaction, org)
@@ -123,9 +123,9 @@ pub async fn read_project_env_instance(
         .await
         .context("system db connect")?;
 
-    let mut transaction = wamn_platform_identity::transaction::read_connection(
+    let mut transaction = wamn_identity::transaction::read_connection(
         &mut client,
-        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     let result = async {
@@ -151,9 +151,9 @@ pub async fn read_project_env_policy(
         .await
         .context("system db connect")?;
 
-    let mut transaction = wamn_platform_identity::transaction::read_connection(
+    let mut transaction = wamn_identity::transaction::read_connection(
         &mut client,
-        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     let result = async {

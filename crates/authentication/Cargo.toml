@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connections/test-util"]
+test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connection/test-util"]
 
 [dependencies]
 wamn-digest.workspace = true
@@ -26,11 +26,11 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-connections = { workspace = true }
+wamn-connection = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-oci = { workspace = true }
-wamn-platform-identity = { workspace = true }
+wamn-identity = { workspace = true }
 wamn-registry = { workspace = true }
 
 [dev-dependencies]
@@ -45,7 +45,7 @@ wamn-authentication = { path = ".", features = ["test-util"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true, features = ["test-util"] }
 wamn-oci = { workspace = true, features = ["test-util"] }
-wamn-platform-identity = { workspace = true, features = ["test-util"] }
+wamn-identity = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

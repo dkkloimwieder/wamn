@@ -15,7 +15,7 @@ pub fn repository() -> PathBuf {
 
 pub fn manifest(package: &Path) -> Value {
     serde_json::from_slice(
-        &std::fs::read(wamn_compiler::output_root(package).join("wamn.json")).unwrap(),
+        &std::fs::read(wamn_codegen::output_root(package).join("wamn.json")).unwrap(),
     )
     .unwrap()
 }
@@ -44,7 +44,7 @@ pub fn admit(
     ));
     std::fs::write(&rendered, serde_json::to_vec(&declaration).unwrap()).unwrap();
     let component_bytes =
-        wamn_compiler::output_root(package).join(format!("components/{name}.wasm"));
+        wamn_codegen::output_root(package).join(format!("components/{name}.wasm"));
     let admitted = admit_component(AdmitComponentRequest {
         package: package.into(),
         component_bytes,

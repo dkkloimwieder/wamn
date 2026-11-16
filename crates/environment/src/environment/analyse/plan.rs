@@ -32,7 +32,7 @@ pub(crate) async fn project_url(
     }
     wamn_postgres::database_configuration(
         &platform.system_database_url,
-        &wamn_control_provision::project_env_database_name(
+        &wamn_provision::project_env_database_name(
             &document.org,
             &document.project,
             &document.env,

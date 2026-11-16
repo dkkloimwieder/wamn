@@ -33,8 +33,8 @@ macro_rules! change {
     ($client:expr, |$tx:ident| $body:expr) => {{
         let mut $tx = $client.begin().await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
+            (&wamn_provision::bind_platform_principal_sql(
+                wamn_provision::PlatformComponent::Provisioning,
             ))
                 .to_string(),
         ))
@@ -54,7 +54,7 @@ macro_rules! change {
 async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    wamn_identity::test_database::project_platform(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
     let project_env_key = "t1--dev--project".parse().unwrap();
 

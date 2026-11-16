@@ -13,7 +13,7 @@ pub fn release_name(
     application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<String> {
     Ok(
-        wamn_control_provision::environment_names::application_release_name(
+        wamn_provision::environment_names::application_release_name(
             org,
             project,
             env,
@@ -37,7 +37,7 @@ pub fn roles(
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Vec<Role> {
-    let project_env_key = wamn_control_provision::project_env_key(org, project, env);
+    let project_env_key = wamn_provision::project_env_key(org, project, env);
     let target = |extra: &[(&str, &str)]| -> Mapping {
         [
             ("wamn.project_env_key", project_env_key.as_str()),

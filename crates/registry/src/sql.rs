@@ -248,7 +248,7 @@ pub const EXECUTION_HOST_SRC_FILE_ROUTE_GENERATIONS: &str = "SELECT connection_i
 pub const EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND project=$2 \
              AND ($3::text IS NULL OR env=$3) ORDER BY env";
 
-/// crates/connections/src/oauth_token.rs::lock registry statement.
+/// crates/connection/src/oauth_token.rs::lock registry statement.
 pub const PLATFORM_RUNTIME_SRC_OAUTH_TOKEN_LOCK: &str =
     "SELECT registry.lock_oauth_connection($1,$2,$3,$4)";
 
@@ -397,12 +397,12 @@ pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS: 
 pub const CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH: &str =
     "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5,$6,$7)";
 
-/// services/identity/src/session.rs::CURRENT_TARGET_SQL registry statement.
+/// services/identity-service/src/session.rs::CURRENT_TARGET_SQL registry statement.
 pub const IDENTITY_SRC_SESSION_CURRENT_TARGET_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.environment_projects JOIN registry.environments USING (org,env) \
     WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4 \
     AND status = 'active')";
 
-/// services/identity/src/session.rs::REGISTERED_ORG_SQL registry statement.
+/// services/identity-service/src/session.rs::REGISTERED_ORG_SQL registry statement.
 pub const IDENTITY_SRC_SESSION_REGISTERED_ORG_SQL: &str =
     "SELECT EXISTS (SELECT 1 FROM registry.orgs WHERE id = $1)";
 

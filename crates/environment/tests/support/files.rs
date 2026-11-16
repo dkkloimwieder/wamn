@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
+use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_oci::package_artifact::http_client::HttpClient;
 
 pub const CALLER: &str = "a0000000-0000-4000-8000-0000000000c4";
@@ -56,7 +56,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         .execute(&mut observer)
         .await
         .map(drop)?;
-    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_provision::APP_SCHEMA_SQL)
         .execute(&mut observer)
         .await
         .map(drop)?;
@@ -70,7 +70,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     )] {
         let role = workload_login(family, target)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&wamn_control_provision::test_database::login_sql(
+            (&wamn_provision::test_database::login_sql(
                 family,
                 name,
                 &role,
@@ -205,7 +205,7 @@ pub struct Registry {
     pub unenabled: Client,
     pub org: wamn_registry::OrgId,
     project: wamn_registry::ProjectId,
-    pub credentials: std::sync::Arc<wamn_connections::credentials::MemoryStore>,
+    pub credentials: std::sync::Arc<wamn_connection::credentials::MemoryStore>,
     pub connection_id: String,
     pub generation: i64,
     pub definition: serde_json::Value,
@@ -223,11 +223,11 @@ impl Registry {
         payload["env"] = "dev".into();
         let mut tx = wamn_test_postgres::transaction(
             &mut self.control,
-            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
+            &wamn_provision::PlatformComponent::Provisioning.principal_id(),
             "wamn:provisioning",
         )
         .await?;
-        wamn_connections::connections::administration::execute_with_store(
+        wamn_connection::connections::administration::execute_with_store(
             &mut tx,
             &self.org,
             operation,
@@ -246,11 +246,11 @@ impl Registry {
     ) -> anyhow::Result<()> {
         let mut tx = wamn_test_postgres::transaction(
             &mut self.control,
-            &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
+            &wamn_provision::PlatformComponent::Provisioning.principal_id(),
             "wamn:provisioning",
         )
         .await?;
-        wamn_connections::credentials::define(&mut tx,&self.org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),self.credentials.as_ref()).await?;
+        wamn_connection::credentials::define(&mut tx,&self.org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),self.credentials.as_ref()).await?;
         tx.commit().await?;
         Ok(())
     }

@@ -10,7 +10,7 @@ use super::*;
 /// subcommand calls.)
 #[test]
 fn cluster_is_derived_by_placement_and_policy() {
-    use wamn_control_provision::EnvPolicy;
+    use wamn_provision::EnvPolicy;
     let ded = Org::dedicated("demo".parse().unwrap());
     assert_eq!(cluster_of(&ded, &EnvPolicy::dev()).name, "demo-dev");
     assert_eq!(cluster_of(&ded, &EnvPolicy::prod()).name, "demo-prod");
@@ -97,7 +97,7 @@ async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
 async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("SET ROLE wamn_system")

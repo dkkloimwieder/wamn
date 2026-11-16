@@ -56,7 +56,7 @@ pub struct Configuration {
     pub event_observer: Option<Nats>,
     #[serde(default)]
     pub identity: Identity,
-    pub oauth_encryption: Option<wamn_connections::oauth_encryption::Configuration>,
+    pub oauth_encryption: Option<wamn_connection::oauth_encryption::Configuration>,
 }
 
 /// The platform broker connection, using mounted TLS credentials.
@@ -120,7 +120,7 @@ impl Configuration {
             "control credentials must belong to the org namespace"
         );
         ensure!(
-            config.apply_database.username.as_str() == wamn_control_provision::apply::APPLY_ROLE,
+            config.apply_database.username.as_str() == wamn_provision::apply::APPLY_ROLE,
             "operation configuration requires the apply role"
         );
         let (_, digest) = config
@@ -222,13 +222,13 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     let verifier = wamn_identity_protocol::verifier::SessionVerifier::new(
         keys,
         config.org.as_str(),
-        &wamn_platform_identity::control::control_audience(&config.org)?,
+        &wamn_identity::control::control_audience(&config.org)?,
     )?;
     let oauth = config
         .oauth_encryption
         .as_ref()
         .map(|configuration| {
-            let envelope = Arc::new(wamn_connections::oauth_encryption::Envelope::open(
+            let envelope = Arc::new(wamn_connection::oauth_encryption::Envelope::open(
                 configuration,
             )?);
             wamn_http::oauth_authorization::Authorization::new(&config.public_origin, envelope)
@@ -259,7 +259,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             administration: config.administration_dir.clone(),
             identity: config.identity.connection(),
             platform,
-            system_database: wamn_control_provision::migrations::MigrationDatabase::System
+            system_database: wamn_provision::migrations::MigrationDatabase::System
                 .configuration(&config.apply_database.to_json()?)?,
             integration_registry: integration_registry.clone(),
             registry_credentials: registry_credentials.clone(),
@@ -288,7 +288,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
                 tracing::warn!(%error, "transaction identity retention failed");
             }
             let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                wamn_connections::credential_cleanup::collect(
+                wamn_connection::credential_cleanup::collect(
                     &mut *cleanup_pool.acquire().await?,
                     &cleanup_org,
                 )

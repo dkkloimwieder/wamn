@@ -8,7 +8,7 @@ use syn::{Item, spanned::Spanned as _};
 /// The operation's types, SQL and validation continue to come from the compiler.
 pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
     let (model, action) = local.split_once('.').context("use model.action")?;
-    let output = wamn_compiler::output_root(package);
+    let output = wamn_codegen::output_root(package);
     let manifest =
         wamn_catalog::manifest::PackageManifest::from_slice(&fs::read(output.join("wamn.json"))?)?;
     let declaration = manifest
@@ -30,7 +30,7 @@ pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
                 .flatten()
         })
         .context("action has no component owner")?;
-    let workspace = wamn_compiler::package_workspace(package);
+    let workspace = wamn_codegen::package_workspace(package);
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(workspace.join("Cargo.toml"))
         .no_deps()
@@ -142,7 +142,7 @@ pub fn component(
     name: &wamn_catalog::manifest::source_name::SourceName,
     destination: &Path,
 ) -> Result<()> {
-    let source = wamn_compiler::output_root(package)
+    let source = wamn_codegen::output_root(package)
         .join("client-ts/components")
         .join(format!("{name}.ts"));
     let source_text = fs::read_to_string(&source)?;
@@ -231,7 +231,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        let output = wamn_compiler::output_root(&package);
+        let output = wamn_codegen::output_root(&package);
         fs::create_dir_all(output.join("component")).unwrap();
         fs::write(output.join("wamn.json"), serde_json::to_vec(&serde_json::json!({
             "package": {"id": "package", "version": "1.0.0"},

@@ -11,7 +11,7 @@ pub fn role_posture_sql() -> String {
         "{app}\n{query}\n{owner}\n",
         app = sql::ensure_app_acl_role_sql(),
         query =
-            sql::ensure_workload_acl_role_sql(wamn_control_provision::WorkloadRoleFamily::Query),
+            sql::ensure_workload_acl_role_sql(wamn_provision::WorkloadRoleFamily::Query),
         owner = sql::ensure_db_owner_role_sql(),
     )
 }

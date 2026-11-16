@@ -129,7 +129,7 @@ See [integration administration](../../docs/operations/deployment.md#project-int
    jq -n --arg project "$NETSUITE_PROJECT" \
      '{project:$project,name:"netsuite",integration_type:"http",auth_type:"oauth2_client_credentials_jwt"}' \
      > "$work/integration.json"
-   wamn-ctl integration write --file "$work/integration.json"
+   wamn integration write --file "$work/integration.json"
    ```
 
 4. Create the connection request with the account host and token endpoint:
@@ -154,7 +154,7 @@ See [integration administration](../../docs/operations/deployment.md#project-int
    ```sh
    key_file=$(jq -er '.private_key_file' "$NETSUITE_CREDENTIALS")
    jq -n --rawfile private_key "$key_file" '{private_key:$private_key}' > "$work/credential.json"
-   wamn-ctl connection write --file "$work/connection.json" --credential-file "$work/credential.json"
+   wamn connection write --file "$work/connection.json" --credential-file "$work/credential.json"
    ```
 
    The credential shape is `{private_key: PEM}`.
@@ -165,7 +165,7 @@ See [integration administration](../../docs/operations/deployment.md#project-int
    ```sh
    jq -n --arg project "$NETSUITE_PROJECT" --arg env "$NETSUITE_ENV" \
      '{project:$project,env:$env,name:"netsuite"}' > "$work/target.json"
-   wamn-ctl connection set-credential --file "$work/target.json" --credential-file "$work/credential.json"
+   wamn connection set-credential --file "$work/target.json" --credential-file "$work/credential.json"
    ```
 
 7. Remove the temporary requests and credential after setup:

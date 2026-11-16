@@ -79,17 +79,17 @@ impl Operation {
             ("wamn-ctl-nats".into(), "nats", "/credentials/nats"),
         ];
         if self.privileged() {
-            let owner = wamn_control_provision::migrations::MigrationDatabase::Project
+            let owner = wamn_provision::migrations::MigrationDatabase::Project
                 .managed_role(database);
             needs.push((owner.password_secret.name, "owner", "/credentials/owner"));
             needs.push((
-                wamn_control_provision::project_env_cdc_secret_name(org, project, env),
+                wamn_provision::project_env_cdc_secret_name(org, project, env),
                 "capture",
                 "/credentials/capture",
             ));
             needs.push((
-                wamn_control_provision::workload_secret_name(
-                    wamn_control_provision::WorkloadRoleFamily::Migration,
+                wamn_provision::workload_secret_name(
+                    wamn_provision::WorkloadRoleFamily::Migration,
                     org,
                     project,
                     env,
@@ -117,7 +117,7 @@ impl ControlRoutes<'_> {
         payload: &str,
     ) -> Result<Value, Refusal> {
         let request: Request = serde_json::from_str(payload).map_err(|_| invalid("value"))?;
-        let coordinate = wamn_control_provision::environment_names::environment_resource_name(
+        let coordinate = wamn_provision::environment_names::environment_resource_name(
             self.org,
             &request.project,
             &request.env,
@@ -196,7 +196,7 @@ impl ControlRoutes<'_> {
         )
         .await?
         .context("project deployment is absent")?;
-        let database = wamn_control_provision::project_env_database_name(
+        let database = wamn_provision::project_env_database_name(
             self.org,
             &request.project,
             &request.env,
@@ -226,7 +226,7 @@ impl ControlRoutes<'_> {
             &worker.database_credential,
             self.registry_token_metadata,
         );
-        let administration = wamn_control_provision::control_administration_secret_name(self.org);
+        let administration = wamn_provision::control_administration_secret_name(self.org);
         // The connection projection selects the project's actual database server.
         job["spec"]["template"]["spec"]["volumes"]
             .as_array_mut()
@@ -386,7 +386,7 @@ mod tests {
         }
         request.release = None;
         assert!(validate(Operation::Reset, &request).is_ok());
-        let coordinate = wamn_control_provision::environment_names::environment_resource_name(
+        let coordinate = wamn_provision::environment_names::environment_resource_name(
             &"acme".parse().unwrap(),
             &request.project,
             &request.env,

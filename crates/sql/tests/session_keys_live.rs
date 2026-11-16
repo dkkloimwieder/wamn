@@ -7,11 +7,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wamn_identity_protocol::keys::PublicSessionKey;
 use wamn_identity_protocol::test_util::{Audience, verify};
 use wamn_identity_protocol::token::SessionClaims;
-use wamn_platform_identity::session_keys::{
+use wamn_identity::session_keys::{
     activate_session_key, publish_session_key, remove_compromised_session_key, retire_session_keys,
     session_jwks,
 };
-use wamn_platform_identity::session_token::{IssuedSessionToken, sign_session_token};
+use wamn_identity::session_token::{IssuedSessionToken, sign_session_token};
 
 const ISSUER: &str = "https://identity.lifecycle.internal";
 const OTHER_ISSUER: &str = "https://other.lifecycle.internal";
@@ -26,7 +26,7 @@ async fn session_key_lifecycle_on_postgres(pool: sqlx::PgPool) {
     let second = publish_session_key(&mut admin, ISSUER).await.unwrap();
     let third = publish_session_key(&mut admin, ISSUER).await.unwrap();
     let other = publish_session_key(&mut admin, OTHER_ISSUER).await.unwrap();
-    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    let actor = wamn_provision::PlatformComponent::Provisioning.principal_id();
     for relation in ["identity.session_keys", "identity.session_signing_state"] {
         wamn_test_infrastructure::record_history::assert_stamp(
             &mut admin, relation, "true", &actor, &actor,
@@ -289,7 +289,7 @@ async fn prepare_database(url: &str) -> (String, Client) {
     .await
     .map(drop)
     .expect("prepare empty platform schemas");
-    wamn_control_provision::test_database::system_schema(url).await;
+    wamn_provision::test_database::system_schema(url).await;
     (url.to_owned(), admin)
 }
 
@@ -514,7 +514,7 @@ async fn scheduled_rotation_keeps_the_previous_verification_key(pool: sqlx::PgPo
     .await
     .unwrap()
     .get(0);
-    wamn_platform_identity::session_keys::rotate_session_keys(&mut admin, issuer, interval)
+    wamn_identity::session_keys::rotate_session_keys(&mut admin, issuer, interval)
         .await
         .unwrap();
     let unchanged: String = sqlx::query(sqlx::AssertSqlSafe(
@@ -528,8 +528,8 @@ async fn scheduled_rotation_keeps_the_previous_verification_key(pool: sqlx::PgPo
     assert_eq!(unchanged, initial);
     let mut tx = admin.begin().await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -538,7 +538,7 @@ async fn scheduled_rotation_keeps_the_previous_verification_key(pool: sqlx::PgPo
     .unwrap();
     sqlx::query(sqlx::AssertSqlSafe(("UPDATE identity.session_keys SET published_at=clock_timestamp()-interval '2 hours' WHERE issuer=$1").to_string())).bind(&issuer).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
-    wamn_platform_identity::session_keys::rotate_session_keys(&mut admin, issuer, interval)
+    wamn_identity::session_keys::rotate_session_keys(&mut admin, issuer, interval)
         .await
         .unwrap();
     let current: String = sqlx::query(sqlx::AssertSqlSafe(
@@ -556,7 +556,7 @@ async fn scheduled_rotation_keeps_the_previous_verification_key(pool: sqlx::PgPo
     remove_compromised_session_key(&mut admin, issuer, &current)
         .await
         .unwrap();
-    wamn_platform_identity::session_keys::rotate_session_keys(&mut admin, issuer, interval)
+    wamn_identity::session_keys::rotate_session_keys(&mut admin, issuer, interval)
         .await
         .unwrap();
     let active: Option<String> = sqlx::query(sqlx::AssertSqlSafe(

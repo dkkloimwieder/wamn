@@ -8,7 +8,7 @@ use sqlx::{Connection as _, Row as _};
 use url::Url;
 use zeroize::Zeroizing;
 
-use wamn_connections::oauth_encryption::{Encrypted, Envelope};
+use wamn_connection::oauth_encryption::{Encrypted, Envelope};
 
 /// A refusal with a safe public reason. Sources never enter a callback page.
 pub struct Error {
@@ -186,7 +186,7 @@ impl Authorization {
             .await
             .map_err(|error| failed("callback identity failed", error))?;
         let connection: uuid::Uuid = row.get("connection_id");
-        let context = wamn_connections::connections::administration::configure(
+        let context = wamn_connection::connections::administration::configure(
             tx,
             org,
             "connection.oauth_callback",
@@ -249,7 +249,7 @@ impl Authorization {
             .map_err(|error| failed("invalid provider token response", error))?;
         let received = tokio::time::Instant::now();
         let plaintext = Zeroizing::new(
-            serde_json::to_vec(&wamn_connections::oauth_token::Token {
+            serde_json::to_vec(&wamn_connection::oauth_token::Token {
                 access_token: Some(token.access_token),
                 refresh_token: token.refresh_token,
             })
@@ -260,7 +260,7 @@ impl Authorization {
             .encrypt(&plaintext)
             .await
             .map_err(|error| failed("token encryption failed", error))?;
-        wamn_connections::oauth_token::write_row(
+        wamn_connection::oauth_token::write_row(
             tx,
             connection,
             &encrypted,
@@ -283,7 +283,7 @@ impl Authorization {
         let store = None;
         #[cfg(any(test, feature = "test-util"))]
         let store = self.store.as_deref().or(store);
-        wamn_connections::connection_credentials::read_secret(text("ref")?, text("version")?, store)
+        wamn_connection::connection_credentials::read_secret(text("ref")?, text("version")?, store)
             .await
             .map(Zeroizing::new)
     }

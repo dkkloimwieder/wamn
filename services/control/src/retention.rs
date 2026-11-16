@@ -4,7 +4,7 @@ use sqlx::Connection as _;
 
 async fn prune_identities(
     input: &str,
-    scope: wamn_control_provision::migrations::MigrationDatabase,
+    scope: wamn_provision::migrations::MigrationDatabase,
 ) -> anyhow::Result<()> {
     // Bound credential lookup, connection establishment, role selection and delete.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -31,7 +31,7 @@ async fn prune_identities(
 
 /// Remove identities that no running transaction can still use.
 pub(crate) async fn identities(directory: &std::path::Path, system: &str) -> anyhow::Result<()> {
-    use wamn_control_provision::migrations::MigrationDatabase;
+    use wamn_provision::migrations::MigrationDatabase;
     if let Err(error) = prune_identities(system, MigrationDatabase::System).await {
         tracing::warn!(%error, "system transaction identity retention failed");
     }

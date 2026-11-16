@@ -31,7 +31,7 @@ wamn-oci = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-engine = { workspace = true }
-wamn-compiler = { workspace = true }
+wamn-codegen = { workspace = true }
 wamn-fixture-package = { workspace = true, optional = true }
 wamn-test-infrastructure = { workspace = true, optional = true }
 hyper = { workspace = true }
@@ -45,8 +45,8 @@ wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-control-provision = { workspace = true, features = ["test-util"] }
-wamn-platform-identity = { workspace = true, features = ["test-util"] }
+wamn-provision = { workspace = true, features = ["test-util"] }
+wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }

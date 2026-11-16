@@ -1,9 +1,9 @@
 //! Image-owned platform SQL migrations.
 use anyhow::ensure;
 use sqlx::migrate::{Migration, Migrator};
-use wamn_control_provision::migrations::MigrationDatabase;
+use wamn_provision::migrations::MigrationDatabase;
 pub fn embedded_sources(target: MigrationDatabase) -> Vec<Migration> {
-    wamn_control_provision::migrations::embedded(target)
+    wamn_provision::migrations::embedded(target)
         .iter()
         .cloned()
         .collect()
@@ -61,12 +61,12 @@ pub async fn apply_target(
     let login = database.require_login(client).await?;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(&login)
-        .bind(wamn_control_provision::PlatformComponent::ApplyPackage.principal_id())
+        .bind(wamn_provision::PlatformComponent::ApplyPackage.principal_id())
         .execute(&mut *client).await?;
     let key = crate::migrations::lock_session(client, lock, &[]).await?;
     let result = async {
         let table = format!("{schema}._sqlx_migrations");
-        wamn_control_provision::migration::prepare_history(client, &table, &login).await?;
+        wamn_provision::migration::prepare_history(client, &table, &login).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {table} OWNER TO {owner}"
         )))
@@ -93,7 +93,7 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
     if present {
         return Ok(false);
     }
-    sqlx::raw_sql(wamn_control_provision::sql::ensure_db_owner_role_sql())
+    sqlx::raw_sql(wamn_provision::sql::ensure_db_owner_role_sql())
         .execute(&mut *client)
         .await?;
     sqlx::raw_sql(
@@ -103,12 +103,12 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
     .await?;
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::ensure_platform_group_role_sql(),
+        wamn_provision::sql::ensure_platform_group_role_sql(),
     ))
     .execute(&mut *client)
     .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+        wamn_provision::sql::ensure_app_acl_role_sql(),
     ))
     .execute(&mut *client)
     .await?;
@@ -122,7 +122,7 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
         sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
             .execute(&mut *client)
             .await?;
-        sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+        sqlx::raw_sql(wamn_provision::APP_SCHEMA_SQL)
             .execute(&mut *client)
             .await?;
         sqlx::raw_sql(include_str!("../../../deploy/sql/run-state.sql"))
@@ -140,11 +140,11 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
     sqlx::raw_sql("RESET ROLE").execute(&mut *client).await?;
     result?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::grant_dynamic_sql_surface_sql(),
+        wamn_provision::sql::grant_dynamic_sql_surface_sql(),
     ))
     .execute(&mut *client)
     .await?;
-    sqlx::raw_sql(wamn_control_provision::MIGRATION_PRIVILEGES_SQL)
+    sqlx::raw_sql(wamn_provision::MIGRATION_PRIVILEGES_SQL)
         .execute(client)
         .await?;
     Ok(true)

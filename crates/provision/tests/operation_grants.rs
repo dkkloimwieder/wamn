@@ -1,11 +1,11 @@
 //! Installed role constraints and the built-in administrator write.
 
 use sqlx::Connection as _;
-use wamn_control_provision::operation_grants::{
+use wamn_provision::operation_grants::{
     ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     operation_base_grants_requirements_sql,
 };
-use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
+use wamn_provision::{PlatformComponent, bind_platform_principal_sql};
 
 async fn admin_write(connection: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
     let mut transaction = connection.begin().await?;
@@ -29,7 +29,7 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
     let _serialized = wamn_test_postgres::lock();
     let mut connection = pool.acquire().await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+        wamn_provision::sql::ensure_app_acl_role_sql(),
     ))
     .execute(&mut *connection)
     .await?;

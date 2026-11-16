@@ -3,9 +3,9 @@
 use sqlx::Row as _;
 use std::time::Duration;
 
-use wamn_control_provision::PlatformComponent;
+use wamn_provision::PlatformComponent;
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_identity::{
+use wamn_identity::{
     IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
     create_service, create_user, disable_principal, grant_project_env_membership,
     has_project_env_membership, issue_pat, project_roles, resolve_principal, resolve_subject,
@@ -35,7 +35,7 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     .await
     .map(drop)
     .expect("prepare empty platform schemas");
-    wamn_control_provision::test_database::system_schema(&url).await;
+    wamn_provision::test_database::system_schema(&url).await;
     let provisioning = provisioning_principal_is_seeded(&mut client).await;
     unbound_identity_writes_refuse(&mut client).await;
     // The fixture is platform setup, so it writes as wamn:provisioning.
@@ -65,7 +65,7 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
     )
     .await
     .expect("create user principal");
-    wamn_platform_identity::org::activate_org_membership(
+    wamn_identity::org::activate_org_membership(
         &mut client,
         user.id(),
         &"demo".parse().unwrap(),
@@ -310,7 +310,7 @@ async fn project_environment_membership_round_trip(
     .await
     .expect("create another user");
     for (principal, org) in [(user, "demo"), (user, "other"), (&other_user, "demo")] {
-        wamn_platform_identity::org::activate_org_membership(
+        wamn_identity::org::activate_org_membership(
             client,
             principal.id(),
             &org.parse().unwrap(),

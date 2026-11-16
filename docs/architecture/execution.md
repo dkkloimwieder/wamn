@@ -54,7 +54,7 @@ Each top-level member is one parameter, and its value is the compact JSON text o
 The client encoder sorts parameter names and uses one escaping format so its requests share cache entries.
 The parser accepts any parameter order and valid escaping, and parses each value as JSON.
 The router refuses malformed JSON and targets longer than 8 KiB with HTTP 400 and `invalid-target`.
-The [CLI encoder](../../services/ctl/src/read_query.rs) writes the query. The [HTTP parser](../../crates/catalog/src/read_query.rs) reads it.
+The [CLI encoder](../../services/cli/src/read_query.rs) writes the query. The [HTTP parser](../../crates/catalog/src/read_query.rs) reads it.
 
 The host derives the `Cache-Control` value of each read route from its operation type and auth policy when it serves the route, and the router only writes it.
 A `get` sends `no-cache`, and a `query` or `projection` sends `max-age=10, stale-while-revalidate=60`.
@@ -170,8 +170,8 @@ The host carries no single release digest. Application Helm histories remain ind
 
 An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
-A role or permission write first takes the project lock that `wamn-ctl` and release reconciliation take.
-The writes are the functions of [`wamn_platform_identity::application`](../../crates/identity/src/application.rs), which the role verbs of `wamn-ctl` also call.
+A role or permission write first takes the project lock that `wamn` and release reconciliation take.
+The writes are the functions of [`wamn_environment::application`](../../crates/environment/src/application.rs), which the role verbs of `wamn` also call.
 `user_role.revoke` reads current inherited administration through the host’s identity reader. It derives the answer from the org, environment and project grants.
 `permission.grant` writes one permission row. A row the serving release does not serve grants nothing.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `user_not_found` or `admin_covered`.
@@ -201,7 +201,7 @@ Every other org route needs a current `org-admin` row of the caller in the token
 A project route needs that row, or a current `project-admin` row of the caller in the project that the request names.
 A write runs in one transaction on a second `control` login, which holds one write at a time.
 The transaction inserts the caller and sealed operation id into `platform.tx_identity`, then checks the role again.
-The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/src/org.rs), which platform installation also calls.
+The writes are the functions of [`wamn_identity::org`](../../crates/identity/src/org.rs), which platform installation also calls.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
 Native control reads that login from the installed public connection projection, one file per `<project>--<env>`, at each write. Its component configuration selects `administration_dir`; passwords stay in the owning role Secrets.
@@ -445,7 +445,7 @@ A refusal without details returns an empty object. Absent optional refusal detai
 Private modules in `wamn-workflow` own deterministic graph decisions.
 Before execution, the host binds each invocation in one registry with a shared lifetime and trace context.
 `wamn-sql` owns identity, causation, the transaction and the WAL position.
-`wamn-connections` owns the release context and the attested connection invocation.
+`wamn-connection` owns the release context and the attested connection invocation.
 SQL binding makes sure that the release and identity match before execution.
 HTTP, storage and integration dispatch read the connections record from the same registry.
 Guest logs use wash-runtime's `TracingLogger` and the host tracing exporter.
@@ -591,7 +591,7 @@ A missing permission refuses that command.
 
 Missed or refused ticks produce a log entry without catch-up, and host shutdown cancels the task.
 
-The [JSONata node](../../guests/jsonata/src/lib.rs) is a palette node compiled to wasm.
+The [JSONata node](../../guests/jsonata-expression/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.
 The result leaves on port `main`, or on the selected port `items`.
 Each JSONata node declares `input-schema` and `output-schema` in its parameters.
@@ -685,7 +685,7 @@ Every layer exposes an interface and depends only on layers below it: base platf
 
 Park acts on the queue row only. The run status stays `dispatched`, so the retired run-level `parked` status does not come back. A park inside a walk needs a saved walk and is part of approvals, which are out of target.
 
-The node is a std guest at `guests/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its parameter `expression` holds the JSONata text. The required `input-schema` and `output-schema` declare its input and result contracts. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
+The node is a std guest at `guests/jsonata-expression`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its parameter `expression` holds the JSONata text. The required `input-schema` and `output-schema` declare its input and result contracts. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
 
 The `shape` node turns the row event into the item array that `label-render` takes, with `packaging_id` and `location_id`, and the label key `{packaging_id}/{row_version}`. Epic 25 moved the trigger from the movement insert to the packaging update. One move therefore stores one label, and a redelivered event overwrites it. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
 
@@ -805,8 +805,8 @@ Its caller deletes the keys of the list after the commit. `wamn-broker::Publishe
 A change of a user row or a user role deletes the key of the principal.
 A change of a role, a permission or the environment status deletes every key of the project.
 A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal delete the identity key of the principal.
-The writers are the application host, the control host, the identity service and `wamn-ctl`.
-The identity service and `wamn-ctl` read the connection from `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT` and `WAMN_NATS_TLS_KEY`, with a client certificate of the wasmCloud CA.
+The writers are the application host, the control host, the identity service and `wamn`.
+The identity service and `wamn` read the connection from `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT` and `WAMN_NATS_TLS_KEY`, with a client certificate of the wasmCloud CA.
 `WAMN_NATS_TLS_SERVER_NAME` names the server certificate when a port-forward reaches the server.
 A lost delete waits for at most the configured bound.
 
@@ -850,7 +850,7 @@ Failed renewal or login expiry requires explicit login and submission. Quitting 
 ### Connection memory
 
 The host answers the connection facts of a call from its memory, so a repeated call reads Postgres and the credential store only on a miss.
-The [memory](../../crates/connections/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
+The [memory](../../crates/connection/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
 It follows the revision and watch rules of the [auth memory](#auth-memory).
 Connection facts keep their own 60-second expiry.
 The [shared replica](../../crates/authority/src/kv_memory.rs) holds these rules for both memories.
@@ -871,7 +871,7 @@ The active connection fact supplies the credential id and service principal.
 The host resolves the secret under that credential id.
 
 The [engine](../../crates/engine/src/integration.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
-The [connections dispatch](../../crates/connections/src/integrations.rs) links an instance per (connection id, generation, credential id) from that compiled component.
+The [connections dispatch](../../crates/connection/src/integrations.rs) links an instance per (connection id, generation, credential id) from that compiled component.
 Typed integration imports use labels, the connection names that code declares.
 The host resolves each label by its component digest, package, and name.
 HTTP and blobstore share one authority resolver.
@@ -953,7 +953,7 @@ The host binds the principal that created the state before it reads or writes ot
 Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.
-The shared [encryption module](../../crates/connections/src/oauth_encryption.rs) supports regional Cloud KMS and a local key file.
+The shared [encryption module](../../crates/connection/src/oauth_encryption.rs) supports regional Cloud KMS and a local key file.
 The host reads its provider from `WAMN_OAUTH_ENCRYPTION`.
 Use `gcp` for Cloud KMS or `local` for a key file.
 [Deployment instructions](../operations/gcp.md#49-platform-install-inputs) describe that configuration.
@@ -1254,17 +1254,17 @@ The [key cache](../../crates/authentication/src/session_keys.rs) and [key owner]
 
 ## Operator clients
 
-Generated screens use the [client contract](../../crates/compiler/src/client_ir.rs), derived from admitted declarations.
+Generated screens use the [client contract](../../crates/codegen/src/client_ir.rs), derived from admitted declarations.
 Operation types come from the manifest.
 Record links come from declared relations, keys, and compatible reads.
 The generator never guesses a record from a field name ending in `_id`.
 
-The [screen plan](../../crates/compiler/src/client_plan.rs) holds the screen rules that every UI target applies.
+The [screen plan](../../crates/codegen/src/client_plan.rs) holds the screen rules that every UI target applies.
 It gives each callable operation one role: table, detail, form, delete, or none with a reason.
 It also states the columns, the operator inputs, the row source, the paging, and the screens that one row opens.
 It carries interaction meaning only, so no layout, styling, or framework concept enters it.
 
-A package can also generate [TypeScript bindings](../../crates/compiler/src/client_ts.rs) for a browser.
+A package can also generate [TypeScript bindings](../../crates/codegen/src/client_ts.rs) for a browser.
 It opts in with a `client_package` name in its manifest, and a package that declares none generates no TypeScript. Nothing is published to a registry, and the name is what a workspace imports.
 The bindings carry a request type, a result type, the published route and one function for each public operation.
 A private event handler is absent, and an operation the release does not publish carries its types without a function.
@@ -1305,7 +1305,7 @@ A generated detail, a table, an edit cell, the record text in a table's referenc
 Each reads again only after a write that touches them, so an unchanged read costs one 304 and an untouched read costs nothing.
 A form's own record read does not read again, because the form sends the revision that it read when it opened.
 
-A package that generates TypeScript also generates [wfe descriptions](../../crates/compiler/src/client_component.rs) for its supported screen roles.
+A package that generates TypeScript also generates [wfe descriptions](../../crates/codegen/src/client_component.rs) for its supported screen roles.
 Descriptions contain presentation data for tables, details, forms, and deletes.
 The [Receiving web application](../../apps/wamn_receiving/web/README.md) binds those descriptions to requests, validation, reference selectors, and navigation.
 The generated TypeScript bindings continue to use the browser runtime.

@@ -3,7 +3,7 @@
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use wamn_control_provision::migrations::MigrationDatabase;
+use wamn_provision::migrations::MigrationDatabase;
 use wamn_identity_protocol::PrincipalId;
 
 use crate::{Configuration, execution::Execution};
@@ -48,7 +48,7 @@ impl Execution {
         let environment = operation.as_str().starts_with("environment.");
         let input: Value = serde_json::from_str(payload)?;
         let coordinate = if environment {
-            wamn_control_provision::environment_names::environment_resource_name(
+            wamn_provision::environment_names::environment_resource_name(
                 &self.org,
                 &input["project"]
                     .as_str()
@@ -104,7 +104,7 @@ impl Execution {
         job["spec"]["template"]["spec"]["volumes"] = json!([
             {"name":"configuration","configMap":{"name":worker.configuration}},
             {"name":"work","emptyDir":{}},
-            {"name":"administration","configMap":{"name":wamn_control_provision::control_administration_secret_name(&self.org)}}
+            {"name":"administration","configMap":{"name":wamn_provision::control_administration_secret_name(&self.org)}}
         ]);
         wamn_kubernetes::job::container(&mut job)["volumeMounts"] = json!([
             {"name":"configuration","mountPath":"/etc/wamn/control","readOnly":true},
@@ -127,7 +127,7 @@ impl Execution {
                 &triple,
             )
             .await?;
-            let database = wamn_control_provision::project_env_database_name(
+            let database = wamn_provision::project_env_database_name(
                 &self.org, project, env, &instance,
             );
             MigrationDatabase::Project.managed_role(&database)
@@ -288,13 +288,13 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                     &triple,
                 )
                 .await?;
-                let database = wamn_control_provision::project_env_database_name(
+                let database = wamn_provision::project_env_database_name(
                     &config.org,
                     &project,
                     &env,
                     &instance,
                 );
-                let key = wamn_control_provision::control_administration_key(&project, &env);
+                let key = wamn_provision::control_administration_key(&project, &env);
                 let input = std::fs::read_to_string(config.administration_dir.join(key))?;
                 ensure!(
                     wamn_postgres::identity(&input)?.1 == database,

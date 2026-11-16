@@ -3,7 +3,7 @@
 Migration SQL defines an application's schema.
 `wamn-schema-introspection` reads PostgreSQL into a normalized schema description.
 The compiler selects relations from the manifest and authored SQL before it reads their column types.
-`wamn-compiler` owns authored declarations and their checks. It combines them with the schema description and SQL bytes to produce package artifacts. Catalog holds compiled release facts and does not depend on the compiler.
+`wamn-codegen` owns authored declarations and their checks. It combines them with the schema description and SQL bytes to produce package artifacts. Catalog holds compiled release facts and does not depend on the compiler.
 The schema description is derived output, not an editable schema language.
 The generator's core transformation performs no filesystem, database, clock, or environment access.
 The build describes its complete SQL corpus with SQLx before it emits consumers.
@@ -181,14 +181,14 @@ Offline creates with integer keys replay by the write log’s `request_id`, not 
 Generation writes these files for each package. A path below is a logical path: the file lies at the same path, without `generated/`, in the package's build output `apps/target/wamn/<package>`, which Git does not hold.
 
 1. `generated/data/<model>.rs` holds one data function for each operation of the model. The function parses the scalars, calls the generated accessor, and returns the one generated refusal type.
-2. `wamn-data-access::error` owns the shared refusal type and statement error translation. Each export translates it into its WIT error.
+2. `wamn-guest::data_access::error` owns the shared refusal type and statement error translation. Each export translates it into its WIT error.
 3. `generated/component/<model>.rs` holds one module for each operation. Its `Action` trait has a default `run` method. The application implements the trait on its component. It can override `run` and call `default_handle` from the override. The export validates input before it calls the override.
 4. `generated/wit/world.wit` holds the world `<package>:generated/generated`, which exports every operation of the package and imports what those operations call.
 5. `generated/publication/attachments.json` holds the final routes, inline input schemas, and computed definition hashes.
 6. `generated/publication/components.json` holds the final component declarations with inline input and result schemas.
 7. `generated/data/sequences.rs` holds `sequences::<name>::next` and `sequences::<name>::peek` for each sequence that the package declares `callable`. The package has no such file without a callable sequence.
 
-The shared crate `wamn-data-access` holds the keyset cursor, the query page, scalar parsers, and statement error translation.
+The shared crate `wamn-guest` holds the keyset cursor, the query page, scalar parsers, and statement error translation.
 The compiled `wamn.json` carries `compiled_operations`, including described statements and their transaction facts.
 Readers borrow each operation through `wamn_catalog::operation_contract`. The compiler emits no contract files, source maps, or native verifier rows.
 `generated/openapi.json` describes the published HTTP interface with OpenAPI 3.1. GET parameters carry separate JSON values.
@@ -675,12 +675,12 @@ A 30-day log with no stamp columns:
 }
 ```
 
-The [manifest validation](../../crates/compiler/src/manifest.rs) refuses a missing key, a key on an overlay model, and a repeated name.
+The [manifest validation](../../crates/catalog/src/manifest.rs) refuses a missing key, a key on an overlay model, and a repeated name.
 It also refuses an actor without its time: `created_by` requires `created_at`, and `updated_by` requires `updated_at`.
 It refuses every other retention, including `P0D`, weeks, months, years, time parts, fractions, and signs.
 The [retention task](#retention-task) removes expired entries.
 
-[Generation validation](../../crates/compiler/src/generate/validation.rs) compares the declaration with the schema.
+[Generation validation](../../crates/codegen/src/generate/validation.rs) compares the declaration with the schema.
 It refuses a selected column that is absent or nullable, and a logged relation with no primary key.
 A selected time column must be `timestamptz`, and a selected actor column must be `uuid`, the type of `platform."user".id`.
 Generation also refuses a column with a reserved name that the declaration does not select.
@@ -1104,9 +1104,9 @@ A platform principal cannot authenticate.
 The `identity.pats` foreign key carries the principal type, and a CHECK refuses a token for a platform principal.
 Every path that turns a stored principal into a caller also refuses the platform type.
 
-The identity issuer and wamn-ctl bind `wamn:provisioning` in each write transaction.
+The identity issuer and wamn bind `wamn:provisioning` in each write transaction.
 wamn-identity issues each token in its own transaction.
-wamn-ctl creates service principals, assigns project roles, grants and revokes memberships, and revokes tokens in the same way.
+wamn creates service principals, assigns project roles, grants and revokes memberships, and revokes tokens in the same way.
 A drop tells hosts to discard a cached authorization fact.
 Service creation and project-role assignment record identity drops.
 Provisioning publishes each drop after its transaction commits, including the role assignment before PAT issuance.
@@ -1266,7 +1266,7 @@ Test database isolation has one definition in [running tests](../operations/runn
 ### Project integrations and credentials
 
 Connection readers belong to a project deployment, not to the process.
-The invocation record in `wamn-connections` selects that reader and its immutable loaded release.
+The invocation record in `wamn-connection` selects that reader and its immutable loaded release.
 The host refuses a project or digest mismatch before it resolves a connection binding.
 Credential generations and revocation still apply to every call and open blob handle.
 Several loaded releases of one project share its reader, while each release retains its own binding facts.

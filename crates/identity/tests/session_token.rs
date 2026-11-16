@@ -1,4 +1,4 @@
-use wamn_platform_identity::session_token::minting_times;
+use wamn_identity::session_token::minting_times;
 
 #[test]
 fn delayed_minting_keeps_original_deadline_and_refuses_late_results() {

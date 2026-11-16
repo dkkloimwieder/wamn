@@ -22,12 +22,12 @@ use wamn_engine::flow_http_routing::{
     required_bearer_token, route_credential, signature_unauthorized, unauthorized,
 };
 use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_platform_identity::PrincipalType;
+use wamn_identity::PrincipalType;
 
 use crate::authorization::{AuthorizationStore, SessionGrantRefusal};
 use crate::session_keys::IssuerKeys;
-use wamn_connections::connection_facts::ConnectionFacts;
-use wamn_connections::connection_memory::ConnectionStatus;
+use wamn_connection::connection_facts::ConnectionFacts;
+use wamn_connection::connection_memory::ConnectionStatus;
 
 async fn admit_session<T>(
     verifier: &SessionVerifier<IssuerKeys>,
@@ -340,13 +340,13 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .as_ref()
                 .ok_or_else(authentication_unavailable)?;
             let token = required_bearer_token(headers)?;
-            let mut transaction = wamn_platform_identity::transaction::read_pool(
+            let mut transaction = wamn_identity::transaction::read_pool(
                 identity_reader,
                 &wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
             )
             .await
             .map_err(|_| authentication_unavailable())?;
-            let principal = wamn_platform_identity::authenticate_route_pat(&mut transaction, token)
+            let principal = wamn_identity::authenticate_route_pat(&mut transaction, token)
                 .instrument(tracing::info_span!("wamn.auth.identity"))
                 .await
                 .map_err(|error| {
@@ -385,7 +385,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 }
                 PrincipalType::Service => {}
             }
-            // A service receives its roles through `wamn-ctl grant-role`.
+            // A service receives its roles through `wamn grant-role`.
             let permissions = self
                 .postgres
                 .user_operation_permissions(project, &target.project_env_key, principal.id())

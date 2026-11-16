@@ -26,22 +26,20 @@ The platform build publishes shared palette components separately from applicati
 
 ## Directory owners
 
-Each library has one concern. Package names remain independent of directory names.
+Each library has one concern. Directory names follow crate names without the `wamn-` prefix.
 
 | Directory | Owner and responsibility |
 | --- | --- |
 | `crates/catalog` | `wamn-catalog`: release and route facts, package and application names, environment configuration, and lifecycle locks |
-| `crates/compiler` | `wamn-compiler`: authored model, document rules, SQL descriptions, and generated outputs |
+| `crates/codegen` | `wamn-codegen`: authored model, document rules, SQL descriptions, and generated outputs |
 | `crates/schema-introspection` | `wamn-schema-introspection`: PostgreSQL catalog descriptions |
 | `crates/digest` | `wamn-digest`: canonical JSON and SHA-256 identities |
 | `crates/scalar` | `wamn-scalar`: scalar formats and SQL value types |
 | `crates/number-pattern` | `wamn-number-pattern`: document number pattern parsing |
 | `crates/registry` | `wamn-registry`: hierarchy coordinates, resource names, and registry SQL |
-| `crates/provision` | `wamn-control-provision`: database roles and provisioning SQL |
+| `crates/provision` | `wamn-provision`: database roles and provisioning SQL |
 | `crates/publish` | `wamn-publish`: package, release, integration, and web publication |
-| `crates/package-artifact` | `wamn-package-artifact`: registry transport and artifact readers |
-| `crates/component-artifact` | `wamn-component-artifact`: engine artifact adapter and registry credential helper |
-| `crates/release` | `wamn-release-control`: release charts and deployment facts |
+| `crates/oci` | `wamn-oci`: registry transport, artifact readers, engine artifact adapter, and registry credentials |
 | `crates/environment` | `wamn-environment`: environment lifecycle, package apply, and retention |
 | `crates/platform-install` | `wamn-platform-install`: chart installation and bootstrap |
 | `crates/dev` | `wamn-dev`: watched builds, publication, and deployment |
@@ -50,28 +48,26 @@ Each library has one concern. Package names remain independent of directory name
 | `crates/event-wire` | `wamn-event-wire`: event records and stable event identity |
 | `crates/events` | `wamn-events`: event admission, capture configuration, and reader lifecycle |
 | `crates/component-policy` | `wamn-component-policy`: import admission and platform import declarations |
-| `crates/component-composer` | `wamn-component-composer`: overlay and base composition |
+| `crates/build` | `wamn-build`: package builds and overlay and base composition |
 | `crates/engine` | `wamn-engine`: native loading, dispatch, and the invocation scope registry |
-| `crates/execution-host` | `wamn-execution-host`: invocation authority, platform routes, and release readiness |
 | `crates/run-state` | `wamn-run-state`: persisted run admission, leases, and settlement |
 | `crates/workflow` | `wamn-workflow`: workflow lifecycle, graph traversal, and durable queue delivery |
 | `crates/authority` | `wamn-authority`: shared invocation identity and effect evidence |
 | `crates/postgres` | `wamn-postgres`: PostgreSQL connection configuration and transport |
 | `crates/sql` | `wamn-sql`: host operation transactions and database authority |
 | `crates/http` | `wamn-http`: authorized outbound HTTP and OAuth |
-| `crates/connections` | `wamn-connections`: connection facts, credentials, resource leases, invocation context, and bound Wasm import dispatch |
+| `crates/connection` | `wamn-connection`: connection facts, credentials, resource leases, invocation context, and bound Wasm import dispatch |
 | `crates/blobstore` | `wamn-blobstore`: authorized object storage |
 | `crates/authentication` | `wamn-authentication`: route authentication and session verification |
-| `crates/identity` | `wamn-platform-identity`: identity authority and its SQL |
+| `crates/identity` | `wamn-identity`: identity authority and its SQL |
 | `crates/identity-client` | `wamn-identity-client`: HTTPS client for identity administration |
 | `crates/identity-protocol` | `wamn-identity-protocol`: principal IDs, database login names, roles, credential formats, and session tokens |
-| `crates/data-access` | `wamn-data-access`: guest cursors, pages, and scalar conversion |
-| `crates/postgres-statements` | `wamn-postgres-statements`: guest operation SQL and document numbering |
+| `crates/guest` | `wamn-guest`: guest cursors, pages, scalar conversion, operation SQL, and document numbering |
 | `crates/record-history` | `wamn-record-history`: reconstruction of a row from its history |
 | `guests/http-route` | HTTP matching and JSON invocation of typed application operations |
 | `guests/blob-put` | Palette node that writes one object |
 | `crates/jsonata` | `wamn-jsonata`: expression evaluation shared by publication and the JSONata guest |
-| `guests/jsonata` | Palette node that evaluates a JSONata expression |
+| `guests/jsonata-expression` | Palette node that evaluates a JSONata expression |
 | `guests/http-page` | Palette node that reads HTTP pages |
 | `guests/http-request` | Palette node that makes an HTTP request |
 | `guests/label-render` | Palette node that renders label text |
@@ -79,11 +75,11 @@ Each library has one concern. Package names remain independent of directory name
 | `guests/transform` | Palette node that transforms its input |
 | `services/host` | `wamn-host`: shared environment host for HTTP and queued operations |
 | `services/control` | `wamn-control`: authenticated org control service |
-| `services/identity` | `wamn-identity`: session issuer, passwords, PATs, and public verification keys |
-| `services/web-front` | `wamn-web-front`: browser files, runtime configuration, and password proxy |
+| `services/identity-service` | `wamn-identity-service` (binary `wamn-identity`): session issuer, passwords, PATs, and public verification keys |
+| `services/web` | `wamn-web`: browser files, runtime configuration, and password proxy |
 | `services/edge` | `wamn-edge`: local application host and device loop |
 | `services/cdc-reader` | `wamn-cdc-reader`: PostgreSQL change capture and broker acknowledgement |
-| `services/ctl` | `wamn`: user CLI. `wamn-ctl`: internal operation worker |
+| `services/cli` | `wamn-cli`: user CLI and internal operation worker; binary `wamn` |
 | `test-support/application` | Shared product deployment fixtures for application tests |
 | `test-support/postgres` | Private TLS Postgres servers, SQLx test runner, and prerequisite parser |
 | `test-support/resources` | Temporary external resources, HTTP fixtures, and shared test adapters |

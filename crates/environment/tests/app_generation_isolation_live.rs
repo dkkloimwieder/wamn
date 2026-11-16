@@ -33,7 +33,7 @@
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
-use wamn_control_provision::{
+use wamn_provision::{
     WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name, workload_login,
 };
 use wamn_environment::provision_project_env::{privilege_sql, role_posture_sql};
@@ -133,7 +133,7 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     .expect("the App family takes a project target");
     run_alone(
         &mut superuser,
-        &wamn_control_provision::test_database::login_sql(
+        &wamn_provision::test_database::login_sql(
             WorkloadRoleFamily::App,
             &home,
             &generation,

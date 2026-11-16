@@ -16,7 +16,7 @@ use async_nats::jetstream;
 use chrono::{DateTime, Utc};
 
 use wamn_catalog::WiringEventOperation as Op;
-use wamn_control_provision::{
+use wamn_provision::{
     cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
 };
 use wamn_environment::environment::capture_gap::{
@@ -144,9 +144,9 @@ async fn recover_and_close_record_each_capture_gap() {
 
     // The registry, owned by wamn_system as the verbs expect.
     let mut system = connect(&system_url).await;
-    wamn_control_provision::test_database::system_schema(&system_url).await;
+    wamn_provision::test_database::system_schema(&system_url).await;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
-        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .bind(wamn_provision::PlatformComponent::Provisioning.principal_id())
         .execute(&mut system)
         .await
         .unwrap();
@@ -333,7 +333,7 @@ async fn recover_and_close_record_each_capture_gap() {
         ENV.parse().unwrap(),
         PROJECT.parse().unwrap(),
     );
-    let name = wamn_control_provision::project_env_cdc_secret_name(
+    let name = wamn_provision::project_env_cdc_secret_name(
         &org.parse().unwrap(),
         &PROJECT.parse().unwrap(),
         &ENV.parse().unwrap(),
@@ -493,7 +493,7 @@ async fn recover_and_close_record_each_capture_gap() {
     wamn_events::capture_gap::require_resynchronized(&system_url, &triple)
         .await
         .unwrap();
-    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    let actor = wamn_provision::PlatformComponent::Provisioning.principal_id();
     wamn_test_infrastructure::record_history::assert_stamp(
         &mut system,
         "registry.capture_gap",

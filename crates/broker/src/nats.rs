@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// The NATS connection of a platform process that is not a host: identity,
-/// wamn-ctl, the CDC reader and the provisioning Jobs. The server takes only a
+/// wamn, the CDC reader and the provisioning Jobs. The server takes only a
 /// client certificate of the platform CA, and maps it to the process's user
 /// (docs/plan/alignment.md R4).
 #[derive(Debug, Clone)]

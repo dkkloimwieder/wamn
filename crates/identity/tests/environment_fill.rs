@@ -17,10 +17,10 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
             .url(),
     )
     .unwrap();
-    wamn_control_provision::test_database::system(system.as_str()).await;
+    wamn_provision::test_database::system(system.as_str()).await;
     {
         let batches: &[&str] = &[
-            &wamn_control_provision::test_database::seed_org_project_env_sql(
+            &wamn_provision::test_database::seed_org_project_env_sql(
                 &"fill".parse().unwrap(),
                 &"fixture".parse().unwrap(),
                 &"dev".parse().unwrap(),
@@ -37,11 +37,11 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     let mut authority_connection = wamn_postgres::connect(system.as_str()).await?;
     let mut authority = wamn_test_postgres::transaction(
         &mut authority_connection,
-        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
         "admin:environment-fill",
     )
     .await?;
-    let member = *wamn_platform_identity::create_user(
+    let member = *wamn_identity::create_user(
         &mut authority,
         "member@example.invalid",
         "member@example.invalid",
@@ -49,13 +49,13 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     )
     .await?
     .id();
-    wamn_platform_identity::org::activate_org_membership(
+    wamn_identity::org::activate_org_membership(
         &mut authority,
         &member,
         &"fill".parse().unwrap(),
     )
     .await?;
-    wamn_platform_identity::org::grant_member(
+    wamn_identity::org::grant_member(
         &mut authority,
         &member,
         &"fill".parse().unwrap(),
@@ -64,10 +64,10 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     )
     .await?;
     let service =
-        *wamn_platform_identity::create_service(&mut authority, "automation", "Automation")
+        *wamn_identity::create_service(&mut authority, "automation", "Automation")
             .await?
             .id();
-    wamn_platform_identity::assign_project_role(
+    wamn_identity::assign_project_role(
         &mut authority,
         &service,
         &"fill".parse().unwrap(),
@@ -86,7 +86,7 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
             .url(),
     )
     .unwrap();
-    wamn_platform_identity::test_database::project_platform(project.as_str()).await;
+    wamn_identity::test_database::project_platform(project.as_str()).await;
     let target = ApplicationTarget {
         org: &"fill".parse().unwrap(),
         project: &"fixture".parse().unwrap(),
@@ -121,11 +121,11 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     assert_eq!(preserved, service_row);
     let mut authority = wamn_test_postgres::transaction(
         &mut authority_connection,
-        &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
         "admin:revoke-environment-member",
     )
     .await?;
-    wamn_platform_identity::org::revoke_member(
+    wamn_identity::org::revoke_member(
         &mut authority,
         &member,
         &"fill".parse().unwrap(),

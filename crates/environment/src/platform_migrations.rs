@@ -1,7 +1,7 @@
 //! SQLx applies image-owned platform migrations under authenticated platform authority.
 
 use sqlx::migrate::Migration;
-use wamn_control_provision::migrations::MigrationDatabase;
+use wamn_provision::migrations::MigrationDatabase;
 use wamn_platform_install::platform_migrations::apply_target;
 
 pub use wamn_platform_install::platform_migrations::{

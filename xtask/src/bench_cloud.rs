@@ -254,7 +254,7 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
     )
     .await?;
     let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&std::fs::read(
-        wamn_compiler::package_manifest_path(&root.join("apps/wamn_receiving")),
+        wamn_codegen::package_manifest_path(&root.join("apps/wamn_receiving")),
     )?)?;
     let operation = manifest
         .compiled_operations

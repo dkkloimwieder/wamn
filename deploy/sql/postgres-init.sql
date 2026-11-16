@@ -109,7 +109,7 @@ GRANT USAGE ON SCHEMA s2 TO wamn_app;
 -- read every project.
 --
 -- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
--- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;
+-- pinned by a byte-equality guard in wamn-provision. Do not hand-edit;
 -- change the builder.
 --
 -- It is the BOOTSTRAP rendering because this file is applied to databases whose

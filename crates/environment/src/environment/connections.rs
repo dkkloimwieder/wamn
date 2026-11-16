@@ -12,7 +12,7 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_connections::connections::{ConnectionError, administration};
+use wamn_connection::connections::{ConnectionError, administration};
 
 use super::Platform;
 use super::document::EnvironmentDocument;
@@ -45,8 +45,8 @@ pub async fn write(
                 .await
                 .map(drop)?;
             sqlx::raw_sql(sqlx::AssertSqlSafe(
-                wamn_control_provision::bind_platform_principal_sql(
-                    wamn_control_provision::PlatformComponent::Provisioning,
+                wamn_provision::bind_platform_principal_sql(
+                    wamn_provision::PlatformComponent::Provisioning,
                 ),
             ))
             .execute(&mut *tx)

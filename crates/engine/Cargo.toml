@@ -52,7 +52,7 @@ url = { workspace = true }
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }
 # The engine tests encode their guests from WAT in-process. Same exact pins as
-# wamn-component-artifact.
+# wamn-oci.
 wat = "=1.254.2"
 wit-component = { workspace = true, features = ["dummy-module"] }
 wit-parser = { workspace = true }

@@ -4,7 +4,7 @@
 It pulls the platform UI from its pinned registry artifact.
 Application uploads pull a pinned standalone web artifact from the registry.
 It does not build files or change edge routing.
-[services/ctl/src/web.rs](../../services/ctl/src/web.rs) defines the arguments and output.
+[services/cli/src/web.rs](../../services/cli/src/web.rs) defines the arguments and output.
 [crates/publish/src/web_artifact.rs](../../crates/publish/src/web_artifact.rs) owns the upload behavior.
 
 ## Build and push
@@ -57,7 +57,7 @@ For an anonymous push, the credential file must explicitly contain `{"auths":{"<
 
 ## Arguments
 
-The [wamn binary](../../services/ctl/src/bin/wamn.rs) exposes these two forms:
+The [wamn binary](../../services/cli/src/bin/wamn.rs) exposes these two forms:
 
 ```text
 wamn web upload --web sha256:<64 lowercase hex digits> --bucket <bucket URL> --artifact-base <registry/repository> --registry-auth-file <file>
@@ -148,7 +148,7 @@ The index and `sw.js` carry `Cache-Control: no-cache`.
 The web front also marks generated `config.json` as `no-cache`.
 The accepted extensions are `html`, `js`, `css`, `json`, `map`, `svg`, `png`, `ico`, `woff2`, and `woff`.
 
-The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crates/publish/src/web_artifact.rs) report these errors:
+The [CLI](../../services/cli/src/web.rs) and [upload implementation](../../crates/publish/src/web_artifact.rs) report these errors:
 
 | Error text | Cause or action |
 | --- | --- |

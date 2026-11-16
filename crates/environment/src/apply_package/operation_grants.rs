@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use wamn_control_provision::operation_grants::{
+use wamn_provision::operation_grants::{
     ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_LOCK_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     operation_base_grants_requirements_sql,
 };

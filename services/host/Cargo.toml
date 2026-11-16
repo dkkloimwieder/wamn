@@ -11,7 +11,7 @@ wamn-broker = { workspace = true }
 mimalloc = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-oci = { workspace = true }
-wamn-control-provision = { workspace = true }
+wamn-provision = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }

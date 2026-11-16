@@ -22,7 +22,7 @@ pub async fn wait_administration(
     budget: std::time::Duration,
 ) -> anyhow::Result<()> {
     tokio::time::timeout(budget, async {
-        let name = wamn_control_provision::control_administration_secret_name(&triple.org);
+        let name = wamn_provision::control_administration_secret_name(&triple.org);
         let Some(secret) = kubectl::get::<Value>(
             &target.kubeconfig,
             &target.context,
@@ -34,7 +34,7 @@ pub async fn wait_administration(
         else {
             return Ok(());
         };
-        let key = wamn_control_provision::control_administration_key(&triple.project, &triple.env);
+        let key = wamn_provision::control_administration_key(&triple.project, &triple.env);
         let login = present
             .then(|| {
                 secret["data"][&key]

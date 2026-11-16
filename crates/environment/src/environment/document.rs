@@ -45,7 +45,7 @@ impl EnvironmentDocument {
 pub async fn write_revocation_configuration(
     client: &mut sqlx::PgConnection,
     document: &EnvironmentDocument,
-) -> Result<u64, wamn_platform_identity::IdentityError> {
+) -> Result<u64, wamn_identity::IdentityError> {
     use crate::configuration::{
         PlatformConfiguration, Setting, write_configuration,
     };
@@ -84,9 +84,9 @@ pub(super) async fn read_configuration(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> Result<Option<wamn_catalog::configuration::EnvironmentConfiguration>, sqlx::Error> {
-    let principal = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    let principal = wamn_provision::PlatformComponent::Provisioning.principal_id();
     let mut transaction =
-        wamn_platform_identity::transaction::read_connection(connection, &principal).await?;
+        wamn_identity::transaction::read_connection(connection, &principal).await?;
     let configuration = wamn_catalog::configuration::read(&mut transaction, triple).await?;
     transaction.commit().await?;
     Ok(configuration)
@@ -293,9 +293,9 @@ mod tests {
         use wamn_catalog::configuration;
         let _lock = wamn_test_postgres::lock();
         let database = wamn_test_postgres::url(&pool);
-        wamn_control_provision::test_database::system(database.as_str()).await;
+        wamn_provision::test_database::system(database.as_str()).await;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::test_database::seed_org_project_env_sql(
+            wamn_provision::test_database::seed_org_project_env_sql(
                 &"acme".parse().unwrap(),
                 &"wms".parse().unwrap(),
                 &"prod".parse().unwrap(),
@@ -386,7 +386,7 @@ mod tests {
             Some(&expected)
         );
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::test_database::seed_org_project_env_sql(
+            wamn_provision::test_database::seed_org_project_env_sql(
                 &"acme".parse().unwrap(),
                 &"wms".parse().unwrap(),
                 &"dev".parse().unwrap(),

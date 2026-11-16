@@ -8,18 +8,18 @@ pub mod grants;
 async fn identity_issuer_refusals_and_catalog_rules() {
     let mut server = wamn_test_postgres::start(&[]).unwrap();
     let database = server
-        .create_database(wamn_control_provision::identity_role::IDENTITY_ISSUER_DATABASE)
+        .create_database(wamn_provision::identity_role::IDENTITY_ISSUER_DATABASE)
         .await
         .unwrap();
-    wamn_control_provision::test_database::system(database.url()).await;
+    wamn_provision::test_database::system(database.url()).await;
     let mut admin = wamn_postgres::connect(database.url()).await.unwrap();
     let issuer = "https://identity.example.test";
     grants::execute(
         &mut admin,
-        &wamn_control_provision::test_database::issuer_login_sql(issuer, "issuer-test").unwrap(),
+        &wamn_provision::test_database::issuer_login_sql(issuer, "issuer-test").unwrap(),
     )
     .await;
-    let login = wamn_control_provision::identity_role::identity_issuer_login(issuer).unwrap();
+    let login = wamn_provision::identity_role::identity_issuer_login(issuer).unwrap();
     let mut url = url::Url::parse(database.url()).unwrap();
     url.set_username(login.as_str()).unwrap();
     url.set_password(Some("issuer-test")).unwrap();

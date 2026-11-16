@@ -6,7 +6,7 @@
 //! about which project it may read — and the host has to be able to make sure that
 //! identity before it opens the connection.
 //!
-//! `wamn-control-provision` DELEGATES here for the App family rather than
+//! `wamn-provision` DELEGATES here for the App family rather than
 //! carrying a second implementation. There is one definition of the digest and
 //! one of the framing.
 

@@ -4,7 +4,7 @@ use serde_json::json;
 use sqlx::{Connection as _, Row as _};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_environment::environment::{analyse, bindings, document::EnvironmentDocument};
-use wamn_connections::connections::administration;
+use wamn_connection::connections::administration;
 
 async fn connect(url: &str) -> sqlx::PgConnection {
     let client = wamn_postgres::connect(url).await.unwrap();
@@ -43,7 +43,7 @@ async fn seed(client: &mut sqlx::PgConnection) {
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::seed_org_project_env_sql(
+        (&wamn_provision::test_database::seed_org_project_env_sql(
             &"acme".parse().unwrap(),
             &"one".parse().unwrap(),
             &"dev".parse().unwrap(),
@@ -54,7 +54,7 @@ async fn seed(client: &mut sqlx::PgConnection) {
     .await
     .map(drop)
     .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning)))).execute(&mut *client).await.map(drop).unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_provision::bind_platform_principal_sql(wamn_provision::PlatformComponent::Provisioning)))).execute(&mut *client).await.map(drop).unwrap();
     let mut tx = client.begin().await.unwrap();
     sqlx::raw_sql("SET LOCAL ROLE wamn_control")
         .execute(&mut *tx)
@@ -62,8 +62,8 @@ async fn seed(client: &mut sqlx::PgConnection) {
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -71,8 +71,8 @@ async fn seed(client: &mut sqlx::PgConnection) {
     .await
     .map(drop)
     .unwrap();
-    let store = wamn_connections::credentials::MemoryStore::default();
-    wamn_connections::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}),&store).await.unwrap();
+    let store = wamn_connection::credentials::MemoryStore::default();
+    wamn_connection::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
 }
 
@@ -80,7 +80,7 @@ async fn seed(client: &mut sqlx::PgConnection) {
 async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     sqlx::raw_sql("SET ROLE wamn_db_owner")
@@ -233,7 +233,7 @@ async fn two_packages_can_bind_distinct_names_to_one_connection_without_authorit
 ) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     let mut doc = document();
@@ -285,7 +285,7 @@ async fn two_packages_can_bind_distinct_names_to_one_connection_without_authorit
 async fn a_version_change_refuses_stored_values_that_do_not_validate(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     let mut tx = client.begin().await.unwrap();
@@ -295,8 +295,8 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate(pool: sqlx:
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -304,8 +304,8 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate(pool: sqlx:
     .await
     .map(drop)
     .unwrap();
-    let store = wamn_connections::credentials::MemoryStore::default();
-    wamn_connections::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"127.0.0.1:502"}}),&store).await.unwrap();
+    let store = wamn_connection::credentials::MemoryStore::default();
+    wamn_connection::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"127.0.0.1:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
     sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,write_interfaces,published_at) SELECT integration_type,2,digest,'{\"type\":\"object\",\"properties\":{\"authority\":{\"type\":\"string\"},\"unit\":{\"type\":\"integer\"}},\"required\":[\"authority\",\"unit\"]}',operations,exports,write_interfaces,now() FROM registry.integration_type_version WHERE integration_type='modbus' AND version=1; SET ROLE wamn_db_owner").execute(&mut client).await.map(drop).unwrap();
     let mut doc = document();
@@ -332,7 +332,7 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate(pool: sqlx:
 async fn blobstore_interfaces_accept_another_storage_provider(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     let mut tx = client.begin().await.unwrap();
@@ -342,8 +342,8 @@ async fn blobstore_interfaces_accept_another_storage_provider(pool: sqlx::PgPool
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -351,8 +351,8 @@ async fn blobstore_interfaces_accept_another_storage_provider(pool: sqlx::PgPool
     .await
     .map(drop)
     .unwrap();
-    let store = wamn_connections::credentials::MemoryStore::default();
-    wamn_connections::credentials::define(
+    let store = wamn_connection::credentials::MemoryStore::default();
+    wamn_connection::credentials::define(
         &mut tx,
         &"acme".parse().unwrap(),
         &json!({"project":"one","env":"dev","name":"labels",
@@ -390,7 +390,7 @@ async fn blobstore_interfaces_accept_another_storage_provider(pool: sqlx::PgPool
 #[sqlx::test(migrations = false)]
 async fn publish_refuses_wasm_and_native_worlds_without_health(pool: sqlx::PgPool) {
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native-health','native',false); SET ROLE wamn_control").execute(&mut client).await.map(drop).unwrap();
     for code in ["modbus", "native-health"] {
@@ -403,7 +403,7 @@ async fn publish_refuses_wasm_and_native_worlds_without_health(pool: sqlx::PgPoo
 async fn apply_refuses_a_read_requirement_for_a_write_interface(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     let mut tx = client.begin().await.unwrap();
@@ -413,8 +413,8 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface(pool: sqlx::PgPo
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -422,8 +422,8 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface(pool: sqlx::PgPo
     .await
     .map(drop)
     .unwrap();
-    let store = wamn_connections::credentials::MemoryStore::default();
-    wamn_connections::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"192.168.1.2:502"}}),&store).await.unwrap();
+    let store = wamn_connection::credentials::MemoryStore::default();
+    wamn_connection::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"192.168.1.2:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
     sqlx::raw_sql("SET ROLE wamn_db_owner")
         .execute(&mut client)
@@ -476,7 +476,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface(pool: sqlx::PgPo
 async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
     let mut tx = client.begin().await.unwrap();
@@ -486,8 +486,8 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: 
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -495,8 +495,8 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: 
     .await
     .map(drop)
     .unwrap();
-    let store = wamn_connections::credentials::MemoryStore::default();
-    wamn_connections::credentials::define(
+    let store = wamn_connection::credentials::MemoryStore::default();
+    wamn_connection::credentials::define(
         &mut tx,
         &"acme".parse().unwrap(),
         &json!({"project":"one","env":"dev","name":"meter",
@@ -616,7 +616,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: 
 #[sqlx::test(migrations = false)]
 async fn publish_refuses_write_interfaces_outside_the_exports(pool: sqlx::PgPool) {
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     sqlx::raw_sql("SET ROLE wamn_control")
         .execute(&mut client)
@@ -638,10 +638,10 @@ async fn publish_refuses_write_interfaces_outside_the_exports(pool: sqlx::PgPool
 async fn project_observation_preserves_the_baseline_and_refuses_unknown_state(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    wamn_identity::test_database::project_platform(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (wamn_control_provision::sql::ensure_db_owner_role_sql()).to_string(),
+        (wamn_provision::sql::ensure_db_owner_role_sql()).to_string(),
     ))
     .execute(&mut client)
     .await
@@ -654,8 +654,8 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state(po
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!(
             "BEGIN; {}",
-            wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning
+            wamn_provision::bind_platform_principal_sql(
+                wamn_provision::PlatformComponent::Provisioning
             )
         ))
             .to_string(),

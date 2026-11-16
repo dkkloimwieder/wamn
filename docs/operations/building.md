@@ -55,7 +55,7 @@ Do not set `RUSTC_WRAPPER=sccache`.
 Build native programs in debug mode by default:
 
 ```bash
-cargo build --locked --offline -p wamn-host -p wamn-control -p wamn-ctl -p wamn-identity \
+cargo build --locked --offline -p wamn-host -p wamn-control -p wamn-cli -p wamn-identity-service \
   -p wamn-cdc-reader
 ```
 
@@ -63,7 +63,7 @@ cargo build --locked --offline -p wamn-host -p wamn-control -p wamn-ctl -p wamn-
 
 `wamn` owns the developer commands.
 `wamn-control` serves authenticated org control routes and runs authorized operation Jobs.
-`wamn-ctl` runs internal bootstrap steps.
+`wamn` runs internal bootstrap steps.
 Development uses the identity service installed on `kind`. The CLI needs no identity process beside it.
 
 [`wamn build`](#wamn-build) compiles the components of each package it builds.
@@ -108,7 +108,7 @@ Control endpoints run natively and need no HTTP guest artifact.
 The build leaves standard WASI imports unchanged. The host supplies their empty application context.
 
 The build then composes each component of a package that pins bases in `base_dependencies`.
-`wamn-component-composer` joins the overlay component and each base whose operations it imports into one component.
+`wamn-build` joins the overlay component and each base whose operations it imports into one component.
 It reads each base component from the base's `build.json`, so build the base first.
 The overlay imports each base operation that it calls under the base's export name, and the base supplies that operation.
 An overlay that imports no base operation stays as it is.
@@ -207,13 +207,13 @@ A package that holds both `wamn.k` and an authored `wamn.json` is refused.
 It reads the version, URL and checksum from `mise.toml`.
 Package builds install it when it is absent.
 Set `WAMN_KCL` to use another binary of the pinned version.
-`wamn_compiler::kcl::binary` selects that override first, then the pinned installation, then `kcl` on `PATH`.
+`wamn_codegen::kcl::binary` selects that override first, then the pinned installation, then `kcl` on `PATH`.
 The compiler runs KCL and never installs tools.
 Platform document schemas live with their document types in `crates/environment/kcl/`.
 The OpenTofu renderer reads `ProjectDocument` in that same crate.
-The compiler owns the authored model in `crates/compiler/src/manifest.rs`. It checks document rules once and derives inherited model fields once. Catalog readers decode compiled facts without repeating document checks.
+The catalog owns the authored model in `crates/catalog/src/manifest.rs`. The code generator checks document rules once and derives inherited model fields once. Catalog readers decode compiled facts without repeating document checks.
 
-The schema module that `wamn.k` imports as `manifest` is [`crates/compiler/kcl/manifest`](../../crates/compiler/kcl/manifest/manifest.k).
+The schema module that `wamn.k` imports as `manifest` is [`crates/codegen/kcl/manifest`](../../crates/codegen/kcl/manifest/manifest.k).
 
 - Plain English names in the schema module; use `type` for variant names; no plurals that the manifest does not already use.
 
@@ -229,7 +229,7 @@ The server keeps the roles `wamn_app` and `wamn_db_owner` if the build had to cr
 
 ```bash
 DATABASE_URL=postgres://postgres:<password>@127.0.0.1:<port>/postgres \
-  cargo run --locked --offline -p wamn-ctl --bin wamn -- build \
+  cargo run --locked --offline -p wamn-cli --bin wamn -- build \
   apps/wamn_receiving apps/client_acme_receiving
 ```
 
@@ -388,7 +388,7 @@ docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha2
 The result is one stripped file, `$CARGO_TARGET_DIR/edge/wamn-edge`.
 The target compiles with the Debian trixie cross compiler.
 The cluster image `edge-web` is a different build.
-The Dockerfile stage `build-edge-web` builds the separate `wamn-web-front` service for linux/amd64.
+The Dockerfile stage `build-edge-web` builds the separate `wamn-web` service for linux/amd64.
 
 ## Isolated worktrees
 

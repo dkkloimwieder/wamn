@@ -425,7 +425,7 @@ The [native alignment page](native-alignment.md) names the conditions for replac
 
 - The kind clusters keep the projected docker configuration file for their in-cluster registry. Only the GKE host changes.
 
-- The operator verbs of `wamn-ctl` (`push-package`, `publish-release`, the delivery verbs) keep `--registry-auth-file`. They run by hand, outside the cluster.
+- The operator verbs of `wamn` (`push-package`, `publish-release`, the delivery verbs) keep `--registry-auth-file`. They run by hand, outside the cluster.
 
 - A host that is set up for the metadata server and cannot get a token refuses the pull with a named outcome. It never falls back to an anonymous pull.
 

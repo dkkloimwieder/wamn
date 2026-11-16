@@ -257,11 +257,7 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
     ] {
         let mut refused = network.to_vec();
         if package == "wamn-edge" {
-            refused.extend([
-                "wamn-workflow",
-                "wamn-execution-host",
-                "wamn-platform-identity",
-            ]);
+            refused.extend(["wamn-workflow", "wamn-identity"]);
         } else {
             refused.extend(["hyper-util", "hyper-rustls", "reqwest", "wamn-workflow"]);
         }

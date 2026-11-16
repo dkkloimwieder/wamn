@@ -1,7 +1,7 @@
 //! Signing-state admission uses the configured restricted database connection.
 use sqlx::Connection as _;
-use wamn_control_provision::migrations::MigrationDatabase;
-use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
+use wamn_provision::migrations::MigrationDatabase;
+use wamn_identity::session_keys::{activate_session_key, publish_session_key};
 
 #[sqlx::test(migrations = false)]
 async fn identity_update_requires_active_signing_state_and_bounds_database_reads(
@@ -9,8 +9,8 @@ async fn identity_update_requires_active_signing_state_and_bounds_database_reads
 ) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
-    let input = wamn_control_provision::test_database::platform_migration_input(
+    wamn_provision::test_database::system(database.as_str()).await;
+    let input = wamn_provision::test_database::platform_migration_input(
         database.as_str(),
         MigrationDatabase::System,
     )

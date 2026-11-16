@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use serde_json::{Value, json};
 use wamn_kubernetes::{Store, StoreVersion};
-use wamn_connections::connections::administration;
+use wamn_connection::connections::administration;
 
 #[derive(Debug, Default)]
 struct RecordingStore(Mutex<Vec<Vec<u8>>>);
@@ -41,8 +41,8 @@ async fn execute(
 ) -> Value {
     let mut tx = client.begin().await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -72,7 +72,7 @@ async fn execute(
 async fn write_and_copy_keep_environment_generations_and_credentials_separate(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
@@ -81,8 +81,8 @@ async fn write_and_copy_keep_environment_generations_and_credentials_separate(po
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -92,7 +92,7 @@ async fn write_and_copy_keep_environment_generations_and_credentials_separate(po
     .unwrap();
     for env in ["dev", "prod"] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&wamn_control_provision::test_database::seed_org_project_env_sql(
+            (&wamn_provision::test_database::seed_org_project_env_sql(
                 &"acme".parse().unwrap(),
                 &"app".parse().unwrap(),
                 &env.parse().unwrap(),
@@ -184,7 +184,7 @@ async fn write_and_copy_keep_environment_generations_and_credentials_separate(po
 async fn oauth_writers_invalidate_rows_in_the_generation_transaction(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
@@ -193,8 +193,8 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction(pool: sqlx:
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -203,7 +203,7 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction(pool: sqlx:
     .map(drop)
     .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::seed_org_project_env_sql(
+        (&wamn_provision::test_database::seed_org_project_env_sql(
             &"acme".parse().unwrap(),
             &"app".parse().unwrap(),
             &"dev".parse().unwrap(),
@@ -263,7 +263,7 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction(pool: sqlx:
 async fn jwt_connection_write_enforces_credential_and_auth_schemas(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
@@ -272,8 +272,8 @@ async fn jwt_connection_write_enforces_credential_and_auth_schemas(pool: sqlx::P
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -282,7 +282,7 @@ async fn jwt_connection_write_enforces_credential_and_auth_schemas(pool: sqlx::P
     .map(drop)
     .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::seed_org_project_env_sql(
+        (&wamn_provision::test_database::seed_org_project_env_sql(
             &"acme".parse().unwrap(),
             &"app".parse().unwrap(),
             &"dev".parse().unwrap(),
@@ -334,8 +334,8 @@ async fn jwt_connection_write_enforces_credential_and_auth_schemas(pool: sqlx::P
     for request in invalid {
         let mut tx = client.begin().await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
+            (&wamn_provision::bind_platform_principal_sql(
+                wamn_provision::PlatformComponent::Provisioning,
             ))
                 .to_string(),
         ))

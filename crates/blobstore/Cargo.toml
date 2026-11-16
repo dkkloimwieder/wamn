@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connections/test-util", "wamn-sql/test-util"]
+test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "wamn-sql/test-util"]
 
 [dependencies]
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
@@ -27,7 +27,7 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-connections = { workspace = true }
+wamn-connection = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-sql = { workspace = true }
 wamn-registry = { workspace = true }

@@ -2,8 +2,8 @@
 
 use anyhow::Context as _;
 use serde_json::json;
-use wamn_control_provision::connection::managed_role;
-use wamn_control_provision::{
+use wamn_provision::connection::managed_role;
+use wamn_provision::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, sql, workload_login,
 };
 use wamn_kubernetes::kubectl;
@@ -81,7 +81,7 @@ pub(crate) async fn provision(
             WorkloadRoleIdentityType::Org => unreachable!("org roles are not project credentials"),
         };
         let username = workload_login(family, identity)?;
-        let secret = wamn_control_provision::workload_secret_name(
+        let secret = wamn_provision::workload_secret_name(
             family,
             &document.org,
             &document.project,
@@ -157,7 +157,7 @@ pub(crate) async fn provision(
         );
     }
     data.insert("app.json".into(), json!({"compiled":application.context("application login is absent")?, "dynamic":dynamic.context("query login is absent")?}).to_string().into());
-    let name = wamn_control_provision::project_env_secret_name(
+    let name = wamn_provision::project_env_secret_name(
         &document.org,
         &document.project,
         &document.env,

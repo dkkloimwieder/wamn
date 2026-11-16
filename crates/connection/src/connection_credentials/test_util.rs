@@ -1,0 +1,181 @@
+//! Credential references backed by an in-memory store for runtime tests.
+
+use super::ConnectionCredentials;
+use sqlx::Connection as _;
+use std::sync::Arc;
+use wamn_kubernetes::{Store as _, test_util::MemoryStore};
+
+pub struct Fixture {
+    pub database: url::Url,
+    pub admin: sqlx::PgConnection,
+    pub store: Arc<MemoryStore>,
+}
+
+impl Fixture {
+    pub async fn new(database: url::Url) -> Self {
+        wamn_provision::test_database::system(database.as_str()).await;
+        let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
+
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut admin)
+            .await
+            .map(drop)
+            .unwrap();
+        for project in ["project-a", "project-b", "host-project", "other-project"] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                (&wamn_provision::test_database::seed_org_project_env_sql(
+                    &"acme".parse().expect("fixed identifier"),
+                    &project.parse().unwrap(),
+                    &"dev".parse().unwrap(),
+                ))
+                    .to_string(),
+            ))
+            .execute(&mut admin)
+            .await
+            .map(drop)
+            .unwrap();
+        }
+        sqlx::raw_sql(wamn_registry::test_util::seed_credential_target_sql())
+            .execute(&mut admin)
+            .await
+            .map(drop)
+            .unwrap();
+        let store = Arc::new(MemoryStore::default());
+        Self {
+            database,
+            admin,
+            store,
+        }
+    }
+
+    pub async fn put(&mut self, name: &str, value: &str, projects: &[&str]) {
+        self.put_type(name, value, projects, &"http".parse().unwrap())
+            .await;
+    }
+
+    pub async fn put_store(&mut self, name: &str, value: &str, projects: &[&str]) {
+        self.put_type(name, value, projects, &"s3".parse().unwrap())
+            .await;
+    }
+
+    async fn put_type(
+        &mut self,
+        name: &str,
+        value: &str,
+        projects: &[&str],
+        integration_type: &wamn_registry::integration_code::IntegrationCode,
+    ) {
+        let parameters = if integration_type.as_str() == "s3" {
+            serde_json::json!({"provider":"s3","endpoint":"http://fixture.invalid","container":"files","prefix":"test/"})
+        } else {
+            serde_json::json!({"primary-authority":"https://fixture.invalid/","tls-verification":"verify-authority"})
+        };
+        self.put_configuration(
+            name,
+            value,
+            projects,
+            (integration_type, "custom", parameters),
+        )
+        .await;
+    }
+
+    pub async fn put_http(
+        &mut self,
+        name: &str,
+        value: &str,
+        projects: &[&str],
+        (auth_type, auth): (&str, serde_json::Value),
+    ) {
+        self.put_configuration(name, value, projects, (&"http".parse().unwrap(), auth_type,
+            serde_json::json!({"primary-authority":"https://fixture.invalid/","tls-verification":"verify-authority","auth":auth}))).await;
+    }
+
+    async fn put_configuration(
+        &mut self,
+        name: &str,
+        value: &str,
+        projects: &[&str],
+        (integration_type, auth_type, parameters): (
+            &wamn_registry::integration_code::IntegrationCode,
+            &str,
+            serde_json::Value,
+        ),
+    ) {
+        for project in projects {
+            let mut tx = self.admin.begin().await.unwrap();
+            sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+                .execute(&mut *tx)
+                .await
+                .map(drop)
+                .unwrap();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                (&wamn_provision::bind_platform_principal_sql(
+                    wamn_provision::PlatformComponent::Provisioning,
+                ))
+                    .to_string(),
+            ))
+            .execute(&mut *tx)
+            .await
+            .map(drop)
+            .unwrap();
+            let stored = self
+                .store
+                .put(
+                    &wamn_registry::Triple::new(
+                        "acme".parse().expect("fixed identifier"),
+                        "dev".parse().unwrap(),
+                        project.parse().unwrap(),
+                    ),
+                    uuid::Uuid::new_v4(),
+                    value.as_bytes(),
+                )
+                .await
+                .unwrap();
+            crate::credentials::define(&mut tx,&"acme".parse().expect("fixed identifier"),&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":if auth_type == "custom" { "{}" } else { value }}),&crate::credentials::ReferencedCredentials(&stored)).await.unwrap();
+            tx.commit().await.unwrap();
+        }
+    }
+
+    pub async fn reader(&self, project: &wamn_registry::ProjectId) -> ConnectionCredentials {
+        let mut admin = wamn_postgres::connect(self.database.as_str())
+            .await
+            .unwrap();
+        let role = format!("c35_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(sqlx::AssertSqlSafe(
+            (wamn_provision::sql::upsert_control_author_project_env_key_mapping_sql())
+                .to_string(),
+        ))
+        .bind(&role)
+        .bind(&wamn_registry::project_env_key(
+            &"acme".parse().expect("fixed identifier"),
+            project,
+            &"dev".parse().unwrap(),
+        ))
+        .bind(&"acme")
+        .bind(&project)
+        .bind(&"dev")
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap();
+        sqlx::raw_sql("COMMIT")
+            .execute(&mut admin)
+            .await
+            .map(drop)
+            .unwrap();
+        let mut url = url::Url::parse(self.database.as_str()).unwrap();
+        url.set_username(&role).unwrap();
+        url.set_password(Some("fixture-password")).unwrap();
+        ConnectionCredentials::from_database(
+            wamn_postgres::pool(url.as_str(), 4).await.unwrap(),
+            &"acme".parse().expect("fixed identifier"),
+        )
+        .with_store(Arc::<MemoryStore>::clone(&self.store))
+    }
+}
+
+impl std::fmt::Debug for Fixture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Fixture").finish_non_exhaustive()
+    }
+}

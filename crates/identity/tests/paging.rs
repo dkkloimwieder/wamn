@@ -2,8 +2,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
 use wamn_digest::canonical_json_bytes;
-use wamn_platform_identity::IdentityRefusal;
-use wamn_platform_identity::paging::{ListPage, Order};
+use wamn_identity::IdentityRefusal;
+use wamn_identity::paging::{ListPage, Order};
 
 fn binding() -> Value {
     json!({"principal": "00000000-0000-0000-0000-000000000001", "org": "acme", "project": null})

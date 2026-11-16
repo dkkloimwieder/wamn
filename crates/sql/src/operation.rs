@@ -55,7 +55,7 @@ impl OperationMetrics {
 #[derive(Debug)]
 pub(super) struct OperationWorkload {
     start: (String, String),
-    context: Arc<wamn_connections::invocation::ReleaseContext>,
+    context: Arc<wamn_connection::invocation::ReleaseContext>,
     identity: SessionIdentity,
     operations: BTreeMap<CanonicalName, OperationAuthority>,
     invoker: std::sync::RwLock<Option<std::sync::Weak<dyn OperationInvoker>>>,
@@ -66,7 +66,7 @@ struct OperationAuthority {
     read: bool,
     grant: Option<wamn_catalog::registered_operation::RegisteredOperation>,
     schema: Option<String>,
-    invocation: wamn_connections::connection::ConnectionInvocation,
+    invocation: wamn_connection::connection::ConnectionInvocation,
     application: wamn_catalog::ApplicationName,
     transaction: bool,
 }
@@ -150,7 +150,7 @@ impl WamnPostgres {
                 record.identity = entry.identity.clone();
             });
         self.scopes
-            .update::<wamn_connections::invocation::Scope, _>(component, |record| {
+            .update::<wamn_connection::invocation::Scope, _>(component, |record| {
                 record.context = Some(Arc::clone(&entry.context));
             });
         bound.insert(component.to_owned(), entry);

@@ -22,7 +22,7 @@
 
 use std::fmt::Write as _;
 
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
+use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 
 /// The project every probe runs under, and the user its seeded rows belong to.
 const PROJECT_ENV_KEY: &str = "t1--dev--project";
@@ -84,7 +84,7 @@ fn prelude(url: &str) -> (wamn_identity_protocol::LoginName, String) {
         },
     )
     .expect("App accepts project target");
-    let mut script = wamn_control_provision::test_database::login_sql(
+    let mut script = wamn_provision::test_database::login_sql(
         WorkloadRoleFamily::App,
         &database,
         &app_generation,

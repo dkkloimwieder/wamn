@@ -16,7 +16,7 @@
 //! Credentials and targets are control-plane data, so no row here holds
 //! them.
 
-use wamn_platform_identity::{IdentityError, database_error};
+use wamn_identity::{IdentityError, database_error};
 
 const EXTERNAL_SYSTEM_SQL: &str = "INSERT INTO platform.external_system (id, name) \
     VALUES ($1::text::uuid, $2) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name \

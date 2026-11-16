@@ -3,9 +3,9 @@ use super::{CompositionError, PackageInput, PathBuf, SelectedComponentArtifact};
 pub(super) fn component_entry<'a>(
     package: &PackageInput,
     component: &wamn_catalog::manifest::source_name::SourceName,
-    build_record: &'a wamn_compiler::build_record::BuildRecord,
-) -> Result<(PathBuf, &'a wamn_compiler::build_record::BuildComponent), CompositionError> {
-    let output = wamn_compiler::output_root(&package.root);
+    build_record: &'a wamn_codegen::build_record::BuildRecord,
+) -> Result<(PathBuf, &'a wamn_codegen::build_record::BuildComponent), CompositionError> {
+    let output = wamn_codegen::output_root(&package.root);
     let entry = build_record
         .outputs
         .components
@@ -28,7 +28,7 @@ pub(super) fn built_component(
     package: &PackageInput,
     component: &wamn_catalog::manifest::source_name::SourceName,
     path: PathBuf,
-    entry: &wamn_compiler::build_record::BuildComponent,
+    entry: &wamn_codegen::build_record::BuildComponent,
     bytes: &[u8],
 ) -> Result<SelectedComponentArtifact, CompositionError> {
     let digest = wamn_digest::bytes_sha256(bytes);

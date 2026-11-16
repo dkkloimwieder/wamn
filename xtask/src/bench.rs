@@ -1,7 +1,7 @@
 //! Timed Receiving calls, mixed traffic, and shared-order contention.
 
 use sqlx::Row as _;
-#[path = "../../services/ctl/src/read_query.rs"]
+#[path = "../../services/cli/src/read_query.rs"]
 mod read_query;
 
 use std::collections::BTreeMap;

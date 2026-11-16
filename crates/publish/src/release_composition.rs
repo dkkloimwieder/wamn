@@ -86,7 +86,7 @@ pub fn select_component_artifacts(
     for package in packages {
         let component = plan::selected_component(package)?;
         let build_record =
-            wamn_compiler::build_record::read(&wamn_compiler::output_root(&package.root))
+            wamn_codegen::build_record::read(&wamn_codegen::output_root(&package.root))
                 .map_err(|source| CompositionError::owner("read the package build", source))?;
         selected.push(built_component(package, component, &build_record)?);
     }
@@ -98,7 +98,7 @@ pub fn select_component_artifacts(
 fn built_component(
     package: &PackageInput,
     component: &wamn_catalog::manifest::source_name::SourceName,
-    build_record: &wamn_compiler::build_record::BuildRecord,
+    build_record: &wamn_codegen::build_record::BuildRecord,
 ) -> Result<SelectedComponentArtifact, CompositionError> {
     let (path, entry) = plan::component_entry(package, component, build_record)?;
     let bytes = fs::read(&path).map_err(|source| {

@@ -2,7 +2,7 @@
 
 #[path = "support/grants.rs"]
 pub mod grants;
-use wamn_control_provision::{
+use wamn_provision::{
     PlatformComponent, WorkloadRoleFamily, migrations::MigrationDatabase,
 };
 
@@ -27,7 +27,7 @@ async fn security_definer_rules(pool: &sqlx::PgPool, scope: MigrationDatabase) {
     let _fixture = match scope {
         MigrationDatabase::System => {
             let url = wamn_test_postgres::url(pool);
-            wamn_control_provision::test_database::system(url.as_str()).await;
+            wamn_provision::test_database::system(url.as_str()).await;
             None
         }
         MigrationDatabase::Project => {
@@ -69,14 +69,14 @@ async fn project_platform_logins_cannot_escalate(pool: sqlx::PgPool) {
 async fn system_platform_logins_cannot_escalate(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let url = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(url.as_str()).await;
+    wamn_provision::test_database::system(url.as_str()).await;
     platform_rules(&pool, MigrationDatabase::System).await;
 }
 
 async fn platform_rules(pool: &sqlx::PgPool, scope: MigrationDatabase) {
     let admin = wamn_test_postgres::url(pool);
     let url =
-        wamn_control_provision::test_database::platform_migration_input(admin.as_str(), scope)
+        wamn_provision::test_database::platform_migration_input(admin.as_str(), scope)
             .await
             .unwrap();
     let mut connection = wamn_postgres::connect(&url).await.unwrap();

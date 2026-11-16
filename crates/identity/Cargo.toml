@@ -1,5 +1,5 @@
 [package]
-name = "wamn-platform-identity"
+name = "wamn-identity"
 description = "First-party platform identity core backed by the T1 system database."
 version.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ license.workspace = true
 test-util = ["wamn-catalog/test-util"]
 
 [dependencies]
-wamn-control-provision.workspace = true
+wamn-provision.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 wamn-registry = { workspace = true }
@@ -31,7 +31,7 @@ wamn-catalog = { workspace = true }
 
 [dev-dependencies]
 wamn-kubernetes = { workspace = true }
-wamn-connections = { workspace = true }
+wamn-connection = { workspace = true }
 wamn-environment = { workspace = true }
 wamn-registry = { workspace = true, features = ["test-util"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
@@ -42,10 +42,10 @@ wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync"] }
 # The live tests apply the system schema composition and bind platform principals.
-wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 # The project+platform base grants of the application writers in tests/auth_drops_live.rs.
-wamn-platform-identity = { path = ".", features = ["test-util"] }
+wamn-identity = { path = ".", features = ["test-util"] }
 
 [lints]
 workspace = true

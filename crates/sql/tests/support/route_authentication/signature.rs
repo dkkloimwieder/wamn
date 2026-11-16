@@ -14,28 +14,28 @@ pub(super) fn signed(body: &[u8]) -> String {
 }
 
 struct Fixture {
-    credentials: wamn_connections::connection_credentials::test_util::Fixture,
+    credentials: wamn_connection::connection_credentials::test_util::Fixture,
     database: url::Url,
     _server: wamn_test_postgres::OwnedPostgres,
-    memory: Arc<wamn_connections::connection_memory::ConnectionMemory>,
+    memory: Arc<wamn_connection::connection_memory::ConnectionMemory>,
 }
 
 impl Fixture {
     async fn new() -> Self {
         let mut project_server = wamn_test_postgres::start(&[]).unwrap();
         let control = project_server.create_database("control").await.unwrap();
-        let credentials = wamn_connections::connection_credentials::test_util::Fixture::new(
+        let credentials = wamn_connection::connection_credentials::test_util::Fixture::new(
             url::Url::parse(control.url()).unwrap(),
         )
         .await;
         let coordinate = project_server.create_database("project").await.unwrap();
         let database = url::Url::parse(coordinate.url()).unwrap();
-        wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+        wamn_identity::test_database::project_platform(database.as_str()).await;
         Self {
             credentials,
             database,
             _server: project_server,
-            memory: Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
+            memory: Arc::new(wamn_connection::connection_memory::ConnectionMemory::default()),
         }
     }
 
@@ -88,7 +88,7 @@ impl Fixture {
         let postgres = Arc::new(wamn_sql::WamnPostgres::with_provider(Arc::new(
             wamn_sql::StaticCredentialProvider::new(projects, None),
         )));
-        let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
+        let facts = Arc::new(wamn_connection::connection_facts::ConnectionFacts::new(
             Arc::clone(&self.memory),
             Arc::new(self.credentials.reader(project).await),
             &postgres,
@@ -374,8 +374,8 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
         .map(drop)
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        (&wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ))
             .to_string(),
     ))
@@ -384,7 +384,7 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
     .map(drop)
     .unwrap();
     sqlx::query("INSERT INTO identity.project_roles(principal_id,org,project,role) VALUES ($1,'acme','host-project','admin')").bind(&principal).execute(&mut fixture.credentials.admin).await.map(|result| result.rows_affected()).unwrap();
-    let token = wamn_platform_identity::issue_pat(
+    let token = wamn_identity::issue_pat(
         &mut fixture.credentials.admin,
         &principal,
         "connection fixture",

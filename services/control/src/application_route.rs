@@ -5,9 +5,9 @@
 //! before the handler runs. A route runs in one host-owned transaction under
 //! the environment's `wamn_administration` login, which binds `app.user_id`
 //! to the caller and `app.operation` to the route's sealed operation id. A
-//! role or permission write first takes the project lock that `wamn-ctl` and
+//! role or permission write first takes the project lock that `wamn` and
 //! release reconciliation take. The writes are the functions of
-//! `wamn_environment::application`, which `wamn-ctl` also calls, so no
+//! `wamn_environment::application`, which `wamn` also calls, so no
 //! second writer exists. A grant stores one row, and a caller holds exactly
 //! its rows, so a grant works while two releases serve during a rollout.
 //!
@@ -28,7 +28,7 @@ use wamn_catalog::{
     HostAttachment, HostHandler, HostRouteAuthority, condition_workflow_document,
     resolve_workflow_components, sealed_operation_reference,
 };
-use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
+use wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::PrincipalId;
@@ -37,7 +37,7 @@ use wamn_environment::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
-use wamn_platform_identity::control::is_project_admin;
+use wamn_identity::control::is_project_admin;
 use wamn_sql::WamnPostgres;
 
 use crate::control_route::{Refusal, parse};

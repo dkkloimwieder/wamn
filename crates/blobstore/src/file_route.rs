@@ -187,7 +187,7 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
 pub struct RegistryFileConnections {
     pub client: Option<sqlx::PgPool>,
     pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
-    pub facts: Arc<wamn_connections::connection_facts::ConnectionFacts>,
+    pub facts: Arc<wamn_connection::connection_facts::ConnectionFacts>,
     pub org: wamn_registry::OrgId,
     pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
@@ -301,7 +301,7 @@ impl FileConnections for RegistryFileConnections {
             .await
             .map_err(|error| failed("binding", error))?
             .filter(|fact| {
-                fact.status == wamn_connections::connection_memory::ConnectionStatus::Active
+                fact.status == wamn_connection::connection_memory::ConnectionStatus::Active
             })
             .ok_or_else(|| refused(FileRefusal::BindingRefused, "connection"))?;
         let generation = self
@@ -355,7 +355,7 @@ struct ExposeRequest {
 /// File handlers of one released application environment.
 pub struct FileRoutes {
     pub(crate) release: Arc<LoadedRelease>,
-    pub(crate) context: Arc<wamn_connections::invocation::ReleaseContext>,
+    pub(crate) context: Arc<wamn_connection::invocation::ReleaseContext>,
     pub(crate) postgres: Arc<WamnPostgres>,
     pub(crate) blobstore: Arc<WamnBlobstore>,
     pub(crate) connections: Arc<dyn FileConnections>,
@@ -374,7 +374,7 @@ impl fmt::Debug for FileRoutes {
 /// A session advisory lock holds no database transaction during object I/O.
 impl FileRoutes {
     pub fn new(
-        context: Arc<wamn_connections::invocation::ReleaseContext>,
+        context: Arc<wamn_connection::invocation::ReleaseContext>,
         postgres: Arc<WamnPostgres>,
         blobstore: Arc<WamnBlobstore>,
         connections: Arc<dyn FileConnections>,
@@ -623,7 +623,7 @@ impl FileRoutes {
             .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
         if !matches!(
             invocation.closure,
-            wamn_connections::connection::ConnectionExecutionClosure::Released
+            wamn_connection::connection::ConnectionExecutionClosure::Released
         ) {
             return Err(refused(FileRefusal::PermissionDenied, "operation"));
         }
@@ -826,9 +826,9 @@ mod tests {
         ApplicationDefinition, ComponentConnection, ComponentDescriptor, HostRouteSet,
         PackageCoordinate, ServingComponent, ServingManifest, ServingRelease,
     };
-    use wamn_connections::connection_credentials::ConnectionCredentials;
-    use wamn_connections::connection_facts::ConnectionFacts;
-    use wamn_connections::connection_memory::ConnectionMemory;
+    use wamn_connection::connection_credentials::ConnectionCredentials;
+    use wamn_connection::connection_facts::ConnectionFacts;
+    use wamn_connection::connection_memory::ConnectionMemory;
     use wamn_engine::flow_http_routing::{AuthenticationRequest, CredentialType, Header};
     use wamn_engine::release_manifest::ReleaseTarget;
     use wamn_sql::WamnPostgresConfig;
@@ -952,7 +952,7 @@ mod tests {
         );
         let release = release();
         let context = Arc::new(
-            wamn_connections::invocation::ReleaseContext::new(
+            wamn_connection::invocation::ReleaseContext::new(
                 Arc::clone(&release),
                 Arc::new(ConnectionFacts::new(
                     Arc::new(ConnectionMemory::default()),
@@ -1249,7 +1249,7 @@ mod tests {
     }
     #[tokio::test]
     async fn signed_urls_refuse_an_unregistered_export_before_catalog_access() {
-        use wamn_connections::connection::{
+        use wamn_connection::connection::{
             ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
         };
         let files = files();

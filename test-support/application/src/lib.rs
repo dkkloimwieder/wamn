@@ -129,7 +129,7 @@ impl Application {
     pub async fn database_url(&self) -> anyhow::Result<String> {
         let url = std::env::var("WAMN_SYSTEM_ADMIN_URL")?;
         let suffix = self.instance_suffix().await?;
-        let name = wamn_control_provision::project_env_database_name(
+        let name = wamn_provision::project_env_database_name(
             &self.document.org,
             &self.document.project,
             &self.document.env,
@@ -157,7 +157,7 @@ impl Application {
     }
 
     pub async fn audience(&self) -> anyhow::Result<String> {
-        Ok(wamn_control_provision::session_target::session_audience(
+        Ok(wamn_provision::session_target::session_audience(
             &self.document.triple(),
             &self.instance_suffix().await?,
         )?)

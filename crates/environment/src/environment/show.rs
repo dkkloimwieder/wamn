@@ -12,7 +12,7 @@ pub async fn serving_application(
     triple: &Triple,
     application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<(wamn_digest::Digest, wamn_catalog::EnvironmentApplications)> {
-    let name = wamn_control_provision::environment_names::application_release_name(
+    let name = wamn_provision::environment_names::application_release_name(
         &triple.org,
         &triple.project,
         &triple.env,

@@ -44,7 +44,7 @@ use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentDeclaration, ComponentDescriptor,
     ComponentPackageCoordinate, component_artifact_reference,
 };
-use wamn_compiler::AUTHORED_MANIFEST;
+use wamn_codegen::AUTHORED_MANIFEST;
 use wamn_catalog::manifest::{PackageManifest, PolicyContractState};
 use wamn_engine::component_artifact::component_artifact_config_bytes;
 use wamn_oci::package_artifact::registry_credentials::read_registry_push_credentials;
@@ -239,8 +239,8 @@ pub(crate) async fn connection_components(
         }
         return Ok(result);
     }
-    let output = wamn_compiler::output_root(root);
-    let build_record = wamn_compiler::build_record::read(&output)?;
+    let output = wamn_codegen::output_root(root);
+    let build_record = wamn_codegen::build_record::read(&output)?;
     source_components(root, manifest, &build_record)?
         .into_iter()
         .map(|source| {
@@ -309,7 +309,7 @@ pub fn fixture_package_root(root: &Path) -> anyhow::Result<crate::package_source
 
 /// Pack the compiled output with component descriptor layers.
 fn pack_layers(root: &Path, mut descriptors: Vec<DescriptorFile>) -> anyhow::Result<PackedPackage> {
-    let manifest_path = wamn_compiler::package_manifest_path(root);
+    let manifest_path = wamn_codegen::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let (package_id, version) = package_coordinate(&manifest_bytes)
@@ -423,9 +423,9 @@ struct SourceComponent {
 fn source_components(
     root: &Path,
     manifest: &PackageManifest,
-    record: &wamn_compiler::build_record::BuildRecord,
+    record: &wamn_codegen::build_record::BuildRecord,
 ) -> anyhow::Result<Vec<SourceComponent>> {
-    let output = wamn_compiler::output_root(root);
+    let output = wamn_codegen::output_root(root);
     manifest
         .components
         .keys()
@@ -499,8 +499,8 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         "{} has no {AUTHORED_MANIFEST}; push-package takes an authored package",
         root.display()
     );
-    let build_record = wamn_compiler::build_record::read(&wamn_compiler::output_root(root))?;
-    let manifest_path = wamn_compiler::package_manifest_path(root);
+    let build_record = wamn_codegen::build_record::read(&wamn_codegen::output_root(root))?;
+    let manifest_path = wamn_codegen::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     refuse_workflow_declarations(&manifest_bytes)?;
@@ -779,7 +779,7 @@ impl OpenedPackage {
     ///
     /// When the unpacked file cannot be read.
     pub fn manifest(&self) -> anyhow::Result<Vec<u8>> {
-        let path = self.root.join(wamn_compiler::COMPILED_MANIFEST);
+        let path = self.root.join(wamn_codegen::COMPILED_MANIFEST);
         std::fs::read(&path).with_context(|| format!("read {}", path.display()))
     }
 
@@ -914,7 +914,7 @@ fn unpack_layers(root: &Path, layers: &[PackedLayer]) -> anyhow::Result<()> {
         layers[0].media_type
     );
     write_file(
-        &root.join(wamn_compiler::COMPILED_MANIFEST),
+        &root.join(wamn_codegen::COMPILED_MANIFEST),
         &layers[0].bytes,
     )?;
     for layer in &layers[1..=tar_count] {
@@ -1062,8 +1062,8 @@ mod tests {
     /// The completed `build.json` of the package at `root`, with
     /// the components `receiving` and `blob-put` in its build output.
     fn write_build_record(root: &Path) {
-        use wamn_compiler::build_record;
-        let output = wamn_compiler::output_root(root);
+        use wamn_codegen::build_record;
+        let output = wamn_codegen::output_root(root);
         let components = ["blob-put", "receiving"]
             .map(|name| {
                 let path = format!("components/{name}.wasm");
@@ -1118,7 +1118,7 @@ mod tests {
         assert_eq!(first.layers.len(), 4, "one manifest and three tar layers");
         std::fs::write(root.join("web/src/main.ts"), b"changed source\n").unwrap();
         std::fs::write(root.join("generated/web/index.html"), b"changed output\n").unwrap();
-        let web = wamn_compiler::output_root(&root).join("web-artifact/dist");
+        let web = wamn_codegen::output_root(&root).join("web-artifact/dist");
         write(&web, "index.html", b"standalone output\n");
         // Record the changed compiled output.
         write_build_record(&root);

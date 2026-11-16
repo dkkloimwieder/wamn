@@ -22,7 +22,7 @@ pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<wamn_digest::Diges
         context.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
         context.update(bytes);
     };
-    let manifest_path = wamn_compiler::package_manifest_path(root);
+    let manifest_path = wamn_codegen::package_manifest_path(root);
     frame(
         &std::fs::read(&manifest_path)
             .with_context(|| format!("read {}", manifest_path.display()))?,
@@ -54,13 +54,13 @@ pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<wamn_digest::Diges
 
 /// Record output that a test writes, without compiling a guest.
 pub fn write_build_record(root: &Path) {
-    use wamn_compiler::build_record;
+    use wamn_codegen::build_record;
 
-    let manifest_path = wamn_compiler::package_manifest_path(root);
+    let manifest_path = wamn_codegen::package_manifest_path(root);
     let manifest_bytes = std::fs::read(manifest_path).unwrap();
     // Refusal tests can deliberately write an invalid package declaration.
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
-    let output = wamn_compiler::output_root(root);
+    let output = wamn_codegen::output_root(root);
     std::fs::create_dir_all(&output).unwrap();
     let build_record = build_record::BuildRecord {
         schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),

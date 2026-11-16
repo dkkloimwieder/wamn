@@ -54,7 +54,7 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-native-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-host -p wamn-control -p wamn-oci -p wamn-ctl -p wamn-cdc-reader -p wamn-identity \
+ && cargo build --locked --release -p wamn-host -p wamn-control -p wamn-oci -p wamn-cli -p wamn-cdc-reader -p wamn-identity-service \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
  && install -D -m 0755 target/release/wamn-control /native-output/wamn-control \
  && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn \
@@ -87,14 +87,14 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-native-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-web-front \
- && install -D -m 0755 target/release/wamn-web-front /native-output/wamn-web-front
+ && cargo build --locked --release -p wamn-web \
+ && install -D -m 0755 target/release/wamn-web /native-output/wamn-web
 
 FROM debian:trixie-slim AS edge-web
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-edge-web /native-output/wamn-web-front /usr/local/bin/wamn-web-front
+COPY --from=build-edge-web /native-output/wamn-web /usr/local/bin/wamn-web
 ENV HOME=/tmp
-ENTRYPOINT ["/usr/local/bin/wamn-web-front"]
+ENTRYPOINT ["/usr/local/bin/wamn-web"]
 
 # ---- combined HTTP and durable-queue host image ----------------------------
 FROM debian:trixie-slim AS host

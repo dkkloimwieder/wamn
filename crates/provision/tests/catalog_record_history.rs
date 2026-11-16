@@ -11,7 +11,7 @@ async fn catalog_stamps_require_an_actor_and_preserve_creation(pool: sqlx::PgPoo
     .await;
     let principals = format!(
         "BEGIN; {} COMMIT;",
-        wamn_control_provision::platform_principals_sql(
+        wamn_provision::platform_principals_sql(
             &"example.invalid"
                 .parse::<wamn_registry::platform_domain::PlatformDomain>()
                 .unwrap()
