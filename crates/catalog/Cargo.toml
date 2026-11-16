@@ -21,7 +21,7 @@ test-util = []
 
 [dependencies]
 hex.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 wamn-registry.workspace = true
 wamn-jsonata.workspace = true
 anyhow.workspace = true

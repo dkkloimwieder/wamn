@@ -157,7 +157,7 @@ pub fn condition_workflow_document(
     validate_resolved_wiring_compatibility(document, &components).map_err(|error| {
         WorkflowConditionError {
             detail: format!(
-                "workflow {:?} version {} is not compatible with the serving release",
+                "workflow {} version {} is not compatible with the serving release",
                 document.wiring_id, document.version
             ),
             source: Some(Box::new(error)),

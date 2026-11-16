@@ -255,7 +255,7 @@ mod tests {
                 wiring["nodes"]["rows"]["params"]["expression"]
                     .as_str()
                     .unwrap(),
-                &json!({"carry": due, "items": items}),
+                &json!({"carry": due, "external_system_id": "11111111-1111-4111-8111-111111111111", "items": items}),
             );
             assert_eq!(mapped.as_array().unwrap().len(), 1);
             assert_eq!(mapped[0]["request_id"], due);

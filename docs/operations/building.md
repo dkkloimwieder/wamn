@@ -85,6 +85,7 @@ That builder creates a source view under `CARGO_TARGET_DIR/wamn-guest`.
 Every compiled local package sits below the build workspace in that view.
 Cargo then hashes relative package paths, including packages outside `apps/`.
 The builder preserves dependency declarations and remaps the source view to `/wamn`.
+It refreshes the copied lock file offline for that workspace before the locked build.
 The same sources, lockfile and toolchain produce the same bytes in different checkouts.
 `cargo xtask build-component guests/http-route/Cargo.toml` uses that path for one guest.
 The build refuses a built guest that contains `/home/`, the Cargo home, or the repository path.

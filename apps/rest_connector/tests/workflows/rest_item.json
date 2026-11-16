@@ -85,6 +85,231 @@
       "component": "rest_connector",
       "interface-version": "0.1.0",
       "operation": "rest-connector:sync/finish@0.1.1"
+    },
+    "completed": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "($assert($count($) = 1 and $not($exists($[0].error)), \"consumer command did not succeed\"); $)",
+        "port": "items",
+        "input-schema": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "object",
+                    "properties": {
+                      "keys": {}
+                    },
+                    "required": [
+                      "keys"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "request_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "value",
+                  "request_id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "error": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "const": "idempotency_conflict"
+                          },
+                          "detail": {
+                            "type": "object",
+                            "properties": {
+                              "field": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "field"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "detail"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "const": "internal_error"
+                          },
+                          "detail": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "detail"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "const": "invalid_input"
+                          },
+                          "detail": {
+                            "type": "object",
+                            "properties": {
+                              "field": {
+                                "type": "string"
+                              },
+                              "minimum": {
+                                "type": "string"
+                              },
+                              "maximum": {
+                                "type": "string"
+                              },
+                              "observed": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "field"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "detail"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "const": "permission_denied"
+                          },
+                          "detail": {
+                            "type": "object",
+                            "properties": {
+                              "operation": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "operation"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "detail"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "const": "retry"
+                          },
+                          "detail": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "detail"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "const": "timeout"
+                          },
+                          "detail": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "detail"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "request_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "error",
+                  "request_id"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "output-schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "keys": {}
+                },
+                "required": [
+                  "keys"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "request_id",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 100
+        }
+      }
     }
   },
   "edges": [
@@ -104,6 +329,12 @@
     },
     {
       "from": "record",
+      "to": "completed",
+      "to-port": "input"
+    },
+    {
+      "from": "completed",
+      "from-port": "items",
       "to": "finish"
     }
   ]

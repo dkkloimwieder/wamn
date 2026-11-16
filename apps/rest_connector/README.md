@@ -10,6 +10,7 @@ The first node reads `last_synced_at` through the base's `setting.read` operatio
 The `http-page` node collects the fixture pages and carries `/due` into its output.
 JSONata maps the items into one consumer command envelope, including when the item array is empty.
 The consumer result retains the due time in `request_id`.
+The `completed` mapping refuses a failed consumer result and forwards the successful batch to `finish`.
 
 After every result succeeds, the integration writes that due time to `last_synced_at` through `setting.write`.
 A refusal prevents that write.
