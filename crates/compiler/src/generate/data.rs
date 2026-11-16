@@ -325,7 +325,8 @@ fn emit_create(
         let target = field_name(field);
         writeln!(
             body,
-            "let {target} = wamn_postgres_statements::next_number(transaction, {sequence:?}, &[{keys}]).await.map_err({refuse})?;"
+            "let {target} = wamn_postgres_statements::next_number(transaction, {:?}, &[{keys}]).await.map_err({refuse})?;",
+            sequence.as_str()
         )
         .expect("writing to a String cannot fail");
         arguments.push(target);
@@ -733,7 +734,7 @@ fn emit_feed(
     writeln!(
         source,
         "\n/// The model name a feed cursor carries.\n\
-         const MODEL: &str = {model_name:?};\n\n\
+         const MODEL: &str = {:?};\n\n\
          /// The model row of one row of a feed statement, or `None` for the row\n\
          /// that only carries the snapshot.\n\
          macro_rules! live_row {{\n\
@@ -799,7 +800,8 @@ fn emit_feed(
          }}\n\
          let end = end.ok_or_else(Error::internal)?;\n\
          feed::id::Changes::new(MODEL, part.cursor.as_deref(), end, changed, part.limit).map_err(|Invalid| Error::internal())\n\
-         }}"
+         }}",
+        model_name.as_str()
     )
     .expect("writing to a String cannot fail");
 }
@@ -874,6 +876,7 @@ fn emit_sequences(
     let mut source = String::from(HEADER);
     source.push_str("// The sequences of the package.\n");
     for (name, sequence) in sequences {
+        let name_text = name.as_str();
         let pattern = wamn_number_pattern::parse(&sequence.pattern)
             .expect("validation parsed every sequence pattern");
         let fields = pattern
@@ -919,7 +922,7 @@ fn emit_sequences(
              pub async fn next({parameter}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
              {bind}\
              let mut transaction = wamn_postgres_statements::operation_transaction().await?;\n\
-             wamn_postgres_statements::next_number(&mut transaction, {name:?}, &[{keys}]).await\n\
+             wamn_postgres_statements::next_number(&mut transaction, {name_text:?}, &[{keys}]).await\n\
              }}\n\n\
              /// The current number, the last one issued for the key, with no\n\
              /// lock and no advance. Never for assignment.\n\
@@ -927,7 +930,7 @@ fn emit_sequences(
              pub async fn peek({parameter}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
              {bind}\
              let mut transaction = wamn_postgres_statements::operation_transaction().await?;\n\
-             wamn_postgres_statements::peek_number(&mut transaction, {name:?}, &[{keys}]).await\n\
+             wamn_postgres_statements::peek_number(&mut transaction, {name_text:?}, &[{keys}]).await\n\
              }}\n\
              }}",
             sequence.pattern.escape_debug(),

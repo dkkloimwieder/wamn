@@ -195,6 +195,8 @@ fn emit_data(
     let key = member(&operation.lists.as_ref().expect("validated list").key_field[0]);
     let id_type = super::data::cursor_key_type(key_type);
     let permission = crate::manifest::canonical_operation_identity(package, name)?;
+    let query = name.as_str();
+    let permission_text = permission.as_str();
     let result = compiled.result.as_ref().expect("compiled feed result");
     let row_fields = result
         .fields
@@ -297,8 +299,8 @@ use wamn_postgres_statements::Connection;
 use super::error::{{Constraints, Error}};
 /// The statement accessors of the authored read.
 pub mod sql {{ include!("../wamn/{stem}.rs"); }}
-const QUERY: &str = {name:?};
-const PERMISSION: &str = {permission:?};
+const QUERY: &str = {query:?};
+const PERMISSION: &str = {permission_text:?};
 #[derive(Debug)]
 pub struct Row {{ {row_fields} pub row_version: i64 }}
 #[derive(Debug)]
