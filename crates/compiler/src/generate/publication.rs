@@ -1,9 +1,9 @@
 //! Inline publication schemas and OpenAPI from compiled operations.
 use super::{OperationDescription, insert_json_line};
-use crate::ManifestError as GenerateError;
+use wamn_catalog::manifest::ManifestError as GenerateError;
 use crate::client_fields::{fields_of, input_fields_of};
 use crate::client_ir::FieldIr;
-use crate::manifest::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,8 +21,8 @@ pub(super) fn emit_package_publication(
     for (component, declaration) in &manifest.components {
         for (export, operation) in &declaration.exports {
             if operation.registered_operation.is_some() {
-                return Err(crate::ManifestError::new(
-                    crate::ManifestErrorType::InvalidManifest,
+                return Err(wamn_catalog::manifest::ManifestError::new(
+                    wamn_catalog::manifest::ManifestErrorType::InvalidManifest,
                     format!("component export {export} cannot declare a registered operation"),
                 ));
             }
@@ -72,8 +72,8 @@ pub(super) fn emit_package_publication(
             .get_mut(component.as_str())
             .expect("validated component owner");
         if declaration["operations"].get(identity).is_some() {
-            return Err(crate::ManifestError::new(
-                crate::ManifestErrorType::InvalidManifest,
+            return Err(wamn_catalog::manifest::ManifestError::new(
+                wamn_catalog::manifest::ManifestErrorType::InvalidManifest,
                 format!("component export {identity} is already generated"),
             ));
         }
@@ -118,8 +118,8 @@ pub(super) fn emit_package_publication(
             id.as_str(),
         )
         .map_err(|source| {
-            crate::ManifestError::new(
-                crate::ManifestErrorType::InvalidManifest,
+            wamn_catalog::manifest::ManifestError::new(
+                wamn_catalog::manifest::ManifestErrorType::InvalidManifest,
                 source.to_string(),
             )
         })?
@@ -131,8 +131,8 @@ pub(super) fn emit_package_publication(
             "raw-body-bytes": {"maximum": RAW_BODY_MAXIMUM},
         });
         if attachments.contains_key(&id) {
-            return Err(crate::ManifestError::new(
-                crate::ManifestErrorType::InvalidManifest,
+            return Err(wamn_catalog::manifest::ManifestError::new(
+                wamn_catalog::manifest::ManifestErrorType::InvalidManifest,
                 format!("duplicate HTTP attachment id {id}"),
             ));
         }

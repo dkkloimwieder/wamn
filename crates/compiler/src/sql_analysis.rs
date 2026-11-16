@@ -1,7 +1,7 @@
 //! PostgreSQL syntax facts used by compilation and release effect review.
 
-use crate::manifest::FilterMatch;
-use crate::{ManifestError, ManifestErrorType};
+use wamn_catalog::manifest::FilterMatch;
+use wamn_catalog::manifest::{ManifestError, ManifestErrorType};
 use pg_query::{NodeEnum, NodeRef};
 use std::collections::{BTreeMap, BTreeSet};
 

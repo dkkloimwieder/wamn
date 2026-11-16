@@ -127,12 +127,12 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
 pub async fn installed_manifests(
     platform: &Platform,
     document: &EnvironmentDocument,
-) -> anyhow::Result<Vec<wamn_compiler::manifest::PackageManifest>> {
+) -> anyhow::Result<Vec<wamn_catalog::manifest::PackageManifest>> {
     let mut manifests = Vec::new();
     for (id, baseline) in super::stage::installed(platform, document).await? {
         let package = super::stage::open(platform, &id, &baseline.current).await?;
         let path = wamn_compiler::package_manifest_path(package.root());
-        manifests.push(wamn_compiler::manifest::PackageManifest::from_slice(
+        manifests.push(wamn_catalog::manifest::PackageManifest::from_slice(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )?);
     }
@@ -146,7 +146,7 @@ pub async fn installed_manifests(
 pub(super) async fn ensure_streams(
     platform: &Platform,
     document: &EnvironmentDocument,
-    manifests: &[wamn_compiler::manifest::PackageManifest],
+    manifests: &[wamn_catalog::manifest::PackageManifest],
 ) -> anyhow::Result<()> {
     let Some(events) = &platform.events else {
         return Ok(());
@@ -157,7 +157,7 @@ pub(super) async fn ensure_streams(
         for (package, entity) in manifests
             .iter()
             .filter(|manifest| selection.packages.contains(&manifest.package.id))
-            .flat_map(wamn_compiler::manifest::PackageManifest::entity_pairs)
+            .flat_map(wamn_catalog::manifest::PackageManifest::entity_pairs)
         {
             consumers.push(wamn_broker::events::application_consumer(
                 &triple,

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use anyhow::{Context as _, ensure};
 
 use wamn_catalog::package_schema::{PackageDirectory, package_metadata};
-use wamn_compiler::manifest::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 
 mod entity_maps;

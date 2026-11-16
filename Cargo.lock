@@ -5560,6 +5560,7 @@ dependencies = [
  "wamn-record-history",
  "wamn-registry",
  "wamn-scalar",
+ "wit-parser 0.254.2",
 ]
 
 [[package]]
@@ -5762,7 +5763,6 @@ dependencies = [
  "tokio",
  "url",
  "wamn-catalog",
- "wamn-compiler",
  "wamn-control-provision",
  "wamn-digest",
  "wamn-identity-protocol",

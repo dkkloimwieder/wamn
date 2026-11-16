@@ -18,7 +18,7 @@ use super::{
 /// Every package's parsed manifest and the contract type of every operation
 /// the packages generate.
 pub(super) type PackageManifestSources = (
-    BTreeMap<wamn_catalog::PackageName, wamn_compiler::manifest::PackageManifest>,
+    BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
     RouteContracts,
 );
 
@@ -64,7 +64,7 @@ pub(super) async fn open_application(
                     package.package_version()
                 )
             })?;
-        let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&artifact.manifest()?)?;
+        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&artifact.manifest()?)?;
         ensure!(
             &manifest.package.id == package.package_id()
                 && &manifest.package.version == package.package_version(),
@@ -103,7 +103,7 @@ pub(super) fn read_package_manifests(
             }
         })?;
         let manifest =
-            wamn_compiler::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
+            wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
                 .map_err(|error| {
                     PublishManifestError::with_source(
                         PublishManifestErrorType::PackageManifest,
@@ -111,7 +111,7 @@ pub(super) fn read_package_manifests(
                         error,
                     )
                 })?;
-        wamn_compiler::manifest::validate_operation_vocabulary(&manifest).map_err(|error| {
+        wamn_catalog::manifest::validate_operation_vocabulary(&manifest).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
                 format!("validate package manifest {}", path.display()),
@@ -147,7 +147,7 @@ struct PackageContract {
 
 /// Borrow the operation descriptions compiled into a package document.
 fn operation_contracts(
-    manifest: &wamn_compiler::manifest::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
 ) -> Result<Vec<PackageContract>, PublishManifestError> {
     #[derive(serde::Deserialize)]
     struct Relation<'a> {
@@ -245,7 +245,7 @@ pub fn package_route(
         )
     })?;
     let manifest =
-        wamn_compiler::manifest::PackageManifest::from_slice(&bytes).map_err(|source| {
+        wamn_catalog::manifest::PackageManifest::from_slice(&bytes).map_err(|source| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
                 format!("parse {}", path.display()),

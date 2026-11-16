@@ -32,7 +32,7 @@ use crate::build_record::{
     BUILD_RECORD_SCHEMA, BuildDependency, BuildOutputs, BuildPackage, BuildRecord,
 };
 use crate::describe::{DescribedStatement, column_type, describe_statements};
-use crate::manifest::{CrudAction, PackageManifest, ResultClass, canonical_operation_identity};
+use wamn_catalog::manifest::{CrudAction, PackageManifest, ResultClass, canonical_operation_identity};
 use crate::materialize::{expected_files, introspect_with_manifest, write_files};
 use wamn_digest::bytes_sha256;
 
@@ -1077,11 +1077,11 @@ mod tests {
 /// Source metadata used before the database describes statement values.
 #[derive(Debug, serde::Deserialize)]
 struct ManifestSources {
-    package: crate::manifest::PackageIdentity,
+    package: wamn_catalog::manifest::PackageIdentity,
     #[serde(default)]
     base_dependencies:
-        BTreeMap<crate::source_name::SourceName, crate::manifest::BaseDependencyRequirement>,
-    models: BTreeMap<crate::source_name::SourceName, crate::manifest::ModelDeclaration>,
+        BTreeMap<wamn_catalog::manifest::source_name::SourceName, wamn_catalog::manifest::BaseDependencyRequirement>,
+    models: BTreeMap<wamn_catalog::manifest::source_name::SourceName, wamn_catalog::manifest::ModelDeclaration>,
     #[serde(default)]
     custom_operations: BTreeMap<String, OperationSources>,
 }

@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use wamn_compiler::manifest::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 use wamn_compiler::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
@@ -238,7 +238,7 @@ pub(super) fn run(
     catalog: &CatalogIr,
     value: &Value,
     sources: &[AuthoredSql<'_>],
-) -> Result<GeneratedPackage, wamn_compiler::ManifestError> {
+) -> Result<GeneratedPackage, wamn_catalog::manifest::ManifestError> {
     run_with_bases(catalog, value, sources, &[manifest()])
 }
 
@@ -247,7 +247,7 @@ pub(super) fn run_with_bases(
     manifest: &Value,
     sources: &[AuthoredSql<'_>],
     bases: &[Value],
-) -> Result<GeneratedPackage, wamn_compiler::ManifestError> {
+) -> Result<GeneratedPackage, wamn_catalog::manifest::ManifestError> {
     let bases = bases
         .iter()
         .map(|base| PackageManifest::from_slice(&serde_json::to_vec(base).unwrap()).unwrap())

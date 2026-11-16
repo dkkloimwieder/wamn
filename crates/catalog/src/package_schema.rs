@@ -1,6 +1,6 @@
 //! Package inputs and the physical relation declarations used by CDC.
 
-use crate::manifest::PackageManifest;
+use crate::manifest::installation::PackageManifest;
 use crate::{PackageCoordinate, canonical_name::CanonicalName};
 use wamn_record_history::history_table_name;
 

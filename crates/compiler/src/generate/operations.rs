@@ -9,17 +9,17 @@ use super::{
     custom_operation_constraint_origin, json, operation_constraints, operation_exclusions,
     query_variants, server_owned_fields, sql, writable_path,
 };
-use crate::manifest::{
+use wamn_catalog::manifest::{
     ContractFieldDeclaration, CrudAction, CustomOperationDeclaration,
     CustomOperationResultDeclaration, DeleteMode, FieldText, ModelDeclaration,
     OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest, ResultClass,
     canonical_operation_identity, custom_artifact_stem, rust_type_identifier,
 };
-use crate::manifest::{
+use wamn_catalog::manifest::{
     FieldReference, OperationErrorDetailKey, StaticSqlRelationDeclaration, TombstoneColumn,
     authored_name,
 };
-use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_scalar::SqlValueType;
 
 /// Request, result and refusal facts compiled once for a model action.
@@ -28,7 +28,7 @@ pub(super) struct ModelOperation<'a> {
     pub request: &'a OperationDeclaration,
     pub result: CustomOperationResultDeclaration,
     pub refusals:
-        BTreeMap<crate::manifest::AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+        BTreeMap<wamn_catalog::manifest::AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
     pub revision: Option<SqlValueType>,
     pub guarded_fields: BTreeMap<String, String>,
 }
@@ -50,8 +50,8 @@ impl ModelShape<'_> {
 /// The shared input of every model guest emitter.
 #[derive(Debug)]
 pub(super) struct ModelDescription<'a> {
-    pub package: &'a crate::manifest::PackageIdentity,
-    pub name: &'a crate::source_name::SourceName,
+    pub package: &'a wamn_catalog::manifest::PackageIdentity,
+    pub name: &'a wamn_catalog::manifest::source_name::SourceName,
     pub min_lengths: &'a BTreeMap<String, u32>,
     pub shape: ModelShape<'a>,
     pub operations: BTreeMap<CrudAction, ModelOperation<'a>>,
@@ -60,7 +60,7 @@ pub(super) struct ModelDescription<'a> {
     pub feed: bool,
     pub number: Option<(
         &'a str,
-        &'a crate::source_name::SourceName,
+        &'a wamn_catalog::manifest::source_name::SourceName,
         wamn_number_pattern::Pattern,
     )>,
 }
@@ -70,14 +70,14 @@ pub(super) struct ModelDescription<'a> {
 pub(super) struct CustomDescription<'a> {
     pub declaration: &'a CustomOperationDeclaration,
     pub statements: &'a BTreeMap<
-        crate::source_name::SourceName,
-        crate::manifest::StaticSqlStatementDeclaration,
+        wamn_catalog::manifest::source_name::SourceName,
+        wamn_catalog::manifest::StaticSqlStatementDeclaration,
     >,
     pub request: Vec<crate::client_ir::FieldIr>,
     pub request_root: &'static str,
     pub feed_key: Option<SqlValueType>,
     pub result: Option<std::borrow::Cow<'a, CustomOperationResultDeclaration>>,
-    pub refusals: BTreeMap<crate::source_name::SourceName, OperationErrorDetailDeclaration>,
+    pub refusals: BTreeMap<wamn_catalog::manifest::source_name::SourceName, OperationErrorDetailDeclaration>,
     pub revision: Option<SqlValueType>,
     pub rows: Vec<super::RustRow>,
     pub accessors: Vec<super::StaticSqlAccessor>,
@@ -99,7 +99,7 @@ pub(super) fn emit_model(
     operation_sql: &BTreeMap<String, Vec<String>>,
     catalog: &CatalogIr,
     manifest: &PackageManifest,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
@@ -171,7 +171,7 @@ pub(super) fn compile_custom<'a>(
         .map(|literal| {
             (
                 literal.clone(),
-                crate::manifest::custom_operation_error_detail(operation, literal.as_str()),
+                wamn_catalog::manifest::custom_operation_error_detail(operation, literal.as_str()),
             )
         })
         .collect();
@@ -187,7 +187,7 @@ pub(super) fn compile_custom<'a>(
                 path: "row_version".to_owned(),
                 ty: SqlValueType::Int64,
                 nullable: false,
-                revision: crate::manifest::Revision::Flag(false),
+                revision: wamn_catalog::manifest::Revision::Flag(false),
                 values: Vec::new(),
                 label: None,
                 visible: None,
@@ -198,7 +198,7 @@ pub(super) fn compile_custom<'a>(
         refusals
             .entry("cursor_expired".parse().expect("fixed identifier"))
             .or_insert_with(|| {
-                crate::manifest::custom_operation_error_detail(operation, "cursor_expired")
+                wamn_catalog::manifest::custom_operation_error_detail(operation, "cursor_expired")
             });
         let key = &operation
             .lists
@@ -308,7 +308,7 @@ fn describe_custom_operation(
 ) -> Result<super::OperationDescription, GenerateError> {
     let operation = compiled.declaration;
     let operation_id = canonical_operation_identity(&manifest.package, operation_name)?;
-    let grant = (operation.visibility == crate::manifest::OperationVisibility::Public)
+    let grant = (operation.visibility == wamn_catalog::manifest::OperationVisibility::Public)
         .then(|| operation_id.clone());
     let statements = compiled
         .statements
@@ -330,18 +330,18 @@ fn describe_custom_operation(
         .collect::<Result<Vec<_>, _>>()?;
     let operation_contract = wamn_catalog::OperationContract {
         type_: match operation.type_ {
-            crate::manifest::CustomOperationType::Command => wamn_catalog::OperationType::Command,
-            crate::manifest::CustomOperationType::Projection => {
+            wamn_catalog::manifest::CustomOperationType::Command => wamn_catalog::OperationType::Command,
+            wamn_catalog::manifest::CustomOperationType::Projection => {
                 wamn_catalog::OperationType::Projection
             }
-            crate::manifest::CustomOperationType::EventHandler => {
+            wamn_catalog::manifest::CustomOperationType::EventHandler => {
                 wamn_catalog::OperationType::EventHandler
             }
         },
         visibility: Some(
             match operation.visibility {
-                crate::manifest::OperationVisibility::Public => "public",
-                crate::manifest::OperationVisibility::Private => "private",
+                wamn_catalog::manifest::OperationVisibility::Public => "public",
+                wamn_catalog::manifest::OperationVisibility::Private => "private",
             }
             .to_owned(),
         ),
@@ -586,7 +586,7 @@ fn error_detail_contract(
 
 pub(super) fn emit_operation_sql(
     sql_corpus: &mut BTreeMap<String, Vec<u8>>,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,
@@ -673,7 +673,7 @@ fn describe_model_operation<'a>(
     sql_corpus: &super::SqlCorpus,
     transactional: &StatementTransactionality,
     manifest: &PackageManifest,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
     action: CrudAction,
@@ -908,7 +908,7 @@ fn column_reference(
     manifest: &PackageManifest,
     table: &Table,
     column: &str,
-) -> Option<(crate::source_name::SourceName, String)> {
+) -> Option<(wamn_catalog::manifest::source_name::SourceName, String)> {
     let (schema, referenced, key) = table.constraints().iter().find_map(|constraint| {
         let ConstraintType::ForeignKey {
             columns,
@@ -970,7 +970,7 @@ fn crud_result_contract(
                 path: column.name.clone(),
                 ty: column.ty,
                 nullable: column.nullable,
-                revision: crate::manifest::Revision::Flag(
+                revision: wamn_catalog::manifest::Revision::Flag(
                     model.revision_field() == Some(column.name.as_str())
                         && !(action == CrudAction::Query
                             && model.feed_enabled()
@@ -1193,7 +1193,7 @@ fn error_contract(
     model: &ModelDeclaration,
     facts: &ModelOperation<'_>,
 ) -> Value {
-    use crate::manifest::AccessOperationErrorLiteral as Code;
+    use wamn_catalog::manifest::AccessOperationErrorLiteral as Code;
     let operation = facts.request;
     let refusals = &facts.refusals;
     let revision = facts.revision;
@@ -1319,7 +1319,7 @@ fn merge_json(mut left: Value, right: &Value) -> Value {
     Value::Object(left.clone())
 }
 
-fn count_contract(limit: &crate::manifest::CountLimitDeclaration) -> Value {
+fn count_contract(limit: &wamn_catalog::manifest::CountLimitDeclaration) -> Value {
     let mut contract = json!({
         "minimum": limit.minimum,
         "maximum": limit.maximum,

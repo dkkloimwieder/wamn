@@ -14,9 +14,9 @@ use wamn_scalar::SqlValueType;
 
 use super::{BTreeMap, CatalogIr, Table, column, relation};
 use crate::key::primary_key;
-use crate::manifest::{CrudAction, ModelDeclaration, PackageManifest};
-use crate::manifest::{FieldRole, Target};
-use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_catalog::manifest::{CrudAction, ModelDeclaration, PackageManifest};
+use wamn_catalog::manifest::{FieldRole, Target};
+use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// Refuse what the package's numbering declarations cannot mean.
 ///
@@ -57,7 +57,7 @@ pub(super) fn validate_numbering(
 /// Each sequence's parsed pattern, by name.
 fn sequence_patterns(
     manifest: &PackageManifest,
-) -> Result<BTreeMap<&crate::source_name::SourceName, Pattern>, GenerateError> {
+) -> Result<BTreeMap<&wamn_catalog::manifest::source_name::SourceName, Pattern>, GenerateError> {
     manifest
         .sequences
         .iter()
@@ -75,7 +75,7 @@ fn sequence_patterns(
 
 fn validate_model_fields(
     manifest: &PackageManifest,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
@@ -140,7 +140,7 @@ fn validate_model_fields(
 
 /// A numbered field is separate from the row id.
 fn validate_numbered_field(
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
     field: &str,
@@ -269,7 +269,7 @@ fn refuse_supplied_fields(manifest: &PackageManifest) -> Result<(), GenerateErro
 
 fn supplied(
     operation: &wamn_catalog::local_operation::LocalOperation,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     field: &str,
 ) -> GenerateError {
     GenerateError::new(

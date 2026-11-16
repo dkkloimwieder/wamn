@@ -8,7 +8,7 @@ pub use plan::require_imports;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
-use wamn_compiler::manifest::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 
 pub async fn install(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -42,7 +42,7 @@ pub fn palette_connections<'a>(
         &'a wamn_catalog::PackageName,
         &'a wamn_catalog::canonical_name::CanonicalName,
     ),
-    &'a wamn_compiler::manifest::ConnectionDeclaration,
+    &'a wamn_catalog::manifest::ConnectionDeclaration,
 > {
     let mut names = std::collections::BTreeMap::new();
     for package in packages {
@@ -66,7 +66,7 @@ pub fn palette_connections<'a>(
 mod palette_tests {
     #[test]
     fn configured_connections_keep_each_application_declaration_owner() {
-        let packages: Vec<wamn_compiler::manifest::PackageManifest> = ["orders", "shipping"]
+        let packages: Vec<wamn_catalog::manifest::PackageManifest> = ["orders", "shipping"]
             .into_iter()
             .map(|id| {
                 serde_json::from_value(serde_json::json!({
@@ -134,8 +134,8 @@ pub async fn prepare_release(
                     let interface =
                         require_imports(&bytes, alias.as_str(), &declaration.interface)?;
                     let mode = match declaration.mode {
-                        wamn_compiler::manifest::ConnectionMode::Read => "read",
-                        wamn_compiler::manifest::ConnectionMode::Write => "write",
+                        wamn_catalog::manifest::ConnectionMode::Read => "read",
+                        wamn_catalog::manifest::ConnectionMode::Write => "write",
                     };
                     sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING")
                     .bind(project_env_key).bind(component.descriptor.component_digest).bind(owner)
@@ -212,7 +212,7 @@ pub async fn write(
         let Some(interface) = resolve.id_of(*id) else {
             continue;
         };
-        if wamn_compiler::manifest::host_connection_interface(&interface)
+        if wamn_catalog::manifest::host_connection_interface(&interface)
             || interface.starts_with("wamn:postgres/")
         {
             continue;
@@ -233,8 +233,8 @@ pub async fn write(
             .with_context(|| format!("package declares no connection {name}"))?;
         let interface = require_imports(bytes, name.as_str(), &declaration.interface)?;
         let mode = match declaration.mode {
-            wamn_compiler::manifest::ConnectionMode::Read => "read",
-            wamn_compiler::manifest::ConnectionMode::Write => "write",
+            wamn_catalog::manifest::ConnectionMode::Read => "read",
+            wamn_catalog::manifest::ConnectionMode::Write => "write",
         };
         written += sqlx::query("INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode) \
              VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(project_env_key).bind(digest).bind(&manifest.package.id).bind(name).bind(&interface).bind(mode).execute(&mut **tx).await.map(|result| result.rows_affected())?;

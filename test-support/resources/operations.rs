@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use wamn_compiler::manifest::{OperationOwners, resolve_operation_reference};
+use wamn_catalog::manifest::{OperationOwners, resolve_operation_reference};
 use wamn_compiler::package_manifest_path;
 
 /// The manifest of one repository package, by its package id.

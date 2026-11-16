@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use sqlx::{Connection as _, Row as _};
-use wamn_compiler::manifest::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 use wamn_environment::environment::{analyse, bindings, document::EnvironmentDocument};
 use wamn_platform_identity::connections::administration;
 
@@ -445,14 +445,14 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface(pool: sqlx::PgPo
     let mut manifest = package(&"modbus".parse().unwrap());
     let declaration = manifest.connections.get_mut("upstream").unwrap();
     declaration.interface = "wamn:modbus/write@1.0.0".into();
-    declaration.mode = wamn_compiler::manifest::ConnectionMode::Read;
+    declaration.mode = wamn_catalog::manifest::ConnectionMode::Read;
     assert!(
         bindings::analyse(&mut client, &doc, &[manifest.clone()])
             .await
             .is_err()
     );
     manifest.connections.get_mut("upstream").unwrap().mode =
-        wamn_compiler::manifest::ConnectionMode::Write;
+        wamn_catalog::manifest::ConnectionMode::Write;
     assert_eq!(
         bindings::analyse(&mut client, &doc, &[manifest.clone()])
             .await
@@ -461,7 +461,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface(pool: sqlx::PgPo
         1
     );
     let declaration = manifest.connections.get_mut("upstream").unwrap();
-    declaration.mode = wamn_compiler::manifest::ConnectionMode::Read;
+    declaration.mode = wamn_catalog::manifest::ConnectionMode::Read;
     declaration.interface = "wamn:modbus/read@1.0.0".into();
     assert_eq!(
         bindings::analyse(&mut client, &doc, &[manifest])

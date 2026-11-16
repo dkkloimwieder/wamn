@@ -2,7 +2,7 @@ use super::{CompositionError, PackageInput, PathBuf, SelectedComponentArtifact};
 
 pub(super) fn component_entry<'a>(
     package: &PackageInput,
-    component: &wamn_compiler::source_name::SourceName,
+    component: &wamn_catalog::manifest::source_name::SourceName,
     build_record: &'a wamn_compiler::build_record::BuildRecord,
 ) -> Result<(PathBuf, &'a wamn_compiler::build_record::BuildComponent), CompositionError> {
     let output = wamn_compiler::output_root(&package.root);
@@ -26,7 +26,7 @@ pub(super) fn component_entry<'a>(
 
 pub(super) fn built_component(
     package: &PackageInput,
-    component: &wamn_compiler::source_name::SourceName,
+    component: &wamn_catalog::manifest::source_name::SourceName,
     path: PathBuf,
     entry: &wamn_compiler::build_record::BuildComponent,
     bytes: &[u8],
@@ -53,7 +53,7 @@ pub(super) fn built_component(
 
 pub(super) fn selected_component(
     package: &PackageInput,
-) -> Result<&wamn_compiler::source_name::SourceName, CompositionError> {
+) -> Result<&wamn_catalog::manifest::source_name::SourceName, CompositionError> {
     if package.manifest.components.len() != 1 {
         return Err(CompositionError::invalid(
             "select package component artifact",

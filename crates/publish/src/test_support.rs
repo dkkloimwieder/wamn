@@ -58,7 +58,7 @@ pub fn closure_component(
     }
 }
 
-pub fn source_manifest() -> wamn_compiler::manifest::PackageManifest {
+pub fn source_manifest() -> wamn_catalog::manifest::PackageManifest {
     serde_json::from_str(include_str!(
         "../tests/fixtures/component_package/generated/wamn.json"
     ))

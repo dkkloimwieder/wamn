@@ -400,7 +400,7 @@ pub fn publish_release_with_package_manifests(
     component_facts: &ReleaseComponents,
     package_manifests: &BTreeMap<
         wamn_catalog::PackageName,
-        wamn_compiler::manifest::PackageManifest,
+        wamn_catalog::manifest::PackageManifest,
     >,
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
@@ -571,7 +571,7 @@ fn validate_release_package_manifests(
     request: &PublishReleaseManifest<'_>,
     package_manifests: &BTreeMap<
         wamn_catalog::PackageName,
-        wamn_compiler::manifest::PackageManifest,
+        wamn_catalog::manifest::PackageManifest,
     >,
 ) -> Result<(), PublishManifestError> {
     let expected_package_ids = request
@@ -631,7 +631,7 @@ mod tests {
         .unwrap()]);
         let manifests: BTreeMap<
             wamn_catalog::PackageName,
-            wamn_compiler::manifest::PackageManifest,
+            wamn_catalog::manifest::PackageManifest,
         > = BTreeMap::from([(manifest.package.id.clone(), manifest)]);
         let publish = |environment| {
             let request = PublishReleaseManifest {
@@ -1123,7 +1123,7 @@ mod tests {
 
     fn dependency_manifest(
         digest: &wamn_digest::Digest,
-    ) -> wamn_compiler::manifest::PackageManifest {
+    ) -> wamn_catalog::manifest::PackageManifest {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
             "../tests/fixtures/component_package/generated/wamn.json"
         ))
@@ -1183,7 +1183,7 @@ mod tests {
         version: &str,
         base: (&wamn_catalog::PackageName, &str),
         digest: &wamn_digest::Digest,
-    ) -> wamn_compiler::manifest::PackageManifest {
+    ) -> wamn_catalog::manifest::PackageManifest {
         let mut document = serde_json::to_value(dependency_manifest(digest))
             .expect("the dependency fixture manifest serializes");
         document["package"] = serde_json::json!({"id": id, "version": version});
@@ -1225,7 +1225,7 @@ mod tests {
         ]);
         let manifests: BTreeMap<
             wamn_catalog::PackageName,
-            wamn_compiler::manifest::PackageManifest,
+            wamn_catalog::manifest::PackageManifest,
         > = BTreeMap::from([(
             "overlay".parse().unwrap(),
             pinning_manifest(
@@ -1319,7 +1319,7 @@ mod tests {
         ]);
         let manifests: BTreeMap<
             wamn_catalog::PackageName,
-            wamn_compiler::manifest::PackageManifest,
+            wamn_catalog::manifest::PackageManifest,
         > = BTreeMap::from([(
             "overlay".parse().unwrap(),
             pinning_manifest(

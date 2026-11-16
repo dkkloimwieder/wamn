@@ -31,7 +31,7 @@ pub(crate) fn generate_with(catalog: &CatalogIr, value: &Value) -> GeneratedPack
 pub(crate) fn try_generate_with(
     catalog: &CatalogIr,
     value: &Value,
-) -> Result<GeneratedPackage, wamn_compiler::ManifestError> {
+) -> Result<GeneratedPackage, wamn_catalog::manifest::ManifestError> {
     try_generate_with_sql(catalog, value, &authored_sql())
 }
 
@@ -41,9 +41,9 @@ pub(crate) fn try_generate_with_sql(
     catalog: &CatalogIr,
     value: &Value,
     authored: &[(String, Vec<u8>)],
-) -> Result<GeneratedPackage, wamn_compiler::ManifestError> {
+) -> Result<GeneratedPackage, wamn_catalog::manifest::ManifestError> {
     let manifest = serde_json::to_vec(value).expect("serialize platform fixture manifest");
-    let parsed = wamn_compiler::manifest::PackageManifest::from_slice(&manifest)?;
+    let parsed = wamn_catalog::manifest::PackageManifest::from_slice(&manifest)?;
     let paths: std::collections::BTreeSet<_> = parsed
         .models
         .values()

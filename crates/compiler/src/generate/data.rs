@@ -12,10 +12,10 @@ use std::fmt::Write as _;
 use wamn_scalar::SqlValueType;
 
 use super::{AccessorBind, WamnApi, insert_bytes, query_variants, sql};
-use crate::ManifestError as GenerateError;
+use wamn_catalog::manifest::ManifestError as GenerateError;
 use crate::key::KeyType;
-use crate::manifest::FilterMatch;
-use crate::manifest::{
+use wamn_catalog::manifest::FilterMatch;
+use wamn_catalog::manifest::{
     CrudAction, OperationDeclaration, PackageManifest, rust_identifier, rust_type_identifier,
 };
 
@@ -230,7 +230,7 @@ fn key_request(
 
 fn emit_get(
     source: &mut String,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
 ) {
@@ -250,14 +250,14 @@ fn emit_get(
 
 fn emit_create(
     source: &mut String,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     api: &WamnApi,
     number: Option<&(
         &str,
-        &crate::source_name::SourceName,
+        &wamn_catalog::manifest::source_name::SourceName,
         wamn_number_pattern::Pattern,
     )>,
 ) {
@@ -396,7 +396,7 @@ fn emit_value(body: &mut String, target: &str, path: &str, bind: &AccessorBind, 
 
 fn emit_update(
     source: &mut String,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
@@ -488,7 +488,7 @@ fn emit_update(
 
 fn emit_delete(
     source: &mut String,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
@@ -530,7 +530,7 @@ fn emit_delete(
 
 fn emit_query(
     source: &mut String,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
@@ -596,8 +596,8 @@ fn emit_query(
     for (field, direction) in query_variants(operation) {
         let direction_name = sql::direction_name(direction);
         let direction_type = match direction {
-            crate::manifest::CursorDirection::Ascending => "Direction::Ascending",
-            crate::manifest::CursorDirection::Descending => "Direction::Descending",
+            wamn_catalog::manifest::CursorDirection::Ascending => "Direction::Ascending",
+            wamn_catalog::manifest::CursorDirection::Descending => "Direction::Descending",
         };
         let key_column = table
             .column(field)
@@ -639,8 +639,8 @@ fn emit_query(
         .expect("writing to a String cannot fail");
     }
     let default_direction = match default.direction {
-        crate::manifest::CursorDirection::Ascending => "Direction::Ascending",
-        crate::manifest::CursorDirection::Descending => "Direction::Descending",
+        wamn_catalog::manifest::CursorDirection::Ascending => "Direction::Ascending",
+        wamn_catalog::manifest::CursorDirection::Descending => "Direction::Descending",
     };
     if operation
         .filters
@@ -694,7 +694,7 @@ fn emit_query(
 /// (docs/architecture/execution.md#change-feed).
 fn emit_feed(
     source: &mut String,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model_type: &str,
     table: &super::operations::ModelShape<'_>,
     binds: &str,
@@ -842,7 +842,7 @@ pub(super) fn emit_package_data(
         .iter()
         .filter(|(_, operation)| operation.feed == Some(true))
     {
-        let stem = crate::manifest::custom_artifact_stem(name);
+        let stem = wamn_catalog::manifest::custom_artifact_stem(name);
         writeln!(
             source,
             "\n/// The authored `{name}` feed.\npub mod {stem} {{ include!(\"{stem}.rs\"); }}"
@@ -869,8 +869,8 @@ pub(super) fn emit_package_data(
 /// names none takes no key: `next()` and `peek()`.
 fn emit_sequences(
     sequences: &[(
-        &crate::source_name::SourceName,
-        &crate::manifest::SequenceDeclaration,
+        &wamn_catalog::manifest::source_name::SourceName,
+        &wamn_catalog::manifest::SequenceDeclaration,
     )],
 ) -> String {
     let mut source = String::from(HEADER);

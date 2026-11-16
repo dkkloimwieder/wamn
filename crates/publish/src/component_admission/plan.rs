@@ -8,12 +8,12 @@ use wamn_catalog::registered_operation::RegisteredOperation;
 /// Bind result signing only from the package's verified typed result fields.
 pub(super) fn bind_signed_file_results(
     component: &mut AdmittedComponent,
-    manifest: &wamn_compiler::manifest::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
 ) -> Result<(), ComponentProjectionError> {
     use wamn_catalog::{
         SIGNED_FILE_READS, SignedFileField, SignedFileReads, SignedFileResultClass,
     };
-    use wamn_compiler::manifest::ResultClass;
+    use wamn_catalog::manifest::ResultClass;
 
     let invalid = |detail: String| {
         ComponentProjectionError::new(
@@ -27,7 +27,7 @@ pub(super) fn bind_signed_file_results(
             .iter()
             .find_map(|(name, declaration)| {
                 let canonical =
-                    wamn_compiler::manifest::canonical_operation_identity(&manifest.package, name)
+                    wamn_catalog::manifest::canonical_operation_identity(&manifest.package, name)
                         .ok()?;
                 (canonical.as_str() == export)
                     .then_some(declaration.result.as_ref())
@@ -108,7 +108,7 @@ pub fn portable_requirement(
 /// The exports among `selected` whose request element transaction the host begins, as
 /// the package manifest declares them.
 pub(super) fn host_transaction_exports(
-    manifest: &wamn_compiler::manifest::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     selected: &BTreeSet<RegisteredOperation>,
 ) -> Result<BTreeSet<RegisteredOperation>, ComponentProjectionError> {
     let mut exports = BTreeSet::new();
@@ -118,7 +118,7 @@ pub(super) fn host_transaction_exports(
             error.to_string(),
         )
     })? {
-        let operation = wamn_compiler::manifest::canonical_operation_identity(
+        let operation = wamn_catalog::manifest::canonical_operation_identity(
             &manifest.package,
             &local_operation,
         )
@@ -156,7 +156,7 @@ pub(super) fn host_transaction_exports(
 /// declines to look for manifest operations that, by construction, it does
 /// not serve; it is not a bypass of admission.
 pub(super) fn validate_component_operation_assignment(
-    manifest: &wamn_compiler::manifest::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     component: &AdmittedComponent,
     expected: &BTreeMap<RegisteredOperation, ExpectedOperationContract>,
 ) -> Result<BTreeSet<RegisteredOperation>, ComponentProjectionError> {
@@ -250,7 +250,7 @@ pub(super) fn validate_component_operation_assignment(
 }
 
 pub(super) fn expected_operation_contracts(
-    manifest: &wamn_compiler::manifest::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
 ) -> Result<BTreeMap<RegisteredOperation, ExpectedOperationContract>, ComponentProjectionError> {
     let default_component = (manifest.components.len() == 1).then(|| {
         manifest
@@ -287,17 +287,17 @@ pub(super) fn expected_operation_contracts(
             &mut expected,
             local_operation,
             operation.component.as_ref().or(default_component),
-            operation.visibility() == wamn_compiler::manifest::OperationVisibility::Public,
+            operation.visibility() == wamn_catalog::manifest::OperationVisibility::Public,
         )?;
     }
     Ok(expected)
 }
 
 pub(super) fn insert_expected_operation(
-    manifest: &wamn_compiler::manifest::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     expected: &mut BTreeMap<RegisteredOperation, ExpectedOperationContract>,
     local_operation: &wamn_catalog::local_operation::LocalOperation,
-    component: Option<&wamn_compiler::source_name::SourceName>,
+    component: Option<&wamn_catalog::manifest::source_name::SourceName>,
     public: bool,
 ) -> Result<(), ComponentProjectionError> {
     let component = component.ok_or_else(|| {
@@ -307,7 +307,7 @@ pub(super) fn insert_expected_operation(
         )
     })?;
     let operation =
-        wamn_compiler::manifest::canonical_operation_identity(&manifest.package, local_operation)
+        wamn_catalog::manifest::canonical_operation_identity(&manifest.package, local_operation)
             .map_err(|error| {
             ComponentProjectionError::new(
                 ComponentProjectionErrorType::StatementOperationMismatch,

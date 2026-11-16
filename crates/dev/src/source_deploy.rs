@@ -6,7 +6,7 @@ use wamn_build::{BuildRequest, build_package};
 
 use anyhow::{Context as _, ensure};
 use wamn_catalog::PackageCoordinate;
-use wamn_compiler::manifest::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 use wamn_compiler::{
     build::{default_output_root, package_output},
     build_record,

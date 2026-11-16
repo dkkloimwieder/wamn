@@ -9,7 +9,7 @@ use plan::{mode_satisfies, refuse};
 use std::collections::BTreeMap;
 use std::fmt;
 
-use wamn_compiler::manifest::{ConnectionDeclaration, ConnectionMode, PackageManifest};
+use wamn_catalog::manifest::{ConnectionDeclaration, ConnectionMode, PackageManifest};
 
 use super::document::EnvironmentDocument;
 
@@ -228,7 +228,7 @@ mod tests {
     use super::plan::interface_compatible;
     #[test]
     fn a_read_requirement_refuses_a_write_interface() {
-        use wamn_compiler::manifest::ConnectionMode::{Read, Write};
+        use wamn_catalog::manifest::ConnectionMode::{Read, Write};
         let writes = vec!["wamn:modbus/write@1.0.0".to_owned()];
         assert!(!super::mode_satisfies(
             Read,

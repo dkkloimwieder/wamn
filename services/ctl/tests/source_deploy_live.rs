@@ -177,12 +177,12 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure(
     deploy(&a, false, true)?;
     let changed = build_record::read(&output)?;
     assert_ne!(first.package.version, changed.package.version);
-    let source = wamn_compiler::manifest::PackageManifest::from_slice(
+    let source = wamn_catalog::manifest::PackageManifest::from_slice(
         &wamn_compiler::compile_manifest(&a)?,
     )?;
     assert_eq!(
         source.package.version,
-        wamn_compiler::manifest::PackageManifest::from_slice(&authored)?
+        wamn_catalog::manifest::PackageManifest::from_slice(&authored)?
             .package
             .version,
     );

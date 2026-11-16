@@ -6,13 +6,13 @@ use wamn_scalar::SqlValueType;
 use super::typed_exports::{emit_error_mapper, emit_export_adapter, emit_row_adapter};
 use super::{BTreeMap, Column, insert_bytes};
 use crate::client_ir::FieldIr;
-use crate::manifest::{
+use wamn_catalog::manifest::{
     AccessOperationErrorLiteral, ContractFieldDeclaration, CrudAction, CustomOperationDeclaration,
     OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest, ResultClass,
     binding_identifier, rust_identifier, rust_type_identifier,
 };
-use crate::manifest::{FilterMatch, OperationErrorDetailKey, authored_name};
-use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_catalog::manifest::{FilterMatch, OperationErrorDetailKey, authored_name};
+use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 pub(super) const CRUD_REQUEST_ELEMENTS_MINIMUM: u32 = 1;
 pub(super) const CRUD_REQUEST_ELEMENTS_MAXIMUM: u32 = 100;
@@ -258,7 +258,7 @@ fn emit_crud_result(
     name: &str,
     action: CrudAction,
     fields: &[ContractFieldDeclaration],
-    class: crate::manifest::ResultClass,
+    class: wamn_catalog::manifest::ResultClass,
 ) {
     writeln!(source, "  record {name}-row {{").expect("writing to a String cannot fail");
     for column in fields {
@@ -271,15 +271,15 @@ fn emit_crud_result(
     }
     source.push_str("  }\n\n");
     let carrier = match class {
-        crate::manifest::ResultClass::One => format!("{name}-row"),
-        crate::manifest::ResultClass::OptionalOne => format!("option<{name}-row>"),
-        crate::manifest::ResultClass::BoundedList | crate::manifest::ResultClass::Page => {
+        wamn_catalog::manifest::ResultClass::One => format!("{name}-row"),
+        wamn_catalog::manifest::ResultClass::OptionalOne => format!("option<{name}-row>"),
+        wamn_catalog::manifest::ResultClass::BoundedList | wamn_catalog::manifest::ResultClass::Page => {
             format!("list<{name}-row>")
         }
     };
     writeln!(source, "  record {name}-result {{\n    value: {carrier},")
         .expect("writing to a String cannot fail");
-    if action == CrudAction::Query && class == crate::manifest::ResultClass::Page {
+    if action == CrudAction::Query && class == wamn_catalog::manifest::ResultClass::Page {
         source.push_str("    next-cursor: option<string>,\n");
     }
     source.push_str("  }\n\n");
@@ -775,7 +775,7 @@ fn crud_is_keyed(action: CrudAction) -> bool {
 /// Whether the request elements of a custom operation carry a `request_id`: every type
 /// but a projection, which is a read.
 fn custom_is_keyed(operation: &CustomOperationDeclaration) -> bool {
-    operation.type_ != crate::manifest::CustomOperationType::Projection
+    operation.type_ != wamn_catalog::manifest::CustomOperationType::Projection
 }
 
 /// The WIT field that keys a request element or an outcome, or nothing for a read.
@@ -895,7 +895,7 @@ fn emit_forwarding_interface(
     version: &wamn_catalog::package_version::PackageVersion,
     group: &str,
     local_name: &str,
-    dependency: &crate::manifest::BaseDependencyRequirement,
+    dependency: &wamn_catalog::manifest::BaseDependencyRequirement,
     _operation: &CustomOperationDeclaration,
 ) -> String {
     let dependency_package = dependency.package.as_str().replace('_', "-");

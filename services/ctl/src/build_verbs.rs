@@ -56,7 +56,7 @@ pub enum EjectTarget {
     /// Copy a browser component to an authored file for composition.
     Component {
         package: PathBuf,
-        name: wamn_compiler::source_name::SourceName,
+        name: wamn_catalog::manifest::source_name::SourceName,
         output: PathBuf,
     },
 }

@@ -23,14 +23,14 @@ use wamn_schema_introspection::ir::{
     CatalogIr, Column, Constraint, ConstraintType, Exclusion, ForeignKeyAction, Table,
 };
 
-use crate::manifest::{
+use wamn_catalog::manifest::{
     AccessOperationErrorLiteral, CrudAction, CursorDirection, CustomOperationDeclaration,
     DeleteMode, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
     PackageManifest, RecordHistoryColumn, StaticSqlFetch, TombstoneColumn,
 };
 use crate::sql;
 use crate::sql_analysis::contains_schema_qualified_reference;
-use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
@@ -250,7 +250,7 @@ pub(crate) fn derive_model(
     bases: &[PackageManifest],
 ) -> Result<(), GenerateError> {
     manifest.refuse_authored_stamps()?;
-    crate::manifest::validate_operation_vocabulary(manifest)?;
+    wamn_catalog::manifest::validate_operation_vocabulary(manifest)?;
     crate::inheritance::inherit_model_fields(manifest, bases)?;
     validation::validate_authored_sources(manifest, authored_sql)?;
     let mut relations = BTreeMap::new();
@@ -299,10 +299,10 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
 #[derive(Debug)]
 pub(crate) struct SqlCorpus {
     pub(crate) statements: BTreeMap<String, Vec<u8>>,
-    model_paths: BTreeMap<crate::source_name::SourceName, BTreeMap<String, Vec<String>>>,
+    model_paths: BTreeMap<wamn_catalog::manifest::source_name::SourceName, BTreeMap<String, Vec<String>>>,
     custom_operations: BTreeMap<
         wamn_catalog::local_operation::LocalOperation,
-        crate::manifest::CustomOperationDeclaration,
+        wamn_catalog::manifest::CustomOperationDeclaration,
     >,
 }
 
@@ -571,7 +571,7 @@ fn operation_error_details(
     operation: &OperationDeclaration,
     model: &ModelDeclaration,
 ) -> BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration> {
-    use crate::manifest::AccessOperationErrorLiteral as Code;
+    use wamn_catalog::manifest::AccessOperationErrorLiteral as Code;
 
     let mut codes = BTreeSet::from([
         Code::InvalidInput,
@@ -608,7 +608,7 @@ fn operation_error_details(
         .map(|code| {
             (
                 code,
-                crate::manifest::access_operation_error_detail(action, code),
+                wamn_catalog::manifest::access_operation_error_detail(action, code),
             )
         })
         .collect()
@@ -888,7 +888,7 @@ fn complete_enum_fields(
 /// authored list equal to the CHECK's set is the derived set stated again, and
 /// one that names a value outside it widens it: both refuse.
 fn model_enum_fields(
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<BTreeMap<String, Vec<String>>, GenerateError> {
@@ -1128,13 +1128,13 @@ fn omission_refused(column: &Column) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{Column, Constraint, Table, model_enum_fields};
-    use crate::ManifestErrorType as GenerateErrorType;
-    use crate::manifest::ModelDeclaration;
+    use wamn_catalog::manifest::ManifestErrorType as GenerateErrorType;
+    use wamn_catalog::manifest::ModelDeclaration;
     use wamn_scalar::SqlValueType;
 
     #[test]
     fn derivation_inherits_fields_from_the_resolved_base() {
-        use crate::manifest::{FieldRole, PackageManifest};
+        use wamn_catalog::manifest::{FieldRole, PackageManifest};
         let base: PackageManifest = serde_json::from_value(serde_json::json!({
             "package": {"id": "base", "version": "1.0.0"},
             "required_platform_policy_contract": {"id": "base_access", "state": "satisfied"},

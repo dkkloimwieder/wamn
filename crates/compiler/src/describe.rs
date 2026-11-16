@@ -107,7 +107,7 @@ pub(crate) fn validate_contract(
     description: &DescribedStatement,
     binds: &[crate::generate::StatementValueContract],
     columns: &[crate::generate::StatementValueContract],
-) -> Result<(), crate::ManifestError> {
+) -> Result<(), wamn_catalog::manifest::ManifestError> {
     let valid = description.parameters.len() == binds.len()
         && description.columns.len() == columns.len()
         && description
@@ -127,8 +127,8 @@ pub(crate) fn validate_contract(
     if valid {
         return Ok(());
     }
-    Err(crate::ManifestError::for_path(
-        crate::ManifestErrorType::InvalidOperation,
+    Err(wamn_catalog::manifest::ManifestError::for_path(
+        wamn_catalog::manifest::ManifestErrorType::InvalidOperation,
         format!(
             "{path}: SQLx description does not fit the accessor's parameters and selected columns"
         ),

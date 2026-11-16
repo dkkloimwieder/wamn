@@ -136,7 +136,7 @@ pub struct Analysis {
     pub notices: Vec<Notice>,
     pub actor: String,
     pub plan: Vec<String>,
-    pub packages: Vec<wamn_compiler::manifest::PackageManifest>,
+    pub packages: Vec<wamn_catalog::manifest::PackageManifest>,
 }
 
 /// Evidence that does not prevent application activation.

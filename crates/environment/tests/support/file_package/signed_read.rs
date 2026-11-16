@@ -67,7 +67,7 @@ pub(super) fn signed_read_fixture(
             false,
         )])),
     ))?;
-    let mut manifest = wamn_compiler::manifest::PackageManifest::from_slice(&manifest)?;
+    let mut manifest = wamn_catalog::manifest::PackageManifest::from_slice(&manifest)?;
     manifest.compiled_operations = generated.operations().clone();
     std::fs::write(
         package.join("generated/wamn.json"),

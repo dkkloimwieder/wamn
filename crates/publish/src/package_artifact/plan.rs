@@ -5,7 +5,7 @@ use super::{
 use anyhow::Context as _;
 
 pub(crate) fn component_connection_names<'a>(
-    manifest: &'a wamn_compiler::manifest::PackageManifest,
+    manifest: &'a wamn_catalog::manifest::PackageManifest,
     component: &wamn_catalog::canonical_name::CanonicalName,
 ) -> anyhow::Result<&'a [wamn_catalog::canonical_name::CanonicalName]> {
     manifest
@@ -51,7 +51,7 @@ pub(super) fn package_coordinate(
     wamn_catalog::PackageName,
     wamn_catalog::package_version::PackageVersion,
 )> {
-    let document: wamn_compiler::manifest::OperationOwners = serde_json::from_slice(manifest)?;
+    let document: wamn_catalog::manifest::OperationOwners = serde_json::from_slice(manifest)?;
     Ok((document.package.id, document.package.version))
 }
 
