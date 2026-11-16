@@ -711,6 +711,47 @@ mod tests {
         );
     }
     #[test]
+    fn publication_allows_sample_errors_but_refuses_an_output_outside_the_schema() {
+        let export = "wamn:node/handler@0.1.0".parse().unwrap();
+        let mut jsonata = component("jsonata", &export, "input", json!({}), "main", json!({}));
+        jsonata.target = crate::palette_target(&jsonata.target.project_env_key);
+        operation_mut(&mut jsonata, &export).parameters =
+            ["expression", "input-schema", "output-schema"]
+                .into_iter()
+                .map(|name| AdmittedComponentParameter {
+                    name: name.parse().unwrap(),
+                    schema: schema(if name == "expression" {
+                        json!({"type": "string"})
+                    } else {
+                        json!({})
+                    }),
+                    required: true,
+                })
+                .collect();
+        let mut document = WiringDocument::parse(&json!({
+            "format-version": "0.1", "wiring-id": "sample-errors", "version": 1, "entry": "map",
+            "nodes": {"map": {"component": "jsonata", "interface-version": "0.1.0",
+                "operation": "wamn:node/handler@0.1.0", "params": {
+                    "input-schema": {"type": "boolean"},
+                    "expression": "($assert($); 42)", "output-schema": {"type": "integer"}
+                }}}, "edges": []
+        }))
+        .unwrap();
+        let components = BTreeMap::from([("map".parse().unwrap(), jsonata)]);
+        validate_resolved_wiring_compatibility(&document, &components).unwrap();
+        document.nodes.get_mut("map").unwrap().params.insert(
+            "expression".parse().unwrap(),
+            json!("($assert($); \"text\")"),
+        );
+        assert_eq!(
+            validate_resolved_wiring_compatibility(&document, &components)
+                .unwrap_err()
+                .error_type(),
+            WiringCompatibilityErrorType::JsonataSample
+        );
+    }
+
+    #[test]
     fn publication_checks_the_declared_jsonata_input_and_output_schemas() {
         let mut jsonata = component(
             "jsonata",
