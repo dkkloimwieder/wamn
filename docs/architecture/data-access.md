@@ -1266,7 +1266,7 @@ Test database isolation has one definition in [running tests](../operations/runn
 ### Project integrations and credentials
 
 Connection readers belong to a project deployment, not to the process.
-The invocation record selects that reader and its immutable loaded release.
+The invocation record in `wamn-connections` selects that reader and its immutable loaded release.
 The host refuses a project or digest mismatch before it resolves a connection binding.
 Credential generations and revocation still apply to every call and open blob handle.
 Several loaded releases of one project share its reader, while each release retains its own binding facts.

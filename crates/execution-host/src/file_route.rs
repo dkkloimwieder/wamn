@@ -380,7 +380,7 @@ struct UploadQuery {
 /// File handlers of one released application environment.
 pub struct FileRoutes {
     pub(crate) release: Arc<LoadedRelease>,
-    pub(crate) context: Arc<wamn_sql::invocation::ReleaseContext>,
+    pub(crate) context: Arc<wamn_connections::invocation::ReleaseContext>,
     pub(crate) postgres: Arc<WamnPostgres>,
     pub(crate) blobstore: Arc<WamnBlobstore>,
     pub(crate) connections: Arc<dyn FileConnections>,
@@ -399,7 +399,7 @@ impl fmt::Debug for FileRoutes {
 /// A session advisory lock holds no database transaction during object I/O.
 impl FileRoutes {
     pub fn new(
-        context: Arc<wamn_sql::invocation::ReleaseContext>,
+        context: Arc<wamn_connections::invocation::ReleaseContext>,
         postgres: Arc<WamnPostgres>,
         blobstore: Arc<WamnBlobstore>,
         connections: Arc<dyn FileConnections>,
@@ -719,7 +719,7 @@ impl FileRoutes {
             .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
         if !matches!(
             invocation.closure,
-            wamn_authority::connection::ConnectionExecutionClosure::Released
+            wamn_connections::connection::ConnectionExecutionClosure::Released
         ) {
             return Err(refused(FileRefusal::PermissionDenied, "operation"));
         }
@@ -1299,7 +1299,7 @@ mod tests {
         );
         let release = release();
         let context = Arc::new(
-            wamn_sql::invocation::ReleaseContext::new(
+            wamn_connections::invocation::ReleaseContext::new(
                 Arc::clone(&release),
                 Arc::new(ConnectionFacts::new(
                     Arc::new(ConnectionMemory::default()),
@@ -1747,7 +1747,7 @@ mod tests {
     }
     #[tokio::test]
     async fn signed_urls_refuse_an_unregistered_export_before_catalog_access() {
-        use wamn_authority::connection::{
+        use wamn_connections::connection::{
             ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
         };
         let files = files();

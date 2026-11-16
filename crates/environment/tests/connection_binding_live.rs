@@ -411,9 +411,10 @@ fn provision_project_components_for_http_manifest()
 
 #[sqlx::test(migrations = false)]
 async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch(pool: sqlx::PgPool) {
-    use wamn_authority::connection::{
-        ConnectionError, ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
-        InvocationEntry, WiringPosition,
+    use wamn_authority::connection::ConnectionError;
+    use wamn_connections::connection::{
+        ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
+        WiringPosition,
     };
     use wamn_http::{ConnectionHttp, transport::HttpTransport};
     let _lock = wamn_test_postgres::lock();
@@ -671,12 +672,12 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution(pool: sq
         ComponentDescriptor, ConnectionMode, PALETTE_PACKAGE_ID,
     };
 
-    use wamn_authority::connection::{
+    use wamn_authority::identity::CandidateBindingWorld;
+    use wamn_blobstore::binding;
+    use wamn_connections::connection::{
         ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
         WiringPosition,
     };
-    use wamn_authority::identity::CandidateBindingWorld;
-    use wamn_blobstore::binding;
     use wamn_sql::connection_binding::resolve;
     const DIGEST: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
     const OPERATION: &str = "wamn:node/handler@0.1.0";

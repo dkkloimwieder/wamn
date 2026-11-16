@@ -1,6 +1,6 @@
 //! The host-owned lifetime and context of each invocation.
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
@@ -30,7 +30,7 @@ impl InvocationAuthority for ReleaseScope {
 
 struct Record {
     trace: InvocationTrace,
-    authority: Box<dyn InvocationAuthority>,
+    authorities: HashMap<TypeId, Box<dyn InvocationAuthority>>,
     execution: InvocationExecution,
 }
 
@@ -105,7 +105,12 @@ impl InvocationScopes {
             .read()
             .expect("invocation scopes lock poisoned");
         Some(read(
-            (records.get(scope)?.authority.as_ref() as &dyn Any).downcast_ref()?,
+            (records
+                .get(scope)?
+                .authorities
+                .get(&TypeId::of::<T>())?
+                .as_ref() as &dyn Any)
+                .downcast_ref()?,
         ))
     }
 
@@ -116,8 +121,10 @@ impl InvocationScopes {
             .expect("invocation scopes lock poisoned")
             .values()
             .any(|record| {
-                (record.authority.as_ref() as &dyn Any)
-                    .downcast_ref::<T>()
+                record
+                    .authorities
+                    .get(&TypeId::of::<T>())
+                    .and_then(|authority| (authority.as_ref() as &dyn Any).downcast_ref::<T>())
                     .is_some_and(&predicate)
             })
     }
@@ -134,11 +141,15 @@ impl InvocationScopes {
             .expect("invocation scopes lock poisoned");
         let record = records.entry(scope.to_owned()).or_insert_with(|| Record {
             trace: InvocationTrace::capture(),
-            authority: Box::<T>::default(),
+            authorities: HashMap::new(),
             execution: InvocationExecution::default(),
         });
         update(
-            (record.authority.as_mut() as &mut dyn Any)
+            (record
+                .authorities
+                .entry(TypeId::of::<T>())
+                .or_insert_with(|| Box::<T>::default())
+                .as_mut() as &mut dyn Any)
                 .downcast_mut()
                 .expect("scope authority type differs"),
         )
@@ -154,15 +165,20 @@ impl InvocationScopes {
             .write()
             .expect("invocation scopes lock poisoned");
         Some(update(
-            (records.get_mut(scope)?.authority.as_mut() as &mut dyn Any).downcast_mut()?,
+            (records
+                .get_mut(scope)?
+                .authorities
+                .get_mut(&TypeId::of::<T>())?
+                .as_mut() as &mut dyn Any)
+                .downcast_mut()?,
         ))
     }
 
     /// Install an admitted invocation atomically and return its lifetime owner.
-    pub fn enter<T: InvocationAuthority>(
+    pub fn enter(
         self: &Arc<Self>,
         scope: String,
-        authority: T,
+        authorities: impl IntoIterator<Item = Box<dyn InvocationAuthority>>,
         trace: InvocationTrace,
     ) -> anyhow::Result<ScopeLifetime> {
         let mut records = self
@@ -177,7 +193,10 @@ impl InvocationScopes {
             scope.clone(),
             Record {
                 trace,
-                authority: Box::new(authority),
+                authorities: authorities
+                    .into_iter()
+                    .map(|authority| ((authority.as_ref() as &dyn Any).type_id(), authority))
+                    .collect(),
                 execution: InvocationExecution::default(),
             },
         );
@@ -193,7 +212,11 @@ impl InvocationScopes {
         scope: String,
         trace: InvocationTrace,
     ) -> anyhow::Result<ScopeLifetime> {
-        self.enter(scope, ReleaseScope::default(), trace)
+        self.enter(
+            scope,
+            [Box::new(ReleaseScope::default()) as Box<dyn InvocationAuthority>],
+            trace,
+        )
     }
 
     /// Bind a release for a workload that supplies no other service authority.
@@ -207,8 +230,9 @@ impl InvocationScopes {
             .read()
             .expect("invocation scopes lock poisoned")
             .get(scope)?
-            .authority
-            .release()
+            .authorities
+            .values()
+            .find_map(|authority| authority.release())
     }
 
     /// Record the execution span once native initialization completes.
@@ -333,7 +357,7 @@ mod tests {
         let lifetime = scopes
             .enter(
                 "request".to_owned(),
-                ReleaseScope::default(),
+                [Box::new(ReleaseScope::default()) as Box<dyn InvocationAuthority>],
                 InvocationTrace::capture(),
             )
             .unwrap();

@@ -31,12 +31,12 @@ pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 /// Host services bound by the host invocation policy.
 pub(super) struct NativePolicyResources {
     pub(super) files: Option<Arc<crate::file_route::FileRoutes>>,
-    pub(super) integrations: Option<Arc<wamn_integrations::Integrations>>,
+    pub(super) integrations: Option<Arc<wamn_connections::integrations::Integrations>>,
     pub(super) postgres: Arc<WamnPostgres>,
     pub(super) logging: Arc<TracingLogger>,
     pub(super) connection_http: Arc<ConnectionHttp>,
     pub(super) blobstore: Arc<WamnBlobstore>,
-    pub(super) context: Arc<wamn_sql::invocation::ReleaseContext>,
+    pub(super) context: Arc<wamn_connections::invocation::ReleaseContext>,
     pub(super) release: Arc<LoadedRelease>,
     pub(super) project: String,
 }
@@ -270,7 +270,7 @@ impl InvocationPolicy for NativePolicy {
         }
         let application = match component.application.as_ref() {
             Some(application) => application,
-            None => wamn_authority::connection::released_invocation_application(
+            None => wamn_connections::connection::released_invocation_application(
                 self.resources.release.manifest(),
                 self.resources.release.target(),
                 &facts.acquisition.invocation,
@@ -395,7 +395,7 @@ impl InvocationPolicy for NativePolicy {
         // HTTP borrows the transaction that its entry already opened.
         if !matches!(
             request.facts.acquisition.invocation.entry,
-            wamn_authority::connection::InvocationEntry::Wiring(_)
+            wamn_connections::connection::InvocationEntry::Wiring(_)
         ) {
             return super::native_call::invoke_raw(target, request).await;
         }

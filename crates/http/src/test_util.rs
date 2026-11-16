@@ -11,15 +11,15 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use wamn_authority::connection::{
-    ConnectionError, ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
-    InvocationEntry,
-};
+use wamn_authority::connection::ConnectionError;
 use wamn_authority::identity::ConnectionEffectSnapshot;
 use wamn_broker::Publisher;
 use wamn_catalog::{
     AdmittedComponentOperation, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
     ServingComponent, ServingManifest, ServingRelease, ServingRoute,
+};
+use wamn_connections::connection::{
+    ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
 };
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_connections::connection_memory::ConnectionMemory;
@@ -48,8 +48,8 @@ pub fn invocation() -> ConnectionInvocation {
             interface_version: "0.1".to_string(),
             operation: "orders:notify/dispatch@1.0.0".to_string(),
         },
-        entry: wamn_authority::connection::InvocationEntry::Wiring(
-            wamn_authority::connection::WiringPosition {
+        entry: wamn_connections::connection::InvocationEntry::Wiring(
+            wamn_connections::connection::WiringPosition {
                 application: "package_a".parse().unwrap(),
                 wiring_hash: fixture_wiring_hash(),
                 wiring_id: "orders".to_string(),

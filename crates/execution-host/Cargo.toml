@@ -9,7 +9,6 @@ license.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-number-pattern.workspace = true
 wamn-events.workspace = true
-wamn-integrations.workspace = true
 moka = { workspace = true, features = ["sync"] }
 oci-client.workspace = true
 wamn-package-artifact.workspace = true

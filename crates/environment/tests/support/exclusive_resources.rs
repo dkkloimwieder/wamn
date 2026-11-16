@@ -295,7 +295,7 @@ impl Fixture {
         let integrations = Integrations::new(
             Arc::clone(&facts),
             &self.release,
-            &self.postgres,
+            self.postgres.as_ref(),
             "one",
             self.registry.clone(),
             self.registry_credentials.clone(),
@@ -306,7 +306,7 @@ impl Fixture {
         let writer = Integrations::new(
             facts,
             &writer_release,
-            &self.postgres,
+            self.postgres.as_ref(),
             "one",
             self.registry.clone(),
             self.registry_credentials.clone(),

@@ -14,7 +14,7 @@ use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, Operation
 use wamn_http::transport::HttpTransport;
 use wamn_publish::component_admission::ComponentAdmission;
 
-use wamn_authority::connection::{ConnectionExecutionClosure, InvocationEntry, WiringPosition};
+use wamn_connections::connection::{ConnectionExecutionClosure, InvocationEntry, WiringPosition};
 use wamn_sql::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };

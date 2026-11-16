@@ -443,13 +443,16 @@ Text fields keep the WIT `string` type.
 The converter derives deletion markers from absent change data. It omits that data from a deleted row.
 A refusal without details returns an empty object. Absent optional refusal details stay omitted.
 Private modules in `wamn-workflow` own deterministic graph decisions.
-Before execution, the host admits one invocation record with caller, SQL, identity, causation, effect authority and trace context.
-PostgreSQL, HTTP and storage read that record from one registry.
+Before execution, the host binds each invocation in one registry with a shared lifetime and trace context.
+`wamn-sql` owns identity, causation, the transaction and the WAL position.
+`wamn-connections` owns the release context and the attested connection invocation.
+SQL binding makes sure that the release and identity match before execution.
+HTTP, storage and integration dispatch read the connections record from the same registry.
 Guest logs use wash-runtime's `TracingLogger` and the host tracing exporter.
 Guest context stays a plain attribute.
 The host's native logging callback enters the invocation span stored in the active scope before it emits each record.
-The record retains signing authority through commit and replay.
-Cancellation or shutdown revokes the record. Normal completion releases it after result signing.
+The scope retains signing authority through commit and replay.
+Cancellation or shutdown revokes both records. Normal completion releases them after result signing.
 The [queue](../../crates/workflow/src/queue.rs) in `wamn-workflow` drives delivery.
 `wamn-run-state` owns admission, leases, settlement and pruning as functions over an authorized connection.
 `WamnPostgres` authorizes the connection and commits or rolls back each transaction.
@@ -869,7 +872,7 @@ The active connection fact supplies the credential id and service principal.
 The host resolves the secret under that credential id.
 
 The [engine](../../crates/engine/src/integration.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
-The [dispatch](../../crates/integrations/src/lib.rs) links an instance per (connection id, generation, credential id) from that compiled component.
+The [connections dispatch](../../crates/connections/src/integrations.rs) links an instance per (connection id, generation, credential id) from that compiled component.
 Typed integration imports use labels, the connection names that code declares.
 The host resolves each label by its component digest, package, and name.
 HTTP and blobstore share one authority resolver.

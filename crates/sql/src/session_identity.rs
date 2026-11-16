@@ -13,12 +13,12 @@ use wamn_event_wire::Causation;
 use wamn_identity_protocol::AuthorityClass;
 use wamn_registry::identifiers::valid_project;
 
-use wamn_authority::connection::ConnectionInvocation;
 #[cfg(test)]
 use wamn_authority::identity::CandidateBindingWorld;
 use wamn_authority::identity::{
     ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, SessionIdentity,
 };
+use wamn_connections::connection::ConnectionInvocation;
 
 use super::pool::{
     ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool,
@@ -615,27 +615,28 @@ impl WamnPostgres {
         invocation: ConnectionInvocation,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(!component_id.is_empty(), "component id must be present");
-        crate::invocation::validate_invocation(&invocation)?;
-        self.scopes.update::<Authority, _>(component_id, |record| {
-            anyhow::ensure!(record.invocation.is_none(), "invocation is already bound");
-            record.invocation = Some(invocation);
-            Ok(())
-        })
+        wamn_connections::invocation::validate_invocation(&invocation)?;
+        self.scopes
+            .update::<wamn_connections::invocation::Scope, _>(component_id, |record| {
+                anyhow::ensure!(record.invocation.is_none(), "invocation is already bound");
+                record.invocation = Some(invocation);
+                Ok(())
+            })
     }
 
     /// Release the invocation when the instance returns to the pool.
     #[cfg(any(test, feature = "test-util"))]
     pub fn revoke_invocation(&self, component_id: &str) {
         self.scopes
-            .update_existing::<Authority, _>(component_id, |record| record.invocation = None);
+            .update_existing::<wamn_connections::invocation::Scope, _>(component_id, |record| {
+                record.invocation = None
+            });
     }
 
     /// The invocation currently bound to one pooled instance.
     #[must_use]
     pub fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
-        self.scopes
-            .read::<Authority, _>(component_id, |record| record.invocation.clone())
-            .flatten()
+        wamn_connections::invocation::invocation(&self.scopes, component_id)
     }
 
     /// Bind workload identity and verify that its executing principal is provisioned.
@@ -685,6 +686,15 @@ impl WamnPostgres {
         identity: &SessionIdentity,
     ) -> anyhow::Result<()> {
         validate_identity(identity)?;
+        self.scopes
+            .read::<wamn_connections::invocation::Scope, _>(component_id, |record| {
+                record
+                    .context
+                    .as_ref()
+                    .map(|context| crate::invocation::validate_context(identity, context))
+                    .transpose()
+            })
+            .transpose()?;
         self.scopes.update::<Authority, _>(component_id, |record| {
             record.identity = identity.clone();
             record.causation = None;
@@ -823,7 +833,7 @@ impl WamnPostgres {
             .invocation(component_id)
             .context("no admitted connection invocation")?;
         let manifest = loaded.manifest();
-        let application = wamn_authority::connection::released_invocation_application(
+        let application = wamn_connections::connection::released_invocation_application(
             manifest,
             loaded.target(),
             &invocation,
@@ -846,11 +856,11 @@ impl WamnPostgres {
             .context("release does not carry the executing operation")?;
         let entry_matches = match (&invocation.entry, lookup.entry) {
             (
-                wamn_authority::connection::InvocationEntry::Route,
+                wamn_connections::connection::InvocationEntry::Route,
                 wamn_authority::identity::ConnectionEntryLookup::Route { package_id },
             ) => package_id == &invocation.origin.package_id,
             (
-                wamn_authority::connection::InvocationEntry::Wiring(position),
+                wamn_connections::connection::InvocationEntry::Wiring(position),
                 wamn_authority::identity::ConnectionEntryLookup::Wiring {
                     application,
                     wiring,

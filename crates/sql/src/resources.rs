@@ -219,7 +219,7 @@ pub(super) fn db_span_for_project(
         &span,
         invocation
             .as_ref()
-            .map(wamn_authority::connection::ConnectionInvocation::effect_wiring),
+            .map(wamn_connections::connection::ConnectionInvocation::effect_wiring),
     );
     span
 }

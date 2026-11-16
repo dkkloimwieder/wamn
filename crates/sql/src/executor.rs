@@ -163,13 +163,14 @@ impl wamn_connections::database::ProjectDatabase for WamnPostgres {
 impl WamnPostgres {
     /// Whether a released invocation still retains this deployment.
     pub fn release_in_use(&self, release: &wamn_engine::release_manifest::LoadedRelease) -> bool {
-        self.scopes.any::<crate::invocation::Authority>(|record| {
-            record.invocation.is_some()
-                && record
-                    .context
-                    .as_ref()
-                    .is_some_and(|context| std::ptr::eq(context.release.as_ref(), release))
-        })
+        self.scopes
+            .any::<wamn_connections::invocation::Scope>(|record| {
+                record.invocation.is_some()
+                    && record
+                        .context
+                        .as_ref()
+                        .is_some_and(|context| std::ptr::eq(context.release.as_ref(), release))
+            })
     }
 }
 

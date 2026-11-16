@@ -18,16 +18,19 @@ use anyhow::Context as _;
 
 use tracing::Instrument as _;
 use wamn_authority::EffectOutcome;
+use wamn_authority::connection::authorize_snapshot;
 #[cfg(test)]
-use wamn_authority::connection::{
-    ConnectionExecutionClosure, InvocationEntry, authorize_candidate_closure,
-    authorize_release_closure, entry_lookup, test_release,
-};
-use wamn_authority::connection::{ConnectionInvocation, authorize_snapshot};
+use wamn_authority::connection::test_release;
 #[cfg(test)]
 use wamn_authority::identity::{CandidateBindingWorld, ConnectionEffectSnapshot};
 use wamn_authority::normalize_portable_http_target;
 use wamn_catalog::ConnectionTypeDescriptor;
+use wamn_connections::connection::ConnectionInvocation;
+#[cfg(test)]
+use wamn_connections::connection::{
+    ConnectionExecutionClosure, InvocationEntry, authorize_candidate_closure,
+    authorize_release_closure, entry_lookup,
+};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
@@ -124,7 +127,7 @@ impl ConnectionHttp {
     }
 
     fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
-        self.postgres.invocation(component_id)
+        wamn_connections::invocation::invocation(&self.postgres.scopes, component_id)
     }
 
     /// Exercise the host dispatch path without constructing a component store.
@@ -198,7 +201,7 @@ impl ConnectionHttp {
         component_id: &str,
         request: &Request,
     ) -> Result<Response, ConnectionError> {
-        let context = wamn_sql::invocation::context(&self.postgres.scopes, component_id)
+        let context = wamn_connections::invocation::context(&self.postgres.scopes, component_id)
             .map_err(|_| ConnectionError::AttestationInvalid)?;
         let facts = &context.connections;
         let oauth2_cache = facts.oauth_tokens();
@@ -255,7 +258,7 @@ impl ConnectionHttp {
 
     async fn attempt(
         &self,
-        context: &wamn_sql::invocation::ReleaseContext,
+        context: &wamn_connections::invocation::ReleaseContext,
         component_id: &str,
         request: &Request,
         rejected: Option<&str>,

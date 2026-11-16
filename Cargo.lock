@@ -5729,6 +5729,7 @@ dependencies = [
  "hyper",
  "moka",
  "object_store",
+ "oci-client",
  "ring",
  "serde",
  "serde_json",
@@ -5745,6 +5746,7 @@ dependencies = [
  "wamn-connections",
  "wamn-control-provision",
  "wamn-digest",
+ "wamn-engine",
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-package-artifact",
@@ -5754,6 +5756,8 @@ dependencies = [
  "wamn-run-state",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
+ "wash-runtime",
+ "wasmtime",
  "wat",
  "zeroize",
 ]
@@ -6038,7 +6042,6 @@ dependencies = [
  "wamn-http",
  "wamn-identity-client",
  "wamn-identity-protocol",
- "wamn-integrations",
  "wamn-kubernetes",
  "wamn-package-artifact",
  "wamn-platform-identity",
@@ -6163,7 +6166,6 @@ dependencies = [
  "wamn-identity",
  "wamn-identity-client",
  "wamn-identity-protocol",
- "wamn-integrations",
  "wamn-kubernetes",
  "wamn-number-pattern",
  "wamn-package-artifact",
@@ -6228,7 +6230,6 @@ dependencies = [
  "wamn-execution-host",
  "wamn-http",
  "wamn-identity-protocol",
- "wamn-integrations",
  "wamn-kubernetes",
  "wamn-package-artifact",
  "wamn-postgres",
@@ -6372,28 +6373,6 @@ dependencies = [
  "wamn-digest",
  "wamn-identity-protocol",
  "zeroize",
-]
-
-[[package]]
-name = "wamn-integrations"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "moka",
- "oci-client",
- "sqlx",
- "tokio",
- "tracing",
- "uuid",
- "wamn-catalog",
- "wamn-connections",
- "wamn-digest",
- "wamn-engine",
- "wamn-package-artifact",
- "wamn-sql",
- "wash-runtime",
- "wasmtime",
 ]
 
 [[package]]

@@ -3,7 +3,7 @@ use super::super::pool::ResolvedCredential;
 use super::*;
 use std::collections::BTreeSet;
 
-use wamn_authority::connection::{ConnectionExecutionClosure, ConnectionOrigin};
+use wamn_connections::connection::{ConnectionExecutionClosure, ConnectionOrigin};
 
 fn candidate_binding(component: u8, alias: &str) -> serde_json::Value {
     serde_json::json!({
@@ -261,8 +261,8 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
             interface_version: "0.1.0".to_string(),
             operation: "platform-fixture:widget/update@1.0.0".to_string(),
         },
-        entry: wamn_authority::connection::InvocationEntry::Wiring(
-            wamn_authority::connection::WiringPosition {
+        entry: wamn_connections::connection::InvocationEntry::Wiring(
+            wamn_connections::connection::WiringPosition {
                 configuration: Default::default(),
                 application: "package_a".parse().unwrap(),
                 wiring_hash: format!("sha256:{}", "a".repeat(64))
@@ -302,7 +302,7 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
             project,
             &"dev".parse().unwrap(),
         ));
-        Arc::new(crate::invocation::ReleaseContext::new(release, facts).unwrap())
+        Arc::new(wamn_connections::invocation::ReleaseContext::new(release, facts).unwrap())
     };
     let first_project = deployment(&"test--dev--fixture".parse().unwrap(), "fixture");
     let second_project = deployment(&"test--dev--other".parse().unwrap(), "other");
@@ -334,13 +334,13 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     other.identity.project = Some("other".to_owned());
     let second = AuthorizedInvocation::enter(&pg, other).await.unwrap();
     assert!(Arc::ptr_eq(
-        &crate::invocation::context(&pg.scopes, "c1")
+        &wamn_connections::invocation::context(&pg.scopes, "c1")
             .unwrap()
             .connections,
         &first_project.connections
     ));
     assert!(Arc::ptr_eq(
-        &crate::invocation::context(&pg.scopes, "c2")
+        &wamn_connections::invocation::context(&pg.scopes, "c2")
             .unwrap()
             .connections,
         &second_project.connections
@@ -355,7 +355,7 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     assert!(pg.session_identity("c1").is_none());
     assert!(pg.invocation("c1").is_none());
     assert!(pg.scopes.release("c1").is_none());
-    assert!(crate::invocation::context(&pg.scopes, "c1").is_err());
+    assert!(wamn_connections::invocation::context(&pg.scopes, "c1").is_err());
     assert!(pg.invocation("c2").is_some());
     drop(second);
     assert!(pg.scopes.is_empty());

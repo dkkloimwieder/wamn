@@ -59,8 +59,7 @@ Each library has one concern. Package names remain independent of directory name
 | `crates/postgres` | `wamn-postgres`: PostgreSQL connection configuration and transport |
 | `crates/sql` | `wamn-sql`: host operation transactions and database authority |
 | `crates/http` | `wamn-http`: authorized outbound HTTP and OAuth |
-| `crates/connections` | `wamn-connections`: connection facts, credentials, and resource leases |
-| `crates/integrations` | `wamn-integrations`: bound Wasm import dispatch |
+| `crates/connections` | `wamn-connections`: connection facts, credentials, resource leases, invocation context, and bound Wasm import dispatch |
 | `crates/blobstore` | `wamn-blobstore`: authorized object storage |
 | `crates/authentication` | `wamn-authentication`: route authentication and session verification |
 | `crates/identity` | `wamn-platform-identity`: identity authority and its SQL |

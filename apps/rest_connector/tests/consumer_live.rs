@@ -495,7 +495,9 @@ pub async fn invoke(
     use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
     use wamn_http::transport::HttpTransport;
 
-    use wamn_authority::connection::{ConnectionExecutionClosure, InvocationEntry, WiringPosition};
+    use wamn_connections::connection::{
+        ConnectionExecutionClosure, InvocationEntry, WiringPosition,
+    };
     use wash_runtime::plugin::wasi_logging::TracingLogger;
 
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
