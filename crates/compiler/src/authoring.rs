@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, ensure};
 
-use crate::manifest::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 use crate::output_root;
 
 /// The manifest file an author writes.
@@ -117,7 +117,7 @@ pub(crate) fn compile_authored_manifest(package_root: &Path) -> Result<Vec<u8>> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::CustomOperationResultDeclaration;
+    use wamn_catalog::manifest::CustomOperationResultDeclaration;
     use crate::{GenerationInput, StatementTransactionality, generate};
     use wamn_schema_introspection::ir::CatalogIr;
 

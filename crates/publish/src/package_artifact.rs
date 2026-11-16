@@ -45,7 +45,7 @@ use wamn_catalog::{
     ComponentPackageCoordinate, component_artifact_reference,
 };
 use wamn_compiler::AUTHORED_MANIFEST;
-use wamn_compiler::manifest::{PackageManifest, PolicyContractState};
+use wamn_catalog::manifest::{PackageManifest, PolicyContractState};
 use wamn_engine::component_artifact::component_artifact_config_bytes;
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 

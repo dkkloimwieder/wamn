@@ -10,8 +10,8 @@ use wamn_catalog::schema::ForeignKeyColumn;
 use wamn_schema_introspection::ir::{CatalogIr, ConstraintType, Table, View, ViewColumnOrigin};
 
 use crate::AuthoredSql;
-use crate::manifest::{CustomOperationDeclaration, PackageManifest};
-use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_catalog::manifest::{CustomOperationDeclaration, PackageManifest};
+use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 use wamn_catalog::feed::{FeedDirection, FeedLink, FeedSource, FeedTable};
 
@@ -159,7 +159,7 @@ pub(crate) fn derive(
         ));
     }
     if let Some(result) = &operation.result {
-        if result.class != crate::manifest::ResultClass::BoundedList {
+        if result.class != wamn_catalog::manifest::ResultClass::BoundedList {
             return Err(fail("a feeding read needs a bounded_list result"));
         }
         for field in &result.fields {
@@ -839,7 +839,7 @@ mod tests {
             .get_mut("load")
             .unwrap()
             .row
-            .push(crate::manifest::StaticSqlValueDeclaration {
+            .push(wamn_catalog::manifest::StaticSqlValueDeclaration {
                 name: "row_version".parse().unwrap(),
                 ty: wamn_scalar::SqlValueType::Int64,
                 nullable: false,

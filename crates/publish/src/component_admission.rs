@@ -187,7 +187,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
     let package = package_metadata(&directory)
         .context("validate strict package directory before component publication")?;
     let package_manifest =
-        wamn_compiler::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
+        wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
             .context("parse strict package manifest before component publication")?;
     let component_bytes = std::fs::read(&args.component_bytes)
         .with_context(|| format!("read component bytes {}", args.component_bytes.display()))?;
@@ -251,8 +251,8 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
             .get(alias)
             .with_context(|| format!("package declares no connection {alias}"))?;
         connection.mode = match declaration.mode {
-            wamn_compiler::manifest::ConnectionMode::Read => wamn_catalog::ConnectionMode::Read,
-            wamn_compiler::manifest::ConnectionMode::Write => wamn_catalog::ConnectionMode::Write,
+            wamn_catalog::manifest::ConnectionMode::Read => wamn_catalog::ConnectionMode::Read,
+            wamn_catalog::manifest::ConnectionMode::Write => wamn_catalog::ConnectionMode::Write,
         };
     }
     connections.sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
@@ -393,7 +393,7 @@ mod tests {
         document["components"]["secondary"] = serde_json::json!({});
         document["custom_operations"]["audit.observe"]["component"] =
             serde_json::json!("secondary");
-        let manifest: wamn_compiler::manifest::PackageManifest =
+        let manifest: wamn_catalog::manifest::PackageManifest =
             serde_json::from_value(document).expect("two-component manifest parses");
         let operation = "observer-fixture:audit/observe@3.0.0".parse().unwrap();
         let component = AdmittedComponent {
@@ -440,8 +440,8 @@ mod tests {
     fn signed_file_result_metadata_is_bound_from_the_package_only() {
         let mut manifest = overlay_manifest();
         let declaration = manifest.custom_operations.get_mut("audit.observe").unwrap();
-        declaration.type_ = wamn_compiler::manifest::CustomOperationType::Projection;
-        declaration.visibility = wamn_compiler::manifest::OperationVisibility::Public;
+        declaration.type_ = wamn_catalog::manifest::CustomOperationType::Projection;
+        declaration.visibility = wamn_catalog::manifest::OperationVisibility::Public;
         declaration.permission = Some("audit.observe".parse().unwrap());
         declaration
             .errors
@@ -453,7 +453,7 @@ mod tests {
             }))
             .unwrap(),
         );
-        let export = wamn_compiler::manifest::canonical_operation_identity(
+        let export = wamn_catalog::manifest::canonical_operation_identity(
             &manifest.package,
             &"audit.observe".parse().unwrap(),
         )
@@ -504,7 +504,7 @@ mod tests {
         assert!(super::bind_signed_file_results(&mut component, &manifest).is_err());
     }
 
-    fn overlay_manifest() -> wamn_compiler::manifest::PackageManifest {
+    fn overlay_manifest() -> wamn_catalog::manifest::PackageManifest {
         serde_json::from_str(include_str!(
             "../tests/fixtures/observer_package/generated/wamn.json"
         ))
@@ -514,7 +514,7 @@ mod tests {
     /// A component absent from the manifest, exporting one handler and
     /// registering nothing: the palette-node shape.
     fn stranger(
-        manifest: &wamn_compiler::manifest::PackageManifest,
+        manifest: &wamn_catalog::manifest::PackageManifest,
         name: &str,
         registered: Option<&wamn_catalog::registered_operation::RegisteredOperation>,
     ) -> AdmittedComponent {

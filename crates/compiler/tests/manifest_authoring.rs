@@ -98,13 +98,13 @@ manifest.Package {{
 #[test]
 fn feed_and_append_only_declarations_round_trip() {
     let defaults = Package::new(&source("", "")).compile();
-    let parsed = wamn_compiler::manifest::PackageManifest::from_slice(
+    let parsed = wamn_catalog::manifest::PackageManifest::from_slice(
         &serde_json::to_vec(&defaults).unwrap(),
     )
     .unwrap();
     assert!(parsed.models["widget"].feed_enabled());
     assert!(
-        !parsed.models["widget"].operations[&wamn_compiler::manifest::CrudAction::Get].append_only
+        !parsed.models["widget"].operations[&wamn_catalog::manifest::CrudAction::Get].append_only
     );
     assert!(!parsed.custom_operations["widget.archive"].append_only);
 
@@ -113,13 +113,13 @@ fn feed_and_append_only_declarations_round_trip() {
         "            append_only = True",
     ))
     .compile();
-    let parsed = wamn_compiler::manifest::PackageManifest::from_slice(
+    let parsed = wamn_catalog::manifest::PackageManifest::from_slice(
         &serde_json::to_vec(&explicit).unwrap(),
     )
     .unwrap();
     assert!(!parsed.models["widget"].feed_enabled());
     assert!(
-        parsed.models["widget"].operations[&wamn_compiler::manifest::CrudAction::Get].append_only
+        parsed.models["widget"].operations[&wamn_catalog::manifest::CrudAction::Get].append_only
     );
     assert!(parsed.custom_operations["widget.archive"].append_only);
 }
@@ -145,7 +145,7 @@ fn authored_list_feed_declarations_round_trip() {
         );
         let compiled =
             Package::new(&source("", "").replace("    custom_operations = {", &read)).compile();
-        let parsed = wamn_compiler::manifest::PackageManifest::from_slice(
+        let parsed = wamn_catalog::manifest::PackageManifest::from_slice(
             &serde_json::to_vec(&compiled).unwrap(),
         )
         .unwrap();
@@ -270,7 +270,7 @@ fn field_visibility_is_optional_and_boolean_for_models_and_custom_results() {
         compiled["custom_operations"]["widget.archive"]["result"]["fields"][0]["visible"],
         true
     );
-    let typed = wamn_compiler::manifest::PackageManifest::from_slice(
+    let typed = wamn_catalog::manifest::PackageManifest::from_slice(
         &serde_json::to_vec(&compiled).unwrap(),
     )
     .unwrap();

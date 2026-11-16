@@ -18,7 +18,6 @@ anyhow.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 
-wamn-compiler = { workspace = true }
 wamn-digest = { workspace = true, features = ["sqlx"] }
 serde = { workspace = true, features = ["derive"] }
 # The per-project-env credential Secrets render as JSON (kubectl apply accepts

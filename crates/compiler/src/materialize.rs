@@ -10,7 +10,7 @@ use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
 use crate::authoring::package_manifest_path;
-use crate::manifest::{CONTROL_OWNED_RELATION_TABLES, PackageManifest};
+use wamn_catalog::manifest::{CONTROL_OWNED_RELATION_TABLES, PackageManifest};
 use crate::{AuthoredSql, GeneratedPackage};
 
 #[derive(Debug)]
@@ -286,7 +286,7 @@ pub(crate) fn existing_files(root: &Path) -> Result<Vec<PathBuf>> {
 
 pub(crate) fn application_schemas(
     manifest: &PackageManifest,
-) -> Result<Vec<wamn_catalog::canonical_name::CanonicalName>, crate::ManifestError> {
+) -> Result<Vec<wamn_catalog::canonical_name::CanonicalName>, wamn_catalog::manifest::ManifestError> {
     let schemas = manifest
         .models
         .values()
@@ -306,8 +306,8 @@ pub(crate) fn application_schemas(
         return Ok(schemas);
     }
     if schemas.is_empty() {
-        return Err(crate::ManifestError::new(
-            crate::ManifestErrorType::InvalidManifest,
+        return Err(wamn_catalog::manifest::ManifestError::new(
+            wamn_catalog::manifest::ManifestErrorType::InvalidManifest,
             "manifest must name at least one valid application schema",
         ));
     }

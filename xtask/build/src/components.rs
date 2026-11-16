@@ -8,8 +8,8 @@ use tokio::process::Command;
 const COMPILED_MANIFEST_NAME: &str = "wamn.json";
 use crate::{BuildRequest, package_output};
 use wamn_compiler::build_record::{self, BuildComponent, BuildRecord};
-use wamn_compiler::manifest::PackageManifest;
-use wamn_compiler::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_catalog::manifest::PackageManifest;
+use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_digest::bytes_sha256;
 
 /// Where the components lie in a package's build output.
@@ -313,7 +313,7 @@ pub(crate) fn base_components(
 fn component_file(
     output: &Path,
     build_record: &BuildRecord,
-    name: &wamn_compiler::source_name::SourceName,
+    name: &wamn_catalog::manifest::source_name::SourceName,
 ) -> Result<(PathBuf, wamn_digest::Digest)> {
     let entry = build_record
         .outputs

@@ -47,8 +47,8 @@ pub(super) fn validate_request(
 
 /// Derive the one schema that an application's SQL resolves against.
 pub(crate) fn application_runtime_schema(
-    manifest: &wamn_compiler::manifest::PackageManifest,
-    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_compiler::manifest::PackageManifest>,
+    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
     components: &BTreeSet<ServingComponent>,
 ) -> anyhow::Result<Option<String>> {
     let mut members = vec![manifest];
@@ -104,7 +104,7 @@ pub(crate) fn application_runtime_schema(
 
 /// Select applications whose admitted component includes the integration base.
 pub fn composes_integration(
-    manifest: &wamn_compiler::manifest::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     components: &BTreeSet<ServingComponent>,
 ) -> bool {
     manifest.base_dependencies.values().any(|dependency| {
@@ -125,8 +125,8 @@ pub fn composes_integration(
 /// Resolve the declared dependency permissions of an integration application.
 /// Publication resolves them against the released package manifests.
 pub fn application_dependency_permissions(
-    manifest: &wamn_compiler::manifest::PackageManifest,
-    manifests: &BTreeMap<&wamn_catalog::PackageName, &wamn_compiler::manifest::PackageManifest>,
+    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifests: &BTreeMap<&wamn_catalog::PackageName, &wamn_catalog::manifest::PackageManifest>,
 ) -> anyhow::Result<BTreeSet<String>> {
     let mut permissions = BTreeSet::new();
     for dependency in manifest.base_dependencies.values() {
@@ -157,7 +157,7 @@ pub fn application_dependency_permissions(
                     )
                 })?;
             if registered {
-                let canonical = wamn_compiler::manifest::canonical_operation_identity(
+                let canonical = wamn_catalog::manifest::canonical_operation_identity(
                     &base.package,
                     operation,
                 )?;
@@ -177,7 +177,7 @@ pub fn application_dependency_permissions(
 
 pub(super) fn pin_runtime_schemas(
     components: BTreeSet<ServingComponent>,
-    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_compiler::manifest::PackageManifest>,
+    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
 ) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {
     let dependency_manifests = manifests.iter().collect();
     let schemas = manifests
@@ -230,7 +230,7 @@ pub(super) fn project_routes(
     component_facts: &ReleaseComponents,
     package_manifests: &BTreeMap<
         wamn_catalog::PackageName,
-        wamn_compiler::manifest::PackageManifest,
+        wamn_catalog::manifest::PackageManifest,
     >,
     components: &mut BTreeSet<ServingComponent>,
 ) -> Result<BTreeSet<ServingRoute>, PublishManifestError> {

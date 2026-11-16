@@ -528,7 +528,7 @@ mod tests {
     /// triggers that apply-package derives from the `audit_log` declarations of
     /// one package manifest.
     async fn install_record_history(client: &mut Client, manifest: &[u8]) -> Result<()> {
-        let manifest: wamn_compiler::manifest::PackageManifest =
+        let manifest: wamn_catalog::manifest::PackageManifest =
             serde_json::from_slice(manifest).context("parse package manifest")?;
         let logs = manifest.models.values().filter_map(|model| {
             model.log_retention().map(|retention| {
@@ -544,7 +544,7 @@ mod tests {
         });
         let triggers = manifest.models.values().filter_map(|model| {
             let audit_log = model.audit_log.as_ref()?;
-            let columns = wamn_compiler::manifest::RecordHistoryColumn::ALL
+            let columns = wamn_catalog::manifest::RecordHistoryColumn::ALL
                 .into_iter()
                 .filter(|column| audit_log.columns.contains(column))
                 .map(|column| format!("'{}'", column.as_str()))
@@ -1643,7 +1643,7 @@ mod tests {
     }
 
     async fn assert_status_vocabulary(client: &mut Client) -> Result<()> {
-        let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&generated(MANIFEST))
+        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&generated(MANIFEST))
             .context("parse the compiled Receiving manifest")?;
         let statuses = manifest
             .models

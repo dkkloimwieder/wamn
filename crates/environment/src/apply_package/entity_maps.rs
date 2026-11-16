@@ -2,7 +2,7 @@ use sqlx::Row as _;
 use std::collections::BTreeSet;
 
 use anyhow::{Context as _, bail, ensure};
-use wamn_compiler::manifest::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 
 pub(super) async fn reconcile_entity_maps(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

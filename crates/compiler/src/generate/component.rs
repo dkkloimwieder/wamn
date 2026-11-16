@@ -19,12 +19,12 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use super::insert_bytes;
-use crate::ManifestError as GenerateError;
-use crate::manifest::{
+use wamn_catalog::manifest::ManifestError as GenerateError;
+use wamn_catalog::manifest::{
     CrudAction, ModelDeclaration, OperationDeclaration, PackageManifest, binding_identifier,
     rust_identifier, rust_type_identifier,
 };
-use crate::manifest::{FilterMatch, PackageIdentity, canonical_operation_prefix};
+use wamn_catalog::manifest::{FilterMatch, PackageIdentity, canonical_operation_prefix};
 
 const HEADER: &str = "// @generated from the package manifest; do not edit.\n\n";
 
@@ -348,7 +348,7 @@ pub(super) fn emit_package_component(
         .expect("writing to a String cannot fail");
     }
     for (name, _) in feeds {
-        let stem = crate::manifest::custom_artifact_stem(name);
+        let stem = wamn_catalog::manifest::custom_artifact_stem(name);
         writeln!(
             source,
             "\n/// The authored `{name}` handler.\npub mod {stem} {{ include!(\"{stem}.rs\"); }}"
@@ -366,7 +366,7 @@ pub(super) fn emit_package_component(
 fn emit_package_world(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
-    models: &[(&crate::source_name::SourceName, &ModelDeclaration)],
+    models: &[(&wamn_catalog::manifest::source_name::SourceName, &ModelDeclaration)],
 ) -> Result<(), GenerateError> {
     const POSTGRES: &str =
         "  import wamn:postgres/types@0.4.0;\n  import wamn:postgres/statements@0.4.0;\n";
@@ -397,7 +397,7 @@ fn emit_package_world(
     // component keeps its world byte for byte.
     let mut imports = String::new();
     for (name, declaration) in &manifest.connections {
-        if !crate::manifest::host_connection_interface(&declaration.interface) {
+        if !wamn_catalog::manifest::host_connection_interface(&declaration.interface) {
             writeln!(imports, "  import {name}: {};", declaration.interface)
                 .expect("writing to a String cannot fail");
         }

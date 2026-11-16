@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 use wamn_compiler::GeneratedPackage;
-use wamn_compiler::ManifestErrorType as GenerateErrorType;
+use wamn_catalog::manifest::ManifestErrorType as GenerateErrorType;
 use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{CatalogIr, Column, Constraint};
 

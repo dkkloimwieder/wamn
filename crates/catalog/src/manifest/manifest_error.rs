@@ -121,14 +121,14 @@ impl Error for ManifestError {
     }
 }
 
-impl From<wamn_catalog::local_operation::ParseLocalOperationError> for ManifestError {
-    fn from(error: wamn_catalog::local_operation::ParseLocalOperationError) -> Self {
+impl From<crate::local_operation::ParseLocalOperationError> for ManifestError {
+    fn from(error: crate::local_operation::ParseLocalOperationError) -> Self {
         Self::with_source(ManifestErrorType::InvalidIdentity, error.to_string(), error)
     }
 }
 
-impl From<wamn_catalog::canonical_name::ParseCanonicalNameError> for ManifestError {
-    fn from(source: wamn_catalog::canonical_name::ParseCanonicalNameError) -> Self {
+impl From<crate::canonical_name::ParseCanonicalNameError> for ManifestError {
+    fn from(source: crate::canonical_name::ParseCanonicalNameError) -> Self {
         Self::with_source(
             ManifestErrorType::InvalidIdentity,
             "invalid canonical name",

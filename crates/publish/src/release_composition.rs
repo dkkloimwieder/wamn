@@ -13,7 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::anyhow;
-use wamn_compiler::manifest::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompositionErrorType {
@@ -97,7 +97,7 @@ pub fn select_component_artifacts(
 /// `build.json` records, validated against its digest.
 fn built_component(
     package: &PackageInput,
-    component: &wamn_compiler::source_name::SourceName,
+    component: &wamn_catalog::manifest::source_name::SourceName,
     build_record: &wamn_compiler::build_record::BuildRecord,
 ) -> Result<SelectedComponentArtifact, CompositionError> {
     let (path, entry) = plan::component_entry(package, component, build_record)?;

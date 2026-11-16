@@ -84,10 +84,10 @@ impl sqlx::postgres::PgHasArrayType for SourceName {
         <String as sqlx::postgres::PgHasArrayType>::array_type_info()
     }
 }
-impl From<ParseSourceNameError> for crate::ManifestError {
+impl From<ParseSourceNameError> for crate::manifest::ManifestError {
     fn from(source: ParseSourceNameError) -> Self {
         Self::with_source(
-            crate::ManifestErrorType::InvalidIdentity,
+            crate::manifest::ManifestErrorType::InvalidIdentity,
             "invalid authored name",
             source,
         )
@@ -108,7 +108,7 @@ impl PartialEq<&str> for SourceName {
         self.as_str() == *other
     }
 }
-impl From<SourceName> for wamn_catalog::canonical_name::CanonicalName {
+impl From<SourceName> for crate::canonical_name::CanonicalName {
     fn from(value: SourceName) -> Self {
         String::from(value)
             .try_into()

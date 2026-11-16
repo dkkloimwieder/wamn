@@ -24,9 +24,8 @@ wamn-catalog = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-number-pattern = { workspace = true }
 
-wit-parser = { workspace = true }
-
 [dev-dependencies]
+wit-parser = { workspace = true }
 url.workspace = true
 wamn-postgres-statements = { path = "../postgres-statements" }
 uuid.workspace = true

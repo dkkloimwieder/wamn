@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use wamn_scalar::SqlValueType;
 
-use crate::manifest::{CustomOperationType, authored_name};
+use wamn_catalog::manifest::{CustomOperationType, authored_name};
 
 use super::{
     AccessorBind, AccessorFetch, BTreeMap, CHANGES_STATEMENT, CREATE_STATEMENT, CatalogIr, Column,
@@ -11,8 +11,8 @@ use super::{
     RustVisibility, StaticSqlAccessor, Table, WamnAccessor, WamnApi, column, insert_bytes,
     operation_constraints, operation_exclusions, query_variants, sql,
 };
-use crate::ManifestError as GenerateError;
-use crate::manifest::{
+use wamn_catalog::manifest::ManifestError as GenerateError;
+use wamn_catalog::manifest::{
     CrudAction, CustomOperationDeclaration, ModelDeclaration, OperationDeclaration, StaticSqlFetch,
     rust_identifier, rust_type_identifier,
 };
@@ -209,7 +209,7 @@ fn static_sql_accessor_result_type(accessor: &StaticSqlAccessor) -> String {
 
 pub(super) fn wamn_api(
     catalog: &CatalogIr,
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
     operation_sql: &BTreeMap<String, Vec<String>>,
@@ -483,7 +483,7 @@ fn filter_binds(operation: &OperationDeclaration) -> Vec<AccessorBind> {
 /// Both statements return one outer row even when no model row matched, so
 /// every column is nullable (`crate::sql::query`, `crate::sql::changes`).
 fn feed_rows(
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Vec<RustRow> {
@@ -559,7 +559,7 @@ fn feed_rows(
 }
 
 fn operation_result_row(
-    model_name: &crate::source_name::SourceName,
+    model_name: &wamn_catalog::manifest::source_name::SourceName,
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,

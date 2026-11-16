@@ -7,7 +7,7 @@ pub use plan::{apply_order, sequence_defaults};
 use std::collections::BTreeMap;
 
 use anyhow::{Context as _, bail, ensure};
-use wamn_compiler::manifest::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 
 use super::Platform;
 use super::analyse::{self, Installed};

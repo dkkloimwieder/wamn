@@ -131,7 +131,7 @@ pub(super) async fn open(
     }
     let candidate = Candidate::source(root)?;
     let manifest =
-        wamn_compiler::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
+        wamn_catalog::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
     ensure!(
         &manifest.package.id == id && &manifest.package.version == version,
         "package artifact does not declare {id}@{version}"
@@ -269,12 +269,12 @@ pub async fn reset_candidates(
 pub fn validate_candidates(
     candidates: &[Candidate],
     sources: &BTreeMap<wamn_catalog::PackageName, SchemaSource>,
-) -> anyhow::Result<(Vec<wamn_compiler::manifest::PackageManifest>, Vec<usize>)> {
+) -> anyhow::Result<(Vec<wamn_catalog::manifest::PackageManifest>, Vec<usize>)> {
     let mut packages = Vec::new();
     let mut found = BTreeSet::new();
     let mut objects = BTreeSet::new();
     for candidate in candidates {
-        let manifest = wamn_compiler::manifest::PackageManifest::from_slice(
+        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
             &candidate.directory.manifest_bytes,
         )?;
         let id = &manifest.package.id;

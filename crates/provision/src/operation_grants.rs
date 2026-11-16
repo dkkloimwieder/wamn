@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::error::Error as StdError;
 
-use wamn_compiler::manifest::{
+use wamn_catalog::manifest::{
     OperationVisibility, PackageManifest, canonical_operation_identity,
     validate_operation_vocabulary,
 };
@@ -61,14 +61,14 @@ pub enum OperationGrantErrorType {
 pub struct OperationGrantError {
     type_: OperationGrantErrorType,
     context: Box<str>,
-    source: Option<wamn_compiler::ManifestError>,
+    source: Option<wamn_catalog::manifest::ManifestError>,
 }
 
 impl OperationGrantError {
     fn with_source(
         type_: OperationGrantErrorType,
         context: impl Into<Box<str>>,
-        source: wamn_compiler::ManifestError,
+        source: wamn_catalog::manifest::ManifestError,
     ) -> Self {
         Self {
             type_,
@@ -227,7 +227,7 @@ mod tests {
                 "/custom_operations/widget.publish",
                 "component",
                 serde_json::json!("missing"),
-                Some(wamn_compiler::ManifestErrorType::InvalidComponent),
+                Some(wamn_catalog::manifest::ManifestErrorType::InvalidComponent),
             ),
         ] {
             let mut manifest = owned_manifest();
@@ -244,7 +244,7 @@ mod tests {
             if let Some(expected) = expected_source {
                 assert_eq!(
                     source
-                        .downcast_ref::<wamn_compiler::ManifestError>()
+                        .downcast_ref::<wamn_catalog::manifest::ManifestError>()
                         .unwrap()
                         .error_type(),
                     expected

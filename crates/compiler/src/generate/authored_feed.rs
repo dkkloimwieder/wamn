@@ -6,14 +6,14 @@ use wamn_scalar::SqlValueType;
 
 use super::rust::projected_rust_type;
 use super::{CatalogIr, insert_bytes, sql};
-use crate::ManifestError as GenerateError;
-use crate::manifest::{CustomOperationDeclaration, rust_identifier, rust_type_identifier};
-use crate::manifest::{
+use wamn_catalog::manifest::ManifestError as GenerateError;
+use wamn_catalog::manifest::{CustomOperationDeclaration, rust_identifier, rust_type_identifier};
+use wamn_catalog::manifest::{
     StaticSqlFetch, StaticSqlStatementDeclaration, StaticSqlValueDeclaration, custom_artifact_stem,
 };
 
 fn value(
-    name: crate::source_name::SourceName,
+    name: wamn_catalog::manifest::source_name::SourceName,
     ty: SqlValueType,
     nullable: bool,
 ) -> StaticSqlValueDeclaration {
@@ -161,7 +161,7 @@ pub(super) fn prepare_sql(
 
 pub(super) fn emit(
     files: &mut BTreeMap<String, Vec<u8>>,
-    manifest: &crate::manifest::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     name: &wamn_catalog::local_operation::LocalOperation,
     compiled: &super::operations::CustomDescription<'_>,
 ) -> Result<(), GenerateError> {
@@ -180,7 +180,7 @@ fn member(name: &str) -> String {
 
 fn emit_data(
     files: &mut BTreeMap<String, Vec<u8>>,
-    package: &crate::manifest::PackageIdentity,
+    package: &wamn_catalog::manifest::PackageIdentity,
     name: &wamn_catalog::local_operation::LocalOperation,
     compiled: &super::operations::CustomDescription<'_>,
     key_type: SqlValueType,
@@ -194,7 +194,7 @@ fn emit_data(
         .expect("validated statement");
     let key = member(&operation.lists.as_ref().expect("validated list").key_field[0]);
     let id_type = super::data::cursor_key_type(key_type);
-    let permission = crate::manifest::canonical_operation_identity(package, name)?;
+    let permission = wamn_catalog::manifest::canonical_operation_identity(package, name)?;
     let query = name.as_str();
     let permission_text = permission.as_str();
     let result = compiled.result.as_ref().expect("compiled feed result");
@@ -387,7 +387,7 @@ fn emit_component(
                 inputs,
                 "{}: request.{}{},",
                 member(field.name.as_str()),
-                crate::manifest::binding_identifier(field.name.as_str()).expect("validated input"),
+                wamn_catalog::manifest::binding_identifier(field.name.as_str()).expect("validated input"),
                 if field.ty == SqlValueType::Json {
                     if field.nullable {
                         ".map(|value| value.encoded_json)"

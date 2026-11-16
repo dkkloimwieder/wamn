@@ -2,8 +2,8 @@ use serde_json::{Value, json};
 use sqlx::Row as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use wamn_compiler::ManifestErrorType as GenerateErrorType;
-use wamn_compiler::manifest::{
+use wamn_catalog::manifest::ManifestErrorType as GenerateErrorType;
+use wamn_catalog::manifest::{
     CrudAction, PackageManifest, resolve_operation_reference, validate_operation_vocabulary,
 };
 use wamn_compiler::{AuthoredSql, GeneratedPackage};

@@ -10,7 +10,7 @@ pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
     let (model, action) = local.split_once('.').context("use model.action")?;
     let output = wamn_compiler::output_root(package);
     let manifest =
-        wamn_compiler::manifest::PackageManifest::from_slice(&fs::read(output.join("wamn.json"))?)?;
+        wamn_catalog::manifest::PackageManifest::from_slice(&fs::read(output.join("wamn.json"))?)?;
     let declaration = manifest
         .models
         .get(model)
@@ -139,7 +139,7 @@ pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
 /// Copy a generated browser component to an application-owned path.
 pub fn component(
     package: &Path,
-    name: &wamn_compiler::source_name::SourceName,
+    name: &wamn_catalog::manifest::source_name::SourceName,
     destination: &Path,
 ) -> Result<()> {
     let source = wamn_compiler::output_root(package)

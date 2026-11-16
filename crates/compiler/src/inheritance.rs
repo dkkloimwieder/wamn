@@ -5,8 +5,8 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, ensure};
 
-use crate::manifest::PackageManifest;
-use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_catalog::manifest::PackageManifest;
+use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// Read the same base builds that component composition uses. The build record
 /// records each manifest’s digest. Release resolution tests the package
@@ -14,8 +14,8 @@ use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorTy
 pub(crate) fn load_base_manifests(
     output_root: &Path,
     dependencies: &std::collections::BTreeMap<
-        crate::source_name::SourceName,
-        crate::manifest::BaseDependencyRequirement,
+        wamn_catalog::manifest::source_name::SourceName,
+        wamn_catalog::manifest::BaseDependencyRequirement,
     >,
 ) -> Result<Vec<PackageManifest>> {
     dependencies

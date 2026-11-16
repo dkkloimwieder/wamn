@@ -4,8 +4,8 @@ use wamn_schema_introspection::ir::{Column, Table};
 
 use wamn_record_history::history_table_name;
 
-use crate::manifest::{CursorDirection, OperationDeclaration};
-use crate::manifest::{DeleteMode, FilterMatch, ModelDeclaration};
+use wamn_catalog::manifest::{CursorDirection, OperationDeclaration};
+use wamn_catalog::manifest::{DeleteMode, FilterMatch, ModelDeclaration};
 
 // SQL outcomes are shared with the generated result contracts.
 pub(crate) const OUTCOME_NOT_FOUND: &str = "not_found";
@@ -701,7 +701,7 @@ const fn sql_direction(direction: CursorDirection) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::query;
-    use crate::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
+    use wamn_catalog::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
     use sqlx::Row as _;
 
     use wamn_scalar::SqlValueType;

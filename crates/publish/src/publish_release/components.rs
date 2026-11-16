@@ -18,7 +18,7 @@ pub(super) fn resolve_component_dependency_closure(
     >,
     package_manifests: &BTreeMap<
         wamn_catalog::PackageName,
-        wamn_compiler::manifest::PackageManifest,
+        wamn_catalog::manifest::PackageManifest,
     >,
     rule: DependencyDigestRule,
 ) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
@@ -93,7 +93,7 @@ fn visit_base_dependencies(
     >,
     package_manifests: &BTreeMap<
         wamn_catalog::PackageName,
-        wamn_compiler::manifest::PackageManifest,
+        wamn_catalog::manifest::PackageManifest,
     >,
     rule: DependencyDigestRule,
     path: &mut Vec<(
@@ -151,7 +151,7 @@ fn visit_base_dependencies(
 /// The admitted facts of one pinned base: the one component under the pinned
 /// digest, or under the development rule every component of the coordinate.
 fn resolve_base_dependency<'a>(
-    requirement: &wamn_compiler::manifest::BaseDependencyRequirement,
+    requirement: &wamn_catalog::manifest::BaseDependencyRequirement,
     component_facts: &'a BTreeMap<
         (
             wamn_catalog::PackageName,
@@ -268,7 +268,7 @@ fn refuse_anonymous_reach(
 /// Seal each palette alias mode while preserving its configuration declaration.
 pub(super) fn palette_connections(
     connections: &[wamn_catalog::ComponentConnection],
-    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_compiler::manifest::PackageManifest>,
+    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
 ) -> Vec<wamn_catalog::ComponentConnection> {
     connections
         .iter()
@@ -281,10 +281,10 @@ pub(super) fn palette_connections(
                 crate::connection_requirement::palette_connections(connection, manifests.values())
             {
                 let mode = match declaration.mode {
-                    wamn_compiler::manifest::ConnectionMode::Read => {
+                    wamn_catalog::manifest::ConnectionMode::Read => {
                         wamn_catalog::ConnectionMode::Read
                     }
-                    wamn_compiler::manifest::ConnectionMode::Write => {
+                    wamn_catalog::manifest::ConnectionMode::Write => {
                         wamn_catalog::ConnectionMode::Write
                     }
                 };
