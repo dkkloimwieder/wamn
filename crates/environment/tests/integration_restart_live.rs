@@ -104,6 +104,12 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
         + 1;
     let mut workspace = workspace;
     workspace.replace_range(start..end, "members = [\"../guests/modbus\"]");
+    // Workspace path dependencies outside the copied files stay in the repository.
+    let crates = repository.canonicalize()?.join("crates");
+    let workspace = workspace.replace(
+        "path = \"../crates/",
+        &format!("path = \"{}/", crates.display()),
+    );
     std::fs::create_dir(root.join("apps"))?;
     std::fs::write(root.join("apps/Cargo.toml"), workspace)?;
     std::fs::copy(

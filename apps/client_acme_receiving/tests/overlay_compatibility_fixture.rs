@@ -226,16 +226,20 @@ fn required_schema_contract(root: &Path) -> anyhow::Result<Value> {
 }
 
 /// A PostgreSQL 18 server of its own, prepared by deploy/sql/postgres-init.sql,
-/// which creates shared roles and the database wamn, applied as the superuser
-/// postgres.
+/// which creates shared roles and the database wamn, applied with psql as the
+/// superuser postgres. The file carries psql commands (`\connect`, `\ir`).
 async fn production_server() -> anyhow::Result<wamn_test_infrastructure::postgres::OwnedPostgres> {
     let postgres = wamn_test_infrastructure::postgres::start(&[])?;
-    let mut client = wamn_postgres::connect(postgres.database("postgres")?.url()).await?;
-    let sql =
-        std::fs::read_to_string(super::repository_root()?.join("deploy/sql/postgres-init.sql"))?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
-        .execute(&mut client)
-        .await?;
+    let output = std::process::Command::new("psql")
+        .arg(postgres.database("postgres")?.url())
+        .args(["-v", "ON_ERROR_STOP=1", "-q", "-f"])
+        .arg(super::repository_root()?.join("deploy/sql/postgres-init.sql"))
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "apply postgres-init.sql: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(postgres)
 }
 
