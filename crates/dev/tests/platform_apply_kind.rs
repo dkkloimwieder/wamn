@@ -69,15 +69,6 @@ impl Drop for Run {
     }
 }
 
-// The cluster document is the one target input authorized by wamn-alrvy.18.
-// The namespace annotation records consent to use the platform as disposable.
-#[tokio::test]
-#[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, bin:docker, bin:kind, bin:helm, bin:kubectl, bin:openssl, bin:script, env:WAMN_KCL, bin:git, bin:cargo, bin:rustc, input:control-binaries"]
-async fn connection_and_caller_kind() -> anyhow::Result<()> {
-    panic!("wamn-eulfr.12.10: no product deployment of an HTTP request observer");
-    focused(application_deploy::Case::ConnectionAndCaller).await
-}
-
 #[tokio::test]
 #[ignore = "requires: cluster, env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, input:control-binaries"]
 async fn application_recovery_kind() -> anyhow::Result<()> {

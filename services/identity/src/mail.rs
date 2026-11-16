@@ -198,24 +198,6 @@ struct Email<'a> {
 
 impl ResendMailer {
     pub(super) fn new(config: ResendConfig) -> Result<Self, IdentityServiceError> {
-        #[cfg(feature = "test-util")]
-        if let Some(endpoint) = std::env::var_os("WAMN_TEST_RESEND_ENDPOINT") {
-            let refused = || IdentityServiceError::new("test Resend endpoint refused");
-            let endpoint = endpoint.into_string().map_err(|_| refused())?;
-            let url = url::Url::parse(&endpoint).map_err(|_| refused())?;
-            if url.scheme() != "http"
-                || url.host_str() != Some("127.0.0.1")
-                || url.path() != "/emails"
-                || !url.username().is_empty()
-                || url.password().is_some()
-                || url.query().is_some()
-                || url.fragment().is_some()
-                || config.key.as_str() != "unused-development-fixture"
-            {
-                return Err(refused());
-            }
-            return Ok(Self::fixture(endpoint));
-        }
         let client = HttpClient::builder()
             .https_only(true)
             .redirects(Redirects::None)

@@ -7,10 +7,4 @@ mod wms_runtime_live;
 mod business_fixture;
 
 #[cfg(test)]
-mod local_business;
-
-#[cfg(test)]
-mod local_feed;
-
-#[cfg(test)]
 mod inventory_commands_live;

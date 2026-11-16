@@ -518,5 +518,3 @@ fn valid_database_name(name: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
-
-pub mod run_result;

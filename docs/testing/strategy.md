@@ -16,7 +16,6 @@ Test a requirement through behavior at its owning interface, or record it as unt
 [Running tests](../operations/running-tests.md) owns commands, prerequisites, timing, and cleanup.
 The tables below select coverage, not permission to run it: kind/cluster execution, including a diagnostic experiment, needs explicit user approval with its purpose and expected duration.
 Complete a seconds-long prerequisite test before any cluster step; stop a stage after 30 minutes of silence, not after 30 minutes of total runtime.
-The cluster approval restriction and testing budget are recorded in `docs/audit/fixtures.md` and `docs/audit/tests.md`; narrower current user instructions still apply.
 
 ## Ownership
 
@@ -65,7 +64,6 @@ For example, PostgreSQL establishes migration retry behavior, while one SQL-Job 
 A Helm-only test tests Helm reapply/recovery and makes no application-data assertion.
 
 Project meaningful state rather than comparing all database rows or Kubernetes metadata.
-For code-only deployment, test application data and schema identity; permit the targeted control writes accepted in `docs/plan/deploy.md` under Deployment ownership.
 Release-cache additions, application bindings and targeted grants are not forbidden application-data mutations.
 Make sure of beta's effective permissions as well as its release where permission isolation is the requirement.
 

@@ -12,8 +12,6 @@ They cover graph order, ports, retries and the fixed invocation limit.
 The [catalog compatibility tests](../../crates/catalog/src/wiring_compatibility.rs) cover parameter and port admission.
 These tests establish graph decisions, not guest execution or process recovery.
 
-The [queue invariants](../../crates/run-state/src/invariants.rs) inspect pure queue decisions for leases, lease eligibility, and attempt limits.
-They do not establish database admission history, terminal-row immutability, or producer-key uniqueness.
 ## Event traffic
 
 Simulators drive routes or consumers and never write application tables directly.

@@ -47,7 +47,6 @@ sqlx = { workspace = true, features = ["postgres"] }
 [dev-dependencies]
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["macros", "migrate"] }
-proptest.workspace = true
 wamn-catalog = { path = ".", features = ["test-util"] }
 
 [lints]
