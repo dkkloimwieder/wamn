@@ -6,9 +6,6 @@ default:
 build-platform *args:
     cargo xtask build-platform "$@"
 
-test-changes *args:
-    cargo xtask test-changes "$@"
-
 repo-lint *args:
     cargo xtask repo-lint "$@"
 

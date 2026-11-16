@@ -124,7 +124,6 @@ pub struct StatementDescription {
     pub path: String,
     pub binds: Vec<StatementValue>,
     pub columns: Vec<StatementValue>,
-    pub transactional: bool,
 }
 
 /// A parameter or selected column, in database order.

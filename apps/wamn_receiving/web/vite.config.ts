@@ -1,4 +1,4 @@
-import { applicationConfig, precacheManifest, solidApplication, workerBuild } from "@wamn/vite";
+import { applicationConfig, solidApplication } from "@wamn/vite";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig(({ command, mode }) => {
@@ -12,8 +12,6 @@ export default defineConfig(({ command, mode }) => {
   return {
     ...application,
     ...solid,
-    // The page, and the worker that keeps it and config.json for a reload without a network.
-    build: { ...application.build, rollupOptions: workerBuild(import.meta.url, { main: "index.html" }, "src/sw.ts") },
-    plugins: [...solid.plugins, ...application.plugins, precacheManifest(["config.json"])],
+    plugins: [...solid.plugins, ...application.plugins],
   };
 });

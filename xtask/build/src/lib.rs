@@ -37,11 +37,6 @@ pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
     }
     let mut record = wamn_compiler::build::generate_package(request).await?;
     let output = package_output(&request.output_root, &record.package.id);
-    wamn_compiler::materialize_client_consumers(
-        &request.package_root,
-        &record.package.id,
-        &output.join("client-ts"),
-    )?;
     record.outputs.components = components::compile_components(request, &record.package.id).await?;
     fs::write(output.join(BUILD_RECORD_FILE), record.to_bytes())
         .context("write completed build record")?;

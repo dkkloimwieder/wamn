@@ -3,12 +3,11 @@
 use super::rust::{emit_projection, emit_static_sql_projection, static_sql_rows, wamn_api};
 use super::wit::{emit_custom_operation_wit, emit_model_wit};
 use super::{
-    BTreeMap, BTreeSet, CHANGES_STATEMENT, CREATE_KEY_FIELD, CREATE_STATEMENT, CURSOR_VERSION,
-    CatalogIr, ConstraintType, RequiredConstraint, RequiredField, RequiredSchemaContract,
-    RequiredTable, StatementContract, StatementTransactionality, StatementValueContract, Table,
+    BTreeMap, CHANGES_STATEMENT, CREATE_KEY_FIELD, CREATE_STATEMENT, CURSOR_VERSION,
+    CatalogIr, ConstraintType, StatementContract, StatementTransactionality, StatementValueContract, Table,
     Value, WamnApi, column, constraint_error_code, constraint_field,
     custom_operation_constraint_origin, json, operation_constraints, operation_exclusions,
-    query_variants, relation, server_owned_fields, sql, writable_path,
+    query_variants, server_owned_fields, sql, writable_path,
 };
 use crate::manifest::{
     ContractFieldDeclaration, CrudAction, CustomOperationDeclaration,
@@ -21,7 +20,6 @@ use crate::manifest::{
     authored_name,
 };
 use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
-use wamn_record_history::HISTORY_COLUMNS;
 use wamn_scalar::SqlValueType;
 
 /// Request, result and refusal facts compiled once for a model action.
@@ -432,7 +430,6 @@ fn statement_contract(
         path: path.to_owned(),
         binds,
         columns,
-        transactional: transactional.needs_transaction(path),
     })
 }
 
@@ -1299,119 +1296,6 @@ fn error_contract(
     json!({"closed": true, "cases": cases})
 }
 
-/// The schema an installed package needs: each relation it reads or writes,
-/// with the fields and named constraints it consumes, written to
-/// [`super::REQUIRED_SCHEMA_CONTRACT_PATH`]. Overlay compatibility evidence
-/// tests a fresh base install against it.
-pub(super) fn required_schema_contract(
-    catalog: &CatalogIr,
-    manifest: &PackageManifest,
-) -> RequiredSchemaContract {
-    // A history table stays out of the catalog, so its entry carries no table.
-    let mut consumed =
-        BTreeMap::<(String, String), (Option<&Table>, BTreeSet<String>, BTreeSet<String>)>::new();
-    for model in manifest.models.values() {
-        let table = relation(catalog, model).expect("validation resolved relation");
-        let entry = consumed
-            .entry((model.schema.to_string(), model.table.to_string()))
-            .or_insert_with(|| (Some(table), BTreeSet::new(), BTreeSet::new()));
-        entry.1.extend(
-            table
-                .columns()
-                .iter()
-                .map(|column| column.name().to_owned()),
-        );
-        entry.2.extend(
-            table
-                .constraints()
-                .iter()
-                .map(|constraint| constraint.name().to_owned()),
-        );
-    }
-    for relation in manifest.internal_relations.values() {
-        let table = catalog
-            .tables()
-            .iter()
-            .find(|table| table.schema() == relation.schema && table.name() == relation.table)
-            .expect("internal-relation validation resolved relation");
-        consumed
-            .entry((relation.schema.to_string(), relation.table.to_string()))
-            .or_insert_with(|| (Some(table), BTreeSet::new(), BTreeSet::new()));
-    }
-    for operation in manifest.custom_operations.values() {
-        for relation in &operation.relations {
-            let table = catalog
-                .tables()
-                .iter()
-                .find(|table| table.schema() == relation.schema && table.name() == relation.table);
-            let entry = consumed
-                .entry((relation.schema.to_string(), relation.table.to_string()))
-                .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
-            entry.1.extend(
-                relation
-                    .select_fields
-                    .iter()
-                    .chain(&relation.insert_fields)
-                    .chain(&relation.update_fields)
-                    .map(ToString::to_string),
-            );
-            entry
-                .2
-                .extend(relation.constraints.iter().map(ToString::to_string));
-        }
-    }
-    let tables = consumed
-        .into_iter()
-        .map(|((schema, name), (table, fields, constraints))| {
-            let Some(table) = table else {
-                // The fixed history columns in name order, as the catalog orders
-                // columns. Every history column is NOT NULL.
-                return RequiredTable {
-                    schema: schema.into(),
-                    table: name.into(),
-                    fields: BTreeMap::from(HISTORY_COLUMNS)
-                        .into_iter()
-                        .filter(|(column, _)| fields.contains(*column))
-                        .map(|(column, ty)| RequiredField {
-                            name: column.into(),
-                            ty: ty.into(),
-                            nullable: false,
-                        })
-                        .collect(),
-                    constraints: Box::default(),
-                };
-            };
-            RequiredTable {
-                schema: table.schema().into(),
-                table: table.name().into(),
-                fields: table
-                    .columns()
-                    .iter()
-                    .filter(|column| fields.contains(column.name()))
-                    .map(|column| RequiredField {
-                        name: column.name().into(),
-                        ty: column.column_type().as_str().into(),
-                        nullable: column.nullable(),
-                    })
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-                constraints: table
-                    .constraints()
-                    .iter()
-                    .filter(|constraint| constraints.contains(constraint.name()))
-                    .map(|constraint| RequiredConstraint {
-                        name: constraint.name().into(),
-                        definition: serde_json::to_value(constraint.constraint_type())
-                            .expect("constraint IR always serializes"),
-                    })
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .into_boxed_slice();
-    RequiredSchemaContract { tables }
-}
 
 /// A query's contract with its search, when the query declares one. A query
 /// without one keeps its bytes.

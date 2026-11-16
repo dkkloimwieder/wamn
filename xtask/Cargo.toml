@@ -19,13 +19,10 @@ wamn-registry.workspace = true
 wamn-component-policy.workspace = true
 wamn-catalog.workspace = true
 wamn-postgres.workspace = true
-wamn-test-postgres.workspace = true
-syn = { workspace = true, features = ["full"] }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 wamn-build.workspace = true
 anyhow.workspace = true
 futures-util.workspace = true
-chrono = { workspace = true, features = ["clock"] }
 wamn-kubernetes.workspace = true
 cargo_metadata = "0.23"
 csv = "1"

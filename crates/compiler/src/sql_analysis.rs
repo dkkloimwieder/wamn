@@ -155,40 +155,6 @@ fn nodes(parsed: &pg_query::ParseResult) -> Vec<NodeRef<'_>> {
     result
 }
 
-/// Routine names at every expression position, including VALUES and RETURNING.
-pub fn called_routines(sql: &[u8]) -> Result<BTreeSet<String>, &'static str> {
-    fn visit(value: &serde_json::Value, names: &mut BTreeSet<String>) {
-        match value {
-            serde_json::Value::Object(fields) => {
-                if let Some(name) = fields.get("funcname").and_then(serde_json::Value::as_array) {
-                    let parts = name
-                        .iter()
-                        .filter_map(|part| part.get("node")?.get("String")?.get("sval")?.as_str())
-                        .collect::<Vec<_>>();
-                    if !parts.is_empty() {
-                        names.insert(parts.join("."));
-                    }
-                }
-                for value in fields.values() {
-                    visit(value, names);
-                }
-            }
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    visit(value, names);
-                }
-            }
-            _ => {}
-        }
-    }
-    // The complete protobuf tree covers syntax that the convenience node walk omits.
-    let tree = serde_json::to_value(parse(sql)?.protobuf)
-        .map_err(|_| "cannot read the SQL syntax tree")?;
-    let mut names = BTreeSet::new();
-    visit(&tree, &mut names);
-    Ok(names)
-}
-
 pub fn contains_schema_qualified_reference(sql: &[u8], schema: &str) -> bool {
     parse(sql).is_ok_and(|parsed| {
         nodes(&parsed).iter().any(|node| match node {

@@ -1,10 +1,7 @@
 //! Generates deterministic package artifacts from migration-derived schema IR.
 //!
 //! Core generation is a deterministic transformation: callers provide the
-//! normalized [`CatalogIr`](wamn_schema_introspection::ir::CatalogIr), exact manifest bytes, and authored SQL bytes. That transformation performs no filesystem, database,
-//! clock, or environment access; its one child process is `rustfmt`, which
-//! formats the Rust it emits so that the committed artifacts equal what
-//! `cargo fmt` produces.
+//! normalized [`CatalogIr`](wamn_schema_introspection::ir::CatalogIr), exact manifest bytes, and authored SQL bytes.
 //!
 //! Generated identifiers follow
 //! `docs/architecture/naming.md`. Migration introspection owns
@@ -20,10 +17,8 @@ mod authoring;
 pub mod build;
 /// `build.json`, the build record of one package build.
 pub mod build_record;
-pub mod client_component;
 mod client_fields;
 pub mod client_ir;
-/// The UI-neutral screen plan. Every client emitter reads its rules.
 pub mod client_plan;
 mod client_route;
 /// The TypeScript client emitter. Browser bindings from the same contract IR.
@@ -43,7 +38,6 @@ mod materialize;
 mod output;
 mod package_catalog;
 pub mod publication;
-mod rustfmt;
 mod sql;
 mod sql_analysis;
 
@@ -53,10 +47,10 @@ pub use authoring::{
 };
 pub use generate::{
     AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, OperationDescription,
-    REQUIRED_SCHEMA_CONTRACT_PATH, StatementTransactionality, derive_manifest, generate,
+    StatementTransactionality, derive_manifest, generate,
 };
 pub use materialize::{
-    introspect_package, materialize_client_consumers, materialize_host_route_client,
+    introspect_package, materialize_host_route_client,
 };
 pub use output::{host_route_client_output_root, output_root, package_workspace};
 pub use package_catalog::project_package_catalog;

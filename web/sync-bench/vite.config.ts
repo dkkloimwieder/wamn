@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig } from "vitest/config";
-import { applicationConfig, precacheManifest, solidApplication, workerBuild } from "@wamn/vite";
+import { applicationConfig, solidApplication } from "@wamn/vite";
 
 /** Serve the live page and install assets at the application's audience path. */
 export function livePage(request: IncomingMessage, _response: ServerResponse, next: () => void) {
@@ -26,15 +26,9 @@ export default defineConfig(() => {
   return {
     ...application,
     ...solid,
-    // The measurement page, and the packaging screen on a live host.
-    build: {
-      ...application.build,
-      rollupOptions: workerBuild(import.meta.url, { main: "index.html", live: "live.html" }, "src/sw.ts"),
-    },
     plugins: [
       ...solid.plugins,
       ...application.plugins,
-      precacheManifest(["manifest.webmanifest", "icon.svg"]),
       {
         name: "packaging-live-page",
         configureServer(server) {

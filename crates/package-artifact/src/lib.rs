@@ -40,10 +40,7 @@ use oci_client::errors::{OciDistributionError, OciErrorCode};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
-use wamn_catalog::{
-    AdmittedComponent, ComponentDescriptor, ComponentPackageCoordinate,
-    parse_component_artifact_base,
-};
+use wamn_catalog::{ComponentDescriptor, parse_component_artifact_base};
 use wamn_digest::bytes_sha256;
 
 use crate::registry_credentials::{RegistryCredentials, read_registry_credentials};
@@ -471,62 +468,6 @@ pub fn parse_descriptor(bytes: &[u8]) -> anyhow::Result<ComponentDescriptor> {
         descriptor.component
     );
     Ok(descriptor)
-}
-
-/// The component descriptors of the package artifact of
-/// `package_id@version`, sorted by component name.
-///
-/// # Errors
-///
-/// [`NoPackageArtifact`] when the registry holds no artifact for the package,
-/// or an error when the artifact cannot be pulled or a descriptor is not
-/// valid.
-pub async fn read_descriptors(
-    registry: &PackageRegistry,
-    package_id: &wamn_catalog::PackageName,
-    version: &wamn_catalog::package_version::PackageVersion,
-) -> anyhow::Result<Vec<ComponentDescriptor>> {
-    let (_, layers) = pull_package(registry, package_id, version).await?;
-    let mut descriptors = layers
-        .iter()
-        .filter(|layer| layer.media_type == COMPONENT_DESCRIPTOR_MEDIA_TYPE)
-        .map(|layer| parse_descriptor(&layer.bytes))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    descriptors.sort_by(|left, right| left.component.cmp(&right.component));
-    Ok(descriptors)
-}
-
-/// The admitted component facts of one package, for wiring authorship and the
-/// management condition (R2): the descriptors of its package artifact, in `target`.
-///
-/// # Errors
-///
-/// As [`read_descriptors`], or when a descriptor carries an invalid
-/// effect projection.
-pub async fn load_component_facts(
-    registry: &PackageRegistry,
-    target: &ComponentPackageCoordinate,
-) -> anyhow::Result<Vec<AdmittedComponent>> {
-    read_descriptors(registry, &target.package_id, &target.package_version)
-        .await
-        .with_context(|| {
-            format!(
-                "read the component facts of {}@{}",
-                target.package_id, target.package_version
-            )
-        })?
-        .into_iter()
-        .map(|descriptor| {
-            let component = descriptor.into_admitted(target.clone()).component;
-            wamn_catalog::verify_stored_effect_projection(&component).with_context(|| {
-                format!(
-                    "component {:?} of package {}@{} carries an invalid effect projection",
-                    component.component, target.package_id, target.package_version
-                )
-            })?;
-            Ok(component)
-        })
-        .collect()
 }
 
 #[cfg(test)]

@@ -89,7 +89,6 @@ pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 3] = [
             AUTHORED_MANIFEST,
             "command",
             "query",
-            wamn_compiler::REQUIRED_SCHEMA_CONTRACT_PATH,
             "generated/sql",
             "generated/routes",
         ],
@@ -306,13 +305,6 @@ pub fn fixture_package_root(root: &Path) -> anyhow::Result<crate::package_source
             wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(root)?,
         ),
     })
-}
-
-/// The package artifact digest of the package at `root`, the key of its stage
-/// evidence and stage progress (docs/operations/building.md#reading-a-pushed-package): the
-/// offline manifest digest of the tree as it is ([`pack_package`]).
-pub fn package_artifact_digest(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
-    Ok(pack_package(root)?.digest)
 }
 
 /// Pack the compiled output with component descriptor layers.
@@ -672,37 +664,6 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
     let tag = packed.tag()?;
     let repository = Repository::open(&request.registry, &tag)?;
     let existing = repository.manifest().await?;
-    for previous_tag in repository.tags().await? {
-        if previous_tag == tag
-            || !previous_tag
-                .as_str()
-                .starts_with(&format!("{}-", packed.package_id))
-        {
-            continue;
-        }
-        let Some((bytes, _)) = Repository::open(&request.registry, &previous_tag)?
-            .manifest()
-            .await?
-        else {
-            continue;
-        };
-        let manifest: serde_json::Value = serde_json::from_slice(&bytes)?;
-        if manifest["annotations"][PACKAGE_ID_ANNOTATION].as_str()
-            != Some(packed.package_id.as_str())
-        {
-            continue;
-        }
-        let version = manifest["annotations"][PACKAGE_VERSION_ANNOTATION]
-            .as_str()
-            .context("published package version is absent")?;
-        let previous =
-            open_package(&request.registry, &packed.package_id, &version.parse()?).await?;
-        wamn_compiler::migrations::validate_append(
-            &wamn_compiler::output_root(&request.package),
-            previous.root(),
-        )
-        .await?;
-    }
     if is_dev_tag(&tag) {
         let created = match &existing {
             Some((bytes, _)) => {
@@ -772,12 +733,10 @@ async fn push_component_artifact(
             .context("load the component registry push credential")?;
     publish_and_verify(
         &reference,
-        artifact_base,
         registry.insecure_registry,
         &registry.oci_ca_paths,
         &component.bytes,
         &component_artifact_config_bytes(&component.facts),
-        &component.facts,
         credentials.as_ref(),
     )
     .await
@@ -1142,107 +1101,6 @@ mod tests {
         );
     }
 
-    fn receiving_manifest() -> Vec<u8> {
-        std::fs::read(wamn_compiler::package_manifest_path(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving"),
-        ))
-        .unwrap()
-    }
-
-    /// A compiled package fixture with a completed build record.
-    fn package_tree(name: &str) -> PathBuf {
-        let apps = std::env::temp_dir().join(format!(
-            "wamn-package-artifact-test-{name}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&apps);
-        let root = apps.join("wamn_receiving");
-        write(&root, "wamn.k", b"# authored\n");
-        write(&root, "generated/wamn.json", &receiving_manifest());
-        write(
-            &root,
-            wamn_compiler::REQUIRED_SCHEMA_CONTRACT_PATH,
-            b"{\"tables\": []}\n",
-        );
-        write(&root, "generated/sql/receipt.sql", b"SELECT 1;\n");
-        write(&root, "migrations/0001_initial.sql", b"SELECT 1;\n");
-        write(&root, "generated/publication/attachments.json", b"{}\n");
-        write(&root, "generated/web/index.html", b"<html></html>\n");
-        write(&root, "web/dist/stale.html", b"left out\n");
-        write(&root, "web/src/main.ts", b"left out\n");
-        write(&root, "generated/client/left-out.ts", b"left out\n");
-        write_build_record(&root);
-        root
-    }
-
-    fn remove(root: &Path) {
-        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
-    }
-
-    /// A canonical descriptor of the component `receiving`.
-    fn descriptor() -> DescriptorFile {
-        let digest = bytes_sha256(b"receiving");
-        let descriptor: ComponentDescriptor = serde_json::from_value(serde_json::json!({
-            "component": "receiving",
-            "interface-version": "0.1.0",
-            "component-digest": digest,
-            "operations": {},
-            "imports": [],
-            "imports-fingerprint": (format!("sha256:{}", "b".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
-            "effects": [],
-            "connections": [],
-        }))
-        .unwrap();
-        DescriptorFile {
-            name: "receiving".parse().unwrap(),
-            digest,
-            bytes: wamn_digest::canonical_json_bytes(&serde_json::to_value(&descriptor).unwrap()),
-        }
-    }
-
-    #[test]
-    #[ignore = "requires: input:receiving"]
-    fn two_packs_of_the_same_tree_give_one_digest() {
-        let root = package_tree("same");
-        let first = pack_package(&root).unwrap();
-        std::fs::write(root.join("migrations/0001_initial.sql"), b"SELECT 1;\n").unwrap();
-        let second = pack_package(&root).unwrap();
-        assert_eq!(
-            (first.digest.to_string())
-                .parse::<wamn_digest::Digest>()
-                .unwrap(),
-            (second.digest.to_string())
-                .parse::<wamn_digest::Digest>()
-                .unwrap()
-        );
-        assert_eq!(
-            (first.digest.to_string())
-                .parse::<wamn_digest::Digest>()
-                .unwrap(),
-            (bytes_sha256(&first.manifest).to_string())
-                .parse::<wamn_digest::Digest>()
-                .unwrap()
-        );
-        remove(&root);
-    }
-
-    #[test]
-    #[ignore = "requires: input:receiving"]
-    fn a_changed_file_changes_the_digest() {
-        let root = package_tree("changed");
-        let first = pack_package(&root).unwrap();
-        std::fs::write(root.join("generated/sql/receipt.sql"), b"SELECT 2;\n").unwrap();
-        assert_ne!(
-            (first.digest.to_string())
-                .parse::<wamn_digest::Digest>()
-                .unwrap(),
-            (pack_package(&root).unwrap().digest.to_string())
-                .parse::<wamn_digest::Digest>()
-                .unwrap()
-        );
-        remove(&root);
-    }
-
     #[test]
     fn web_edits_leave_the_package_digest_unchanged() {
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
@@ -1274,65 +1132,4 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    #[ignore = "requires: input:receiving"]
-    async fn an_unsatisfied_policy_contract_refuses_before_any_push() {
-        let root = package_tree("policy");
-        let mut document: serde_json::Value =
-            serde_json::from_slice(&receiving_manifest()).unwrap();
-        document["required_platform_policy_contract"]["state"] = serde_json::json!("unsatisfied");
-        write(
-            &root,
-            "generated/wamn.json",
-            &serde_json::to_vec(&document).unwrap(),
-        );
-        // No registry exists: the refusal comes first.
-
-        assert!(
-            push_package(&PushPackageRequest {
-                package: root.clone(),
-                registry: PackageRegistry {
-                    artifact_base: "registry.invalid/wamn/packages".to_owned(),
-                    credentials: None,
-                    registry_auth_file: root.join("missing-auth.json"),
-                    insecure_registry: false,
-                    oci_ca_paths: Vec::new(),
-                },
-                component_artifact_base: "registry.invalid/wamn/components".to_owned(),
-            })
-            .await
-            .is_err()
-        );
-        remove(&root);
-    }
-
-    #[test]
-    #[ignore = "requires: input:receiving"]
-    fn an_unpacked_artifact_packs_to_its_own_digest() {
-        let root = package_tree("unpacked");
-        let descriptor = descriptor();
-        let packed = pack_layers(&root, vec![descriptor]).unwrap();
-        // A source tree has no descriptor layers, so its digest differs.
-        assert_ne!(
-            (pack_package(&root).unwrap().digest.to_string())
-                .parse::<wamn_digest::Digest>()
-                .unwrap(),
-            (packed.digest.to_string())
-                .parse::<wamn_digest::Digest>()
-                .unwrap()
-        );
-
-        let unpacked = root.parent().unwrap().join("unpacked");
-        unpack_layers(&unpacked, &packed.layers).unwrap();
-        let repacked = pack_package(&unpacked).unwrap();
-        assert_eq!(
-            (repacked.digest.to_string())
-                .parse::<wamn_digest::Digest>()
-                .unwrap(),
-            (packed.digest.to_string())
-                .parse::<wamn_digest::Digest>()
-                .unwrap()
-        );
-        remove(&root);
-    }
 }
