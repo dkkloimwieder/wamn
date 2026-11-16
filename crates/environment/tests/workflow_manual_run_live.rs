@@ -152,13 +152,36 @@ fn read_component() -> Vec<u8> {
     .expect("the read component is valid WAT")
 }
 
+fn rows_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "rows": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "total": {"type": "integer"},
+                        "status": {"type": "string"}
+                    },
+                    "required": ["id", "total", "status"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["rows"],
+        "additionalProperties": false
+    })
+}
+
 fn read_declaration() -> Value {
     json!({
         "target": {"project_env_key": PROJECT_ENV_KEY, "package-id": APPLICATION, "package-version": "1.0.0"},
         "component": "orders_data", "interface-version": "0.1.0",
         "operations": {(READ): {"registered-operation": READ,
             "input-ports": [{"name": "input", "schema": {}}],
-            "output-ports": [{"name": "main", "schema": {}}],
+            "output-ports": [{"name": "main", "schema": rows_schema()}],
             "parameters": []}}
     })
 }
@@ -167,8 +190,8 @@ fn jsonata_declaration() -> Value {
     serde_json::from_str(
         &JSONATA_DECLARATION
             .replace("__PROJECT_ENV_KEY__", PROJECT_ENV_KEY)
-            .replace("__PACKAGE_ID__", APPLICATION)
-            .replace("__PACKAGE_VERSION__", "1.0.0"),
+            .replace("__PACKAGE_ID__", wamn_catalog::PALETTE_PACKAGE_ID)
+            .replace("__PACKAGE_VERSION__", wamn_catalog::PALETTE_PACKAGE_VERSION),
     )
     .expect("the jsonata declaration template is JSON")
 }
@@ -194,7 +217,23 @@ fn workflow(version: u32, operation: &str) -> WiringDocument {
             "read": {"component": "orders_data", "interface-version": "0.1.0",
                      "operation": operation, "params": {}},
             "shape": {"component": "jsonata", "interface-version": "0.1.0",
-                      "operation": JSONATA_OPERATION, "params": {"expression": SHAPE, "output-schema": {}}}
+                      "operation": JSONATA_OPERATION, "params": {
+                          "expression": SHAPE,
+                          "input-schema": rows_schema(),
+                          "output-schema": {
+                              "type": "array",
+                              "items": {
+                                  "type": "object",
+                                  "properties": {
+                                      "order": {"type": "string"},
+                                      "open": {"type": "boolean"},
+                                      "total": {"type": "integer"}
+                                  },
+                                  "required": ["order", "open", "total"],
+                                  "additionalProperties": false
+                              }
+                          }
+                      }}
         },
         "edges": [{"from": "read", "to": "shape", "to-port": "input"}]
     }))
@@ -207,7 +246,7 @@ fn manifest(
     read: Option<&wamn_catalog::AdmittedComponent>,
     jsonata: &wamn_catalog::AdmittedComponent,
 ) -> ServingManifest {
-    let mut components = vec![json!({"package-id": APPLICATION,
+    let mut components = vec![json!({"package-id": jsonata.target.package_id,
         "descriptor": ComponentDescriptor::new(jsonata.clone(), Vec::new())})];
     if let Some(read) = read {
         components.push(json!({"package-id": APPLICATION,

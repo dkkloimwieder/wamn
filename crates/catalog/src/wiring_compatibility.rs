@@ -345,7 +345,7 @@ fn validate_parameters(
         return Err(WiringCompatibilityError::new(
             WiringCompatibilityErrorType::MissingRequiredParameter,
             format!(
-                "wiring node {node_id:?} omits required parameter {:?}",
+                "wiring node {node_id} omits required parameter {}",
                 parameter.name
             ),
         ));
