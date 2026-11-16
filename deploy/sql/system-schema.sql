@@ -259,7 +259,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     WHERE session_user::text = 'wamn_control_' ||
         left(encode(sha256(pg_catalog.int8send(octet_length(convert_to('wamn.control.identity.v0.1', 'UTF8'))::bigint) || convert_to('wamn.control.identity.v0.1', 'UTF8') || pg_catalog.int8send(octet_length(convert_to('org', 'UTF8'))::bigint) || convert_to('org', 'UTF8') || pg_catalog.int8send(octet_length(convert_to(o.id, 'UTF8'))::bigint) || convert_to(o.id, 'UTF8') || pg_catalog.int8send(octet_length(convert_to('database', 'UTF8'))::bigint) || convert_to('database', 'UTF8') || pg_catalog.int8send(octet_length(convert_to(current_database(), 'UTF8'))::bigint) || convert_to(current_database(), 'UTF8')), 'hex'), 40)
 $$;
-GRANT EXECUTE ON FUNCTION registry.control_org() TO PUBLIC;
+REVOKE ALL ON FUNCTION registry.control_org() FROM PUBLIC;
 
 
 -- ---------------------------------------------------------------------------
@@ -1853,29 +1853,33 @@ DO $$ BEGIN
  END IF;
 END $$;
 
-DO $$ BEGIN
-    IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
-        GRANT USAGE ON SCHEMA identity TO wamn_conn_reader;
-        GRANT SELECT, INSERT, UPDATE, DELETE ON identity.oauth_token, identity.oauth_authorization TO wamn_conn_reader;
-    END IF;
-END $$;
-
-DO $identity_membership_read$ BEGIN
-    IF to_regrole('wamn_identity_reader') IS NOT NULL THEN
-        GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_identity_reader;
-    END IF;
-END $identity_membership_read$;
-
 -- Policy helpers keep unrelated readers from needing control-table privileges.
 CREATE FUNCTION registry.control_principal(principal uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
     SELECT EXISTS (SELECT FROM identity.org_memberships m WHERE m.principal_id=principal AND m.org=registry.control_org())
         OR EXISTS (SELECT FROM registry.connection c WHERE c.service_principal_id=principal AND c.org=registry.control_org())
 $$;
+REVOKE ALL ON FUNCTION registry.control_principal(uuid) FROM PUBLIC;
 CREATE FUNCTION registry.control_connection(connection uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
     SELECT EXISTS (SELECT FROM registry.connection c WHERE c.id=connection AND c.org=registry.control_org())
 $$;
+REVOKE ALL ON FUNCTION registry.control_connection(uuid) FROM PUBLIC;
+
+DO $$ BEGIN
+    IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
+        GRANT USAGE ON SCHEMA identity TO wamn_conn_reader;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON identity.oauth_token, identity.oauth_authorization TO wamn_conn_reader;
+        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid) TO wamn_conn_reader;
+    END IF;
+END $$;
+
+DO $identity_membership_read$ BEGIN
+    IF to_regrole('wamn_identity_reader') IS NOT NULL THEN
+        GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_identity_reader;
+        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid) TO wamn_identity_reader;
+    END IF;
+END $identity_membership_read$;
 
 -- The pending state supplies the callback's principal before ordinary row security applies.
 CREATE FUNCTION registry.lock_oauth_authorization(pending_state text)
@@ -1916,7 +1920,7 @@ BEGIN
         EXECUTE format('CREATE POLICY control_org ON %s USING (%s) WITH CHECK (%s)',relation_name,predicate,predicate);
     END LOOP;
     IF to_regrole('wamn_control') IS NOT NULL THEN
-        GRANT EXECUTE ON FUNCTION registry.control_org() TO wamn_control;
+        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid) TO wamn_control;
         GRANT SELECT ON registry.environments, identity.environment_roles TO wamn_control;
         GRANT INSERT, UPDATE, DELETE ON identity.environment_roles TO wamn_control;
     END IF;

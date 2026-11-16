@@ -7,6 +7,39 @@ use wamn_control_provision::{
 };
 
 #[sqlx::test(migrations = false)]
+async fn platform_security_definers_have_restricted_authority(pool: sqlx::PgPool) {
+    let _lock = wamn_test_postgres::lock();
+    let existing_schemas: Vec<String> =
+        sqlx::query_scalar("SELECT nspname::text FROM pg_namespace")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let url = wamn_test_postgres::url(&pool);
+    wamn_control_provision::test_database::system(url.as_str()).await;
+
+    // The product bootstrap defines the schema set, including schemas added later.
+    let violations: Vec<String> = sqlx::query_scalar(
+        "SELECT p.oid::regprocedure::text FROM pg_proc p
+         JOIN pg_namespace n ON n.oid=p.pronamespace
+         WHERE p.prosecdef AND n.nspname <> ALL($1::text[])
+           AND (p.proowner <> 'wamn_system'::regrole
+                OR NOT EXISTS (SELECT FROM pg_options_to_table(p.proconfig)
+                               WHERE option_name='search_path' AND option_value='pg_catalog')
+                OR EXISTS (SELECT FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                           WHERE (a.grantee=0 AND a.privilege_type='EXECUTE')
+                              OR (a.grantee<>p.proowner AND a.is_grantable)))",
+    )
+    .bind(&existing_schemas)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        violations.is_empty(),
+        "platform functions expose definer authority: {violations:?}"
+    );
+}
+
+#[sqlx::test(migrations = false)]
 async fn project_platform_logins_cannot_escalate(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let fixture = grants::prepare(&pool, WorkloadRoleFamily::Migration).await;

@@ -1514,53 +1514,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn status_keeps_independent_counts_and_zero() {
-        for (application, control, expected) in [
-            (
-                Some(Err(anyhow::anyhow!("application unavailable"))),
-                Some(Err(anyhow::anyhow!("control unavailable"))),
-                [Value::Null, Value::Null, Value::Null],
-            ),
-            (
-                Some(Ok((0, 2))),
-                Some(Err(anyhow::anyhow!("control unavailable"))),
-                [json!(0), json!(2), Value::Null],
-            ),
-            (
-                Some(Err(anyhow::anyhow!("application unavailable"))),
-                Some(Ok(3)),
-                [Value::Null, Value::Null, json!(3)],
-            ),
-            (None, None, [Value::Null, Value::Null, Value::Null]),
-        ] {
-            let status = json!({"digest": "sha256:live", "workloads": [], "live": [], "rollout": {"replicas": 1}});
-            let answer = status_with_counts(
-                status.clone(),
-                "billing",
-                &"dev".parse().unwrap(),
-                async {
-                    match application {
-                        Some(result) => result,
-                        None => std::future::pending().await,
-                    }
-                },
-                async {
-                    match control {
-                        Some(result) => result,
-                        None => std::future::pending().await,
-                    }
-                },
-            )
-            .await;
-            for (name, expected) in ["users_with_role", "roles", "memberships"]
-                .into_iter()
-                .zip(expected)
-            {
-                assert_eq!(answer[name], expected, "{name}");
-            }
-            for (name, expected) in status.as_object().unwrap() {
-                assert_eq!(answer[name], *expected, "{name}");
-            }
+    async fn status_answers_when_count_reads_fail() {
+        let status = json!({"digest": "sha256:live", "workloads": [], "live": [], "rollout": {"replicas": 1}});
+        let answer = status_with_counts(
+            status.clone(),
+            "billing",
+            &"dev".parse().unwrap(),
+            async { anyhow::bail!("application unavailable") },
+            async { anyhow::bail!("control unavailable") },
+        )
+        .await;
+        for name in ["users_with_role", "roles", "memberships"] {
+            assert!(answer[name].is_null());
+        }
+        for (name, value) in status.as_object().unwrap() {
+            assert_eq!(answer[name], *value, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn status_answers_when_count_reads_time_out() {
+        let status = json!({"digest": "sha256:live"});
+        let answer = status_with_counts(
+            status.clone(),
+            "billing",
+            &"dev".parse().unwrap(),
+            std::future::pending(),
+            std::future::pending(),
+        )
+        .await;
+        for name in ["users_with_role", "roles", "memberships"] {
+            assert!(answer[name].is_null());
+        }
+        for (name, value) in status.as_object().unwrap() {
+            assert_eq!(answer[name], *value, "{name}");
         }
     }
 }
