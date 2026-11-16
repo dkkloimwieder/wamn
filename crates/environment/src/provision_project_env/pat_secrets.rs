@@ -99,7 +99,7 @@ async fn issue_pat_secret(
         &issued.token,
         issued.token_prefix,
         &issued.expires_at,
-    )?;
+    );
     write_secret_json(path, &secret)?;
     Ok(IssuedPatSecret {
         purpose: purpose.purpose,
