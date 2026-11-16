@@ -1907,7 +1907,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     .await
     .map(|result| result.rows_affected())?;
     sqlx::query("CREATE TABLE public.connection_reference(connection_id uuid REFERENCES platform.connection(id))").execute(&mut billing).await.map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO public.connection_reference VALUES($1)")
+    sqlx::query("INSERT INTO public.connection_reference VALUES($1::text::uuid)")
         .bind(&identity)
         .execute(&mut billing)
         .await

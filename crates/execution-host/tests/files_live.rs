@@ -120,14 +120,14 @@ impl FileHost {
             application_fixture::application_host_with_release(name, Arc::clone(&release))
                 .await
                 .context("prepare file application")?;
-        sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
+        sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
             .bind(&host.first).execute(&mut host.admin).await?;
         let mut writer = application_fixture::connect(&administration_url).await?;
         sqlx::raw_sql("BEGIN")
             .execute(&mut writer)
             .await
             .expect("begin fixture transaction");
-        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:file-host-fixture')").bind(&host.first).execute(&mut writer).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture','admin:file-host-fixture')").bind(&host.first).execute(&mut writer).await.map(|result| result.rows_affected())?;
         for action in ["put", "get", "delete", "expose"] {
             sqlx::query("INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader',$1)").bind(&format!("wamn-control:file/{action}")).execute(&mut writer).await.map(|result| result.rows_affected())?;
         }
@@ -667,7 +667,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     let mut administration = application_fixture::connect(&fixture.administration_url).await?;
     let mut target = administration.begin().await?;
     sqlx::query(
-        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:file-host-fixture')",
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture','admin:file-host-fixture')",
     )
     .bind(&fixture.host.first)
     .execute(&mut *target)
@@ -701,7 +701,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         .execute(&mut fixture.writer)
         .await
         .map(drop)?;
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:file-host-fixture')")
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture','admin:file-host-fixture')")
         .bind(&fixture.host.first).execute(&mut fixture.writer).await?;
     sqlx::query("INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key,exposure) VALUES($1::text::uuid,'files',$2::text::uuid,'pending.txt','text/plain',$3,$4,$5,'application')").bind(&fresh.to_string()).bind(&fixture.registry.connection_id).bind(&i64::try_from(staged.size)?).bind(&staged.sha256).bind(&staged.blob_key).execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
     store.finish(fresh).await?;

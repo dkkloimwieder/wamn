@@ -1592,7 +1592,7 @@ mod tests {
             "SELECT subject, email, display_name, updated_by::text \
                  FROM identity.principals WHERE id = $1",
         )
-        .bind(&carol)
+        .bind(carol.parse::<PrincipalId>().unwrap())
         .fetch_one(&mut admin.client)
         .await
         .unwrap();
