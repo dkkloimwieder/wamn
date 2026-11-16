@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use base64::Engine as _;
 use serde_json::Value;
-use wamn_release_control::release_chart::Target;
+use wamn_kubernetes::Target;
 
 use super::document::{ClusterDocument, UpgradeTarget};
 use super::{artifact_plan, resources};

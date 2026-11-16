@@ -70,7 +70,7 @@ pub(crate) async fn compile_components(
         )
         .await?;
         let bytes = fs::read(&built.file)?;
-        let bytes = wamn_component_composer::compose(
+        let bytes = crate::composer::compose(
             bytes,
             bases
                 .iter()
@@ -443,7 +443,7 @@ mod tests {
         let bases = base_components(&request, &manifest).unwrap();
         let overlay =
             wat::parse_str(r#"(component (import "test:base/op@1.0.0" (instance)))"#).unwrap();
-        let composed = wamn_component_composer::compose(
+        let composed = crate::composer::compose(
             overlay,
             bases.iter().map(|path| fs::read(path).unwrap()).collect(),
         )

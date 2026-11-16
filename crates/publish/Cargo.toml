@@ -26,7 +26,6 @@ serde_json = { workspace = true }
 tar = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
 wamn-catalog = { workspace = true }
-wamn-component-composer = { workspace = true }
 wasmparser = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-registry = { workspace = true }

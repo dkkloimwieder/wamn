@@ -11,7 +11,7 @@
 use anyhow::Context as _;
 use sqlx::Row as _;
 use sqlx::postgres::PgRow as Row;
-use wamn_control_provision::{EnvPolicy, RecoveryDomain};
+use crate::{EnvPolicy, RecoveryDomain};
 
 /// Map one `select_env_policies_sql` / `select_env_policy_sql` row into an
 /// [`EnvPolicy`]. Column order: `name, recovery_domain::text, promotion_rank,

@@ -23,7 +23,7 @@ use wamn_postgres::connect;
 
 use super::Platform;
 use super::document::EnvironmentDocument;
-use wamn_release_control::release_chart;
+use wamn_kubernetes::Target;
 
 /// The policy facts `apply` uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -354,7 +354,7 @@ pub(crate) async fn helm(
 
 /// Run `helm` with an explicit kubeconfig, context and namespace.
 async fn helm_in(
-    target: &release_chart::Target,
+    target: &Target,
     arguments: &[&str],
 ) -> anyhow::Result<std::process::Output> {
     let mut args = arguments
@@ -383,7 +383,7 @@ pub(crate) async fn read_revision(
 
 /// [`read_revision`] with an explicit kubeconfig, context and namespace.
 async fn read_revision_in(
-    target: &release_chart::Target,
+    target: &Target,
     release_name: &str,
 ) -> anyhow::Result<Option<Revision>> {
     let history = read_history(target, release_name).await?;
@@ -447,7 +447,7 @@ pub fn rollback_target(history: &[Revision]) -> anyhow::Result<Option<&Revision>
 }
 
 async fn read_history(
-    target: &release_chart::Target,
+    target: &Target,
     release_name: &str,
 ) -> anyhow::Result<Vec<Value>> {
     let output = helm_in(
@@ -468,7 +468,7 @@ async fn read_history(
 }
 
 async fn read_history_revision(
-    target: &release_chart::Target,
+    target: &Target,
     release_name: &str,
     entry: &Value,
 ) -> anyhow::Result<Revision> {

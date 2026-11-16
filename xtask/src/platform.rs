@@ -6,7 +6,7 @@ use clap::Args as ClapArgs;
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use serde_json::Value;
 use std::path::PathBuf;
-use wamn_release_control::release_chart::{self, ImageSet};
+use wamn_platform_install::release_chart::{self, ImageSet};
 
 const IMAGES: [&str; 5] = ["host", "control", "ctl", "identity", "edge-web"];
 const ROLES: [(&str, &str); 1] = [("http-route", "http")];

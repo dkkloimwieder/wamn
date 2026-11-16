@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use wamn_identity_client::PatIssuerConfig;
-use wamn_release_control::release_chart;
+use wamn_kubernetes::Target;
 
 /// The platform inputs of the lifecycle verbs.
 #[derive(Debug, Clone)]
@@ -31,7 +31,7 @@ pub struct Platform {
     /// The system database URL selected for this verb.
     pub system_database_url: String,
     /// The cluster, its context and the operator release's namespace (R6).
-    pub target: release_chart::Target,
+    pub target: Target,
     /// A stamped release chart directory.
     pub chart: PathBuf,
     /// Keep fetched chart files alive for this operation.

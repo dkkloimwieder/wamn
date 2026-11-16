@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
 use wamn_kubernetes::kubectl;
-use wamn_release_control::release_chart::Target;
+use wamn_kubernetes::Target;
 
 pub async fn helm(target: &Target, arguments: &[&std::ffi::OsStr]) -> anyhow::Result<Vec<u8>> {
     let mut args = vec![
@@ -32,7 +32,7 @@ pub(crate) async fn apply_release(
             .into(),
         ..target.clone()
     };
-    wamn_release_control::release_chart::recover_pending(&owner, name).await?;
+    wamn_kubernetes::helm::recover_pending(&owner, name).await?;
     upgrade_release(&owner, entry, directory).await
 }
 

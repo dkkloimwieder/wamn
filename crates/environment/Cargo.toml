@@ -47,7 +47,6 @@ wamn-run-state = { workspace = true }
 wamn-component-artifact = { workspace = true }
 wamn-compiler = { workspace = true }
 wamn-publish = { workspace = true }
-wamn-release-control = { workspace = true }
 
 [dev-dependencies]
 url = { workspace = true }

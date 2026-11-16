@@ -74,7 +74,7 @@ pub fn chart_input(input: &ChartInput<'_>) -> anyhow::Result<Value> {
         );
     }
     Ok(
-        json!({"chart":input.chart, "version":wamn_release_control::release_chart::read_platform_version(&input.chart.join("Chart.yaml"))?,
+        json!({"chart":input.chart, "version":crate::release_chart::read_platform_version(&input.chart.join("Chart.yaml"))?,
         "name":input.name, "namespace":input.namespace,
         "values": {"image":{"repository":repository,"tag":tag,"pullPolicy":input.pull_policy},
             "issuer":input.issuer,"databaseSecret":input.database_secret,"tlsSecret":input.tls_secret,

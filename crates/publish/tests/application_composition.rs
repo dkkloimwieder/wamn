@@ -43,7 +43,7 @@ fn composition_preserves_overlay_exports_that_use_base_types() {
     let world = resolve
         .select_world(&[overlay_package], None)
         .expect("resolve overlay");
-    let application = wamn_component_composer::compose(component(&resolve, world), vec![base])
+    let application = wamn_build::composer::compose(component(&resolve, world), vec![base])
         .expect("compose the typed overlay");
     let composed = application;
     let engine = wamn_engine::build_engine(&[]).expect("build inspection engine");

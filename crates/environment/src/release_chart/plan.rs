@@ -113,14 +113,6 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     Ok(Value::Mapping(values))
 }
 
-pub(super) fn recovery(status: &str) -> Option<Recovery> {
-    match status {
-        "pending-install" => Some(Recovery::Uninstall),
-        "pending-upgrade" | "pending-rollback" => Some(Recovery::Rollback),
-        _ => None,
-    }
-}
-
 pub(super) fn mapping<const N: usize>(entries: [(&str, String); N]) -> Value {
     Value::Mapping(
         entries
@@ -128,16 +120,6 @@ pub(super) fn mapping<const N: usize>(entries: [(&str, String); N]) -> Value {
             .map(|(key, value)| (key.into(), value.into()))
             .collect(),
     )
-}
-
-/// The platform image set: the host image and the role component images.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ImageSet {
-    /// `<repository>:<tag>@sha256:<hex>`.
-    pub host: String,
-    /// `<repository>@sha256:<hex>`.
-    pub http: String,
 }
 
 /// One application HTTP workload with its configuration.
@@ -177,15 +159,6 @@ pub struct ValuesInput {
     pub roles: Vec<Role>,
     /// Who applied. It renders nothing and is kept with the revision (§9.2).
     pub actor: String,
-}
-
-/// What clears an operation that a killed writer left pending.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum Recovery {
-    /// A first install never finished: no revision ever served.
-    Uninstall,
-    /// An upgrade or rollback never finished: the previous revision serves.
-    Rollback,
 }
 
 /// The host samples traces at their start and exports to the cluster's collector.

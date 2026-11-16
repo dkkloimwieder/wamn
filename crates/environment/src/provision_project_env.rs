@@ -29,7 +29,7 @@ use wamn_platform_identity::{
 use wamn_registry::Triple;
 
 use wamn_identity_client::{PatClient, PatIssuerConfig};
-use wamn_release_control::env_policies::read_env_policy;
+use wamn_control_provision::env_policies::read_env_policy;
 
 mod output;
 pub mod pat_secrets;

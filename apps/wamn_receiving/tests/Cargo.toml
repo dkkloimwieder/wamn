@@ -30,7 +30,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "net", "process", "signal", "sync", "time", "rt", "macros"] }
 uuid = { workspace = true, features = ["v7"] }
 wamn-catalog = { workspace = true }
-wamn-component-composer = { workspace = true }
 
 async-nats = { workspace = true }
 bytes = { workspace = true }
@@ -38,7 +37,6 @@ futures-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 wamn-publish = { workspace = true, features = ["test-util"] }
-wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true, features = ["test-util"] }
 wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }

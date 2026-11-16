@@ -41,7 +41,7 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
         )
         .await?;
         super::drain::wait_stopped(platform, &name).await?;
-        return wamn_release_control::release_chart::uninstall(&platform.target, &name).await;
+        return wamn_kubernetes::helm::uninstall(&platform.target, &name).await;
     }
     let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
     for field in ["volumes", "volumeMounts"] {

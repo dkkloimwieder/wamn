@@ -10,9 +10,8 @@ use std::process::Command;
 
 use serde::Deserialize as _;
 use serde_yaml::{Mapping, Value};
-use wamn_release_control::release_chart::{
-    ImageSet, Role, RoleName, ValuesInput, release_name, stamp, values,
-};
+use wamn_environment::release_chart::{Role, RoleName, ValuesInput, release_name, values};
+use wamn_platform_install::release_chart::{ImageSet, stamp};
 
 const DIGEST: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const WEB_DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

@@ -32,7 +32,6 @@ wamn-control-provision.workspace = true
 wamn-platform-identity.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-package-artifact.workspace = true
-wamn-release-control.workspace = true
 wamn-compiler.workspace = true
 wamn-catalog.workspace = true
 postgres-protocol.workspace = true

@@ -9,7 +9,7 @@ use anyhow::Context as _;
 use serde_yaml::{Mapping, Value};
 
 use super::document::EnvironmentDocument;
-use wamn_release_control::release_chart::{self, RoleName, ValuesInput};
+use crate::release_chart::{self, RoleName, ValuesInput};
 
 /// Render application values without host configuration.
 pub fn render(input: &ValuesInput) -> anyhow::Result<Value> {
