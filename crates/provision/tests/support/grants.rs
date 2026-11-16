@@ -216,7 +216,6 @@ pub async fn family(
             | WorkloadRoleFamily::IdentityReader
             | WorkloadRoleFamily::HttpAdmitter
             | WorkloadRoleFamily::SessionRoleReader
-            | WorkloadRoleFamily::ServiceReader
     ) {
         let writes: Vec<String> = sqlx::query_scalar(
             "SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -260,7 +259,6 @@ pub async fn family(
         }
         WorkloadRoleFamily::IdentityReader => "UPDATE identity.principals SET status='active'",
         WorkloadRoleFamily::ConnectionReader => "SELECT * FROM registry.connection",
-        WorkloadRoleFamily::ServiceReader => "SELECT * FROM catalog.packages",
         WorkloadRoleFamily::Retention => "UPDATE wamn_run.runs SET package_id=package_id",
         WorkloadRoleFamily::AuditRetention => "DELETE FROM catalog.packages",
         WorkloadRoleFamily::ExecutorPlatform => "UPDATE wamn_run.runs SET input_json='{}'",
