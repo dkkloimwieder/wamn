@@ -20,9 +20,6 @@ use wamn_package_artifact::http_client::HttpClient;
 
 use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
 
-#[path = "connection_and_caller.rs"]
-mod connection_and_caller;
-
 #[path = "control_operations.rs"]
 mod control_operations;
 
@@ -39,7 +36,6 @@ pub(super) enum Case {
     PlatformUpgrade,
     PlatformSchema,
     ControlOperations,
-    ConnectionAndCaller,
 }
 
 struct Journey<'a> {
@@ -494,9 +490,6 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
                         password,
                     )
                     .await
-                }
-                Case::ConnectionAndCaller => {
-                    connection_and_caller::exercise(&journey, &artifacts["a0"]).await
                 }
                 Case::Reset => reset(&journey, &artifacts).await,
                 Case::Recovery => application_recovery(&journey, &artifacts).await,
@@ -1187,11 +1180,6 @@ async fn sources(
                 &format!("routes = {{path_prefix = \"/{app}\", "),
             )
             .replace("path = \"/", &format!("path = \"/{app}/"));
-        let text = if cases.contains(&Case::ConnectionAndCaller) && app == "alpha" {
-            text.replace("connections = {}", "connections = {upstream = {interface = \"wamn:connection/http@0.1.0\", mode = \"read\"}}")
-        } else {
-            text
-        };
         std::fs::write(manifest, text)?;
         let query = root.join("query/widget_list.sql");
         std::fs::write(

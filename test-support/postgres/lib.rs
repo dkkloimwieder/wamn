@@ -168,27 +168,6 @@ pub fn parse_prerequisites(reason: &str) -> Result<Vec<(&str, &str)>, String> {
         .collect()
 }
 
-/// Derive the execution tier from the strongest resource a test uses.
-/// Runtime and network resources select contract when no live resource is needed.
-pub fn test_tier<'a>(
-    names: impl IntoIterator<Item = (&'a str, &'a str)>,
-    integration: bool,
-) -> &'static str {
-    let mut tier = if integration { "contract" } else { "unit" };
-    for (type_, name) in names {
-        tier = match (type_, name, tier) {
-            ("service", "cluster", _) => "kind",
-            (_, _, "kind") => tier,
-            ("service", "nats", _) => "live-nats",
-            (_, _, "live-nats") => tier,
-            ("service", "postgres", _) => "live-postgres",
-            (_, _, "unit") => "contract",
-            _ => tier,
-        };
-    }
-    tier
-}
-
 /// Fail before setup when an ignored test lacks a declared prerequisite.
 pub fn require_ignored_prerequisites(reason: &str) {
     let names = parse_prerequisites(reason).unwrap_or_else(|error| panic!("{error}"));

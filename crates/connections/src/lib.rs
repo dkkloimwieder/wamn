@@ -10,7 +10,6 @@ pub mod integrations;
 pub mod invocation;
 pub mod oauth_encryption;
 pub mod oauth_token;
-pub mod production_lease;
 pub mod resource_lease;
 
 pub mod pod_identity;

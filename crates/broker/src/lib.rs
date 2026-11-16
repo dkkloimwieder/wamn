@@ -1,6 +1,5 @@
 //! NATS connections, event streams, and shared memory buckets.
 
-pub mod advisories;
 pub mod auth_changes;
 pub mod authorization;
 pub mod connection_changes;

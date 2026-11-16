@@ -35,7 +35,6 @@ use wamn_control_provision::workload_role::{
 use wamn_control_provision::{
     cdc_object_name, control_administration_secret_name, project_env_database_name,
 };
-use wamn_event_wire::delivery_advisory_stream;
 use wamn_registry::Triple;
 
 use super::Platform;
@@ -259,7 +258,7 @@ async fn delete_locked(
             .context("connect the event provisioning credential")?,
     );
     let source = wamn_event_wire::stream_name(org, project, env);
-    for stream in [delivery_advisory_stream(&source), source] {
+    for stream in [source] {
         if wamn_broker::streams::delete(&broker, &stream).await? {
             lines.push(format!("deleted stream {stream}"));
         }

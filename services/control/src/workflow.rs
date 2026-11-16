@@ -5,7 +5,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::{Connection as _, Row as _};
 use wamn_identity_protocol::PrincipalId;
-use wamn_workflow::PostgresWorkflows;
 use wamn_workflow::author_workflow::{AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger};
 use wamn_workflow::workflow_lifecycle::WorkflowVersion;
 
@@ -19,8 +18,6 @@ struct Request {
     application: Option<wamn_catalog::ApplicationName>,
     workflow_id: Option<wamn_catalog::canonical_name::CanonicalName>,
     version: Option<u32>,
-    run_id: Option<String>,
-    limit: Option<u32>,
     document: Option<Value>,
     execution_type: Option<String>,
     execution_role: Option<String>,
@@ -48,32 +45,6 @@ impl Execution {
             request.project.clone(),
         );
         let key = wamn_registry::project_env_key(&self.org, &request.project, &request.env);
-        if matches!(
-            operation.as_str(),
-            "workflow.park" | "workflow.release" | "workflow.runs"
-        ) {
-            let workflows = PostgresWorkflows::new(
-                wamn_postgres::connect(&database).await?,
-                "wamn_run",
-                key,
-                request.env,
-            );
-            return Ok(match operation.as_str() {
-                "workflow.park" => {
-                    workflows
-                        .park(request.run_id.as_deref().context("run_id is absent")?)
-                        .await?;
-                    json!({"status":"parked"})
-                }
-                "workflow.release" => {
-                    workflows
-                        .release(request.run_id.as_deref().context("run_id is absent")?)
-                        .await?;
-                    json!({"status":"queued"})
-                }
-                _ => serde_json::to_value(workflows.list(request.limit.unwrap_or(50)).await?)?,
-            });
-        }
         let mut application = wamn_postgres::connect(&database).await?;
         if operation == "workflow.list" {
             let mut tx = application

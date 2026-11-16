@@ -153,26 +153,6 @@ BEGIN
     END LOOP;
 END $connection_history$;
 
-CREATE TABLE catalog.wiring_tombstones (
-    project_env_key     text        NOT NULL CHECK (project_env_key <> ''),
-    package_id  text        NOT NULL CHECK (package_id <> ''),
-    environment text        NOT NULL CHECK (environment <> ''),
-    wiring_id   text        NOT NULL CHECK (wiring_id <> ''),
-    retired_at  timestamptz NOT NULL DEFAULT now(),
-    reason      text        NOT NULL CHECK (reason <> ''),
-    created_at  timestamptz NOT NULL,
-    created_by  uuid        NOT NULL,
-    updated_at  timestamptz NOT NULL,
-    updated_by  uuid        NOT NULL,
-    CONSTRAINT wiring_tombstones_pkey
-        PRIMARY KEY (project_env_key, package_id, environment, wiring_id)
-);
-
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON catalog.wiring_tombstones
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
 -- One version of one workflow of an environment (docs/plan/workflows.md R8).
 -- The control connection writes it after `author_workflow` evaluates the graph conditions
 -- against the serving release. A version row is immutable except `enabled`,
@@ -265,7 +245,7 @@ BEGIN
         'packages',
         'releases',
         'connection_requirement', 'release_connection', 'connection_binding',
-        'wiring_tombstones', 'workflows'
+        'workflows'
     ] LOOP
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE catalog.%I FORCE ROW LEVEL SECURITY', relation_name);
@@ -293,8 +273,7 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'releases',
-        'connection_requirement',
-        'wiring_tombstones'
+        'connection_requirement'
     ] LOOP
         EXECUTE format(
             'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON catalog.%I FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()',
@@ -309,7 +288,6 @@ GRANT SELECT ON catalog.packages,
     catalog.connection_requirement,
     catalog.release_connection,
     catalog.connection_binding,
-    catalog.wiring_tombstones,
     catalog.workflows
 TO wamn_app;
 

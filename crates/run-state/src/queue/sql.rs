@@ -5,7 +5,6 @@
 //! plane. The production lease is deliberately split into small statements
 //! composed by one host-owned transaction: lock, clear abandoned state, then lease.
 
-use super::MAX_RETRY_BACKOFF_MS;
 use crate::{FailType, RunStatus};
 
 /// Lock one eligible run in exact global FIFO order without granting a lease.
@@ -163,37 +162,6 @@ pub fn renew_production_lease_sql() -> String {
         .to_string()
 }
 
-/// Release one live lease after a credential or pool failure.
-/// Binds: project, run id, lease owner, lease generation. The statement locks both rows
-/// until release or terminalization commits. It returns exhaustion and wiring.
-/// Live tests cover fencing, the shared count, and the delay bounds.
-pub fn release_production_lease_sql() -> String {
-    format!(
-        "WITH held AS MATERIALIZED ( \
-             SELECT q.project_env_key, q.run_id, r.wiring_id, r.wiring_version \
-               FROM run_queue AS q JOIN runs AS r \
-                 ON r.project_env_key = q.project_env_key AND r.run_id = q.run_id \
-              WHERE q.project_env_key = $1::text \
-                AND q.run_id = $2 AND q.lease_owner = $3 \
-                AND q.lease_generation = $4 \
-                AND q.lease_expires_at > statement_timestamp() \
-                AND r.status IN ('{dispatched}', '{running}') \
-              FOR UPDATE OF r, q \
-         ) \
-         UPDATE run_queue AS q \
-            SET attempts = q.attempts + 1, \
-                lease_owner = NULL, lease_expires_at = NULL, \
-                available_at = statement_timestamp() + \
-                    LEAST({MAX_RETRY_BACKOFF_MS}::double precision, \
-                        1000.0 * power(2.0, LEAST(q.attempts, 9)) \
-                        * (1.0 + random() * 0.2)) * interval '1 millisecond' \
-           FROM held WHERE q.project_env_key = held.project_env_key AND q.run_id = held.run_id \
-         RETURNING q.attempts >= q.max_attempts, held.wiring_id, held.wiring_version",
-        dispatched = RunStatus::Dispatched.as_sql(),
-        running = RunStatus::Running.as_sql(),
-    )
-}
-
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
 ///
 /// `$2` is the grace period in milliseconds; `$3` is the exact package-id set
@@ -229,12 +197,6 @@ pub fn select_exhausted_production_sql() -> String {
 /// instant. Every exhausted run records its failure and loses its queue row.
 pub fn terminalize_exhausted_production_sql() -> String {
     terminalize_exhausted_sql(RunStatus::InfrastructureFailure, None)
-}
-
-/// Fail a locked run that spent its last attempt on a credential release.
-/// Binds match [`terminalize_exhausted_production_sql`].
-pub fn terminalize_released_production_sql() -> String {
-    terminalize_exhausted_sql(RunStatus::Failed, Some(FailType::RetryExhausted))
 }
 
 fn terminalize_exhausted_sql(status: RunStatus, fail_type: Option<FailType>) -> String {

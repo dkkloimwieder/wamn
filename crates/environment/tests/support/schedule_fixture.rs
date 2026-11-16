@@ -34,7 +34,6 @@ pub use wamn_workflow::workflow_lifecycle::{
     WorkflowLifecycleError, WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow,
     enable_workflow,
 };
-pub use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 pub use wash_runtime::plugin::wasi_logging::TracingLogger;
 
 pub const PROJECT_ENV_KEY: &str = "schedule-live--dev--default";
@@ -529,69 +528,6 @@ impl Fixture {
             .get(0)
     }
 
-    /// Bind the real queue service to the release and drain its runs.
-    pub async fn drain(&self) {
-        let driver = Arc::new(RouterDriver::new(Arc::new(
-            OperationHost::new(
-                Arc::clone(&self.engine),
-                Arc::clone(&self.postgres),
-                Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
-                    &self.postgres,
-                ))),
-                Arc::new(HttpTransport::new().unwrap()),
-                Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
-                    Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
-                    wamn_broker::Publisher::default(),
-                    Arc::new(ConnectionCredentials::empty()),
-                    &self.postgres,
-                    &self
-                        .release
-                        .target()
-                        .project_env_key
-                        .as_str()
-                        .parse()
-                        .unwrap(),
-                    &PROJECT.parse().unwrap(),
-                    &self.release.target().environment,
-                )),
-                Arc::clone(&self.logging),
-                Arc::from([]),
-                Arc::clone(&self.release),
-                Arc::new(LocalComponentSource::new(self.scratch.path().to_owned())),
-                OperationHostConfig {
-                    project: PROJECT.parse().unwrap(),
-                    schema: Some("application_data".to_owned()),
-                    owner_prefix: "schedule-live".to_owned(),
-                    warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-                },
-            )
-            .unwrap(),
-        )));
-        let service = QueueService::bind(
-            driver,
-            Arc::clone(&self.postgres),
-            Arc::new(
-                WamnJetstream::new(wamn_events::WamnJetstreamConfig::default())
-                    .await
-                    .expect("event transport initializes"),
-            ),
-            &self.release,
-            QueueServiceConfig {
-                project: PROJECT.parse().unwrap(),
-                runner: "schedule-live".to_owned(),
-                lease_ttl_ms: 30_000,
-            },
-        )
-        .await
-        .expect("bind the queue service");
-        let (_stop, stopping) = tokio::sync::watch::channel(true);
-        tokio::time::timeout(Duration::from_secs(60), service.serve(stopping))
-            .await
-            .expect("the queue drains the release's backlog")
-            .expect("queue service");
-        service.revoke();
-    }
-
     /// `(status, result_json)` of a run.
     pub async fn outcome(&mut self, run: &str) -> (String, Option<Value>) {
         let row =
@@ -630,37 +566,6 @@ pub fn envelope(op: &str, txid: i64, lsn: u64) -> String {
     });
     value[if op == "delete" { "old" } else { "new" }] = row;
     value.to_string()
-}
-
-pub async fn admit(
-    fixture: &Fixture,
-    envelope: &str,
-    sequence: u64,
-    lsn: u64,
-) -> Result<(), wamn_run_state::run_store::ProductionLeaseError> {
-    wamn_workflow::event_admission::admit_event_batch(
-        &fixture.postgres,
-        &PROJECT.parse().unwrap(),
-        &fixture.release,
-        &EventBatchAdmission {
-            application: &APP.parse().expect("valid fixture name"),
-            source_package: &APPLICATION.parse().expect("valid fixture name"),
-            entity: "order",
-            envelope,
-            sequence,
-            source_event_id: &wamn_event_wire::msg_id(
-                &PROJECT.parse().unwrap(),
-                &ENVIRONMENT.parse().unwrap(),
-                &wamn_event_wire::CdcIdentity {
-                    system_id: 1,
-                    timeline: 1,
-                    commit_lsn: lsn,
-                    row_ordinal: 0,
-                },
-            ),
-        },
-    )
-    .await
 }
 
 pub async fn changed_order(fixture: &mut Fixture) -> i64 {

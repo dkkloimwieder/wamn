@@ -44,12 +44,6 @@ const NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence \
     WHERE (number_sequence.application, number_sequence.name, number_sequence.pattern) \
           IS DISTINCT FROM (EXCLUDED.application, EXCLUDED.name, EXCLUDED.pattern)";
 
-/// A package's default pattern, written only when the application has no row
-/// of that name: an edited pattern stays.
-const DEFAULT_NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence \
-    (application, name, pattern) VALUES ($1, $2, $3) \
-    ON CONFLICT (application, name) DO NOTHING";
-
 const SETTING_SQL: &str = "INSERT INTO platform.setting \
     (target_type, target_id, key, value, locked) \
     VALUES ($1, $2, $3, $4::text::jsonb, $5) \
@@ -202,29 +196,4 @@ pub struct SequenceDefault {
     pub application: wamn_catalog::ApplicationName,
     pub name: String,
     pub pattern: String,
-}
-
-/// Create the `platform.number_sequence` row of each default that the
-/// application does not have yet, and return how many rows were created. A
-/// row that exists keeps its pattern.
-///
-/// The caller runs this as [`write_configuration`] runs: on the
-/// `wamn_administration` authority, in a transaction that binds `app.user_id`
-/// and `app.operation`.
-pub async fn create_default_sequences(
-    client: &mut sqlx::PgConnection,
-    defaults: &[SequenceDefault],
-) -> Result<u64, IdentityError> {
-    let mut created = 0;
-    for row in defaults {
-        created += sqlx::query(DEFAULT_NUMBER_SEQUENCE_SQL)
-            .bind(&row.application)
-            .bind(&row.name)
-            .bind(&row.pattern)
-            .execute(&mut *client)
-            .await
-            .map(|result| result.rows_affected())
-            .map_err(|error| database_error(&error))?;
-    }
-    Ok(created)
 }

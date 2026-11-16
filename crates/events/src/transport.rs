@@ -6,17 +6,13 @@ use std::time::Duration;
 use async_nats::HeaderMap;
 use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::Context;
-#[cfg(test)]
-use async_nats::jetstream::consumer::AckPolicy;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
 mod admission;
 use anyhow::Context as _;
-#[cfg(test)]
-use futures_util::StreamExt as _;
 use tracing::Instrument as _;
 use wamn_authority::EffectOutcome;
 use wamn_broker::events::{
-    advisory_stream_config, consumer_config_matches, source_stream_config, stream_config_matches,
+    consumer_config_matches, source_stream_config, stream_config_matches,
 };
 use wamn_event_wire::{Causation, DerivedEvent, Op, derived_msg_id, stream_name, subject};
 use wamn_registry::Triple;
@@ -339,7 +335,7 @@ impl WamnJetstream {
         Ok(plugin)
     }
 
-    fn expected_event_streams(&self) -> anyhow::Result<[async_nats::jetstream::stream::Config; 2]> {
+    fn expected_event_streams(&self) -> anyhow::Result<[async_nats::jetstream::stream::Config; 1]> {
         let replicas = self
             .stream_replicas
             .filter(|replicas| (1..=5).contains(replicas))
@@ -363,7 +359,6 @@ impl WamnJetstream {
             .context("event target is absent")?;
         Ok([
             source_stream_config(target, replicas, duplicate_window),
-            advisory_stream_config(target, replicas),
         ])
     }
 
@@ -626,94 +621,6 @@ mod tests {
         })
         .await
         .unwrap();
-    }
-
-    #[tokio::test]
-    #[ignore = "requires: nats, env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
-    async fn live_derived_publish_replay_converges_through_jetstream_dedup() {
-        let client = wamn_broker::nats::PlatformNats::from_env()
-            .expect("set WAMN_NATS_URL and its certificate to this test's disposable broker")
-            .connect()
-            .await
-            .expect("connect");
-        let ctx = async_nats::jetstream::new(client.clone());
-        let stream = "EVT_13_wamnjsderived_3_dev_3_app";
-        let event_subject = "evt.wamnjsderived.dev.app.orders.update";
-        let _ = ctx.delete_stream(stream).await;
-        let target = Triple::new(
-            "wamnjsderived".parse().unwrap(),
-            "dev".parse().unwrap(),
-            "app".parse().unwrap(),
-        );
-        let advisory_config = advisory_stream_config(&target, 1);
-        let advisory_name = advisory_config.name.clone();
-        let _ = ctx.delete_stream(&advisory_name).await;
-        ctx.create_stream(source_stream_config(&target, 1, Duration::from_secs(120)))
-            .await
-            .expect("provision derived stream");
-        ctx.create_stream(advisory_config)
-            .await
-            .expect("provision advisory stream");
-
-        let plugin = WamnJetstream::new(WamnJetstreamConfig {
-            nats: Some(client),
-            event_target: Some(target),
-            stream_replicas: Some(1),
-            dup_window_secs: Some(120),
-        })
-        .await
-        .unwrap();
-        let first = plugin
-            .publish_derived(derived_request("component-1", "author:orders:7"))
-            .await
-            .expect("first server ack");
-        assert!(!first.duplicate);
-        assert_eq!(first.stream_name, stream);
-        let replay = plugin
-            .publish_derived(derived_request("component-1", "author:orders:7"))
-            .await
-            .expect("replay server ack");
-        assert!(replay.duplicate, "the replay converges at JetStream dedup");
-        assert_eq!(replay.stream_seq, first.stream_seq);
-
-        let stream_handle = ctx.get_stream(stream).await.expect("get stream");
-        let consumer = stream_handle
-            .get_or_create_consumer(
-                "derived_mat_test",
-                PullConfig {
-                    durable_name: Some("derived_mat_test".into()),
-                    ack_policy: AckPolicy::Explicit,
-                    filter_subject: event_subject.into(),
-                    ack_wait: Duration::from_secs(5),
-                    max_deliver: -1,
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("bind derived consumer");
-        let mut batch = consumer
-            .fetch()
-            .max_messages(10)
-            .expires(Duration::from_secs(2))
-            .messages()
-            .await
-            .expect("fetch derived event");
-        let mut stored = Vec::new();
-        while let Some(item) = batch.next().await {
-            let message = item.expect("derived message");
-            stored.push(DerivedEvent::from_slice(&message.payload).expect("derived wire"));
-            message.ack().await.expect("ack derived message");
-        }
-        assert_eq!(stored.len(), 1, "the replay was not stored twice");
-        assert_eq!(stored[0].dedup_id, "author:orders:7");
-        assert_eq!(stored[0].entity, "orders");
-        assert_eq!(stored[0].op, Op::Update);
-        assert_eq!(stored[0].causation.depth, 3);
-
-        ctx.delete_stream(stream).await.expect("cleanup");
-        ctx.delete_stream(advisory_name)
-            .await
-            .expect("advisory cleanup");
     }
 }
 

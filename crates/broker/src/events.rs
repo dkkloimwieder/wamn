@@ -2,12 +2,9 @@
 
 use std::time::Duration;
 
-use crate::advisories::{
-    DELIVERY_ADVISORY_MAX_AGE_SECONDS, DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT,
-};
 use async_nats::jetstream::consumer::{self, AckPolicy, DeliverPolicy, pull};
 use async_nats::jetstream::stream::{self, Compression, RetentionPolicy, StorageType};
-use wamn_event_wire::{delivery_advisory_stream, delivery_advisory_subjects, stream_subjects};
+use wamn_event_wire::stream_subjects;
 use wamn_registry::Triple;
 
 /// One event batch holds at most four MiB.
@@ -33,19 +30,6 @@ pub fn source_stream_config(
         max_message_size: -1,
         compression: Some(Compression::None),
         ..Default::default()
-    }
-}
-
-/// Declare bounded broker advisories for the same source stream.
-pub fn advisory_stream_config(target: &Triple, replicas: usize) -> stream::Config {
-    let age = Duration::from_secs(DELIVERY_ADVISORY_MAX_AGE_SECONDS);
-    let source = source_stream_config(target, replicas, age);
-    stream::Config {
-        name: delivery_advisory_stream(&source.name),
-        subjects: delivery_advisory_subjects(&source.name).to_vec(),
-        max_age: age,
-        max_messages_per_subject: DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT,
-        ..source
     }
 }
 
@@ -246,7 +230,7 @@ mod tests {
     use super::*;
     use async_nats::jetstream::consumer::IntoConsumerConfig;
     use async_nats::jetstream::stream::{
-        DiscardPolicy, PersistenceMode, Placement, Republish, Source, SubjectTransform,
+        DiscardPolicy, Placement, Republish, Source, SubjectTransform,
     };
 
     #[test]
@@ -386,107 +370,6 @@ mod tests {
             stream::Config {
                 num_replicas: 1,
                 ..expected.clone()
-            },
-        ];
-        for actual in changed {
-            assert!(!stream_config_matches(&expected, &actual), "{actual:?}");
-        }
-    }
-
-    /// The config a NATS 2.12 server reports adds its own metadata keys.
-    fn server_reported(expected: &stream::Config) -> stream::Config {
-        stream::Config {
-            metadata: [
-                ("_nats.level", "3"),
-                ("_nats.req.level", "0"),
-                ("_nats.ver", "2.12.8"),
-            ]
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect(),
-            description: Some("operator note".into()),
-            template_owner: "server".into(),
-            placement: Some(Placement {
-                cluster: Some("c1".into()),
-                tags: Vec::new(),
-            }),
-            ..expected.clone()
-        }
-    }
-
-    #[test]
-    fn stream_comparison_accepts_server_annotations() {
-        let target = Triple::new(
-            "acme".parse().unwrap(),
-            "dev".parse().unwrap(),
-            "widgets".parse().unwrap(),
-        );
-        for expected in [
-            source_stream_config(&target, 3, Duration::from_secs(120)),
-            advisory_stream_config(&target, 3),
-        ] {
-            assert!(stream_config_matches(
-                &expected,
-                &server_reported(&expected)
-            ));
-        }
-    }
-
-    #[test]
-    fn stream_comparison_refuses_a_changed_owned_field_beside_annotations() {
-        let expected = advisory_stream_config(
-            &Triple::new(
-                "acme".parse().unwrap(),
-                "dev".parse().unwrap(),
-                "widgets".parse().unwrap(),
-            ),
-            3,
-        );
-        let reported = server_reported(&expected);
-        let changed = [
-            stream::Config {
-                name: "foreign".into(),
-                ..reported.clone()
-            },
-            stream::Config {
-                num_replicas: 1,
-                ..reported.clone()
-            },
-            stream::Config {
-                storage: StorageType::Memory,
-                ..reported.clone()
-            },
-            stream::Config {
-                max_age: Duration::ZERO,
-                ..reported.clone()
-            },
-            stream::Config {
-                max_consumers: 1,
-                ..reported.clone()
-            },
-            stream::Config {
-                max_bytes: 1,
-                ..reported.clone()
-            },
-            stream::Config {
-                max_message_size: 1,
-                ..reported.clone()
-            },
-            stream::Config {
-                max_messages_per_subject: -1,
-                ..reported.clone()
-            },
-            stream::Config {
-                compression: Some(Compression::S2),
-                ..reported.clone()
-            },
-            stream::Config {
-                deny_purge: true,
-                ..reported.clone()
-            },
-            stream::Config {
-                persist_mode: Some(PersistenceMode::Async),
-                ..reported
             },
         ];
         for actual in changed {

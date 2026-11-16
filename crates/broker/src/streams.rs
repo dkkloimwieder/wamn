@@ -6,7 +6,7 @@ pub use plan::validate_inputs;
 use std::time::Duration;
 
 use crate::events::{
-    advisory_stream_config, consumer_config_matches, event_consumer_config, source_stream_config,
+    consumer_config_matches, event_consumer_config, source_stream_config,
     stream_config_matches,
 };
 use anyhow::{Context as _, ensure};
@@ -43,7 +43,7 @@ pub async fn last_published_sequence(
 /// The caller excludes writers and waits for CDC publishers before this operation.
 pub async fn discard(context: &Context, target: &Triple) -> anyhow::Result<()> {
     let source = wamn_event_wire::stream_name(&target.org, &target.project, &target.env);
-    for name in [wamn_event_wire::delivery_advisory_stream(&source), source] {
+    for name in [source] {
         let stream = context
             .get_stream(&name)
             .await
@@ -67,7 +67,6 @@ pub async fn provision(
 ) -> anyhow::Result<()> {
     validate_inputs(target, replicas, duplicate_window, consumers)?;
     let source_config = source_stream_config(target, replicas, duplicate_window);
-    let advisory_config = advisory_stream_config(target, replicas);
     let source = context
         .get_or_create_stream(source_config.clone())
         .await
@@ -76,15 +75,6 @@ pub async fn provision(
         stream_config_matches(&source_config, &source.cached_info().config),
         "source stream {} differs from its complete declaration",
         source_config.name
-    );
-    let advisories = context
-        .get_or_create_stream(advisory_config.clone())
-        .await
-        .context("provision the environment advisory stream")?;
-    ensure!(
-        stream_config_matches(&advisory_config, &advisories.cached_info().config),
-        "advisory stream {} differs from its complete declaration",
-        advisory_config.name
     );
     prepare_consumers(&source, consumers).await
 }

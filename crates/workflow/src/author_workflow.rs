@@ -30,8 +30,6 @@ use anyhow::Context as _;
 
 use wamn_catalog::{ServingManifest, WiringDocument, parse_workflow_schedule};
 
-use std::path::Path;
-
 /// Params: `$1` `project_env_key`, `$2` environment, `$3` application, `$4` workflow id,
 /// `$5` version, `$6` graph, `$7` hash, `$8` trigger, `$9` execution type,
 /// `$10` execution role, `$11` authoring principal, `$12` schedule,
@@ -474,70 +472,4 @@ pub async fn author_workflow_in_databases(
 
 fn storage(context: &'static str, error: sqlx::Error) -> AuthorWorkflowError {
     AuthorWorkflowError::with_source(AuthorWorkflowErrorType::Storage, context, error)
-}
-
-pub fn read_compiled_wiring_document(path: &Path) -> Result<WiringDocument, AuthorWorkflowError> {
-    let bytes = std::fs::read(path).map_err(|error| {
-        AuthorWorkflowError::with_source(
-            AuthorWorkflowErrorType::Document,
-            format!("read compiled wiring {}", path.display()),
-            error,
-        )
-    })?;
-    let value = serde_json::from_slice(&bytes).map_err(|error| {
-        AuthorWorkflowError::with_source(
-            AuthorWorkflowErrorType::Document,
-            format!("parse compiled wiring {}", path.display()),
-            error,
-        )
-    })?;
-    let document = WiringDocument::parse(&value).map_err(|error| {
-        AuthorWorkflowError::with_source(
-            AuthorWorkflowErrorType::Document,
-            format!("wiring document {} is not a valid wiring", path.display()),
-            error,
-        )
-    })?;
-    if document.nodes.values().any(|node| {
-        node.operation
-            .as_str()
-            .rsplit_once('@')
-            .is_none_or(|(_, version)| version.is_empty())
-    }) {
-        return Err(AuthorWorkflowError::new(
-            AuthorWorkflowErrorType::Document,
-            "workflow author requires compiled wiring output with sealed operation identities"
-                .to_owned(),
-        ));
-    }
-    Ok(document)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn workflow_input_requires_compiled_operation_identities() {
-        let path =
-            std::env::temp_dir().join(format!("workflow-input-{}.json", uuid::Uuid::now_v7()));
-        let mut document = wamn_catalog::fixture_graph(&"sync".parse().unwrap(), 1);
-        for (operation, accepted) in [
-            ("netsuite:sync/finish@1.0.0", true),
-            ("netsuite:sync/finish", false),
-        ] {
-            document.nodes.values_mut().next().unwrap().operation = operation.parse().unwrap();
-            std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
-            let result = read_compiled_wiring_document(&path);
-            std::fs::remove_file(&path).unwrap();
-            if accepted {
-                assert!(result.is_ok());
-            } else {
-                assert!(matches!(
-                    result.unwrap_err().error_type(),
-                    AuthorWorkflowErrorType::Document
-                ));
-            }
-        }
-    }
 }

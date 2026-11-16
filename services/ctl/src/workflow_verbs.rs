@@ -19,12 +19,6 @@ pub enum WorkflowCommand {
     List(WorkflowTarget),
     /// Start the enabled version of a workflow through the host, and print its run id.
     Start(StartArgs),
-    /// Hold a queued run, so no lease takes it.
-    Park(RunArgs),
-    /// Return a parked run to the queue.
-    Release(RunArgs),
-    /// Print the newest runs of the environment, one JSON object per line.
-    Runs(ListArgs),
 }
 
 /// The environment selected by a workflow request.
@@ -127,23 +121,6 @@ pub struct StartArgs {
     pub input: PathBuf,
 }
 
-#[derive(Debug, Args)]
-pub struct RunArgs {
-    #[command(flatten)]
-    pub target: WorkflowTarget,
-    #[arg(long)]
-    pub run_id: String,
-}
-
-#[derive(Debug, Args)]
-pub struct ListArgs {
-    #[command(flatten)]
-    pub target: WorkflowTarget,
-    /// The most runs to print.
-    #[arg(long, default_value_t = 50)]
-    pub limit: u32,
-}
-
 /// Send workflow administration to the org control service.
 pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
     use serde_json::json;
@@ -172,18 +149,6 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
         WorkflowCommand::List(args) => (
             "workflow.list",
             json!({"project":args.project,"env":args.target.environment}),
-        ),
-        WorkflowCommand::Park(args) => (
-            "workflow.park",
-            json!({"project":args.target.project,"env":args.target.target.environment,"run_id":args.run_id}),
-        ),
-        WorkflowCommand::Release(args) => (
-            "workflow.release",
-            json!({"project":args.target.project,"env":args.target.target.environment,"run_id":args.run_id}),
-        ),
-        WorkflowCommand::Runs(args) => (
-            "workflow.runs",
-            json!({"project":args.target.project,"env":args.target.target.environment,"limit":args.limit}),
         ),
     };
     let result = crate::operation_verbs::ControlHost::from_env()?

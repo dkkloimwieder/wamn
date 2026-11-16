@@ -60,10 +60,6 @@ pub enum FailType {
     /// The run spent its per-invocation node-execution budget (cjv.4) — a
     /// permitted loop that never terminated.
     RunawayBudget,
-    /// The root run exhausted its maximum call depth.
-    DepthBudget,
-    /// The root run exhausted its total-dispatched-node budget.
-    DispatchBudget,
     /// A referenced flow name could not be resolved in the pinned release.
     UnresolvableName,
     /// A resolved artifact's bytes did not match its content hash.
@@ -72,23 +68,18 @@ pub enum FailType {
     ForeignRevision,
     /// A resolved flow's contract is incompatible with its call site.
     IncompatibleContract,
-    /// A resolved flow has a requirement without an environment binding.
-    UnboundRequirement,
 }
 
 impl FailType {
-    pub const ALL: [FailType; 11] = [
+    pub const ALL: [FailType; 8] = [
         FailType::Terminal,
         FailType::RetryExhausted,
         FailType::InvalidInput,
         FailType::RunawayBudget,
-        FailType::DepthBudget,
-        FailType::DispatchBudget,
         FailType::UnresolvableName,
         FailType::HashInvalidBytes,
         FailType::ForeignRevision,
         FailType::IncompatibleContract,
-        FailType::UnboundRequirement,
     ];
 
     pub fn as_sql(self) -> &'static str {
@@ -97,13 +88,10 @@ impl FailType {
             FailType::RetryExhausted => "retry-exhausted",
             FailType::InvalidInput => "invalid-input",
             FailType::RunawayBudget => "runaway-budget",
-            FailType::DepthBudget => "depth-budget",
-            FailType::DispatchBudget => "dispatch-budget",
             FailType::UnresolvableName => "unresolvable-name",
             FailType::HashInvalidBytes => "hash-invalid-bytes",
             FailType::ForeignRevision => "foreign-revision",
             FailType::IncompatibleContract => "incompatible-contract",
-            FailType::UnboundRequirement => "unbound-requirement",
         }
     }
 

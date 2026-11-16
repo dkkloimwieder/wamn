@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use url::Url;
 use wamn_authority::identity::ReleaseIdentity;
-use wamn_connections::production_lease::ProductionLeaseResult;
 use wamn_identity_protocol::AuthorityClass;
 use wamn_sql::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 
@@ -247,13 +246,6 @@ pub async fn assert_terminal_status_dequeued(
     assert_eq!(row.get::<String, _>(0), status);
     assert!(row.get::<bool, _>(1));
     Ok(())
-}
-
-pub fn ready_run(result: ProductionLeaseResult) -> String {
-    match result {
-        ProductionLeaseResult::Ready { run_id, .. } => run_id,
-        ProductionLeaseResult::Empty => panic!("expected ready lease, got Empty"),
-    }
 }
 
 /// The `application_name` the runtime pool carries.

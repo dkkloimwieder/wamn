@@ -380,15 +380,6 @@ pub fn application_release_filter(env: &crate::EnvName) -> String {
     let slug: String = env.as_str().chars().take(SLUG_LEN).collect();
     format!("^r-{slug}-")
 }
-/// The advisory stream of one event source.
-pub fn delivery_advisory_stream(source: &str) -> String {
-    format!("WAMN_EVENT_ADVISORIES_{source}")
-}
-/// The advisory subscriptions of one event source.
-pub fn delivery_advisory_subjects(source: &str) -> [String; 2] {
-    ["MAX_DELIVERIES", "MSG_TERMINATED"]
-        .map(|type_| format!("$JS.EVENT.ADVISORY.CONSUMER.{type_}.{source}.*"))
-}
 /// Join the parts of a broker subject without reordering its protocol tokens.
 pub fn nats_subject(parts: &[&str]) -> String {
     parts.join(".")

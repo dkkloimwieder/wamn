@@ -160,7 +160,7 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
         )
         .await
         .unwrap(),
-        component_source: apply_package::component_source_from_env(None)?,
+        component_source: None,
         changes: wamn_broker::Publisher::default(),
         package: wamn_environment::apply_package::PackageRoot {
             path: package.to_path_buf(),

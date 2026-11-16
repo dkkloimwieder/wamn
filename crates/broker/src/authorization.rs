@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::events::{advisory_stream_config, source_stream_config};
+use crate::events::source_stream_config;
 use anyhow::Context as _;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ pub const AUTHORIZATION: &str = "wamn-nats-authorization";
 
 mod configuration {
     use super::{
-        Deserialize, Duration, STANDARD, Serialize, Value, advisory_stream_config, json,
+        Deserialize, Duration, STANDARD, Serialize, Value, json,
         source_stream_config,
     };
     use anyhow::Context as _;
@@ -132,12 +132,11 @@ mod configuration {
         let project_env_key =
             wamn_registry::project_env_key(&target.org, &target.project, &target.env);
         let source = source_stream_config(target, 1, Duration::from_secs(120));
-        let advisory = advisory_stream_config(target, 1);
         let user = wamn_registry::environment_nats_user(&project_env_key);
         // The environment host reads its application consumers.
         // Provisioning declares the streams and consumers before attachment.
         let mut publish = vec![source.subjects[0].clone()];
-        for name in [&source.name, &advisory.name] {
+        for name in [&source.name] {
             publish.push(wamn_registry::name::nats_subject(&[
                 "$JS",
                 "API",

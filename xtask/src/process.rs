@@ -80,36 +80,6 @@ pub async fn output(root: &Path, program: &str, args: &[&str]) -> anyhow::Result
     String::from_utf8(output.stdout).context("child output is not UTF-8")
 }
 
-pub async fn output_before(
-    root: &Path,
-    program: &str,
-    args: &[&str],
-    deadline: Instant,
-) -> anyhow::Result<String> {
-    let mut command = Command::new(program);
-    command.current_dir(root).args(args);
-    output_command_before(&mut command, deadline, None).await
-}
-
-pub async fn output_command_before(
-    command: &mut Command,
-    deadline: Instant,
-    label: Option<&str>,
-) -> anyhow::Result<String> {
-    let output = execute_inner(command, Some(deadline), false, label)
-        .await
-        .with_context(|| crate::tasks::describe(command))?;
-    ensure!(
-        output.status.success(),
-        "{}: {}\n{}{}",
-        crate::tasks::describe(command),
-        output.status,
-        output.text,
-        output.diagnostics
-    );
-    Ok(output.text)
-}
-
 // A separate subreaper for every command keeps parallel targets' descendants apart.
 // Closing its input requests cleanup, even when the calling future or process dies.
 pub async fn supervise(arguments: &[OsString]) -> anyhow::Result<i32> {
@@ -216,7 +186,6 @@ async fn read(
 #[derive(Debug)]
 pub struct Captured {
     pub text: String,
-    pub diagnostics: String,
     pub status: ExitStatus,
 }
 
@@ -233,14 +202,6 @@ pub async fn execute_before(command: &mut Command, deadline: Instant) -> anyhow:
     execute_checked(command, Some(deadline), None).await
 }
 
-pub async fn execute_labeled_before(
-    command: &mut Command,
-    deadline: Instant,
-    label: &str,
-) -> anyhow::Result<String> {
-    execute_checked(command, Some(deadline), Some(label)).await
-}
-
 async fn execute_checked(
     command: &mut Command,
     deadline: Option<Instant>,
@@ -255,11 +216,6 @@ async fn execute_checked(
         output.text
     );
     Ok(output.text)
-}
-
-pub async fn capture_before(command: &mut Command, deadline: Instant) -> anyhow::Result<Captured> {
-    // Cargo renders diagnostics on stderr. Keep its JSON artifact stream out of the run log.
-    execute_inner(command, Some(deadline), false, None).await
 }
 
 async fn execute_inner(
@@ -382,7 +338,6 @@ async fn execute_inner(
     streams?;
     Ok(Captured {
         text,
-        diagnostics,
         status,
     })
 }
