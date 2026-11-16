@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_package_artifact::http_client::HttpClient;
+use wamn_oci::package_artifact::http_client::HttpClient;
 
 pub struct Routes {
     pub endpoint: String,

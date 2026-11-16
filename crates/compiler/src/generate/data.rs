@@ -63,9 +63,9 @@ pub(super) fn cursor_key_type(ty: SqlValueType) -> &'static str {
         SqlValueType::Int32 => "i32",
         SqlValueType::Int64 => "i64",
         SqlValueType::Text => "String",
-        SqlValueType::Numeric => "wamn_postgres_statements::Numeric",
-        SqlValueType::Timestamptz => "wamn_postgres_statements::TimestampTz",
-        SqlValueType::Uuid => "wamn_postgres_statements::Uuid",
+        SqlValueType::Numeric => "wamn_guest::postgres_statements::Numeric",
+        SqlValueType::Timestamptz => "wamn_guest::postgres_statements::TimestampTz",
+        SqlValueType::Uuid => "wamn_guest::postgres_statements::Uuid",
         SqlValueType::Float64 | SqlValueType::Bytes | SqlValueType::Json => {
             unreachable!("query validation admits only cursor key types as sort fields")
         }
@@ -111,7 +111,7 @@ pub(super) fn emit_model_data(
         .iter()
         .any(|accessor| !accessor.operation.changes_records())
     {
-        "use wamn_postgres_statements::Connection;\n"
+        "use wamn_guest::postgres_statements::Connection;\n"
     } else {
         ""
     };
@@ -120,7 +120,7 @@ pub(super) fn emit_model_data(
         source,
         "// The generated `{model_name}` operations.\n\n\
          #[allow(unused_imports)]\n\
-         use wamn_data_access::{{Direction, Invalid, Page, cursor, feed, scalar}};\n\
+         use wamn_guest::data_access::{{Direction, Invalid, Page, cursor, feed, scalar}};\n\
          {connection}\n\
          #[allow(unused_imports)]\n\
          use super::error::{{Constraints, Error}};\n\n\
@@ -325,7 +325,7 @@ fn emit_create(
         let target = field_name(field);
         writeln!(
             body,
-            "let {target} = wamn_postgres_statements::next_number(transaction, {:?}, &[{keys}]).await.map_err({refuse})?;",
+            "let {target} = wamn_guest::postgres_statements::next_number(transaction, {:?}, &[{keys}]).await.map_err({refuse})?;",
             sequence.as_str()
         )
         .expect("writing to a String cannot fail");
@@ -338,7 +338,7 @@ fn emit_create(
          /// for the operation.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
          #[allow(clippy::too_many_arguments)]\n\
-         pub async fn create(transaction: &mut wamn_postgres_statements::Transaction, {id_parameter}{parameters}) -> Result<{model_type}Row, Error> {{\n\
+         pub async fn create(transaction: &mut wamn_guest::postgres_statements::Transaction, {id_parameter}{parameters}) -> Result<{model_type}Row, Error> {{\n\
          {body}\
          sql::create(transaction, {arguments}).await.map_err({refuse})\n\
          }}\n"
@@ -467,7 +467,7 @@ fn emit_update(
         "/// `{model_name}.update`: change one row at the revision the caller last read.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
          #[allow(clippy::too_many_arguments)]\n\
-         pub async fn update(transaction: &mut wamn_postgres_statements::Transaction, {parameters}) -> Result<{model_type}Row, Error> {{\n\
+         pub async fn update(transaction: &mut wamn_guest::postgres_statements::Transaction, {parameters}) -> Result<{model_type}Row, Error> {{\n\
          {body}\
          let row = sql::update(transaction, {arguments}).await.map_err({refuse})?;\n\
          match row.outcome.as_deref() {{\n\
@@ -508,7 +508,7 @@ fn emit_delete(
         source,
         "/// `{model_name}.delete`: delete one row at the revision the caller last read.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn delete(transaction: &mut wamn_postgres_statements::Transaction, id: {id_type}, expected_{revision_name}: {revision_rust}) -> Result<{model_type}DeleteRow, Error> {{\n\
+         pub async fn delete(transaction: &mut wamn_guest::postgres_statements::Transaction, id: {id_type}, expected_{revision_name}: {revision_rust}) -> Result<{model_type}DeleteRow, Error> {{\n\
          {parse_id}\
          let row = sql::delete(transaction, {id_argument}, expected_{revision_name}).await.map_err({refuse})?;\n\
          match row.outcome.as_deref() {{\n\
@@ -565,7 +565,7 @@ fn emit_query(
                 format!("input.{name}.map(scalar::json_boolean)"),
             ),
             FilterMatch::Range => (
-                "Option<wamn_data_access::Range>".to_owned(),
+                "Option<wamn_guest::data_access::Range>".to_owned(),
                 format!(
                     "input.{name}.as_ref().map(|range| scalar::json_range(range.min.as_deref(), range.max.as_deref()))"
                 ),
@@ -647,7 +647,7 @@ fn emit_query(
         .iter()
         .any(|filter| matches!(filter.match_mode, FilterMatch::Range))
     {
-        source.push_str("pub use wamn_data_access::Range;\n\n");
+        source.push_str("pub use wamn_guest::data_access::Range;\n\n");
     }
     writeln!(
         source,
@@ -660,7 +660,7 @@ fn emit_query(
          pub cursor: Option<String>,\n\
          pub limit: i64,\n\
          }}\n\n\
-         fn query_statement(error: &wamn_postgres_statements::StatementError) -> Error {{\n\
+         fn query_statement(error: &wamn_guest::postgres_statements::StatementError) -> Error {{\n\
          Error::from_statement(error, &Constraints::NONE, {permission})\n\
          }}\n\n\
          /// `{model_name}.query`: one keyset page in the requested sort.\n\
@@ -829,7 +829,7 @@ pub(super) fn emit_package_data(
     }
     let mut source = String::from(HEADER);
     source.push_str("// The generated data functions and their refusal.\n\n");
-    source.push_str("pub use wamn_data_access::error;\n");
+    source.push_str("pub use wamn_guest::data_access::error;\n");
     for (model_name, _) in &models {
         writeln!(
             source,
@@ -919,18 +919,18 @@ fn emit_sequences(
              /// The next number, which advances the counter in the operation\n\
              /// transaction: consumed on commit, never on rollback.\n\
              ///\n/// # Errors\n///\n/// The host's refusal.\n\
-             pub async fn next({parameter}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
+             pub async fn next({parameter}) -> Result<String, wamn_guest::postgres_statements::StatementError> {{\n\
              {bind}\
-             let mut transaction = wamn_postgres_statements::operation_transaction().await?;\n\
-             wamn_postgres_statements::next_number(&mut transaction, {name_text:?}, &[{keys}]).await\n\
+             let mut transaction = wamn_guest::postgres_statements::operation_transaction().await?;\n\
+             wamn_guest::postgres_statements::next_number(&mut transaction, {name_text:?}, &[{keys}]).await\n\
              }}\n\n\
              /// The current number, the last one issued for the key, with no\n\
              /// lock and no advance. Never for assignment.\n\
              ///\n/// # Errors\n///\n/// The host's refusal, and SQLSTATE `P0002` when no number was\n/// issued yet.\n\
-             pub async fn peek({parameter}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
+             pub async fn peek({parameter}) -> Result<String, wamn_guest::postgres_statements::StatementError> {{\n\
              {bind}\
-             let mut transaction = wamn_postgres_statements::operation_transaction().await?;\n\
-             wamn_postgres_statements::peek_number(&mut transaction, {name_text:?}, &[{keys}]).await\n\
+             let mut transaction = wamn_guest::postgres_statements::operation_transaction().await?;\n\
+             wamn_guest::postgres_statements::peek_number(&mut transaction, {name_text:?}, &[{keys}]).await\n\
              }}\n\
              }}",
             sequence.pattern.escape_debug(),

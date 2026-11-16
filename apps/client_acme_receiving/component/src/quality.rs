@@ -26,7 +26,7 @@ pub(super) mod approve_operation {
 }
 
 pub(super) async fn handle_detail(
-    connection: &mut wamn_postgres_statements::Connection,
+    connection: &mut wamn_guest::postgres_statements::Connection,
     request: detail_contract::LoadPurchaseOrderDetailRequest,
 ) -> Result<
     detail_contract::LoadPurchaseOrderDetailResult,
@@ -39,7 +39,7 @@ pub(super) async fn handle_detail(
 }
 
 pub(super) async fn handle_approve(
-    transaction: &mut wamn_postgres_statements::Transaction,
+    transaction: &mut wamn_guest::postgres_statements::Transaction,
     request: approve_contract::ApproveInspectionRequest,
 ) -> Result<approve_contract::ApproveInspectionResult, approve_contract::ApproveInspectionError> {
     operation::quality_approve_inspection(

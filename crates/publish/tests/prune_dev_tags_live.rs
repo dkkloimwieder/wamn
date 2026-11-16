@@ -9,8 +9,8 @@ use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_catalog::package_version::PackageVersion;
 use wamn_catalog::{PackageCoordinate, ServingManifest, ServingRelease};
-use wamn_package_artifact::tag::OciTag;
-use wamn_package_artifact::{
+use wamn_oci::package_artifact::tag::OciTag;
+use wamn_oci::package_artifact::{
     CREATED_ANNOTATION, PACKAGE_ARTIFACT_TYPE, PackageRegistry, Repository,
 };
 

@@ -252,8 +252,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 ) => oci_client::secrets::RegistryAuth::Anonymous,
                 Err(error) => return Err(error).context("read registry credential"),
             };
-            let repository = wamn_package_artifact::Repository::with_auth(
-                &wamn_package_artifact::PackageRegistry {
+            let repository = wamn_oci::package_artifact::Repository::with_auth(
+                &wamn_oci::package_artifact::PackageRegistry {
                     artifact_base: format!("{}/{}", reference.registry(), reference.repository()),
                     credentials: None,
                     registry_auth_file: PathBuf::default(),

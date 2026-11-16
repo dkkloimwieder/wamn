@@ -898,12 +898,10 @@ fn compile_inventory_item_component(package: &GeneratedPackage, export_tests: &s
              \n[dependencies]\nserde = {{ version = \"1\", features = [\"derive\"] }}\nserde_json = \"1\"\n\
              uuid = \"1\"\nwit-bindgen = {{ version = \"0.61\", default-features = false, features = [\"async\", \"macros\", \"realloc\"] }}\n\
              wamn-scalar = {{ path = \"{}\" }}\n\
-             wamn-postgres-statements = {{ path = \"{}\" }}\n\
-             wamn-data-access = {{ path = \"{}\" }}\n\
+             wamn-guest = {{ path = \"{}\" }}\n\
              \n[lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n",
             root.join("crates/scalar").display(),
-            libraries.join("postgres-statements").display(),
-            libraries.join("data-access").display(),
+            libraries.join("guest").display(),
         ),
     )
     .expect("write fixture manifest");
@@ -933,7 +931,7 @@ macro_rules! operation {{
             include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/", stringify!($module), ".rs"));
         }}
         async fn $handler(
-            _transaction: &mut wamn_postgres_statements::Transaction,
+            _transaction: &mut wamn_guest::postgres_statements::Transaction,
             _request: exports::wamn_inventory::inventory_item::$contract::$request,
         ) -> Result<
             exports::wamn_inventory::inventory_item::$contract::$result,

@@ -3,7 +3,7 @@
 use sqlx::Row as _;
 use std::path::{Path, PathBuf};
 
-use wamn_package_artifact::{PackageRegistry, Repository};
+use wamn_oci::package_artifact::{PackageRegistry, Repository};
 use wamn_publish::integration;
 
 #[path = "../../environment/tests/support/local_registry.rs"]
@@ -128,7 +128,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
     let (_, digest) = repository.manifest().await.unwrap().unwrap();
     assert_eq!(digest, built.digest);
 
-    let wasm = wamn_package_artifact::integration::pull(
+    let wasm = wamn_oci::package_artifact::integration::pull(
         &configuration,
         &"fixture".parse().unwrap(),
         &built.digest,
@@ -155,7 +155,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control(pool: sqlx:
         declared
     );
     assert!(
-        wamn_package_artifact::integration::pull(
+        wamn_oci::package_artifact::integration::pull(
             &configuration,
             &"other".parse().unwrap(),
             &built.digest

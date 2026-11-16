@@ -59,7 +59,7 @@ quality::detail_operation::export_operation!(
     Component,
     exports::client_acme_receiving::quality::load_purchase_order_detail,
     wamn::node::types,
-    wamn_postgres_statements::Connection::new(),
+    wamn_guest::postgres_statements::Connection::new(),
     quality::handle_detail,
     detail_operation
 );
@@ -149,7 +149,7 @@ impl RecordReceipt for Component {
         context: NodeContext,
         input: Vec<contract::RecordReceiptItem>,
     ) -> Result<Vec<contract::RecordReceiptOutcome>, NodeError> {
-        let mut transaction = wamn_postgres_statements::operation_transaction()
+        let mut transaction = wamn_guest::postgres_statements::operation_transaction()
             .await
             .map_err(|error| {
                 NodeError::Terminal(ErrorDetail {
@@ -174,7 +174,7 @@ impl RecordReceipt for Component {
 
 async fn record_receipt(
     context: NodeContext,
-    transaction: &mut wamn_postgres_statements::Transaction,
+    transaction: &mut wamn_guest::postgres_statements::Transaction,
     request: contract::RecordReceiptRequest,
 ) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError> {
     let purchase_order_id = request.purchase_order_id.clone();

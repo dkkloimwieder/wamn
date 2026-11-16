@@ -100,7 +100,7 @@ pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
             crate::data::generated::error::Error,
             crate::generated::#model_id::#action_id::codec,
             crate::exports::#namespace::#model_id::#action_id as contract,
-            wamn_postgres_statements::{Connection, Transaction},
+            wamn_guest::postgres_statements::{Connection, Transaction},
         };
         impl crate::generated::#model_id::#action_id::Action for crate::Component { #function }
     };
@@ -202,7 +202,8 @@ mod tests {
         let source = component_root.join("src/lib.rs");
         fs::write(
             &source,
-            r#"extern crate self as wamn_postgres_statements;
+            r#"extern crate self as wamn_guest;
+            pub use crate as postgres_statements;
             pub struct Connection;
             pub struct Transaction;
             mod data {

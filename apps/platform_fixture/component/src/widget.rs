@@ -1,5 +1,5 @@
 use crate::data::widget;
-use wamn_postgres_statements::{Connection, Transaction};
+use wamn_guest::postgres_statements::{Connection, Transaction};
 
 use crate::detail;
 

@@ -2,7 +2,7 @@
 
 use super::*;
 use std::collections::BTreeMap;
-use wamn_package_artifact::http_client::HttpRequest;
+use wamn_oci::package_artifact::http_client::HttpRequest;
 use wamn_platform_identity::password::{
     Password, enroll_password, issue_invitation, password_work,
 };

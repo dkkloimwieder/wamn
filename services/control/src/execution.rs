@@ -17,8 +17,8 @@ pub(crate) struct Execution {
     pub identity: wamn_identity_client::PatIssuerConfig,
     pub platform: Arc<Platform>,
     pub system_database: String,
-    pub registry_credentials: wamn_package_artifact::registry_credentials::RegistryCredentialSource,
-    pub integration_registry: wamn_package_artifact::PackageRegistry,
+    pub registry_credentials: wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource,
+    pub integration_registry: wamn_oci::package_artifact::PackageRegistry,
 }
 
 impl Execution {

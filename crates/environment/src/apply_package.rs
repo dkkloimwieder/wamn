@@ -32,7 +32,7 @@ pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
 pub struct ApplyPackageRequest {
     /// Component repository configuration for digest-addressed binary reads.
     pub component_source:
-        Option<wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
+        Option<wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
 
     /// Package root containing strict wamn.json and migrations/, with the
     /// digest of the verified artifact it was opened from.
@@ -76,7 +76,7 @@ pub struct ApplyOutcome {
 #[derive(Debug)]
 pub(crate) struct PreparedPackage {
     pub component_source:
-        Option<wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
+        Option<wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
     pub root: PathBuf,
     pub directory: PackageDirectory,
     pub manifest: PackageManifest,

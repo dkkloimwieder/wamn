@@ -39,7 +39,7 @@ wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-compiler.workspace = true
 wamn-platform-install.workspace = true
 wamn-publish.workspace = true
-wamn-package-artifact.workspace = true
+wamn-oci.workspace = true
 wash-runtime = { workspace = true, features = ["oci"] }
 oci-client.workspace = true
 docker_credential = "=1.4.0"

@@ -1,6 +1,6 @@
 //! Wire adapters for Acme Receiving operations backed by generated SQL.
 
-use wamn_postgres_statements::{Connection, Transaction, Uuid as WamnUuid};
+use wamn_guest::postgres_statements::{Connection, Transaction, Uuid as WamnUuid};
 
 use crate::data::error::AccessError;
 use crate::data::statements::{
@@ -143,7 +143,7 @@ pub async fn quality_create_inspection(event: &str, receipt_id: &str) -> Result<
         ));
     }
     let receipt_id = parse_uuid(receipt_id, "new.id")?;
-    let mut transaction = wamn_postgres_statements::operation_transaction()
+    let mut transaction = wamn_guest::postgres_statements::operation_transaction()
         .await
         .map_err(|source| AccessError::from_statement("begin inspection creation", &source))?;
     let inserted = create_sql::insert_inspection(&mut transaction, receipt_id.clone())

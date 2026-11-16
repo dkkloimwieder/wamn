@@ -23,7 +23,7 @@ mod adjust {
     }
 
     async fn handle(
-        transaction: &mut wamn_postgres_statements::Transaction,
+        transaction: &mut wamn_guest::postgres_statements::Transaction,
         request: contract::AdjustRequest,
     ) -> Result<contract::AdjustResult, contract::AdjustError> {
         inventory_adjust::execute(
@@ -71,7 +71,7 @@ mod aggregate {
     }
 
     async fn handle(
-        connection: &mut wamn_postgres_statements::Connection,
+        connection: &mut wamn_guest::postgres_statements::Connection,
         _: contract::AggregateRequest,
     ) -> Result<contract::AggregateResult, contract::AggregateError> {
         let rows = inventory_aggregate::execute(connection)
@@ -102,7 +102,7 @@ mod aggregate {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        wamn_postgres_statements::Connection::new(),
+        wamn_guest::postgres_statements::Connection::new(),
         handle,
         operation
     );
@@ -120,7 +120,7 @@ mod merge {
     }
 
     async fn handle(
-        transaction: &mut wamn_postgres_statements::Transaction,
+        transaction: &mut wamn_guest::postgres_statements::Transaction,
         request: contract::MergeRequest,
     ) -> Result<contract::MergeResult, contract::MergeError> {
         inventory_merge::execute(
@@ -165,7 +165,7 @@ mod move_ {
     }
 
     async fn handle(
-        transaction: &mut wamn_postgres_statements::Transaction,
+        transaction: &mut wamn_guest::postgres_statements::Transaction,
         request: contract::MoveRequest,
     ) -> Result<contract::MoveResult, contract::MoveError> {
         inventory_move::execute(
@@ -208,7 +208,7 @@ mod split {
     }
 
     async fn handle(
-        transaction: &mut wamn_postgres_statements::Transaction,
+        transaction: &mut wamn_guest::postgres_statements::Transaction,
         request: contract::SplitRequest,
     ) -> Result<contract::SplitResult, contract::SplitError> {
         inventory_split::execute(

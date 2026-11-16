@@ -30,8 +30,8 @@ use wamn_catalog::{
 };
 use wamn_engine::component_admission::validate_component_admission;
 use wamn_engine::component_artifact::component_artifact_layout;
-use wamn_package_artifact::read_ca_bundles;
-use wamn_package_artifact::registry_credentials::RegistryCredentials;
+use wamn_oci::package_artifact::read_ca_bundles;
+use wamn_oci::package_artifact::registry_credentials::RegistryCredentials;
 
 /// Bound each registry connect/read phase without adding a second deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -317,7 +317,7 @@ pub fn registry_client(
         reference.resolve_registry(),
         reference.repository()
     ))?;
-    let client = wamn_package_artifact::registry_source::RegistrySource::new(
+    let client = wamn_oci::package_artifact::registry_source::RegistrySource::new(
         base,
         insecure,
         REGISTRY_IO_TIMEOUT,

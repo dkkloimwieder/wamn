@@ -6,7 +6,7 @@ description = "Package-grain edge device operation component, with no SQL"
 license = "Apache-2.0"
 
 [dependencies]
-wamn-data-access = { workspace = true }
+wamn-guest = { workspace = true }
 wit-bindgen = { workspace = true }
 
 [lib]

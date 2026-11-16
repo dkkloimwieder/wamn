@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
-use wamn_postgres_statements::{StatementError, StatementErrorType};
+use wamn_guest::postgres_statements::{StatementError, StatementErrorType};
 
 /// Stable operation-contract literal for one refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

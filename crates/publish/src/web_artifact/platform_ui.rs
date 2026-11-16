@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use object_store::{ObjectStore, ObjectStoreExt as _};
 use wamn_digest::canonical_json_bytes;
-use wamn_package_artifact::PackageRegistry;
+use wamn_oci::package_artifact::PackageRegistry;
 
 use super::{
     PackedWebArtifact, Sink, UploadedClient, WEB_MANIFEST_FILE, WebArtifactError,
@@ -20,7 +20,7 @@ const ARTIFACT_TYPE: &str = "application/vnd.wamn.platform-ui.v1";
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Metadata {
-    version: wamn_package_artifact::tag::OciTag,
+    version: wamn_oci::package_artifact::tag::OciTag,
 }
 
 /// Pack UI files and UI metadata into the deterministic web archive format.
@@ -29,7 +29,7 @@ struct Metadata {
 /// Refuses missing indexes, links, or unsupported browser files.
 pub fn pack(
     dist: &Path,
-    version: &wamn_package_artifact::tag::OciTag,
+    version: &wamn_oci::package_artifact::tag::OciTag,
 ) -> Result<PackedWebArtifact, WebArtifactError> {
     (|| {
         let mut files = BTreeMap::new();
@@ -161,7 +161,7 @@ mod tests {
     use futures_util::TryStreamExt as _;
     use object_store::memory::InMemory;
     use wamn_digest::bytes_sha256;
-    use wamn_package_artifact::registry_pull::test_server::Server;
+    use wamn_oci::package_artifact::registry_pull::test_server::Server;
     use wamn_test_infrastructure::scratch::ScratchRoot;
 
     use super::super::test_support::{artifact_fixture, fixture_registry};

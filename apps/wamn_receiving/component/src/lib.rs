@@ -99,7 +99,7 @@ fn map_record_receipt_error(error: &receipt::RecordReceiptError) -> contract::Re
 }
 
 async fn record_receipt_execute(
-    transaction: &mut wamn_postgres_statements::Transaction,
+    transaction: &mut wamn_guest::postgres_statements::Transaction,
     request: contract::RecordReceiptRequest,
 ) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError> {
     receipt::execute(transaction, &record_receipt_command(request))

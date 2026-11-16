@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use wamn_catalog::ServingManifest;
-use wamn_package_artifact::{
+use wamn_oci::package_artifact::{
     CREATED_ANNOTATION, PACKAGE_ARTIFACT_TYPE, PackageRegistry, Repository, is_dev_tag,
 };
 
@@ -20,7 +20,7 @@ pub fn version(
         .next()
         .context("authored package version")?;
     let version = format!("{base}-dev.h{}", &digest.hex()[..12]);
-    let tag = wamn_package_artifact::tag::OciTag::try_from(version)?;
+    let tag = wamn_oci::package_artifact::tag::OciTag::try_from(version)?;
     Ok(String::from(tag).try_into()?)
 }
 
@@ -30,13 +30,13 @@ pub async fn prune(
     registry: &PackageRegistry,
     releases: &[ServingManifest],
     now: DateTime<Utc>,
-) -> anyhow::Result<Vec<wamn_package_artifact::tag::OciTag>> {
+) -> anyhow::Result<Vec<wamn_oci::package_artifact::tag::OciTag>> {
     let pinned: BTreeSet<_> = releases
         .iter()
         .flat_map(|release| &release.release.packages)
         .map(|package| {
             format!("{}-{}", package.package_id(), package.package_version())
-                .parse::<wamn_package_artifact::tag::OciTag>()
+                .parse::<wamn_oci::package_artifact::tag::OciTag>()
         })
         .collect::<Result<BTreeSet<_>, _>>()?
         .into_iter()
@@ -44,11 +44,11 @@ pub async fn prune(
     let repository = Repository::open(
         registry,
         &"latest"
-            .parse::<wamn_package_artifact::tag::OciTag>()
+            .parse::<wamn_oci::package_artifact::tag::OciTag>()
             .unwrap(),
     )?;
     let mut manifests =
-        std::collections::BTreeMap::<_, (Vec<wamn_package_artifact::tag::OciTag>, Vec<u8>)>::new();
+        std::collections::BTreeMap::<_, (Vec<wamn_oci::package_artifact::tag::OciTag>, Vec<u8>)>::new();
     for tag in repository.tags().await? {
         if let Some((bytes, digest)) = Repository::open(registry, &tag)?.manifest().await? {
             manifests
@@ -93,7 +93,7 @@ mod tests {
     fn development_versions_require_a_content_digest() {
         let digest = wamn_digest::bytes_sha256(b"source");
         let version = super::version(&"1.0.0".parse().unwrap(), &digest).unwrap();
-        assert!(wamn_package_artifact::is_dev_tag(
+        assert!(wamn_oci::package_artifact::is_dev_tag(
             &version.to_string().parse().unwrap()
         ));
     }

@@ -5,9 +5,9 @@ use crate::data::statements::wamn::{
     location_list as location_sql, receiving_load_purchase_order_history as history_sql,
     receiving_purchase_order_summary as summary_sql,
 };
-use wamn_data_access::cursor::Direction;
-use wamn_data_access::cursor::id::{decode_with_id, encode_with_id};
-use wamn_postgres_statements::{Connection, Uuid};
+use wamn_guest::data_access::cursor::Direction;
+use wamn_guest::data_access::cursor::id::{decode_with_id, encode_with_id};
+use wamn_guest::postgres_statements::{Connection, Uuid};
 
 pub use location_sql::ListLocationsRow;
 pub use summary_sql::PurchaseOrderSummaryRow;
@@ -43,7 +43,7 @@ pub struct PurchaseOrderHistoryValue {
     pub type_: String,
     pub operation: String,
     pub changed_by: Uuid,
-    pub changed_at: wamn_postgres_statements::TimestampTz,
+    pub changed_at: wamn_guest::postgres_statements::TimestampTz,
     pub before: String,
     pub after: String,
     pub current: String,
@@ -63,7 +63,7 @@ fn history_value(
         })
         .ok_or_else(|| AccessError::internal("history read returned no JSON object image"))
     };
-    let record = wamn_data_access::scalar::uuid(&id.0)
+    let record = wamn_guest::data_access::scalar::uuid(&id.0)
         .map_err(|_| AccessError::invalid("id is not a UUID", "id"))?;
     Ok(PurchaseOrderHistoryValue {
         id: row.id,
@@ -146,7 +146,7 @@ fn history_position(after_cursor: Option<&str>, id: &Uuid) -> Result<i64, Access
     let Some(encoded) = after_cursor.filter(|cursor| !cursor.is_empty()) else {
         return Ok(0);
     };
-    let record = wamn_data_access::scalar::uuid(&id.0)
+    let record = wamn_guest::data_access::scalar::uuid(&id.0)
         .map_err(|_| AccessError::invalid("id is not a UUID", "id"))?;
     let (position, decoded_id) =
         decode_with_id::<i64, Uuid>(encoded, HISTORY_CURSOR_FIELD, HISTORY_CURSOR_DIRECTION)
@@ -165,7 +165,7 @@ mod tests {
     use super::*;
     use crate::data::AccessErrorType;
     use serde_json::Value;
-    use wamn_postgres_statements::TimestampTz;
+    use wamn_guest::postgres_statements::TimestampTz;
 
     #[test]
     fn history_columns_are_the_declared_purchase_order_columns() {

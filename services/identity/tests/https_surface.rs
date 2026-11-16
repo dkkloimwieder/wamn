@@ -16,7 +16,7 @@ use wamn_control_provision::sql::revoke_public_connect_base_grants_sql;
 use wamn_identity::cli::Cli;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks};
-use wamn_package_artifact::http_client::{HttpClient, Redirects};
+use wamn_oci::package_artifact::http_client::{HttpClient, Redirects};
 use wamn_platform_identity::session_keys::publish_session_key;
 
 const ISSUER: &str = "https://identity.service.internal";

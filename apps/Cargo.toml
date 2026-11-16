@@ -23,8 +23,7 @@ members = [
     "../guests/http-route",
     "../guests/blob-put",
     "../guests/jsonata",
-    "../crates/data-access",
-    "../crates/postgres-statements",
+    "../crates/guest",
     "../crates/record-history",
     "../test-support/fixtures/guests/connection-http-standard",
 ]
@@ -110,8 +109,7 @@ serde_json = "1"
 wit-bindgen = { version = "0.62.0", default-features = false, features = ["async", "macros", "realloc"] }
 
 # Guest-owned path identities are independent of the native workspace contract.
-wamn-data-access = { path = "../crates/data-access", version = "0.1.0" }
-wamn-postgres-statements = { path = "../crates/postgres-statements", version = "0.1.0" }
+wamn-guest = { path = "../crates/guest", version = "0.1.0" }
 wamn-record-history = { path = "../crates/record-history", version = "0.1.0" }
 
 [profile.release]

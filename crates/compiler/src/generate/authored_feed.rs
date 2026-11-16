@@ -294,8 +294,8 @@ fn emit_data(
     let text = format!(
         r#"// @generated from the authored feed; do not edit.
 #[allow(unused_imports)]
-use wamn_data_access::{{Invalid, feed, scalar}};
-use wamn_postgres_statements::Connection;
+use wamn_guest::data_access::{{Invalid, feed, scalar}};
+use wamn_guest::postgres_statements::Connection;
 use super::error::{{Constraints, Error}};
 /// The statement accessors of the authored read.
 pub mod sql {{ include!("../wamn/{stem}.rs"); }}
@@ -409,7 +409,7 @@ fn emit_component(
     let text = format!(
         r#"// @generated from the authored feed; do not edit.
 use super::data::{stem} as model;
-use wamn_postgres_statements::Connection;
+use wamn_guest::postgres_statements::Connection;
 use crate::exports::{namespace}::{group}::{local_module} as contract;
 pub(crate) mod operation {{ use super::contract; include!("../wit/{stem}_operation.rs"); }}
 pub(crate) async fn handle(connection: &mut Connection, request: contract::{ty}Request) -> Result<contract::{ty}Result, contract::{ty}Error> {{

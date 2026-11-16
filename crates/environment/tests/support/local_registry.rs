@@ -3,7 +3,7 @@
 
 use std::process::Command;
 use std::time::Duration;
-use wamn_package_artifact::http_client::HttpClient;
+use wamn_oci::package_artifact::http_client::HttpClient;
 
 /// A `registry:2` container, removed on drop.
 pub struct LocalRegistry {

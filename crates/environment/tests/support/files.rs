@@ -5,7 +5,7 @@ use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
-use wamn_package_artifact::http_client::HttpClient;
+use wamn_oci::package_artifact::http_client::HttpClient;
 
 pub const CALLER: &str = "a0000000-0000-4000-8000-0000000000c4";
 pub const CONNECTION: &str = "a0000000-0000-4000-8000-000000000041";

@@ -59,7 +59,7 @@ fn authored_sql_accessors_compile_in_both_output_layouts() {
             entry
                 .file_name()
                 .to_string_lossy()
-                .starts_with("libwamn_postgres_statements-")
+                .starts_with("libwamn_guest-")
                 && entry
                     .path()
                     .extension()
@@ -92,7 +92,7 @@ fn authored_sql_accessors_compile_in_both_output_layouts() {
         std::fs::write(&consumer, r#"
             #[path = "wamn/location.rs"] mod location;
             #[path = "wamn/location_lookup.rs"] mod location_lookup;
-            pub async fn read(connection: &mut wamn_postgres_statements::Connection, id: wamn_postgres_statements::Uuid) {
+            pub async fn read(connection: &mut wamn_guest::postgres_statements::Connection, id: wamn_guest::postgres_statements::Uuid) {
                 let _ = location::get(connection, id).await;
                 let _ = location_lookup::lookup(connection).await;
             }
@@ -105,7 +105,7 @@ fn authored_sql_accessors_compile_in_both_output_layouts() {
                 "--emit=metadata",
             ])
             .arg("--extern")
-            .arg(format!("wamn_postgres_statements={}", library.display()))
+            .arg(format!("wamn_guest={}", library.display()))
             .arg("-L")
             .arg(format!("dependency={}", dependencies.display()))
             .arg("--out-dir")

@@ -20,7 +20,7 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"
 wamn-registry.workspace = true
 hex = { workspace = true }
 dotenvy = { workspace = true }
-wamn-package-artifact = { workspace = true }
+wamn-oci = { workspace = true }
 zeroize = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }

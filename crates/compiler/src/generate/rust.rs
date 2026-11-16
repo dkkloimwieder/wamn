@@ -108,9 +108,9 @@ pub(super) fn emit_static_sql_projection(
     let rows = &compiled.rows;
     let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
     source.push_str(if operation.type_ == CustomOperationType::Projection {
-        "use wamn_postgres_statements::Connection;\n\n"
+        "use wamn_guest::postgres_statements::Connection;\n\n"
     } else {
-        "use wamn_postgres_statements::Transaction;\n\n"
+        "use wamn_guest::postgres_statements::Transaction;\n\n"
     });
     for row in rows {
         emit_rust_row(&mut source, row);
@@ -166,7 +166,7 @@ fn emit_static_sql_wamn_accessor(
     }
     writeln!(
         source,
-        ") -> Result<{}, wamn_postgres_statements::StatementError> {{",
+        ") -> Result<{}, wamn_guest::postgres_statements::StatementError> {{",
         static_sql_accessor_result_type(accessor),
     )
     .expect("writing to a String cannot fail");
@@ -186,7 +186,7 @@ fn emit_static_sql_wamn_accessor(
             .expect("static SQL parameter names were validated for Rust");
         writeln!(
             source,
-            "        wamn_postgres_statements::into_sql_value({parameter}),"
+            "        wamn_guest::postgres_statements::into_sql_value({parameter}),"
         )
         .expect("writing to a String cannot fail");
     }
@@ -652,7 +652,7 @@ pub(super) fn emit_projection(
         .iter()
         .any(|accessor| !accessor.operation.changes_records())
     {
-        source.push_str("use wamn_postgres_statements::Connection;\n\n");
+        source.push_str("use wamn_guest::postgres_statements::Connection;\n\n");
     }
     let model_row = RustRow {
         name: format!("{}Row", rust_type_identifier(model_name.as_str())),
@@ -767,7 +767,7 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
     )
     .expect("writing to a String cannot fail");
     if transactional {
-        source.push_str("    transaction: &mut wamn_postgres_statements::Transaction,\n");
+        source.push_str("    transaction: &mut wamn_guest::postgres_statements::Transaction,\n");
     } else {
         source.push_str("    connection: &mut Connection,\n");
     }
@@ -777,7 +777,7 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
     }
     writeln!(
         source,
-        ") -> Result<{}, wamn_postgres_statements::StatementError> {{",
+        ") -> Result<{}, wamn_guest::postgres_statements::StatementError> {{",
         accessor_result_type(accessor)
     )
     .expect("writing to a String cannot fail");
@@ -795,7 +795,7 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
     for bind in &accessor.binds {
         writeln!(
             source,
-            "        wamn_postgres_statements::into_sql_value({}),",
+            "        wamn_guest::postgres_statements::into_sql_value({}),",
             bind.parameter
         )
         .expect("writing to a String cannot fail");
@@ -826,7 +826,7 @@ fn emit_decode_result(
     source.push_str("    ");
     writeln!(
         source,
-        "wamn_postgres_statements::{decode_function}({statement_constant}, rows, |row| {{"
+        "wamn_guest::postgres_statements::{decode_function}({statement_constant}, rows, |row| {{"
     )
     .expect("writing to a String cannot fail");
     writeln!(source, "        Ok({} {{", row.name).expect("writing to a String cannot fail");
@@ -867,10 +867,10 @@ pub(super) fn projected_rust_type(ty: SqlValueType, optional: bool) -> String {
         SqlValueType::Float64 => "f64",
         SqlValueType::Text => "String",
         SqlValueType::Bytes => "Vec<u8>",
-        SqlValueType::Numeric => "wamn_postgres_statements::Numeric",
-        SqlValueType::Timestamptz => "wamn_postgres_statements::TimestampTz",
-        SqlValueType::Json => "wamn_postgres_statements::Json",
-        SqlValueType::Uuid => "wamn_postgres_statements::Uuid",
+        SqlValueType::Numeric => "wamn_guest::postgres_statements::Numeric",
+        SqlValueType::Timestamptz => "wamn_guest::postgres_statements::TimestampTz",
+        SqlValueType::Json => "wamn_guest::postgres_statements::Json",
+        SqlValueType::Uuid => "wamn_guest::postgres_statements::Uuid",
     };
     if optional {
         format!("Option<{base}>")

@@ -1,6 +1,6 @@
 //! The `widget_maker.list` projection.
 
-use wamn_postgres_statements::{Connection, StatementError};
+use wamn_guest::postgres_statements::{Connection, StatementError};
 
 use crate::data::error::{AccessError, Constraints};
 use crate::data::statements::wamn::widget_maker_list;

@@ -60,17 +60,17 @@ fn items(value: &str) -> Result<Vec<Item>, contract::RecordError> {
 }
 
 async fn handle(
-    transaction: &mut wamn_postgres_statements::Transaction,
+    transaction: &mut wamn_guest::postgres_statements::Transaction,
     request: contract::RecordRequest,
 ) -> Result<contract::RecordResult, contract::RecordError> {
-    use wamn_postgres_statements::StatementErrorType;
+    use wamn_guest::postgres_statements::StatementErrorType;
     let mut keys = Vec::new();
     for item in items(&request.items.encoded_json)? {
         let row = statements::record_item(
             transaction,
             item.key.clone(),
             item.name,
-            wamn_postgres_statements::Uuid(request.external_system_id.clone()),
+            wamn_guest::postgres_statements::Uuid(request.external_system_id.clone()),
         )
         .await
         .map_err(|error| {

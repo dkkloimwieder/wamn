@@ -10,8 +10,8 @@ use tokio::sync::Mutex;
 use wamn_engine::integration::{
     ConnectionDispatch, Integration, IntegrationBinding, IntegrationImports,
 };
-use wamn_package_artifact::registry_credentials::RegistryCredentialSource;
-use wamn_package_artifact::{PackageRegistry, Repository};
+use wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource;
+use wamn_oci::package_artifact::{PackageRegistry, Repository};
 
 use crate::connection_facts::{ConnectionFacts, bounded};
 use crate::connection_memory::{ConnectionFact, ConnectionStatus};
@@ -152,7 +152,7 @@ impl ConnectionDispatch for ComponentReads {
                 ),
             )?;
             let bytes = Arc::new(
-                wamn_package_artifact::integration::pull_from(
+                wamn_oci::package_artifact::integration::pull_from(
                     &repository,
                     &generation.integration_type,
                     digest,

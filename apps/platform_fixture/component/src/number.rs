@@ -1,5 +1,5 @@
 use crate::data::generated::sequences::{label, pick_label};
-use wamn_postgres_statements::Transaction;
+use wamn_guest::postgres_statements::Transaction;
 
 use crate::exports::platform_fixture::number::issue as contract;
 
@@ -20,7 +20,7 @@ async fn handle(
     };
     let result = async {
         let records = crate::data::count_widgets(transaction).await?;
-        Ok::<_, wamn_postgres_statements::StatementError>(contract::IssueResult {
+        Ok::<_, wamn_guest::postgres_statements::StatementError>(contract::IssueResult {
             records,
             bare: label::next().await?,
             bare_peek: label::peek().await?,

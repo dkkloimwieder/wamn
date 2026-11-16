@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use hyper::header::{ACCEPT, AGE};
 use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks, decode_public_key};
-use wamn_package_artifact::http_client::HttpClient;
+use wamn_oci::package_artifact::http_client::HttpClient;
 
 // Owner-approved policy: wamn-ctc8.24–28 and JWT proposal §3–4.
 const MAX_AGE: Duration = Duration::from_secs(300);

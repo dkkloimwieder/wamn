@@ -6,7 +6,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_environment::environment::document::{DeclaredRelease, EnvironmentDocument};
 use wamn_environment::platform::document::ClusterDocument;
-use wamn_package_artifact::http_client::HttpClient;
+use wamn_oci::package_artifact::http_client::HttpClient;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 mod routes;

@@ -67,15 +67,15 @@ impl Platform {
     pub(crate) async fn registry(
         &self,
         base: &str,
-    ) -> anyhow::Result<wamn_package_artifact::PackageRegistry> {
+    ) -> anyhow::Result<wamn_oci::package_artifact::PackageRegistry> {
         let credentials = if self.registry_token_metadata {
             let base = wamn_catalog::parse_component_artifact_base(base)?;
-            Some(wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer
+            Some(wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer
                 .credentials(base.registry()).await?)
         } else {
             None
         };
-        Ok(wamn_package_artifact::PackageRegistry {
+        Ok(wamn_oci::package_artifact::PackageRegistry {
             artifact_base: base.to_owned(),
             credentials,
             registry_auth_file: self.registry_auth_file.clone(),

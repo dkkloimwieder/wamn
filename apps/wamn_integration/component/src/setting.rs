@@ -1,6 +1,6 @@
 //! Read and replace one environment setting.
 use super::exports::wamn_integration::setting::{read as read_contract, write as write_contract};
-use wamn_postgres_statements::{Connection, Json, Transaction};
+use wamn_guest::postgres_statements::{Connection, Json, Transaction};
 
 mod read_operation {
     use super::read_contract as contract;
@@ -76,7 +76,7 @@ export_operation!(
     WriteItem,
     WriteOutcome,
     WriteError,
-    wamn_postgres_statements::operation_transaction()
+    wamn_guest::postgres_statements::operation_transaction()
         .await
         .map_err(|error| super::statement_error(&error))?,
     write

@@ -4,7 +4,7 @@
 //! consumed packagings and says why. The result is the bounded list the contract
 //! declares; the input carries nothing but its correlation id.
 
-use wamn_postgres_statements::Connection;
+use wamn_guest::postgres_statements::Connection;
 
 use crate::data::error::{self, AccessError};
 use crate::data::statements::wamn::inventory_aggregate as sql;
