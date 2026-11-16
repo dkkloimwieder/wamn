@@ -9,13 +9,9 @@ use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
-use crate::StatementTransactionality;
 use crate::authoring::package_manifest_path;
-use crate::client_component::emit_ts_components;
-use crate::client_ir::{ClientContractIr, published_routes};
-use crate::client_plan::ClientPlan;
+use crate::client_ir::ClientContractIr;
 use crate::client_ts::{emit_ts_client, emit_ts_package_json};
-use crate::generate::GeneratedFile;
 use crate::manifest::{CONTROL_OWNED_RELATION_TABLES, PackageManifest};
 use crate::{AuthoredSql, GeneratedPackage};
 
@@ -93,129 +89,6 @@ pub(crate) async fn introspect_with_manifest(
         .context("introspect package schemas");
     client.close().await;
     result
-}
-
-/// Classify effects without executing statements. Authored routine calls are writes.
-pub(crate) async fn classify_statements(
-    database_url: &str,
-    corpus: &BTreeMap<String, Vec<u8>>,
-    schemas: &[wamn_catalog::canonical_name::CanonicalName],
-) -> Result<StatementTransactionality> {
-    use sqlx::Connection as _;
-    let calls = corpus
-        .iter()
-        .map(|(path, bytes)| {
-            let calls = crate::sql_analysis::called_routines(bytes)
-                .map_err(|detail| anyhow::anyhow!("{path}: {detail}"))?;
-            Ok((path.as_str(), calls))
-        })
-        .collect::<Result<BTreeMap<_, _>>>()?;
-    let referenced = calls
-        .values()
-        .flatten()
-        .filter_map(|name| name.rsplit('.').next())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let mut connection = wamn_postgres::connect(database_url)
-        .await
-        .context("connect to plan statements")?;
-    let routines = sqlx::query(AssertSqlSafe("SELECT n.nspname::text, p.proname::text FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = ANY($1::text[]) AND p.proname = ANY($2::text[])".to_owned()).into_sql_str())
-        .bind(schemas).bind(referenced).fetch_all(&mut connection).await.context("read called authored routine names")?;
-    let names = routines
-        .iter()
-        .flat_map(|row| {
-            let schema: String = row.get(0);
-            let name: String = row.get(1);
-            [format!("{schema}.{name}"), name]
-        })
-        .collect::<BTreeSet<_>>();
-    let mut paths = BTreeMap::new();
-    for (path, bytes) in corpus {
-        let sql =
-            std::str::from_utf8(bytes).with_context(|| format!("statement {path} is not UTF-8"))?;
-        if calls[path.as_str()].iter().any(|name| names.contains(name)) {
-            paths.insert(path.clone(), true);
-            continue;
-        }
-        // The simple protocol lets PostgreSQL's generic planner supply the placeholders.
-        let mut rows = sqlx::raw_sql(
-            AssertSqlSafe(format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}")).into_sql_str(),
-        )
-        .fetch_all(&mut connection)
-        .await
-        .with_context(|| format!("plan statement {path}"))?;
-        let row = rows
-            .pop()
-            .with_context(|| format!("planning {path} returned no plan"))?;
-        let plan: serde_json::Value = row
-            .try_get(0)
-            .with_context(|| format!("read the plan of {path}"))?;
-        paths.insert(path.clone(), plan_needs_transaction(&plan));
-    }
-    connection
-        .close()
-        .await
-        .context("close the planning connection")?;
-    Ok(StatementTransactionality::from_paths(paths))
-}
-
-/// Walk a plan tree for the two node types that require a transaction.
-fn plan_needs_transaction(plan: &serde_json::Value) -> bool {
-    match plan {
-        serde_json::Value::Object(map) => {
-            if let Some(serde_json::Value::String(node)) = map.get("Node Type")
-                && (node == "ModifyTable" || node == "LockRows")
-            {
-                return true;
-            }
-            map.values().any(plan_needs_transaction)
-        }
-        serde_json::Value::Array(items) => items.iter().any(plan_needs_transaction),
-        _ => false,
-    }
-}
-
-/// The TypeScript bindings and components that this package declares.
-///
-/// Materialization owns these files with the rest of the generated output.
-/// It removes files that it no longer produces.
-/// Contracts and generated routes come from the package still in memory.
-/// Authored routes come from `publication/attachments.json`.
-/// Route templates are release facts, so bindings use them directly.
-pub(crate) fn client_bindings(
-    manifest: &PackageManifest,
-    package: &GeneratedPackage,
-) -> Result<Vec<GeneratedFile>> {
-    let attachments = serde_json::from_slice(
-        package
-            .file(crate::publication::ATTACHMENTS)
-            .context("missing final attachments")?
-            .bytes(),
-    )?;
-    let declarations = serde_json::from_slice(
-        package
-            .file(crate::publication::COMPONENTS)
-            .context("missing final components")?
-            .bytes(),
-    )?;
-    let routes = published_routes(attachments, &declarations).context("read final routes")?;
-    let ir = ClientContractIr::from_operations(&manifest.package.id, package.operations(), &routes)
-        .context("project client fields")?;
-    let mut files = Vec::new();
-    // A package opts in to TypeScript by declaring the package name that a
-    // browser application imports. Generation never infers one.
-    if let Some(client) = &manifest.client_package {
-        files.extend(emit_ts_client(&ir).context("emit the TypeScript client bindings")?);
-        files.extend(
-            emit_ts_components(&ClientPlan::from_ir(&ir)).context("emit the browser components")?,
-        );
-        files.push(emit_ts_package_json(
-            &client.name,
-            &manifest.package.version,
-        ));
-    }
-    Ok(files)
 }
 
 /// Generate from compiled manifest bytes that the caller holds. `manifest` is
@@ -427,21 +300,6 @@ fn materialize_host_route_set(output: &Path, set: wamn_catalog::HostRouteSet) ->
         expected.insert(relative.to_owned(), file.bytes());
     }
     write_build_output(output, &expected)
-}
-
-/// Copy an application's generated client into its declared workspace consumers.
-///
-/// Consumers receive source files only. Their own packages supply dependencies.
-///
-/// # Errors
-///
-/// Names the consumer and application when the requested client is unavailable.
-pub fn materialize_client_consumers(
-    package_root: &Path,
-    app: &wamn_catalog::PackageName,
-    source: &Path,
-) -> Result<()> {
-    copy_to_consumers(package_root, app, source)
 }
 
 /// Copy the client at `source` into the packages of the workspace that holds

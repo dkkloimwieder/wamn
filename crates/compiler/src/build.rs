@@ -33,10 +33,7 @@ use crate::build_record::{
 };
 use crate::describe::{DescribedStatement, column_type, describe_statements};
 use crate::manifest::{CrudAction, PackageManifest, ResultClass, canonical_operation_identity};
-use crate::materialize::application_schemas;
-use crate::materialize::{
-    classify_statements, client_bindings, expected_files, introspect_with_manifest, write_files,
-};
+use crate::materialize::{expected_files, introspect_with_manifest, write_files};
 use wamn_digest::bytes_sha256;
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
@@ -308,27 +305,19 @@ async fn pass_one_and_two(
         .filter(|(path, _)| !described.contains_key(*path))
         .collect::<Vec<_>>();
     let remaining = describe_statements(database_url, remaining).await?;
-    let schemas = application_schemas(&manifest).context("resolve application schemas")?;
-    let mut verdicts = classify_statements(database_url, &corpus.statements, &schemas).await?;
+    let mut verdicts = preliminary;
     verdicts.described = described;
     verdicts.described.extend(remaining);
     let package_output = package_output(output_root, &manifest.package.id);
     let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &verdicts)
         .with_output_paths(&package_output, &package_output);
     let mut package = crate::generate::generate_described(&input, &manifest, &corpus)?;
-    let client = client_bindings(&manifest, &package)?;
     manifest.compiled_operations = package.take_operations();
     let canonical = canonical_json_bytes(&serde_json::to_value(&manifest)?);
     let mut files = expected_files(&package)?
         .into_iter()
         .map(|(path, bytes)| (path, bytes.to_vec()))
         .collect::<BTreeMap<_, _>>();
-    for file in &client {
-        let relative = Path::new(file.path())
-            .strip_prefix("generated")
-            .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
-        files.insert(relative.to_owned(), file.bytes().to_vec());
-    }
     let columns = history_columns(database_url, &manifest).await?;
     let history = crate::history::render(package_root, &(&manifest).into(), &columns).await?;
     files.extend(crate::history::migrations(package_root, &history).await?);

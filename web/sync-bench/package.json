@@ -7,8 +7,7 @@
     "dev": "vite",
     "build": "pnpm --workspace-root run wfe:build && vite build",
     "lint": "pnpm --workspace-root run wfe:build && tsc --project tsconfig.json",
-    "test": "pnpm --workspace-root run wfe:build && vitest run",
-    "bench": "pnpm --workspace-root run wfe:build && vite build && node bench/run.mjs"
+    "test": "pnpm --workspace-root run wfe:build && vitest run"
   },
   "wamn": {
     "clients": [

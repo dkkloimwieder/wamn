@@ -28,10 +28,6 @@ use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
     ComponentDescriptor,
 };
-use wamn_component_artifact::component_artifact_source::{
-    ComponentArtifactSource, ComponentArtifactSourceConfig,
-};
-use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_engine::component_admission::validate_component_admission;
 use wamn_engine::component_artifact::component_artifact_layout;
 use wamn_package_artifact::read_ca_bundles;
@@ -275,18 +271,12 @@ struct ExpectedOperationContract {
     public: bool,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the push and its verification pull share one registry's transport facts"
-)]
 pub async fn publish_and_verify(
     reference: &Reference,
-    artifact_base: &str,
     insecure: bool,
     oci_ca_paths: &[PathBuf],
     component_bytes: &[u8],
     config_bytes: &[u8],
-    component: &AdmittedComponent,
     credentials: Option<&RegistryCredentials>,
 ) -> anyhow::Result<()> {
     // Built here rather than borrowed from `wash_runtime::oci`, which exposes no
@@ -311,22 +301,6 @@ pub async fn publish_and_verify(
         .await
         .with_context(|| format!("push component artifact {reference}"))?;
 
-    // Publication is not a successful catalog admission until the immutable
-    // reference can be read back by the production puller and independently
-    // shows the descriptor, config facts, and exact component body.
-    let mut source_config =
-        ComponentArtifactSourceConfig::new(artifact_base, insecure, REGISTRY_IO_TIMEOUT)
-            .context("configure published component verification source")?
-            .with_ca_paths(oci_ca_paths)
-            .context("read component registry CA bundles")?;
-    if let Some(credentials) = credentials {
-        source_config = source_config.with_credentials(credentials.clone());
-    }
-    ComponentArtifactSource::new(source_config)
-        .context("configure published component verification client")?
-        .pull_verified(component)
-        .await
-        .with_context(|| format!("verify published component artifact {reference}"))?;
     Ok(())
 }
 
@@ -384,11 +358,7 @@ pub(crate) fn artifact_layout(
 mod tests {
     use wamn_catalog::{
         AdmittedComponentOperation, ComponentOperationDeclaration, ComponentPackageCoordinate,
-        component_artifact_reference,
     };
-    use wamn_component_artifact::component_artifact_source::OCI_CA_PATHS_ENV;
-    use wamn_engine::component_artifact::component_artifact_config_bytes;
-    use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 
     use super::*;
 
@@ -625,104 +595,4 @@ mod tests {
         );
     }
 
-    /// The exact bytes this publisher stores in `requirement_json`, frozen
-    /// whole. `requirement_hash` is the SHA-256 of these same bytes, so an
-    /// added, removed, or renamed field moves the persisted identity of every
-    /// component connection and must not pass silently.
-
-    #[tokio::test]
-    #[ignore = "requires: env:WAMN_COMPONENT_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE"]
-    async fn production_publisher_and_puller_round_trip_exact_bytes() {
-        let artifact_base = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
-            .expect("set WAMN_COMPONENT_ARTIFACT_BASE to a disposable registry/repository");
-        let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")
-            .expect("set WAMN_REGISTRY_AUTH_FILE to its Docker config credential");
-        // A CA names a TLS registry; without one the registry stays plain HTTP.
-        let oci_ca_paths: Vec<PathBuf> = std::env::var(OCI_CA_PATHS_ENV)
-            .map_or_default(|paths| paths.split(',').map(PathBuf::from).collect());
-        let insecure_registry = oci_ca_paths.is_empty();
-        let operation = "wamn:node/handler@0.1.0";
-        let mut resolve = wit_parser::Resolve::new();
-        let package = resolve
-            .push_str(
-                "wamn-node.wit",
-                include_str!("../../../wit/wamn-node/package.wit"),
-            )
-            .expect("the live node WIT parses");
-        let world = resolve
-            .select_world(&[package], Some("node"))
-            .expect("the live node world resolves");
-        let mut module =
-            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
-        wit_component::embed_component_metadata(
-            &mut module,
-            &resolve,
-            world,
-            wit_component::StringEncoding::UTF8,
-        )
-        .expect("fixture component metadata embeds");
-        let component_bytes = wit_component::ComponentEncoder::default()
-            .module(&module)
-            .expect("fixture core module is accepted")
-            .validate(true)
-            .encode()
-            .expect("fixture component encodes");
-        let engine = wamn_engine::build_engine(&[]).expect("component admission engine builds");
-        let component = validate_component_admission(
-            &engine,
-            &component_bytes,
-            wamn_engine::component_admission::ComponentAdmissionRequest {
-                declaration: ComponentDeclaration {
-                    connections: Vec::new(),
-                    target: ComponentPackageCoordinate {
-                        project_env_key: "org-a--dev--project".parse().unwrap(),
-                        package_id: "orders".parse().unwrap(),
-                        package_version: "1.0.0".parse().unwrap(),
-                    },
-                    component: "round-trip".parse().unwrap(),
-                    interface_version: "0.1.0".parse().unwrap(),
-                    operations: BTreeMap::from([(
-                        operation.parse().unwrap(),
-                        ComponentOperationDeclaration {
-                            committed_result_schema: None,
-                            registered_operation: None,
-                            input_ports: Vec::new(),
-                            output_ports: Vec::new(),
-                            parameters: Vec::new(),
-                        },
-                    )]),
-                },
-                admitted_platform_packages: std::collections::BTreeSet::new(),
-                base_digests: std::collections::BTreeSet::new(),
-            },
-        )
-        .expect("fixture bytes admit")
-        .component;
-        let artifact = component_artifact_reference(&artifact_base, &component.component_digest)
-            .expect("fixture artifact reference derives");
-        let reference = Reference::with_tag(
-            artifact.registry().to_owned(),
-            artifact.repository().to_owned(),
-            artifact.tag().to_owned(),
-        );
-        let config_bytes = component_artifact_config_bytes(&component);
-        let credentials = read_registry_push_credentials(
-            PathBuf::from(&registry_auth_file).as_path(),
-            artifact.registry(),
-        )
-        .expect("load live registry credential");
-
-        publish_and_verify(
-            &reference,
-            &artifact_base,
-            insecure_registry,
-            &oci_ca_paths,
-            &component_bytes,
-            &config_bytes,
-            &component,
-            credentials.as_ref(),
-        )
-        .await
-        .expect("production publisher and puller agree");
-    }
 }

@@ -8303,7 +8303,6 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "cargo_metadata",
- "chrono",
  "clap",
  "csv",
  "docker_credential",
@@ -8316,7 +8315,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sqlx",
- "syn 3.0.6",
  "tempfile",
  "tokio",
  "toml 1.1.6+spec-1.1.0",
@@ -8334,7 +8332,6 @@ dependencies = [
  "wamn-publish",
  "wamn-registry",
  "wamn-release-control",
- "wamn-test-postgres",
  "wash-runtime",
 ]
 

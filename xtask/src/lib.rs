@@ -7,7 +7,6 @@ mod netsuite;
 mod platform;
 mod process;
 mod repo_policy;
-mod selection;
 mod submodule_pins;
 mod tasks;
 
@@ -48,18 +47,10 @@ enum Task {
     },
     /// Build one component through the shared guest compiler.
     BuildComponent { manifest: PathBuf },
-    /// Generate TypeScript clients for native host routes.
-    HostRouteClients,
     /// Print guest compiler flags.
     GuestRustflags,
     /// Build, push, and stamp one platform chart.
     BuildPlatform(platform::Args),
-    /// Render a project document for OpenTofu.
-    #[command(subcommand)]
-    Project(platform::ProjectCommand),
-    /// Resize the declared cloud node pools.
-    #[command(subcommand)]
-    Platform(platform::CloudCommand),
     /// Run the deployed application benchmark.
     Bench(bench::Args),
     /// Measure the deployed benchmark tier.
@@ -93,8 +84,6 @@ enum Task {
         edge: bool,
         scale: usize,
     },
-    /// Select tests from Cargo dependencies and repository inputs.
-    TestChanges(selection::Args),
     /// Require a passing, nonempty libtest result.
     RequireTestResult(process::TestArgs),
     /// Run repository formatting, Clippy, and policy checks.
@@ -163,16 +152,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             );
             Ok(())
         }
-        Task::HostRouteClients => wamn_compiler::materialize_host_route_client(
-            &wamn_compiler::host_route_client_output_root(&root),
-        ),
         Task::GuestRustflags => {
             println!("{}", guest_rustflags(&root).await?);
             Ok(())
         }
         Task::BuildPlatform(args) => platform::run(args).await,
-        Task::Project(command) => platform::project(command),
-        Task::Platform(command) => platform::cloud(command).await,
         Task::Bench(args) => bench::run(args).await,
         Task::BenchTier(args) => bench_cloud::tier(&root, &args).await,
         Task::BenchPgMinimum(args) => bench_cloud::pg(&root, &args).await,
@@ -200,7 +184,6 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             edge,
             scale,
         } => bench_data::app_result(&work, &output, &http, edge, scale),
-        Task::TestChanges(args) => selection::run(&root, &args).await,
         Task::RequireTestResult(args) => process::require(&std::env::current_dir()?, &args).await,
         Task::RepoLint(args) => tasks::lint(&root, args.mode).await,
         Task::RepoLintDependencies => tasks::dependencies(&root).await,

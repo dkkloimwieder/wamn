@@ -547,12 +547,10 @@ async fn publish_candidate(
             .parse()?;
             crate::component_admission::publish_and_verify(
                 &reference,
-                inputs.component_artifact_base,
                 registry.insecure_registry,
                 &registry.oci_ca_paths,
                 &component.bytes,
                 &wamn_engine::component_artifact::component_artifact_config_bytes(fact),
-                fact,
                 credentials.as_ref(),
             )
             .await?;

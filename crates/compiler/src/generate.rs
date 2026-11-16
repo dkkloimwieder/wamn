@@ -10,7 +10,7 @@ mod rust;
 mod typed_exports;
 mod validation;
 mod wit;
-use operations::{emit_custom_operation, emit_model, required_schema_contract};
+use operations::{emit_custom_operation, emit_model};
 use validation::{authored_sql_map, validate};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,7 +18,6 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use wamn_digest::canonical_json_bytes;
 use wamn_record_history::history_table_name;
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, Constraint, ConstraintType, Exclusion, ForeignKeyAction, Table,
@@ -160,16 +159,7 @@ impl GeneratedFile {
     /// One generated artifact. Sibling modules emit their own files; the
     /// fields stay private so a path and its bytes are always set together.
     ///
-    /// A `.rs` artifact is formatted here, at the single point every emitter
-    /// passes through, so that a generated Rust file is committed formatted and
-    /// the drift test compares the same bytes a write would have placed on
-    /// disk. JSON, TOML, and SQL bytes are kept exactly as emitted.
     pub(crate) fn new(path: Box<str>, bytes: Box<[u8]>) -> Self {
-        let bytes = if path.ends_with(".rs") {
-            crate::rustfmt::format_rust(&bytes).into_boxed_slice()
-        } else {
-            bytes
-        };
         Self { path, bytes }
     }
 
@@ -218,40 +208,6 @@ impl GeneratedPackage {
             .ok()
             .map(|index| &self.files[index])
     }
-}
-
-/// The generated file that names the schema an installed package needs.
-pub const REQUIRED_SCHEMA_CONTRACT_PATH: &str = "generated/required-schema-contract.json";
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RequiredSchemaContract {
-    tables: Box<[RequiredTable]>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RequiredTable {
-    schema: Box<str>,
-    table: Box<str>,
-    fields: Box<[RequiredField]>,
-    constraints: Box<[RequiredConstraint]>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RequiredField {
-    name: Box<str>,
-    #[serde(rename = "type")]
-    ty: Box<str>,
-    nullable: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RequiredConstraint {
-    name: Box<str>,
-    definition: Value,
 }
 
 /// Compile an authored manifest: add the members that generation derives.
@@ -334,9 +290,6 @@ pub(crate) fn derive_model(
 }
 
 /// Generate a package without filesystem, database, clock, or environment I/O.
-///
-/// The one child process is `rustfmt`, which formats each emitted `.rs`
-/// artifact. It reads and writes only the bytes it is handed.
 pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, GenerateError> {
     let manifest = PackageManifest::from_slice(input.manifest_json)?;
     manifest.validate()?;
@@ -463,11 +416,6 @@ pub(crate) fn generate_described(
     data::emit_package_data(&mut files, manifest)?;
     component::emit_package_component(&mut files, manifest)?;
     publication::emit_package_publication(&mut files, manifest, &operations)?;
-    insert_canonical_json(
-        &mut files,
-        REQUIRED_SCHEMA_CONTRACT_PATH,
-        &required_schema_contract(input.catalog, manifest),
-    )?;
 
     let files = files
         .into_iter()
@@ -1152,20 +1100,6 @@ fn insert_json_line(
     let mut bytes = serde_json::to_vec(value).expect("generated JSON values always serialize");
     bytes.push(b'\n');
     insert_bytes(files, path, bytes)
-}
-
-fn insert_canonical_json(
-    files: &mut BTreeMap<String, Vec<u8>>,
-    path: &str,
-    value: &impl Serialize,
-) -> Result<(), GenerateError> {
-    insert_bytes(
-        files,
-        path,
-        canonical_json_bytes(
-            &serde_json::to_value(value).expect("generated JSON values always serialize"),
-        ),
-    )
 }
 
 pub(crate) fn insert_bytes(

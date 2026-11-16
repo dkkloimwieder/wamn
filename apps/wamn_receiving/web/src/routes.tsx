@@ -14,7 +14,6 @@ import { Actions, Records, type NavigationAction } from "./table";
 import { PurchaseOrderForm, ReceiptForm, SupplierForm } from "./forms";
 import { invoke, type RecordValue } from "./data";
 import { displayRecord, referenceLabels } from "./references";
-import { SyncReceipts } from "./sync";
 
 const recordPath = (base: string, row?: RecordValue) => `${base}/${encodeURIComponent(String(row?.id ?? ""))}`;
 const receiptAction = (fill: (row?: RecordValue) => object): NavigationAction => ({
@@ -92,11 +91,6 @@ export const SECTIONS: readonly ShellSection[] = [
             actions={[
               receiptAction(() => ({ value: { purchaseOrderId: props.params.id } })),
               {
-                description: d.ReceivingLoadReceiptScreenTable,
-                navigation: true,
-                path: () => `purchase-orders/${props.params.id}/receiving`,
-              },
-              {
                 description: d.ReceivingLoadPurchaseOrderHistoryTable,
                 navigation: true,
                 path: () => `purchase-orders/${props.params.id}/history`,
@@ -111,19 +105,6 @@ export const SECTIONS: readonly ShellSection[] = [
         operation: d.PurchaseOrderUpdateForm.id,
         label: d.PurchaseOrderUpdateForm.title,
         component: PurchaseOrderForm,
-      },
-      {
-        scroll: "content",
-        path: "purchase-orders/:id/receiving",
-        operation: d.ReceivingLoadReceiptScreenTable.id,
-        label: d.ReceivingLoadReceiptScreenTable.title,
-        component: (props) => (
-          <SyncReceipts
-            screen={props}
-            description={d.ReceivingLoadReceiptScreenTable}
-            purchaseOrderId={props.params.id!}
-          />
-        ),
       },
       {
         scroll: "content",
@@ -226,16 +207,5 @@ export const SECTIONS: readonly ShellSection[] = [
       },
     ],
   },
-  {
-    label: d.ReceivingLoadOpenReceiptLinesTable.title,
-    screens: [
-      {
-        scroll: "content",
-        path: "open-receipt-lines",
-        operation: d.ReceivingLoadOpenReceiptLinesTable.id,
-        label: d.ReceivingLoadOpenReceiptLinesTable.title,
-        component: (props) => <SyncReceipts screen={props} description={d.ReceivingLoadOpenReceiptLinesTable} />,
-      },
-    ],
-  },
+
 ];

@@ -1,12 +1,3 @@
-#[path = "platform_pools.rs"]
-mod platform_pools;
-#[path = "platform_project.rs"]
-mod platform_project;
-#[path = "platform_project_commands.rs"]
-mod platform_project_commands;
-#[path = "platform_tofu.rs"]
-mod platform_tofu;
-pub use platform_project_commands::{ProjectCommand, project};
 // BuildKit publication and chart stamping.
 
 use crate::process;
@@ -371,34 +362,4 @@ fn loopback(registry: &str) -> bool {
         registry.split([':', '/']).next(),
         Some("localhost" | "127.0.0.1")
     ) || registry.starts_with("[::1]")
-}
-
-pub use self::platform_pools::{Direction, resize, work_directory};
-
-/// Cloud node pool operations from the declared project.
-#[derive(Debug, clap::Subcommand)]
-pub enum CloudCommand {
-    /// Set every node pool to its declared size.
-    Wake { file: PathBuf },
-    /// Set every node pool to zero nodes.
-    Sleep { file: PathBuf },
-}
-
-pub async fn cloud(command: CloudCommand) -> anyhow::Result<()> {
-    let (file, direction) = match command {
-        CloudCommand::Wake { file } => (file, Direction::Wake),
-        CloudCommand::Sleep { file } => (file, Direction::Sleep),
-    };
-    let document = wamn_platform_install::platform::document::ClusterDocument::compile(&file)?;
-    resize(
-        &document,
-        &file.with_file_name("project.k"),
-        direction,
-        &work_directory()?,
-        |line| {
-            println!("{line}");
-            Ok(())
-        },
-    )
-    .await
 }
