@@ -113,21 +113,26 @@ pub(super) async fn run(
         Some(&super::SERVICE.parse().unwrap())
     );
     assert!(execution.postgres.scopes.trace(target).is_some());
-    let before = sqlx::query("SELECT r.status,q.lease_generation FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1").bind(&run).fetch_one(&mut *admin)
-        .await?;
-    assert_eq!(before.get::<String, _>(0), "running");
-    let generation: i64 = before.get(1);
-    let destroyed_connections = execution.postgres.destroyed_connections();
-    // Hold the queue row through shutdown so lease renewal must wait on this
-    // transaction. Cancellation must destroy its connection, not repool it.
-    sqlx::raw_sql("BEGIN")
-        .execute(&mut *admin)
-        .await
-        .map(drop)?;
-    sqlx::query("SELECT run_id FROM wamn_run.run_queue WHERE run_id=$1 FOR UPDATE")
-        .bind(&run)
-        .fetch_one(&mut *admin)
-        .await?;
+    // Keep driving the queue while setup waits on the database, so its lease
+    // heartbeats continue until shutdown.
+    let (generation, destroyed_connections) = tokio::select! {
+        result = &mut queue => panic!("queue stopped before shutdown: {result:?}"),
+        setup = async {
+            let before = sqlx::query("SELECT r.status,q.lease_generation FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1").bind(&run).fetch_one(&mut *admin)
+                .await?;
+            assert_eq!(before.get::<String, _>(0), "running");
+            let generation: i64 = before.get(1);
+            let destroyed_connections = execution.postgres.destroyed_connections();
+            // Hold the queue row so renewal waits until cancellation destroys
+            // its connection.
+            sqlx::raw_sql("BEGIN").execute(&mut *admin).await?;
+            sqlx::query("SELECT run_id FROM wamn_run.run_queue WHERE run_id=$1 FOR UPDATE")
+                .bind(&run)
+                .fetch_one(&mut *admin)
+                .await?;
+            Ok::<_, anyhow::Error>((generation, destroyed_connections))
+        } => setup?,
+    };
     stop.send(true)?;
     wamn_engine::lifecycle::bounded_cleanup(
         wash_runtime::washlet::COMMAND_DRAIN_TIMEOUT,
