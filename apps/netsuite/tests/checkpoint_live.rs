@@ -110,7 +110,7 @@ pub async fn invoke(
     // its execution role, which holds exactly the operation of the graph that
     // needs a grant: the consumer command of another package of the release.
     let workflow_host =
-        super::consumer_live::workflow_host(&mut admin, &database, manifest).await?;
+        super::consumer_live::workflow_host(&mut admin, &database, &guest_url, manifest).await?;
     // The application `erp` holds the three packages of the release. Its name
     // is no package (docs/architecture/execution.md#workflows).
     let run = super::consumer_live::schedule_run(
