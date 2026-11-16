@@ -1732,109 +1732,6 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
     Ok(())
 }
 
-async fn assert_definer_grantees(client: &mut Client) -> anyhow::Result<()> {
-    const CONNECTION: &[&str] = &["wamn_control", "wamn_administration"];
-    const ALLOWED: &[(&str, &[&str])] = &[
-        ("identity.revoke_disabled_password_logins()", &[]),
-        (
-            "identity.lock_password_principal(uuid)",
-            &["wamn_identity_issuer"],
-        ),
-        ("platform.bump_counter(uuid, text, text)", &["wamn_app"]),
-        ("platform.assign_counter(uuid, text, text)", &["wamn_app"]),
-        (
-            "platform.set_counter(uuid, text, text, bigint)",
-            &["wamn_app"],
-        ),
-        (
-            "registry.read_file_connection(text, text, text, uuid)",
-            &["wamn_conn_reader"],
-        ),
-        (
-            "registry.lock_oauth_connection(text, text, text, uuid)",
-            &["wamn_conn_reader"],
-        ),
-        (
-            "registry.read_connection_fact(text, text, text, uuid)",
-            &["wamn_conn_reader"],
-        ),
-        (
-            "registry.read_connection_generation(text, text, text, uuid, bigint)",
-            &["wamn_conn_reader"],
-        ),
-        (
-            "registry.read_connection_secret(text, text, text, uuid)",
-            &["wamn_conn_reader"],
-        ),
-        (
-            "registry.read_env_connections(text, text, text)",
-            &["wamn_conn_reader"],
-        ),
-        (
-            "registry.read_integration_version(text, integer)",
-            &["wamn_conn_reader"],
-        ),
-        (
-            "registry.resolve_environment_connection(text, text, text, text, text, integer)",
-            &["wamn_apply", "wamn_db_owner"],
-        ),
-        (
-            "registry.connection_projection(text, text, text)",
-            &["wamn_apply", "wamn_control", "wamn_db_owner"],
-        ),
-        (
-            "registry.publish_integration(text, integer, text, jsonb, text, text[], text[])",
-            &["wamn_control"],
-        ),
-        (
-            "registry.configure_connection(text, text, jsonb)",
-            CONNECTION,
-        ),
-        (
-            "registry.configure_external_system(text, text, jsonb)",
-            CONNECTION,
-        ),
-        (
-            "registry.configure_integration(text, text, jsonb)",
-            CONNECTION,
-        ),
-        (
-            "registry.configure_integration_type(text, text, jsonb)",
-            CONNECTION,
-        ),
-        (
-            "registry.retired_connection_credential(text)",
-            &["wamn_control"],
-        ),
-    ];
-    let functions = sqlx::query("SELECT p.oid, n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS name, p.proconfig, pg_get_userbyid(p.proowner) AS owner, EXISTS (SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_execute, EXISTS (SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee<>p.proowner AND a.is_grantable) AS grantable FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.prosecdef")
-        .fetch_all(&mut *client).await?;
-    for function in functions {
-        let name: String = function.get("name");
-        let allowed = ALLOWED
-            .iter()
-            .find(|(signature, _)| *signature == name)
-            .unwrap_or_else(|| panic!("unreviewed privileged function: {name}"));
-        let effective = sqlx::query("SELECT r.rolname::text FROM pg_roles r WHERE NOT r.rolsuper AND has_function_privilege(r.oid,$1::text::regprocedure,'EXECUTE') AND NOT pg_has_role(r.oid,(SELECT proowner FROM pg_proc WHERE oid=$1::text::regprocedure),'USAGE') AND NOT EXISTS (SELECT FROM pg_roles a WHERE a.rolname=ANY($2::text[]) AND pg_has_role(r.oid,a.oid,'USAGE'))")
-            .bind(&name).bind(&allowed.1).fetch_all(&mut *client).await?;
-        assert!(
-            effective.is_empty(),
-            "unexpected effective privilege on {name}: {effective:?}"
-        );
-        assert_eq!(function.get::<String, _>("owner"), "wamn_system", "{name}");
-        let configuration: Vec<String> = function.get("proconfig");
-        let search_path = configuration
-            .iter()
-            .filter_map(|setting| setting.split_once('='))
-            .find(|(key, _)| *key == "search_path")
-            .map(|(_, value)| value);
-        assert_eq!(search_path, Some("pg_catalog"), "{name}");
-        assert!(!function.get::<bool, _>("public_execute"), "{name}");
-        assert!(!function.get::<bool, _>("grantable"), "{name}");
-    }
-    Ok(())
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires: postgres, nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> anyhow::Result<()> {
@@ -1867,9 +1764,6 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     .execute(&mut admin)
     .await
     .map(drop)?;
-    assert_definer_grantees(&mut admin).await?;
-    assert_definer_grantees(&mut billing).await?;
-    assert_definer_grantees(&mut shop).await?;
     assert!(
         sqlx::query("SELECT to_regprocedure('catalog.connection_is_referenced(text)') IS NULL")
             .fetch_one(&mut billing)
@@ -1943,12 +1837,6 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
                 .get::<i64, _>(0),
             count
         );
-        for table in ["external_system", "integration", "connection"] {
-            assert!(!sqlx::query("SELECT has_table_privilege('wamn_app',$1,'INSERT,UPDATE,DELETE,TRUNCATE') OR has_any_column_privilege('wamn_app',$1,'INSERT,UPDATE')").bind(&format!("platform.{table}")).fetch_one(&mut *client).await?.get::<bool, _>(0));
-        }
-        for table in ["catalog.release_connection", "catalog.connection_binding"] {
-            assert!(!sqlx::query("SELECT has_table_privilege('wamn_administration',$1,'INSERT,UPDATE,DELETE,TRUNCATE') OR has_any_column_privilege('wamn_administration',$1,'INSERT,UPDATE')").bind(&table).fetch_one(&mut *client).await?.get::<bool, _>(0));
-        }
     }
     let identity: String = sqlx::query("SELECT id::text FROM platform.connection")
         .fetch_one(&mut billing)

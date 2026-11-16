@@ -729,6 +729,9 @@ pub fn grant_identity_reader_surface_sql() -> String {
         .expect("writing to a String cannot fail");
     }
     sql.push_str(" GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_identity_reader;");
+    sql.push_str(&wamn_registry::sql::grant_control_policy_execute_sql(
+        &escape_identifier(WorkloadRoleFamily::IdentityReader.acl_role()),
+    ));
     sql
 }
 
@@ -742,6 +745,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
     );
     write!(sql, " GRANT USAGE ON SCHEMA identity TO {role}; GRANT SELECT, INSERT, UPDATE, DELETE ON identity.oauth_token, identity.oauth_authorization TO {role};")
         .expect("writing to a String cannot fail");
+    sql.push_str(&wamn_registry::sql::grant_control_policy_execute_sql(&role));
     sql
 }
 

@@ -343,7 +343,15 @@ pub const CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMM
 pub const CONTROL_DEV_SRC_DEV_TARGET_DATABASE_RECORDED_DISPOSABLE: &str = "SELECT disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org=$1 AND project=$2 AND env=$3";
 
 /// crates/provision/src/sql.rs::control_surface_grants_sql registry statement.
-pub const CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL: &str = " GRANT EXECUTE ON FUNCTION registry.control_org(), identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_control;";
+pub const CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL: &str = " GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid), identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_control;";
+
+/// Grant the functions required to initialize control row policies for a reader.
+/// The caller supplies a quoted role identifier.
+pub fn grant_control_policy_execute_sql(role: &str) -> String {
+    format!(
+        " GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid) TO {role};",
+    )
+}
 
 /// crates/provision/src/sql.rs::control_surface_grants_sql registry statement.
 pub fn control_provision_src_sql_control_surface_grants_sql_2(

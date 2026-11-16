@@ -1280,7 +1280,7 @@ Catalog bootstrap installs this function after its tables. Application schema in
 Provisioning grants execution to `wamn_administration`.
 Each function is `SECURITY DEFINER`, is owned by `wamn_system`, and pins `search_path` to `pg_catalog`.
 PUBLIC holds no execute grant. Only the control or administration role receives the execute grant that it needs.
-Control logins can read hierarchy rows and write their declared identity and lifecycle fields. Postgres row security limits these operations to the authenticated login’s org. Connection writes still use the restricted functions.
+Control logins can read hierarchy rows and write their declared identity and lifecycle fields. Postgres row security limits these operations to the authenticated login’s org. Its control policy helpers grant execution to each role with access to the protected relations and grant none to `PUBLIC`. Connection writes still use the restricted functions.
 
 ### Application connection bindings
 

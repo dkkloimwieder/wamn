@@ -236,5 +236,6 @@ pub fn grant_identity_issuer_surface_sql() -> String {
     }
     write!(sql, " GRANT SELECT, INSERT, UPDATE, DELETE ON identity.password_attempts TO {role}; GRANT EXECUTE ON FUNCTION identity.lock_password_principal(uuid) TO {role};").expect("string write");
     write!(sql, " GRANT DELETE ON identity.password_logins TO {role};").expect("string write");
+    sql.push_str(&wamn_registry::sql::grant_control_policy_execute_sql(&role));
     sql
 }
