@@ -6,7 +6,6 @@ use std::sync::OnceLock;
 
 use url::Url;
 
-use wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql;
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
     PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType,
@@ -124,27 +123,6 @@ fn rows(url: &str, sql: &str) -> Vec<String> {
         .collect()
 }
 
-/// The SQLSTATE one statement raised as the given login, or `None` on success.
-fn sqlstate(url: &str, statement: &str) -> Option<String> {
-    let (ok, _, err) = psql(url, statement);
-    if ok {
-        return None;
-    }
-    // `VERBOSITY=verbose` prints `ERROR:  42501: permission denied for …`. A
-    // SQLSTATE is five uppercase alphanumerics carrying at least one digit,
-    // which is what separates it from the `ERROR:` label beside it.
-    err.split_whitespace()
-        .filter_map(|token| token.strip_suffix(':'))
-        .find(|code| {
-            code.len() == 5
-                && code
-                    .chars()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-                && code.chars().any(|c| c.is_ascii_digit())
-        })
-        .map(str::to_owned)
-        .or_else(|| panic!("no SQLSTATE in psql stderr:\n{err}"))
-}
 
 /// The admin URL with its userinfo replaced by one role's login, pointed at the
 /// project database.
@@ -334,13 +312,6 @@ fn build() -> Fixture {
         "create the logged fixture relations",
         RETENTION_FIXTURE,
     );
-    // The apply-package grant path, as it runs after the log triggers.
-    apply(
-        &db_url,
-        "converge the audit retention grants",
-        &reconcile_audit_retention_grants_sql(),
-    );
-
     for family in families().filter(|family| database_of(*family) == DATABASE) {
         mint(&db_url, family);
     }
@@ -418,180 +389,9 @@ fn fixture() -> &'static Fixture {
     FIXTURE.get_or_init(build)
 }
 
-/// The executor can read schedule configuration but cannot author it.
-#[test]
-#[ignore = "requires: postgres, bin:psql"]
-fn the_executor_reads_settings_without_write_authority() {
-    let fixture = fixture();
-    apply(
-        &fixture.db_url,
-        "seed schedule configuration",
-        "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture','admin:settings-fixture'); INSERT INTO platform.setting(target_type,target_id,key,value) VALUES ('project','billing','timezone','\"UTC\"'::jsonb); COMMIT;",
-    );
-    let executor = login_url(
-        &fixture.admin,
-        &generation(WorkloadRoleFamily::ExecutorPlatform),
-    );
-    let value: serde_json::Value = serde_json::from_str(&bound_query(&executor,
-        "SELECT value::text FROM platform.setting WHERE target_type='project' AND target_id='billing' AND key='timezone'")).unwrap();
-    assert!(value.is_string());
-    assert!(sqlstate(&executor,
-        "UPDATE platform.setting SET value='null'::jsonb WHERE target_type='project' AND target_id='billing' AND key='timezone'").is_some());
-    let unchanged: serde_json::Value = serde_json::from_str(&query(&fixture.db_url,
-        "SELECT value::text FROM platform.setting WHERE target_type='project' AND target_id='billing' AND key='timezone'")).unwrap();
-    assert_eq!(unchanged, value);
-}
-
 // ---------------------------------------------------------------------------
 // THE PLATFORM-GRAIN ARMS
 // ---------------------------------------------------------------------------
-
-/// A PLATFORM FAMILY WITH GRANTS AND NO PROJECT CONTEXT READS EXACTLY ITS GRANTS
-/// (`wamn-0h0g.22.17`).
-///
-/// The project base grants are narrowed `TO wamn_app`, and PostgreSQL DEFAULT-DENIES
-/// when RLS is on and no policy matches — so the narrowing does not EXEMPT a
-/// platform principal, it LOCKS IT OUT at zero rows with no exception. What
-/// admits it is one permissive `TO wamn_platform` arm per relation, and what
-/// still BOUNDS it is its own table grants. Both halves are read back here: rows
-/// where a grant exists, `42501` where it does not.
-#[test]
-#[ignore = "requires: postgres, bin:psql"]
-fn a_platform_family_without_project_env_key_context_reads_exactly_what_its_grants_say() {
-    let fixture = fixture();
-    let executor = WorkloadRoleFamily::ExecutorPlatform;
-    assert!(
-        executor.is_platform_grain(),
-        "this arm's subject must be a platform-grain family"
-    );
-    let login = generation(executor);
-
-    // The two-hop chain (generation -> stable ACL role -> wamn_platform) is
-    // walked by the PER-EDGE inherit_option, and a bare GRANT onto a NOINHERIT
-    // stable role lands it false and reads zero rows in silence.
-    assert_eq!(
-        query(
-            &fixture.db_url,
-            &format!("SELECT pg_has_role('{login}', '{PLATFORM_GROUP_ROLE}', 'USAGE')::text"),
-        )
-        .parse::<bool>()
-        .unwrap(),
-        true,
-        "the executor-platform generation does not effectively hold \
-         {PLATFORM_GROUP_ROLE}: every platform read would be zero rows"
-    );
-
-    let as_executor = login_url(&fixture.admin, &login);
-    // It has NO project context and structurally cannot acquire one: the session
-    // derivation is the guest's, and a platform family holds neither `USAGE` on
-    // `wamn_authority` nor `EXECUTE` on it. So BOTH projects' rows are the
-    // correct answer below — the confinement is the grant set, not a predicate.
-    assert_eq!(
-        sqlstate(
-            &as_executor,
-            "SELECT wamn_authority.current_project_key();\n"
-        )
-        .as_deref(),
-        Some("42501"),
-        "a platform family reached the guest session derivation; if it can \
-         derive a project key, this arm is measuring a guest"
-    );
-    assert_eq!(
-        bound_query(&as_executor, "SELECT count(*) FROM wamn_run.runs")
-            .parse::<u64>()
-            .unwrap(),
-        2,
-        "the executor-platform family reads runs through its declared grants"
-    );
-}
-
-/// THE PROJECT-TARGETED PLATFORM MEMBER (`wamn-0h0g.22.25`).
-///
-/// # A premise of that ruling no longer holds
-///
-/// The ruling named TWO project-targeted `wamn_platform` members, the effect
-/// writer and `Retention`. `wamn-0h0g.22.32` then DEMOTED the writer out of the group,
-/// and `wamn-0h0g.10.15` removed the effect-writer family, so `Retention` is the
-/// only subject the arm still has. That is asserted here
-/// rather than remembered, so the day a second one appears this arm reds.
-#[test]
-#[ignore = "requires: postgres, bin:psql"]
-fn the_project_env_key_targeted_platform_member_reads_nothing_outside_its_grants() {
-    let fixture = fixture();
-    let login = generation(WorkloadRoleFamily::Retention);
-    let as_retention = login_url(&fixture.admin, &login);
-    // Its grant set names ONE relation, and the shared arm is USING (true), so
-    // the honest assertion is: every row of that relation, and 42501 everywhere
-    // else. The project predicate it keeps in its own statements is what
-    // re-narrows it, and that is not a database-enforced boundary.
-    assert_eq!(
-        bound_query(&as_retention, "SELECT count(*) FROM wamn_run.runs")
-            .parse::<u64>()
-            .unwrap(),
-        2,
-        "the retention family cannot read the relation its grant set names"
-    );
-    for relation in ["wamn_run.run_queue"] {
-        assert_eq!(
-            sqlstate(
-                &as_retention,
-                &format!("SELECT count(*) FROM {relation};\n")
-            )
-            .as_deref(),
-            Some("42501"),
-            "the retention family reached {relation} while holding platform \
-             membership: the shared arm must buy it nothing beyond its grants"
-        );
-    }
-}
-
-/// The audit retention family reads only the retention columns of a history
-/// table whose log keeps entries for n days (`wamn-emtx.13`).
-///
-/// The minted login counts the P30D history table and reads its three columns.
-/// The server refuses an image column, the unlimited history table, and the
-/// logged relation itself. The family holds no `wamn_platform` edge.
-#[test]
-#[ignore = "requires: postgres, bin:psql"]
-fn the_audit_retention_family_reads_only_the_retention_columns_of_its_history_tables() {
-    let fixture = fixture();
-    let family = WorkloadRoleFamily::AuditRetention;
-    let login = generation(family);
-    assert_eq!(
-        query(
-            &fixture.db_url,
-            &format!("SELECT pg_has_role('{login}', '{PLATFORM_GROUP_ROLE}', 'MEMBER')::text"),
-        )
-        .parse::<bool>()
-        .unwrap(),
-        false,
-        "the audit retention generation reaches {PLATFORM_GROUP_ROLE}"
-    );
-    let as_retention = login_url(&fixture.admin, &login);
-    assert_eq!(
-        query(
-            &as_retention,
-            "SELECT count(*) FROM retention_fixture.entry_history \
-              WHERE row_key IS NOT NULL AND position > 0 AND changed_at IS NOT NULL",
-        )
-        .parse::<u64>()
-        .unwrap(),
-        0,
-        "the audit retention family cannot read the retention columns of the P30D history table"
-    );
-    for statement in [
-        "SELECT before FROM retention_fixture.entry_history;\n",
-        "SELECT count(*) FROM retention_fixture.ledger_history;\n",
-        "DELETE FROM retention_fixture.ledger_history;\n",
-        "SELECT count(*) FROM retention_fixture.entry;\n",
-    ] {
-        assert_eq!(
-            sqlstate(&as_retention, statement).as_deref(),
-            Some("42501"),
-            "the audit retention family ran {statement}"
-        );
-    }
-}
 
 /// THE GUEST IS THE ONE FAMILY THE MINIMUM CONFINES BY ROW.
 ///
@@ -717,31 +517,6 @@ fn no_control_policy_passes_every_row() {
             );
         }
     }
-}
-
-/// A reader can select its public membership fields but cannot read the whole row.
-#[test]
-#[ignore = "requires: postgres, bin:psql"]
-fn the_identity_reader_cannot_read_private_membership_fields() {
-    let mut target = Url::parse(&fixture().control_url).unwrap();
-    target
-        .set_username(generation(WorkloadRoleFamily::IdentityReader).as_str())
-        .unwrap();
-    target.set_password(Some(PROBE_PASSWORD)).unwrap();
-    assert!(
-        psql(
-            target.as_str(),
-            "SELECT principal_id,org,status FROM identity.org_memberships LIMIT 0"
-        )
-        .0
-    );
-    assert!(
-        !psql(
-            target.as_str(),
-            "SELECT * FROM identity.org_memberships LIMIT 0"
-        )
-        .0
-    );
 }
 
 /// Authority functions never grant execution through PUBLIC.

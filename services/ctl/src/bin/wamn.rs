@@ -425,16 +425,6 @@ mod platform_tests {
         assert!(Cli::try_parse_from(["wamn", "platform", "apply", "cluster.k"]).is_err());
     }
 
-    #[test]
-    fn platform_status_needs_only_the_document() {
-        let cli = Cli::try_parse_from(["wamn", "platform", "status", "cluster.k"]).unwrap();
-        let Command::Platform(ProductPlatformCommand::Status(args)) = cli.command else {
-            panic!("expected platform status");
-        };
-        assert_eq!(args.file, std::path::Path::new("cluster.k"));
-        assert!(Cli::try_parse_from(["wamn", "platform", "status"]).is_err());
-    }
-
     #[tokio::test]
     async fn platform_missing_document_refuses_before_provider_setup() {
         let directory = std::env::temp_dir().join(format!(

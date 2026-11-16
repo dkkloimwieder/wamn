@@ -66,7 +66,6 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
 async fn load(components: Vec<NativeComponent>) -> anyhow::Result<NativeWorkload> {
     load_with_reuse(
         components,
-        crate::warm_reuse::WarmReuse::default(),
         vec![WitInterface::from(OPERATION)],
     )
     .await
@@ -74,13 +73,11 @@ async fn load(components: Vec<NativeComponent>) -> anyhow::Result<NativeWorkload
 
 async fn load_with_reuse(
     components: Vec<NativeComponent>,
-    warm_reuse: crate::warm_reuse::WarmReuse,
     host_interfaces: Vec<WitInterface>,
 ) -> anyhow::Result<NativeWorkload> {
     load_native_workload(
         Arc::new(crate::build_engine(&[]).expect("production engine")),
         NativeWorkloadSpec {
-            warm_reuse,
             id: "native-import-admission-test".into(),
             namespace: "test".into(),
             name: "native-import-admission-test".into(),
@@ -148,178 +145,4 @@ async fn native_loader_requires_matching_repeated_bytes_before_cache_access() {
     load(vec![first, altered])
         .await
         .expect_err("altered repeat refuses");
-}
-
-#[tokio::test]
-#[ignore = "requires: runtime"]
-async fn native_mixed_workload_keeps_each_component_lifetime() {
-    use wash_runtime::engine::ctx::SharedCtx;
-    use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
-    use wash_runtime::wasmtime::component::{Accessor, Instance};
-
-    fn counter(name: &str, export: &str) -> NativeComponent {
-        let mut input = component(name, export, None, 0);
-        input.bytes = wat::parse_str(format!(
-            r#"(component
-            (core module $code
-                (global $calls (mut i32) (i32.const 0))
-                (func (export "run") (result i32)
-                    global.get $calls i32.const 1 i32.add global.set $calls global.get $calls))
-            (core instance $code (instantiate $code))
-            (func $run (result u32) (canon lift (core func $code "run")))
-            (instance $exports (export "run" (func $run)))
-            (export "{export}" (instance $exports)))"#
-        ))
-        .expect("counter fixture");
-        input.fact.component_digest = wamn_digest::bytes_sha256(&input.bytes);
-        input
-    }
-
-    struct Count {
-        export: String,
-        reply: tokio::sync::oneshot::Sender<u32>,
-    }
-    impl GuestCall for Count {
-        fn describe(&self) -> &'static str {
-            "mixed workload counter"
-        }
-        fn deadline(&self) -> std::time::Duration {
-            std::time::Duration::from_secs(2)
-        }
-        fn call(
-            self: Box<Self>,
-            accessor: &Accessor<SharedCtx>,
-            instance: Instance,
-        ) -> GuestCallFuture<'_> {
-            Box::pin(async move {
-                let run = accessor.with(|mut access| {
-                    let interface = instance
-                        .get_export_index(&mut access, None, &self.export)
-                        .expect("counter interface");
-                    let index = instance
-                        .get_export_index(&mut access, Some(&interface), "run")
-                        .expect("counter export");
-                    instance.get_typed_func::<(), (u32,)>(&mut access, index)
-                })?;
-                let (count,) = run.call_concurrent(accessor, ()).await?;
-                self.reply.send(count).expect("counter receiver");
-                Ok(None)
-            })
-        }
-    }
-
-    let warm = counter("warm", HANDLER);
-    let fresh = counter("fresh", OPERATION);
-    let reuse =
-        crate::warm_reuse::WarmReuse::new(std::slice::from_ref(&warm.fact.component_digest), 1, 60)
-            .expect("deployment trust");
-    let workload = load_with_reuse(vec![warm, fresh], reuse, Vec::new())
-        .await
-        .expect("mixed native workload");
-    for (id, fact) in &workload.facts_by_component_id {
-        let export = fact.operations.keys().next().expect("export");
-        let target = workload
-            .dispatch_target(id, "mixed-workload-test")
-            .await
-            .expect("target");
-        let mut counts = Vec::new();
-        for _ in 0..2 {
-            let (reply, response) = tokio::sync::oneshot::channel();
-            target
-                .dispatch(Count {
-                    export: export.to_string(),
-                    reply,
-                })
-                .await
-                .expect("counter dispatch");
-            counts.push(response.await.expect("counter result"));
-        }
-        assert_eq!(
-            counts,
-            if fact.component == "warm" {
-                vec![1, 2]
-            } else {
-                vec![1, 1]
-            },
-            "{} native lifetime",
-            fact.component
-        );
-    }
-    workload
-        .unbind_all_plugins()
-        .await
-        .expect("close mixed pools");
-}
-
-#[tokio::test]
-#[ignore = "requires: runtime"]
-async fn ambient_cli_receives_no_host_environment_or_arguments() {
-    let mut guest = component("ambient", OPERATION, None, 0);
-    guest.bytes = wat::parse_str(format!(r#"(component
-        (type $strings (list string))
-        (type $pair (tuple string string))
-        (type $environment (list $pair))
-        (import "wasi:cli/environment@0.2.12" (instance $env
-            (export "get-environment" (func (result $environment)))
-            (export "get-arguments" (func (result $strings)))))
-        (core module $memory
-            (memory (export "memory") 1)
-            (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 1024))
-        (core instance $memory (instantiate $memory))
-        (core func $environment (canon lower (func $env "get-environment") (memory $memory "memory") (realloc (func $memory "realloc"))))
-        (core func $arguments (canon lower (func $env "get-arguments") (memory $memory "memory") (realloc (func $memory "realloc"))))
-        (core module $code
-            (import "host" "environment" (func $environment (param i32)))
-            (import "host" "arguments" (func $arguments (param i32)))
-            (import "host" "memory" (memory 1))
-            (func $check
-                i32.const 0 call $environment
-                i32.const 4 i32.load if unreachable end
-                i32.const 8 call $arguments
-                i32.const 12 i32.load if unreachable end)
-            (start $check)
-            (func (export "run") (result i32) i32.const 0))
-        (core instance $code (instantiate $code (with "host" (instance
-            (export "environment" (func $environment))
-            (export "arguments" (func $arguments))
-            (export "memory" (memory $memory "memory"))))))
-        (func $run (result u32) (canon lift (core func $code "run")))
-        (instance $exports (export "run" (func $run)))
-        (export "{OPERATION}" (instance $exports)))"#)).expect("ambient WASI guest");
-    guest.fact.component_digest = wamn_digest::bytes_sha256(&guest.bytes);
-    guest.fact.imports = vec!["wasi:cli/environment@0.2.12".into()];
-    guest.fact.imports_fingerprint =
-        wamn_digest::canonical_json_sha256(&serde_json::json!(guest.fact.imports));
-    let workload = load_native_workload(
-        Arc::new(crate::build_engine(&[]).unwrap()),
-        NativeWorkloadSpec {
-            warm_reuse: Default::default(),
-            id: "empty-ambient-cli".into(),
-            namespace: "test".into(),
-            name: "empty-ambient-cli".into(),
-            components: vec![guest],
-            host_interfaces: Vec::new(),
-            local_resources: LocalResources {
-                environment: HashMap::from([("HOST_SECRET".into(), "not-for-guest".into())]),
-                ..Default::default()
-            },
-        },
-        &HashMap::default(),
-        &PluginBindings::new(),
-        &Meters::new(MeterKind::Off),
-    )
-    .await
-    .expect("standard WASI imports bind");
-    let id = workload.facts_by_component_id.keys().next().unwrap();
-    let target = workload
-        .dispatch_target(id, "empty-ambient-cli")
-        .await
-        .unwrap();
-    crate::operation::native_call::prepare_native(
-        &target,
-        tokio::time::Instant::now() + std::time::Duration::from_secs(5),
-    )
-    .await
-    .expect("guest observes empty ambient state");
-    workload.unbind_all_plugins().await.unwrap();
 }

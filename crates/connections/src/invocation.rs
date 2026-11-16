@@ -1,6 +1,6 @@
 //! Release and connection authority for one invocation scope.
 
-use crate::connection::{ConnectionExecutionClosure, ConnectionInvocation, InvocationEntry};
+use crate::connection::ConnectionInvocation;
 use std::sync::Arc;
 use wamn_engine::invocation_scope::InvocationScopes;
 
@@ -57,16 +57,4 @@ pub fn invocation(scopes: &InvocationScopes, scope: &str) -> Option<ConnectionIn
     scopes
         .read::<Scope, _>(scope, |record| record.invocation.clone())
         .flatten()
-}
-
-pub fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::Result<()> {
-    let entry_valid = match &invocation.entry {
-        InvocationEntry::Route => !matches!(
-            invocation.closure,
-            ConnectionExecutionClosure::Candidate { .. }
-        ),
-        InvocationEntry::Wiring(position) => position.wiring_version > 0,
-    };
-    anyhow::ensure!(entry_valid, "connection-http-invocation-invalid");
-    Ok(())
 }

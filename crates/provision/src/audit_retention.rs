@@ -8,10 +8,6 @@
 //! test those grants.
 //! The same job prunes all write-log claims after 30 days. The write log provides idempotency protection.
 
-use postgres_protocol::escape::{escape_identifier, escape_literal};
-
-use crate::workload_role::AUDIT_RETENTION_ROLE;
-
 /// The shared transaction advisory lock of the retention verb and of the
 /// apply-package trigger reconciliation.
 ///
@@ -74,85 +70,3 @@ SELECT log.schema_name, log.relation_name, log.history_name, log.days
                   AND history.relkind = 'r')
  ORDER BY log.schema_name COLLATE "C", log.relation_name COLLATE "C"
 "#;
-
-/// Converge the grants of [`AUDIT_RETENTION_ROLE`] in the current database.
-///
-/// The role holds schema `USAGE`, `DELETE`, and `SELECT` on
-/// [`AUDIT_RETENTION_READ_COLUMNS`] of each history table that
-/// [`AUDIT_RETENTION_TARGETS_SQL`] returns. With any target, it also holds schema
-/// `USAGE` and `SELECT`, `INSERT`, and `UPDATE` on the pruning watermarks.
-/// The block revokes
-/// every privilege that the role holds on a schema or a relation, and then
-/// grants the exact set. The write log also grants schema `USAGE`, `DELETE`,
-/// and `SELECT (created_at, result)` for its fixed 30-day retention.
-/// A database without the role gets no change, like the
-/// run plane repair of the `wamn_run_retention` grants. The caller runs the block in the transaction that
-/// reconciles the log triggers, after it takes [`AUDIT_RETENTION_LOCK_SQL`].
-pub fn reconcile_audit_retention_grants_sql() -> String {
-    let read_columns = AUDIT_RETENTION_READ_COLUMNS
-        .iter()
-        .map(|column| escape_identifier(column))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "DO $audit_retention_grants$ DECLARE \
-           role_name constant text := {role}; \
-           held record; \
-           target record; \
-         BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
-             RETURN; \
-           END IF; \
-           FOR held IN \
-             SELECT 'SCHEMA' AS type, namespace.nspname::text AS schema_name, \
-                    NULL::text AS relation_name \
-               FROM pg_catalog.pg_namespace AS namespace \
-              CROSS JOIN LATERAL pg_catalog.aclexplode(namespace.nspacl) AS acl \
-              JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee \
-              WHERE grantee.rolname = role_name \
-             UNION \
-             SELECT 'TABLE', namespace.nspname::text, relation.relname::text \
-               FROM pg_catalog.pg_class AS relation \
-               JOIN pg_catalog.pg_namespace AS namespace \
-                 ON namespace.oid = relation.relnamespace \
-              CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl \
-              JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee \
-              WHERE grantee.rolname = role_name \
-             UNION \
-             SELECT 'TABLE', namespace.nspname::text, relation.relname::text \
-               FROM pg_catalog.pg_attribute AS attribute \
-               JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid \
-               JOIN pg_catalog.pg_namespace AS namespace \
-                 ON namespace.oid = relation.relnamespace \
-              CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl \
-              JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee \
-              WHERE grantee.rolname = role_name \
-           LOOP \
-             IF held.type = 'SCHEMA' THEN \
-               EXECUTE format('REVOKE ALL ON SCHEMA %I FROM %I', held.schema_name, role_name); \
-             ELSE \
-               EXECUTE format('REVOKE ALL ON TABLE %I.%I FROM %I', \
-                              held.schema_name, held.relation_name, role_name); \
-             END IF; \
-           END LOOP; \
-           EXECUTE format('GRANT USAGE ON SCHEMA platform, wamn_authority TO %I', role_name); \
-           EXECUTE format('GRANT INSERT ON platform.tx_identity TO %I', role_name); \
-           EXECUTE format('GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO %I', role_name); \
-           FOR target IN {targets} LOOP \
-             EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', target.schema_name, role_name); \
-             EXECUTE format('GRANT DELETE, SELECT ({read_columns}) ON TABLE %I.%I TO %I', \
-                            target.schema_name, target.history_name, role_name); \
-           END LOOP; \
-           IF FOUND THEN \
-             EXECUTE format('GRANT USAGE ON SCHEMA wamn_history TO %I', role_name); \
-             EXECUTE format('GRANT SELECT, INSERT, UPDATE ON TABLE wamn_history.pruning_watermarks TO %I', role_name); \
-           END IF; \
-           IF to_regclass('platform.write_log') IS NOT NULL THEN \
-             EXECUTE format('GRANT USAGE ON SCHEMA platform TO %I', role_name); \
-             EXECUTE format('GRANT DELETE, SELECT (created_at, result) ON TABLE platform.write_log TO %I', role_name); \
-           END IF; \
-         END $audit_retention_grants$;",
-        role = escape_literal(AUDIT_RETENTION_ROLE),
-        targets = AUDIT_RETENTION_TARGETS_SQL.trim(),
-    )
-}

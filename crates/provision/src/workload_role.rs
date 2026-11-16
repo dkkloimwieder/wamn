@@ -8,31 +8,6 @@ use wamn_registry::app_identity_hash;
 
 use crate::name::GUEST_SECRET_PREFIX;
 
-/// Stable NOLOGIN role used by run-retention logins.
-pub const RETENTION_ROLE: &str = "wamn_run_retention";
-/// Stable NOLOGIN role used by executor-platform logins.
-pub use wamn_identity_protocol::authority_class::EXECUTOR_PLATFORM_ROLE;
-/// Compact prefix that leaves room for the full identity digest.
-const EXECUTOR_PLATFORM_LOGIN_PREFIX: &str = "wamn_exec_platform";
-/// Stable NOLOGIN role used by callable-HTTP admission logins.
-pub use wamn_identity_protocol::authority_class::HTTP_ADMITTER_ROLE;
-/// Stable NOLOGIN role used by control-identity reader logins.
-pub const IDENTITY_READER_ROLE: &str = "wamn_identity_reader";
-/// Host-only reader of connection generations and credentials.
-pub const CONNECTION_READER_ROLE: &str = "wamn_conn_reader";
-/// Stable NOLOGIN role for the identity service's environment role reads.
-pub const SESSION_ROLE_READER_ROLE: &str = "wamn_session_role_reader";
-/// Keep the 40-hex identity digest within PostgreSQL's 63 bytes.
-const SESSION_ROLE_READER_LOGIN_PREFIX: &str = "wamn_session_roles";
-/// Stable NOLOGIN role used by administration logins. Its 19 bytes
-/// form a 60-byte login, so the role name is its own prefix.
-pub use wamn_identity_protocol::authority_class::ADMINISTRATION_ROLE;
-/// Stable NOLOGIN role used by record history retention logins.
-pub use wamn_record_history::AUDIT_RETENTION_ROLE;
-/// Stable NOLOGIN role used by control logins, the credential of an org's
-/// control host (docs/architecture/execution.md#host-run-routes).
-pub const CONTROL_ROLE: &str = "wamn_control";
-
 /// The shared NOLOGIN group role every non-guest project-base-grants arm targets
 /// (`wamn-0h0g.22.17`).
 ///
@@ -73,15 +48,6 @@ pub enum WorkloadRoleFamily {
     App,
     Query,
     Migration,
-    Retention,
-    ExecutorPlatform,
-    HttpAdmitter,
-    IdentityReader,
-    SessionRoleReader,
-    AuditRetention,
-    Administration,
-    Control,
-    ConnectionReader,
 }
 
 impl WorkloadRoleFamily {
@@ -91,19 +57,10 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 3] = [
         Self::App,
         Self::Query,
         Self::Migration,
-        Self::Retention,
-        Self::ExecutorPlatform,
-        Self::HttpAdmitter,
-        Self::IdentityReader,
-        Self::SessionRoleReader,
-        Self::AuditRetention,
-        Self::Administration,
-        Self::Control,
-        Self::ConnectionReader,
     ];
 
     /// Stable NOLOGIN ACL role inherited by this family's logins.
@@ -112,15 +69,6 @@ impl WorkloadRoleFamily {
             Self::App => AuthorityClass::GuestSql.acl_role(),
             Self::Query => AuthorityClass::DynamicSql.acl_role(),
             Self::Migration => crate::migration::OWNER_ROLE,
-            Self::Retention => RETENTION_ROLE,
-            Self::ExecutorPlatform => AuthorityClass::ExecutorPlatform.acl_role(),
-            Self::HttpAdmitter => AuthorityClass::CallableHttp.acl_role(),
-            Self::IdentityReader => IDENTITY_READER_ROLE,
-            Self::ConnectionReader => CONNECTION_READER_ROLE,
-            Self::SessionRoleReader => SESSION_ROLE_READER_ROLE,
-            Self::AuditRetention => AUDIT_RETENTION_ROLE,
-            Self::Administration => AuthorityClass::Administration.acl_role(),
-            Self::Control => CONTROL_ROLE,
         }
     }
 
@@ -128,8 +76,6 @@ impl WorkloadRoleFamily {
     pub const fn login_prefix(self) -> &'static str {
         match self {
             Self::Migration => crate::migration::LOGIN_PREFIX,
-            Self::ExecutorPlatform => EXECUTOR_PLATFORM_LOGIN_PREFIX,
-            Self::SessionRoleReader => SESSION_ROLE_READER_LOGIN_PREFIX,
             _ => self.acl_role(),
         }
     }
@@ -137,19 +83,13 @@ impl WorkloadRoleFamily {
     /// Exact identity class used to derive login identities.
     pub const fn identity_type(self) -> WorkloadRoleIdentityType {
         match self {
-            Self::App | Self::Query | Self::Migration | Self::Retention | Self::AuditRetention => {
+            Self::App | Self::Query | Self::Migration => {
                 WorkloadRoleIdentityType::ProjectEnvKey
             }
-            Self::ExecutorPlatform
-            | Self::HttpAdmitter
-            | Self::SessionRoleReader
-            | Self::Administration => WorkloadRoleIdentityType::ProjectEnvironment,
             // Identity follows the RESOURCE PLANE, not the consumer's home: these
             // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
-            Self::IdentityReader | Self::ConnectionReader => WorkloadRoleIdentityType::Control,
             // One credential per org on the control database; `provision-org`
             // mints it (owner ruling of 2026-09-30 on `wamn-a40n.2`).
-            Self::Control => WorkloadRoleIdentityType::Org,
         }
     }
 
@@ -192,7 +132,7 @@ impl WorkloadRoleFamily {
     pub const fn is_platform_grain(self) -> bool {
         !matches!(
             self,
-            Self::App | Self::Query | Self::Migration | Self::AuditRetention
+            Self::App | Self::Query | Self::Migration
         ) && !matches!(
             self.identity_type(),
             WorkloadRoleIdentityType::Control | WorkloadRoleIdentityType::Org
@@ -210,7 +150,6 @@ impl WorkloadRoleFamily {
             // `wamn-0h0g.13.59` froze this label before the role name carried
             // its `run_` qualifier; deriving it would rename the family in
             // operator-facing text for no gain.
-            Self::Retention => "retention".to_string(),
             _ => self
                 .acl_role()
                 .trim_start_matches("wamn_")
@@ -261,35 +200,6 @@ impl WorkloadRoleFamily {
         match self {
             Self::App | Self::Query => b"wamn.app.identity.v0.1",
             Self::Migration => b"wamn.migration.identity.v0.1",
-            Self::Retention => b"wamn.run-retention.identity.v0.1",
-            Self::ExecutorPlatform => b"wamn.executor-platform.identity.v0.1",
-            Self::HttpAdmitter => b"wamn.http-admitter.identity.v0.1",
-            Self::IdentityReader => b"wamn.identity-reader.identity.v0.1",
-            Self::ConnectionReader => b"wamn.connection-reader.identity.v0.1",
-            Self::SessionRoleReader => b"wamn.session-role-reader.identity.v0.1",
-            Self::AuditRetention => b"wamn.audit-retention.identity.v0.1",
-            Self::Administration => b"wamn.administration.identity.v0.1",
-            Self::Control => b"wamn.control.identity.v0.1",
-        }
-    }
-}
-
-/// The ruled projection from authority class onto provisioning family.
-///
-/// `wamn-0h0g.22.14` fixed these four rows and the shape they must keep: ONE
-/// family per class, closed and total over the exact enum, every variant
-/// matched explicitly, and NO wildcard or default arm — so an added or unmapped
-/// class is a compile error here rather than a runtime fallback. If any row
-/// ever needs two families, that row returns as its own owner question rather
-/// than growing an arm.
-impl From<AuthorityClass> for WorkloadRoleFamily {
-    fn from(class: AuthorityClass) -> Self {
-        match class {
-            AuthorityClass::GuestSql => Self::App,
-            AuthorityClass::DynamicSql => Self::Query,
-            AuthorityClass::ExecutorPlatform => Self::ExecutorPlatform,
-            AuthorityClass::CallableHttp => Self::HttpAdmitter,
-            AuthorityClass::Administration => Self::Administration,
         }
     }
 }

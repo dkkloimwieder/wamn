@@ -59,14 +59,6 @@ pub(crate) fn dependency_root(package_root: &Path, package: &wamn_catalog::Packa
     package_workspace(package_root).join(package.as_str())
 }
 
-/// The build output root of the host route clients in the repository at
-/// `repository_root`: `apps/target/wamn`, the root that `wamn build` writes
-/// the applications to. The clients lie in its `wamn_control` directory.
-#[must_use]
-pub fn host_route_client_output_root(repository_root: &Path) -> PathBuf {
-    repository_root.join("apps").join(BUILD_OUTPUT)
-}
-
 /// Whether `directory` lies directly below a `target/wamn` directory.
 pub(crate) fn is_build_output(directory: &Path) -> bool {
     let Some(wamn) = directory.parent() else {
@@ -83,19 +75,7 @@ pub(crate) fn is_build_output(directory: &Path) -> bool {
 mod tests {
     use std::path::Path;
 
-    use super::{host_route_client_output_root, output_root};
-
-    /// The host route clients lie where `wamn build` puts a package named
-    /// for them, never in the repository's `target` (wamn-89s6l).
-    #[test]
-    fn the_host_route_clients_follow_the_application_output_root() {
-        let repository = Path::new("/repository");
-        let package = wamn_catalog::host_route_package();
-        assert_eq!(
-            host_route_client_output_root(repository).join(package.as_str()),
-            output_root(&repository.join("apps").join(package.as_str()))
-        );
-    }
+    use super::output_root;
 
     #[test]
     fn a_package_writes_beside_its_parent_and_an_output_directory_is_its_own() {

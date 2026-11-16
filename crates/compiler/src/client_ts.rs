@@ -176,12 +176,6 @@ pub fn to_snake(member: &str) -> String {
 /// and the application's own configuration resolves the specifier.
 pub const RUNTIME_PACKAGE: &str = "@wamn/web-runtime";
 
-/// The runtime version that generated bindings require.
-///
-/// The bindings and the runtime move together, so a package that generates
-/// against this release states the range here rather than guessing.
-pub const RUNTIME_VERSION_RANGE: &str = "^0.1.0";
-
 /// Words that cannot name a TypeScript function or constant.
 ///
 /// A contract name that takes one keeps it and gains a trailing underscore, in
@@ -308,33 +302,6 @@ pub fn emit_ts_client(ir: &ClientContractIr) -> Result<Vec<GeneratedFile>, Clien
             )
         })
         .collect())
-}
-
-/// The path of the package manifest inside a generated package.
-pub const PACKAGE_JSON_PATH: &str = "generated/client-ts/package.json";
-
-/// Emit the package manifest for the generated bindings.
-///
-/// The name is authored in the package manifest and never inferred. The
-/// version is the release's own. The one dependency is the hand-written
-/// runtime that the modules import, and the application's own configuration
-/// resolves it.
-#[must_use]
-pub fn emit_ts_package_json(
-    client_package: &wamn_catalog::client_package_name::ClientPackageName,
-    version: &wamn_catalog::package_version::PackageVersion,
-) -> GeneratedFile {
-    let source = format!(
-        "{{\n  \"name\": {name},\n  \"version\": {version},\n  \"type\": \"module\",\n  \"private\": true,\n  \"exports\": {{\n    \".\": \"./index.ts\"\n  }},\n  \"dependencies\": {{\n    {runtime}: {range}\n  }}\n}}\n",
-        name = serde_json::Value::String(client_package.to_string()),
-        version = serde_json::Value::String(version.to_string()),
-        runtime = serde_json::Value::String(RUNTIME_PACKAGE.to_owned()),
-        range = serde_json::Value::String(RUNTIME_VERSION_RANGE.to_owned()),
-    );
-    GeneratedFile::new(
-        PACKAGE_JSON_PATH.into(),
-        source.into_bytes().into_boxed_slice(),
-    )
 }
 
 /// Hash only row field names, contract types and nullability, in stable order.

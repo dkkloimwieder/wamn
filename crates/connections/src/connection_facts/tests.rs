@@ -7,7 +7,7 @@ use wamn_platform_identity::connections::administration;
 
 use super::*;
 use crate::connection_credentials::test_util::Fixture;
-use crate::connection_memory::replicate;
+
 use wamn_authority::auth_cache::test_util::{nats, until};
 struct NoProjectDatabase;
 #[async_trait::async_trait]
@@ -118,13 +118,9 @@ async fn assert_postgres_read(fixture: &mut Fixture, facts: &ConnectionFacts, id
 #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_committed_write_serves_the_new_generation_after_the_delete(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (_server, mut client) = nats().await;
+    let (_server, _client) = nats().await;
     let memory = Arc::new(ConnectionMemory::default());
-    let changes = replicate(
-        &mut client,
-        Some(&PROJECT_ENV_KEY.parse().unwrap()),
-        Arc::clone(&memory),
-    );
+    let changes = wamn_broker::Publisher::default();
     until("the connection watch runs", || memory.watched()).await;
     let (mut fixture, facts, id) = setup(&pool, Arc::clone(&memory), changes.clone()).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
@@ -170,14 +166,10 @@ async fn a_committed_write_serves_the_new_generation_after_the_delete(pool: sqlx
 #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (_server, mut client) = nats().await;
+    let (_server, _client) = nats().await;
     let ttl = Duration::from_secs(1);
     let memory = Arc::new(ConnectionMemory::with_ttl(ttl));
-    let changes = replicate(
-        &mut client,
-        Some(&PROJECT_ENV_KEY.parse().unwrap()),
-        Arc::clone(&memory),
-    );
+    let changes = wamn_broker::Publisher::default();
     until("the connection watch runs", || memory.watched()).await;
     let (mut fixture, facts, id) = setup(&pool, Arc::clone(&memory), changes).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
@@ -201,13 +193,9 @@ async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires(pool
 #[ignore = "requires: nats, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
-    let (server, mut client) = nats().await;
+    let (server, _client) = nats().await;
     let memory = Arc::new(ConnectionMemory::default());
-    let changes = replicate(
-        &mut client,
-        Some(&PROJECT_ENV_KEY.parse().unwrap()),
-        Arc::clone(&memory),
-    );
+    let changes = wamn_broker::Publisher::default();
     until("the connection watch runs", || memory.watched()).await;
     let (mut fixture, facts, id) = setup(&pool, Arc::clone(&memory), changes).await;
     let old = facts.connection(&id).await.unwrap().unwrap();

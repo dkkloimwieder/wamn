@@ -2,12 +2,11 @@
 use anyhow::Context as _;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ring::rand::{SecureRandom as _, SystemRandom};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sqlx::Connection as _;
 use std::path::Path;
 use std::time::Duration;
-use wamn_control_provision::connection::{ManagedRole, managed_role};
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
+use wamn_control_provision::connection::ManagedRole;
 use wamn_kubernetes::{kubectl, secret};
 use wamn_postgres::{ConnectionConfig, SecretRef};
 /// Rebuild CNPG declarations from the registry and require the requested role to belong to it.
@@ -249,67 +248,6 @@ pub async fn wait_role(
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-}
-
-/// Create a managed control-database login and publish its public configuration.
-pub async fn provision_control_role(
-    input: &str,
-    namespace: &wamn_registry::OrgId,
-    family: WorkloadRoleFamily,
-) -> anyhow::Result<()> {
-    let options = wamn_postgres::connect_options(input).await?;
-    let database = options
-        .get_database()
-        .context("control database is absent")?;
-    let cluster = options
-        .get_host()
-        .split('.')
-        .next()
-        .context("control host is absent")?
-        .trim_end_matches("-rw");
-    let username = workload_login(
-        family,
-        WorkloadRoleIdentity::Org {
-            org: namespace,
-            database,
-        },
-    )?;
-    let secret = wamn_control_provision::org_workload_secret_name(family, namespace);
-    let kubeconfig = std::env::var_os("KUBECONFIG").map_or_default(std::path::PathBuf::from);
-    let mut connection = wamn_postgres::connect(input).await?;
-    let surface = sql::stable_surface_sql(family)
-        .unwrap_or_else(|| sql::ensure_workload_acl_role_sql(family));
-    sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
-        .execute(&mut connection)
-        .await?;
-    reconcile(
-        input,
-        &kubeconfig,
-        "",
-        namespace,
-        cluster,
-        &managed_role(username.clone(), family.acl_role(), secret.clone()),
-    )
-    .await?;
-    wait_role(&mut connection, &username).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
-        family, database, &username,
-    )))
-    .execute(&mut connection)
-    .await?;
-    let config = configuration(
-        namespace.as_str(),
-        cluster,
-        options.get_host().into(),
-        options.get_port(),
-        database.into(),
-        username,
-        secret,
-    );
-    let name = wamn_registry::name::control_administration_secret_name(namespace);
-    let object = json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":namespace},"data":{"control.json":config.to_json()?}});
-    kubectl::apply(&kubeconfig, "", namespace.as_str(), &object).await?;
-    Ok(())
 }
 
 /// Serialize org chart writes and cancel Helm if the registry session is lost.

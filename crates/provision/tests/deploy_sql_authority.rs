@@ -1693,48 +1693,6 @@ fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
-/// Spec test 20 for the `platform` log (epic rulings 40, 42, 43, and 58).
-/// `deploy/sql/app-schema.sql` gives each `platform` relation a
-/// `wamn_record_history_log` trigger with the argument `unlimited`. After
-/// apply-package converges the audit retention grants, the audit retention
-/// role cannot read or delete those history tables. The
-/// `P30D` fixture relation is the control: the same convergence grants the
-/// role its history table.
-#[test]
-#[ignore = "requires: postgres, bin:psql"]
-fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
-    let (_database, admin) = shared_server();
-    let (db_url, guest) = record_history_log_fixture(&admin);
-    apply(
-        &db_url,
-        &format!(
-            "BEGIN;\n{};\n{}\nCOMMIT;\n",
-            wamn_control_provision::audit_retention::AUDIT_RETENTION_LOCK_SQL,
-            wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql()
-        ),
-    );
-
-    apply(
-        &db_url,
-        r#"
-DO $$ DECLARE history regclass; BEGIN
-    ASSERT has_table_privilege('wamn_audit_retention', 'rh_probe.projected_history', 'DELETE');
-    FOR history IN
-        SELECT to_regclass(format('%I.%I', n.nspname, c.relname || '_history'))
-          FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
-          JOIN pg_namespace n ON n.oid=c.relnamespace
-         WHERE n.nspname='platform' AND t.tgname='wamn_record_history_log' AND NOT t.tgisinternal
-    LOOP
-        ASSERT history IS NOT NULL;
-        ASSERT NOT has_table_privilege('wamn_audit_retention', history, 'DELETE');
-        ASSERT NOT has_table_privilege('wamn_audit_retention', history, 'SELECT');
-    END LOOP;
-END $$;
-"#,
-    );
-    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
-}
-
 #[test]
 #[ignore = "requires: postgres, bin:psql"]
 fn identity_grants_refuse_guest_reads_and_mutations() {

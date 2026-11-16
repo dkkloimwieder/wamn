@@ -1,6 +1,6 @@
 //! Resolve project integrations and write release-targeted environment bindings.
 
-use sqlx::{Connection as _, Row as _};
+use sqlx::Row as _;
 pub(super) mod plan;
 pub(crate) use plan::exports_satisfy;
 pub use plan::key;
@@ -263,37 +263,6 @@ pub async fn write(
         drops.release(project_env_key, digest);
     }
     Ok(())
-}
-
-/// Refresh shared connection projections during provisioning or explicit connection writes.
-pub async fn project_authority(
-    system_url: &str,
-    project_url: &str,
-    document: &EnvironmentDocument,
-) -> anyhow::Result<wamn_broker::auth_changes::AuthDrops> {
-    let mut system = wamn_postgres::connect(system_url).await?;
-    let mut source = system.begin().await?;
-    let mut project = super::analyse::connect_project(project_url).await?;
-    let mut target = project.begin().await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ),
-    ))
-    .execute(&mut *target)
-    .await
-    .map(drop)?;
-    let drops = wamn_platform_identity::connection_projection::project(
-        &mut source,
-        &mut target,
-        &document.org,
-        &document.project,
-        &document.env,
-    )
-    .await?;
-    target.commit().await?;
-    source.commit().await?;
-    Ok(drops)
 }
 
 #[cfg(test)]

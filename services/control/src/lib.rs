@@ -119,17 +119,6 @@ impl Configuration {
             config.apply_database.username.as_str() == wamn_control_provision::apply::APPLY_ROLE,
             "operation configuration requires the apply role"
         );
-        let expected_control = wamn_control_provision::workload_login(
-            wamn_control_provision::WorkloadRoleFamily::Control,
-            wamn_control_provision::WorkloadRoleIdentity::Org {
-                org: &config.org,
-                database: &config.database.database,
-            },
-        )?;
-        ensure!(
-            config.database.username == expected_control,
-            "native control requires its org control login"
-        );
         let (_, digest) = config
             .worker
             .image
@@ -357,7 +346,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
                 changes: changes.clone(),
             },
         )
-        .with_control_authenticator(Arc::new(ControlRouteAuthenticator::new(verifier, pool)))
+        .with_control_authenticator(Arc::new(ControlRouteAuthenticator::new(verifier)))
         .with_control_execution(Arc::new(execution::Execution {
             org: config.org.clone(),
             changes,

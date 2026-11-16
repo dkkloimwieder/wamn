@@ -136,42 +136,6 @@ impl ConnectionFacts {
         &self.project_env_key
     }
 
-    /// Hold the resource lease and the connection mutex for one exclusive call.
-    pub async fn exclusive_call(
-        &self,
-        id: uuid::Uuid,
-    ) -> anyhow::Result<Option<crate::resource_lease::Call>> {
-        let revision = self.memory.resource_leases.revision(id);
-        let fact = self
-            .connection(&id)
-            .await?
-            .context("connection unavailable")?;
-        anyhow::ensure!(
-            fact.status == crate::connection_memory::ConnectionStatus::Active,
-            "connection disabled"
-        );
-        if !fact.exclusive {
-            return Ok(None);
-        }
-        let call = self
-            .memory
-            .resource_leases
-            .call(
-                id,
-                fact.target_id,
-                fact.resource_key
-                    .as_deref()
-                    .context("exclusive resource key absent")?,
-                fact.target_type == "local",
-            )
-            .await?;
-        if self.memory.resource_leases.revision(id) != revision {
-            self.memory.resource_leases.invalidate(id);
-            anyhow::bail!("connection changed during lease acquisition");
-        }
-        Ok(Some(call))
-    }
-
     /// The credential reader used by connection authentication.
     pub fn reader(&self) -> Arc<ConnectionCredentials> {
         Arc::clone(&self.reader)
@@ -217,10 +181,6 @@ impl ConnectionFacts {
 
     /// Drop the secret that the new fact of `id` no longer names.
     fn observe(&self, id: &uuid::Uuid, fact: Option<&ConnectionFact>) {
-        if fact.is_none_or(|fact| fact.status != crate::connection_memory::ConnectionStatus::Active)
-        {
-            self.memory.resource_leases.invalidate(*id);
-        }
         self.memory
             .oauth_tokens
             .retain_generation(*id, fact.map(|fact| fact.active_generation));

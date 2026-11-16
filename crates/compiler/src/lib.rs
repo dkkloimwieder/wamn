@@ -49,10 +49,8 @@ pub use generate::{
     AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, OperationDescription,
     StatementTransactionality, derive_manifest, generate,
 };
-pub use materialize::{
-    introspect_package, materialize_host_route_client,
-};
-pub use output::{host_route_client_output_root, output_root, package_workspace};
+pub use materialize::introspect_package;
+pub use output::{output_root, package_workspace};
 pub use package_catalog::project_package_catalog;
 
 mod history;

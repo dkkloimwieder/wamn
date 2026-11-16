@@ -1,19 +1,11 @@
 //! Blob storage resolves bindings under the shared invocation authority.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use object_store::aws::AmazonS3Builder;
 use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{ClientOptions, ObjectStore, RetryConfig};
-use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
-use wash_runtime::plugin::HostPlugin;
-use wash_runtime::wasmtime::component::Linker;
-use wash_runtime::wit::{WitInterface, WitWorld};
 
-use wamn_authority::effect_span::{EffectIdentity, effect_span, record_wiring};
-
-use super::binding::{self, BindingError};
 use super::store::{BoundContainer, ConnectionAuthority};
 use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider};
 
@@ -21,9 +13,6 @@ use wamn_connections::connection::ConnectionInvocation;
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_connections::connection_memory::{ConnectionFact, ConnectionStatus};
 use wamn_sql::WamnPostgres;
-
-/// Plugin id, as the host registry knows it.
-pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
 
 /// The WAMN blobstore host service.
 pub struct WamnBlobstore {
@@ -139,62 +128,6 @@ impl WamnBlobstore {
                 error.into_boxed_dyn_error(),
             )
         })
-    }
-
-    /// Resolve one declared alias under the shared invocation authority.
-    pub(super) async fn container_for(
-        &self,
-        component_id: &str,
-        store_alias: &wamn_catalog::canonical_name::CanonicalName,
-    ) -> Result<BoundContainer, BindingError> {
-        let context = wamn_connections::invocation::context(&self.postgres.scopes, component_id)
-            .map_err(|_| BindingError::unauthorized())?;
-        let facts = &context.connections;
-        let snapshot = wamn_sql::connection_binding::resolve(
-            &self.postgres,
-            component_id,
-            store_alias,
-        )
-        .await
-        .map_err(|error| {
-            tracing::warn!(%error, component_id, %store_alias, "blobstore authority refused");
-            BindingError::unauthorized()
-        })?;
-        let id = snapshot
-            .instance_id
-            .as_deref()
-            .and_then(|id| id.parse().ok())
-            .ok_or(BindingError::unauthorized())?;
-        let fact = active_fact(facts, &id)
-            .await
-            .map_err(|_| BindingError::unauthorized())?
-            .filter(|fact| Some(fact.active_generation) == snapshot.generation)
-            .ok_or(BindingError::unauthorized())?;
-        let configuration = facts
-            .generation(&id, fact.active_generation)
-            .await
-            .map_err(|_| BindingError::unauthorized())?;
-        let provider =
-            provider(&configuration.integration_type).map_err(|_| BindingError::unauthorized())?;
-        let bound = binding::resolve(&snapshot, provider)?;
-        let client = self
-            .client(facts, id, &fact, &bound)
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, "blobstore client unavailable");
-                BindingError::unauthorized()
-            })?;
-        Ok(BoundContainer::new(
-            Arc::clone(&client.store),
-            bound.container,
-            bound.prefix,
-            ConnectionAuthority::Live {
-                facts: Arc::clone(facts),
-                id,
-                generation: fact.active_generation,
-            },
-        )
-        .with_read_only(snapshot.read_only))
     }
 
     async fn client(
@@ -357,91 +290,4 @@ pub async fn health(
         )
         .await?;
     Ok(())
-}
-
-/// The `wamn.blobstore` span over one guest object-store effect.
-///
-/// Carries the shared identity vocabulary plus the invocation this component
-/// was entered under: the package, the wiring position, the occurrence, the
-/// admitted component name and the node operation, copied from the
-/// host-attested invocation — never anything the guest sent. A
-/// pooled instance with no invocation bound records those keys empty, which says
-/// "about to be refused" where a missing field would look like lost
-/// instrumentation.
-///
-/// The object KEY is deliberately absent: keys are guest-authored and can carry
-/// project data, and a span is a wider audience than the effect itself.
-pub(super) fn blobstore_span(
-    plugin: &WamnBlobstore,
-    component_id: &str,
-    operation: &'static str,
-) -> tracing::Span {
-    let make_span = |identity: Option<&wamn_authority::identity::SessionIdentity>| {
-        effect_span!(
-            "wamn.blobstore",
-            EffectIdentity {
-                project_env_key: identity
-                    .as_ref()
-                    .and_then(|identity| identity.project_env_key.as_ref()),
-                project: identity
-                    .as_ref()
-                    .and_then(|identity| identity
-                        .project
-                        .as_ref()
-                        .map(wamn_registry::ProjectId::as_str))
-                    .unwrap_or(""),
-                component: component_id,
-            },
-            None,
-            effect.operation = operation,
-        )
-    };
-    let span = plugin
-        .postgres
-        .scopes
-        .read::<wamn_sql::invocation::Authority, _>(component_id, |record| {
-            make_span(Some(&record.identity))
-        })
-        .unwrap_or_else(|| make_span(None));
-    let invocation = plugin.invocation(component_id);
-    record_wiring(
-        &span,
-        invocation
-            .as_ref()
-            .map(wamn_connections::connection::ConnectionInvocation::effect_wiring),
-    );
-    span
-}
-
-impl HostPlugin for WamnBlobstore {
-    fn id(&self) -> &'static str {
-        WAMN_BLOBSTORE_ID
-    }
-
-    fn world(&self) -> WitWorld {
-        WitWorld {
-            imports: HashSet::from([
-                WitInterface::from("wasmcloud:blobstore/types@0.1.0"),
-                WitInterface::from("wasmcloud:blobstore/container@0.1.0"),
-                WitInterface::from("wasmcloud:blobstore/blobstore@0.1.0"),
-            ]),
-            exports: HashSet::new(),
-        }
-    }
-}
-
-/// Wire the blobstore host functions into a linker.
-pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
-    super::bindings::wasmcloud::blobstore::types::add_to_linker::<SharedCtx, SharedCtx>(
-        linker,
-        extract_active_ctx,
-    )?;
-    super::bindings::wasmcloud::blobstore::container::add_to_linker::<SharedCtx, SharedCtx>(
-        linker,
-        extract_active_ctx,
-    )?;
-    super::bindings::wasmcloud::blobstore::blobstore::add_to_linker::<SharedCtx, SharedCtx>(
-        linker,
-        extract_active_ctx,
-    )
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_environment::environment::document::{DeclaredRelease, EnvironmentDocument};
-use wamn_environment::platform::{document::ClusterDocument, document::Provider, provider};
+use wamn_environment::platform::document::ClusterDocument;
 use wamn_package_artifact::http_client::HttpClient;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -23,25 +23,6 @@ impl Application {
     pub async fn prepare(source: &Path) -> anyhow::Result<Self> {
         let scratch = ScratchRoot::create()?;
         let cluster = ClusterDocument::compile(Path::new(&std::env::var("WAMN_TEST_CLUSTER")?))?;
-        ensure!(
-            cluster.provider == Provider::Kind,
-            "fixture requires the kind tool"
-        );
-        let kubeconfig = scratch.path().join("kubeconfig");
-        let context = provider::existing_kubeconfig(&cluster, &kubeconfig).await?;
-        let namespace = wamn_kubernetes::kubectl::kubectl(
-            &kubeconfig,
-            &context,
-            "platform",
-            &["get", "namespace", "platform", "-o", "json"],
-            None,
-        )
-        .await?;
-        let namespace: Value = serde_json::from_str(&namespace)?;
-        ensure!(
-            namespace["metadata"]["annotations"]["wamn.dev/disposable"] == "true",
-            "fixture requires a disposable platform"
-        );
         let mut document = EnvironmentDocument::compile(
             &PathBuf::from(std::env::var("WAMN_DEV_ENV")?).join("environment.k"),
         )?;

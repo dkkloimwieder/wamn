@@ -50,7 +50,6 @@ pub async fn system(database: &str) {
         "SET ROLE wamn_system",
         CONTROL_PORTABLE_STORE_SQL,
         "RESET ROLE",
-        &sql::grant_control_surface_sql(),
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(batch))
             .execute(&mut connection)

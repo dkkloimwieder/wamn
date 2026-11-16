@@ -257,40 +257,6 @@ pub(super) fn platform_chart(
     })
 }
 
-pub(super) fn resolve_chart(
-    document: &ClusterDocument,
-    selection: &UpgradeTarget,
-    operator: Option<&Value>,
-    control: Option<&Value>,
-    identity: Option<&Value>,
-    supplied: &Path,
-) -> anyhow::Result<SelectedChart> {
-    if operator.is_none() {
-        return select(supplied);
-    }
-    let (installed, only) = match selection {
-        UpgradeTarget::Control => (control, "control"),
-        UpgradeTarget::Identity => (identity, "identity"),
-        UpgradeTarget::Host { .. } => return select(supplied),
-    };
-    let path = [installed, operator]
-        .into_iter()
-        .flatten()
-        .filter_map(|values| values["platform"]["chart"].as_str())
-        .find(|chart| !chart.is_empty());
-    let (name, namespace) = selection.owner(document);
-    let path = path.with_context(|| {
-        format!(
-            "cannot resolve owner release {namespace}/{name}: platform/wamn has no platform.chart default. No resources changed."
-        )
-    })?;
-    select(Path::new(path)).with_context(|| {
-        format!(
-            "recorded chart {path} for owner release {namespace}/{name} is unavailable or invalid. Restore the prepared chart at that path, or select a new one explicitly with --only {only}. No resources changed."
-        )
-    })
-}
-
 fn read_yaml(file: &Path) -> anyhow::Result<Value> {
     serde_yaml::from_slice(
         &std::fs::read(file).with_context(|| format!("read {}", file.display()))?,

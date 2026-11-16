@@ -353,23 +353,6 @@ pub fn grant_control_policy_execute_sql(role: &str) -> String {
     )
 }
 
-/// crates/provision/src/sql.rs::control_surface_grants_sql registry statement.
-pub fn control_provision_src_sql_control_surface_grants_sql_2(
-    role: &str,
-    signature: &str,
-) -> String {
-    format!(
-        " DO $connection_acl$ BEGIN IF to_regprocedure('registry.{signature}') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.{signature} TO {role}; END IF; END $connection_acl$;"
-    )
-}
-
-/// crates/provision/src/sql.rs::grant_connection_reader_surface_sql registry statement.
-pub fn control_provision_src_sql_grant_connection_reader_surface_sql(role: &str) -> String {
-    format!(
-        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lock_oauth_connection(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_generation(text,text,text,uuid,bigint), registry.read_connection_secret(text,text,text,uuid), registry.read_env_connections(text,text,text), registry.read_integration_version(text,integer) TO {role};"
-    )
-}
-
 /// crates/environment/src/provision_system.rs::set_platform_domain registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN: &str =
     "UPDATE registry.meta SET platform_domain = $1 WHERE platform_domain IS DISTINCT FROM $1";

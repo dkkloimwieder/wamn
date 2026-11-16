@@ -12,7 +12,6 @@ use wamn_engine::operation::native_workload::{
     NativeApplication, NativeWorkloadSpec, load_native_application,
 };
 use wamn_engine::operation::next_scope;
-use wamn_engine::warm_reuse::WarmReuse;
 use wash_runtime::engine::Engine;
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::{HostPlugin, PluginBindings};
@@ -48,7 +47,6 @@ impl EdgeApplication {
                 namespace: target.project_env_key.to_string(),
                 name: target.environment.to_string(),
                 components: release.native_components(),
-                warm_reuse: WarmReuse::default(),
                 local_resources: wash_runtime::types::LocalResources::default(),
                 host_interfaces,
             },

@@ -29,7 +29,7 @@ use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 use plan::prune_history_sql;
 
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 use postgres_protocol::escape::{escape_identifier, escape_literal};
 
 use wamn_control_provision::audit_retention::{
@@ -37,8 +37,7 @@ use wamn_control_provision::audit_retention::{
     WRITE_LOG_RETENTION_TARGET_SQL,
 };
 use wamn_control_provision::{
-    PlatformComponent, WorkloadRoleFamily, WorkloadRoleIdentity, bind_platform_principal_sql,
-    workload_login,
+    PlatformComponent, bind_platform_principal_sql,
 };
 
 /// Inputs of one record history retention run.
@@ -83,44 +82,11 @@ pub async fn prune_expired_record_history(
         .context("audit retention credential connect")?;
 
     let result = async {
-        verify_audit_retention_identity(&mut client, &request.project_env_key()).await?;
         prune(&mut client).await
     }
     .await;
     drop(client);
     result
-}
-
-/// Refuse unless the connected role is the audit retention login of this exact `(project, database)` pair.
-///
-/// The verb derives the expected name from the environment coordinate and the server's
-/// `current_database()`. The URL is operator input, so the verb does not read
-/// the database from it.
-async fn verify_audit_retention_identity(
-    client: &mut Client,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-) -> anyhow::Result<()> {
-    let row =
-        sqlx::query("SELECT current_user::text AS role, current_database()::text AS database")
-            .fetch_one(&mut *client)
-            .await
-            .context("read connected audit retention identity")?;
-    let role: wamn_identity_protocol::LoginName = row.get("role");
-    let database: String = row.get("database");
-    let target = WorkloadRoleIdentity::ProjectEnvKey {
-        project_env_key,
-        database: &database,
-    };
-    let expected = workload_login(WorkloadRoleFamily::AuditRetention, target)
-        .context("derive the expected retention identity")?;
-    if expected == role {
-        return Ok(());
-    }
-    bail!(
-        "refusing to prune record history: connected as {role:?} in database {database:?}, which \
-         is not an audit-retention login for project_env_key {project_env_key:?} (expected \
-         {expected:?})"
-    )
 }
 
 /// Prune each history table whose relation keeps its entries for n days.

@@ -1,14 +1,12 @@
 //! Pinned HTTP transport with pooling and response collection.
 
 use std::{
-    collections::HashMap,
     error::Error as StdError,
     fmt,
     net::SocketAddr,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
 
 use bytes::{Bytes, BytesMut};
@@ -41,30 +39,8 @@ use super::network_policy;
 pub(crate) const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_HEADER_BYTES: usize = 32 * 1024;
 pub(crate) const MAX_HEADERS: usize = 100;
-const MAX_IDLE_SOCKETS: usize = 2;
-const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 type BoxError = Box<dyn StdError + Send + Sync>;
-type HttpClient = Client<PinnedConnector, Full<Bytes>>;
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ConnectionIdentity {
-    pub(crate) project_env_key: wamn_registry::ProjectEnvKey,
-    pub(crate) project: Box<str>,
-    pub(crate) environment: wamn_registry::EnvName,
-    pub(crate) instance: Box<str>,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ClientIdentity {
-    pub(crate) connection: ConnectionIdentity,
-    pub(crate) package: wamn_catalog::PackageName,
-    pub(crate) component_digest: wamn_digest::Digest,
-    pub(crate) requirement: Box<str>,
-    pub(crate) binding_hash: wamn_digest::Digest,
-    pub(crate) definition_hash: wamn_digest::Digest,
-    pub(crate) generation: i64,
-}
 
 /// Shares pinned clients across host stores.
 #[derive(Clone)]
@@ -80,20 +56,7 @@ impl fmt::Debug for HttpTransport {
 }
 
 struct Inner {
-    state: Mutex<State>,
     tls: Arc<rustls::ClientConfig>,
-}
-
-#[derive(Default)]
-struct State {
-    clients: HashMap<ClientKey, CachedClient>,
-}
-
-#[derive(Clone, Eq, Hash, PartialEq)]
-struct ClientKey {
-    identity: ClientIdentity,
-    target: Target,
-    invocation: Option<Box<str>>,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -101,12 +64,6 @@ struct Target {
     authority: Box<str>,
     peer: SocketAddr,
     tls_name: Option<Box<str>>,
-}
-
-struct CachedClient {
-    http: HttpClient,
-    life: Arc<ClientLife>,
-    used: Instant,
 }
 
 struct ClientLife {
@@ -133,17 +90,9 @@ impl HttpTransport {
         tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         Self {
             inner: Arc::new(Inner {
-                state: Mutex::new(State::default()),
                 tls: Arc::new(tls),
             }),
             invocation: None,
-        }
-    }
-
-    pub(crate) fn for_invocation(&self, scope: &str, execution: InvocationExecution) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-            invocation: Some((scope.into(), execution)),
         }
     }
 
@@ -152,66 +101,6 @@ impl HttpTransport {
         self.invocation.as_ref().map_or(deadline, |(_, execution)| {
             deadline.min(execution.deadline())
         })
-    }
-
-    pub(crate) async fn execute(
-        &self,
-        identity: ClientIdentity,
-        decision: &AuthorityDecision,
-        mut request: Request<&[u8]>,
-    ) -> Result<Response<Bytes>, TransportError> {
-        let deadline = self.deadline();
-        let target = target(decision, request.uri())?;
-        if request.body().len() > MAX_BODY_BYTES {
-            return Err(input("HTTP request body limit exceeded"));
-        }
-        let host = decision
-            .host_header
-            .parse()
-            .map_err(|error| input("Invalid HTTP host header").with_source(error))?;
-        request.headers_mut().insert(header::HOST, host);
-        let length = header::HeaderValue::from(request.body().len());
-        request.headers_mut().insert(header::CONTENT_LENGTH, length);
-        header_budget(request.headers(), (0, 0), Phase::BeforeDispatch)?;
-
-        let http = self.client(identity, target)?;
-        let request = request.map(|body| Full::new(Bytes::copy_from_slice(body)));
-        let mut phase = Phase::AwaitingHead;
-        let send = timeout_at(deadline, async {
-            let response = http.request(request).await.map_err(head_error)?;
-            phase = Phase::ResponseBody;
-            let (parts, body) = response.into_parts();
-            let mut budget = header_budget(&parts.headers, (0, 0), phase)?;
-            let mut body = Limited::new(body, MAX_BODY_BYTES);
-            let mut bytes = BytesMut::new();
-            while let Some(frame) = body.frame().await {
-                let frame = frame.map_err(|error| {
-                    TransportError::new(ErrorType::Transport, phase, "HTTP response body lost")
-                        .with_source(error)
-                })?;
-                if let Some(data) = frame.data_ref() {
-                    bytes.extend_from_slice(data);
-                }
-                if let Some(trailers) = frame.trailers_ref() {
-                    budget = header_budget(trailers, budget, phase)?;
-                }
-            }
-            Ok(Response::from_parts(parts, bytes.freeze()))
-        });
-        let result = match &self.invocation {
-            Some((_, execution)) => execution.run(send).await,
-            None => Some(send.await),
-        };
-        match result {
-            Some(Ok(result)) => result,
-            None => Err(self.interrupted(phase)),
-            Some(Err(error)) => Err(TransportError::new(
-                ErrorType::Timeout,
-                phase,
-                "HTTP transport deadline exceeded",
-            )
-            .with_source(error)),
-        }
     }
 
     /// Send once without retaining a client or acquiring connection identity.
@@ -309,69 +198,6 @@ impl HttpTransport {
         )
     }
 
-    fn client(
-        &self,
-        identity: ClientIdentity,
-        target: Target,
-    ) -> Result<HttpClient, TransportError> {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .map_err(|_| input("HTTP transport state unavailable"))?;
-        let now = Instant::now();
-        state.clients.retain(|_, client| {
-            now.duration_since(client.used) < IDLE_TIMEOUT
-                && client
-                    .life
-                    .execution
-                    .as_ref()
-                    .is_none_or(InvocationExecution::is_active)
-        });
-        let key = ClientKey {
-            identity,
-            target,
-            invocation: self.invocation.as_ref().map(|(scope, _)| scope.clone()),
-        };
-        if let Some(client) = state.clients.get_mut(&key) {
-            client.used = now;
-            return Ok(client.http.clone());
-        }
-        let life = Arc::new(ClientLife {
-            execution: self
-                .invocation
-                .as_ref()
-                .map(|(_, execution)| execution.clone()),
-        });
-        let connector = PinnedConnector {
-            target: key.target.clone(),
-            tls: Arc::clone(&self.inner.tls),
-            life: Arc::clone(&life),
-        };
-        let http = Client::builder(ClientExecutor {
-            life: Arc::clone(&life),
-        })
-        .pool_max_idle_per_host(MAX_IDLE_SOCKETS)
-        .pool_idle_timeout(IDLE_TIMEOUT)
-        .pool_timer(TokioTimer::new())
-        .timer(TokioTimer::new())
-        .retry_canceled_requests(false)
-        .http1_max_buf_size(MAX_HEADER_BYTES)
-        .http1_max_headers(MAX_HEADERS)
-        .http2_max_header_list_size(
-            u32::try_from(MAX_HEADER_BYTES).expect("32 KiB header limit fits u32"),
-        )
-        .build(connector);
-        state.clients.insert(
-            key,
-            CachedClient {
-                http: http.clone(),
-                life: Arc::clone(&life),
-                used: now,
-            },
-        );
-        Ok(http)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -419,9 +245,6 @@ impl TransportError {
         self.type_ == ErrorType::Timeout && self.phase != Phase::ResponseBody
     }
 
-    pub(crate) fn is_response_lost(&self) -> bool {
-        self.phase == Phase::ResponseBody
-    }
 }
 
 impl fmt::Debug for TransportError {

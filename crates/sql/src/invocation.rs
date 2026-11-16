@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::{OperationTransaction, SessionIdentity, WamnPostgres};
 use wamn_connections::connection::ConnectionInvocation;
-use wamn_connections::invocation::{ReleaseContext, Scope, validate_invocation};
+use wamn_connections::invocation::{ReleaseContext, Scope};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_scope::{InvocationAuthority, InvocationScopes, ScopeLifetime};
 use wamn_engine::invocation_trace::InvocationTrace;
@@ -113,9 +113,6 @@ impl AuthorizedInvocation {
             registered_operation,
         )?;
         crate::validate_identity(&identity)?;
-        if let Some(invocation) = &invocation {
-            validate_invocation(invocation)?;
-        }
         if let Some(context) = &context {
             validate_context(&identity, context)?;
         }

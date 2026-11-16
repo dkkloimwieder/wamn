@@ -5,10 +5,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use wamn_environment::environment::document::EnvironmentDocument;
-use wamn_environment::platform::{
-    document::{ClusterDocument, Provider},
-    provider,
-};
+use wamn_environment::platform::document::ClusterDocument;
 use wamn_release_control::release_chart::Target;
 
 pub fn required(name: &str) -> anyhow::Result<String> {
@@ -27,21 +24,16 @@ pub struct Fixture {
 impl Fixture {
     pub async fn prepare(name: &str) -> anyhow::Result<Self> {
         let cluster = ClusterDocument::compile(Path::new(&required("WAMN_TEST_CLUSTER")?))?;
-        ensure!(
-            cluster.provider == Provider::Kind,
-            "browser fixture requires the kind tool"
-        );
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .canonicalize()?;
         let root = PathBuf::from(required("WAMN_TIMINGS_ROOT")?).join(name);
         std::fs::create_dir_all(&root)?;
-        let mut target = Target {
+        let target = Target {
             kubeconfig: root.join("kubeconfig"),
             context: String::new(),
             namespace: cluster.org.to_string(),
         };
-        target.context = provider::existing_kubeconfig(&cluster, &target.kubeconfig).await?;
         let output = wamn_kubernetes::kubectl::kubectl(
             &target.kubeconfig,
             &target.context,

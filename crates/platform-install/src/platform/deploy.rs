@@ -1,6 +1,5 @@
 //! Deploy platform resources from their selected, prepared charts.
 
-use std::io::Write;
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -8,145 +7,10 @@ use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::{self, SelectedChart};
 use super::document::{ClusterDocument, UpgradeTarget};
-use super::{control, identity, installation, installed::InstalledPlatform, provider, resources};
+use super::{control, identity, installation, installed::InstalledPlatform, resources};
 use serde_json::Value;
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_release_control::release_chart;
-
-/// Apply platform resources and initialize an installation without a control release.
-///
-/// # Errors
-/// Returns resource, bootstrap, service, or endpoint failures.
-pub async fn deploy(
-    document: &ClusterDocument,
-    chart: Option<&Path>,
-    directory: &Path,
-    output: &mut impl Write,
-) -> anyhow::Result<()> {
-    let kubeconfig = directory.join("kubeconfig");
-    let context = provider::available_kubeconfig(document, &kubeconfig).await?;
-    let existing = context.is_some();
-    let target = Target {
-        kubeconfig,
-        context: context.unwrap_or_default(),
-        namespace: document.org.to_string(),
-    };
-    let installed = if existing {
-        InstalledPlatform::read(&target).await?
-    } else {
-        None
-    };
-    let operator_values = installed.as_ref().map(|installed| &installed.values);
-    let platform_chart = artifact_plan::platform_chart(operator_values, chart)?;
-    let control_values = installed
-        .as_ref()
-        .map(InstalledPlatform::control)
-        .filter(|value| value["enabled"] == true);
-    anyhow::ensure!(
-        control_values.is_none(),
-        "existing platforms update through authenticated control"
-    );
-    let identity_values = installed
-        .as_ref()
-        .map(InstalledPlatform::identity)
-        .filter(|value| value["enabled"] == true);
-    let control_chart = artifact_plan::resolve_chart(
-        document,
-        &UpgradeTarget::Control,
-        operator_values,
-        control_values,
-        identity_values,
-        platform_chart.directory(),
-    )?;
-    let identity_chart = artifact_plan::resolve_chart(
-        document,
-        &UpgradeTarget::Identity,
-        operator_values,
-        control_values,
-        identity_values,
-        platform_chart.directory(),
-    )?;
-    writeln!(
-        output,
-        "platform default chart: {}",
-        platform_chart.directory().display()
-    )?;
-    writeln!(
-        output,
-        "control chart: {}",
-        control_chart.directory().display()
-    )?;
-    writeln!(
-        output,
-        "identity chart: {}",
-        identity_chart.directory().display()
-    )?;
-    output.flush()?;
-    let target = &target;
-    let chart = &platform_chart;
-    anyhow::ensure!(
-        chart.reference().starts_with("oci://"),
-        "platform installation requires a published chart digest"
-    );
-    installation::infrastructure(target, chart, directory).await?;
-    // Broker credentials are explicit and never enter Helm values.
-    let users =
-        wamn_broker::authorization::update_authorization(target, &document.org, None).await?;
-    let mut values = installation::values(document, chart)?;
-    resources::merge(&mut values, crate::environment::broker_certificates(users));
-    if let Some(installed) = &installed {
-        for component in ["control", "identity", "edge"] {
-            values[component] = installed.values[component].clone();
-        }
-    }
-    installation::apply(target, chart, &mut values, directory).await?;
-    let org_name = wamn_registry::name::resource_suffix("org", document.org.as_str());
-    let org_values = resources::release_values(target, document.org.as_str(), &org_name).await?;
-    let mut entry = installation::organization_entry(document, chart, org_values)?;
-    let declarations = crate::roles::platform(&document.org, "wamn-pg", "wamn_system")?;
-    crate::credentials::prepare(target, &declarations).await?;
-    entry["values"]["managedRoles"] = crate::roles::values(&declarations)?;
-    resources::apply_release(target, &entry, directory).await?;
-    wamn_kubernetes::kubectl::wait(
-        &target.kubeconfig,
-        &target.context,
-        document.org.as_str(),
-        "cluster.postgresql.cnpg.io",
-        "wamn-pg",
-        "condition=Ready",
-        "600s",
-    )
-    .await?;
-    values["identity"] = identity::resource_entry(document, &identity_chart)?["values"].take();
-    values["identity"]["enabled"] = true.into();
-    values["identity"]["name"] = "identity".into();
-    values["identity"]["namespace"] = document.org.as_str().into();
-    installation::apply(target, chart, &mut values, directory).await?;
-    if control_values.is_none() {
-        control::initialize(target, document).await?;
-    }
-    values["control"] =
-        control::resource_entry(document, &control_chart, control_values)?["values"].take();
-    values["control"]["enabled"] = true.into();
-    values["control"]["name"] = wamn_registry::name::control_resource(&document.org).into();
-    values["control"]["namespace"] = document.org.as_str().into();
-    values["edge"] = super::edge::chart_input(
-        &chart.directory().join("platform/edge"),
-        chart.image("edge")?,
-        document,
-    )?["values"]
-        .take();
-    values["edge"]["enabled"] = true.into();
-    values["edge"]["name"] = "wamn-edge".into();
-    values["edge"]["namespace"] = "hosts".into();
-    resources::apply_release(
-        target,
-        &installation::platform_entry(chart, values)?,
-        directory,
-    )
-    .await?;
-    control::probe(target, document).await
-}
 
 /// Prepare an update of one existing owner without entering installation.
 ///

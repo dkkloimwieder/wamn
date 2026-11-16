@@ -62,24 +62,6 @@ pub async fn registered(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *snapshot)
         .await?;
-    let orgs: Vec<wamn_registry::OrgId> = sqlx::query_scalar(wamn_registry::sql::INSTALL_ORGS)
-        .bind(namespace)
-        .fetch_all(&mut *snapshot)
-        .await?;
-    for org in orgs {
-        let role = managed_role(
-            workload_login(
-                WorkloadRoleFamily::Control,
-                WorkloadRoleIdentity::Org {
-                    org: &org,
-                    database,
-                },
-            )?,
-            WorkloadRoleFamily::Control.acl_role(),
-            wamn_control_provision::org_workload_secret_name(WorkloadRoleFamily::Control, &org),
-        );
-        declarations.entry(cluster.into()).or_default().push(role);
-    }
     let projects: Vec<ProjectFact> = sqlx::query_as(wamn_registry::sql::INSTALL_PROJECTS)
         .bind(namespace)
         .fetch_all(&mut *snapshot)

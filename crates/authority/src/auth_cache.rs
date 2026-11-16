@@ -3,13 +3,6 @@
 //!
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
-use wamn_broker::Publisher;
-
-use wamn_platform_identity::AuthenticatedPrincipal;
-
-pub use crate::kv_memory::Ticket;
 
 /// The roles a principal holds in one project, with the permissions of each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -22,119 +15,6 @@ pub struct PrincipalGrants {
     pub user: bool,
     /// Each held role, with each permission of that role.
     pub roles: BTreeMap<String, BTreeSet<String>>,
-}
-
-struct Token {
-    deadline: SystemTime,
-    /// The principal a PAT admitted, or `None` for an active session.
-    pat: Option<AuthenticatedPrincipal>,
-}
-
-struct CredentialDeadline;
-impl moka::Expiry<wamn_digest::Digest, Arc<Token>> for CredentialDeadline {
-    fn expire_after_create(
-        &self,
-        _: &wamn_digest::Digest,
-        token: &Arc<Token>,
-        _: std::time::Instant,
-    ) -> Option<Duration> {
-        Some(
-            token
-                .deadline
-                .duration_since(SystemTime::now())
-                .unwrap_or_default(),
-        )
-    }
-}
-
-struct Tokens {
-    tokens: moka::sync::Cache<wamn_digest::Digest, Arc<Token>>,
-}
-
-/// The auth facts one host keeps. One instance lives in
-/// [`WamnPostgres`](wamn_sql::WamnPostgres), so the
-/// route authenticator and the identity binding share it.
-pub struct AuthCache {
-    tokens: Mutex<Tokens>,
-}
-
-impl Default for AuthCache {
-    fn default() -> Self {
-        Self::with_ttl(Duration::ZERO)
-    }
-}
-
-impl std::fmt::Debug for AuthCache {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("AuthCache").finish_non_exhaustive()
-    }
-}
-
-fn digest(token: &str) -> wamn_digest::Digest {
-    wamn_digest::bytes_sha256(token.as_bytes())
-}
-
-impl AuthCache {
-    /// A cache whose facts live for `ttl`.
-    pub fn with_ttl(ttl: Duration) -> Self {
-        Self {
-            tokens: Mutex::new(Tokens {
-                tokens: moka::sync::Cache::builder()
-                    .time_to_live(ttl)
-                    .expire_after(CredentialDeadline)
-                    .build(),
-            }),
-        }
-    }
-
-    fn tokens(&self) -> std::sync::MutexGuard<'_, Tokens> {
-        self.tokens
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Drop every fact.
-    pub fn clear(&self) {
-        let tokens = self.tokens();
-        tokens.tokens.invalidate_all();
-    }
-
-    /// The principal of an admitted PAT.
-    pub fn pat(&self, token: &str) -> Option<AuthenticatedPrincipal> {
-        self.tokens()
-            .tokens
-            .get(&digest(token))
-            .filter(|token| SystemTime::now() < token.deadline)
-            .and_then(|token| token.pat.clone())
-    }
-
-    /// The grants of a principal, or the ticket of a read of them.
-    pub fn grants(
-        &self,
-        _project_env_key: &wamn_registry::ProjectEnvKey,
-        _principal: &wamn_identity_protocol::PrincipalId,
-    ) -> Result<PrincipalGrants, Ticket> {
-        Err(Ticket(0))
-    }
-
-    /// Keep the grants of a principal. A present user row also answers the
-    /// provisioned-principal test of the identity binding.
-    pub async fn keep_grants(
-        &self,
-        _project_env_key: &wamn_registry::ProjectEnvKey,
-        _principal: &wamn_identity_protocol::PrincipalId,
-        _ticket: Ticket,
-        _grants: PrincipalGrants,
-    ) {
-    }
-}
-
-pub fn replicate(
-    _client: &async_nats::Client,
-    _project_env_key: Option<&wamn_registry::ProjectEnvKey>,
-    _holder: Arc<AuthCache>,
-) -> Publisher {
-    Publisher::default()
 }
 
 /// Live auth-cache fixtures shared by writer tests.

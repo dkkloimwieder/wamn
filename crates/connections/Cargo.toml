@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["dep:url", "wamn-registry/test-util", "dep:wamn-test-infrastructure", "wamn-kubernetes/test-util", "wamn-control-provision/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", ]
+test-util = ["dep:wamn-postgres", "dep:url", "wamn-registry/test-util", "dep:wamn-test-infrastructure", "wamn-kubernetes/test-util", "wamn-control-provision/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", ]
 
 [dependencies]
 oci-client.workspace = true
@@ -40,7 +40,7 @@ wamn-control-provision = { workspace = true, optional = true }
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes = { workspace = true }
 wamn-package-artifact = { workspace = true }
-wamn-postgres = { workspace = true }
+wamn-postgres = { workspace = true, optional = true }
 wamn-registry = { workspace = true }
 zeroize = { workspace = true }
 

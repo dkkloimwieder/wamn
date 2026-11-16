@@ -27,23 +27,15 @@ mod projects;
 mod releases;
 
 use wamn_authentication::route_authentication::EnvironmentStatusReader;
-use wamn_authentication::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_component_artifact::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_control_provision::project_env_database_name;
-use wamn_control_provision::session_target::session_audience;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
     build_engine_with_host_memory_and_compilation_cache,
 };
 use wamn_engine::flow_http_routing::FlowHttpRouting;
-use wamn_http::transport::HttpTransport;
-use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_registry::Triple;
-use wamn_sql::AuthorityClass;
-use wamn_sql::ClassCredentials;
 use wamn_sql::WamnPostgres;
 
 #[expect(
@@ -196,26 +188,6 @@ pub struct HostArgs {
     /// Extra wasm proposals to enable on the engine (comma-separated)
     #[arg(long = "wasm-proposal", value_delimiter = ',')]
     pub wasm_proposals: Vec<WasmProposal>,
-
-    /// Exact reviewed component digests trusted for reuse by the deployment owner.
-    #[arg(
-        long,
-        env = "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS",
-        value_delimiter = ','
-    )]
-    pub trusted_warm_component_digest: Vec<wamn_digest::Digest>,
-
-    /// Native instances retained per eligible component, independent of admission limits.
-    #[arg(long, env = "WAMN_COMPONENT_POOL_SIZE", default_value_t = 1)]
-    pub component_pool_size: i32,
-
-    /// Native idle reclamation window for eligible components.
-    #[arg(
-        long,
-        env = "WAMN_COMPONENT_RECLAIM_WINDOW_SECONDS",
-        default_value_t = 60
-    )]
-    pub component_reclaim_window_seconds: i32,
 
     /// Total guest-memory budget, applied according to guest-memory-mode.
     /// The separate process memory limit remains enforced in either mode.
@@ -423,89 +395,6 @@ fn host_memory(args: &HostArgs) -> anyhow::Result<HostMemoryBudgets> {
     .map_err(anyhow::Error::msg)
 }
 
-/// Route each sourced url onto the AUTHORITY CLASS it belongs to
-/// (`wamn-0h0g.22.16`, `wamn-0h0g.22.31`, `wamn-0h0g.22.11`).
-///
-/// A FUNCTION RATHER THAN A CLOSURE IN `run` BECAUSE THE ROUTING IS THE SECURITY
-/// PROPERTY AND `run` IS UNREACHABLE FROM A TEST — the `executor_credentials`
-/// precedent. Inline, a mutant that names the wrong class, or that keeps the
-/// shared `every_class` entry on the absent arm, leaves a platform pool on the
-/// guest login and SURVIVES every test in this crate, because nothing can
-/// observe the composition without standing up a NATS cluster, a release and a
-/// database.
-///
-/// Each cut-over family carries `Option<String>` rather than a required url:
-/// unlike the executor, a host serves with no run-plane work and no trusted HTTP
-/// effect at all, so an absent generation UNNAMES its class and startup
-/// continues. Unnaming is not the same as leaving the shared entry in place —
-/// see [`ClassCredentials::without_class`].
-fn host_credentials(
-    databases: Option<(String, String)>,
-    executor_platform_url: Option<String>,
-    http_admitter_url: Option<String>,
-    administration_url: Option<String>,
-) -> ClassCredentials {
-    let credentials = databases.map_or_else(ClassCredentials::default, |(compiled, dynamic)| {
-        ClassCredentials::default()
-            .with_class(AuthorityClass::GuestSql, compiled)
-            .with_class(AuthorityClass::DynamicSql, dynamic)
-    });
-    let credentials = match executor_platform_url {
-        Some(platform) => credentials.with_class(AuthorityClass::ExecutorPlatform, platform),
-        None => credentials.without_class(AuthorityClass::ExecutorPlatform),
-    };
-    let credentials = match http_admitter_url {
-        Some(admitter) => credentials.with_class(AuthorityClass::CallableHttp, admitter),
-        None => credentials.without_class(AuthorityClass::CallableHttp),
-    };
-    match administration_url {
-        Some(administration) => {
-            credentials.with_class(AuthorityClass::Administration, administration)
-        }
-        None => credentials.without_class(AuthorityClass::Administration),
-    }
-}
-
-fn session_verifier(
-    args: &HostArgs,
-    environment: &wamn_registry::EnvName,
-    project: &wamn_registry::ProjectId,
-    suffix: &wamn_registry::instance_suffix::InstanceSuffix,
-    http_admitter_url: &str,
-) -> anyhow::Result<SessionVerifier<IssuerKeys>> {
-    let org = args
-        .org
-        .as_ref()
-        .context("a session route requires --org/WAMN_ORG")?;
-    let issuer = args
-        .session_issuer
-        .as_deref()
-        .context("a session route requires --session-issuer")?;
-    let audience = session_audience(
-        &Triple::new(org.clone(), environment.clone(), project.clone()),
-        suffix,
-    )?;
-    let database = project_env_database_name(org, project, environment, suffix);
-    // Compare trusted deployment coordinates, not anything carried by a token.
-    // Parsing failures never attach the credential-bearing URL to diagnostics.
-    let (_, configured_database) = wamn_postgres::identity(http_admitter_url)?;
-    anyhow::ensure!(
-        configured_database == database,
-        "session audience and permission database differ"
-    );
-    let ca_path = args
-        .session_jwks_ca
-        .as_deref()
-        .context("a session route requires --session-jwks-ca")?;
-    let ca = std::fs::read(ca_path).context("read the session issuer public CA bundle")?;
-    let mut endpoint = url::Url::parse(issuer).context("parse the configured session issuer")?;
-    endpoint.set_path("/.well-known/jwks.json");
-    endpoint.set_query(None);
-    let keys = IssuerKeys::new(IssuerKeysConfig::new(issuer, endpoint.as_str(), &ca)?);
-    SessionVerifier::new(keys, org.as_str(), &audience)
-        .context("configure the host session verifier")
-}
-
 /// The tracing target of the scheduler client's events. The `wasmcloud:nats`
 /// plugin logs the same event words, and only the target and the `client`
 /// field tell the two lines apart (wamn-gdex).
@@ -662,7 +551,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let credentials = Arc::new(projects::Credentials(Arc::clone(&projects)));
     let postgres = Arc::new(WamnPostgres::with_provider(credentials));
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
-    let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let authentication = Arc::new(projects::Authentication(Arc::clone(&projects)));
     let source = if args.projects.is_some() {
         let artifact_base = args
@@ -702,16 +590,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         oci_cache_dir: args.oci_cache_dir.clone(),
         oci_ca_paths: args.oci_ca_paths.clone(),
     };
-    let releases = source.map(|source| {
+    let releases = source.map(|_| {
         Arc::new(projects::Environment::new(
             Arc::clone(&args),
             projects,
-            Arc::clone(&engine),
             Arc::clone(&postgres),
-            http_transport,
-            Arc::clone(&logging),
-            source,
-            router_owner.clone(),
         ))
     });
     let flow_http = FlowHttpRouting::new(Arc::clone(&postgres.scopes))
@@ -878,13 +761,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let drain_bound_seconds = args.drain_bound_seconds;
     let result = {
         let queue_serving = async {
-            match releases.as_ref() {
-                Some(releases) => releases.serve(stopping).await,
-                None => std::future::pending().await,
-            }
+            std::future::pending().await
         };
         tokio::pin!(queue_serving);
-
         // Polling cleanup requests shutdown. Observe the retained native state instead.
         let mut sigterm =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -1560,101 +1439,6 @@ host:
         assert!(result.is_err());
     }
 
-    const GUEST: &str = "postgres://guest@h/db";
-    const QUERY: &str = "postgres://query@h/db";
-    const PLATFORM: &str = "postgres://platform@h/db";
-    const ADMITTER: &str = "postgres://admitter@h/db";
-    const ADMINISTRATION: &str = "postgres://administration@h/db";
-
-    /// THE GUEST URL IS NOT A CUT-OVER FAMILY'S CREDENTIAL (`wamn-0h0g.22.31`,
-    /// `wamn-0h0g.22.11`).
-    ///
-    /// Driven through [`host_credentials`], the same call `run` makes, so the
-    /// ROUTING is what is pinned rather than a re-statement of it. Every class is
-    /// validated, not just the ones that matter: naming the wrong class moves BOTH
-    /// the class that gained a cut-over url and the one that lost it, and a
-    /// two-class assertion could miss the second half.
-    #[test]
-    fn the_host_routes_each_url_to_its_own_class() {
-        let credentials = host_credentials(
-            Some((GUEST.to_owned(), QUERY.to_owned())),
-            Some(PLATFORM.to_owned()),
-            Some(ADMITTER.to_owned()),
-            Some(ADMINISTRATION.to_owned()),
-        );
-        for class in AuthorityClass::ALL {
-            let expected = match class {
-                AuthorityClass::ExecutorPlatform => PLATFORM,
-                AuthorityClass::CallableHttp => ADMITTER,
-                AuthorityClass::Administration => ADMINISTRATION,
-                AuthorityClass::GuestSql => GUEST,
-                AuthorityClass::DynamicSql => QUERY,
-            };
-            assert_eq!(
-                credentials.url(class),
-                Some(expected),
-                "{class:?} must authenticate with its own credential"
-            );
-        }
-    }
-
-    /// A HOST GIVEN NO GENERATION FOR A CUT-OVER FAMILY UNNAMES THAT CLASS
-    /// (`wamn-0h0g.22.31`, `wamn-0h0g.22.11`).
-    ///
-    /// The load-bearing half. Keeping `every_class`'s shared entry would leave
-    /// the family authenticating as the GUEST — a login of another authority
-    /// that still satisfies the map — so the absent arm must ERASE the entry and
-    /// let checkout refuse for the missing credential. Each arm is exercised on
-    /// its own so a mutant that unnames both, or the wrong one, fails here.
-    #[test]
-    fn a_host_with_no_generation_for_a_family_refuses_rather_than_borrows() {
-        let no_admitter = host_credentials(
-            Some((GUEST.to_owned(), QUERY.to_owned())),
-            Some(PLATFORM.to_owned()),
-            None,
-            None,
-        );
-        assert_eq!(
-            no_admitter.url(AuthorityClass::CallableHttp),
-            None,
-            "an unprovisioned callable-HTTP family must have NO credential rather \
-             than the guest's"
-        );
-        assert_eq!(
-            no_admitter.url(AuthorityClass::ExecutorPlatform),
-            Some(PLATFORM),
-            "unnaming callable-HTTP must not disturb another class"
-        );
-
-        let no_platform = host_credentials(
-            Some((GUEST.to_owned(), QUERY.to_owned())),
-            None,
-            Some(ADMITTER.to_owned()),
-            None,
-        );
-        assert_eq!(
-            no_platform.url(AuthorityClass::ExecutorPlatform),
-            None,
-            "an unprovisioned executor-platform family must have NO credential \
-             rather than the guest's"
-        );
-        assert_eq!(
-            no_platform.url(AuthorityClass::CallableHttp),
-            Some(ADMITTER),
-            "unnaming executor-platform must not disturb another class"
-        );
-
-        let neither =
-            host_credentials(Some((GUEST.to_owned(), QUERY.to_owned())), None, None, None);
-        assert_eq!(neither.url(AuthorityClass::ExecutorPlatform), None);
-        assert_eq!(neither.url(AuthorityClass::CallableHttp), None);
-        assert_eq!(
-            neither.url(AuthorityClass::GuestSql),
-            Some(GUEST),
-            "the guest class keeps its own credential either way"
-        );
-    }
-
     #[test]
     fn a_release_backed_host_takes_exactly_one_registry_credential() {
         let file = ["host", "--registry-auth-file", "/tmp/registry.json"];
@@ -1684,44 +1468,6 @@ host:
         ];
         assert!(parse(both).is_err());
         assert!(RegistryPullCredential::select(None, false).is_err());
-    }
-
-    #[test]
-    fn session_configuration_requires_the_complete_public_trust_binding() {
-        assert!(parse(["host"]).is_ok());
-        for arguments in [
-            vec!["host", "--session-issuer", "https://identity.invalid"],
-            vec!["host", "--session-jwks-ca", "/ca.pem"],
-            vec!["host", "--session-instance-suffix", "k3m9x2p7"],
-        ] {
-            assert!(parse(arguments).is_err());
-        }
-        let cli = parse([
-            "host",
-            "--org",
-            "fixture",
-            "--session-issuer",
-            "https://identity.invalid",
-            "--session-jwks-ca",
-            "/nonexistent/session-public-ca.pem",
-        ])
-        .expect("complete session trust configuration");
-        for database in [
-            "wamn-db-other--widgets--dev--k3m9x2p7",
-            "wamn-db-fixture--other--dev--k3m9x2p7",
-            "wamn-db-fixture--widgets--prod--k3m9x2p7",
-            "wamn-db-fixture--widgets--dev--a1b2c3d4",
-        ] {
-            let error = session_verifier(
-                &cli.args,
-                &"dev".parse().unwrap(),
-                &"widgets".parse().unwrap(),
-                &"k3m9x2p7".parse().unwrap(),
-                &format!("postgres://reader:secret@localhost/{database}"),
-            )
-            .expect_err("the permission reader must target the exact audience database");
-            assert!(!format!("{error:?}").contains("secret"));
-        }
     }
 
     /// The chart's native memory settings reach `HostMemoryBudgets` intact.

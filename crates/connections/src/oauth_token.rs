@@ -22,17 +22,9 @@ pub struct Cache {
 #[derive(Default)]
 struct Entries {
     tokens: HashMap<CacheKey, (String, Instant)>,
-    revision: u64,
 }
 
 impl Cache {
-    pub fn ticket(&self) -> u64 {
-        self.entries
-            .lock()
-            .expect("OAuth token cache lock")
-            .revision
-    }
-
     pub fn get(&self, key: &CacheKey) -> Option<String> {
         self.entries
             .lock()
@@ -41,23 +33,6 @@ impl Cache {
             .get(key)
             .filter(|(_, deadline)| Instant::now() < *deadline)
             .map(|(token, _)| token.clone())
-    }
-
-    pub fn put(
-        &self,
-        ticket: u64,
-        key: CacheKey,
-        token: String,
-        expires: Instant,
-        current: impl FnOnce() -> bool,
-    ) {
-        let mut entries = self.entries.lock().expect("OAuth token cache lock");
-        if entries.revision == ticket && Instant::now() < expires && current() {
-            entries
-                .tokens
-                .retain(|_, (_, deadline)| Instant::now() < *deadline);
-            entries.tokens.insert(key, (token, expires));
-        }
     }
 
     pub fn remove(&self, key: &CacheKey) {
@@ -70,16 +45,9 @@ impl Cache {
 
     pub fn retain_generation(&self, id: uuid::Uuid, generation: Option<i64>) {
         let mut entries = self.entries.lock().expect("OAuth token cache lock");
-        entries.revision = entries.revision.wrapping_add(1);
         entries
             .tokens
             .retain(|(connection, active), _| *connection != id || generation == Some(*active));
-    }
-
-    pub fn clear(&self) {
-        let mut entries = self.entries.lock().expect("OAuth token cache lock");
-        entries.revision = entries.revision.wrapping_add(1);
-        entries.tokens.clear();
     }
 
     #[cfg(any(test, feature = "test-util"))]
@@ -113,7 +81,6 @@ pub struct Fetched {
 
 pub struct Available {
     pub token: String,
-    pub retain_until: Option<Instant>,
 }
 
 /// A shared refresh failure. Debug output omits provider and token material.
@@ -150,14 +117,6 @@ pub fn is_oauth(auth_type: &str) -> bool {
         auth_type,
         "oauth2_client_credentials" | "oauth2_client_credentials_jwt" | "oauth2_authorization_code"
     )
-}
-
-/// The access token stops being reusable at the sixty-second refresh margin.
-fn retain_until(started: Instant, seconds_left: f64) -> Option<Instant> {
-    Duration::try_from_secs_f64(seconds_left - 60.0)
-        .ok()
-        .and_then(|duration| started.checked_add(duration))
-        .filter(|expires| *expires > Instant::now())
 }
 
 pub struct Request<'a> {
@@ -209,7 +168,6 @@ where
         .execute(&mut *tx)
         .await?;
     lock(&mut tx, request).await?;
-    let started = Instant::now();
     let stored = read_row(&mut tx, request.connection, envelope).await?;
     if let Some(stored) = &stored {
         if let Some(access) = &stored.token.access_token
@@ -219,7 +177,6 @@ where
         {
             let available = Available {
                 token: access.clone(),
-                retain_until: retain_until(started, stored.seconds_left),
             };
             tx.commit().await?;
             return Ok(Ok(available));
@@ -339,7 +296,6 @@ where
     tx.commit().await?;
     Ok(Available {
         token: token.access_token.context("OAuth access token missing")?,
-        retain_until: retain_until(fetched_at, seconds),
     })
 }
 
@@ -400,23 +356,5 @@ impl std::fmt::Debug for Available {
 impl std::fmt::Debug for Request<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Request").finish_non_exhaustive()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn due_and_memory_window_use_sixty_seconds() {
-        let now = Instant::now();
-        for seconds in [f64::NEG_INFINITY, 0.0, 59.0, 60.0] {
-            assert!(retain_until(now, seconds).is_none());
-        }
-        assert_eq!(
-            retain_until(now, 3600.0),
-            Some(now + Duration::from_mins(59))
-        );
-        assert!(retain_until(now - Duration::from_mins(59), 3600.0).is_none());
     }
 }

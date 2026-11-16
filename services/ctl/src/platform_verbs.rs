@@ -1,13 +1,11 @@
 //! Thin platform command adapters.
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
 use wamn_platform_install::platform::document::{ClusterDocument, UpgradeTarget};
-use wamn_platform_install::platform::{deploy, provider, status};
-use wamn_release_control::release_chart::Target;
 
 /// Management verbs also available through the low-level control tool.
 #[derive(Debug, Subcommand)]
@@ -21,8 +19,6 @@ pub enum PlatformCommand {
 pub enum ProductPlatformCommand {
     /// Deploy platform resources from a prepared chart.
     Deploy(DeployArgs),
-    /// Read the current platform state without creating a cluster.
-    Status(ShowArgs),
     /// Inspect or apply platform SQL through control.
     #[command(subcommand)]
     Schema(PlatformSchemaCommand),
@@ -111,18 +107,12 @@ pub struct ShowArgs {
 
 pub async fn run_product(
     command: ProductPlatformCommand,
-    mut output: impl Write,
+    output: impl Write,
 ) -> anyhow::Result<()> {
     let mut signals = signals()?;
     match command {
         ProductPlatformCommand::Deploy(args) => deploy(&args, &mut signals, output).await,
-        ProductPlatformCommand::Status(args) => {
-            let document = ClusterDocument::compile(&args.file)?;
-            let directory = work_directory()?;
-            let result = report_status(&document, &directory, &mut signals, &mut output).await;
-            let cleanup = std::fs::remove_dir_all(directory).context("remove status directory");
-            result.and(cleanup)
-        }
+
         ProductPlatformCommand::Schema(command) => {
             let (args, apply) = match command {
                 PlatformSchemaCommand::Diff(args) => (args, false),
@@ -157,102 +147,18 @@ async fn deploy(
         .with_context(|| format!("resolve cluster {}", args.file.display()))?;
     let document = ClusterDocument::compile(&file)?;
     writeln!(output, "cluster: {}", file.display())?;
-    if std::env::var_os("WAMN_CONTROL_URL").is_some() {
-        anyhow::ensure!(
-            args.chart.is_none(),
-            "control selects the prepared chart; --chart is only for bootstrap"
-        );
-        let selection = args
-            .only
-            .as_ref()
-            .context("after bootstrap, select the existing Helm owner with --only")?;
-        let control = crate::operation_verbs::ControlHost::from_env()?;
-        return interruptible(signals, control.platform(serde_json::json!({"type":"update","document":document,"selection":match selection { UpgradeTarget::Control => "control".to_owned(), UpgradeTarget::Identity => "identity".to_owned(), UpgradeTarget::Host { release, group } => format!("host:{release}/{group}") }}))).await;
-    }
-    let discovery = work_directory()?;
-    let existing = async {
-        let kubeconfig = discovery.join("kubeconfig");
-        let Some(context) = provider::available_kubeconfig(&document, &kubeconfig).await? else {
-            return anyhow::Ok(false);
-        };
-        let target = Target {
-            kubeconfig,
-            context,
-            namespace: document.org.to_string(),
-        };
-        Ok(
-            wamn_platform_install::platform::installed::InstalledPlatform::read(&target)
-                .await?
-                .is_some_and(|installed| installed.control()["enabled"] == true),
-        )
-    }
-    .await;
-    std::fs::remove_dir_all(&discovery)?;
-    anyhow::ensure!(
-        !existing?,
-        "control already exists; set WAMN_CONTROL_URL and WAMN_TOKEN"
-    );
-    anyhow::ensure!(
-        args.only.is_none(),
-        "bootstrap does not update an existing Helm owner"
-    );
-    let directory = work_directory()?;
-    writeln!(output, "work directory: {}", directory.display())?;
-    output.flush()?;
-    let result = interruptible(signals, async {
-        deploy::deploy(&document, args.chart.as_deref(), &directory, &mut output).await
-    })
-    .await;
-    let observed = report_status(&document, &directory, signals, &mut output).await;
-    // A failed observation or output write must not replace the deployment error.
-    // Only a newly created kind cluster mounts this run's registry directory.
-    // Reapply repairs the original mount source, outside this work directory.
-    let cleanup = if result.is_ok() && !directory.join("kubeconfig.registry").exists() {
-        std::fs::remove_dir_all(directory).context("remove deployment directory")
-    } else {
-        Ok(())
-    };
-    result.and(observed).and(cleanup)
-}
 
-async fn report_status(
-    document: &ClusterDocument,
-    directory: &Path,
-    signals: &mut Signals,
-    output: &mut impl Write,
-) -> anyhow::Result<()> {
-    let observed = interruptible(signals, async {
-        let kubeconfig = directory.join("status-kubeconfig");
-        let context = provider::existing_kubeconfig(document, &kubeconfig).await?;
-        let target = Target {
-            kubeconfig,
-            context,
-            namespace: "platform".into(),
-        };
-        status::read(document, &target).await
-    })
-    .await;
-    match observed {
-        Ok(observed) => {
-            status::write(&observed, output)?;
-            output.flush()?;
-            anyhow::ensure!(
-                observed.category == status::Category::Ready,
-                "platform is {}",
-                observed.category
-            );
-            Ok(())
-        }
-        Err(error) => {
-            // Keep diagnostics free of provider output, which can contain credentials.
-            let _ = writeln!(
-                output,
-                "platform: unknown\nnext: restore access to the existing cluster and retry platform status"
-            );
-            let _ = output.flush();
-            Err(error)
-        }
-    }
+    anyhow::ensure!(
+        args.chart.is_none(),
+        "control selects the prepared chart; --chart is only for bootstrap"
+    );
+    let selection = args
+        .only
+        .as_ref()
+        .context("after bootstrap, select the existing Helm owner with --only")?;
+    let control = crate::operation_verbs::ControlHost::from_env()?;
+    interruptible(signals, control.platform(serde_json::json!({"type":"update","document":document,"selection":match selection { UpgradeTarget::Control => "control".to_owned(), UpgradeTarget::Identity => "identity".to_owned(), UpgradeTarget::Host { release, group } => format!("host:{release}/{group}") }}))).await
+
 }
 
 struct Signals {
@@ -303,26 +209,6 @@ async fn interruptible<T>(
         () = terminated => anyhow::bail!("platform command terminated"),
         result = operation => result,
     }
-}
-
-fn work_directory() -> anyhow::Result<PathBuf> {
-    let directory = std::env::temp_dir().join(format!(
-        "wamn-deploy-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-    ));
-    let mut builder = std::fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt as _;
-        builder.mode(0o700);
-    }
-    builder
-        .create(&directory)
-        .context("create private deployment directory")?;
-    Ok(directory)
 }
 
 pub fn run(command: PlatformCommand, output: impl Write) -> anyhow::Result<()> {

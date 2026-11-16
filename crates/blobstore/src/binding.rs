@@ -1,7 +1,6 @@
 //! Validate a storage binding before building a client.
 
-use wamn_authority::identity::ConnectionEffectSnapshot;
-use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider, ConnectionTypeDescriptor};
+use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider};
 
 /// A storage refusal before a client or container is exposed.
 #[derive(Debug)]
@@ -12,18 +11,10 @@ pub struct BindingError {
 }
 #[derive(Debug)]
 enum BindingErrorType {
-    Authority,
     Definition,
     Credential,
 }
 impl BindingError {
-    pub(super) fn unauthorized() -> Self {
-        Self {
-            type_: BindingErrorType::Authority,
-            detail: "connection is not authorized for this component",
-            source: None,
-        }
-    }
     fn definition(source: wamn_catalog::ConnectionDefinitionError) -> Self {
         Self {
             type_: BindingErrorType::Definition,
@@ -42,7 +33,6 @@ impl BindingError {
 impl core::fmt::Display for BindingError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let category = match self.type_ {
-            BindingErrorType::Authority => "authority",
             BindingErrorType::Definition => "definition",
             BindingErrorType::Credential => "credential",
         };
@@ -59,25 +49,6 @@ impl std::error::Error for BindingError {
             .as_ref()
             .map(|source| source as &(dyn std::error::Error + 'static))
     }
-}
-
-pub fn resolve(
-    snapshot: &ConnectionEffectSnapshot,
-    provider: BlobstoreProvider,
-) -> Result<BlobstoreDefinition, BindingError> {
-    wamn_authority::connection::authorize_snapshot(
-        snapshot,
-        &ConnectionTypeDescriptor::blobstore_v1(),
-    )
-    .map_err(|_| BindingError::unauthorized())?;
-    resolve_coordinates(
-        snapshot.definition.as_ref().ok_or(BindingError::refused(
-            BindingErrorType::Definition,
-            "connection generation carries no definition",
-        ))?,
-        snapshot.credential_handle.as_deref(),
-        provider,
-    )
 }
 
 pub fn resolve_coordinates(

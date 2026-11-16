@@ -1271,8 +1271,6 @@ The host refuses a project or digest mismatch before it resolves a connection bi
 Credential generations and revocation still apply to every call and open blob handle.
 Several loaded releases of one project share its reader, while each release retains its own binding facts.
 
-See [integration and connection schema](../plan/integration-schema.md).
-
 The control role keeps its existing table grants. Connection administration uses `registry.configure_connection` and the targeted `registry.connection_*` read functions.
 These functions return only non-secret authority. The write function creates a service principal only with its connection and returns its id for `AuthDrops`.
 The upgrade import reads retained bindings through `catalog.connection_upgrade_bindings(text,text)`, without reading the catalog tables.
@@ -1284,8 +1282,6 @@ PUBLIC holds no execute grant. Only the control or administration role receives 
 Control logins can read hierarchy rows and write their declared identity and lifecycle fields. Postgres row security limits these operations to the authenticated login’s org. Its control policy helpers grant execution to each role with access to the protected relations and grant none to `PUBLIC`. Connection writes still use the restricted functions.
 
 ### Application connection bindings
-
-See [integration and connection schema](../plan/integration-schema.md).
 
 Environment apply reads connection projections through targeted system functions.
 They do not add table grants to the control or administration roles.

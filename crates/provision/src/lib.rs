@@ -18,7 +18,6 @@ pub mod platform_principals;
 /// The pure derivation guest RLS uses to reach a project from `current_user`.
 pub mod project_key;
 /// The two T1 control-database read consumers' targeted credential contract.
-pub mod readers;
 pub mod session_target;
 pub mod sql;
 /// Test databases with the system control store minimum.
@@ -32,17 +31,16 @@ pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_OWNER_ROLE, DB_PREFIX, GUEST_SECRET_PREFIX,
     INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
     MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, control_administration_key,
-    control_administration_secret_name, org_workload_secret_name, project_env_cdc_secret_name,
+    control_administration_secret_name, project_env_cdc_secret_name,
     project_env_database_name, project_env_guest_secret_name, project_env_key,
     project_env_namespace, project_env_secret_name, validate_project_env, validate_project_env_cdc,
     workload_secret_name,
 };
 pub use platform_principals::{bind_platform_principal_sql, platform_principals_sql};
-pub use readers::{SystemReader, system_reader_identity_hash, system_reader_login};
 /// The platform component list, for callers that bind a component as the actor.
 pub use wamn_identity_protocol::PlatformComponent;
 pub use workload_role::{
-    ADMINISTRATION_ROLE, AUDIT_RETENTION_ROLE, CONTROL_ROLE, PLATFORM_GROUP_ROLE, RETENTION_ROLE,
+    PLATFORM_GROUP_ROLE,
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityError, WorkloadRoleIdentityType,
     workload_login, workload_role_identity_hash,
 };
@@ -76,12 +74,10 @@ pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABL
 pub const APP_SCHEMA_SQL: &str = concat!(include_str!("../../../deploy/sql/app-schema.sql"),);
 
 mod placement;
-mod template;
 pub use placement::{
     ClusterRef, DEFAULT_PG_IMAGE, EnvPolicy, Org, OrgEnvPolicy, Placement, RecoveryDomain,
     cluster_of,
 };
-pub use template::Template;
 
 /// Project event trigger installed by the authenticated administrator during initialization.
 pub const MIGRATION_PRIVILEGES_SQL: &str =

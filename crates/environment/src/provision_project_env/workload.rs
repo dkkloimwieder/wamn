@@ -150,33 +150,7 @@ pub(crate) async fn provision(
         if family == WorkloadRoleFamily::Query {
             dynamic = Some(serde_json::to_value(&config)?);
         }
-        if family == WorkloadRoleFamily::SessionRoleReader {
-            let instance =
-                super::read_project_env_instance(&platform.system_database_url, &triple).await?;
-            let target = wamn_control_provision::session_target::SessionTarget::new(
-                &triple,
-                &instance,
-                &key,
-                &config.to_json()?,
-            )?;
-            data.insert("session-target.json".into(), target.to_json()?.into());
-        }
-        if family == WorkloadRoleFamily::Administration {
-            let name = wamn_registry::name::control_administration_secret_name(&document.org);
-            let key = wamn_control_provision::control_administration_key(
-                &document.project,
-                &document.env,
-            );
-            let patch = json!({"data":{key:config.to_json()?}}).to_string();
-            kubectl::kubectl(
-                &platform.target.kubeconfig,
-                &platform.target.context,
-                namespace,
-                &["patch", "configmap", &name, "--type=merge", "-p", &patch],
-                None,
-            )
-            .await?;
-        }
+
         data.insert(
             format!("{}.json", family.component_stem()),
             config.to_json()?.into(),

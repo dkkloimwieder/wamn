@@ -86,13 +86,6 @@ impl IdentityConfig {
         Ok(self)
     }
 
-    /// Publish each logout, logout-all, reset and replay revocation to the
-    /// memory of the hosts.
-    pub fn with_auth_changes(mut self, changes: wamn_broker::Publisher) -> Self {
-        self.changes = changes;
-        self
-    }
-
     /// Enable invitation and password endpoints with explicit mail configuration.
     pub fn with_resend(mut self, mail: mail::ResendConfig) -> Self {
         self.mail = Some(mail::MailConfig::Resend(mail));

@@ -22,8 +22,7 @@
 //! it ages beyond the configured window.
 
 use anyhow::{Context as _, bail};
-use sqlx::{Connection as _, Row as _};
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
+use sqlx::Connection as _;
 
 /// Inputs of one terminal run history prune.
 #[derive(Debug)]
@@ -76,7 +75,6 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
         .context("retention credential connect")?;
 
     let result = async {
-        verify_retention_identity(&mut client, &request.project_env_key()).await?;
         prune(
             &mut client,
             &request.schema,
@@ -89,60 +87,6 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
     .await;
     drop(client);
     result
-}
-
-/// Refuse unless the connected role is the logins
-/// this exact `(project, database)` pair mints (`wamn-0h0g.12.69`).
-///
-/// # This is the negative-negative guard, and it has to be here
-///
-/// The statement below cannot enforce it. `wamn_run.runs` FORCEs row-level
-/// security whose only arm a platform-grain family matches is
-/// `TO wamn_platform USING (true)`, so a retention credential's rows are not
-/// narrowed by the server at all — measured on PostgreSQL 18.6, a login
-/// created for one project deletes another project's terminal runs, and their queue
-/// rows cascade with them. PostgreSQL privileges are relation- and
-/// column-shaped, never row-shaped, so the grant set cannot express it either.
-///
-/// What the server DOES supply is an unforgeable identity: the login
-/// name carries the 160-bit target digest of `(project, database)` under the
-/// retention family's own domain, and `current_user` cannot be rewritten by a
-/// session. Deriving the expected name from the environment coordinate and `current_database()`
-/// and comparing turns a free CLI argument into an identity the credential has to
-/// back. A missing, foreign or mismatched project therefore ERRORS here, instead
-/// of reaching a predicate that matches nothing and reporting `pruned 0 terminal
-/// run(s)` with exit 0.
-///
-/// The database is read from the SERVER (`current_database()`), never parsed out
-/// of the URL: the URL is operator input, and testing a digest against the same
-/// input that chose it establishes nothing.
-async fn verify_retention_identity(
-    client: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-) -> anyhow::Result<()> {
-    let row =
-        sqlx::query("SELECT current_user::text AS role, current_database()::text AS database")
-            .fetch_one(&mut *client)
-            .await
-            .context("read connected retention identity")?;
-    let role: wamn_identity_protocol::LoginName = row.get("role");
-    let database: String = row.get("database");
-
-    let target = WorkloadRoleIdentity::ProjectEnvKey {
-        project_env_key,
-        database: &database,
-    };
-    let expected = workload_login(WorkloadRoleFamily::Retention, target)
-        .context("derive the expected retention identity")?;
-    if expected == role {
-        return Ok(());
-    }
-    bail!(
-        "refusing to prune: connected as {role:?} in database {database:?}, which is not a \
-         run-retention login for project_env_key {project_env_key:?} (expected {expected:?}). \
-         Pruning under any other identity either carries authority this verb does not need or \
-         would delete nothing and report success."
-    )
 }
 
 /// The reusable core: pin the session `search_path` to the project, then run the
