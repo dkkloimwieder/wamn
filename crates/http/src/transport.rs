@@ -1,4 +1,4 @@
-//! Pinned HTTP transport with bounded admission, pooling, and response collection.
+//! Pinned HTTP transport with pooling and response collection.
 
 use std::{
     collections::HashMap,
@@ -6,7 +6,7 @@ use std::{
     fmt,
     net::SocketAddr,
     pin::Pin,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex},
     task::{Context, Poll},
     time::Duration,
 };
@@ -26,7 +26,6 @@ use rustls::pki_types::ServerName;
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
-    sync::{OwnedSemaphorePermit, Semaphore},
     time::{Instant, timeout_at},
 };
 use tokio_rustls::TlsConnector;
@@ -42,11 +41,6 @@ use super::network_policy;
 pub(crate) const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_HEADER_BYTES: usize = 32 * 1024;
 pub(crate) const MAX_HEADERS: usize = 100;
-const MAX_CLIENTS: usize = 128;
-const MAX_SOCKETS: usize = 64;
-const MAX_REQUESTS: usize = 32;
-const MAX_CONNECTION_SOCKETS: usize = 8;
-const MAX_CONNECTION_REQUESTS: usize = 8;
 const MAX_IDLE_SOCKETS: usize = 2;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -72,7 +66,7 @@ pub(crate) struct ClientIdentity {
     pub(crate) generation: i64,
 }
 
-/// Shares pinned clients and hard resource limits across host stores.
+/// Shares pinned clients across host stores.
 #[derive(Clone)]
 pub struct HttpTransport {
     inner: Arc<Inner>,
@@ -87,16 +81,12 @@ impl fmt::Debug for HttpTransport {
 
 struct Inner {
     state: Mutex<State>,
-    clients: Arc<Semaphore>,
-    sockets: Arc<Semaphore>,
-    requests: Arc<Semaphore>,
     tls: Arc<rustls::ClientConfig>,
 }
 
 #[derive(Default)]
 struct State {
     clients: HashMap<ClientKey, CachedClient>,
-    identities: HashMap<ConnectionIdentity, Weak<ConnectionQuota>>,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -119,15 +109,7 @@ struct CachedClient {
     used: Instant,
 }
 
-struct ConnectionQuota {
-    sockets: Arc<Semaphore>,
-    requests: Arc<Semaphore>,
-}
-
 struct ClientLife {
-    // Connection tasks, connecting futures, and actual sockets retain this lease.
-    _permit: OwnedSemaphorePermit,
-    quota: Arc<ConnectionQuota>,
     execution: Option<InvocationExecution>,
 }
 
@@ -152,9 +134,6 @@ impl HttpTransport {
         Self {
             inner: Arc::new(Inner {
                 state: Mutex::new(State::default()),
-                clients: Arc::new(Semaphore::new(MAX_CLIENTS)),
-                sockets: Arc::new(Semaphore::new(MAX_SOCKETS)),
-                requests: Arc::new(Semaphore::new(MAX_REQUESTS)),
                 tls: Arc::new(tls),
             }),
             invocation: None,
@@ -195,13 +174,7 @@ impl HttpTransport {
         request.headers_mut().insert(header::CONTENT_LENGTH, length);
         header_budget(request.headers(), (0, 0), Phase::BeforeDispatch)?;
 
-        let _global = acquire(&self.inner.requests, "HTTP request capacity exhausted")?;
-        let (http, life) = self.client(identity, target)?;
-        let _connection = acquire(
-            &life.quota.requests,
-            "HTTP connection request capacity exhausted",
-        )?;
-        // Admission precedes the only owned request-body copy.
+        let http = self.client(identity, target)?;
         let request = request.map(|body| Full::new(Bytes::copy_from_slice(body)));
         let mut phase = Phase::AwaitingHead;
         let send = timeout_at(deadline, async {
@@ -260,13 +233,7 @@ impl HttpTransport {
         let length = header::HeaderValue::from(request.body().len());
         request.headers_mut().insert(header::CONTENT_LENGTH, length);
         header_budget(request.headers(), (0, 0), Phase::BeforeDispatch)?;
-        let _request = acquire(&self.inner.requests, "HTTP request capacity exhausted")?;
         let life = Arc::new(ClientLife {
-            _permit: acquire(&self.inner.clients, "HTTP client capacity exhausted")?,
-            quota: Arc::new(ConnectionQuota {
-                sockets: Arc::new(Semaphore::new(1)),
-                requests: Arc::new(Semaphore::new(1)),
-            }),
             execution: self
                 .invocation
                 .as_ref()
@@ -275,7 +242,6 @@ impl HttpTransport {
         let endpoint = PinnedConnector {
             target,
             tls: Arc::clone(&self.inner.tls),
-            sockets: Arc::clone(&self.inner.sockets),
             life: Arc::clone(&life),
         };
         let http = Client::builder(ClientExecutor { life })
@@ -347,7 +313,7 @@ impl HttpTransport {
         &self,
         identity: ClientIdentity,
         target: Target,
-    ) -> Result<(HttpClient, Arc<ClientLife>), TransportError> {
+    ) -> Result<HttpClient, TransportError> {
         let mut state = self
             .inner
             .state
@@ -369,40 +335,9 @@ impl HttpTransport {
         };
         if let Some(client) = state.clients.get_mut(&key) {
             client.used = now;
-            return Ok((client.http.clone(), Arc::clone(&client.life)));
+            return Ok(client.http.clone());
         }
-        if self.inner.clients.available_permits() == 0 {
-            let oldest = state
-                .clients
-                .iter()
-                .min_by_key(|(_, client)| client.used)
-                .map(|(key, _)| key.clone());
-            if let Some(oldest) = oldest {
-                state.clients.remove(&oldest);
-            }
-        }
-        // Eviction does not grant capacity if a retired client's tasks still live.
-        let permit = acquire(&self.inner.clients, "HTTP client capacity exhausted")?;
-        state
-            .identities
-            .retain(|_, quota| quota.strong_count() != 0);
-        let quota = state
-            .identities
-            .get(&key.identity.connection)
-            .and_then(Weak::upgrade)
-            .unwrap_or_else(|| {
-                let quota = Arc::new(ConnectionQuota {
-                    sockets: Arc::new(Semaphore::new(MAX_CONNECTION_SOCKETS)),
-                    requests: Arc::new(Semaphore::new(MAX_CONNECTION_REQUESTS)),
-                });
-                state
-                    .identities
-                    .insert(key.identity.connection.clone(), Arc::downgrade(&quota));
-                quota
-            });
         let life = Arc::new(ClientLife {
-            _permit: permit,
-            quota,
             execution: self
                 .invocation
                 .as_ref()
@@ -411,7 +346,6 @@ impl HttpTransport {
         let connector = PinnedConnector {
             target: key.target.clone(),
             tls: Arc::clone(&self.inner.tls),
-            sockets: Arc::clone(&self.inner.sockets),
             life: Arc::clone(&life),
         };
         let http = Client::builder(ClientExecutor {
@@ -436,7 +370,7 @@ impl HttpTransport {
                 used: now,
             },
         );
-        Ok((http, life))
+        Ok(http)
     }
 }
 
@@ -510,15 +444,6 @@ impl StdError for TransportError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         self.source.as_deref().map(|source| source as _)
     }
-}
-
-fn acquire(
-    semaphore: &Arc<Semaphore>,
-    detail: &'static str,
-) -> Result<OwnedSemaphorePermit, TransportError> {
-    Arc::clone(semaphore).try_acquire_owned().map_err(|error| {
-        TransportError::new(ErrorType::Limit, Phase::BeforeDispatch, detail).with_source(error)
-    })
 }
 
 fn input(detail: &'static str) -> TransportError {
@@ -630,7 +555,6 @@ where
 struct PinnedConnector {
     target: Target,
     tls: Arc<rustls::ClientConfig>,
-    sockets: Arc<Semaphore>,
     life: Arc<ClientLife>,
 }
 
@@ -654,11 +578,6 @@ impl Service<Uri> for PinnedConnector {
             if authority != connector.target.authority.as_ref() {
                 return Err(input("HTTP connector authority mismatch"));
             }
-            let global = acquire(&connector.sockets, "HTTP socket capacity exhausted")?;
-            let connection = acquire(
-                &connector.life.quota.sockets,
-                "HTTP connection socket capacity exhausted",
-            )?;
             // Hyper can retain a connecting future. Its deadline still belongs to the invocation.
             let deadline = connector.life.execution.as_ref().map_or(
                 Instant::now() + REQUEST_TIMEOUT,
@@ -709,8 +628,6 @@ impl Service<Uri> for PinnedConnector {
                     io: TokioIo::new(stream),
                     http2,
                     peer,
-                    _global: global,
-                    _connection: connection,
                     _life: connector.life,
                 })
             })
@@ -773,12 +690,9 @@ impl AsyncWrite for Stream {
 }
 
 struct SocketIo {
-    // Fields drop in this order: actual socket, then permits, then client lease.
     io: TokioIo<Stream>,
     http2: bool,
     peer: SocketAddr,
-    _global: OwnedSemaphorePermit,
-    _connection: OwnedSemaphorePermit,
     _life: Arc<ClientLife>,
 }
 
@@ -820,6 +734,3 @@ impl Connection for SocketIo {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
