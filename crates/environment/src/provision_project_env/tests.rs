@@ -66,7 +66,6 @@ fn secret_writes_replace_links_without_following_or_sharing_them() {
 async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
     for (secret_namespace, disposable) in [(Some("hosts".to_owned()), None), (None, Some(true))] {
         let _error = provision_project_env(&ProvisionProjectEnvRequest {
-            changes: wamn_broker::Publisher::default(),
             org: "acme".parse().unwrap(),
             project: "billing".parse().unwrap(),
             env: "dev".parse().unwrap(),

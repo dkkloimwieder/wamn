@@ -152,7 +152,6 @@ impl Configuration {
                 stream_replicas: events.stream_replicas,
                 dup_window_secs: events.dup_window_secs,
             }),
-            auth_nats: Some(self.nats.connection()),
         })
     }
 }
@@ -232,7 +231,6 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         })
         .transpose()?;
     let transport = Arc::new(wamn_http::transport::HttpTransport::new()?);
-    let changes = wamn_broker::Publisher::connect(&config.nats.connection()).await?;
     let handlers = Arc::new(
         HostRouteDelivery::new(
             Arc::new(LoadedRelease::control_root()),
@@ -245,13 +243,11 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
                 administration: Some(config.administration_dir.clone()),
                 status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
                 org: config.org.clone(),
-                changes: changes.clone(),
             },
         )
         .with_control_authenticator(Arc::new(ControlRouteAuthenticator::new(verifier)))
         .with_control_execution(Arc::new(execution::Execution {
             org: config.org.clone(),
-            changes,
             worker: config.worker.clone(),
             platform_database: config.apply_database.clone(),
             event_observer: config.event_observer.as_ref().map(Nats::connection),

@@ -6,9 +6,6 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-
-use wamn_broker::auth_changes::AuthDrops;
-use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_catalog::HostAttachment;
 use wamn_identity_protocol::PrincipalId;
 
@@ -83,21 +80,12 @@ impl ControlRoutes<'_> {
         {
             return Err(super::denied(attachment));
         }
-        let mut drops = AuthDrops::default();
-        let mut connection_drops = ConnectionDrops::default();
         if operation == "connection.authorize" {
             let oauth = self.oauth.ok_or_else(|| {
                 Refusal::Failed(anyhow::anyhow!("OAuth authorization unavailable"))
             })?;
-            let context = administration::execute(
-                &mut transaction,
-                self.org,
-                operation,
-                payload,
-                &mut drops,
-                &mut connection_drops,
-            )
-            .await?;
+            let context =
+                administration::execute(&mut transaction, self.org, operation, payload).await?;
             let url = oauth
                 .authorize(&mut transaction, &context, *caller)
                 .await
@@ -106,15 +94,8 @@ impl ControlRoutes<'_> {
             return Ok(json!({"authorization_url":url}));
         }
         if attachment.route.type_.is_read() {
-            let mut result = administration::execute(
-                &mut transaction,
-                self.org,
-                operation,
-                payload,
-                &mut drops,
-                &mut connection_drops,
-            )
-            .await?;
+            let mut result =
+                administration::execute(&mut transaction, self.org, operation, payload).await?;
             if operation == "connection.get" && result["auth_type"] == "oauth2_authorization_code" {
                 result["redirect_uri"] = self
                     .oauth
@@ -219,30 +200,18 @@ impl ControlRoutes<'_> {
                 self.org,
                 operation,
                 payload,
-                &mut drops,
-                &mut connection_drops,
             )
             .await?
         } else {
-            administration::execute(
-                &mut transaction,
-                self.org,
-                operation,
-                payload,
-                &mut drops,
-                &mut connection_drops,
-            )
-            .await?
+            administration::execute(&mut transaction, self.org, operation, payload).await?
         };
         if let Some(principal) = result["principal_id"].as_str() {
-            drops.identity(&principal.parse::<PrincipalId>()?);
+            let _ = principal.parse::<PrincipalId>()?;
         }
         let credentials = result
             .as_object_mut()
             .and_then(|result| result.remove("credentials"));
         transaction.commit().await?;
-        self.changes.publish(drops).await;
-        self.changes.publish(connection_drops).await;
         let mut completed = Vec::new();
         for (mut target, (project, env)) in targets.into_iter().zip(&environments) {
             let projected = async {

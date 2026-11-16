@@ -36,7 +36,6 @@
 //!
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
-use wamn_broker::Publisher;
 mod connection_test;
 mod integration;
 mod operations;
@@ -48,16 +47,13 @@ use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-
-use wamn_broker::auth_changes::AuthDrops;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
 use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::application::{
-    ApplicationTarget, project_authority, require_platform_rows,
-    write_environment_status,
+    ApplicationTarget, project_authority, require_platform_rows, write_environment_status,
 };
 use wamn_platform_identity::control::{
     control_projects_page, is_org_admin, is_project_admin, org_projects_page,
@@ -71,7 +67,6 @@ use wamn_platform_identity::org::{
 };
 use wamn_platform_identity::paging::{ListPage, Order};
 use wamn_platform_identity::{IdentityError, IdentityRefusal, require_user_contact};
-use wamn_registry::project_env_key;
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -155,8 +150,6 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) worker: Option<&'a wamn_kubernetes::job::Worker>,
     pub(crate) operation_jobs: Option<&'a wamn_kubernetes::kubernetes_api::KubernetesApi>,
     pub(crate) org: &'a wamn_registry::OrgId,
-    /// Publishes each user row and status change of an environment.
-    pub(crate) changes: &'a Publisher,
     pub(crate) oauth: Option<&'a wamn_http::oauth_authorization::Authorization>,
     pub(crate) connection_health: Option<&'a crate::connection_health::ConnectionHealth>,
 }
@@ -398,21 +391,15 @@ impl ControlRoutes<'_> {
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 reactivate_org_membership(&mut transaction, &principal, self.org).await?;
-                let mut drops = AuthDrops::default();
-                drops.identity(&principal);
                 transaction.commit().await?;
-                self.changes.publish(drops).await;
                 Ok(json!({ "principal_id": principal.to_string().as_str(), "status": "active" }))
             }
             HostHandler::UserDeactivate => {
                 let principal = principal(payload)?;
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
-                let mut drops = AuthDrops::default();
-                deactivate_org_membership(&mut transaction, &principal, self.org, &mut drops)
-                    .await?;
+                deactivate_org_membership(&mut transaction, &principal, self.org).await?;
                 transaction.commit().await?;
-                self.changes.publish(drops).await;
                 let environments = self.environments(caller, None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
@@ -423,10 +410,7 @@ impl ControlRoutes<'_> {
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 grant_org_admin(&mut transaction, &principal, self.org).await?;
-                let mut drops = AuthDrops::default();
-                drops.identity(&principal);
                 transaction.commit().await?;
-                self.changes.publish(drops).await;
                 let environments = self.environments(caller, None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
@@ -436,10 +420,8 @@ impl ControlRoutes<'_> {
                 let principal = principal(payload)?;
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
-                let mut drops = AuthDrops::default();
-                revoke_org_admin(&mut transaction, &principal, self.org, &mut drops).await?;
+                revoke_org_admin(&mut transaction, &principal, self.org).await?;
                 transaction.commit().await?;
-                self.changes.publish(drops).await;
                 let environments = self.environments(caller, None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
@@ -579,10 +561,7 @@ impl ControlRoutes<'_> {
                     &request.env,
                 )
                 .await?;
-                let mut drops = AuthDrops::default();
-                drops.identity(&principal);
                 transaction.commit().await?;
-                self.changes.publish(drops).await;
                 let environment = [(request.project.clone(), request.env.clone())];
                 self.write_applications(&mut writer, attachment, caller, &principal, &environment)
                     .await?;
@@ -606,18 +585,15 @@ impl ControlRoutes<'_> {
                         Some(&request.env),
                     )
                     .await?;
-                let mut drops = AuthDrops::default();
                 revoke_member(
                     &mut transaction,
                     &principal,
                     self.org,
                     &request.project,
                     &request.env,
-                    &mut drops,
                 )
                 .await?;
                 transaction.commit().await?;
-                self.changes.publish(drops).await;
                 let environment = [(request.project.clone(), request.env.clone())];
                 self.write_applications(&mut writer, attachment, caller, &principal, &environment)
                     .await?;
@@ -637,10 +613,7 @@ impl ControlRoutes<'_> {
                     .await?;
                 grant_project_admin(&mut transaction, &principal, self.org, &request.project)
                     .await?;
-                let mut drops = AuthDrops::default();
-                drops.identity(&principal);
                 transaction.commit().await?;
-                self.changes.publish(drops).await;
                 let environments = self.environments(caller, Some(&request.project)).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
@@ -657,17 +630,9 @@ impl ControlRoutes<'_> {
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
-                let mut drops = AuthDrops::default();
-                revoke_project_admin(
-                    &mut transaction,
-                    &principal,
-                    self.org,
-                    &request.project,
-                    &mut drops,
-                )
-                .await?;
+                revoke_project_admin(&mut transaction, &principal, self.org, &request.project)
+                    .await?;
                 transaction.commit().await?;
-                self.changes.publish(drops).await;
                 let environments = self.environments(caller, Some(&request.project)).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
@@ -718,7 +683,6 @@ impl ControlRoutes<'_> {
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 create_project(&mut transaction, self.org, &project).await?;
-                let mut drops = AuthDrops::default();
                 for row in sqlx::query(
                     "SELECT principal_id FROM identity.project_roles WHERE org=$1 AND project=$2",
                 )
@@ -727,10 +691,9 @@ impl ControlRoutes<'_> {
                 .fetch_all(&mut *transaction)
                 .await?
                 {
-                    drops.identity(&row.get(0));
+                    let _principal: PrincipalId = row.get(0);
                 }
                 transaction.commit().await?;
-                self.changes.publish(drops).await;
                 Ok(json!({ "project": project }))
             }
             handler => Err(Refusal::Failed(anyhow::anyhow!(
@@ -782,10 +745,7 @@ impl ControlRoutes<'_> {
         let mut writer = self.writer.lock().await;
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
         invite_member(&mut transaction, &user.principal_id, self.org, &grants).await?;
-        let mut drops = AuthDrops::default();
-        drops.identity(&user.principal_id);
         transaction.commit().await?;
-        self.changes.publish(drops).await;
         let mut environments: std::collections::BTreeSet<(
             wamn_registry::ProjectId,
             wamn_registry::EnvName,
@@ -871,9 +831,8 @@ impl ControlRoutes<'_> {
         let logins = self.logins(environments)?;
         let mut completed: Vec<String> = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
-            let project_env_key = project_env_key(self.org, project, env);
-            match write_status(&url, &project_env_key, attachment, caller, status).await {
-                Ok(drops) => self.changes.publish(drops).await,
+            match write_status(&url, attachment, caller, status).await {
+                Ok(()) => {}
                 Err(error) => {
                     tracing::warn!(
                         error = format!("{error:#}"),
@@ -964,16 +923,14 @@ impl ControlRoutes<'_> {
         wamn_platform_identity::org::lock_membership(&mut system, principal, self.org).await?;
         let mut completed = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
-            let project_env_key = project_env_key(self.org, project, env);
             let target = ApplicationTarget {
                 org: self.org,
                 project,
                 env,
-                project_env_key: &project_env_key,
             };
             match write_application(&mut system, &url, target, attachment, caller, principal).await
             {
-                Ok(drops) => self.changes.publish(drops).await,
+                Ok(()) => {}
                 Err(error) => {
                     tracing::warn!(
                         error = format!("{error:#}"),
@@ -1137,8 +1094,7 @@ async fn status_with_counts(
 }
 
 /// One environment's application write, in its own transaction on its
-/// administration login. It returns the drops of the write, none when the
-/// database holds no platform rows.
+/// administration login.
 async fn write_application(
     system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     url: &str,
@@ -1146,31 +1102,29 @@ async fn write_application(
     attachment: &HostAttachment,
     caller: &PrincipalId,
     principal: &PrincipalId,
-) -> anyhow::Result<AuthDrops> {
+) -> anyhow::Result<()> {
     let mut client = wamn_postgres::connect(url).await?;
 
     let result = async {
         let mut transaction = client.begin().await?;
         sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)").bind(caller).bind(&attachment.operation).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
         require_platform_rows(&mut transaction).await?;
-        let mut drops = AuthDrops::default();
-        project_authority(system, &mut transaction, target, principal, &mut drops).await?;
+        project_authority(system, &mut transaction, target, principal).await?;
         transaction.commit().await?;
-        anyhow::Ok(drops)
+        anyhow::Ok(())
     }.await;
     drop(client);
     result
 }
 
 /// One environment's status row, in its own transaction on its
-/// administration login. It returns the drops of the write.
+/// administration login.
 async fn write_status(
     url: &str,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     status: EnvironmentStatus,
-) -> anyhow::Result<AuthDrops> {
+) -> anyhow::Result<()> {
     let mut client = wamn_postgres::connect(url)
         .await
         .context("connect the administration login")?;
@@ -1186,10 +1140,9 @@ async fn write_status(
         .await
         .map(|result| result.rows_affected())?;
         require_platform_rows(&mut transaction).await?;
-        let mut drops = AuthDrops::default();
-        write_environment_status(&mut transaction, project_env_key, status, &mut drops).await?;
+        write_environment_status(&mut transaction, status).await?;
         transaction.commit().await?;
-        anyhow::Ok(drops)
+        anyhow::Ok(())
     }
     .await;
     drop(client);

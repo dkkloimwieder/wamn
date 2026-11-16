@@ -126,9 +126,6 @@ pub struct ProvisionProjectEnvRequest {
     /// Operator authentication for PAT issuance through `wamn-identity`.
     pub pat_issuer: PatIssuerConfig,
 
-    /// Publisher for committed principal and project-role changes.
-    pub changes: wamn_broker::Publisher,
-
     /// Issue a management-author PAT and write its Kubernetes `Secret` JSON here.
     pub emit_management_author_pat_secret: Option<PathBuf>,
 
@@ -283,7 +280,6 @@ pub async fn provision_project_env(
                 &args.namespace,
                 args.emit_management_author_pat_secret.as_deref(),
                 args.emit_operator_pat_secret.as_deref(),
-                &args.changes,
             )
             .await?
         }

@@ -21,7 +21,6 @@ use wamn_identity_protocol::secret::{SecretToken, SecretType};
 use zeroize::Zeroizing;
 
 use crate::{AuthenticatedPrincipal, PrincipalId, decode_principal};
-use wamn_broker::auth_changes::AuthDrops;
 
 /// Maximum UTF-8 password input; at least 64 Unicode characters fit.
 pub const MAX_PASSWORD_BYTES: usize = 1024;
@@ -482,11 +481,9 @@ pub async fn reset_password(
     principal: &PrincipalId,
     secret: &str,
     password: Password,
-    drops: &mut AuthDrops,
 ) -> Result<(), PasswordError> {
     establish_password(client, work, principal, secret, password, RESET_PURPOSE).await?;
     // The reset revoked every login of the principal (store_password).
-    drops.identity(principal);
     Ok(())
 }
 
@@ -547,7 +544,7 @@ async fn store_password(
         .map(|result| result.rows_affected())
         .map_err(|source| database(&source))?;
         // reset_password records the drop of this revoke after the commit.
-        crate::password_login::revoke_all(&mut tx, principal, &mut AuthDrops::default())
+        crate::password_login::revoke_all(&mut tx, principal)
             .await
             .map_err(|source| infrastructure("reset revocation failed", source))?;
     } else {

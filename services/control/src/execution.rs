@@ -13,7 +13,6 @@ pub(crate) struct Execution {
     pub worker: wamn_kubernetes::job::Worker,
     pub platform_database: wamn_postgres::ConnectionConfig,
     pub event_observer: Option<wamn_broker::nats::PlatformNats>,
-    pub changes: wamn_broker::Publisher,
     pub administration: PathBuf,
     pub identity: wamn_identity_client::PatIssuerConfig,
     pub platform: Arc<Platform>,
@@ -64,7 +63,6 @@ impl wamn_execution_host::ControlExecution for Execution {
                 wamn_environment::provision_project_env::revoke_provisioning_pat(
                     &self.system_database,
                     &request.token_prefix,
-                    &self.changes,
                 )
                 .await?;
                 Ok(json!({"revoked":true}))
@@ -166,7 +164,6 @@ impl wamn_execution_host::ControlExecution for Execution {
                         system_database_url: self.system_database.clone(),
                         identity: self.identity.clone(),
                     },
-                    &self.changes,
                 )
                 .await?;
                 Ok(serde_json::to_value(token)?)

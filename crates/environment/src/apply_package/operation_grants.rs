@@ -9,7 +9,6 @@ use wamn_control_provision::operation_grants::{
 pub(super) async fn ensure_admin_role(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &wamn_registry::ProjectEnvKey,
-    drops: &mut wamn_broker::auth_changes::AuthDrops,
 ) -> anyhow::Result<bool> {
     sqlx::query(OPERATION_GRANT_LOCK_SQL)
         .bind(project_env_key)
@@ -31,8 +30,5 @@ pub(super) async fn ensure_admin_role(
         .await
         .map(|result| result.rows_affected())
         .context("create the admin role")?;
-    if written > 0 {
-        drops.project_env_key(project_env_key);
-    }
     Ok(written > 0)
 }

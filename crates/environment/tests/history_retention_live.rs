@@ -148,7 +148,6 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
         .await
         .unwrap(),
         component_source: None,
-        changes: wamn_broker::Publisher::default(),
         package: wamn_environment::apply_package::PackageRoot {
             path: package.to_path_buf(),
             artifact_digest: Some(

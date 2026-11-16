@@ -63,21 +63,16 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         &"dev".parse().unwrap(),
     )
     .await?;
-    let service = *wamn_platform_identity::create_service(
-        &mut authority,
-        "automation",
-        "Automation",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
-    )
-    .await?
-    .id();
+    let service =
+        *wamn_platform_identity::create_service(&mut authority, "automation", "Automation")
+            .await?
+            .id();
     wamn_platform_identity::assign_project_role(
         &mut authority,
         &service,
         &"fill".parse().unwrap(),
         &"fixture".parse().unwrap(),
         "project-admin",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
 
@@ -96,15 +91,8 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         org: &"fill".parse().unwrap(),
         project: &"fixture".parse().unwrap(),
         env: &"dev".parse().unwrap(),
-        project_env_key: &"fill--dev--fixture".parse().unwrap(),
     };
-    fill(
-        system.as_str(),
-        project.as_str(),
-        target,
-        &wamn_broker::Publisher::default(),
-    )
-    .await?;
+    fill(system.as_str(), project.as_str(), target).await?;
     let mut client = wamn_postgres::connect(project.as_str()).await?;
     for component in wamn_identity_protocol::PlatformComponent::ALL {
         let row = sqlx::query("SELECT type='platform' AND email=$2 AND created_by=$3 FROM platform.\"user\" WHERE id=$1").bind(component.principal_id()).bind(format!("{}@example.invalid",component.as_str())).bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id()).fetch_one(&mut client).await?;
@@ -123,13 +111,7 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         .bind(service.to_string())
         .fetch_one(&mut client)
         .await?;
-    fill(
-        system.as_str(),
-        project.as_str(),
-        target,
-        &wamn_broker::Publisher::default(),
-    )
-    .await?;
+    fill(system.as_str(), project.as_str(), target).await?;
     let preserved: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
         "SELECT created_at, updated_at FROM platform.\"user\" WHERE id=$1::text::uuid",
     )
@@ -137,7 +119,6 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     .fetch_one(&mut client)
     .await?;
     assert_eq!(preserved, service_row);
-    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     let mut authority = wamn_test_postgres::transaction(
         &mut authority_connection,
         &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
@@ -150,17 +131,10 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         &"fill".parse().unwrap(),
         &"fixture".parse().unwrap(),
         &"dev".parse().unwrap(),
-        &mut drops,
     )
     .await?;
     authority.commit().await?;
-    fill(
-        system.as_str(),
-        project.as_str(),
-        target,
-        &wamn_broker::Publisher::default(),
-    )
-    .await?;
+    fill(system.as_str(), project.as_str(), target).await?;
     let removed: bool = sqlx::query_scalar(
         "SELECT NOT EXISTS(SELECT FROM platform.\"user\" WHERE id=$1::text::uuid)",
     )

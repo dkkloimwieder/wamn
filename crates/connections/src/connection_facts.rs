@@ -4,12 +4,10 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
-use wamn_broker::Publisher;
 
 use anyhow::Context as _;
 use moka::policy::EvictionPolicy;
 use moka::sync::Cache;
-use wamn_broker::connection_changes::ConnectionDrops;
 
 use crate::connection_credentials::{
     ConnectionCredentials, ConnectionGeneration, IntegrationVersion,
@@ -17,9 +15,6 @@ use crate::connection_credentials::{
 use crate::connection_memory::{ConnectionFact, ConnectionMemory, EnvConnections, ReleaseFact};
 use crate::database::ProjectDatabase;
 use sqlx::Row as _;
-
-#[cfg(test)]
-mod tests;
 
 /// The number of entries of each bounded map.
 pub const MAP_ENTRIES: u64 = 1024;
@@ -55,7 +50,6 @@ impl std::fmt::Debug for Secret {
 pub struct ConnectionFacts {
     oauth_encryption: Option<Arc<crate::oauth_encryption::Envelope>>,
     memory: Arc<ConnectionMemory>,
-    changes: Publisher,
     reader: Arc<ConnectionCredentials>,
     postgres: std::sync::Weak<dyn ProjectDatabase>,
     project_env_key: wamn_registry::ProjectEnvKey,
@@ -83,7 +77,6 @@ impl ConnectionFacts {
     /// The host keeps PostgreSQL alive while it serves the project.
     pub fn new(
         memory: Arc<ConnectionMemory>,
-        changes: Publisher,
         reader: Arc<ConnectionCredentials>,
         postgres: &Arc<impl ProjectDatabase + 'static>,
         project_env_key: &wamn_registry::ProjectEnvKey,
@@ -94,7 +87,6 @@ impl ConnectionFacts {
         Self {
             oauth_encryption: None,
             memory,
-            changes,
             reader,
             postgres: database,
             project_env_key: project_env_key.to_owned(),
@@ -160,9 +152,6 @@ impl ConnectionFacts {
     /// Drop the secret and read the fact again from Postgres. A sender calls this
     /// once after the external system refuses the credential.
     pub async fn read_again(&self, id: &uuid::Uuid) -> anyhow::Result<Option<ConnectionFact>> {
-        let mut drops = ConnectionDrops::default();
-        drops.connection(&self.project_env_key, *id);
-        self.changes.publish(drops).await;
         let old = self
             .seen
             .lock()

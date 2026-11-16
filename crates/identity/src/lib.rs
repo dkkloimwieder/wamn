@@ -36,8 +36,6 @@ pub mod session_keys;
 pub mod session_token;
 pub mod transaction;
 
-use wamn_broker::auth_changes::AuthDrops;
-
 const INSERT_USER_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
     RETURNING id, type, subject, display_name, status";
@@ -580,7 +578,6 @@ pub async fn create_service(
     client: &mut sqlx::PgConnection,
     subject: &str,
     display_name: &str,
-    drops: &mut AuthDrops,
 ) -> Result<Principal, IdentityError> {
     let subject = canonical_subject(subject)?;
     let display_name = require_display_name(display_name)?;
@@ -591,7 +588,6 @@ pub async fn create_service(
         .await
         .map_err(|error| database_error(&error))?;
     let principal = decode_principal(&row)?;
-    drops.identity(principal.id());
     Ok(principal)
 }
 
@@ -633,7 +629,6 @@ pub async fn resolve_subject(
 pub async fn disable_principal(
     client: &mut sqlx::PgConnection,
     id: &PrincipalId,
-    drops: &mut AuthDrops,
 ) -> Result<Principal, IdentityError> {
     let row = sqlx::query(DISABLE_PRINCIPAL_SQL)
         .bind(id)
@@ -643,7 +638,6 @@ pub async fn disable_principal(
         .ok_or_else(|| {
             IdentityError::new(IdentityErrorType::NotFound, "principal does not exist")
         })?;
-    drops.identity(id);
     decode_principal(&row)
 }
 
@@ -755,7 +749,6 @@ fn decide_pat(
 pub async fn revoke_pat(
     client: &mut sqlx::PgConnection,
     prefix: &wamn_identity_protocol::pat_prefix::PatPrefix,
-    drops: &mut AuthDrops,
 ) -> Result<PatRecord, IdentityError> {
     let row = sqlx::query(REVOKE_PAT_SQL)
         .bind(prefix)
@@ -763,8 +756,7 @@ pub async fn revoke_pat(
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| IdentityError::new(IdentityErrorType::NotFound, "token does not exist"))?;
-    let principal: PrincipalId = row.try_get(6).map_err(|error| database_error(&error))?;
-    drops.identity(&principal);
+    let _principal: PrincipalId = row.try_get(6).map_err(|error| database_error(&error))?;
     decode_pat(&row)
 }
 
@@ -789,7 +781,6 @@ pub async fn assign_project_role(
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     role: &str,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let service: bool = sqlx::query(
         "SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1 AND type='service')",
@@ -804,7 +795,7 @@ pub async fn assign_project_role(
     }
 
     let role = role.parse::<RoleName>()?.to_string();
-    let written = sqlx::query(ASSIGN_PROJECT_ROLE_SQL)
+    sqlx::query(ASSIGN_PROJECT_ROLE_SQL)
         .bind(principal_id)
         .bind(org)
         .bind(project)
@@ -813,9 +804,6 @@ pub async fn assign_project_role(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    if written > 0 {
-        drops.identity(principal_id);
-    }
     Ok(())
 }
 
@@ -899,7 +887,6 @@ pub async fn revoke_project_env_membership(
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
-    drops: &mut AuthDrops,
 ) -> Result<bool, IdentityError> {
     org::lock_membership(client, principal_id, org).await?;
     let removed = sqlx::query(REVOKE_PROJECT_ENV_MEMBERSHIP_SQL)
@@ -911,7 +898,6 @@ pub async fn revoke_project_env_membership(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    drops.identity(principal_id);
     Ok(removed != 0)
 }
 

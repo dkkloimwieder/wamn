@@ -5,8 +5,6 @@ use sqlx::Row as _;
 use wamn_kubernetes::{Store, StoreVersion};
 
 use super::{ConnectionError, refuse};
-use wamn_broker::auth_changes::AuthDrops;
-use wamn_broker::connection_changes::ConnectionDrops;
 
 fn store_error(source: wamn_kubernetes::Error) -> ConnectionError {
     ConnectionError {
@@ -22,19 +20,8 @@ pub async fn execute(
     org: &wamn_registry::OrgId,
     operation: &str,
     payload: &str,
-    drops: &mut AuthDrops,
-    connections: &mut ConnectionDrops,
 ) -> Result<Value, ConnectionError> {
-    execute_in(
-        tx,
-        org,
-        operation,
-        payload,
-        (drops, connections),
-        None,
-        None,
-    )
-    .await
+    execute_in(tx, org, operation, payload, None, None).await
 }
 
 /// The store injection point for administration tests.
@@ -43,20 +30,9 @@ pub async fn execute_with_store(
     org: &wamn_registry::OrgId,
     operation: &str,
     payload: &str,
-    drops: &mut AuthDrops,
-    connections: &mut ConnectionDrops,
     store: Option<&dyn Store>,
 ) -> Result<Value, ConnectionError> {
-    execute_in(
-        tx,
-        org,
-        operation,
-        payload,
-        (drops, connections),
-        store,
-        None,
-    )
-    .await
+    execute_in(tx, org, operation, payload, store, None).await
 }
 
 /// Execute a connection write against every version retained by live releases.
@@ -66,19 +42,8 @@ pub async fn execute_in_environment(
     org: &wamn_registry::OrgId,
     operation: &str,
     payload: &str,
-    drops: &mut AuthDrops,
-    connections: &mut ConnectionDrops,
 ) -> Result<Value, ConnectionError> {
-    execute_in(
-        tx,
-        org,
-        operation,
-        payload,
-        (drops, connections),
-        None,
-        Some(environment),
-    )
-    .await
+    execute_in(tx, org, operation, payload, None, Some(environment)).await
 }
 
 async fn execute_in(
@@ -86,7 +51,6 @@ async fn execute_in(
     org: &wamn_registry::OrgId,
     operation: &str,
     payload: &str,
-    (drops, connections): (&mut AuthDrops, &mut ConnectionDrops),
     store: Option<&dyn Store>,
     environment: Option<&mut sqlx::Transaction<'_, sqlx::Postgres>>,
 ) -> Result<Value, ConnectionError> {
@@ -104,7 +68,6 @@ async fn execute_in(
             org,
             operation,
             (request.clone(), credential),
-            drops,
             store,
             environment,
         )
@@ -112,67 +75,16 @@ async fn execute_in(
     } else {
         configure(tx, org, operation, &request).await?
     };
-    record_connection_drops(org, operation, &request, &mut result, connections);
-    Ok(result)
-}
-
-/// Record the memory key of each connection a committed write changes
-/// (docs/architecture/execution.md#connection-memory). The integration
-/// writers return the connections of the integration in every environment,
-/// which the route does not show. A write, copy or delete can create or
-/// remove a connection, so it also records the environment's connection map.
-/// An integration delete changes no map, because it refuses while the
-/// integration has a connection.
-fn record_connection_drops(
-    org: &wamn_registry::OrgId,
-    operation: &str,
-    request: &Value,
-    result: &mut Value,
-    connections: &mut ConnectionDrops,
-) {
-    let Some(project) = request["project"]
+    if request["project"]
         .as_str()
         .and_then(|project| project.parse::<wamn_registry::ProjectId>().ok())
-    else {
-        return;
-    };
-    if matches!(
-        operation,
-        "connection.write" | "connection.copy" | "connection.delete"
-    ) && let Some(env) = result["env"]
-        .as_str()
-        .and_then(|env| env.parse::<wamn_registry::EnvName>().ok())
+        .is_some()
+        && matches!(operation, "integration.enable" | "integration.disable")
+        && let Some(result) = result.as_object_mut()
     {
-        connections.connections(&wamn_registry::project_env_key(org, &project, &env));
+        let _ = result.remove("connections");
     }
-    let mut record = |env: &Value, id: &Value| {
-        if let (Some(env), Some(id)) = (
-            env.as_str()
-                .and_then(|env| env.parse::<wamn_registry::EnvName>().ok()),
-            id.as_str().and_then(|id| id.parse::<uuid::Uuid>().ok()),
-        ) {
-            connections.connection(&wamn_registry::project_env_key(org, &project, &env), id);
-        }
-    };
-    match operation {
-        "connection.write"
-        | "connection.copy"
-        | "connection.set_credential"
-        | "connection.enable"
-        | "connection.disable"
-        | "connection.delete" => record(&result["env"], &result["id"]),
-        "integration.enable" | "integration.disable" => {
-            if let Some(Value::Array(rows)) = result
-                .as_object_mut()
-                .and_then(|result| result.remove("connections"))
-            {
-                for row in &rows {
-                    record(&row["env"], &row["id"]);
-                }
-            }
-        }
-        _ => {}
-    }
+    Ok(result)
 }
 
 /// Validate the non-secret request shape before any database call.
@@ -326,7 +238,6 @@ async fn generation(
     org: &wamn_registry::OrgId,
     operation: &str,
     (mut request, credential): (Value, Option<Value>),
-    drops: &mut AuthDrops,
     store: Option<&dyn Store>,
     environment: Option<&mut sqlx::Transaction<'_, sqlx::Postgres>>,
 ) -> Result<Value, ConnectionError> {
@@ -437,17 +348,15 @@ async fn generation(
         }
     }
     let result = result?;
-    drops.identity(
-        &context["principal_id"]
-            .as_str()
-            .expect("database principal")
-            .parse::<wamn_identity_protocol::PrincipalId>()
-            .map_err(|source| ConnectionError {
-                code: "invalid_input",
-                field: "principal_id",
-                source: Some(Box::new(source)),
-            })?,
-    );
+    let _ = context["principal_id"]
+        .as_str()
+        .expect("database principal")
+        .parse::<wamn_identity_protocol::PrincipalId>()
+        .map_err(|source| ConnectionError {
+            code: "invalid_input",
+            field: "principal_id",
+            source: Some(Box::new(source)),
+        })?;
     Ok(result)
 }
 

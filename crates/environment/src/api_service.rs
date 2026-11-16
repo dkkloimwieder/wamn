@@ -3,7 +3,6 @@
 use anyhow::{Context as _, ensure};
 use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
-use wamn_broker::{Publisher, auth_changes::AuthDrops};
 use wamn_identity_client::{PatClient, PatIssuerConfig};
 use wamn_identity_protocol::RoleName;
 use wamn_platform_identity::PrincipalStatus;
@@ -35,7 +34,6 @@ impl std::fmt::Debug for Request {
 /// Retrying a partial creation reuses its identity and grants.
 pub async fn create(
     request: &Request,
-    changes: &Publisher,
 ) -> anyhow::Result<wamn_identity_protocol::wire::PatResponse> {
     wamn_control_provision::validate_project_env(&request.org, &request.project, &request.env)?;
     ensure!(
@@ -90,7 +88,6 @@ pub async fn create(
         &mut system,
         &subject,
         &request.display_name,
-        changes,
     )
     .await?;
     ensure!(
@@ -106,7 +103,6 @@ pub async fn create(
     ))
     .execute(&mut *tx)
     .await?;
-    let mut drops = AuthDrops::default();
     // Existing service rows and grants stay. This makes a retry after an issuer failure safe.
     let principal_id = principal.id();
     let present: bool = sqlx::query(
@@ -119,13 +115,11 @@ pub async fn create(
     if !present {
         write_service(
             &mut tx,
-            &key,
             ApplicationUser {
                 principal_id: principal.id(),
                 email: &subject,
                 display_name: principal.display_name(),
             },
-            &mut drops,
         )
         .await?;
     }
@@ -139,12 +133,10 @@ pub async fn create(
                 role: role.as_str(),
                 grant: true,
             },
-            &mut drops,
         )
         .await?;
     }
     tx.commit().await?;
-    changes.publish(drops).await;
     let token = issuer
         .issue(principal.id(), &request.name, request.lifetime)
         .await?;

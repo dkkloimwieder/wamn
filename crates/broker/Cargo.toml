@@ -9,8 +9,6 @@ test-util = []
 
 [dependencies]
 wamn-catalog.workspace = true
-wamn-identity-protocol = { workspace = true }
-wamn-digest.workspace = true
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream", "kv", "server_2_10", "server_2_11", "server_2_12"] }
 base64 = { workspace = true }
@@ -20,7 +18,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "time"] }
 tracing = { workspace = true }
-uuid = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-kubernetes = { workspace = true }

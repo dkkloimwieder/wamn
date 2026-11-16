@@ -1,11 +1,8 @@
 //! Provisioning PAT issuance, revocation, and Secret documents.
-
-use wamn_broker::Publisher;
 pub(super) mod plan;
 pub(super) use plan::render_pat_secret;
 
 use anyhow::Context as _;
-use wamn_broker::auth_changes::AuthDrops;
 
 use super::{
     Client, Duration, IdentityErrorType, PatClient, Path, PathBuf, Principal, PrincipalStatus,
@@ -38,7 +35,6 @@ pub(super) async fn issue_pat_secrets(
     namespace: &str,
     management_author_path: Option<&Path>,
     operator_path: Option<&Path>,
-    changes: &Publisher,
 ) -> anyhow::Result<Vec<IssuedPatSecret>> {
     let mut client = wamn_postgres::connect(system_url)
         .await
@@ -55,23 +51,14 @@ pub(super) async fn issue_pat_secrets(
                     namespace,
                     MANAGEMENT_AUTHOR,
                     path,
-                    changes,
                 )
                 .await?,
             );
         }
         if let Some(path) = operator_path {
             issued.push(
-                issue_pat_secret(
-                    &mut client,
-                    pat_client,
-                    triple,
-                    namespace,
-                    OPERATOR,
-                    path,
-                    changes,
-                )
-                .await?,
+                issue_pat_secret(&mut client, pat_client, triple, namespace, OPERATOR, path)
+                    .await?,
             );
         }
         Ok::<_, anyhow::Error>(issued)
@@ -88,9 +75,8 @@ async fn issue_pat_secret(
     namespace: &str,
     purpose: PatPurpose,
     path: &Path,
-    changes: &Publisher,
 ) -> anyhow::Result<IssuedPatSecret> {
-    let (principal, issued) = mint_pat(client, pat_client, triple, purpose, changes).await?;
+    let (principal, issued) = mint_pat(client, pat_client, triple, purpose).await?;
     let secret = render_pat_secret(
         triple,
         namespace,
@@ -112,22 +98,20 @@ pub async fn mint_pat(
     pat_client: &PatClient,
     triple: &Triple,
     purpose: PatPurpose,
-    changes: &Publisher,
 ) -> anyhow::Result<(Principal, wamn_identity_protocol::wire::PatResponse)> {
     let subject = purpose.subject(triple);
     let display_name = purpose.display_name(triple);
-    let principal = resolve_or_create_service(client, &subject, &display_name, changes).await?;
+    let principal = resolve_or_create_service(client, &subject, &display_name).await?;
     anyhow::ensure!(
         principal.status() == PrincipalStatus::Active,
         "service principal {subject:?} is disabled"
     );
     let mut transaction = provisioning_transaction(client).await?;
-    let drops = assign_pat_role(&mut transaction, &principal, triple, purpose).await?;
+    assign_pat_role(&mut transaction, &principal, triple, purpose).await?;
     transaction
         .commit()
         .await
         .with_context(|| format!("commit {} role", purpose.role))?;
-    changes.publish(drops).await;
 
     let issued = pat_client
         .issue(principal.id(), purpose.purpose, PAT_TTL)
@@ -151,37 +135,24 @@ pub async fn assign_pat_role(
     principal: &Principal,
     triple: &Triple,
     purpose: PatPurpose,
-) -> anyhow::Result<AuthDrops> {
-    let mut drops = AuthDrops::default();
+) -> anyhow::Result<()> {
     assign_project_role(
         transaction,
         principal.id(),
         &triple.org,
         &triple.project,
         purpose.role,
-        &mut drops,
     )
     .await
     .with_context(|| format!("assign {} role", purpose.role))?;
-    Ok(drops)
+    Ok(())
 }
 
 pub async fn resolve_or_create_service(
     client: &mut Client,
     subject: &str,
     display_name: &str,
-    changes: &Publisher,
 ) -> anyhow::Result<Principal> {
-    let (principal, drops) = resolve_or_create_service_drops(client, subject, display_name).await?;
-    changes.publish(drops).await;
-    Ok(principal)
-}
-
-async fn resolve_or_create_service_drops(
-    client: &mut Client,
-    subject: &str,
-    display_name: &str,
-) -> anyhow::Result<(Principal, AuthDrops)> {
     let mut transaction = provisioning_transaction(client).await?;
     if let Some(principal) = resolve_subject(&mut transaction, PrincipalType::Service, subject)
         .await
@@ -191,17 +162,16 @@ async fn resolve_or_create_service_drops(
             .commit()
             .await
             .context("commit service principal lookup")?;
-        return Ok((principal, AuthDrops::default()));
+        return Ok(principal);
     }
 
-    let mut drops = AuthDrops::default();
-    match create_service(&mut transaction, subject, display_name, &mut drops).await {
+    match create_service(&mut transaction, subject, display_name).await {
         Ok(principal) => {
             transaction
                 .commit()
                 .await
                 .context("commit service principal")?;
-            Ok((principal, drops))
+            Ok(principal)
         }
         Err(error) if error.error_type() == IdentityErrorType::Conflict => {
             transaction
@@ -217,7 +187,7 @@ async fn resolve_or_create_service_drops(
                 .commit()
                 .await
                 .context("commit service principal lookup")?;
-            Ok((principal, AuthDrops::default()))
+            Ok(principal)
         }
         Err(error) => Err(error).context("create service principal"),
     }
@@ -226,7 +196,6 @@ async fn resolve_or_create_service_drops(
 pub async fn revoke_provisioning_pat(
     system_url: &str,
     prefix: &wamn_identity_protocol::pat_prefix::PatPrefix,
-    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<()> {
     let mut client = wamn_postgres::connect(system_url)
         .await
@@ -234,21 +203,16 @@ pub async fn revoke_provisioning_pat(
 
     let result = async {
         let mut transaction = provisioning_transaction(&mut client).await?;
-        let mut drops = wamn_broker::auth_changes::AuthDrops::default();
-        revoke_pat(&mut transaction, prefix, &mut drops)
+        revoke_pat(&mut transaction, prefix)
             .await
             .context("revoke PAT by prefix")?;
         transaction
             .commit()
             .await
             .context("commit PAT revocation")?;
-        changes.publish(drops).await;
         Ok::<(), anyhow::Error>(())
     }
     .await;
     drop(client);
     result
 }
-
-#[cfg(test)]
-mod tests;

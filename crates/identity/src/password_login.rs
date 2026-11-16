@@ -16,7 +16,6 @@ use zeroize::Zeroizing;
 use crate::{
     AuthenticatedPrincipal, IdentityError, IdentityErrorType, PrincipalId, resolve_principal,
 };
-use wamn_broker::auth_changes::AuthDrops;
 
 /// Maximum login duration from password authentication, in seconds.
 pub const ABSOLUTE_LIFETIME: i64 = 8 * 60 * 60;
@@ -183,7 +182,6 @@ pub async fn authenticate_renewal(
     issuer: &str,
     audience: &str,
     secret: &str,
-    drops: &mut AuthDrops,
 ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
     sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')")
         .bind(principal)
@@ -203,7 +201,7 @@ pub async fn authenticate_renewal(
         return Ok(None);
     }
     if consumed {
-        revoke_family(tx, &login, drops).await?;
+        revoke_family(tx, &login).await?;
         return Ok(None);
     }
     if !usable {
@@ -227,7 +225,6 @@ pub async fn rotate_login(
     issuer: &str,
     audience: &str,
     secret: &str,
-    drops: &mut AuthDrops,
 ) -> Result<Option<Renewal>, IdentityError> {
     let Some(digest) = SecretToken::parse(SecretType::Renewal, secret)
         .ok()
@@ -239,7 +236,7 @@ pub async fn rotate_login(
         return Ok(None);
     };
     if consumed {
-        revoke_family(tx, &login, drops).await?;
+        revoke_family(tx, &login).await?;
         return Ok(None);
     }
     if !usable {
@@ -259,10 +256,8 @@ pub async fn rotate_login(
 async fn revoke_family(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     login: &Login,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     sqlx::query("UPDATE identity.password_logins SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1::text::uuid").bind(&login.id).execute(&mut **tx).await.map(|result| result.rows_affected()).map_err(|error| database(&error))?;
-    drops.identity(&login.principal);
     Ok(())
 }
 
@@ -272,14 +267,13 @@ pub async fn revoke_login(
     issuer: &str,
     audience: &str,
     secret: &str,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     if let Some(digest) = SecretToken::parse(SecretType::Renewal, secret)
         .ok()
         .map(|token| token.digest())
         && let Some((login, _, _)) = lookup(tx, issuer, audience, &digest).await?
     {
-        revoke_family(tx, &login, drops).await?;
+        revoke_family(tx, &login).await?;
     }
     Ok(())
 }
@@ -290,11 +284,9 @@ pub async fn revoke_login(
 pub async fn revoke_all(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     principal: &PrincipalId,
-    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     lock_principal(tx, principal).await?;
     sqlx::query("UPDATE identity.password_logins SET revoked_at=clock_timestamp() WHERE principal_id=$1 AND revoked_at IS NULL").bind(principal).execute(&mut **tx).await.map(|result| result.rows_affected()).map_err(|error| database(&error))?;
-    drops.identity(principal);
     Ok(())
 }
 

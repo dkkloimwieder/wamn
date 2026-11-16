@@ -12,8 +12,6 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_broker::auth_changes::AuthDrops;
-use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_platform_identity::connections::{ConnectionError, administration};
 
 use super::Platform;
@@ -57,8 +55,6 @@ pub async fn write(
             let mut writes = Writes {
                 tx: &mut tx,
                 org: &document.org,
-                auth: AuthDrops::default(),
-                drops: ConnectionDrops::default(),
             };
             let mut lines = Vec::new();
             for name in document.integrations.keys() {
@@ -107,11 +103,7 @@ pub async fn write(
                 writes.run("connection.write", &request).await?;
                 lines.push(format!("wrote connection {name}"));
             }
-            let Writes { auth, drops, .. } = writes;
             tx.commit().await.context("commit the connection writes")?;
-            let changes = platform.auth_changes().await?;
-            changes.publish(auth).await;
-            changes.publish(drops).await;
             Ok(lines)
         })
         .await;
@@ -130,21 +122,11 @@ fn read(documents: &Path, file: &str) -> anyhow::Result<Value> {
 struct Writes<'a, 'c> {
     tx: &'a mut sqlx::Transaction<'c, sqlx::Postgres>,
     org: &'a wamn_registry::OrgId,
-    auth: AuthDrops,
-    drops: ConnectionDrops,
 }
 
 impl Writes<'_, '_> {
     async fn call(&mut self, operation: &str, request: &Value) -> Result<Value, ConnectionError> {
-        administration::execute(
-            self.tx,
-            self.org,
-            operation,
-            &request.to_string(),
-            &mut self.auth,
-            &mut self.drops,
-        )
-        .await
+        administration::execute(self.tx, self.org, operation, &request.to_string()).await
     }
 
     async fn run(&mut self, operation: &str, request: &Value) -> anyhow::Result<Value> {

@@ -10,7 +10,6 @@ pub async fn fill(
     system_url: &str,
     project_url: &str,
     target: ApplicationTarget<'_>,
-    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<()> {
     let mut system = wamn_postgres::connect(system_url).await?;
     let mut system = system.begin().await?;
@@ -23,7 +22,6 @@ pub async fn fill(
     let mut project = wamn_postgres::connect(project_url).await?;
     let mut project = project.begin().await?;
     fill_platform(&mut project, &domain).await?;
-    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     let mut principals = BTreeSet::new();
     for row in sqlx::query("SELECT DISTINCT p.id, p.subject, p.display_name FROM identity.project_roles r JOIN identity.principals p ON p.id=r.principal_id WHERE r.org=$1 AND r.project=$2 AND p.type='service' AND p.status='active'")
         .bind(target.org).bind(target.project).fetch_all(&mut *system).await? {
@@ -33,7 +31,7 @@ pub async fn fill(
         let present: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM platform.\"user\" WHERE id=$1)")
             .bind(principal_id).fetch_one(&mut *project).await?;
         if !present {
-            application::write_service(&mut project, target.project_env_key, ApplicationUser { principal_id: &principal_id, email: &format!("{subject}@{domain}"), display_name: &display_name }, &mut drops).await?;
+            application::write_service(&mut project, ApplicationUser { principal_id: &principal_id, email: &format!("{subject}@{domain}"), display_name: &display_name }).await?;
         }
         principals.insert(principal_id);
     }
@@ -55,11 +53,10 @@ pub async fn fill(
         .await?,
     );
     for id in principals {
-        application::project_authority(&mut system, &mut project, target, &id, &mut drops).await?;
+        application::project_authority(&mut system, &mut project, target, &id).await?;
     }
     project.commit().await?;
     system.commit().await?;
-    changes.publish(drops).await;
     Ok(())
 }
 

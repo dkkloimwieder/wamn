@@ -5,14 +5,12 @@ use std::time::Duration;
 
 use serde_json::json;
 use sqlx::PgConnection as Client;
-use wamn_broker::{auth_changes::AuthDrops, connection_changes::ConnectionDrops};
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_environment::{
     environment::delete::delete_registry_rows, provision_project_env::provisioning_transaction,
 };
 use wamn_platform_identity::connections::administration;
 use wamn_registry::Triple;
-
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let client = wamn_postgres::connect(url).await?;
@@ -61,8 +59,6 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         .await
         .map(drop)?;
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
-    let mut auth = AuthDrops::default();
-    let mut changes = ConnectionDrops::default();
     for (operation, request) in [
         (
             "integration.write",
@@ -78,8 +74,6 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
             &"acme".parse().unwrap(),
             operation,
             &request.to_string(),
-            &mut auth,
-            &mut changes,
             Some(&store),
         )
         .await?;

@@ -2,8 +2,6 @@
 
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
-
-use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{platform_principals_sql, test_database};
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::application::{ApplicationTarget, project_authority};
@@ -77,13 +75,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
     let target = user;
     let removal = tokio::spawn(async move {
         let mut tx = second.begin().await?;
-        deactivate_org_membership(
-            &mut tx,
-            &target,
-            &"acme".parse().unwrap(),
-            &mut AuthDrops::default(),
-        )
-        .await?;
+        deactivate_org_membership(&mut tx, &target, &"acme".parse().unwrap()).await?;
         tx.commit().await?;
         anyhow::Ok(second)
     });
@@ -108,13 +100,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
 
     activate_org_membership(&mut first, &user, &"acme".parse().unwrap()).await?;
     let mut tx = first.begin().await?;
-    deactivate_org_membership(
-        &mut tx,
-        &user,
-        &"acme".parse().unwrap(),
-        &mut AuthDrops::default(),
-    )
-    .await?;
+    deactivate_org_membership(&mut tx, &user, &"acme".parse().unwrap()).await?;
     let target = user;
     let grant = tokio::spawn(async move {
         let mut tx = second.begin().await?;
@@ -242,19 +228,12 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
     .execute(&mut target)
     .await
     .map(drop)?;
-    let service = create_service(
-        &mut system,
-        "operator-test",
-        "Operator",
-        &mut AuthDrops::default(),
-    )
-    .await?;
+    let service = create_service(&mut system, "operator-test", "Operator").await?;
     let principal: PrincipalId = *service.id();
     let coordinate = ApplicationTarget {
         org: &"acme".parse().unwrap(),
         project: &"billing".parse().unwrap(),
         env: &"dev".parse().unwrap(),
-        project_env_key: &"acme--dev--billing".parse().unwrap(),
     };
     for expected in [true, false] {
         let mut tx = system.begin().await?;
@@ -265,7 +244,6 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
                 &"acme".parse().unwrap(),
                 &"billing".parse().unwrap(),
                 "project-admin",
-                &mut AuthDrops::default(),
             )
             .await?;
         } else {
@@ -278,14 +256,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
         tx.commit().await?;
         let mut authority = system.begin().await?;
         let mut application = target.begin().await?;
-        project_authority(
-            &mut authority,
-            &mut *application,
-            coordinate,
-            &principal,
-            &mut AuthDrops::default(),
-        )
-        .await?;
+        project_authority(&mut authority, &mut *application, coordinate, &principal).await?;
         application.commit().await?;
         authority.commit().await?;
         let admin: bool = sqlx::query("SELECT EXISTS(SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')").bind(&principal.to_string().as_str()).fetch_one(&mut target).await?.get(0);
@@ -333,7 +304,6 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
     .map(drop)?;
     let actor: PrincipalId = "a5500000-0000-4000-8000-000000000001".parse()?;
     let target: PrincipalId = "a5500000-0000-4000-8000-000000000002".parse()?;
-    let mut drops = AuthDrops::default();
     let mut tx = client.begin().await?;
     for (principal, email) in [
         (&actor, "actor@example.test"),
@@ -341,24 +311,16 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
     ] {
         write_user(
             &mut tx,
-            &"test--dev--project".parse().unwrap(),
             ApplicationUser {
                 principal_id: principal,
                 email,
                 display_name: email,
             },
-            &mut drops,
         )
         .await?;
     }
     for role in ["delegated", "reader"] {
-        create_role(
-            &mut tx,
-            &"test--dev--project".parse().unwrap(),
-            role,
-            &mut drops,
-        )
-        .await?;
+        create_role(&mut tx, role).await?;
     }
     mutate_grant(
         &mut tx,
@@ -369,7 +331,6 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
             role: "delegated",
             grant: true,
         },
-        &mut drops,
     )
     .await?;
     mutate_grant(
@@ -381,7 +342,6 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
             reference: "example:item/read",
             grant: true,
         },
-        &mut drops,
     )
     .await?;
     for grant in [true, false] {
@@ -394,7 +354,6 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
                 role: "admin",
                 grant,
             },
-            &mut drops,
         )
         .await
         .expect_err("direct admin mutation refuses");
@@ -412,7 +371,6 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
             reference: "example:item/read",
             grant: true,
         },
-        &mut drops,
     )
     .await?;
     for reference in ["example:item/write", "wamn-control:permission/grant"] {
@@ -425,7 +383,6 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
                 reference,
                 grant: true,
             },
-            &mut drops,
         )
         .await
         .expect_err("unheld or fixed operation refuses");

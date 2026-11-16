@@ -30,7 +30,6 @@ pub async fn configure(
         )
         .await?;
         let outcome = provision_project_env::provision_project_env(&ProvisionProjectEnvRequest {
-            changes: platform.auth_changes().await?,
             org: triple.org.clone(),
             project: triple.project.clone(),
             env: triple.env.clone(),
@@ -92,7 +91,6 @@ pub async fn configure(
             serde_json::json!({"bootstrap":null}),
         )
         .await?;
-        let key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
         wamn_platform_identity::environment::fill(
             system_owner,
             &owner,
@@ -100,9 +98,7 @@ pub async fn configure(
                 org: &triple.org,
                 project: &triple.project,
                 env: &triple.env,
-                project_env_key: &key,
             },
-            &platform.auth_changes().await?,
         )
         .await?;
         crate::provision_project_env::workload::provision(

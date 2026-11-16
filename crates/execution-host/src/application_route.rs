@@ -18,14 +18,12 @@
 //! the workflow names.
 
 use std::collections::{BTreeMap, BTreeSet};
-use wamn_broker::Publisher;
 use wamn_events::admission::{ManualRunAdmission, ManualRunAdmitted};
 
 use crate::number_counter::{CounterSet, CounterSetRefusal};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection as Client;
-use wamn_broker::auth_changes::AuthDrops;
 use wamn_catalog::{
     HostAttachment, HostHandler, HostRouteAuthority, condition_workflow_document,
     resolve_workflow_components, sealed_operation_reference,
@@ -48,8 +46,6 @@ use crate::control_route::{Refusal, parse};
 pub(crate) struct ApplicationRoutes<'a> {
     pub(crate) postgres: &'a WamnPostgres,
     pub(crate) project: &'a wamn_registry::ProjectId,
-    /// Publishes each role or permission change.
-    pub(crate) changes: &'a Publisher,
     pub(crate) release: &'a LoadedRelease,
     /// The identity reader of `wamn_system` and the org, for the covering
     /// fact of `user.list` and the covering test of an `admin` revoke.
@@ -294,14 +290,8 @@ impl ApplicationRoutes<'_> {
                 .await;
         }
         let project_env_key = &self.release.target().project_env_key;
-        let mut drops = AuthDrops::default();
-        let result = self
-            .serve(attachment, principal, payload, project_env_key, &mut drops)
-            .await;
-        if result.is_ok() && !drops.is_empty() {
-            self.changes.publish(drops).await;
-        }
-        result
+        self.serve(attachment, principal, payload, project_env_key)
+            .await
     }
 
     async fn serve(
@@ -310,7 +300,6 @@ impl ApplicationRoutes<'_> {
         principal: &PrincipalId,
         payload: &str,
         project_env_key: &wamn_registry::ProjectEnvKey,
-        drops: &mut AuthDrops,
     ) -> Result<Value, Refusal> {
         match attachment.route.handler {
             HostHandler::ApplicationUserList => {
@@ -350,8 +339,7 @@ impl ApplicationRoutes<'_> {
             HostHandler::RoleCreate => {
                 let request: RoleRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    let created =
-                        create_role(client, project_env_key, &request.role, drops).await?;
+                    let created = create_role(client, &request.role).await?;
                     Ok(json!({ "created": created }))
                 })
                 .await
@@ -359,8 +347,7 @@ impl ApplicationRoutes<'_> {
             HostHandler::RoleDelete => {
                 let request: RoleRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    let deleted =
-                        delete_role(client, project_env_key, &request.role, drops).await?;
+                    let deleted = delete_role(client, &request.role).await?;
                     Ok(json!({ "deleted": deleted }))
                 })
                 .await
@@ -389,7 +376,6 @@ impl ApplicationRoutes<'_> {
                             reference: request.operation.as_str(),
                             grant: true,
                         },
-                        drops,
                     )
                     .await?;
                     Ok(json!({ "rows_added": outcome.rows_added }))
@@ -408,7 +394,6 @@ impl ApplicationRoutes<'_> {
                             reference: request.operation.as_str(),
                             grant: false,
                         },
-                        drops,
                     )
                     .await?;
                     Ok(json!({}))
@@ -429,7 +414,6 @@ impl ApplicationRoutes<'_> {
                             role: &request.role,
                             grant: true,
                         },
-                        drops,
                     )
                     .await?;
                     Ok(json!({ "granted": granted.changed }))
@@ -450,7 +434,6 @@ impl ApplicationRoutes<'_> {
                             role: &request.role,
                             grant: false,
                         },
-                        drops,
                     )
                     .await?;
                     Ok(json!({ "revoked": revoked.changed }))

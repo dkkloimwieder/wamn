@@ -14,8 +14,6 @@ mod error;
 mod migration;
 mod operation_grants;
 mod package_version;
-#[cfg(test)]
-mod tests;
 
 pub use error::{
     APPLY_PACKAGE_REFUSAL, ApplyPackageError, ApplyPackageErrorType,
@@ -39,9 +37,6 @@ pub struct ApplyPackageRequest {
     /// Package root containing strict wamn.json and migrations/, with the
     /// digest of the verified artifact it was opened from.
     pub package: PackageRoot,
-
-    /// Publisher for auth facts after the package transaction commits.
-    pub changes: wamn_broker::Publisher,
 
     /// Owner connection to the target project-environment database.
     pub database_url: String,
@@ -75,8 +70,6 @@ pub struct ApplyOutcome {
 
     /// Whether this application changed the database.
     pub changed: bool,
-
-    pub drops: wamn_broker::auth_changes::AuthDrops,
 }
 
 /// Package bytes and migration policy prepared before database mutation.
@@ -145,9 +138,6 @@ async fn apply_request(
         advance_schema,
     )
     .await;
-    if let Ok(outcome) = &result {
-        request.changes.publish(outcome.drops.clone()).await;
-    }
     drop(client);
     result
 }
@@ -221,7 +211,6 @@ async fn apply(
             package_version,
             migrations_applied: 0,
             changed: false,
-            drops: wamn_broker::auth_changes::AuthDrops::default(),
         });
     }
     if let Some(installed) = &applied {
@@ -265,10 +254,8 @@ async fn apply(
         artifact_digest,
     )
     .await?;
-    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     if applied.is_none() {
-        changed |=
-            operation_grants::ensure_admin_role(&mut tx, project_env_key, &mut drops).await?;
+        changed |= operation_grants::ensure_admin_role(&mut tx, project_env_key).await?;
     }
     tx.commit().await?;
     drop(executor);
@@ -277,7 +264,6 @@ async fn apply(
         package_version,
         migrations_applied,
         changed: changed || migrations_applied != 0,
-        drops,
     })
 }
 

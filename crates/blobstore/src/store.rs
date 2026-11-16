@@ -429,7 +429,6 @@ mod tests {
         .unwrap();
         Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
-            wamn_broker::Publisher::default(),
             Arc::new(reader),
             &Arc::new(postgres),
             &wamn_registry::project_env_key(
