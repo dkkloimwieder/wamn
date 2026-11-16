@@ -1278,7 +1278,8 @@ These functions return only non-secret authority. The write function creates a s
 The upgrade import reads retained bindings through `catalog.connection_upgrade_bindings(text,text)`, without reading the catalog tables.
 Catalog bootstrap installs this function after its tables. Application schema installation does not require the catalog schema.
 Provisioning grants execution to `wamn_administration`.
-Each function is `SECURITY DEFINER`, is owned by `wamn_system`, and pins `search_path` to `pg_catalog`.
+The database owner owns each `SECURITY DEFINER` function: `wamn_system` in the system database and `wamn_db_owner` in a project database.
+Each function pins `search_path` to `pg_catalog`.
 PUBLIC holds no execute grant. Only the control or administration role receives the execute grant that it needs.
 Control logins can read hierarchy rows and write their declared identity and lifecycle fields. Postgres row security limits these operations to the authenticated login’s org. Its control policy helpers grant execution to each role with access to the protected relations and grant none to `PUBLIC`. Connection writes still use the restricted functions.
 
