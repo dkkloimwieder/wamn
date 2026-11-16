@@ -28,8 +28,6 @@ mod releases;
 
 use wamn_authentication::route_authentication::EnvironmentStatusReader;
 use wamn_authentication::session_keys::{IssuerKeys, IssuerKeysConfig};
-#[cfg(test)]
-use wamn_catalog::ServingManifest;
 use wamn_component_artifact::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
@@ -41,14 +39,12 @@ use wamn_engine::engine::{
     build_engine_with_host_memory_and_compilation_cache,
 };
 use wamn_engine::flow_http_routing::FlowHttpRouting;
-use wamn_engine::release_manifest::LoadedRelease;
 use wamn_http::transport::HttpTransport;
 use wamn_identity_protocol::verifier::SessionVerifier;
 use wamn_registry::Triple;
 use wamn_sql::AuthorityClass;
 use wamn_sql::ClassCredentials;
 use wamn_sql::WamnPostgres;
-use wamn_workflow::DEFAULT_QUEUE_LEASE_TTL_MS;
 
 #[expect(
     clippy::struct_excessive_bools,
@@ -131,10 +127,6 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_RUNNER")]
     pub runner: Option<String>,
 
-    /// Duration of a durable queue lease before another replica may recover it.
-    #[arg(long, env = "WAMN_QUEUE_LEASE_TTL_MS", default_value_t = DEFAULT_QUEUE_LEASE_TTL_MS)]
-    pub queue_lease_ttl_ms: u64,
-
     /// The environment of this host's release target, and nothing else. The
     /// operator chart passes the pod namespace first; a release passes the
     /// environment name again in its `extraArgs`, and the last value wins
@@ -149,10 +141,6 @@ pub struct HostArgs {
     /// Address for the workload HTTP server
     #[arg(long = "http-addr")]
     pub http_addr: Option<SocketAddr>,
-
-    /// Address for native file transfers on release hosts.
-    #[arg(long, env = "WAMN_FILES_ADDR")]
-    pub files_addr: Option<SocketAddr>,
 
     /// Address for native readiness and liveness probes.
     #[arg(long, env = "WASH_PROBE_ADDR")]
@@ -537,46 +525,6 @@ const SCHEDULER_NATS_BUFFER: usize = 2048;
 /// event carries only the error type, so each line also counts the failed
 /// passes since the last connect; async-nats logs the cause of each attempt on
 /// `async_nats::connector` at debug.
-/// The data client and its `name`: the connection of the host's own code by the
-/// data URL with the environment certificate (docs/plan/alignment.md R5, R8).
-/// Its replies use the inbox of `user`, the one inbox prefix that user may
-/// read. It reconnects and starts like the scheduler client.
-async fn connect_data_nats(
-    args: &HostArgs,
-    name: &str,
-    user: Option<&str>,
-    certificate: Option<&Path>,
-) -> anyhow::Result<async_nats::Client> {
-    let mut opts = async_nats::ConnectOptions::new()
-        .name(name)
-        .max_reconnects(None)
-        .client_capacity(SCHEDULER_NATS_BUFFER);
-    if let Some(user) = user {
-        opts = opts.custom_inbox_prefix(wamn_registry::name::nats_subject(&[
-            &wamn_registry::name::nats_token("_INBOX_", user, ""),
-        ]));
-    }
-    let ca = certificate.map(|path| path.join("ca.crt"));
-    let cert = certificate.map(|path| path.join("tls.crt"));
-    let key = certificate.map(|path| path.join("tls.key"));
-    opts = wamn_broker::nats::tls_options(
-        opts,
-        ca.as_deref().or(args.data_nats_tls_ca.as_deref()),
-        cert.as_deref().or(args.data_nats_tls_cert.as_deref()),
-        key.as_deref().or(args.data_nats_tls_key.as_deref()),
-        None,
-    )?;
-    if args.data_nats_tls_first {
-        opts = opts.tls_first();
-    }
-    wamn_broker::nats::connect(
-        opts,
-        &args.data_nats_url,
-        wamn_broker::nats::InitialConnect::RetryTransport,
-    )
-    .await
-}
-
 async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<async_nats::Client> {
     let mut opts = async_nats::ConnectOptions::new()
         .name(name)
@@ -869,20 +817,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         ingress_handler = Some(Arc::clone(&server));
         builder = builder.with_http_handler(http_handler);
     }
-    let file_listener = match args.files_addr {
-        Some(address) => {
-            anyhow::ensure!(
-                releases.is_some(),
-                "--files-addr requires a release host with file routes"
-            );
-            Some(
-                tokio::net::TcpListener::bind(address)
-                    .await
-                    .with_context(|| format!("bind the native file listener on {address}"))?,
-            )
-        }
-        None => None,
-    };
     let probe_listener = match args.probe_addr {
         Some(address) => Some(probes::bind(address).await?),
         None => None,
@@ -893,23 +827,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         router_delivery = releases.is_some(),
         "wamn-host starting (base plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres, wamn:flow-http-routing)"
     );
-    let mut file_tasks = tokio::task::JoinSet::new();
-    if let Some(listener) = file_listener {
-        let releases = Arc::clone(
-            releases
-                .as_ref()
-                .expect("file listener requires project resources"),
-        );
-        file_tasks.spawn(wamn_execution_host::file_route::serve_selected(
-            listener,
-            {
-                let releases = Arc::clone(&releases);
-                move |host| releases.files(host)
-            },
-            Arc::clone(&flow_http),
-            Some(releases as Arc<_>),
-        ));
-    }
     let mut probe_tasks = tokio::task::JoinSet::new();
     if let Some(listener) = probe_listener {
         probe_tasks.spawn(probes::serve(
@@ -977,9 +894,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 _ = sigterm.recv() => Ok(()),
                 error = wamn_engine::lifecycle::watch_liveness(&liveness, Some(&probe_state), silence_budget) => Err(error),
                 () = ingress_stopped(ingress_connections.as_ref()) => Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")),
-                task = file_tasks.join_next(), if !file_tasks.is_empty() => {
-                    Err(anyhow::anyhow!("native file listener stopped unexpectedly: {task:?}"))
-                }
                 task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
                     Err(probe_listener_failure(task.as_ref()))
                 }
@@ -1024,42 +938,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .await
     };
     // Abort and join auxiliary tasks even when the native command task skipped Host::stop.
-    file_tasks.abort_all();
-    let file_result = wamn_engine::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
-        while file_tasks.join_next().await.is_some() {}
-        Ok(())
-    })
-    .await;
     probe_tasks.abort_all();
     let probe_result = wamn_engine::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
         while probe_tasks.join_next().await.is_some() {}
         Ok(())
     })
     .await;
-    result.and(file_result).and(probe_result)
-}
-
-/// Resolve each event admission tick through the current release selection.
-async fn serve_application_events(
-    selection: tokio::sync::watch::Receiver<Option<Arc<LoadedRelease>>>,
-    mut stopped: tokio::sync::watch::Receiver<bool>,
-    mut admit: impl AsyncFnMut(&Arc<LoadedRelease>),
-) {
-    let mut ticks = tokio::time::interval(Duration::from_secs(1));
-    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        tokio::select! {
-            _ = stopped.changed() => return,
-            _ = ticks.tick() => {},
-        }
-        let Some(release) = selection.borrow().as_ref().map(Arc::clone) else {
-            continue;
-        };
-        tokio::select! {
-            _ = stopped.changed() => return,
-            () = admit(&release) => {},
-        }
-    }
+    result.and(probe_result)
 }
 
 /// The time the auxiliary teardown after [`stop_combined_after`] may take:
@@ -1226,59 +1111,10 @@ fn normalize_explicit_ingress_stop(
 }
 
 #[cfg(test)]
-#[path = "host/lease_tests.rs"]
-mod lease_tests;
-
-#[cfg(test)]
 mod tests {
     use clap::Parser as _;
-    use wamn_engine::release_manifest::ReleaseTarget;
 
     use super::*;
-
-    const RELEASE_DIGEST: &str =
-        "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-
-    #[tokio::test(start_paused = true)]
-    async fn event_admission_uses_the_current_selection() {
-        let bytes = anonymous_release(Vec::new()).canonical_bytes();
-        let release = Arc::new(
-            LoadedRelease::load_canonical_bytes(
-                &bytes,
-                "startup release",
-                ReleaseTarget::new("acme--dev--wms".parse().unwrap(), "dev".parse().unwrap())
-                    .with_applications(
-                        serde_json::from_str(r#"{"store":{"packages":["cat"]}}"#).unwrap(),
-                    ),
-            )
-            .unwrap(),
-        );
-        let mut next = anonymous_release(Vec::new());
-        next.host_routes
-            .insert(wamn_catalog::HostRouteSet::Application);
-        let next = Arc::new(
-            LoadedRelease::load_canonical_bytes(
-                &next.canonical_bytes(),
-                "next release",
-                release.target().clone(),
-            )
-            .unwrap(),
-        );
-        let (stop, stopped) = tokio::sync::watch::channel(false);
-        let mut admissions = 0;
-        let (selection, selected) = tokio::sync::watch::channel(Some(Arc::clone(&release)));
-        serve_application_events(selected, stopped, async |received| {
-            if admissions == 0 {
-                assert!(Arc::ptr_eq(&release, received));
-                selection.send_replace(Some(Arc::clone(&next)));
-            } else {
-                assert!(Arc::ptr_eq(&next, received));
-                stop.send(true).unwrap();
-            }
-            admissions += 1;
-        })
-        .await;
-    }
 
     #[test]
     fn the_host_namespace_is_the_chart_variable_and_never_the_environment() {
@@ -1886,80 +1722,6 @@ host:
             .expect_err("the permission reader must target the exact audience database");
             assert!(!format!("{error:?}").contains("secret"));
         }
-    }
-
-    fn anonymous_release(connections: Vec<wamn_catalog::ComponentConnection>) -> ServingManifest {
-        use std::collections::{BTreeMap, BTreeSet};
-        use wamn_catalog::{
-            AdmittedComponentOperation, AttachmentTarget, AttachmentType, ComponentDescriptor,
-            OperationType, PackageCoordinate, ServingAttachment, ServingComponent, ServingRelease,
-            ServingRoute,
-        };
-
-        let mut descriptor = ComponentDescriptor::named(
-            "http-request".parse().unwrap(),
-            "0.1".parse().unwrap(),
-            RELEASE_DIGEST.parse().unwrap(),
-        );
-        descriptor.connections = connections;
-        ServingManifest::new(
-            ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new(
-                    "cat".parse().unwrap(),
-                    "1.0.0".parse().unwrap(),
-                )
-                .unwrap()]),
-            },
-            BTreeSet::from([ServingComponent {
-                runtime_schema: None,
-                package_id: "cat".parse().unwrap(),
-                descriptor: {
-                    let mut descriptor = descriptor;
-                    descriptor.operations = BTreeMap::from([(
-                        "request".parse().unwrap(),
-                        AdmittedComponentOperation {
-                            host_transaction: false,
-                            input_ports: Vec::new(),
-                            output_ports: Vec::new(),
-                            parameters: Vec::new(),
-                            committed_result_schema: None,
-                            registered_operation: None,
-                        },
-                    )]);
-                    descriptor
-                },
-            }]),
-            BTreeSet::from([ServingRoute {
-                package_id: "cat".parse().unwrap(),
-                component: "http-request".parse().unwrap(),
-                operation: "request".parse().unwrap(),
-                type_: OperationType::Command,
-                reads: BTreeSet::new(),
-                revision: None,
-                idempotency: None,
-            }]),
-            BTreeMap::from([(
-                "orders".parse().unwrap(),
-                ServingAttachment {
-                    type_: AttachmentType::Http,
-                    package_id: "cat".parse().unwrap(),
-                    target: AttachmentTarget::Route {
-                        component: "http-request".parse().unwrap(),
-                        operation: "request".parse().unwrap(),
-                    },
-                    definition_hash: (RELEASE_DIGEST).parse::<wamn_digest::Digest>().unwrap(),
-                    definition: serde_json::json!({
-                        "id": "orders",
-                        "type": "http",
-                        "source-id": "public",
-                        "route": {"path": "/orders", "method": "POST"}
-                    }),
-                    auth_policy: serde_json::json!({"modes": ["none"]}),
-                    registered_operation: None,
-                },
-            )]),
-        )
-        .expect("anonymous release is valid")
     }
 
     /// The chart's native memory settings reach `HostMemoryBudgets` intact.

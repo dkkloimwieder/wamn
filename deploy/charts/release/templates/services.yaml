@@ -15,22 +15,5 @@ spec:
       port: 80
       targetPort: 80
       protocol: TCP
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ (default $.Release.Name $.Values.name) }}-files
-  namespace: {{ (default $.Release.Namespace $.Values.namespace) }}
-  annotations:
-    {{- include "release.annotations" $ | nindent 4 }}
-spec:
-  type: ClusterIP
-  selector:
-    wasmcloud.com/hostgroup: {{ required "hostGroup is required" $.Values.hostGroup | quote }}
-  ports:
-    - name: files
-      port: 80
-      targetPort: files
-      protocol: TCP
 {{- end }}
 {{- end }}
