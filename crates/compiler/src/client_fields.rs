@@ -347,7 +347,7 @@ fn every_field(fields: &[FieldIr]) -> Vec<&FieldIr> {
 
 fn object_fields(schema: &Value, prefix: &str, hints: &[&FieldIr]) -> Vec<FieldIr> {
     let required = values(schema.get("required"));
-    schema
+    let mut fields: Vec<_> = schema
         .get("properties")
         .and_then(Value::as_object)
         .into_iter()
@@ -360,7 +360,9 @@ fn object_fields(schema: &Value, prefix: &str, hints: &[&FieldIr]) -> Vec<FieldI
             };
             schema_field(child, path, required.contains(name), hints)
         })
-        .collect()
+        .collect();
+    fields.sort_by(|left, right| left.path.cmp(&right.path));
+    fields
 }
 
 fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&FieldIr]) -> FieldIr {

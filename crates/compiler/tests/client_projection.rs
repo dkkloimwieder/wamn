@@ -347,7 +347,7 @@ fn custom_state_and_claim_declarations_do_not_invent_input_key_links() {
         ),
         ("claim_stock", json!("claim")),
     ] {
-        let identity = format!("example:entry/{name}@1.0.0");
+        let identity = format!("example:entry/{}@1.0.0", name.replace('_', "-"));
         let declaration = json!({
             "operation": identity, "type": "command", "grant": identity,
             "permission_token": format!("entry.{name}"), "result": "one",
@@ -645,7 +645,7 @@ fn direct_claim_and_composed_completion_project_from_route_evidence() {
 fn query_columns_remain_specific_to_each_result_contract() {
     let mut contracts = BTreeMap::new();
     for (name, column) in [("by_code", "code"), ("by_title", "title")] {
-        let identity = format!("example:entry/{name}@1.0.0");
+        let identity = format!("example:entry/{}@1.0.0", name.replace('_', "-"));
         insert_operation(
             &mut contracts,
             name,

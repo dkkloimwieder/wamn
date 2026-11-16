@@ -757,7 +757,7 @@ mod tests {
                         Vec::new(),
                     );
                     let operation: OperationDeclaration = serde_json::from_value(serde_json::json!({
-                        "permission": "create", "result": "one", "writable_fields": if writable { vec!["label"] } else { vec![] }
+                        "permission": "key_row.create", "result": "one", "writable_fields": if writable { vec!["label"] } else { vec![] }
                     })).unwrap();
                     let sql = super::create(&table, &model, &operation);
                     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("PREPARE create_row AS {sql}")))
@@ -823,9 +823,10 @@ mod tests {
             vec![Constraint::primary_key("page_row_pkey", ["id"]).unwrap()],
             Vec::new(),
         );
-        let operation: OperationDeclaration =
-            serde_json::from_value(serde_json::json!({"permission": "read", "result": "page"}))
-                .expect("declare a paged query");
+        let operation: OperationDeclaration = serde_json::from_value(
+            serde_json::json!({"permission": "page_row.query", "result": "page"}),
+        )
+        .expect("declare a paged query");
         for direction in [CursorDirection::Ascending, CursorDirection::Descending] {
             let ascending = matches!(direction, CursorDirection::Ascending);
             let sql = query(&table, &operation, "rank", direction, false, false);

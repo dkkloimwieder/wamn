@@ -224,8 +224,6 @@ describe("a transport failure", () => {
       items: [{ request_id: "r1" }],
     });
     expect(outcome.status).toBe("uncertain");
-    if (outcome.status === "uncertain") {
-    }
   });
 
   it("sends many items in one call, and reads one outcome for each", async () => {
