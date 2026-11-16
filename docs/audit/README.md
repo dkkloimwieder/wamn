@@ -4,6 +4,8 @@ This audit covers WAMN applications, runtime services, build and deployment tool
 
 Inputs: [measurements](measurements.md), [code quality](code-quality.md), [coupling](coupling.md), [upgrade](upgrade.md), [deployment](deployment.md), [security](security.md), [developer experience](developer-experience.md), [tests](tests.md), and [hygiene](hygiene.md). The synthesis also reads [the architecture overview](../architecture/overview.md) and [CLAUDE.md](../../CLAUDE.md). No build, test, or deployment ran during this synthesis.
 
+[Architecture overhaul test report, November 2026](test-report-2026-11.md) compares test changes from `7b9134a7b` to `60cf3bba8`.
+
 ## Findings ranked across reports
 
 The table covers all 222 numbered findings in 184 merged rows. Severity follows the reports. Merged rows use the highest severity and largest effort estimate. S, M, and L mean small, medium, and large effort.
