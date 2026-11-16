@@ -6540,6 +6540,7 @@ dependencies = [
  "wamn-kubernetes",
  "wamn-package-artifact",
  "wamn-platform-identity",
+ "wamn-platform-install",
  "wamn-postgres",
  "wamn-registry",
  "wamn-release-control",

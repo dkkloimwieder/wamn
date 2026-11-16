@@ -67,9 +67,10 @@ An `env:NAME` need selects its output recipe and requires a nonempty variable af
 A `bin:PROGRAM` need requires an executable on `PATH` or at the given absolute path.
 For `bin:kcl`, the selector checks `WAMN_KCL`, the pinned installation under `.tools/kcl/`, then `PATH`.
 The selector runs ignored cases only when it can supply their declared inputs.
-KCL-dependent library cases declare `bin:kcl`.
+KCL-dependent tests in `wamn-platform-install` and `wamn-ctl` live in integration targets.
+They declare `bin:kcl`. Chart rendering also declares `bin:helm`.
 For a direct run, prepare KCL with `cargo xtask install-kcl`.
-Then run `cargo test -p PACKAGE --lib CASE -- --ignored --exact`.
+Then run `cargo test -p PACKAGE --test TARGET CASE -- --ignored --exact`.
 An explicit suite fails when a selected case lacks an input.
 Selected suites own their named cases or filters, so dependency selection runs each case once.
 

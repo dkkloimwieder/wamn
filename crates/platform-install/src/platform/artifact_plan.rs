@@ -451,47 +451,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires: bin:kcl, bin:helm"]
-    fn service_chart_resolution_prefers_own_then_default_then_fresh_supplied() -> anyhow::Result<()>
-    {
-        let supplied = prepared_chart();
-        let default = prepared_chart();
-        let own = prepared_chart();
-        let operator = json!({"platform":{"chart":default.0}});
-        let unavailable_default = json!({"platform":{"chart":default.0.join("missing")}});
-        let recorded = json!({"platform":{"chart":own.0}});
-        let legacy = json!({});
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
-        for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
-            for (operator, installed, expected) in [
-                (None, None, &supplied.0),
-                (Some(&operator), None, &default.0),
-                (Some(&operator), Some(&legacy), &default.0),
-                (Some(&operator), Some(&recorded), &own.0),
-                (Some(&unavailable_default), Some(&recorded), &own.0),
-                (None, Some(&recorded), &supplied.0),
-            ] {
-                let (control, identity) = match selection {
-                    UpgradeTarget::Control => (installed, Some(&recorded)),
-                    UpgradeTarget::Identity => (Some(&recorded), installed),
-                    UpgradeTarget::Host { .. } => unreachable!(),
-                };
-                let selected = resolve_chart(
-                    &document,
-                    &selection,
-                    operator,
-                    control,
-                    identity,
-                    &supplied.0,
-                )?;
-                assert_eq!(selected.directory(), expected.canonicalize()?);
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
     fn selection_accepts_independent_registries_and_tags() {
         let chart = prepared_chart();
         let selected = select(&chart.0.join("platform/..")).unwrap();
