@@ -298,10 +298,7 @@ impl ApplicationRoutes<'_> {
         let result = self
             .serve(attachment, principal, payload, project_env_key, &mut drops)
             .await;
-        // The host drops its own memory at once, and the message reaches the
-        // other hosts of the project.
         if result.is_ok() && !drops.is_empty() {
-            self.postgres.auth_cache().clear();
             self.changes.publish(drops).await;
         }
         result

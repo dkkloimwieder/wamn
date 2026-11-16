@@ -1,13 +1,6 @@
 //! The connection facts of a call, from the connection memory and from
 //! Postgres (docs/architecture/execution.md#connection-memory).
 //!
-//! The mutable facts come from [`ConnectionMemory`]: the fact of a
-//! connection, the connection map of a release and the connection map of the
-//! environment. A miss reads Postgres and puts the fact with its ticket. The
-//! immutable rows stay in bounded maps of this host under their own ids: a
-//! generation under (connection, generation), a version under (type,
-//! version) and a secret under its credential id. A new fact of a connection
-//! drops the secret that no current fact names.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -131,10 +124,6 @@ impl ConnectionFacts {
         Arc::clone(&self.memory.oauth_tokens)
     }
 
-    pub fn oauth_ticket(&self, id: &uuid::Uuid) -> crate::connection_memory::Ticket {
-        self.memory.connection_ticket(&self.project_env_key, id)
-    }
-
     pub fn environment(&self) -> &wamn_registry::EnvName {
         &self.environment
     }
@@ -196,27 +185,15 @@ impl ConnectionFacts {
     /// The fact of connection `id`, or `None` when the environment has no
     /// such connection.
     pub async fn connection(&self, id: &uuid::Uuid) -> anyhow::Result<Option<ConnectionFact>> {
-        let fact = match self.memory.connection(&self.project_env_key, id) {
-            Ok(fact) => Some(fact),
-            Err(ticket) => {
-                let fact = self
-                    .reader
-                    .connection_fact(&self.project, &self.environment, id)
-                    .await?;
-                if let Some(fact) = &fact {
-                    self.memory
-                        .keep_connection(&self.project_env_key, id, ticket, fact.clone())
-                        .await;
-                }
-                fact
-            }
-        };
+        let fact = self
+            .reader
+            .connection_fact(&self.project, &self.environment, id)
+            .await?;
         self.observe(id, fact.as_ref());
         Ok(fact)
     }
 
-    /// Drop the fact of connection `id` from every host and its secret from
-    /// this one, and read the fact again from Postgres. A sender calls this
+    /// Drop the secret and read the fact again from Postgres. A sender calls this
     /// once after the external system refuses the credential.
     pub async fn read_again(&self, id: &uuid::Uuid) -> anyhow::Result<Option<ConnectionFact>> {
         let mut drops = ConnectionDrops::default();
@@ -264,60 +241,44 @@ impl ConnectionFacts {
         &self,
         manifest_digest: &wamn_digest::Digest,
     ) -> anyhow::Result<ReleaseFact> {
-        match self.memory.release(&self.project_env_key, manifest_digest) {
-            Ok(fact) => Ok(fact),
-            Err(ticket) => {
-                let database = self
-                    .postgres
-                    .upgrade()
-                    .context("project database authority was unloaded")?;
-                let mut connection = database.read_connection(&self.project).await?;
-                let rows = sqlx::query("SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) WHERE b.project_env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3").bind(&self.project_env_key).bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection map")?;
-                let versions = sqlx::query("SELECT connection_id,version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2").bind(&self.project_env_key).bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection versions")?;
-                let fact = crate::connection_memory::ReleaseFact {
-                    versions: versions
-                        .into_iter()
-                        .map(|row| (row.get(0), row.get(1)))
-                        .collect(),
-                    bindings: rows
-                        .into_iter()
-                        .map(|row| {
-                            Ok::<_, sqlx::Error>(crate::connection_memory::ReleaseBinding {
-                                component_digest: row.get(0),
-                                package_id: row.try_get(1)?,
-                                name: row.get(2),
-                                connection_id: row.get(3),
-                                version: row.get(4),
-                            })
-                        })
-                        .collect::<Result<_, _>>()?,
-                };
-                connection.commit().await?;
-                self.memory
-                    .keep_release(&self.project_env_key, manifest_digest, ticket, fact.clone())
-                    .await;
-                Ok(fact)
-            }
-        }
+        let database = self
+            .postgres
+            .upgrade()
+            .context("project database authority was unloaded")?;
+        let mut connection = database.read_connection(&self.project).await?;
+        let rows = sqlx::query("SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) WHERE b.project_env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3").bind(&self.project_env_key).bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection map")?;
+        let versions = sqlx::query("SELECT connection_id,version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2").bind(&self.project_env_key).bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection versions")?;
+        let fact = crate::connection_memory::ReleaseFact {
+            versions: versions
+                .into_iter()
+                .map(|row| (row.get(0), row.get(1)))
+                .collect(),
+            bindings: rows
+                .into_iter()
+                .map(|row| {
+                    Ok::<_, sqlx::Error>(crate::connection_memory::ReleaseBinding {
+                        component_digest: row.get(0),
+                        package_id: row.try_get(1)?,
+                        name: row.get(2),
+                        connection_id: row.get(3),
+                        version: row.get(4),
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+        };
+        connection.commit().await?;
+        Ok(fact)
     }
 
     /// The map from integration name to connection id of the environment.
     pub async fn env_connections(&self) -> anyhow::Result<EnvConnections> {
-        match self.memory.connections(&self.project_env_key) {
-            Ok(map) => Ok(map),
-            Err(ticket) => {
-                let map = EnvConnections {
-                    connections: self
-                        .reader
-                        .env_connections(&self.project, &self.environment)
-                        .await?,
-                };
-                self.memory
-                    .keep_connections(&self.project_env_key, ticket, map.clone())
-                    .await;
-                Ok(map)
-            }
-        }
+        let map = EnvConnections {
+            connections: self
+                .reader
+                .env_connections(&self.project, &self.environment)
+                .await?,
+        };
+        Ok(map)
     }
 
     /// Generation `generation` of connection `id`.

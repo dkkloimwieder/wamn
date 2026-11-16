@@ -10,30 +10,20 @@ pub mod nats;
 pub mod streams;
 
 /// A committed change set names its bucket and the keys to remove.
-pub trait Changes {
-    fn into_deletions(self) -> (&'static str, Vec<kv_memory::Deletion>);
-}
+pub trait Changes {}
 
 /// Publish committed changes on one shared broker connection.
 #[derive(Debug, Clone, Default)]
-pub struct Publisher(Option<async_nats::Client>);
+pub struct Publisher {}
 
 impl Publisher {
-    pub fn new(client: async_nats::Client) -> Self {
-        Self(Some(client))
+    pub fn new(_client: async_nats::Client) -> Self {
+        Self::default()
     }
-    pub async fn connect(connection: &nats::PlatformNats) -> anyhow::Result<Self> {
-        Ok(Self::new(connection.connect().await?))
+    pub async fn connect(_connection: &nats::PlatformNats) -> anyhow::Result<Self> {
+        Ok(Self::default())
     }
-    pub fn client(&self) -> Option<&async_nats::Client> {
-        self.0.as_ref()
-    }
-    pub async fn publish(&self, changes: impl Changes) {
-        if let Some(client) = &self.0 {
-            let (bucket, deletions) = changes.into_deletions();
-            kv_memory::delete(client, bucket, deletions).await;
-        }
-    }
+    pub async fn publish(&self, _changes: impl Changes) {}
 }
 
 /// The event broker inputs of CDC (`enable-cdc-project-env`).

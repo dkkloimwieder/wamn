@@ -29,7 +29,6 @@ use crate::session_keys::IssuerKeys;
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_connections::connection_memory::ConnectionStatus;
 
-/// Verify a session, resolve its grants, check liveness, then renew admission evidence.
 async fn admit_session<T>(
     verifier: &SessionVerifier<IssuerKeys>,
     token: &str,
@@ -116,12 +115,7 @@ impl PlatformRouteAuthenticator {
             .map(|facts| (facts.project_env_key().to_owned(), facts))
             .collect();
         let (identity_reader, verifiers) = match identity {
-            Some((reader, verifiers)) => {
-                for key in projects.keys().chain(verifiers.keys()) {
-                    postgres.set_hierarchy_reader(key, reader.clone());
-                }
-                (Some(reader), verifiers)
-            }
+            Some((reader, verifiers)) => (Some(reader), verifiers),
             None => (None, std::collections::HashMap::new()),
         };
         Self {
@@ -140,9 +134,6 @@ impl PlatformRouteAuthenticator {
         identity_reader: Option<sqlx::PgPool>,
         verifier: Option<SessionVerifier<IssuerKeys>>,
     ) -> Self {
-        if let Some(reader) = &identity_reader {
-            postgres.set_hierarchy_reader(project_env_key, reader.clone());
-        }
         Self::new(
             postgres,
             [],
@@ -257,11 +248,6 @@ impl PlatformRouteAuthenticator {
                     })
             },
             async |claims| {
-                let cache = self.postgres.auth_cache();
-                if cache.session_active(token) {
-                    return Ok(true);
-                }
-                let ticket = cache.identity_ticket();
                 let mut transaction =
                     wamn_platform_identity::transaction::read_pool(identity_reader, &claims.sub)
                         .await
@@ -278,16 +264,6 @@ impl PlatformRouteAuthenticator {
                     .commit()
                     .await
                     .map_err(|_| authentication_unavailable())?;
-                if active {
-                    let deadline = u64::try_from(claims.exp)
-                        .ok()
-                        .and_then(|seconds| {
-                            std::time::UNIX_EPOCH
-                                .checked_add(std::time::Duration::from_secs(seconds))
-                        })
-                        .ok_or_else(unauthorized)?;
-                    cache.keep_session_active(ticket, token, &claims.sub, deadline);
-                }
                 Ok(active)
             },
         )
@@ -393,33 +369,24 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .as_ref()
                 .ok_or_else(authentication_unavailable)?;
             let token = required_bearer_token(headers)?;
-            let cache = self.postgres.auth_cache();
-            let principal = if let Some(principal) = cache.pat(token) {
-                principal
-            } else {
-                let ticket = cache.identity_ticket();
-                let mut transaction = wamn_platform_identity::transaction::read_pool(
-                    identity_reader,
-                    &wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
-                )
+            let mut transaction = wamn_platform_identity::transaction::read_pool(
+                identity_reader,
+                &wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
+            )
+            .await
+            .map_err(|_| authentication_unavailable())?;
+            let principal = wamn_platform_identity::authenticate_route_pat(&mut transaction, token)
+                .instrument(tracing::info_span!("wamn.auth.identity"))
+                .await
+                .map_err(|error| {
+                    tracing::warn!(error = %error, "route PAT authentication unavailable");
+                    authentication_unavailable()
+                })?
+                .ok_or_else(unauthorized)?;
+            transaction
+                .commit()
                 .await
                 .map_err(|_| authentication_unavailable())?;
-                let principal =
-                    wamn_platform_identity::authenticate_route_pat(&mut transaction, token)
-                        .instrument(tracing::info_span!("wamn.auth.identity"))
-                        .await
-                        .map_err(|error| {
-                            tracing::warn!(error = %error, "route PAT authentication unavailable");
-                            authentication_unavailable()
-                        })?
-                        .ok_or_else(unauthorized)?;
-                transaction
-                    .commit()
-                    .await
-                    .map_err(|_| authentication_unavailable())?;
-                cache.keep_pat(ticket, token, &principal);
-                principal
-            };
             let credential_deadline = principal.pat_deadline();
             let principal = principal.principal();
             match principal.principal_type() {

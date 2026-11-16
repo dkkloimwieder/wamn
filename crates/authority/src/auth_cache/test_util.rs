@@ -65,10 +65,6 @@ pub async fn nats() -> (Server, async_nats::Client) {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
-    // Identity makes the buckets in a deployment.
-    wamn_broker::kv_memory::create_buckets(&client)
-        .await
-        .unwrap();
     (server, client)
 }
 
@@ -79,9 +75,7 @@ pub async fn watched(
     project_env_key: Option<&wamn_registry::ProjectEnvKey>,
     holder: Arc<AuthCache>,
 ) -> Publisher {
-    let writer = replicate(client, project_env_key, Arc::clone(&holder));
-    until("the watch runs", || holder.memory.bucket().is_some()).await;
-    writer
+    replicate(client, project_env_key, holder)
 }
 
 pub async fn until(what: &str, is_ready: impl Fn() -> bool) {
