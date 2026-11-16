@@ -107,13 +107,15 @@ pub(super) fn validate_samples(
         if input_schemas.validate(&sample, input_index).is_err() {
             continue;
         }
-        let output = wamn_jsonata::evaluate_sample(expression, &sample, parameters)
-            .map_err(|error| refusal(node_id, number, &sample, &error))?;
+        checked = true;
+        // An evaluation error goes to the node's error port at run time.
+        let Ok(output) = wamn_jsonata::evaluate_sample(expression, &sample, parameters) else {
+            continue;
+        };
         let output: serde_json::Value = serde_json::from_str(&output).expect("JSONata emits JSON");
         output_schemas
             .validate(&output, output_index)
             .map_err(|error| refusal(node_id, number, &sample, &error))?;
-        checked = true;
     }
     if !checked {
         return Err(WiringCompatibilityError::new(

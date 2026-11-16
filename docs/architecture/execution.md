@@ -598,7 +598,7 @@ Each JSONata node declares `input-schema` and `output-schema` in its parameters.
 Admission uses these declarations for the node's input ports and selected output ports.
 It requires equal schemas on each edge.
 It evaluates at most three samples from the declared input schema with the same engine as the guest.
-A failed evaluation or an output outside the promised schema refuses admission and names the node and sample.
+An evaluation error is allowed, because at run time it goes to the node's error port. A returned value outside the promised schema refuses admission and names the node and sample.
 These samples cannot prove every possible output.
 The router compiles schemas once per walk.
 It validates each JSONata result against the declared output schema before routing or completion.
