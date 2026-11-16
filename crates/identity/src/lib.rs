@@ -24,9 +24,6 @@ use wamn_identity_protocol::{PrincipalId, RoleName};
 #[cfg(feature = "test-util")]
 pub mod test_database;
 
-pub mod application;
-pub mod configuration;
-pub mod connections;
 pub mod control;
 pub mod org;
 pub mod paging;
@@ -424,7 +421,7 @@ pub struct IdentityError {
 }
 
 impl IdentityError {
-    fn new(type_: IdentityErrorType, message: impl Into<Box<str>>) -> Self {
+    pub fn new(type_: IdentityErrorType, message: impl Into<Box<str>>) -> Self {
         Self {
             type_,
             message: message.into(),
@@ -1050,7 +1047,7 @@ pub fn require_user_contact(email: &str, display_name: &str) -> Result<(), Ident
     Ok(())
 }
 
-fn database_error(error: &sqlx::Error) -> IdentityError {
+pub fn database_error(error: &sqlx::Error) -> IdentityError {
     let type_ = match error
         .as_database_error()
         .and_then(sqlx::error::DatabaseError::code)
@@ -1191,5 +1188,3 @@ mod tests {
         assert!(require_pat_ttl(MAX_PAT_TTL + Duration::from_secs(1)).is_err());
     }
 }
-
-pub mod environment;

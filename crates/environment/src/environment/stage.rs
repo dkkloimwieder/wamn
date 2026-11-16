@@ -86,7 +86,7 @@ pub async fn materialize_application_principals(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
         );
-        wamn_platform_identity::application::create_role(&mut transaction, &role).await?;
+        crate::application::create_role(&mut transaction, &role).await?;
     }
     write_runtime_grants(
         &mut system,
@@ -159,11 +159,11 @@ pub async fn write_runtime_grants(
             package,
             &dependency_manifests,
         )? {
-            wamn_platform_identity::application::mutate_grant(
+            crate::application::mutate_grant(
                 transaction,
                 project_env_key,
-                wamn_platform_identity::application::GrantAuthority::Provisioning,
-                wamn_platform_identity::application::GrantChange::Permission {
+                crate::application::GrantAuthority::Provisioning,
+                crate::application::GrantChange::Permission {
                     role: &role,
                     reference: &permission,
                     grant: true,
@@ -171,11 +171,11 @@ pub async fn write_runtime_grants(
             )
             .await?;
         }
-        wamn_platform_identity::application::mutate_grant(
+        crate::application::mutate_grant(
             transaction,
             project_env_key,
-            wamn_platform_identity::application::GrantAuthority::Provisioning,
-            wamn_platform_identity::application::GrantChange::UserRole {
+            crate::application::GrantAuthority::Provisioning,
+            crate::application::GrantChange::UserRole {
                 user_id: principal.id(),
                 role: &role,
                 grant: true,
@@ -250,7 +250,7 @@ mod tests {
         let defaults = super::sequence_defaults(&applications, [&base, &overlay]).unwrap();
         assert_eq!(
             defaults,
-            [wamn_platform_identity::configuration::SequenceDefault {
+            [crate::configuration::SequenceDefault {
                 application: "receiving".parse().unwrap(),
                 name: "order".into(),
                 pattern: "PO-{seq:po}".into(),

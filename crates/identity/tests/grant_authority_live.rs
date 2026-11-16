@@ -4,7 +4,7 @@ use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 use wamn_control_provision::{platform_principals_sql, test_database};
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_identity::application::{ApplicationTarget, project_authority};
+use wamn_environment::application::{ApplicationTarget, project_authority};
 use wamn_platform_identity::org::{
     activate_org_membership, deactivate_org_membership, grant_project_admin, lock_membership,
 };
@@ -284,7 +284,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
 async fn authored_mutations_refuse_direct_admin_and_escalation(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
-    use wamn_platform_identity::application::{
+    use wamn_environment::application::{
         ApplicationUser, GrantAuthority, GrantChange, create_role, mutate_grant, write_user,
     };
     let _lock = wamn_test_postgres::lock();
@@ -359,7 +359,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
         .expect_err("direct admin mutation refuses");
         assert!(matches!(
             error.refusal(),
-            Some(wamn_platform_identity::application::AdministrationRefusal::AdminCovered { .. })
+            Some(wamn_environment::application::AdministrationRefusal::AdminCovered { .. })
         ));
     }
     mutate_grant(
@@ -388,7 +388,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
         .expect_err("unheld or fixed operation refuses");
         assert!(matches!(
             error.refusal(),
-            Some(wamn_platform_identity::application::AdministrationRefusal::NotGrantable { .. })
+            Some(wamn_environment::application::AdministrationRefusal::NotGrantable { .. })
         ));
     }
     tx.commit().await?;

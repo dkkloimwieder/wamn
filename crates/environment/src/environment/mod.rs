@@ -15,6 +15,11 @@ pub mod sql;
 pub mod stage;
 pub mod write;
 
+use crate::application::{self, ApplicationTarget, ApplicationUser};
+use anyhow::Context as _;
+use sqlx::{Connection as _, Row as _};
+use std::collections::BTreeSet;
+
 use std::path::PathBuf;
 
 use wamn_identity_client::PatIssuerConfig;
@@ -78,4 +83,72 @@ impl Platform {
             oci_ca_paths: self.oci_ca_paths.clone(),
         })
     }
+}
+
+/// Fill platform, service, member and administrator rows from system authority.
+pub async fn fill(
+    system_url: &str,
+    project_url: &str,
+    target: ApplicationTarget<'_>,
+) -> anyhow::Result<()> {
+    let mut system = wamn_postgres::connect(system_url).await?;
+    let mut system = system.begin().await?;
+    wamn_platform_identity::org::lock_org_memberships(&mut system, target.org).await?;
+    let domain: Option<wamn_registry::platform_domain::PlatformDomain> =
+        sqlx::query_scalar(wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY)
+            .fetch_one(&mut *system)
+            .await?;
+    let domain = domain.context("platform domain is absent")?;
+    let mut project = wamn_postgres::connect(project_url).await?;
+    let mut project = project.begin().await?;
+    fill_platform(&mut project, &domain).await?;
+    let mut principals = BTreeSet::new();
+    for row in sqlx::query("SELECT DISTINCT p.id, p.subject, p.display_name FROM identity.project_roles r JOIN identity.principals p ON p.id=r.principal_id WHERE r.org=$1 AND r.project=$2 AND p.type='service' AND p.status='active'")
+        .bind(target.org).bind(target.project).fetch_all(&mut *system).await? {
+        let principal_id: wamn_identity_protocol::PrincipalId = row.get(0);
+        let subject: String = row.get(1);
+        let display_name: String = row.get(2);
+        let present: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM platform.\"user\" WHERE id=$1)")
+            .bind(principal_id).fetch_one(&mut *project).await?;
+        if !present {
+            application::write_service(&mut project, ApplicationUser { principal_id: &principal_id, email: &format!("{subject}@{domain}"), display_name: &display_name }).await?;
+        }
+        principals.insert(principal_id);
+    }
+    principals.extend(
+        sqlx::query_scalar::<_, wamn_identity_protocol::PrincipalId>(
+            "SELECT id FROM identity.principals WHERE identity.has_project_access(id,$1,$2,$3)",
+        )
+        .bind(target.org)
+        .bind(target.env)
+        .bind(target.project)
+        .fetch_all(&mut *system)
+        .await?,
+    );
+    principals.extend(
+        sqlx::query_scalar::<_, wamn_identity_protocol::PrincipalId>(
+            "SELECT id FROM platform.\"user\" WHERE type IN ('user','service')",
+        )
+        .fetch_all(&mut *project)
+        .await?,
+    );
+    for id in principals {
+        application::project_authority(&mut system, &mut project, target, &id).await?;
+    }
+    project.commit().await?;
+    system.commit().await?;
+    Ok(())
+}
+
+/// Fill the platform principal rows in an initialized project database.
+pub async fn fill_platform(
+    project: &mut sqlx::PgConnection,
+    domain: &wamn_registry::platform_domain::PlatformDomain,
+) -> anyhow::Result<()> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::platform_principals_sql(domain),
+    ))
+    .execute(project)
+    .await?;
+    Ok(())
 }

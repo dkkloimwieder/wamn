@@ -36,7 +36,7 @@ pub async fn define(
     store: &dyn Store,
 ) -> anyhow::Result<()> {
     use serde_json::json;
-    use wamn_platform_identity::connections::administration;
+    use crate::connections::administration;
     if let Some(name) = request["external_system"].as_str() {
         administration::execute(
             tx,

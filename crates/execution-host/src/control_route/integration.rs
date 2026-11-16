@@ -10,7 +10,7 @@ use wamn_catalog::HostAttachment;
 use wamn_identity_protocol::PrincipalId;
 
 use super::{ControlRoutes, ProjectTarget, Refusal, incomplete, parse};
-use wamn_platform_identity::connections::{ConnectionError, administration, references};
+use wamn_connections::connections::{ConnectionError, administration, references};
 
 impl From<ConnectionError> for Refusal {
     fn from(error: ConnectionError) -> Self {

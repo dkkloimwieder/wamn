@@ -9,7 +9,7 @@ use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeSet;
 
-use wamn_platform_identity::application::{create_role, delete_role};
+use wamn_environment::application::{create_role, delete_role};
 
 async fn rows(client: &mut Client) -> BTreeSet<String> {
     sqlx::query(
@@ -64,11 +64,11 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     assert!(!change!(client, |tx| create_role(&mut tx, "clerk")).unwrap());
 
     change!(client, |tx| {
-        wamn_platform_identity::application::mutate_grant(
+        wamn_environment::application::mutate_grant(
             &mut tx,
             &project_env_key,
-            wamn_platform_identity::application::GrantAuthority::Provisioning,
-            wamn_platform_identity::application::GrantChange::Permission {
+            wamn_environment::application::GrantAuthority::Provisioning,
+            wamn_environment::application::GrantChange::Permission {
                 role: "admin",
                 reference: "shop:line/list",
                 grant: true,
@@ -79,11 +79,11 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
 
     // A reference the release does not serve is stored.
     let dormant = change!(client, |tx| {
-        wamn_platform_identity::application::mutate_grant(
+        wamn_environment::application::mutate_grant(
             &mut tx,
             &project_env_key,
-            wamn_platform_identity::application::GrantAuthority::Provisioning,
-            wamn_platform_identity::application::GrantChange::Permission {
+            wamn_environment::application::GrantAuthority::Provisioning,
+            wamn_environment::application::GrantChange::Permission {
                 role: "clerk",
                 reference: "shop:order/delete",
                 grant: true,
@@ -94,11 +94,11 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     assert_eq!(dormant.rows_added, 1);
 
     let granted = change!(client, |tx| {
-        wamn_platform_identity::application::mutate_grant(
+        wamn_environment::application::mutate_grant(
             &mut tx,
             &project_env_key,
-            wamn_platform_identity::application::GrantAuthority::Provisioning,
-            wamn_platform_identity::application::GrantChange::Permission {
+            wamn_environment::application::GrantAuthority::Provisioning,
+            wamn_environment::application::GrantChange::Permission {
                 role: "clerk",
                 reference: "shop:report/run",
                 grant: true,
@@ -108,11 +108,11 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     .unwrap();
     assert_eq!(granted.rows_added, 1, "the grant alone is stored");
     let again = change!(client, |tx| {
-        wamn_platform_identity::application::mutate_grant(
+        wamn_environment::application::mutate_grant(
             &mut tx,
             &project_env_key,
-            wamn_platform_identity::application::GrantAuthority::Provisioning,
-            wamn_platform_identity::application::GrantChange::Permission {
+            wamn_environment::application::GrantAuthority::Provisioning,
+            wamn_environment::application::GrantChange::Permission {
                 role: "clerk",
                 reference: "shop:report/run",
                 grant: true,
@@ -122,11 +122,11 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     .unwrap();
     assert_eq!(again.rows_added, 0, "a second grant writes nothing");
     change!(client, |tx| {
-        wamn_platform_identity::application::mutate_grant(
+        wamn_environment::application::mutate_grant(
             &mut tx,
             &project_env_key,
-            wamn_platform_identity::application::GrantAuthority::Provisioning,
-            wamn_platform_identity::application::GrantChange::Permission {
+            wamn_environment::application::GrantAuthority::Provisioning,
+            wamn_environment::application::GrantChange::Permission {
                 role: "clerk",
                 reference: "shop:line/list",
                 grant: true,
@@ -141,11 +141,11 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
     );
 
     change!(client, |tx| {
-        wamn_platform_identity::application::mutate_grant(
+        wamn_environment::application::mutate_grant(
             &mut tx,
             &project_env_key,
-            wamn_platform_identity::application::GrantAuthority::Provisioning,
-            wamn_platform_identity::application::GrantChange::Permission {
+            wamn_environment::application::GrantAuthority::Provisioning,
+            wamn_environment::application::GrantChange::Permission {
                 role: "clerk",
                 reference: "shop:line/list",
                 grant: false,
@@ -158,11 +158,11 @@ async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
         set(&["shop:order/delete", "shop:report/run"])
     );
     change!(client, |tx| {
-        wamn_platform_identity::application::mutate_grant(
+        wamn_environment::application::mutate_grant(
             &mut tx,
             &project_env_key,
-            wamn_platform_identity::application::GrantAuthority::Provisioning,
-            wamn_platform_identity::application::GrantChange::Permission {
+            wamn_environment::application::GrantAuthority::Provisioning,
+            wamn_environment::application::GrantChange::Permission {
                 role: "clerk",
                 reference: "shop:line/list",
                 grant: false,

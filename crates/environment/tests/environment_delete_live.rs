@@ -9,7 +9,7 @@ use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_environment::{
     environment::delete::delete_registry_rows, provision_project_env::provisioning_transaction,
 };
-use wamn_platform_identity::connections::administration;
+use wamn_connections::connections::administration;
 use wamn_registry::Triple;
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
@@ -58,7 +58,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         .execute(&mut *transaction)
         .await
         .map(drop)?;
-    let store = wamn_test_infrastructure::credentials::MemoryStore::default();
+    let store = wamn_connections::credentials::MemoryStore::default();
     for (operation, request) in [
         (
             "integration.write",

@@ -46,7 +46,7 @@ pub async fn write_revocation_configuration(
     client: &mut sqlx::PgConnection,
     document: &EnvironmentDocument,
 ) -> Result<u64, wamn_platform_identity::IdentityError> {
-    use wamn_platform_identity::configuration::{
+    use crate::configuration::{
         PlatformConfiguration, Setting, write_configuration,
     };
     let settings = std::iter::once(Setting {

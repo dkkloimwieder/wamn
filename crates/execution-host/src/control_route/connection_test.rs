@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use wamn_catalog::HostAttachment;
 use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::Store as _;
-use wamn_platform_identity::connections::administration;
+use wamn_connections::connections::administration;
 
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 

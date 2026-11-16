@@ -6,7 +6,7 @@ use anyhow::Context as _;
 pub fn sequence_defaults<'a>(
     applications: &wamn_catalog::EnvironmentApplications,
     packages: impl IntoIterator<Item = &'a PackageManifest>,
-) -> anyhow::Result<Vec<wamn_platform_identity::configuration::SequenceDefault>> {
+) -> anyhow::Result<Vec<crate::configuration::SequenceDefault>> {
     let mut defaults = BTreeMap::new();
     for package in packages {
         let id = &package.package.id;
@@ -29,7 +29,7 @@ pub fn sequence_defaults<'a>(
     Ok(defaults
         .into_iter()
         .map(|((application, name), (_, pattern))| {
-            wamn_platform_identity::configuration::SequenceDefault {
+            crate::configuration::SequenceDefault {
                 application,
                 name: name.to_string(),
                 pattern,

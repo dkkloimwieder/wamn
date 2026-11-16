@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use serde_json::{Value, json};
 use wamn_kubernetes::{Store, StoreVersion};
-use wamn_platform_identity::connections::administration;
+use wamn_connections::connections::administration;
 
 #[derive(Debug, Default)]
 struct RecordingStore(Mutex<Vec<Vec<u8>>>);

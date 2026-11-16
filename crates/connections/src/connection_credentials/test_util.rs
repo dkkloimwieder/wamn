@@ -131,7 +131,7 @@ impl Fixture {
                 )
                 .await
                 .unwrap();
-            wamn_test_infrastructure::credentials::define(&mut tx,&"acme".parse().expect("fixed identifier"),&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":if auth_type == "custom" { "{}" } else { value }}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await.unwrap();
+            crate::credentials::define(&mut tx,&"acme".parse().expect("fixed identifier"),&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":if auth_type == "custom" { "{}" } else { value }}),&crate::credentials::ReferencedCredentials(&stored)).await.unwrap();
             tx.commit().await.unwrap();
         }
     }

@@ -23,6 +23,7 @@ wamn-control-provision = { workspace = true }
 wamn-registry = { workspace = true }
 
 [dev-dependencies]
+wamn-environment = { workspace = true }
 wamn-digest.workspace = true
 wamn-postgres.workspace = true
 wamn-test-postgres.workspace = true

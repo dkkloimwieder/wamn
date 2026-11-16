@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["dep:wamn-postgres", "dep:url", "wamn-registry/test-util", "dep:wamn-test-infrastructure", "wamn-kubernetes/test-util", "wamn-control-provision/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", ]
+test-util = ["dep:wamn-postgres", "dep:url", "wamn-registry/test-util", "wamn-kubernetes/test-util", "wamn-control-provision/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", ]
 
 [dependencies]
 oci-client.workspace = true
@@ -14,7 +14,6 @@ wamn-engine.workspace = true
 wash-runtime.workspace = true
 wasmtime.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
-wamn-test-infrastructure = { workspace = true, optional = true }
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream", "kv"] }
 async-trait = { workspace = true }
@@ -57,7 +56,6 @@ wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-kubernetes = { workspace = true, features = ["test-util"] }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-platform-identity = { workspace = true, features = ["test-util"] }
-wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wat = "=1.254.2"
 
