@@ -517,12 +517,11 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
             return Ok(Err(Refusal::NotBegun));
         }
         let mut open = current.take().expect("authorized read exists");
-        if let Some(transaction) = open.transaction() {
-            if let Err(PgCommitFailure::RolledBack(error) | PgCommitFailure::Uncertain(error)) =
+        if let Some(transaction) = open.transaction()
+            && let Err(PgCommitFailure::RolledBack(error) | PgCommitFailure::Uncertain(error)) =
                 transaction.commit().await
-            {
-                return Ok(Err(Refusal::Postgres(error)));
-            }
+        {
+            return Ok(Err(Refusal::Postgres(error)));
         }
         open.postgres
             .operation_metrics

@@ -201,6 +201,8 @@ async fn open_stream(
     sql: String,
     params: Vec<SqlValue>,
 ) -> Result<OpenedStream, PgError> {
+    use sqlx::Statement as _;
+
     let (opened, started) = oneshot::channel();
     let (rows, batches) = mpsc::channel(1);
     let (outcome, finished) = oneshot::channel();
@@ -212,7 +214,6 @@ async fn open_stream(
                 let prepared = sqlx::Executor::prepare(&mut *conn, sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql))).await.map_err(|error| map_pg_error(&error))?;
                 let columns = columns_of(&prepared);
                 opened.take().expect("a query opens once").send(Ok(columns)).map_err(|_| PgError::ConnectionUnavailable)?;
-                use sqlx::Statement as _;
                 let mut query = sqlx::query(prepared.sql().clone());
                 for (index, param) in params.iter().enumerate() {
                     query = query.bind(PgParam::prepared(param, &prepared, index));
@@ -258,8 +259,9 @@ async fn open_stream(
                 }
             }
             Err(error) => {
-                if let QueryTransaction::Operation(state) = &transaction {
-                    if let Ok(mut state) = state.lock() { state.finished = true; }
+                if let QueryTransaction::Operation(state) = &transaction
+                    && let Ok(mut state) = state.lock() {
+                    state.finished = true;
                 }
                 Err(error)
             }
