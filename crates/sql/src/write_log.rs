@@ -181,10 +181,10 @@ impl OperationTransaction {
         })
         .await?;
         let claim = opaque_claim(claim)?;
-        if matches!(claim, Claim::New) {
-            if let Some(result) = &self.known_result {
-                self.stage_finish(operation, key, result.to_owned());
-            }
+        if matches!(claim, Claim::New)
+            && let Some(result) = &self.known_result
+        {
+            self.stage_finish(operation, key, result.to_owned());
         }
         Ok(claim)
     }
