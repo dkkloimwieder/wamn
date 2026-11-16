@@ -28,25 +28,6 @@ pub(in crate::environment) fn host_group(mut group: Mapping) -> anyhow::Result<M
     Ok(group)
 }
 
-/// Derive registry arguments from the platform host's environment variables.
-pub(in crate::environment) fn registry_arguments(host_group: &Mapping) -> Vec<String> {
-    host_group
-        .get("env")
-        .and_then(Value::as_sequence)
-        .into_iter()
-        .flatten()
-        .filter_map(|variable| match variable["name"].as_str() {
-            Some("WAMN_REGISTRY_AUTH_FILE") => variable["value"]
-                .as_str()
-                .map(|path| format!("--registry-auth-file={path}")),
-            Some("WAMN_REGISTRY_TOKEN_METADATA") if variable["value"].as_str() == Some("true") => {
-                Some("--registry-token-metadata".into())
-            }
-            _ => None,
-        })
-        .collect()
-}
-
 /// Build release values from the document, artifact, policy, and host overlay.
 pub(super) fn release_values(
     document: &EnvironmentDocument,

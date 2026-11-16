@@ -1,7 +1,7 @@
 //! Initialize or explicitly advance package SQL from verified files.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
 
@@ -63,43 +63,11 @@ impl ApplyPackageRequest {
 
 /// Read the existing component repository variable with the package registry's transport.
 pub fn component_source_from_env(
-    registry: Option<&wamn_publish::package_artifact::PackageRegistry>,
+    _: Option<&wamn_publish::package_artifact::PackageRegistry>,
 ) -> anyhow::Result<
     Option<wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
 > {
-    use wamn_component_artifact::component_artifact_source::{
-        ComponentArtifactSourceConfig, OCI_CA_PATHS_ENV,
-    };
-    let base = match std::env::var("WAMN_COMPONENT_ARTIFACT_BASE") {
-        Ok(base) => base,
-        Err(std::env::VarError::NotPresent) => return Ok(None),
-        Err(error) => return Err(error).context("read WAMN_COMPONENT_ARTIFACT_BASE"),
-    };
-    let mut source = ComponentArtifactSourceConfig::new(
-        &base,
-        registry.is_some_and(|registry| registry.insecure_registry),
-        std::time::Duration::from_secs(30),
-    )?;
-    if let Some(registry) = registry {
-        source = source
-            .with_registry_auth_file(&registry.registry_auth_file)?
-            .with_ca_paths(&registry.oci_ca_paths)?;
-    } else {
-        if let Some(file) = std::env::var_os("WAMN_REGISTRY_AUTH_FILE") {
-            source = source.with_registry_auth_file(Path::new(&file))?;
-        }
-        if let Some(paths) = std::env::var_os(OCI_CA_PATHS_ENV) {
-            source = source.with_ca_paths(
-                &paths
-                    .to_string_lossy()
-                    .split(',')
-                    .filter(|path| !path.is_empty())
-                    .map(PathBuf::from)
-                    .collect::<Vec<_>>(),
-            )?;
-        }
-    }
-    Ok(Some(source))
+    Ok(None)
 }
 
 /// Result of one exact package application.

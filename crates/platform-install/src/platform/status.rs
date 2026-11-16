@@ -1,6 +1,5 @@
 //! Read platform state from Helm, Kubernetes, endpoints, and PostgreSQL without mutation.
 
-use sqlx::Connection as _;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io::Write;
@@ -12,7 +11,7 @@ use base64::Engine as _;
 use serde_json::Value;
 use wamn_release_control::release_chart::Target;
 
-use super::document::{ClusterDocument, Provider, UpgradeTarget};
+use super::document::{ClusterDocument, UpgradeTarget};
 use super::{artifact_plan, resources};
 use wamn_kubernetes::kubectl;
 use wamn_package_artifact::http_client::{HttpClient, Redirects};
@@ -499,11 +498,6 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
             result.as_ref().ok(),
         ));
     }
-    let database = tokio::time::timeout(Duration::from_secs(40), database(target)).await;
-    observations.push(database.ok().and_then(Result::ok).unwrap_or_else(|| observation(
-        "PostgreSQL/wamn_system", Category::Unknown,
-        "Read platform/wamn-pg-rw and wamn-pg-superuser; restore database access and retry status",
-    )));
     for identity in [true, false] {
         let result =
             tokio::time::timeout(Duration::from_secs(40), probe(target, document, identity)).await;
@@ -511,26 +505,6 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
             if identity { "identity/HTTPS/healthz" } else { "control/HTTP/control/mine" },
             Category::Unknown, "Inspect this service's endpoints, serving certificate, and process logs; retry status",
         )));
-    }
-    if document.provider == Provider::Kind {
-        let result = async {
-            HttpClient::builder()
-                .timeout(Duration::from_secs(5))
-                .build()?
-                .get(format!(
-                    "http://{}/v2/",
-                    document.registry.split('/').next().unwrap_or_default()
-                ))
-                .send()
-                .await
-                .map_err(anyhow::Error::from)
-        }
-        .await;
-        observations.push(observation("local registry", match result {
-            Ok(response) if response.status().is_success() => Category::Ready,
-            Ok(_) => Category::Failed,
-            Err(_) => Category::Unknown,
-        }, "Inspect the local registry container and published port; rerun platform deploy if it is missing"));
     }
     if document.buckets.web.is_empty() {
         warnings.push("cluster.buckets.web: platform UI storage is not selected; select storage and upload UI when needed".into());
@@ -1029,57 +1003,6 @@ fn secret_bytes(secret: &Value, key: &str) -> anyhow::Result<Vec<u8>> {
     base64::engine::general_purpose::STANDARD
         .decode(value)
         .context("invalid Secret encoding")
-}
-
-async fn database(target: &Target) -> anyhow::Result<Observation> {
-    let forward =
-        super::database::forward(target, &target.namespace, "wamn-pg", "wamn_system").await?;
-    let options = wamn_postgres::connect_options(&forward.input)
-        .await?
-        .options([
-            ("default_transaction_read_only", "on"),
-            ("statement_timeout", "5000"),
-        ]);
-    let mut client = wamn_postgres::connect(options).await?;
-    // The connection future stays targeted to this observation, including cancellation.
-    let read = async {
-        let mut transaction = client
-            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .await?;
-        let state = crate::provision_system::system_state(&mut transaction).await?;
-        let report = crate::platform_migrations::observe_system(&mut transaction).await?;
-        let result = database_state(&state, &report);
-        transaction.rollback().await?;
-        Ok(result)
-    };
-    read.await
-}
-
-fn database_state(
-    state: &crate::provision_system::SystemState,
-    report: &crate::migrations::SchemaReport,
-) -> Observation {
-    use crate::provision_system::SystemState;
-    let category = match state {
-        SystemState::Complete => Category::Ready,
-        SystemState::Absent | SystemState::Incomplete => Category::Incomplete,
-    };
-    let mut result = observation(
-        "PostgreSQL/wamn_system",
-        category,
-        match state {
-            SystemState::Absent => {
-                "Run platform deploy with the selected chart to initialize the absent system schema"
-            }
-            _ => {
-                "Inspect the system baseline and restore a verified database backup; do not reset or replay partial initialization"
-            }
-        },
-    );
-    result
-        .facts
-        .extend(report.to_string().lines().map(str::to_owned));
-    result
 }
 
 async fn probe(

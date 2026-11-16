@@ -59,18 +59,10 @@ pub(super) async fn prepare(
             .context("missing component registry")?,
         &analysis.actor,
     )?;
-    let release_name = analysis.authorities.release_name.clone();
     let private = PrivateDirectory::create()?;
     let values = private.path("values.yaml");
     std::fs::write(&values, serde_yaml::to_string(&rendered)?)
         .with_context(|| format!("write {}", values.display()))?;
-    super::runtime::require_chart_references(
-        &platform.target,
-        &platform.chart,
-        &release_name,
-        &rendered,
-    )
-    .await?;
     Ok(Prepared {
         directory: private,
         roles: names,

@@ -19,7 +19,6 @@ platform:
 release:
   # `sha256:<hex>` of the release manifest.
   manifestDigest: ""
-  artifactBase: ""
 # `org/project/env`.
 environment: ""
 routeHost: ""
@@ -35,8 +34,6 @@ platformUi: null
 org: ""
 # The application's HTTP role: `{name: http, entry: ..., config: {}}`.
 roles: []
-# `{actor}`: who applied. Helm keeps it with the revision.
-audit: {}
 
 # Shared environment host selected by application workloads.
 hostGroup: ""

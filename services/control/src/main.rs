@@ -14,11 +14,6 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     #[command(hide = true)]
-    BootstrapProject {
-        #[arg(long)]
-        connection: String,
-    },
-    #[command(hide = true)]
     Operation(wamn_control::Operation),
     #[command(hide = true)]
     Platform { request: String },
@@ -38,18 +33,12 @@ async fn main() -> anyhow::Result<()> {
         .log_internal_errors(false)
         .init();
     let cli = Cli::parse();
-    if let Some(Command::BootstrapProject { connection }) = &cli.command {
-        return wamn_platform_install::environment::initialize_database(connection).await;
-    }
     let config = wamn_control::Configuration::read(
         cli.config
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("--config is required"))?,
     )?;
     match cli.command {
-        Some(Command::BootstrapProject { .. }) => {
-            unreachable!("bootstrap returned before component startup")
-        }
         None => wamn_control::serve(config).await,
         Some(Command::Platform { request }) => {
             println!(

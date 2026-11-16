@@ -15,96 +15,6 @@ use super::document::EnvironmentDocument;
 use wamn_postgres::connect;
 use wamn_publish::package_artifact::{OpenedPackage, PackageSource, open_package_source};
 
-/// Initialize absent package baselines in dependency order, without selecting a release.
-/// Existing baselines keep their SQL records even when the selected version changes.
-pub async fn initialize(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    analysed: &BTreeMap<wamn_catalog::PackageName, Installed>,
-    manifest: &wamn_catalog::ServingManifest,
-    project_url: &str,
-    migration_database_url: &str,
-) -> anyhow::Result<Vec<PackageManifest>> {
-    let project_env_key =
-        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
-
-    let mut opened = Vec::new();
-    for package in &manifest.release.packages {
-        let (id, version) = (package.package_id(), package.package_version());
-        let package = open(platform, id, version).await?;
-        let path = wamn_compiler::package_manifest_path(package.root());
-        let package_manifest = PackageManifest::from_slice(
-            &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-        )
-        .with_context(|| format!("parse {}", path.display()))?;
-        opened.push((id.to_owned(), version.to_owned(), package, package_manifest));
-    }
-    let order = apply_order(
-        &opened
-            .iter()
-            .map(|(id, _, _, package_manifest)| {
-                (
-                    id,
-                    package_manifest
-                        .base_dependencies
-                        .values()
-                        .map(|dependency| &dependency.package)
-                        .collect(),
-                )
-            })
-            .collect::<Vec<_>>(),
-    )?;
-    let mut opened = opened.into_iter().map(Some).collect::<Vec<_>>();
-    let mut packages = Vec::new();
-    for index in order {
-        let (id, version, opened, package_manifest) =
-            opened[index].take().context("each package applies once")?;
-        let applies = !analysed.contains_key(&id);
-        if applies {
-            crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
-                migration_database_url: migration_database_url.to_owned(),
-                component_source: platform.component_source()?,
-                changes: platform.auth_changes().await?,
-                package: opened.package_root(),
-                database_url: project_url.to_owned(),
-                org: document.org.clone(),
-                project: document.project.clone(),
-                environment: document.env.clone(),
-            })
-            .await
-            .with_context(|| format!("apply package {id}@{version}"))?;
-        }
-        packages.push((id, version, opened, package_manifest));
-    }
-
-    materialize_application_principals(
-        &platform.system_database_url,
-        project_url,
-        &project_env_key,
-        manifest,
-        &packages
-            .iter()
-            .map(|(_, _, _, manifest)| manifest.clone())
-            .collect::<Vec<_>>(),
-        &platform.auth_changes().await?,
-    )
-    .await?;
-    create_number_sequences(
-        project_url,
-        &sequence_defaults(
-            &document.membership(),
-            packages.iter().map(|(_, _, _, manifest)| manifest),
-        )?,
-    )
-    .await
-    .context("create the number sequences of the release's packages")?;
-
-    Ok(packages
-        .into_iter()
-        .map(|(_, _, _, package_manifest)| package_manifest)
-        .collect())
-}
-
 /// Create each integration application principal and its declared dependency role.
 /// An identical apply writes no rows.
 ///
@@ -293,41 +203,6 @@ pub async fn write_runtime_grants(
     }
     system.commit().await?;
     Ok(())
-}
-
-/// Create the `platform.number_sequence` row of each default the database at
-/// `project_url` does not have yet, and return how many were created. A row
-/// that exists keeps its pattern, so an edited pattern survives every apply.
-///
-/// The project owner writes the defaults and binds `wamn:provisioning`
-/// as the actor and operation.
-///
-/// # Errors
-///
-/// When the database refuses a statement.
-pub async fn create_number_sequences(
-    project_url: &str,
-    defaults: &[wamn_platform_identity::configuration::SequenceDefault],
-) -> anyhow::Result<u64> {
-    if defaults.is_empty() {
-        return Ok(0);
-    }
-    let mut project = super::analyse::connect_project(project_url).await?;
-    let mut transaction = project.begin().await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_identity_protocol::PlatformComponent::Provisioning,
-        ),
-    ))
-    .execute(&mut *transaction)
-    .await
-    .map(drop)
-    .context("bind wamn:provisioning as the actor and operation")?;
-    let created =
-        wamn_platform_identity::configuration::create_default_sequences(&mut transaction, defaults)
-            .await?;
-    transaction.commit().await?;
-    Ok(created)
 }
 
 /// The installed packages of the project database, read now.

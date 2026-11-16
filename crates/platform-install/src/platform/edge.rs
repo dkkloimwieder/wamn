@@ -6,7 +6,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_release_control::release_chart::Target;
 
-use super::document::{ClusterDocument, Provider};
+use super::document::ClusterDocument;
 use wamn_kubernetes::kubectl;
 
 /// Select one platform edge, with no application route list.
@@ -17,8 +17,6 @@ pub fn chart_input(chart: &Path, image: &str, document: &ClusterDocument) -> any
         "version":wamn_release_control::release_chart::read_platform_version(&chart.join("Chart.yaml"))?,
         "name":"wamn-edge", "namespace":"hosts",
         "values":{
-            "neg":document.provider == Provider::Gcp,
-            "trustedProxyHops":if document.provider == Provider::Gcp { 2 } else { 1 },
             "tlsSecret":"wamn-edge-tls", "identityCaConfigMap":"identity-ca",
             "identity":&super::identity::issuer(document.org.as_str()),
             "web":{"image":image, "bucket":if bucket.is_empty() { String::new() } else { format!("gs://{bucket}") }},

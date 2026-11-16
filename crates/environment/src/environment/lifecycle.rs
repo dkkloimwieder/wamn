@@ -19,7 +19,7 @@ pub async fn configure(
         );
     }
     let mut platform = platform.clone();
-    let installed = super::runtime::resolve_platform(&mut platform, &document.org).await?;
+    super::runtime::resolve_platform(&mut platform, &document.org).await?;
     let triple = document.triple();
     let client = wamn_postgres::connect(system_owner).await?;
     LifecycleLock::hold(client, &triple, async |lock| {
@@ -71,16 +71,6 @@ pub async fn configure(
             &connection.database,
         )))
         .execute(&mut client)
-        .await?;
-        let image = crate::platform::artifact_plan::select(&platform.chart)?
-            .image("control")?
-            .to_owned();
-        wamn_platform_install::environment::initialize(
-            &platform.target,
-            &image,
-            &connection,
-            unconfigured,
-        )
         .await?;
         if unconfigured {
             crate::platform_migrations::restore_project(
@@ -146,7 +136,6 @@ pub async fn configure(
         )
         .await?;
         resources::ensure_streams(&platform, document, &[]).await?;
-        resources::provision_environment_host(&platform, &installed, document).await?;
         let mut connection = lock.client().await;
         let mut tx = provision_project_env::provisioning_transaction(&mut connection).await?;
         document.save(&mut tx).await?;

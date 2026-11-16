@@ -7,12 +7,11 @@ use wamn_control_provision::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, sql, workload_login,
 };
 use wamn_kubernetes::kubectl;
-use wamn_registry::Triple;
 
 use crate::environment::{Platform, document::EnvironmentDocument};
 
 pub(crate) use wamn_platform_install::credentials::{
-    configuration, provision_platform_migration, reconcile, remove_roles, wait_role,
+    configuration, reconcile, remove_roles, wait_role,
 };
 
 /// Provision every role once and publish only public connection facts in a ConfigMap.
@@ -197,52 +196,5 @@ pub(crate) async fn provision(
         &config_map,
     )
     .await?;
-    Ok(())
-}
-
-/// Restore grants for existing managed logins after replacing a project database.
-pub(crate) async fn restore_database_access(
-    system_input: &str,
-    input: &str,
-    triple: &Triple,
-) -> anyhow::Result<()> {
-    let instance = super::read_project_env_instance(system_input, triple).await?;
-    let mut database = wamn_control_provision::project_env_database_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-        &instance,
-    );
-    let key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
-    let mut connection = wamn_postgres::connect(input).await?;
-    for family in WorkloadRoleFamily::project_env_families()
-        .filter(|family| family.identity_type() != WorkloadRoleIdentityType::Control)
-    {
-        let identity = if family.identity_type() == WorkloadRoleIdentityType::ProjectEnvKey {
-            WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: &key,
-                database: &mut database,
-            }
-        } else {
-            WorkloadRoleIdentity::ProjectEnvironment {
-                org: &triple.org,
-                project: &triple.project,
-                environment: &triple.env,
-                database: &mut database,
-            }
-        };
-        let username = workload_login(family, identity)?;
-        if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1)")
-            .bind(&username)
-            .fetch_one(&mut connection)
-            .await?
-        {
-            sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
-                family, &database, &username,
-            )))
-            .execute(&mut connection)
-            .await?;
-        }
-    }
     Ok(())
 }

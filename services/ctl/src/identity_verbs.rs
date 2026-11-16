@@ -6,7 +6,6 @@ use std::fmt;
 use clap::Args;
 use serde_json::json;
 use std::path::PathBuf;
-use wamn_environment::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
 
 /// Create one API service with authored application roles and a private PAT output.
 #[derive(Args)]
@@ -46,39 +45,6 @@ pub async fn create_api_service(args: ApiServiceArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Provisioning inputs for one identity authority, not a project environment.
-#[derive(Args)]
-pub struct IdentityIssuerArgs {
-    /// Exact HTTPS issuer configured on wamn-identity.
-    #[arg(long)]
-    pub issuer: String,
-    /// Administrator URL for the wamn_system database.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
-    pub system_database_url: String,
-    /// Host the emitted credential URL names, for example `<cluster>-rw`. It
-    /// has no default, so the admin URL's host never reaches a workload.
-    #[arg(long)]
-    pub db_host: Option<String>,
-    /// Port the emitted credential URL names.
-    #[arg(long, default_value_t = 5432)]
-    pub db_port: u16,
-    /// Namespace for the emitted Secret.
-    #[arg(long, default_value = "wamn-system")]
-    pub namespace: String,
-    /// Name for the emitted Secret, matching the identity chart.
-    #[arg(long, default_value = "wamn-identity-db")]
-    pub secret_name: String,
-}
-
-impl fmt::Debug for IdentityIssuerArgs {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("IdentityIssuerArgs")
-            .field("system_database_url", &"[REDACTED]")
-            .finish_non_exhaustive()
-    }
-}
-
 /// Arguments that name one existing user and one existing project environment.
 #[derive(Debug, Args)]
 pub struct ProjectEnvMembershipArgs {
@@ -101,21 +67,6 @@ pub struct ProjectEnvMembershipArgs {
     /// Existing user principal UUID from the system database.
     #[arg(long)]
     pub principal_id: wamn_identity_protocol::PrincipalId,
-}
-
-/// Run one identity credential generation action and print what it did.
-pub async fn provision_issuer(args: IdentityIssuerArgs) -> anyhow::Result<()> {
-    let outcome = provision_identity_issuer(&IdentityIssuerRequest {
-        issuer: args.issuer,
-        system_database_url: args.system_database_url,
-        db_host: args.db_host,
-        db_port: args.db_port,
-        namespace: args.namespace,
-        secret_name: args.secret_name,
-    })
-    .await?;
-    println!("identity database role {} provisioned", outcome.role);
-    Ok(())
 }
 
 /// Grant one user's project environment membership and print the new state.
@@ -143,13 +94,7 @@ mod tests {
     use clap::{CommandFactory as _, Parser};
     use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 
-    use super::{IdentityIssuerArgs, ProjectEnvMembershipArgs};
-
-    #[derive(Parser)]
-    struct IssuerCli {
-        #[command(flatten)]
-        args: IdentityIssuerArgs,
-    }
+    use super::ProjectEnvMembershipArgs;
 
     #[derive(Parser)]
     struct MembershipCli {
@@ -231,18 +176,6 @@ mod tests {
         server.await.unwrap();
     }
 
-    fn issuer_arguments() -> Vec<&'static str> {
-        vec![
-            "issuer",
-            "--issuer",
-            "https://identity.wamn-system.svc",
-            "--system-database-url",
-            "postgres://admin:hidden-value@sysdb/wamn_system",
-            "--db-host",
-            "sysdb",
-        ]
-    }
-
     fn membership_arguments() -> [&'static str; 11] {
         [
             "membership",
@@ -257,22 +190,6 @@ mod tests {
             "--token",
             "session",
         ]
-    }
-
-    #[test]
-    fn targeted_role_arguments_parse_and_redact_admin_credentials() {
-        let args = IssuerCli::try_parse_from(issuer_arguments()).unwrap().args;
-        assert_eq!(args.namespace, "wamn-system");
-        assert_eq!(args.secret_name, "wamn-identity-db");
-        assert_eq!(args.db_host.as_deref(), Some("sysdb"));
-        assert!(!format!("{args:?}").contains("hidden-value"));
-    }
-
-    #[test]
-    fn an_issuer_rejects_an_unrelated_org_argument() {
-        let mut values = issuer_arguments();
-        values.extend(["--org", "acme"]);
-        assert!(IssuerCli::try_parse_from(values).is_err());
     }
 
     #[test]

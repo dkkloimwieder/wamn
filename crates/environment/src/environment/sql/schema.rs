@@ -421,57 +421,6 @@ pub(super) async fn apply_candidates(
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Status {
-    pub mode: SchemaMode,
-    pub disposable: Option<bool>,
-    pub installed: BTreeMap<wamn_catalog::PackageName, SchemaSource>,
-    pub applications: BTreeMap<wamn_catalog::ApplicationName, Diff>,
-    pub unknowns: Vec<String>,
-}
-
-pub async fn status(
-    platform: &mut Platform,
-    document: &EnvironmentDocument,
-) -> anyhow::Result<Status> {
-    super::super::runtime::resolve_registry(platform, &document.org).await?;
-    let state = state(platform, document).await?;
-    let mut applications = BTreeMap::new();
-    let mut unknowns = state.unknowns.clone();
-    for application in document.applications.keys() {
-        match release_candidates(platform, document, application, None).await {
-            Ok((release, candidates)) => {
-                applications.insert(
-                    application.clone(),
-                    plan(document, application, Some(release), &candidates, &state).await?,
-                );
-            }
-            Err(error) => unknowns.push(format!(
-                "application {application} candidate unknown: {error:#}"
-            )),
-        }
-    }
-    Ok(Status {
-        mode: document.schema_mode(state.disposable),
-        disposable: state.disposable,
-        installed: state
-            .packages
-            .into_iter()
-            .map(|(id, p)| {
-                (
-                    id,
-                    SchemaSource {
-                        version: p.coordinate.package_version().to_owned(),
-                        artifact: p.artifact_digest,
-                    },
-                )
-            })
-            .collect(),
-        applications,
-        unknowns,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

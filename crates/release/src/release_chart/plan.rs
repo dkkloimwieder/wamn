@@ -108,10 +108,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     let mut values = Mapping::new();
     values.insert(
         "release".into(),
-        mapping([
-            ("manifestDigest", input.manifest_digest.to_string()),
-            ("artifactBase", input.artifact_base.clone()),
-        ]),
+        mapping([("manifestDigest", input.manifest_digest.to_string())]),
     );
     values.insert("environment".into(), environment.into());
     values.insert("routeHost".into(), input.route_host.clone().into());
@@ -121,7 +118,6 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         serde_yaml::to_value(&input.applications).context("render the applications")?,
     );
     values.insert("roles".into(), Value::Sequence(roles));
-    values.insert("audit".into(), mapping([("actor", input.actor.clone())]));
     values.insert(
         "hostGroup".into(),
         wamn_registry::name::environment_host_name(&input.org, &input.env).into(),
