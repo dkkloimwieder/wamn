@@ -23,7 +23,7 @@ use wamn_authentication::session_keys::{IssuerKeys, IssuerKeysConfig, TestClock}
 
 pub(super) const ISSUER: &str = "https://identity.example.test/issuer";
 pub(super) const ORG: &str = "org-a";
-pub(super) const AUDIENCE: &str = "urn:wamn:project-env:org-a:project:dev:instance-one";
+pub(super) const AUDIENCE: &str = "urn:wamn:project-env:org-a:dev:project:instance-one";
 
 fn pair() -> Ed25519KeyPair {
     // Fixed test-only seed. Production signing keys never enter this crate.
