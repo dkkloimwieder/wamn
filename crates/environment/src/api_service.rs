@@ -6,7 +6,7 @@ use std::time::Duration;
 use wamn_identity_client::{PatClient, PatIssuerConfig};
 use wamn_identity_protocol::RoleName;
 use wamn_platform_identity::PrincipalStatus;
-use wamn_platform_identity::application::{
+use crate::application::{
     ApplicationUser, GrantAuthority, GrantChange, mutate_grant, write_service,
 };
 

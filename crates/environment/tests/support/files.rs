@@ -205,7 +205,7 @@ pub struct Registry {
     pub unenabled: Client,
     pub org: wamn_registry::OrgId,
     project: wamn_registry::ProjectId,
-    pub credentials: std::sync::Arc<wamn_test_infrastructure::credentials::MemoryStore>,
+    pub credentials: std::sync::Arc<wamn_connections::credentials::MemoryStore>,
     pub connection_id: String,
     pub generation: i64,
     pub definition: serde_json::Value,
@@ -227,7 +227,7 @@ impl Registry {
             "wamn:provisioning",
         )
         .await?;
-        wamn_platform_identity::connections::administration::execute_with_store(
+        wamn_connections::connections::administration::execute_with_store(
             &mut tx,
             &self.org,
             operation,
@@ -250,7 +250,7 @@ impl Registry {
             "wamn:provisioning",
         )
         .await?;
-        wamn_test_infrastructure::credentials::define(&mut tx,&self.org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),self.credentials.as_ref()).await?;
+        wamn_connections::credentials::define(&mut tx,&self.org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),self.credentials.as_ref()).await?;
         tx.commit().await?;
         Ok(())
     }

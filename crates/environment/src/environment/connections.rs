@@ -12,7 +12,7 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_platform_identity::connections::{ConnectionError, administration};
+use wamn_connections::connections::{ConnectionError, administration};
 
 use super::Platform;
 use super::document::EnvironmentDocument;

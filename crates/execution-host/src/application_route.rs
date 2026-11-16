@@ -7,7 +7,7 @@
 //! to the caller and `app.operation` to the route's sealed operation id. A
 //! role or permission write first takes the project lock that `wamn-ctl` and
 //! release reconciliation take. The writes are the functions of
-//! `wamn_platform_identity::application`, which `wamn-ctl` also calls, so no
+//! `wamn_environment::application`, which `wamn-ctl` also calls, so no
 //! second writer exists. A grant stores one row, and a caller holds exactly
 //! its rows, so a grant works while two releases serve during a rollout.
 //!
@@ -33,7 +33,7 @@ use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
-use wamn_platform_identity::application::{
+use wamn_environment::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
@@ -99,8 +99,8 @@ struct UserRoleRequest {
     role: String,
 }
 
-impl From<wamn_platform_identity::application::GrantError> for Refusal {
-    fn from(error: wamn_platform_identity::application::GrantError) -> Self {
+impl From<wamn_environment::application::GrantError> for Refusal {
+    fn from(error: wamn_environment::application::GrantError) -> Self {
         AdministrationError::from(error).into()
     }
 }

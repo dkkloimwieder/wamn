@@ -91,10 +91,10 @@ pub async fn configure(
             serde_json::json!({"bootstrap":null}),
         )
         .await?;
-        wamn_platform_identity::environment::fill(
+        crate::environment::fill(
             system_owner,
             &owner,
-            wamn_platform_identity::application::ApplicationTarget {
+            crate::application::ApplicationTarget {
                 org: &triple.org,
                 project: &triple.project,
                 env: &triple.env,

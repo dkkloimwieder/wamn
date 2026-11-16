@@ -1,7 +1,7 @@
 //! Identity provisioning fills the rows that application foreign keys reference.
 
 use sqlx::Row as _;
-use wamn_platform_identity::{application::ApplicationTarget, environment::fill};
+use wamn_environment::{application::ApplicationTarget, environment::fill};
 
 #[tokio::test]
 #[ignore = "requires: postgres"]

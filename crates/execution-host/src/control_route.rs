@@ -52,7 +52,7 @@ use wamn_control_provision::control_administration_key;
 use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_identity::application::{
+use wamn_environment::application::{
     ApplicationTarget, project_authority, require_platform_rows, write_environment_status,
 };
 use wamn_platform_identity::control::{

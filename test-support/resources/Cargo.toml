@@ -20,10 +20,7 @@ wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 wamn-broker = { workspace = true }
 wamn-digest = { workspace = true, features = ["sqlx"] }
-wamn-platform-identity = { workspace = true }
 wamn-kubernetes = { workspace = true, features = ["test-util"] }
-async-trait = { workspace = true }
-uuid = { workspace = true, features = ["v4"] }
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream", "server_2_10"] }
 base64 = { workspace = true }
@@ -35,7 +32,6 @@ wamn-registry = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-compiler = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "process", "time"] }
 url = { workspace = true }

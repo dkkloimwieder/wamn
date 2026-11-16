@@ -12,5 +12,3 @@ pub use wamn_test_postgres as postgres;
 
 pub mod record_history;
 pub mod scratch;
-
-pub mod credentials;

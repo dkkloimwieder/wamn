@@ -11,3 +11,7 @@ pub mod oauth_encryption;
 pub mod oauth_token;
 
 pub mod pod_identity;
+
+pub mod connections;
+#[cfg(feature = "test-util")]
+pub mod credentials;

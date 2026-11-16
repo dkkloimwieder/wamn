@@ -186,7 +186,7 @@ impl Authorization {
             .await
             .map_err(|error| failed("callback identity failed", error))?;
         let connection: uuid::Uuid = row.get("connection_id");
-        let context = wamn_platform_identity::connections::administration::configure(
+        let context = wamn_connections::connections::administration::configure(
             tx,
             org,
             "connection.oauth_callback",
