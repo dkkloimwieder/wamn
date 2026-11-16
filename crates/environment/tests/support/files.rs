@@ -188,7 +188,7 @@ pub async fn metadata(writer: &mut Client) -> anyhow::Result<()> {
     sqlx::query(
         "INSERT INTO platform.file \
          (id,application,connection_id,name,media_type,size,sha256,blob_key) \
-         VALUES ($1::text::uuid,$2,$3::text::uuid,'fixture.txt','text/plain',0,repeat('0',64), \
+         VALUES ($1::text::uuid,$2,$3::text::uuid,'fixture.txt','text/plain',0,'sha256:' || repeat('0',64), \
                  'dev/_wamn_files/live/' || $1)",
     )
     .bind(&FILE)

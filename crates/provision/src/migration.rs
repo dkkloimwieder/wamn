@@ -88,11 +88,27 @@ pub(crate) fn default_privileges_sql(login: &wamn_identity_protocol::LoginName) 
     let role = postgres_protocol::escape::escape_identifier(login.as_str());
     format!(
         "ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO wamn_app; \
-         ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT USAGE ON SCHEMAS TO wamn_app, wamn_query; \
          ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO wamn_app; \
          ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT SELECT ON TABLES TO wamn_query; \
          ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
     )
+}
+
+/// Grant runtime use and migration access on one model schema.
+pub async fn grant_model_schema_access(
+    connection: &mut sqlx::PgConnection,
+    login: &wamn_identity_protocol::LoginName,
+    schema: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "GRANT USAGE ON SCHEMA {schema} TO wamn_app, wamn_query; \
+         GRANT USAGE, CREATE ON SCHEMA {schema} TO {login}",
+        schema = postgres_protocol::escape::escape_identifier(schema),
+        login = postgres_protocol::escape::escape_identifier(login.as_str()),
+    )))
+    .execute(connection)
+    .await?;
+    Ok(())
 }
 
 /// Trusted grants required by compiler-generated history and proper foreign keys.

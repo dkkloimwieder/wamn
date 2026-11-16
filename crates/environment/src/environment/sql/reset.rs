@@ -46,13 +46,31 @@ pub async fn reset_database(
     .execute(&mut *tx)
     .await?;
     let mut migration = wamn_postgres::connect(migration_url).await?;
-    wamn_control_provision::migration::require_login(&mut migration, &project_env_key).await?;
+    let migration_login =
+        wamn_control_provision::migration::require_login(&mut migration, &project_env_key).await?;
+    ensure!(
+        migration_login == login,
+        "migration and owner connections name different databases"
+    );
+    // Generated history functions need CREATE on wamn_history independently of model schemas.
+    let schemas: Vec<String> = sqlx::query_scalar(
+        "SELECT nspname::text FROM pg_namespace
+         WHERE nspowner='wamn_db_owner'::regrole AND nspname <> 'wamn_history'
+           AND has_schema_privilege($1,oid,'CREATE')",
+    )
+    .bind(&login)
+    .fetch_all(&mut *tx)
+    .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "DROP OWNED BY {}",
         postgres_protocol::escape::escape_identifier(login.as_str())
     )))
-    .execute(&mut migration)
+    .execute(&mut *tx)
     .await?;
+    for schema in &schemas {
+        wamn_control_provision::migration::grant_model_schema_access(&mut tx, &login, schema)
+            .await?;
+    }
     // SQLx histories are trusted platform objects, separate from application DDL ownership.
     for (table,) in sqlx::query_as::<_, (String,)>("SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='wamn_history' AND c.relname LIKE 'migrations_%' AND c.relkind='r'").fetch_all(&mut *tx).await? {
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP TABLE {table}"))).execute(&mut *tx).await?;

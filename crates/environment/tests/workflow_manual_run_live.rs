@@ -425,6 +425,10 @@ async fn targeted_postgres(admin: &mut Client, url: &str) -> Arc<WamnPostgres> {
         .await
         .unwrap()
         .get(0);
+    let triple = PROJECT_ENV_KEY
+        .parse::<wamn_registry::ProjectEnvKey>()
+        .unwrap()
+        .triple();
     let mut credentials = ClassCredentials::default();
     for (family, class) in [
         (WorkloadRoleFamily::App, AuthorityClass::GuestSql),
@@ -444,9 +448,9 @@ async fn targeted_postgres(admin: &mut Client, url: &str) -> Arc<WamnPostgres> {
             }
         } else {
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: &PROJECT_ENV_KEY.parse().unwrap(),
-                project: &PROJECT.parse().unwrap(),
-                environment: &ENVIRONMENT.parse().unwrap(),
+                org: &triple.org,
+                project: &triple.project,
+                environment: &triple.env,
                 database: &database,
             }
         };

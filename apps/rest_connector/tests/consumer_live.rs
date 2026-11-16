@@ -102,6 +102,10 @@ pub async fn workflow_host(
         &wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
+    let triple = PROJECT_ENV_KEY
+        .parse::<wamn_registry::ProjectEnvKey>()
+        .unwrap()
+        .triple();
     let mut credentials = ClassCredentials::default();
     for (family, class) in [
         (
@@ -116,9 +120,9 @@ pub async fn workflow_host(
         let role = workload_login(
             family,
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: &PROJECT_ENV_KEY.parse().unwrap(),
-                project: &"test".parse().unwrap(),
-                environment: &"test".parse().unwrap(),
+                org: &triple.org,
+                project: &triple.project,
+                environment: &triple.env,
                 database: database.path().trim_start_matches('/'),
             },
         )?;
@@ -309,12 +313,10 @@ pub async fn install(
     roots: &[PathBuf],
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<String> {
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("CREATE ROLE wamn_app NOLOGIN; ").to_string(),
-    ))
-    .execute(&mut *admin)
-    .await
-    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::ensure_app_acl_role_sql()))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (sql::ensure_db_owner_role_sql()).to_string(),
     ))
