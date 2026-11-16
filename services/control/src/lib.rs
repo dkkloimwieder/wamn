@@ -1,6 +1,11 @@
 //! Authenticated org administration without a guest runtime.
 
+mod application_route;
+pub mod connection_health;
+mod control_route;
+pub mod environment_status;
 mod execution;
+mod host_route;
 pub mod platform;
 pub mod retention;
 mod workflow;
@@ -19,7 +24,7 @@ use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_environment::environment::Platform;
-use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
+pub use host_route::{ControlExecution, HostRouteDelivery, HostRouteHandlers};
 use wamn_identity_client::PatIssuerConfig;
 
 /// Public component configuration. Database passwords stay in CNPG Secrets.
@@ -241,7 +246,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
                 )),
                 identity: Some(config.identity.connection()),
                 administration: Some(config.administration_dir.clone()),
-                status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
+                status: Arc::new(crate::environment_status::KubernetesSource),
                 org: config.org.clone(),
             },
         )
@@ -263,7 +268,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         .with_operation_jobs(wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?)
         .with_registry_token_metadata(config.registry_token_metadata)
         .with_connection_health(Arc::new(
-            wamn_execution_host::connection_health::ConnectionHealth::new(transport)
+            crate::connection_health::ConnectionHealth::new(transport)
                 .with_registry(integration_registry, registry_credentials),
         ))
         .with_oauth(oauth.as_ref().map(Arc::clone)),
@@ -283,7 +288,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
                 tracing::warn!(%error, "transaction identity retention failed");
             }
             let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                wamn_execution_host::credential_cleanup::collect(
+                wamn_connections::credential_cleanup::collect(
                     &mut *cleanup_pool.acquire().await?,
                     &cleanup_org,
                 )
@@ -323,7 +328,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
                         async move {
                             let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
                             let response = if request.uri().path() == "/oauth/callback" && let Some(oauth) = oauth {
-                                wamn_execution_host::oauth_callback::response(&oauth, &database, &org, request).await
+                                wamn_http::oauth_callback::response(&oauth, &database, &org, request).await
                             } else { handlers.http(&routing, request).await };
                             Ok::<_, std::convert::Infallible>(response)
                         }

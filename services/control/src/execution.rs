@@ -35,7 +35,7 @@ impl Execution {
 }
 
 #[async_trait::async_trait]
-impl wamn_execution_host::ControlExecution for Execution {
+impl crate::host_route::ControlExecution for Execution {
     async fn execute(
         &self,
         operation: &wamn_catalog::canonical_name::CanonicalName,

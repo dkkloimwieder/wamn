@@ -15,3 +15,4 @@ pub mod pod_identity;
 pub mod connections;
 #[cfg(feature = "test-util")]
 pub mod credentials;
+pub mod credential_cleanup;

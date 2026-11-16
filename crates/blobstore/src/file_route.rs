@@ -15,8 +15,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
-use wamn_blobstore::files::{FileStorageError, FileStorageErrorType, FileStore, MAX_URL_LIFETIME};
-use wamn_blobstore::plugin::WamnBlobstore;
+use crate::files::{FileStorageError, FileStorageErrorType, FileStore, MAX_URL_LIFETIME};
+use crate::plugin::WamnBlobstore;
 use wamn_catalog::{ComponentConnectionType, HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -70,7 +70,7 @@ pub enum FileRefusal {
 }
 
 impl FileRefusal {
-    pub(crate) fn code(self) -> &'static str {
+    pub fn code(self) -> &'static str {
         match self {
             Self::InvalidInput => "invalid_input",
             Self::PermissionDenied => "permission_denied",
@@ -677,7 +677,7 @@ impl FileRoutes {
             .map_err(Into::into)
     }
 
-    pub(crate) async fn handle(
+    pub async fn handle(
         &self,
         attachment: &HostAttachment,
         caller: &AuthenticatedCaller,

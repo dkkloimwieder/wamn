@@ -31,7 +31,13 @@ wamn-workflow.workspace = true
 wamn-publish.workspace = true
 async-trait.workspace = true
 wamn-package-artifact.workspace = true
-wamn-execution-host.workspace = true
+wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-events.workspace = true
+wamn-blobstore.workspace = true
+bytes.workspace = true
+boon.workspace = true
+moka = { workspace = true, features = ["sync"] }
+oci-client.workspace = true
 wamn-identity-client.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes.workspace = true

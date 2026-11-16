@@ -6,9 +6,10 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-control-provision/test-util", "dep:wamn-postgres", "dep:wamn-control-provision", "dep:wamn-broker", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connections/test-util", "dep:wamn-sql", "wamn-sql/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "hyper/server"]
+test-util = ["wamn-control-provision/test-util", "dep:wamn-control-provision", "dep:wamn-broker", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connections/test-util", "dep:wamn-sql", "wamn-sql/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "hyper/server"]
 
 [dependencies]
+wasmtime-wasi-http.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 tempfile = { workspace = true, optional = true }
 wamn-test-postgres = { workspace = true, optional = true }
@@ -50,7 +51,7 @@ wamn-engine = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes = { workspace = true }
 wamn-package-artifact = { workspace = true }
-wamn-postgres = { workspace = true, optional = true }
+wamn-postgres = { workspace = true }
 wamn-sql = { workspace = true, optional = true }
 wamn-registry = { workspace = true }
 wash-runtime = { workspace = true }
