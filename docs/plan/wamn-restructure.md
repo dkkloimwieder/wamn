@@ -39,7 +39,7 @@ Org → environment → project → application. One boundary per level.
 - SECURITY DEFINER functions are owned by their database's owner (`datdba`), set `search_path=pg_catalog`, have no PUBLIC EXECUTE and are not grantable. Grant tests are refusal tests plus invariants derived from the role model.
 - Grants: one project database read, cached in the host's local `moka` cache. One lifetime per project (a project setting), positive answers only. No NATS replica, no drop notices.
 - Admin inheritance (org, environment, project admin) is stored as rows in each project database. No system database read per request.
-- `platform."user"` is keyed `(issuer, sub)`, written by one writer.
+- `platform."user"` keeps `id` (UUID) as primary key and is unique on `(issuer, sub)`. One writer: `wamn_environment::application`. The four platform principals are seed rows in the schema.
 - Roles and ACLs are run-time data. The permission vocabulary is derived from the schema and the operations. Applications ship with an `admin` role only. Bounds on calls are a project setting.
 
 ## Request path
@@ -215,6 +215,54 @@ Issues:
   - Package `wamn-modbus` → `modbus`
   - Update the Dockerfile, chart, xtask and docs references to match. The `wamn-ctl` NATS certificate in the installation chart stays until 3.6.
 
+## Epic 3: step 3.1 database model
+
+Rules:
+- Only the work listed here. Nothing from 3.2 or later.
+- Schema changes edit the files in `deploy/sql` directly. There is no migration chain.
+- Done means all three pass:
+  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
+  - The product's own code that applies `deploy/sql` runs against a fresh local Postgres, for the system database and one project database, with no error. Use one local Postgres container, for these checks only.
+- Run no tests and write no new tests (tests come in 3.8). If a test stops compiling and changing a column, a role name or an import does not fix it, delete the test.
+- Generated code is regenerated, never edited by hand.
+
+Issues:
+
+3.1a `project_env_key` leaves project databases. Runs first, alone.
+- SQL: drop the column, and its place in keys and indexes, from `catalog.packages`, `catalog.connection_requirement`, `catalog.release_connection`, `catalog.connection_binding`, `catalog.workflows`, `wamn_run.runs` and `wamn_run.run_queue`.
+- SQL: drop the row policies by project on `catalog.*` and `wamn_run.*`, keeping the part that requires an identity. Drop all three `wamn_authority.project_key()` definitions (`app-schema.sql`, `catalog-schema-prefix.sql`, `run-state.sql`), `current_project_key()`, and the `project_key` expression indexes.
+- Rust: remove the key from every statement and binding against these tables.
+- The key stays wherever several deployments share a store: system database rows, NATS subjects and keys, resource names, login names.
+
+3.1b to 3.1d run in parallel after 3.1a:
+
+3.1b Connection tables move to the project database.
+- In the project database (`platform` schema): `connection`, with the four integration fields (name, type, auth type, external system) as its columns; `connection_generation`; `external_system`; the credential reference (today `identity.credential`); `oauth_token`; `oauth_authorization`.
+- Delete: `registry.{external_system,integration,connection,connection_generation}`, `identity.{credential,oauth_token,oauth_authorization}`, and `platform.integration`.
+- `integration_type`, `integration_type_version` and `auth_type` stay in the system database.
+- Move every writer and reader to the project database: connection administration (`wamn_connection::connections`), OAuth (`wamn-http`, `wamn_connection::oauth_token`), connection credentials (`wamn_connection::connection_credentials`), `wamn-blobstore`, environment bindings (`wamn_environment::environment::{bindings,connections}`) and the control routes.
+- The connection reader login goes.
+
+3.1c Login set T2 and role names.
+- New crate `wamn-role` in `crates/role`. It holds every Postgres role name and nothing else. Remove the copies in `wamn-identity-protocol`, `wamn-provision`, `wamn-record-history` and `wamn-schema-introspection`.
+- Project database logins:
+  - migration: owner of the database and of every object in it. It replaces `wamn_db_owner` and `wamn_app_owner`, which both go.
+  - application: `wamn_app`
+  - read-only: `wamn_query`
+  - platform: `wamn_platform`
+- `AuthorityClass` keeps `GuestSql` and `DynamicSql`. `ExecutorPlatform`, `CallableHttp` and `Administration` become one `Platform` class on `wamn_platform`.
+- System database: one reader login per environment for the host's system reads.
+- Each role is created in exactly one SQL file.
+- Every SECURITY DEFINER function is owned by its database's owner (`datdba`), sets `search_path=pg_catalog`, has no PUBLIC EXECUTE and is not grantable.
+- Logins are still created by the current provisioning code under their `wamn-role` names. Creating them in charts is step 3.6.
+
+3.1d `platform."user"` key and its writer.
+- Add `issuer` and `sub` (text, NOT NULL) with `UNIQUE (issuer, sub)`. `id` stays the primary key. Foreign keys, `user_role` and the `created_by`/`updated_by` stamps keep using `id`.
+- For wamn identity, `issuer` is the identity issuer address and `sub` is the principal id.
+- One writer: `wamn_environment::application::{write_user, write_service}`. `wamn_environment::environment::stage` writes through it.
+- The four platform principals (`wamn:provisioning`, `wamn:apply-package`, `wamn:executor`, `wamn:audit-retention`) become seed rows in `app-schema.sql`, with the ids already fixed in `user_platform_principal_check`. Delete `wamn_provision::platform_principals`.
+- The host's lookup by `(iss, sub)` is step 3.3. Do not change it here.
+
 ## Open items
 
 - Checks in phase 3: Helm values size for the largest application (3.2); each KCL `check:` rule also in Rust or SQL (3.5); `/_wamn/residency` goes unless 3.5 needs it; 3.5 creates the operation service account and application principals.
@@ -228,6 +276,8 @@ Issues:
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
 - 3.4: merge `wamn-events` and `wamn-event-wire`. In Epic 2 the merge made a cycle, because `wamn-broker`, `wamn-run-state` and `wamn-sql` depend on `wamn-event-wire`.
 - 3.5: `wamn_catalog::manifest::installation` is a second, smaller model of the package document. Its readers move to the full model and it is deleted.
+- 3.3: the host resolves the caller's user row by `(iss, sub)`.
+- 3.6: a connection limit for each login, set in the CloudNativePG managed roles.
 
 # Part 2: Review log
 
@@ -1522,3 +1572,5 @@ Recommend a.
 **Ruled (D, 2026-11-16): Epic 2 scope.** `wamn-execution-host` goes into the control service, by owner. Deferred: `wamn-role` to 3.1, name builders out of `wamn-kubernetes` to 3.5, test layout and `test-support/resources` to 3.8. Fact-forced targets: `org.rs` stays in `wamn-identity` (`control.rs` and the moved code use it); OAuth callback → `wamn-http` and connection health → control service, because `wamn-connections` would form a cycle with `wamn-http` and `wamn-blobstore`.
 
 **Ruled (D, 2026-11-16): Epic 2 targets.** `credentials.rs` → `wamn-connections` under `test-util`; `env_policies.rs` → `wamn-control-provision`; the existing catalog manifest types → `wamn_catalog::manifest::installation`; the event crates merge in 3.4.
+
+**Ruled (D, 2026-11-16): Epic 3 scope.** `platform."user"` keeps `id` and adds `UNIQUE (issuer, sub)` (1a); the platform principals are seed rows (2a); connection limits wait for 3.6 (3a); the epic is checked by applying the schema to a fresh local Postgres (4a); `catalog.release_connection` and `catalog.connection_binding` lose `project_env_key` now and are deleted in 3.2 (5a). Fact: admin inheritance is already stored as rows (`application::project_authority`, run on org and project admin grants), so N3 needs no work.
