@@ -155,7 +155,7 @@ pub(super) fn emit_model_data(
             source,
             "const {}: &str = {:?};",
             permission_constant(*action),
-            operation.permission
+            operation.permission.as_str()
         )
         .expect("writing to a String cannot fail");
     }
