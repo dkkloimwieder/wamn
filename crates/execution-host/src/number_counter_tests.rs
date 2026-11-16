@@ -126,7 +126,7 @@ impl Live {
             &LIVE_PRINCIPAL
                 .parse::<wamn_identity_protocol::PrincipalId>()
                 .unwrap(),
-            SET_OPERATION,
+            &SET_OPERATION.parse().unwrap(),
             request_id,
             &CounterSet {
                 application: APPLICATION.parse().unwrap(),

@@ -94,7 +94,7 @@ pub(super) async fn project_database(
     admin_url: &str,
     system_url: &str,
     project: &str,
-    instance: &str,
+    instance: &wamn_registry::instance_suffix::InstanceSuffix,
     logins: &std::path::Path,
 ) -> anyhow::Result<Client> {
     use wamn_environment::provision_project_env;
@@ -210,8 +210,23 @@ pub(super) async fn environments(
     ));
     let _ = std::fs::remove_dir_all(&logins);
     std::fs::create_dir_all(&logins)?;
-    let billing =
-        project_database(admin, admin_url, admin_url, "billing", "aaaaaaa1", &logins).await?;
-    let shop = project_database(admin, admin_url, admin_url, "shop", "aaaaaaa2", &logins).await?;
+    let billing = project_database(
+        admin,
+        admin_url,
+        admin_url,
+        "billing",
+        &"aaaaaaa1".parse()?,
+        &logins,
+    )
+    .await?;
+    let shop = project_database(
+        admin,
+        admin_url,
+        admin_url,
+        "shop",
+        &"aaaaaaa2".parse()?,
+        &logins,
+    )
+    .await?;
     Ok((logins, billing, shop))
 }

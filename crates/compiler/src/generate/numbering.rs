@@ -238,7 +238,10 @@ fn refuse_supplied_fields(manifest: &PackageManifest) -> Result<(), GenerateErro
                 .find(|field| filled.contains(&field.as_str()))
             {
                 return Err(supplied(
-                    &format!("{model_name}.{}", action.as_str()),
+                    &wamn_catalog::local_operation::LocalOperation::try_from(format!(
+                        "{model_name}.{}",
+                        action.as_str()
+                    ))?,
                     model_name,
                     field,
                 ));
@@ -264,7 +267,11 @@ fn refuse_supplied_fields(manifest: &PackageManifest) -> Result<(), GenerateErro
     Ok(())
 }
 
-fn supplied(operation: &str, model_name: &str, field: &str) -> GenerateError {
+fn supplied(
+    operation: &wamn_catalog::local_operation::LocalOperation,
+    model_name: &str,
+    field: &str,
+) -> GenerateError {
     GenerateError::new(
         GenerateErrorType::InvalidOperation,
         format!(

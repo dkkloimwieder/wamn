@@ -2,7 +2,6 @@
 
 use wamn_broker::Publisher;
 pub(super) mod plan;
-pub use plan::parse_pat_prefix;
 pub(super) use plan::render_pat_secret;
 
 use anyhow::Context as _;
@@ -98,7 +97,7 @@ async fn issue_pat_secret(
         purpose,
         principal.id(),
         &issued.token,
-        &issued.token_prefix,
+        issued.token_prefix,
         &issued.expires_at,
     )?;
     write_secret_json(path, &secret)?;
@@ -254,7 +253,7 @@ async fn resolve_or_create_service_drops(
 
 pub async fn revoke_provisioning_pat(
     system_url: &str,
-    prefix: &str,
+    prefix: &wamn_identity_protocol::pat_prefix::PatPrefix,
     changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<()> {
     let mut client = wamn_postgres::connect(system_url)

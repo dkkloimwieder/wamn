@@ -41,7 +41,7 @@ pub async fn registered(registry_input: &str, namespace: &str) -> anyhow::Result
         String,
         String,
         String,
-        String,
+        wamn_registry::instance_suffix::InstanceSuffix,
         String,
         Option<String>,
         String,
@@ -112,7 +112,7 @@ pub async fn registered(registry_input: &str, namespace: &str) -> anyhow::Result
 fn project(
     declarations: &mut Declarations,
     triple: &Triple,
-    instance: &str,
+    instance: &wamn_registry::instance_suffix::InstanceSuffix,
     cluster: &str,
     system_cluster: &str,
     system_database: &str,

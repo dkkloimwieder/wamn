@@ -19,7 +19,7 @@ pub const WASM_TYPE: &str = "application/wasm";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct IntegrationConfig {
-    code: String,
+    code: wamn_registry::integration_code::IntegrationCode,
     runtime_type: RuntimeType,
     #[serde(rename = "source_digest")]
     _source_digest: wamn_digest::Digest,
@@ -32,7 +32,7 @@ struct IntegrationConfig {
 /// Refuses absent artifacts, another integration, and altered manifests or blobs.
 pub async fn pull(
     registry: &PackageRegistry,
-    code: &str,
+    code: &wamn_registry::integration_code::IntegrationCode,
     digest: &wamn_digest::Digest,
 ) -> anyhow::Result<Vec<u8>> {
     let repository = Repository::open(registry, digest)?;
@@ -42,7 +42,7 @@ pub async fn pull(
 /// Read an integration through an already authenticated repository.
 pub async fn pull_from(
     repository: &Repository,
-    code: &str,
+    code: &wamn_registry::integration_code::IntegrationCode,
     digest: &wamn_digest::Digest,
 ) -> anyhow::Result<Vec<u8>> {
     ensure!(
@@ -76,7 +76,7 @@ pub async fn pull_from(
     );
     let config: IntegrationConfig = serde_json::from_slice(&config)?;
     ensure!(
-        config.code == code
+        &config.code == code
             && matches!(config.runtime_type, RuntimeType::Wasm | RuntimeType::Native),
         "integration artifact does not belong to integration {code}"
     );

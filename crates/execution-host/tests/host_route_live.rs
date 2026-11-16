@@ -29,10 +29,10 @@ use wamn_package_artifact::http_client::HttpClient;
 mod session_fixture;
 use session_fixture::{AUDIENCE, ORG, Server, claims, header, signed};
 
-#[path = "support/session_authority.rs"]
-mod session_authority;
 #[path = "support/application_fixture.rs"]
 mod application_fixture;
+#[path = "support/session_authority.rs"]
+mod session_authority;
 use application_fixture::{
     ApplicationHost, MEMBER, PASSWORD, PROJECT, application_host, connect, credentials, install,
     load_release, login,
@@ -226,8 +226,8 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         .components
         .iter()
         .flat_map(|component| component.descriptor.operations.values())
-        .filter_map(|operation| operation.registered_operation.as_deref())
-        .map(|operation| wamn_catalog::sealed_operation_reference(operation).to_owned())
+        .filter_map(|operation| operation.registered_operation.as_ref())
+        .map(|operation| wamn_catalog::sealed_operation_reference(operation.as_str()).to_owned())
         .chain(
             manifest
                 .host_routes

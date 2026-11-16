@@ -6,16 +6,23 @@
 /// package, model and action are written in kebab case.
 pub fn operation_token(
     package: &crate::PackageName,
-    version: &str,
-    model: &str,
-    action: &str,
-) -> String {
+    version: &crate::package_version::PackageVersion,
+    local: &crate::local_operation::LocalOperation,
+) -> Result<
+    crate::registered_operation::RegisteredOperation,
+    crate::registered_operation::ParseRegisteredOperationError,
+> {
+    let (module, action) = local
+        .as_str()
+        .split_once('.')
+        .expect("a parsed local operation has one separator");
     format!(
         "{}:{}/{}@{version}",
         package.as_str().replace('_', "-"),
-        model.replace('_', "-"),
-        action.replace('_', "-"),
+        module.replace('_', "-"),
+        action.replace('_', "-")
     )
+    .try_into()
 }
 
 /// A sealed operation id split at its last `@` into its reference and its
@@ -61,8 +68,11 @@ pub struct OperationDescription {
 
 /// Borrow one operation's compiled facts. Old documents carry no descriptions.
 pub fn operation_contract<'a>(
-    operations: &'a std::collections::BTreeMap<String, OperationDescription>,
-    local: &str,
+    operations: &'a std::collections::BTreeMap<
+        crate::local_operation::LocalOperation,
+        OperationDescription,
+    >,
+    local: &crate::local_operation::LocalOperation,
 ) -> Option<&'a OperationDescription> {
     operations.get(local)
 }
@@ -71,13 +81,13 @@ pub fn operation_contract<'a>(
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperationContract {
-    pub operation: String,
+    pub operation: crate::registered_operation::RegisteredOperation,
     #[serde(rename = "type")]
     pub type_: crate::OperationType,
     #[serde(default)]
     pub visibility: Option<String>,
-    pub permission_token: Option<String>,
-    pub grant: Option<String>,
+    pub permission_token: Option<crate::local_operation::LocalOperation>,
+    pub grant: Option<crate::registered_operation::RegisteredOperation>,
     #[serde(default)]
     pub statements: Vec<StatementDescription>,
     #[serde(default)]

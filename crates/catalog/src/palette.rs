@@ -28,7 +28,9 @@ pub fn palette_target(
         package_id: PALETTE_PACKAGE_ID
             .parse()
             .expect("platform package name is valid"),
-        package_version: PALETTE_PACKAGE_VERSION.to_owned(),
+        package_version: PALETTE_PACKAGE_VERSION
+            .parse()
+            .expect("fixed palette package version"),
     }
 }
 

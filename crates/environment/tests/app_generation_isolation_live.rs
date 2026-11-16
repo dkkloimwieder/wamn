@@ -101,13 +101,17 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     let url = wamn_test_postgres::url(&pool).to_string();
     let mut superuser = connect(&url).await;
 
-    let home =
-        project_env_database_name(ORG, PROJECT, &HOME_ENVIRONMENT.parse().unwrap(), INSTANCE);
+    let home = project_env_database_name(
+        ORG,
+        PROJECT,
+        &HOME_ENVIRONMENT.parse().unwrap(),
+        &INSTANCE.parse().unwrap(),
+    );
     let neighbour = project_env_database_name(
         ORG,
         PROJECT,
         &NEIGHBOUR_ENVIRONMENT.parse().unwrap(),
-        INSTANCE,
+        &INSTANCE.parse().unwrap(),
     );
 
     // Step 1 of the runbook, then step 2 and step 3 for each environment, with

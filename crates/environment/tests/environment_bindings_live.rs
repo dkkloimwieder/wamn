@@ -26,8 +26,8 @@ fn document() -> EnvironmentDocument {
         .insert("fixture".parse().expect("valid name"));
     document
 }
-fn package(integration_type: &str) -> PackageManifest {
-    let interface = match integration_type {
+fn package(integration_type: &wamn_registry::integration_code::IntegrationCode) -> PackageManifest {
+    let interface = match integration_type.as_str() {
         "http" => "wamn:connection/http@0.1.0",
         "gcs" | "s3" => "wasmcloud:blobstore/blobstore@0.1.0",
         _ => "wamn:modbus/read@1.0.0",
@@ -90,7 +90,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: 
         .map(drop)
         .unwrap();
     let mut doc = document();
-    let packages = [package("http")];
+    let packages = [package(&"http".parse().unwrap())];
     // Neither an unreferenced integration nor another application's connection is a prerequisite.
     doc.integrations.insert(
         "unavailable".into(),
@@ -137,10 +137,10 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: 
         .unwrap();
     assert_eq!(selected[0].version, 1);
 
-    let mut missing = package("http");
+    let mut missing = package(&"http".parse().unwrap());
     missing.connections.get_mut("upstream").unwrap().interface =
         "wamn:connection/metadata@0.1.0".into();
-    for invalid in [package("gcs"), missing] {
+    for invalid in [package(&"gcs".parse().unwrap()), missing] {
         assert!(
             bindings::analyse(&mut client, &doc, &[invalid])
                 .await
@@ -252,7 +252,7 @@ async fn two_packages_can_bind_distinct_names_to_one_connection_without_authorit
             version: None,
         },
     );
-    let first = package("http");
+    let first = package(&"http".parse().unwrap());
     let mut second = first.clone();
     second.package.id = "other".parse().expect("valid name");
     let declaration = second.connections.remove("upstream").unwrap();
@@ -323,7 +323,7 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate(pool: sqlx:
         },
     );
     assert!(
-        bindings::analyse(&mut client, &doc, &[package("modbus")])
+        bindings::analyse(&mut client, &doc, &[package(&"modbus".parse().unwrap())])
             .await
             .is_err()
     );
@@ -552,11 +552,11 @@ async fn blobstore_interfaces_accept_another_storage_provider(pool: sqlx::PgPool
             version: None,
         },
     );
-    let bindings = bindings::analyse(&mut client, &doc, &[package("s3")])
+    let bindings = bindings::analyse(&mut client, &doc, &[package(&"s3".parse().unwrap())])
         .await
         .unwrap();
     assert_eq!(bindings.len(), 1);
-    assert_eq!(bindings[0].integration_type, "gcs");
+    assert_eq!(bindings[0].integration_type, "gcs".parse().unwrap());
 }
 
 #[sqlx::test(migrations = false)]
@@ -614,7 +614,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface(pool: sqlx::PgPo
             version: None,
         },
     );
-    let mut manifest = package("modbus");
+    let mut manifest = package(&"modbus".parse().unwrap());
     let declaration = manifest.connections.get_mut("upstream").unwrap();
     declaration.interface = "wamn:modbus/write@1.0.0".into();
     declaration.mode = wamn_compiler::manifest::ConnectionMode::Read;
@@ -692,7 +692,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: 
         .await
         .map(drop)
         .unwrap();
-    let shared = bindings::analyse(&mut client, &doc, &[package("http")])
+    let shared = bindings::analyse(&mut client, &doc, &[package(&"http".parse().unwrap())])
         .await
         .unwrap();
     sqlx::raw_sql("SET ROLE wamn_system")
@@ -722,7 +722,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: 
         .await
         .map(drop)
         .unwrap();
-    let exclusive = bindings::analyse(&mut client, &doc, &[package("modbus")])
+    let exclusive = bindings::analyse(&mut client, &doc, &[package(&"modbus".parse().unwrap())])
         .await
         .unwrap();
     assert!(exclusive[0].exclusive);
@@ -766,7 +766,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: 
         .await
         .map(drop)
         .unwrap();
-    let local = bindings::analyse(&mut client, &doc, &[package("modbus")])
+    let local = bindings::analyse(&mut client, &doc, &[package(&"modbus".parse().unwrap())])
         .await
         .unwrap();
     sqlx::raw_sql("SET ROLE wamn_system")
@@ -846,7 +846,10 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state(po
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(observed.installed["fixture"].current, "1.0.0");
+    assert_eq!(
+        observed.installed["fixture"].current,
+        "1.0.0".parse().unwrap()
+    );
 
     sqlx::raw_sql("REVOKE SELECT ON catalog.packages FROM wamn_db_owner")
         .execute(&mut client)

@@ -19,7 +19,7 @@ fn platform_fixture_generates_client_descriptors() {
             description.operation.type_ != wamn_catalog::OperationType::EventHandler
                 && description.operation.visibility.as_deref() != Some("private")
         })
-        .filter_map(|(local, _)| local.strip_prefix("widget."))
+        .filter_map(|(local, _)| local.as_str().strip_prefix("widget."))
         .collect();
     assert_eq!(
         widget

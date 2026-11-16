@@ -162,7 +162,7 @@ fn component(
         .into_admitted(wamn_catalog::ComponentPackageCoordinate::new(
             &PROJECT_ENV_KEY.parse().unwrap(),
             name.parse()?,
-            "1.0.0",
+            "1.0.0".parse()?,
         )?);
     let config =
         wamn_engine::component_artifact::component_artifact_config_bytes(&admitted.component);
@@ -250,11 +250,11 @@ fn package(
     std::fs::write(root.join("generated/wamn.json"), &bytes)?;
     wamn_test_infrastructure::fixture_digest::write_build_record(&root);
     let packed = wamn_publish::package_artifact::pack_package(&root)?;
-    let tag = packed.tag();
+    let tag = packed.tag()?;
     artifact(
         objects,
         "packages",
-        &tag,
+        tag.as_str(),
         packed.manifest,
         packed
             .layers
@@ -274,8 +274,11 @@ fn release(
         format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         release: wamn_catalog::ServingRelease {
             packages: BTreeSet::from([
-                PackageCoordinate::new(component.package_id.clone(), version)?,
-                PackageCoordinate::new("wamn_integration".parse().expect("valid name"), "1.0.0")?,
+                PackageCoordinate::new(component.package_id.clone(), version.parse()?)?,
+                PackageCoordinate::new(
+                    "wamn_integration".parse().expect("valid name"),
+                    "1.0.0".parse().unwrap(),
+                )?,
             ]),
         },
         composed_entry: None,
@@ -400,7 +403,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
                 .unwrap(),
             ),
             system_database_url: system.url().into(),
-            platform_domain: "example.invalid".into(),
+            platform_domain: "example.invalid".parse().unwrap(),
         },
     )
     .await?;
@@ -585,7 +588,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         );
         assert_eq!(
             installed.packages[id].coordinate.package_version(),
-            package.candidate
+            &package.candidate
         );
     }
     assert_eq!(installed.packages["a"], state.packages["a"]);
@@ -804,7 +807,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .base_dependencies
         .get_mut("state")
         .unwrap()
-        .operations = vec!["data.update".into()];
+        .operations = vec!["data.update".parse().unwrap()];
     let candidate_packages = [candidate, base_package];
     expand::prepare(
         &platform,
@@ -839,8 +842,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             &operation.permission,
         )?;
         assert_eq!(
-            b_permissions.contains(token.rsplit_once("@").unwrap().0),
-            b_after.contains(token.rsplit_once("@").unwrap().0)
+            b_permissions.contains(token.as_str().rsplit_once("@").unwrap().0),
+            b_after.contains(token.as_str().rsplit_once("@").unwrap().0)
         );
     }
     for release in [&old_a, &new_a] {
@@ -1102,8 +1105,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
                 &operation.permission,
             )?;
             assert_eq!(
-                b_permissions.contains(token.rsplit_once("@").unwrap().0),
-                b_after.contains(token.rsplit_once("@").unwrap().0)
+                b_permissions.contains(token.as_str().rsplit_once("@").unwrap().0),
+                b_after.contains(token.as_str().rsplit_once("@").unwrap().0)
             );
         }
 

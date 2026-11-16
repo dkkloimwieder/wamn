@@ -1,22 +1,5 @@
 use super::*;
 
-#[test]
-fn pat_prefix_accepts_only_sixteen_lowercase_hex_digits() {
-    assert_eq!(
-        parse_pat_prefix("0123456789abcdef").unwrap(),
-        "0123456789abcdef"
-    );
-    for prefix in [
-        "0123456789abcde",
-        "0123456789abcdef0",
-        "0123456789ABCDEF",
-        "0123456789abcdeg",
-        "",
-    ] {
-        assert!(parse_pat_prefix(prefix).is_err());
-    }
-}
-
 const PRINCIPAL: &str = "a792950e-150c-4c6e-8000-000000000004";
 
 async fn system_client(url: &str) -> Client {

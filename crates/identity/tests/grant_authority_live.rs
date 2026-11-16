@@ -197,7 +197,12 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
         .await
         .map(drop)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&platform_principals_sql("example.test")?).to_string(),
+        (&platform_principals_sql(
+            &"example.test"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut target)
     .await
@@ -281,7 +286,12 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
     wamn_platform_identity::test_database::project_platform(database.as_str()).await;
     let mut client = connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&platform_principals_sql("example.test")?).to_string(),
+        (&platform_principals_sql(
+            &"example.test"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut client)
     .await

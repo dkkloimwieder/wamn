@@ -281,7 +281,7 @@ async fn setup(raw: &str) -> Fixture {
             project: "widgets".into(),
             env: env.parse().unwrap(),
         };
-        let name = project_env_database_name(org, "widgets", &triple.env, SUFFIX);
+        let name = project_env_database_name(org, "widgets", &triple.env, &SUFFIX.parse().unwrap());
         let role = workload_login(
             WorkloadRoleFamily::SessionRoleReader,
             WorkloadRoleIdentity::ProjectEnvironment {
@@ -294,7 +294,7 @@ async fn setup(raw: &str) -> Fixture {
         .expect_redacted("reader role");
         let target = SessionTarget::new(
             &triple,
-            SUFFIX,
+            &SUFFIX.parse().unwrap(),
             &wamn_registry::project_env_key(org, "widgets", &triple.env),
             &login_url(&mut admin, &name, &role),
         )

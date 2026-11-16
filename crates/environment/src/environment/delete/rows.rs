@@ -13,7 +13,6 @@ use wamn_registry::Triple;
 pub async fn delete_registry_rows(
     system: &mut sqlx::PgConnection,
     triple: &Triple,
-    _instance: &str,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (triple.org.as_str(), triple.project.as_str(), &triple.env);
     let mut lines = Vec::new();

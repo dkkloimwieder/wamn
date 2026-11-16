@@ -513,14 +513,14 @@ fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
                 .replace('-', "_")
                 .parse()
                 .unwrap(),
-            package_version: "1.0.0".into(),
+            package_version: "1.0.0".parse().unwrap(),
         },
         component: "node".into(),
         interface_version: "0.1.0".into(),
         operations: BTreeMap::from([(
             operation.into(),
             AdmittedComponentOperation {
-                registered_operation: registered.then(|| operation.into()),
+                registered_operation: registered.then(|| operation.parse().unwrap()),
                 committed_result_schema: None,
                 host_transaction: false,
                 input_ports: Vec::new(),
@@ -642,8 +642,11 @@ impl Fixture {
                     .iter()
                     .chain(&callees)
                     .map(|fact| {
-                        PackageCoordinate::new(fact.target.package_id.clone(), "1.0.0")
-                            .expect("package coordinate")
+                        PackageCoordinate::new(
+                            fact.target.package_id.clone(),
+                            "1.0.0".parse().unwrap(),
+                        )
+                        .expect("package coordinate")
                     })
                     .collect(),
             },
@@ -1263,7 +1266,7 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         release: ServingRelease {
             packages: BTreeSet::from([PackageCoordinate::new(
                 "root".parse().expect("valid name"),
-                "1.0.0",
+                "1.0.0".parse().unwrap(),
             )
             .unwrap()]),
         },

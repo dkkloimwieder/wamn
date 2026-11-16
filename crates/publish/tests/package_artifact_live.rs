@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use wamn_package_artifact::tag::OciTag;
 
 use wamn_catalog::{ComponentDescriptor, ComponentPackageCoordinate};
 use wamn_component_artifact::component_artifact_source::{
@@ -81,9 +82,9 @@ impl Fixture {
 
     /// The descriptor of `component` in the artifact `tag`, pulled again
     /// through the production puller.
-    async fn pulled_descriptor(&self, tag: &str, component: &str) -> ComponentDescriptor {
+    async fn pulled_descriptor(&self, tag: &OciTag, component: &str) -> ComponentDescriptor {
         let opened = open_package_source(PackageSource::Artifact {
-            tag: tag.to_owned(),
+            tag: tag.clone(),
             registry: self.registry.clone(),
         })
         .await
@@ -93,12 +94,15 @@ impl Fixture {
                 .expect("read the descriptor"),
         )
         .expect("decode the descriptor");
-        let (package_id, version) = tag.rsplit_once('-').expect("a tag names a version");
+        let (package_id, version) = tag
+            .as_str()
+            .rsplit_once('-')
+            .expect("a tag names a version");
         let facts = descriptor.clone().into_admitted(
             ComponentPackageCoordinate::new(
                 &"org-a--dev--project".parse().unwrap(),
                 package_id.parse().unwrap(),
-                version,
+                version.parse().unwrap(),
             )
             .expect("a target"),
         );
@@ -170,7 +174,7 @@ async fn push_repeat_fetch_and_refusals() {
     let by_tag = pull_package(
         &fixture.registry,
         &"wamn_receiving".parse().unwrap(),
-        tag_version(&first.tag),
+        &tag_version(&first.tag),
     )
     .await
     .expect("pull by the tag");
@@ -186,7 +190,7 @@ async fn push_repeat_fetch_and_refusals() {
     let _absent = pull_package(
         &fixture.registry,
         &"wamn_receiving".parse().unwrap(),
-        "0.0.0-absent",
+        &"0.0.0-absent".parse().unwrap(),
     )
     .await
     .expect_err("an absent tag refuses");
@@ -206,7 +210,9 @@ async fn a_tag_that_holds_another_digest_refuses_before_any_push() {
         .expect("push WMS");
     let built = build_record::read(&apps().join("target/wamn/wamn_receiving"))
         .expect("read the Receiving build");
-    let tag = format!("{}-{}", built.package.id, built.package.version);
+    let tag: OciTag = format!("{}-{}", built.package.id, built.package.version)
+        .parse()
+        .unwrap();
     let receiving_tag = Repository::open(&fixture.registry, &tag).expect("open the tag");
     let (wms_manifest, _) = Repository::open(&fixture.registry, &wms.tag)
         .expect("open the WMS tag")
@@ -235,7 +241,7 @@ async fn a_tag_that_holds_another_digest_refuses_before_any_push() {
         "the refused push left no new component in the registry"
     );
     for component in &built.outputs.components {
-        let hex = component.sha256.hex();
+        let hex: OciTag = component.sha256.hex().parse().unwrap();
         assert!(
             !components_before.iter().any(|tag| tag == &hex),
             "component {} of Receiving is not in the registry",
@@ -257,7 +263,7 @@ async fn a_tag_that_holds_another_digest_refuses_before_any_push() {
 }
 
 /// The tags of the component repository, sorted.
-async fn component_tags(fixture: &Fixture) -> Vec<String> {
+async fn component_tags(fixture: &Fixture) -> Vec<OciTag> {
     let listed: serde_json::Value = HttpClient::builder()
         .build()
         .expect("registry HTTP client")
@@ -271,17 +277,27 @@ async fn component_tags(fixture: &Fixture) -> Vec<String> {
         .json()
         .await
         .expect("decode the component tags");
-    let mut tags: Vec<String> = listed["tags"]
+    let mut tags: Vec<OciTag> = listed["tags"]
         .as_array()
         .expect("the registry lists tags")
         .iter()
-        .map(|tag| tag.as_str().expect("a tag is a string").to_owned())
+        .map(|tag| {
+            tag.as_str()
+                .expect("a tag is a string")
+                .parse()
+                .expect("a valid OCI tag")
+        })
         .collect();
     tags.sort();
     tags
 }
 
 /// The version of a tag `<package_id>-<version>` whose package id has no `-`.
-fn tag_version(tag: &str) -> &str {
-    tag.split_once('-').expect("a tag names a version").1
+fn tag_version(tag: &OciTag) -> wamn_catalog::package_version::PackageVersion {
+    tag.as_str()
+        .split_once('-')
+        .expect("a tag names a version")
+        .1
+        .parse()
+        .unwrap()
 }

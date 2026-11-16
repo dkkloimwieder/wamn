@@ -1332,7 +1332,7 @@ mod tests {
         unrelated.descriptor.component = "unrelated".to_string();
         unrelated.descriptor.component_digest = digest('e');
         manifest.release.packages.insert(
-            PackageCoordinate::new("package_b".parse().unwrap(), "1.0.0")
+            PackageCoordinate::new("package_b".parse().unwrap(), "1.0.0".parse().unwrap())
                 .expect("unrelated package"),
         );
         invocation.package_id.clone_from(&unrelated.package_id);

@@ -382,7 +382,12 @@ pub async fn install(
     .await
     .map(drop)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::platform_principals_sql("example.test")?).to_string(),
+        (&wamn_control_provision::platform_principals_sql(
+            &"example.test"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        ))
+            .to_string(),
     ))
     .execute(&mut *admin)
     .await
@@ -582,7 +587,10 @@ pub async fn invoke(
     )
     .await?;
     let caller = run_caller(&mut admin, &workflow_host, &run, ROLE).await?;
-    wamn_engine::native_routes::authorize_registered_operation(Some(&caller), Some(OPERATION))?;
+    wamn_engine::native_routes::authorize_registered_operation(
+        Some(&caller),
+        Some(&OPERATION.parse()?),
+    )?;
     let finish_operation = "rest-connector:sync/finish@0.1.1";
     let connector = admissions
         .iter()

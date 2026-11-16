@@ -30,9 +30,11 @@ const INGRESS: &[u8] = b"the route guest bytes";
 fn manifest() -> ServingManifest {
     ServingManifest::new(
         ServingRelease {
-            packages: BTreeSet::from([
-                PackageCoordinate::new(PACKAGE.parse().unwrap(), VERSION).expect("package")
-            ]),
+            packages: BTreeSet::from([PackageCoordinate::new(
+                PACKAGE.parse().unwrap(),
+                VERSION.parse().unwrap(),
+            )
+            .expect("package")]),
         },
         BTreeSet::from([ServingComponent {
             runtime_schema: None,
@@ -48,7 +50,7 @@ fn manifest() -> ServingManifest {
                         output_ports: Vec::new(),
                         parameters: Vec::new(),
                         committed_result_schema: None,
-                        registered_operation: Some(PERMISSION.into()),
+                        registered_operation: Some(PERMISSION.parse().unwrap()),
                     },
                 )]);
                 descriptor
@@ -65,14 +67,14 @@ fn fact() -> AdmittedComponent {
         target: ComponentPackageCoordinate {
             project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
             package_id: PACKAGE.parse().unwrap(),
-            package_version: VERSION.into(),
+            package_version: VERSION.parse().unwrap(),
         },
         component: COMPONENT.into(),
         interface_version: "0.1".into(),
         operations: BTreeMap::from([(
             OPERATION.into(),
             AdmittedComponentOperation {
-                registered_operation: Some(PERMISSION.into()),
+                registered_operation: Some(PERMISSION.parse().unwrap()),
                 committed_result_schema: None,
                 host_transaction: false,
                 input_ports: Vec::new(),

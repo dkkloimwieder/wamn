@@ -110,7 +110,12 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     .expect("registry owner");
 
     let triple = Triple::new(ORG, ENV.parse().unwrap(), PROJECT);
-    let cdc_name = cdc_object_name(ORG, PROJECT, &ENV.parse().unwrap(), INSTANCE);
+    let cdc_name = cdc_object_name(
+        ORG,
+        PROJECT,
+        &ENV.parse().unwrap(),
+        &INSTANCE.parse().unwrap(),
+    );
     let schemas = vec!["app".to_owned(), "other".to_owned()];
     let observations = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
     let in_place = async || {

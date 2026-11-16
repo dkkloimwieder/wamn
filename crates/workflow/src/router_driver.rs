@@ -109,8 +109,8 @@ impl RouterDriver {
                                 &self.operations.project, &request.project_env_key,
                                 &request.identity.principal_id, &request.identity.role,
                             ).await?.ok_or_else(|| OperationRefusal::new(OperationRefusalType::PermissionDenied,
-                                operation.registered_operation.as_deref().unwrap_or(operation_name)))?;
-                            authorize_registered_operation(Some(&caller), operation.registered_operation.as_deref())?;
+                                operation.registered_operation.as_ref().map_or(operation_name.as_str(), wamn_catalog::registered_operation::RegisteredOperation::as_str)))?;
+                            authorize_registered_operation(Some(&caller), operation.registered_operation.as_ref())?;
                             let deadline_ms = bounded_node_deadline_ms(call.deadline_ms);
                             if let Some(requested_ms) = call.deadline_ms.filter(|requested| *requested != deadline_ms) {
                                 adjustments.push(DeadlineAdjustment { node: call.node.clone(), requested_ms, effective_ms: deadline_ms });

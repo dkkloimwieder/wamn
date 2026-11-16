@@ -1,22 +1,7 @@
 use super::registry::do_record_project_env;
 use sqlx::{Connection as _, Row as _};
-use std::collections::BTreeSet;
 
 use super::*;
-
-/// The mint is the whole non-reuse mechanism (wamn-0h0g.13.57): every draw
-/// must satisfy the pure crate's rule, and the draws must actually differ.
-/// A constant, a counter, or a triple-derived suffix collapses `seen`.
-#[test]
-fn the_minted_instance_suffix_is_a_fresh_valid_dns_label_tail() {
-    let mut seen = BTreeSet::new();
-    for _ in 0..64 {
-        let suffix = mint_instance_suffix().expect("mint an instance suffix");
-        validate_instance_suffix(&suffix).expect("a minted suffix satisfies the pure rule");
-        seen.insert(suffix);
-    }
-    assert_eq!(seen.len(), 64, "64 draws collapsed to {}", seen.len());
-}
 
 #[test]
 fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
@@ -151,7 +136,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) 
             "cloud",
             "db-first",
             Some("system"),
-            "abcd1234",
+            &"abcd1234".parse().unwrap(),
             disposable,
         )
         .await

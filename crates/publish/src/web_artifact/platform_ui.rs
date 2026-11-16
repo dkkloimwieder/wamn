@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use object_store::{ObjectStore, ObjectStoreExt as _};
 use wamn_digest::canonical_json_bytes;
-use wamn_package_artifact::{PackageRegistry, ensure_tag};
+use wamn_package_artifact::PackageRegistry;
 
 use super::{
     PackedWebArtifact, Sink, UploadedClient, WEB_MANIFEST_FILE, WebArtifactError,
@@ -20,16 +20,18 @@ const ARTIFACT_TYPE: &str = "application/vnd.wamn.platform-ui.v1";
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Metadata {
-    version: String,
+    version: wamn_package_artifact::tag::OciTag,
 }
 
 /// Pack UI files and UI metadata into the deterministic web archive format.
 ///
 /// # Errors
-/// Refuses invalid versions, missing indexes, links, or unsupported browser files.
-pub fn pack(dist: &Path, version: &str) -> Result<PackedWebArtifact, WebArtifactError> {
+/// Refuses missing indexes, links, or unsupported browser files.
+pub fn pack(
+    dist: &Path,
+    version: &wamn_package_artifact::tag::OciTag,
+) -> Result<PackedWebArtifact, WebArtifactError> {
     (|| {
-        ensure_tag(version)?;
         let mut files = BTreeMap::new();
         artifact_files(dist, Path::new(""), &mut files)?;
         ensure!(
@@ -46,10 +48,10 @@ pub fn pack(dist: &Path, version: &str) -> Result<PackedWebArtifact, WebArtifact
         archive.insert(
             PathBuf::from(WEB_MANIFEST_FILE),
             canonical_json_bytes(&serde_json::to_value(Metadata {
-                version: version.into(),
+                version: version.clone(),
             })?),
         );
-        pack_archive(version.into(), archive, ARTIFACT_TYPE)
+        pack_archive(version.clone(), archive, ARTIFACT_TYPE)
     })()
     .map_err(|source| WebArtifactError {
         type_: WebArtifactErrorType::Pack,
@@ -73,7 +75,6 @@ fn read_metadata(tar: &[u8]) -> anyhow::Result<()> {
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes)?;
         let metadata: Metadata = serde_json::from_slice(&bytes)?;
-        ensure_tag(&metadata.version)?;
         ensure!(
             bytes == canonical_json_bytes(&serde_json::to_value(metadata)?),
             "web.json is not canonical JSON"
@@ -172,8 +173,8 @@ mod tests {
         let second = scratch.path().join("second");
         artifact_fixture(&first, false);
         artifact_fixture(&second, true);
-        let packed = pack(&first.join("dist"), "1.2.3").unwrap();
-        let other = pack(&second.join("dist"), "1.2.3").unwrap();
+        let packed = pack(&first.join("dist"), &"1.2.3".parse().unwrap()).unwrap();
+        let other = pack(&second.join("dist"), &"1.2.3".parse().unwrap()).unwrap();
         assert_eq!(
             (packed.digest.to_string())
                 .parse::<wamn_digest::Digest>()
@@ -187,7 +188,7 @@ mod tests {
             (packed.digest.to_string())
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
-            (pack(&second.join("dist"), "1.2.3")
+            (pack(&second.join("dist"), &"1.2.3".parse().unwrap())
                 .unwrap()
                 .digest
                 .to_string())
@@ -195,14 +196,14 @@ mod tests {
             .unwrap()
         );
         std::fs::write(second.join("dist/config.json"), "org data").unwrap();
-        assert!(pack(&second.join("dist"), "1.2.3").is_err());
+        assert!(pack(&second.join("dist"), &"1.2.3".parse().unwrap()).is_err());
     }
 
     #[tokio::test]
     async fn missing_corrupt_and_application_artifacts_write_nothing() {
         let scratch = ScratchRoot::create().unwrap();
         artifact_fixture(scratch.path(), false);
-        let packed = pack(&scratch.path().join("dist"), "1.2.3").unwrap();
+        let packed = pack(&scratch.path().join("dist"), &"1.2.3".parse().unwrap()).unwrap();
         let application = super::super::pack_web_artifact(scratch.path()).unwrap();
         for (responses, digest) in [
             (vec![(404, Vec::new())], &packed.digest),
@@ -240,7 +241,7 @@ mod tests {
     async fn partial_upload_keeps_equal_objects_and_conflicts_never_publish_the_index() {
         let scratch = ScratchRoot::create().unwrap();
         artifact_fixture(scratch.path(), false);
-        let packed = pack(&scratch.path().join("dist"), "1.2.3").unwrap();
+        let packed = pack(&scratch.path().join("dist"), &"1.2.3".parse().unwrap()).unwrap();
         for conflict in [true, false] {
             let server = Server::start(vec![
                 (200, packed.manifest.clone()),

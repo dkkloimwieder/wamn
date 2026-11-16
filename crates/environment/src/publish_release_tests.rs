@@ -45,7 +45,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         }
         component.operations.insert(operation.clone(), export);
         components.insert(component, Vec::new()).unwrap();
-        packages.insert(PackageCoordinate::new(package.clone(), "1.0.0").unwrap());
+        packages.insert(PackageCoordinate::new(package.clone(), "1.0.0".parse().unwrap()).unwrap());
         manifests.insert(package.to_owned(), manifest);
     }
     let published = publish_release_with_package_manifests(

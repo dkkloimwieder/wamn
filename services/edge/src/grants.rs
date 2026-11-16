@@ -34,7 +34,8 @@ impl Grants {
             .components
             .iter()
             .flat_map(|component| component.descriptor.operations.values())
-            .filter_map(|operation| operation.registered_operation.as_deref())
+            .filter_map(|operation| operation.registered_operation.as_ref())
+            .map(wamn_catalog::registered_operation::RegisteredOperation::as_str)
             .collect();
         for (role, permissions) in &document.roles {
             if !role

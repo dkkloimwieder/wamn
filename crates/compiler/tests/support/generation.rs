@@ -283,7 +283,7 @@ pub(super) fn published_input(package: &GeneratedPackage, local: &str) -> Value 
         .as_object()
         .unwrap()
         .values()
-        .find(|attachment| attachment["registered-operation"] == *identity)
+        .find(|attachment| attachment["registered-operation"] == identity.as_str())
         .unwrap()["definition"]["input-schema"]
         .clone()
 }

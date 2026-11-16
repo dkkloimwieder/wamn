@@ -79,7 +79,7 @@ impl EdgeOperation {
         {
             return Err(Refusal::ReadsClaimNothing);
         }
-        authorize_registered_operation(caller.as_ref(), fact.registered_operation.as_deref())
+        authorize_registered_operation(caller.as_ref(), fact.registered_operation.as_ref())
             .map_err(|_| Refusal::GrantDenied)?;
         if caller
             .as_ref()

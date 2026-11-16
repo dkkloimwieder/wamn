@@ -24,7 +24,7 @@ pub struct ProvisionSystemArgs {
     /// Email domain of the platform principal rows, written to
     /// `registry.meta.platform_domain`.
     #[arg(long)]
-    pub platform_domain: Option<String>,
+    pub platform_domain: Option<wamn_registry::platform_domain::PlatformDomain>,
 }
 
 /// Install the control store into an empty system database.

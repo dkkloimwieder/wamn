@@ -72,7 +72,14 @@ mod tests {
         ] {
             let packages: Vec<(wamn_catalog::PackageName, _)> = packages
                 .into_iter()
-                .map(|(package, version)| (package.parse().unwrap(), version))
+                .map(|(package, version)| {
+                    (
+                        package.parse().unwrap(),
+                        version
+                            .parse::<wamn_catalog::package_version::PackageVersion>()
+                            .unwrap(),
+                    )
+                })
                 .collect();
             let selection = document.applications.get_mut("fixture").unwrap();
             selection.client.as_mut().unwrap().package = package.parse().unwrap();
@@ -84,7 +91,7 @@ mod tests {
                 verify(
                     selection,
                     &web,
-                    packages.iter().map(|(id, version)| (id, *version))
+                    packages.iter().map(|(id, version)| (id, version))
                 )
                 .is_ok(),
                 allowed

@@ -1,5 +1,6 @@
 //! Resource names derived from registry coordinates.
 
+use crate::instance_suffix::InstanceSuffix;
 use wamn_digest::sha256;
 
 /// The key of a project environment: `<org>--<env>--<project>` (owner
@@ -81,7 +82,7 @@ pub fn project_env_database_name(
     org: &str,
     project: &str,
     env: &crate::EnvName,
-    instance: &str,
+    instance: &InstanceSuffix,
 ) -> String {
     format!(
         "{}{INSTANCE_SUFFIX_SEPARATOR}{instance}",
@@ -129,13 +130,12 @@ pub fn control_administration_key(project: &str, env: &crate::EnvName) -> String
 /// different namespace and cannot inherit the deleted one's contents.
 ///
 /// Validate the triple's assembled length with the provisioning coordinate validator and the
-/// suffix with the provisioning instance validator before use; a triple that does not
-/// fit is refused, not shortened.
+/// suffix through `InstanceSuffix`; a triple that does not fit is refused.
 pub fn project_env_namespace(
     org: &str,
     project: &str,
     env: &crate::EnvName,
-    instance: &str,
+    instance: &InstanceSuffix,
 ) -> String {
     format!(
         "{}{INSTANCE_SUFFIX_SEPARATOR}{instance}",
@@ -167,7 +167,12 @@ pub fn project_env_cdc_secret_name(org: &str, project: &str, env: &crate::EnvNam
 /// carries; identity always travels in the registration row / Secret labels,
 /// never parsed back out of a name. Validate the assembled length with
 /// the provisioning CDC validator before use.
-pub fn cdc_object_name(org: &str, project: &str, env: &crate::EnvName, instance: &str) -> String {
+pub fn cdc_object_name(
+    org: &str,
+    project: &str,
+    env: &crate::EnvName,
+    instance: &InstanceSuffix,
+) -> String {
     format!("{}__{instance}", cdc_object_name_stem(org, project, env))
 }
 
@@ -332,7 +337,12 @@ pub fn credential_login(prefix: &str, identity_hash: &str) -> wamn_identity_prot
         .expect("derived login fits PostgreSQL identifiers")
 }
 /// The audience of one project database instance.
-pub fn project_audience(org: &str, project: &str, env: &crate::EnvName, instance: &str) -> String {
+pub fn project_audience(
+    org: &str,
+    project: &str,
+    env: &crate::EnvName,
+    instance: &InstanceSuffix,
+) -> String {
     format!("urn:wamn:project-env:{org}:{env}:{project}:{instance}")
 }
 /// The audience of one org's control service.
@@ -389,8 +399,22 @@ mod tests {
             project_env_key("acme", "shipping", &"dev".parse().unwrap())
         );
         assert_ne!(
-            project_env_database_name("acme", "billing", &"dev".parse().unwrap(), "abcdefgh"),
-            project_env_database_name("acme", "shipping", &"dev".parse().unwrap(), "abcdefgh")
+            project_env_database_name(
+                "acme",
+                "billing",
+                &"dev".parse().unwrap(),
+                &"abcdefgh"
+                    .parse::<crate::instance_suffix::InstanceSuffix>()
+                    .unwrap()
+            ),
+            project_env_database_name(
+                "acme",
+                "shipping",
+                &"dev".parse().unwrap(),
+                &"abcdefgh"
+                    .parse::<crate::instance_suffix::InstanceSuffix>()
+                    .unwrap()
+            )
         );
         let resource =
             environment_resource_name("acme", "billing", &"dev".parse().unwrap()).unwrap();

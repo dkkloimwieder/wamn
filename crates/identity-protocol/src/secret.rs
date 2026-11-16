@@ -61,27 +61,28 @@ impl fmt::Debug for SecretToken {
 }
 
 /// A personal access token with a public lookup prefix and a random secret.
-pub struct PatToken(Zeroizing<String>);
+pub struct PatToken {
+    lookup: crate::pat_prefix::PatPrefix,
+    value: Zeroizing<String>,
+}
 impl PatToken {
     pub fn mint() -> Result<Self, TokenError> {
-        Ok(Self(Zeroizing::new(format!(
-            "{PAT_TOKEN_PREFIX}{}_{}",
-            random_hex::<8>()?,
+        let lookup = random_hex::<8>()?.parse().map_err(|_| TokenError)?;
+        let value = Zeroizing::new(format!(
+            "{PAT_TOKEN_PREFIX}{lookup}_{}",
             random_hex::<32>()?
-        ))))
+        ));
+        Ok(Self { lookup, value })
     }
-    /// Make sure of a public lookup prefix without accepting a secret.
-    pub fn valid_lookup(value: &str) -> bool {
-        value.len() == 16 && is_lower_hex(value)
-    }
-    pub fn lookup(&self) -> &str {
-        &self.0[PAT_TOKEN_PREFIX.len()..PAT_TOKEN_PREFIX.len() + 16]
+    /// The parsed public lookup identity, without the token secret.
+    pub fn lookup(&self) -> &crate::pat_prefix::PatPrefix {
+        &self.lookup
     }
     pub fn expose(&self) -> &str {
-        &self.0
+        &self.value
     }
     pub fn into_secret(self) -> Zeroizing<String> {
-        self.0
+        self.value
     }
     pub fn digest(&self) -> wamn_digest::Digest {
         wamn_digest::bytes_sha256(self.expose().as_bytes())
@@ -97,10 +98,14 @@ impl FromStr for PatToken {
             .strip_prefix(PAT_TOKEN_PREFIX)
             .and_then(|v| v.split_once('_'))
             .ok_or(TokenError)?;
-        if !Self::valid_lookup(lookup) || secret.len() != 64 || !is_lower_hex(secret) {
+        let lookup = lookup.parse().map_err(|_| TokenError)?;
+        if secret.len() != 64 || !is_lower_hex(secret) {
             return Err(TokenError);
         }
-        Ok(Self(Zeroizing::new(value.into())))
+        Ok(Self {
+            lookup,
+            value: Zeroizing::new(value.into()),
+        })
     }
 }
 impl fmt::Debug for PatToken {

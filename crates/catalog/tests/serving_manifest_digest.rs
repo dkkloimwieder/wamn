@@ -20,8 +20,16 @@ const DEFINITION: &str = "sha256:55555555555555555555555555555555555555555555555
 fn release() -> ServingRelease {
     ServingRelease {
         packages: BTreeSet::from([
-            PackageCoordinate::new("platform_fixture".parse().unwrap(), "1.0.0").unwrap(),
-            PackageCoordinate::new("platform_fixture_overlay".parse().unwrap(), "3.0.0").unwrap(),
+            PackageCoordinate::new(
+                "platform_fixture".parse().unwrap(),
+                "1.0.0".parse().unwrap(),
+            )
+            .unwrap(),
+            PackageCoordinate::new(
+                "platform_fixture_overlay".parse().unwrap(),
+                "3.0.0".parse().unwrap(),
+            )
+            .unwrap(),
         ]),
     }
 }
@@ -65,7 +73,7 @@ fn components() -> BTreeSet<ServingComponent> {
                         parameters: Vec::new(),
                         committed_result_schema: None,
                         registered_operation: Some(
-                            "platform-fixture-overlay:widget/get@3.0.0".into(),
+                            "platform-fixture-overlay:widget/get@3.0.0".parse().unwrap(),
                         ),
                     },
                 )]);
@@ -110,7 +118,9 @@ fn manifest() -> ServingManifest {
                     "run-deadline-ms": 30000
                 }),
                 auth_policy: json!({"modes": ["pat"]}),
-                registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
+                registered_operation: Some(
+                    "platform-fixture-overlay:widget/get@3.0.0".parse().unwrap(),
+                ),
             },
         )]),
     )
@@ -254,8 +264,9 @@ fn operation_provider_manifest(
     ServingManifest::new(
         ServingRelease {
             packages: BTreeSet::from([
-                PackageCoordinate::new(package.clone(), version).unwrap(),
-                PackageCoordinate::new("consumer".parse().unwrap(), "1.0.0").unwrap(),
+                PackageCoordinate::new(package.clone(), version.parse().unwrap()).unwrap(),
+                PackageCoordinate::new("consumer".parse().unwrap(), "1.0.0".parse().unwrap())
+                    .unwrap(),
             ]),
         },
         BTreeSet::from([
@@ -284,7 +295,7 @@ fn operation_provider_manifest(
                             // operation.
                             registered_operation: export
                                 .starts_with(&format!("{package}:"))
-                                .then(|| export.to_owned()),
+                                .then(|| export.parse().unwrap()),
 
                             ..operation.clone()
                         },

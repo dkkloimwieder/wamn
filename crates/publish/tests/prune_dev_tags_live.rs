@@ -7,7 +7,9 @@ use chrono::{Duration, Utc};
 use oci_client::client::{Config, ImageLayer};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
 use std::collections::{BTreeMap, BTreeSet};
+use wamn_catalog::package_version::PackageVersion;
 use wamn_catalog::{PackageCoordinate, ServingManifest, ServingRelease};
+use wamn_package_artifact::tag::OciTag;
 use wamn_package_artifact::{
     CREATED_ANNOTATION, PACKAGE_ARTIFACT_TYPE, PackageRegistry, Repository,
 };
@@ -33,23 +35,23 @@ async fn prune_preserves_pins_and_shared_digests_and_removes_expired_dev_tags() 
         oci_ca_paths: Vec::new(),
     };
     let now = Utc::now();
-    let pinned_version = "1.0.0-dev.h0123456789ab";
-    let pinned = format!("orders-{pinned_version}");
-    let expired = "orders-1.0.0-dev.h123456789abc";
-    let shared = "orders-1.0.0-dev.h23456789abcd";
-    let stable = "orders-1.0.0";
-    let shared_pin_version = "1.0.0-dev.h3456789abcde";
-    let shared_pin = format!("billing-{shared_pin_version}");
-    let pinned_alias = "orders-1.0.0-dev.h456789abcdef";
+    let pinned_version: PackageVersion = "1.0.0-dev.h0123456789ab".parse()?;
+    let pinned: OciTag = format!("orders-{pinned_version}").parse()?;
+    let expired: OciTag = "orders-1.0.0-dev.h123456789abc".parse()?;
+    let shared: OciTag = "orders-1.0.0-dev.h23456789abcd".parse()?;
+    let stable: OciTag = "orders-1.0.0".parse()?;
+    let shared_pin_version: PackageVersion = "1.0.0-dev.h3456789abcde".parse()?;
+    let shared_pin: OciTag = format!("billing-{shared_pin_version}").parse()?;
+    let pinned_alias: OciTag = "orders-1.0.0-dev.h456789abcdef".parse()?;
     for (tag, alias) in [
-        (pinned.as_str(), None),
-        (expired, None),
-        (shared, Some(stable)),
-        (shared_pin.as_str(), Some(pinned_alias)),
+        (&pinned, None),
+        (&expired, None),
+        (&shared, Some(&stable)),
+        (&shared_pin, Some(&pinned_alias)),
     ] {
         let repository = Repository::open(&registry, tag)?;
         let layer = ImageLayer::new(
-            tag.as_bytes().to_vec(),
+            tag.as_str().as_bytes().to_vec(),
             "application/octet-stream".into(),
             None,
         );
@@ -113,12 +115,12 @@ async fn prune_preserves_pins_and_shared_digests_and_removes_expired_dev_tags() 
             .is_some()
     );
     assert!(
-        Repository::open(&registry, expired)?
+        Repository::open(&registry, &expired)?
             .manifest()
             .await?
             .is_none()
     );
-    for tag in [shared, stable, &shared_pin, pinned_alias] {
+    for tag in [&shared, &stable, &shared_pin, &pinned_alias] {
         assert!(
             Repository::open(&registry, tag)?
                 .manifest()

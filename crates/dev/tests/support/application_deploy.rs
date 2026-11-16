@@ -1275,7 +1275,7 @@ async fn observer(journey: &Journey<'_>) -> anyhow::Result<sqlx::PgConnection> {
         .map(drop)?;
     let document = EnvironmentDocument::compile(&journey.file)?;
     let row = sqlx::query("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3").bind(&document.org).bind(&document.project).bind(&document.env).fetch_one(&mut system).await?;
-    let suffix: String = row.get(0);
+    let suffix: wamn_registry::instance_suffix::InstanceSuffix = row.try_get(0)?;
     let name = wamn_control_provision::project_env_database_name(
         &document.org,
         &document.project,

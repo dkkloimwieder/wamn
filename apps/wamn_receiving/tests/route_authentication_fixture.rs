@@ -18,13 +18,12 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const BASE_PACKAGE_ID: &str = "wamn_receiving";
 /// The version of the base package, from its wamn.json.
-static BASE_PACKAGE_VERSION: LazyLock<&'static str> =
-    LazyLock::new(|| package_version(&BASE_PACKAGE_ID.parse().expect("valid fixture name")).leak());
+static BASE_PACKAGE_VERSION: LazyLock<wamn_catalog::package_version::PackageVersion> =
+    LazyLock::new(|| package_version(&BASE_PACKAGE_ID.parse().expect("valid fixture name")));
 const OVERLAY_PACKAGE_ID: &str = "client_acme_receiving";
 /// The version of the overlay package, from its wamn.json.
-static OVERLAY_PACKAGE_VERSION: LazyLock<&'static str> = LazyLock::new(|| {
-    package_version(&OVERLAY_PACKAGE_ID.parse().expect("valid fixture name")).leak()
-});
+static OVERLAY_PACKAGE_VERSION: LazyLock<wamn_catalog::package_version::PackageVersion> =
+    LazyLock::new(|| package_version(&OVERLAY_PACKAGE_ID.parse().expect("valid fixture name")));
 
 /// The Receiving release from this checkout.
 fn identity() -> &'static ReleaseIdentity {
@@ -36,7 +35,10 @@ fn identity() -> &'static ReleaseIdentity {
         packages: JOURNEY_PACKAGES
             .iter()
             .map(|package| {
-                wamn_catalog::PackageCoordinate::new(package.id.parse().unwrap(), package.version())
+                wamn_catalog::PackageCoordinate::new(
+                    package.id.parse().unwrap(),
+                    package.version().clone(),
+                )
             })
             .collect::<Result<_, _>>()
             .expect("read the Receiving journey package coordinates"),
@@ -51,11 +53,11 @@ struct JourneyPackage {
 
 impl JourneyPackage {
     /// The version of the package, from its wamn.json.
-    fn version(&self) -> &'static str {
+    fn version(&self) -> &'static wamn_catalog::package_version::PackageVersion {
         if self.id == BASE_PACKAGE_ID {
-            *BASE_PACKAGE_VERSION
+            &BASE_PACKAGE_VERSION
         } else {
-            *OVERLAY_PACKAGE_VERSION
+            &OVERLAY_PACKAGE_VERSION
         }
     }
 }

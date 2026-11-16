@@ -12,6 +12,7 @@ pub use login::{LoginName, ParseLoginNameError};
 
 mod principal;
 pub use principal::{ParseIdentityError, PrincipalId, RoleName};
+pub mod pat_prefix;
 pub mod secret;
 #[cfg(feature = "test-util")]
 pub mod test_util;

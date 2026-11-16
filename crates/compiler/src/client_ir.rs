@@ -311,11 +311,11 @@ pub struct OperationIr {
     #[serde(rename = "type")]
     pub type_: String,
     /// Canonical operation identity.
-    pub operation: String,
+    pub operation: wamn_catalog::registered_operation::RegisteredOperation,
     /// The grant a caller needs.
-    pub grant: String,
+    pub grant: wamn_catalog::registered_operation::RegisteredOperation,
     /// Permission token this operation is authorized by.
-    pub permission_token: String,
+    pub permission_token: wamn_catalog::local_operation::LocalOperation,
     /// Authored screen label, or the canonical operation identity when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -390,7 +390,7 @@ pub struct RecordIr {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RevisionBindingIr {
-    pub read_operation: String,
+    pub read_operation: wamn_catalog::registered_operation::RegisteredOperation,
     pub read_key_input: String,
     pub key_field: String,
     pub revision_field: String,
@@ -539,12 +539,18 @@ impl ClientContractIr {
     /// Project compiled descriptions with the routes that serve them.
     pub fn from_operations(
         package: &wamn_catalog::PackageName,
-        operations: &BTreeMap<String, crate::OperationDescription>,
-        routes: &BTreeMap<String, RouteIr>,
+        operations: &BTreeMap<
+            wamn_catalog::local_operation::LocalOperation,
+            crate::OperationDescription,
+        >,
+        routes: &BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
     ) -> Result<Self, ClientIrError> {
         let mut modules = BTreeMap::<String, BTreeMap<String, &crate::OperationDescription>>::new();
         for (local, operation) in operations {
-            let (module, name) = local.split_once('.').expect("validated operation name");
+            let (module, name) = local
+                .as_str()
+                .split_once('.')
+                .expect("validated operation name");
             modules
                 .entry(module.to_owned())
                 .or_default()
@@ -556,7 +562,7 @@ impl ClientContractIr {
     fn assemble(
         package: &wamn_catalog::PackageName,
         modules: BTreeMap<String, BTreeMap<String, &crate::OperationDescription>>,
-        routes: &BTreeMap<String, RouteIr>,
+        routes: &BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
     ) -> Result<Self, ClientIrError> {
         let mut models = modules
             .into_iter()
@@ -568,7 +574,7 @@ impl ClientContractIr {
             for operation in &mut model.operations {
                 operation
                     .label
-                    .get_or_insert_with(|| operation.operation.clone());
+                    .get_or_insert_with(|| operation.operation.to_string());
                 default_field_labels(&mut operation.input_fields);
                 default_field_labels(&mut operation.result_fields);
                 if let Some(route) = &mut operation.route {
@@ -596,8 +602,10 @@ fn default_field_labels(fields: &mut [FieldIr]) {
 pub fn published_routes(
     published: BTreeMap<String, wamn_catalog::ServingAttachment>,
     declarations: &Value,
-) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
-    let mut index = BTreeMap::<String, RouteIr>::new();
+) -> Result<BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>, ClientIrError>
+{
+    let mut index =
+        BTreeMap::<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>::new();
     for (id, attachment) in published {
         if attachment.type_ != wamn_catalog::AttachmentType::Http {
             continue;
@@ -659,7 +667,7 @@ pub fn published_routes(
 fn build_model(
     name: &str,
     operations: BTreeMap<String, &crate::OperationDescription>,
-    routes: &BTreeMap<String, RouteIr>,
+    routes: &BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
 ) -> Result<ModelIr, ClientIrError> {
     let mut built = Vec::with_capacity(operations.len());
     for (operation_name, parts) in operations {
@@ -717,7 +725,7 @@ fn build_operation(
     module: &str,
     name: &str,
     parts: &crate::OperationDescription,
-    routes: &BTreeMap<String, RouteIr>,
+    routes: &BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
 ) -> Result<Option<OperationIr>, ClientIrError> {
     let operation = &parts.operation;
     if operation.visibility.as_deref() == Some("private") {
@@ -819,7 +827,7 @@ fn bind_served_contracts(models: &mut [ModelIr]) {
             if let Some(terminal) = route
                 .terminal_operation
                 .as_ref()
-                .and_then(|id| operations.get(id))
+                .and_then(|id| operations.get(id.as_str()))
             {
                 if route.response.result_class.is_none() {
                     route.response.result_class = Some(terminal.result_class.clone());

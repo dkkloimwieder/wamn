@@ -15,7 +15,9 @@ pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
         package_id
             .parse()
             .map_err(|error: wamn_catalog::ParsePackageNameError| error.to_string())?,
-        package_version,
+        package_version
+            .parse::<wamn_catalog::package_version::PackageVersion>()
+            .map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())
 }
@@ -236,6 +238,7 @@ pub fn application_dependency_permissions(
                 )?;
                 permissions.insert(
                     canonical
+                        .as_str()
                         .split_once('@')
                         .expect("canonical operation has a version")
                         .0

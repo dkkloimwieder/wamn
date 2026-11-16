@@ -223,7 +223,7 @@ pub struct ConnectionEffectSnapshot {
     pub component: Option<String>,
     pub interface_version: Option<String>,
     pub operation: Option<String>,
-    pub registered_operation: Option<String>,
+    pub registered_operation: Option<wamn_catalog::registered_operation::RegisteredOperation>,
     pub requirement_json: Option<serde_json::Value>,
     pub requirement_hash: Option<wamn_digest::Digest>,
     pub node_permitted: bool,

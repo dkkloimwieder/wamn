@@ -45,7 +45,7 @@ fn release() -> Arc<LoadedRelease> {
             .unwrap()
     };
     let mut manifest = ServingManifest::new(
-ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base".parse().unwrap(), "1.0.0").unwrap()]) },
+ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base".parse().unwrap(), "1.0.0".parse().unwrap()).unwrap()]) },
 BTreeSet::from([ServingComponent {
             runtime_schema: None,
             package_id: "base".parse().unwrap(),
@@ -56,7 +56,7 @@ host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), para
 
             }), (OPERATION.into(), AdmittedComponentOperation {
 host_transaction: true, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
-                registered_operation: Some(OPERATION.into()),
+                registered_operation: Some(OPERATION.parse().unwrap()),
                 committed_result_schema: None,
             })]); descriptor },
 

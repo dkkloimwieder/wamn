@@ -162,11 +162,14 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure(
     package(&sources, "appa", schema_version)?;
     deploy(&a, true, false)?;
     let schema_build = build_record::read(&output)?;
-    assert_eq!(schema_build.package.version, schema_version);
+    assert_eq!(
+        schema_build.package.version,
+        schema_version.parse().unwrap()
+    );
     let authored = wamn_compiler::compile_manifest(&a)?;
     deploy(&a, false, true)?;
     let first = build_record::read(&output)?;
-    assert_ne!(first.package.version, schema_version);
+    assert_ne!(first.package.version, schema_version.parse().unwrap());
     deploy(&a, false, true)?;
     let repeated = build_record::read(&output)?;
     assert_eq!(first, repeated);

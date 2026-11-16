@@ -111,7 +111,7 @@ pub(crate) fn write_output(path: Option<&Path>, text: &str) -> anyhow::Result<()
 pub struct ProvisionedRoute {
     pub database_url: String,
     pub token: String,
-    pub token_prefix: String,
+    pub token_prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
     pub principal_subject: wamn_identity_protocol::PrincipalId,
     pub management_token: Option<String>,
     pub management_principal_subject: Option<wamn_identity_protocol::PrincipalId>,

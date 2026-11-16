@@ -99,7 +99,7 @@ async fn issue(inner: &Inner, request: Request<Incoming>) -> Response<Full<Bytes
 fn token_response(token: &IssuedPat, principal: &PrincipalId) -> Response<Full<Bytes>> {
     match serde_json::to_vec(&IssueResponse {
         token: token.token(),
-        token_prefix: token.record().prefix(),
+        token_prefix: *token.record().prefix(),
         principal_id: *principal,
         created_at: token.record().created_at(),
         expires_at: token.record().expires_at(),

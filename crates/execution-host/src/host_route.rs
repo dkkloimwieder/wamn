@@ -241,7 +241,7 @@ impl HostRouteDelivery {
                         project,
                         &self.release.target().project_env_key,
                         principal,
-                        &attachment.operation,
+                        attachment.operation.as_str(),
                     )
                     .await
                     .map_err(Refusal::Failed)?;
@@ -379,8 +379,8 @@ fn served_references(release: &LoadedRelease) -> BTreeSet<String> {
         .components
         .iter()
         .flat_map(|component| component.descriptor.operations.values())
-        .filter_map(|operation| operation.registered_operation.as_deref())
-        .map(|operation| wamn_catalog::sealed_operation_reference(operation).to_owned());
+        .filter_map(|operation| operation.registered_operation.as_ref())
+        .map(|operation| wamn_catalog::sealed_operation_reference(operation.as_str()).to_owned());
     let host = manifest
         .host_routes
         .iter()

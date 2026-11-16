@@ -6,7 +6,7 @@ pub(in super::super) fn render_pat_secret(
     purpose: PatPurpose,
     principal_id: &wamn_identity_protocol::PrincipalId,
     token: &str,
-    prefix: &str,
+    prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
     expires_at: &str,
 ) -> anyhow::Result<Value> {
     let subject = purpose.subject(triple);
@@ -38,17 +38,6 @@ pub(in super::super) fn render_pat_secret(
             "token": token,
         },
     }))
-}
-
-pub fn parse_pat_prefix(value: &str) -> Result<String, String> {
-    let valid = value.len() == 16
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
-    if !valid {
-        return Err("PAT prefix must be 16 lowercase hex digits".to_owned());
-    }
-    Ok(value.to_owned())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -13,7 +13,7 @@ fn changed_target_identity_is_refused() {
             "acme",
             "widgets",
             &"dev".parse().unwrap(),
-            "k3m9x2p7",
+            &"k3m9x2p7".parse().unwrap(),
         );
         let username = workload_login(
             WorkloadRoleFamily::SessionRoleReader,
@@ -41,7 +41,9 @@ fn changed_target_identity_is_refused() {
         };
         SessionTarget::new(
             &triple,
-            "k3m9x2p7",
+            &"k3m9x2p7"
+                .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
+                .unwrap(),
             &wamn_registry::project_env_key("acme", "widgets", &"dev".parse().unwrap()),
             &connection.to_json().unwrap(),
         )
@@ -54,8 +56,6 @@ fn changed_target_identity_is_refused() {
         "/org",
         "/project",
         "/env",
-        "/instance_suffix",
-        "/project_env_key",
         "/connection/database",
         "/connection/username",
     ] {

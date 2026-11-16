@@ -37,7 +37,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
 tracing = { workspace = true }
-wamn-catalog = { workspace = true }
+wamn-catalog = { workspace = true, features = ["sqlx"] }
 wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-registry = { workspace = true }

@@ -94,7 +94,7 @@ fn rows_from_document(document: &serde_json::Value) -> anyhow::Result<PlatformCo
     {
         result.integrations.push(Integration {
             id: text(row, "id")?,
-            integration_type: text(row, "integration_type")?,
+            integration_type: text(row, "integration_type")?.parse()?,
             external_system_id: row["external_system_id"].as_str().map(str::to_owned),
             name: text(row, "name")?,
             status: text(row, "status")?,
@@ -107,7 +107,7 @@ fn rows_from_document(document: &serde_json::Value) -> anyhow::Result<PlatformCo
         result.connections.push(Connection {
             id: text(row, "id")?,
             integration_id: text(row, "integration_id")?,
-            integration_type: text(row, "integration_type")?,
+            integration_type: text(row, "integration_type")?.parse()?,
             status: text(row, "status")?,
         });
     }
@@ -176,6 +176,7 @@ async fn push(
             "{}@{}",
             text(row, "subject")?,
             text(row, "platform_domain")?
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()?
         );
         let changed = sqlx::query("INSERT INTO platform.\"user\"(id,type,email,display_name,status) VALUES ($1,'service',$2,$3,$4) \
              ON CONFLICT (id) DO UPDATE SET email=EXCLUDED.email, display_name=EXCLUDED.display_name, status=EXCLUDED.status \

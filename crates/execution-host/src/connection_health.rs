@@ -44,7 +44,7 @@ impl ConnectionHealth {
     /// Link candidate values and return only non-secret health diagnostics.
     pub async fn probe(
         &self,
-        integration_type: &str,
+        integration_type: &wamn_registry::integration_code::IntegrationCode,
         runtime: &str,
         digest: Option<&wamn_digest::Digest>,
         parameters: &serde_json::Value,
@@ -52,7 +52,7 @@ impl ConnectionHealth {
         credential: Option<&str>,
     ) -> Result<(), String> {
         match runtime {
-            "host" => match integration_type {
+            "host" => match integration_type.as_str() {
                 "http" => wamn_http::health(&self.transport, parameters, auth_type, credential)
                     .await
                     .map_err(|error| {
@@ -79,7 +79,7 @@ impl ConnectionHealth {
 
     async fn guest(
         &self,
-        code: &str,
+        code: &wamn_registry::integration_code::IntegrationCode,
         digest: Option<&wamn_digest::Digest>,
         parameters: &serde_json::Value,
         auth_type: &str,

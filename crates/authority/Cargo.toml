@@ -26,7 +26,7 @@ tracing-opentelemetry = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-broker = { workspace = true }
-wamn-catalog = { workspace = true }
+wamn-catalog = { workspace = true, features = ["sqlx"] }
 wamn-engine = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-platform-identity = { workspace = true }

@@ -278,7 +278,7 @@ mod tests {
                 target: ComponentPackageCoordinate {
                     project_env_key: "org-a--dev--project".parse().unwrap(),
                     package_id: "orders".parse().unwrap(),
-                    package_version: "1.0.0".to_owned(),
+                    package_version: "1.0.0".parse().unwrap(),
                 },
                 component: "transform".to_owned(),
                 interface_version: "0.1.0".to_owned(),

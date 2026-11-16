@@ -66,7 +66,7 @@ pub fn resolve_workflow_components(
     manifest: &ServingManifest,
     document: &WiringDocument,
 ) -> Result<BTreeMap<String, AdmittedComponent>, WorkflowConditionError> {
-    let versions: BTreeMap<&crate::PackageName, &str> = manifest
+    let versions: BTreeMap<&crate::PackageName, &crate::package_version::PackageVersion> = manifest
         .release
         .packages
         .iter()
@@ -122,10 +122,11 @@ pub fn resolve_workflow_components(
             package_id: chosen.package_id.clone(),
             package_version: if chosen.package_id.as_str() == crate::PALETTE_PACKAGE_ID {
                 crate::PALETTE_PACKAGE_VERSION
+                    .parse()
+                    .expect("fixed palette package version")
             } else {
-                versions[&chosen.package_id]
-            }
-            .to_owned(),
+                versions[&chosen.package_id].clone()
+            },
         };
         resolved.insert(
             node_id.clone(),
@@ -183,7 +184,7 @@ mod tests {
     fn operation(op: &str, registered: bool) -> AdmittedComponentOperation {
         AdmittedComponentOperation {
             committed_result_schema: None,
-            registered_operation: registered.then(|| op.to_owned()),
+            registered_operation: registered.then(|| op.parse().unwrap()),
             host_transaction: false,
             input_ports: Vec::new(),
             output_ports: Vec::new(),
@@ -211,7 +212,7 @@ mod tests {
             target: ComponentPackageCoordinate {
                 project_env_key: "t1--dev--project".parse().unwrap(),
                 package_id: package.to_owned(),
-                package_version: "1.0.0".to_owned(),
+                package_version: "1.0.0".parse().unwrap(),
             },
             component: name.to_owned(),
             interface_version: "0.1".to_owned(),
@@ -232,8 +233,10 @@ mod tests {
         ServingManifest::new(
             ServingRelease {
                 packages: BTreeSet::from([
-                    PackageCoordinate::new(APPLICATION.parse().unwrap(), "1.0.0").unwrap(),
-                    PackageCoordinate::new("palette".parse().unwrap(), "2.0.0").unwrap(),
+                    PackageCoordinate::new(APPLICATION.parse().unwrap(), "1.0.0".parse().unwrap())
+                        .unwrap(),
+                    PackageCoordinate::new("palette".parse().unwrap(), "2.0.0".parse().unwrap())
+                        .unwrap(),
                 ]),
             },
             components.into_iter().collect(),
@@ -280,7 +283,10 @@ mod tests {
             &document,
         )
         .unwrap();
-        assert_eq!(resolved["node"].target.package_version, "1.0.0");
+        assert_eq!(
+            resolved["node"].target.package_version,
+            "1.0.0".parse().unwrap()
+        );
         assert_eq!(
             condition_workflow_document(
                 &"t1--dev--project".parse().unwrap(),

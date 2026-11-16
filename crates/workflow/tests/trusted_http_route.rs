@@ -388,7 +388,7 @@ fn declaration() -> anyhow::Result<ComponentDeclaration> {
     let target = wamn_catalog::ComponentPackageCoordinate::new(
         &PROJECT_ENV_KEY.parse().unwrap(),
         PACKAGE.parse().unwrap(),
-        PACKAGE_VERSION,
+        PACKAGE_VERSION.parse()?,
     )?;
     let document = wamn_publish::component_declaration::render_palette_declaration(
         &template,
@@ -576,7 +576,12 @@ async fn seed_with_client(
     .map(drop)
     .context("install the catalog and run-plane DDL")?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::platform_principals_sql("http-fixture.invalid")?.clone(),
+        wamn_control_provision::platform_principals_sql(
+            &"http-fixture.invalid"
+                .parse::<wamn_registry::platform_domain::PlatformDomain>()
+                .unwrap(),
+        )
+        .clone(),
     ))
     .execute(&mut *client)
     .await
