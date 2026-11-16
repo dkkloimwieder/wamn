@@ -13,7 +13,18 @@
         "parameters": {
           "script": "customscript_integration",
           "deploy": "customdeploy_integration"
-        }
+        },
+        "input-schema": {
+          "type": "object",
+          "properties": {
+            "body": {}
+          },
+          "required": [
+            "body"
+          ],
+          "additionalProperties": true
+        },
+        "output-schema": {}
       }
     },
     "request": {

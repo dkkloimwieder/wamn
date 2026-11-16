@@ -696,3 +696,76 @@ fn target_port_refuses_a_value_before_invocation() {
         FailureType::InvalidInput
     );
 }
+
+#[test]
+fn jsonata_output_must_match_its_declaration_before_routing_or_completion() {
+    for edges in [
+        vec![],
+        vec![edge("map", "target"), edge("map", "other")],
+        vec![edge_on("map", "error", "target")],
+    ] {
+        let (id, mut map) = node_cfg(
+            "map",
+            "jsonata",
+            json!({
+                "expression": "$ = 99 ? \"wrong\" : $", "input-schema": {"type": "integer"}, "output-schema": {"type": "integer"}
+            }),
+        );
+        map.operation = "wamn:node/handler@0.1.0".into();
+        let document = wamn_catalog::WiringDocument::new(
+            "typed",
+            1,
+            "map",
+            [
+                (id, map),
+                node("target", "consume"),
+                node("other", "consume"),
+            ]
+            .into_iter()
+            .collect(),
+            edges,
+        )
+        .unwrap();
+        let mut components = super::components(&document);
+        let component = components.get_mut("map").unwrap();
+        component.target = wamn_catalog::palette_target(&component.target.project_env_key);
+        if document.edges.iter().any(|edge| edge.from_port == "main") {
+            for id in ["target", "other"] {
+                components
+                    .get_mut(id)
+                    .unwrap()
+                    .operations
+                    .get_mut("consume")
+                    .unwrap()
+                    .input_ports[0]
+                    .schema
+                    .schema = json!({"type":"integer"});
+            }
+        }
+        let wiring = Wiring::compile(document, &components).unwrap();
+        for (output, valid) in [(json!(42), true), (json!("wrong"), false)] {
+            let trace = run(&wiring, "delivery", json!(99), |call| {
+                if call.node == "map" {
+                    NodeOutcome::ok(output.clone())
+                } else {
+                    NodeOutcome::ok(json!(null))
+                }
+            });
+            if valid {
+                assert_eq!(trace.status, WalkStatus::Completed);
+            } else if wiring.successors("map", "error").next().is_some() {
+                assert_eq!(trace.status, WalkStatus::Completed);
+                assert!(
+                    trace
+                        .invoked
+                        .iter()
+                        .any(|call| call.node == "target" && call.payload.get("error").is_some())
+                );
+            } else {
+                assert_eq!(trace.status, WalkStatus::Failed);
+                assert_eq!(trace.walk.failure().unwrap().type_, FailureType::Terminal);
+                assert!(trace.invoked.iter().all(|call| call.node == "map"));
+            }
+        }
+    }
+}

@@ -1,6 +1,7 @@
 //! Index the catalog graph without copying its nodes or edges.
 use anyhow::Context as _;
 use boon::{Compiler, Draft, SchemaIndex, Schemas};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use wamn_catalog::{AdmittedComponent, WiringDocument, WiringEdge, WiringNode, resolve_input_port};
 
@@ -10,10 +11,11 @@ pub(crate) struct Wiring {
     document: WiringDocument,
     out: HashMap<String, Vec<usize>>,
     inferred_ports: HashMap<usize, String>,
-    input_schemas: HashMap<String, HashMap<String, InputSchema>>,
+    input_schemas: HashMap<String, HashMap<String, PortSchema>>,
+    output_schemas: HashMap<String, PortSchema>,
 }
 
-struct InputSchema {
+struct PortSchema {
     schemas: Schemas,
     index: SchemaIndex,
 }
@@ -37,33 +39,58 @@ impl Wiring {
             }
         }
         let mut input_schemas = HashMap::new();
+        let mut output_schemas = HashMap::new();
         for (node_id, node) in &document.nodes {
-            let operation = components
+            let component = components
                 .get(node_id)
-                .and_then(|component| component.operation(&node.operation))
+                .with_context(|| format!("node {node_id:?} has no admitted component"))?;
+            let operation = component
+                .operation(&node.operation)
                 .with_context(|| format!("node {node_id:?} has no admitted operation"))?;
+            let operation =
+                wamn_catalog::specialize_wiring_operation(node_id, node, component, operation)?;
             let mut ports = HashMap::new();
             for port in &operation.input_ports {
-                let uri = "mem://wamn-port.json";
-                let mut schemas = Schemas::new();
-                let mut compiler = Compiler::new();
-                compiler.set_default_draft(Draft::V2020_12);
-                compiler
-                    .add_resource(uri, port.schema.schema.clone())
-                    .map_err(|error| anyhow::anyhow!("node {node_id:?} input schema: {error}"))?;
-                let index = compiler
-                    .compile(uri, &mut schemas)
-                    .map_err(|error| anyhow::anyhow!("node {node_id:?} input schema: {error}"))?;
-                ports.insert(port.name.clone(), InputSchema { schemas, index });
+                ports.insert(port.name.clone(), compile_schema(&port.schema.schema)?);
             }
             input_schemas.insert(node_id.clone(), ports);
+            if matches!(operation, Cow::Owned(_)) {
+                output_schemas.insert(
+                    node_id.clone(),
+                    compile_schema(&node.params["output-schema"])?,
+                );
+            }
         }
         Ok(Self {
             document,
             out,
             inferred_ports,
             input_schemas,
+            output_schemas,
         })
+    }
+
+    pub(super) fn validates_output(&self, node: &str) -> bool {
+        self.output_schemas.contains_key(node)
+    }
+
+    pub(super) fn validate_output(
+        &self,
+        node: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(), super::ErrorDetail> {
+        let Some(schema) = self.output_schemas.get(node) else {
+            return Ok(());
+        };
+        schema
+            .schemas
+            .validate(payload, schema.index)
+            .map_err(|error| {
+                super::ErrorDetail::coded(
+                    "schema-invalid",
+                    format!("node {node:?} output does not match its declared schema: {error}"),
+                )
+            })
     }
 
     pub(super) fn validate_input(
@@ -126,6 +153,20 @@ impl Wiring {
                 })
             })
     }
+}
+
+fn compile_schema(schema: &serde_json::Value) -> anyhow::Result<PortSchema> {
+    let uri = "mem://wamn-port.json";
+    let mut schemas = Schemas::new();
+    let mut compiler = Compiler::new();
+    compiler.set_default_draft(Draft::V2020_12);
+    compiler
+        .add_resource(uri, schema.clone())
+        .map_err(|error| anyhow::anyhow!("port schema: {error}"))?;
+    let index = compiler
+        .compile(uri, &mut schemas)
+        .map_err(|error| anyhow::anyhow!("port schema: {error}"))?;
+    Ok(PortSchema { schemas, index })
 }
 
 impl std::fmt::Debug for Wiring {

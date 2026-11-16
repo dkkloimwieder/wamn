@@ -7,9 +7,9 @@
 //! The node emits the expression's result as it is. A result that JSONata
 //! calls undefined, for example a path that matches nothing, emits `null`.
 //!
-//! The wiring declares `output-schema`, the exact schema the result promises.
-//! Publication checks sample evaluations with the shared engine. Each target
-//! input port checks an arriving value against its schema before invocation.
+//! The wiring declares `input-schema` and `output-schema` for its port contracts.
+//! Publication checks samples from the input schema with the shared engine.
+//! The router validates the result once against the declared output schema.
 //!
 //! An input that is not JSON is `invalid-input`. An expression that does not
 //! parse is a configuration fault, and an evaluation failure repeats on a

@@ -12,7 +12,38 @@
         "expression": "($assert(event = \"insert\" and $type(new.key) = \"string\" and $length(new.key) > 0, \"item insert requires a stable key\"); {\"path\": \"/services/rest/record/v1/\" & $encodeUrlComponent($parameters.record_type) & \"/eid:\" & $encodeUrlComponent(new.key), \"body\": {\"entityId\": new.name, \"externalId\": new.key}})",
         "parameters": {
           "record_type": "customer"
-        }
+        },
+        "input-schema": {
+          "type": "object",
+          "properties": {
+            "event": {
+              "const": "insert"
+            },
+            "new": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "name"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "event",
+            "new"
+          ],
+          "additionalProperties": true
+        },
+        "output-schema": {}
       }
     },
     "request": {

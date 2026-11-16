@@ -13,7 +13,18 @@
         "parameters": {
           "record_type": "customer"
         },
-        "port-input-pointer": "/0/port"
+        "port-input-pointer": "/0/port",
+        "input-schema": {
+          "type": "object",
+          "properties": {
+            "body": {}
+          },
+          "required": [
+            "body"
+          ],
+          "additionalProperties": true
+        },
+        "output-schema": {}
       }
     },
     "post": {
@@ -51,7 +62,9 @@
       "interface-version": "0.1.0",
       "operation": "wamn:node/handler@0.1.0",
       "params": {
-        "expression": "$[0]"
+        "expression": "$[0]",
+        "input-schema": {},
+        "output-schema": {}
       }
     }
   },

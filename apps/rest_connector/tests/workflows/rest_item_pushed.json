@@ -10,7 +10,58 @@
       "operation": "wamn:node/handler@0.1.0",
       "params": {
         "expression": "[{\"request_id\": new.key, \"value\": {\"record_id\": new.key}}]",
-        "port": "items"
+        "port": "items",
+        "input-schema": {
+          "type": "object",
+          "properties": {
+            "new": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "new"
+          ],
+          "additionalProperties": true
+        },
+        "output-schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "record_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "record_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "request_id",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 100
+        }
       }
     },
     "append": {

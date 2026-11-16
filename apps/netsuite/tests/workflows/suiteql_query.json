@@ -9,7 +9,23 @@
       "interface-version": "0.1.0",
       "operation": "wamn:node/handler@0.1.0",
       "params": {
-        "expression": "($assert($type(q) = \"string\" and $contains($lowercase(q), \"order by id\"), \"SuiteQL must order by the stable id key\"); {\"body\": {\"q\": q}, \"due\": null})"
+        "expression": "($assert($type(q) = \"string\" and $contains($lowercase(q), \"order by id\"), \"SuiteQL must order by the stable id key\"); {\"body\": {\"q\": q}, \"due\": null})",
+        "input-schema": {
+          "type": "object",
+          "properties": {
+            "q": {
+              "type": "string",
+              "examples": [
+                "SELECT id FROM customer ORDER BY id"
+              ]
+            }
+          },
+          "required": [
+            "q"
+          ],
+          "additionalProperties": true
+        },
+        "output-schema": {}
       }
     },
     "page": {

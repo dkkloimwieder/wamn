@@ -98,13 +98,7 @@ pub fn validate_wiring_compatibility(
         validate_parameters(node_id, node, operation)?;
         resolved.insert(
             node_id.as_str(),
-            ResolvedOperation {
-                component,
-                operation,
-                output_ports: crate::wiring_jsonata::specialize(
-                    node_id, node, component, operation,
-                )?,
-            },
+            crate::specialize_wiring_operation(node_id, node, component, operation)?,
         );
     }
 
@@ -156,13 +150,7 @@ pub fn validate_resolved_wiring_compatibility(
         validate_parameters(node_id, node, operation)?;
         resolved.insert(
             node_id.as_str(),
-            ResolvedOperation {
-                component,
-                operation,
-                output_ports: crate::wiring_jsonata::specialize(
-                    node_id, node, component, operation,
-                )?,
-            },
+            crate::specialize_wiring_operation(node_id, node, component, operation)?,
         );
     }
     if components.len() != resolved.len() {
@@ -177,7 +165,7 @@ pub fn validate_resolved_wiring_compatibility(
 
 fn validate_resolved_edges(
     wiring: &WiringDocument,
-    resolved: &BTreeMap<&str, ResolvedOperation<'_>>,
+    resolved: &BTreeMap<&str, Cow<'_, AdmittedComponentOperation>>,
 ) -> Result<(), WiringCompatibilityError> {
     if let Some(node_id) = wiring
         .response
@@ -192,7 +180,7 @@ fn validate_resolved_edges(
                     format!("committed-result node {node_id:?} has no resolved operation"),
                 )
             })?
-            .operation;
+            .as_ref();
         if operation.committed_result_schema.is_none() {
             return Err(WiringCompatibilityError::new(
                 WiringCompatibilityErrorType::MissingOperation,
@@ -223,7 +211,7 @@ fn validate_resolved_edges(
             &edge.to,
             &wiring.nodes[&edge.to].operation,
             edge.to_port.as_deref(),
-            target.operation,
+            target,
         )?;
 
         // `error` is router-owned failure data, not a successful component
@@ -261,21 +249,11 @@ fn validate_resolved_edges(
         }
     }
     for (node_id, resolved) in resolved {
-        crate::wiring_jsonata::validate_samples(
-            wiring,
-            node_id,
-            &wiring.nodes[*node_id],
-            resolved.component,
-            resolved.operation,
-        )?;
+        if matches!(resolved, Cow::Owned(_)) {
+            crate::wiring_jsonata::validate_samples(node_id, &wiring.nodes[*node_id])?;
+        }
     }
     Ok(())
-}
-
-struct ResolvedOperation<'a> {
-    component: &'a AdmittedComponent,
-    operation: &'a AdmittedComponentOperation,
-    output_ports: Cow<'a, [AdmittedComponentPort]>,
 }
 
 fn resolve_component_operation<'a>(
@@ -718,20 +696,31 @@ mod tests {
         );
     }
     #[test]
-    fn publication_refuses_a_jsonata_sample_outside_its_promised_schema() {
+    fn publication_checks_the_declared_jsonata_input_and_output_schemas() {
         let mut jsonata = component(
             "jsonata",
             "wamn:node/handler@0.1.0",
             "input",
-            json!({"type": "object", "required": ["flag"], "properties": {"flag": {"type": "boolean"}}}),
+            json!({}),
             "main",
             json!({}),
         );
         jsonata.target = crate::palette_target(&jsonata.target.project_env_key);
+        operation_mut(&mut jsonata, "wamn:node/handler@0.1.0")
+            .input_ports
+            .push(AdmittedComponentPort {
+                name: "items".into(),
+                schema: schema(json!({"type": "array"})),
+            });
         operation_mut(&mut jsonata, "wamn:node/handler@0.1.0").parameters = vec![
             AdmittedComponentParameter {
                 name: "expression".into(),
                 schema: schema(json!({"type": "string"})),
+                required: true,
+            },
+            AdmittedComponentParameter {
+                name: "input-schema".into(),
+                schema: schema(json!({})),
                 required: true,
             },
             AdmittedComponentParameter {
@@ -741,12 +730,13 @@ mod tests {
             },
         ];
         let mut document = WiringDocument::parse(&json!({
-            "format-version": "0.1", "wiring-id": "typed", "version": 1, "entry": "map",
-            "nodes": {"map": {"component": "jsonata", "interface-version": "0.1.0",
+            "format-version": "0.1", "wiring-id": "typed", "version": 1, "entry": "source",
+            "nodes": {"source": {"component": "source", "interface-version": "0.1.0", "operation": "read"}, "map": {"component": "jsonata", "interface-version": "0.1.0",
                 "operation": "wamn:node/handler@0.1.0", "params": {
+                    "input-schema": {"type": "object", "required": ["flag"], "properties": {"flag": {"type": "boolean"}}},
                     "expression": "flag ? 42 : 43", "output-schema": {"type": "integer"}
                 }}, "consume": {"component": "sink", "interface-version": "0.1.0", "operation": "consume"}},
-            "edges": [{"from": "map", "to": "consume"}]
+            "edges": [{"from": "source", "to": "map", "to-port": "input"}, {"from": "map", "to": "consume"}]
         }))
         .unwrap();
         let sink = component(
@@ -757,10 +747,43 @@ mod tests {
             "main",
             json!({}),
         );
-        let components =
-            BTreeMap::from([("map".to_owned(), jsonata), ("consume".to_owned(), sink)]);
-        validate_resolved_wiring_compatibility(&document, &components)
-            .expect("declared output meets the target contract");
+        let source = component(
+            "source",
+            "read",
+            "input",
+            json!({}),
+            "main",
+            document.nodes["map"].params["input-schema"].clone(),
+        );
+        let components = BTreeMap::from([
+            ("source".to_owned(), source),
+            ("map".to_owned(), jsonata),
+            ("consume".to_owned(), sink),
+        ]);
+        for port in ["input", "items"] {
+            document.edges[0].to_port = Some(port.into());
+            validate_resolved_wiring_compatibility(&document, &components)
+                .expect("both JSONata inputs use the declared schema");
+        }
+        let input = document
+            .nodes
+            .get_mut("map")
+            .unwrap()
+            .params
+            .insert("input-schema".into(), json!({"type": "string"}))
+            .unwrap();
+        assert_eq!(
+            validate_resolved_wiring_compatibility(&document, &components)
+                .unwrap_err()
+                .error_type(),
+            WiringCompatibilityErrorType::SchemaMismatch
+        );
+        document
+            .nodes
+            .get_mut("map")
+            .unwrap()
+            .params
+            .insert("input-schema".into(), input);
         document
             .nodes
             .get_mut("map")

@@ -12,7 +12,23 @@
         "expression": "($assert($type(id) = \"string\" and $length(id) > 0, \"id must be a nonempty string\"); {\"path\": \"/services/rest/record/v1/\" & $encodeUrlComponent($parameters.record_type) & \"/\" & $encodeUrlComponent(id), \"body\": body})",
         "parameters": {
           "record_type": "customer"
-        }
+        },
+        "input-schema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "body": {}
+          },
+          "required": [
+            "body",
+            "id"
+          ],
+          "additionalProperties": true
+        },
+        "output-schema": {}
       }
     },
     "request": {

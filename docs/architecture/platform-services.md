@@ -140,10 +140,13 @@ The input remains unchanged.
 Its optional `port-input-pointer` selects `main` or `items` from the expression result through a JSON pointer.
 A missing target, a non-string target, or an unknown port returns a terminal error.
 Without that pointer, the existing `port` parameter supplies the output port.
+The required `input-schema` declares the schema for both input ports.
 The required `output-schema` declares the result schema for the selected output port.
 A dynamic port selector uses the same promised schema for both outputs.
-Admission checks sample evaluations. Each target port checks each arriving value once before invocation.
-The `items` input port accepts an array with the same handler as `input`.
+Admission evaluates samples from the declared input schema.
+The router validates the result once against the declared output schema, before routing or completion.
+Targets reuse this validation because their schemas must equal the declared output schema.
+Both input ports use the same handler and declared input schema.
 Edges into either input port name that port explicitly.
 
 The `http-page` node emits one array on `main` after it collects all pages.

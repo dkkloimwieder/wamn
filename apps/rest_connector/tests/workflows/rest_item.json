@@ -26,7 +26,45 @@
       "operation": "wamn:node/handler@0.1.0",
       "params": {
         "expression": "[{\"request_id\": carry, \"value\": {\"external_system_id\": external_system_id, \"idempotency_key\": carry, \"items\": [items.{\"key\": id, \"name\": name}]}}]",
-        "port": "items"
+        "port": "items",
+        "input-schema": {},
+        "output-schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "type": "string"
+              },
+              "value": {
+                "type": "object",
+                "properties": {
+                  "external_system_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "items": {}
+                },
+                "required": [
+                  "external_system_id",
+                  "idempotency_key",
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "request_id",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 100
+        }
       }
     },
     "record": {

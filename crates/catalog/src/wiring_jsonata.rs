@@ -1,48 +1,62 @@
 //! Node-specific JSONata port contracts, derived from wiring configuration.
 
 use crate::{
-    AdmittedComponent, AdmittedComponentOperation, AdmittedComponentPort, WiringCompatibilityError,
-    WiringCompatibilityErrorType, WiringDocument, WiringNode,
+    AdmittedComponent, AdmittedComponentOperation, WiringCompatibilityError,
+    WiringCompatibilityErrorType, WiringNode,
 };
 use std::borrow::Cow;
 
-pub(super) fn specialize<'a>(
+/// Specialize palette JSONata ports from the node's required schema declarations.
+///
+/// Other operations are borrowed unchanged. JSONata operations are owned and
+/// carry the declared input schema on every input and the declared output schema
+/// on each selectable output.
+///
+/// # Errors
+/// Returns a refusal for a missing or invalid schema declaration.
+pub fn specialize_wiring_operation<'a>(
     node_id: &str,
     node: &WiringNode,
     component: &AdmittedComponent,
     operation: &'a AdmittedComponentOperation,
-) -> Result<Cow<'a, [AdmittedComponentPort]>, WiringCompatibilityError> {
+) -> Result<Cow<'a, AdmittedComponentOperation>, WiringCompatibilityError> {
     if component.target.package_id.as_str() != crate::PALETTE_PACKAGE_ID
         || node.component != "jsonata"
         || node.operation != "wamn:node/handler@0.1.0"
     {
-        return Ok(Cow::Borrowed(&operation.output_ports));
+        return Ok(Cow::Borrowed(operation));
     }
-    let schema = node.params.get("output-schema").ok_or_else(|| {
-        WiringCompatibilityError::new(
-            WiringCompatibilityErrorType::MissingRequiredParameter,
-            format!("JSONata node {node_id:?} must declare output-schema"),
-        )
-    })?;
-    let schema = crate::component_facts::normalize_schema(schema.clone(), "JSONata output")
-        .map_err(|error| {
+    let declared_schema = |parameter: &str| {
+        let schema = node.params.get(parameter).ok_or_else(|| {
             WiringCompatibilityError::new(
-                WiringCompatibilityErrorType::InvalidParameter,
-                format!("JSONata node {node_id:?} has an invalid output-schema: {error}"),
+                WiringCompatibilityErrorType::MissingRequiredParameter,
+                format!("JSONata node {node_id:?} must declare {parameter}"),
             )
         })?;
-    let mut ports = operation.output_ports.clone();
+        crate::component_facts::normalize_schema(schema.clone(), parameter).map_err(|error| {
+            WiringCompatibilityError::new(
+                WiringCompatibilityErrorType::InvalidParameter,
+                format!("JSONata node {node_id:?} has an invalid {parameter}: {error}"),
+            )
+        })
+    };
+    let input_schema = declared_schema("input-schema")?;
+    let output_schema = declared_schema("output-schema")?;
+    let mut operation = operation.clone();
+    for port in &mut operation.input_ports {
+        port.schema = input_schema.clone();
+    }
     let selected = node
         .params
         .get("port")
         .and_then(serde_json::Value::as_str)
         .unwrap_or(crate::MAIN_PORT);
-    for port in &mut ports {
+    for port in &mut operation.output_ports {
         if node.params.contains_key("port-input-pointer") || port.name == selected {
-            port.schema = schema.clone();
+            port.schema = output_schema.clone();
         }
     }
-    Ok(Cow::Owned(ports))
+    Ok(Cow::Owned(operation))
 }
 
 /// Three deterministic probes keep publication work bounded. They exercise
@@ -53,18 +67,9 @@ const SAMPLE_VALUE_BUDGET: usize = 256;
 const SAMPLE_DEPTH: usize = 16;
 
 pub(super) fn validate_samples(
-    wiring: &WiringDocument,
     node_id: &str,
     node: &WiringNode,
-    component: &AdmittedComponent,
-    operation: &AdmittedComponentOperation,
 ) -> Result<(), WiringCompatibilityError> {
-    if component.target.package_id.as_str() != crate::PALETTE_PACKAGE_ID
-        || node.component != "jsonata"
-        || node.operation != "wamn:node/handler@0.1.0"
-    {
-        return Ok(());
-    }
     let expression = node.params["expression"]
         .as_str()
         .expect("validated expression parameter");
@@ -82,76 +87,50 @@ pub(super) fn validate_samples(
     let output_index = compiler
         .compile("mem://output.json", &mut output_schemas)
         .expect("validated output schema");
-    let incoming: Vec<_> = wiring
-        .edges
-        .iter()
-        .filter(|edge| edge.to == node_id)
-        .collect();
-    for (port_number, port) in operation.input_ports.iter().enumerate() {
-        let used = if incoming.is_empty() {
-            operation.input_ports.len() == 1 || port.name == "input"
-        } else {
-            incoming.iter().any(|edge| {
-                edge.to_port
-                    .as_deref()
-                    .map_or(operation.input_ports.len() == 1, |name| name == port.name)
-            })
-        };
-        if !used {
+    let input = &node.params["input-schema"];
+    let mut input_schemas = boon::Schemas::new();
+    let uri = "mem://input.json";
+    let mut compiler = boon::Compiler::new();
+    compiler.set_default_draft(boon::Draft::V2020_12);
+    compiler
+        .add_resource(uri, input.clone())
+        .expect("admitted input schema");
+    let input_index = compiler
+        .compile(uri, &mut input_schemas)
+        .expect("admitted input schema");
+    let mut checked = false;
+    for number in 0..SAMPLE_COUNT {
+        let mut budget = SAMPLE_VALUE_BUDGET;
+        let sample = sample(input, input, number, 0, &mut budget);
+        if input_schemas.validate(&sample, input_index).is_err() {
             continue;
         }
-        let input = &port.schema.schema;
-        let mut input_schemas = boon::Schemas::new();
-        let uri = format!("mem://input-{port_number}.json");
-        let mut compiler = boon::Compiler::new();
-        compiler.set_default_draft(boon::Draft::V2020_12);
-        compiler
-            .add_resource(&uri, input.clone())
-            .expect("admitted input schema");
-        let input_index = compiler
-            .compile(&uri, &mut input_schemas)
-            .expect("admitted input schema");
-        let mut checked = false;
-        for number in 0..SAMPLE_COUNT {
-            let mut budget = SAMPLE_VALUE_BUDGET;
-            let sample = sample(input, input, number, 0, &mut budget);
-            if input_schemas.validate(&sample, input_index).is_err() {
-                continue;
-            }
-            let output = wamn_jsonata::evaluate_sample(expression, &sample, parameters)
-                .map_err(|error| refusal(node_id, &port.name, number, &sample, &error))?;
-            let output: serde_json::Value =
-                serde_json::from_str(&output).expect("JSONata emits JSON");
-            output_schemas
-                .validate(&output, output_index)
-                .map_err(|error| refusal(node_id, &port.name, number, &sample, &error))?;
-            checked = true;
-        }
-        if !checked {
-            return Err(WiringCompatibilityError::new(
-                WiringCompatibilityErrorType::JsonataSample,
-                format!(
-                    "JSONata node {node_id:?} input port {:?}: no valid schema sample could be built",
-                    port.name
-                ),
-            ));
-        }
+        let output = wamn_jsonata::evaluate_sample(expression, &sample, parameters)
+            .map_err(|error| refusal(node_id, number, &sample, &error))?;
+        let output: serde_json::Value = serde_json::from_str(&output).expect("JSONata emits JSON");
+        output_schemas
+            .validate(&output, output_index)
+            .map_err(|error| refusal(node_id, number, &sample, &error))?;
+        checked = true;
+    }
+    if !checked {
+        return Err(WiringCompatibilityError::new(
+            WiringCompatibilityErrorType::JsonataSample,
+            format!("JSONata node {node_id:?}: no valid input schema sample could be built"),
+        ));
     }
     Ok(())
 }
 
 fn refusal(
     node: &str,
-    port: &str,
     number: usize,
     sample: &serde_json::Value,
     error: &dyn std::fmt::Display,
 ) -> WiringCompatibilityError {
     WiringCompatibilityError::new(
         WiringCompatibilityErrorType::JsonataSample,
-        format!(
-            "JSONata node {node:?} input port {port:?} sample {number} ({sample}) failed: {error}"
-        ),
+        format!("JSONata node {node:?} input sample {number} ({sample}) failed: {error}"),
     )
 }
 

@@ -18,6 +18,11 @@
       ],
       "parameters": [
         {
+          "name": "input-schema",
+          "schema": {"type": ["object", "boolean"]},
+          "required": true
+        },
+        {
           "name": "output-schema",
           "schema": {"type": ["object", "boolean"]},
           "required": true

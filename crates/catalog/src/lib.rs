@@ -24,6 +24,7 @@ mod signed_file_read;
 mod wiring;
 mod wiring_compatibility;
 mod wiring_jsonata;
+
 mod workflow_condition;
 
 /// Test databases with the project catalog minimum.
@@ -92,6 +93,7 @@ pub use wiring_compatibility::{
     WiringCompatibilityError, WiringCompatibilityErrorType, resolve_input_port,
     validate_resolved_wiring_compatibility, validate_wiring_compatibility,
 };
+pub use wiring_jsonata::specialize_wiring_operation;
 pub use workflow_condition::{
     WorkflowConditionError, condition_workflow_document, resolve_workflow_components,
 };

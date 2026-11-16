@@ -111,6 +111,8 @@ struct Token {
     /// `None` only for the wiring entry; routed tokens carry the edge's resolved
     /// target operation input.
     input_port: Option<String>,
+    /// A JSONata emission already passed the equal schema at its source.
+    validated: bool,
     payload: Arc<Value>,
 }
 
@@ -258,6 +260,7 @@ impl Wiring {
         frontier.push_back(Token {
             node: self.entry().to_string(),
             input_port: None,
+            validated: false,
             payload: Arc::new(delivery.payload),
         });
         Walk {
@@ -286,8 +289,9 @@ impl Wiring {
         while walk.current.is_none() {
             match walk.frontier.pop_front() {
                 Some(tok) => {
-                    if let Err(detail) =
-                        self.validate_input(&tok.node, tok.input_port.as_deref(), &tok.payload)
+                    if !tok.validated
+                        && let Err(detail) =
+                            self.validate_input(&tok.node, tok.input_port.as_deref(), &tok.payload)
                     {
                         // A refused delivery is never invoked or retried. Charge the
                         // hop budget so a cycle of error ports remains bounded.
@@ -416,6 +420,10 @@ impl Wiring {
 
         match outcome {
             NodeOutcome::Success { payload, port } => {
+                if let Err(detail) = self.validate_output(&call.node, &payload) {
+                    self.error_or_fail(walk, &call.node, detail, FailureType::Terminal);
+                    return Ok(());
+                }
                 // Decided before anything mutates, so a rejected verdict leaves
                 // the walk exactly as it found it.
                 let verdict = match self
@@ -497,6 +505,9 @@ impl Wiring {
             walk.frontier.push_back(Token {
                 node: edge.to.clone(),
                 input_port: Some(input_port.to_owned()),
+                // Publication requires equal schemas on successful edges.
+                // Error payloads have a separate contract and still need a check.
+                validated: port != ERROR_PORT && self.validates_output(node),
                 payload: Arc::clone(payload),
             });
         }

@@ -591,13 +591,18 @@ Missed or refused ticks produce a log entry without catch-up, and host shutdown 
 The [JSONata node](../../guests/jsonata/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.
 The result leaves on port `main`, or on the selected port `items`.
-The wiring must declare `output-schema` in each JSONata node's parameters.
-Admission derives that node's output port schema from this declaration and keeps schema equality on edges.
-It evaluates at most three samples from each used input schema with the same engine as the guest.
+Each JSONata node declares `input-schema` and `output-schema` in its parameters.
+Admission uses these declarations for the node's input ports and selected output ports.
+It requires equal schemas on each edge.
+It evaluates at most three samples from the declared input schema with the same engine as the guest.
 A failed evaluation or an output outside the promised schema refuses admission and names the node and sample.
 These samples cannot prove every possible output.
-The router compiles target port schemas once per walk and checks each arriving value before invocation.
-A failed check follows the target's error path as `InvalidInput`. Retries reuse the checked value.
+The router compiles schemas once per walk.
+It validates each JSONata result against the declared output schema before routing or completion.
+An invalid result follows the JSONata node's error path as a terminal failure.
+Targets reuse this validation because publication requires equal schemas.
+Other arriving values follow the target's error path as `InvalidInput` if validation fails.
+Retries reuse the validated input.
 The node is a std guest: it imports `wasi:random` at the version that Rust std links, and the build preserves that import.
 
 The WMS workflow `movement_label` is the first example.
@@ -677,7 +682,7 @@ Every layer exposes an interface and depends only on layers below it: base platf
 
 Park acts on the queue row only. The run status stays `dispatched`, so the retired run-level `parked` status does not come back. A park inside a walk needs a saved walk and is part of approvals, which are out of target.
 
-The node is a std guest at `guests/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its parameter `expression` holds the JSONata text, and `output-schema` declares the result contract. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
+The node is a std guest at `guests/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its parameter `expression` holds the JSONata text. The required `input-schema` and `output-schema` declare its input and result contracts. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
 
 The `shape` node turns the row event into the item array that `label-render` takes, with `packaging_id` and `location_id`, and the label key `{packaging_id}/{row_version}`. Epic 25 (`docs/history/wms-inventory-spec.md`) moved the trigger from the movement insert to the packaging update. One move therefore stores one label, and a redelivered event overwrites it. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
 
