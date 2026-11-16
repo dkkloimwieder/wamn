@@ -20,7 +20,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_events::admission::{ManualRunAdmission, ManualRunAdmitted};
 
-use crate::number_counter::{CounterSet, CounterSetRefusal};
+use wamn_sql::number_counter::{CounterSet, CounterSetRefusal};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection as Client;
@@ -467,7 +467,7 @@ impl ApplicationRoutes<'_> {
             key: request.key,
             value: request.value,
         };
-        let value = crate::number_counter::set_number_counter(
+        let value = wamn_sql::number_counter::set_number_counter(
             self.postgres,
             self.project,
             &self.release.target().project_env_key,

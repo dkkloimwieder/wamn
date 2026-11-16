@@ -16,6 +16,7 @@ use wash_runtime::wasmtime::component::{Component, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 mod executor;
+pub mod number_counter;
 mod operation;
 mod operation_transaction;
 mod pool;

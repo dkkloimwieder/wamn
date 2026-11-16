@@ -36,3 +36,5 @@ pub mod intake;
 pub mod plugin;
 pub mod store;
 pub mod wit_error;
+
+pub mod file_route;

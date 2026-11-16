@@ -290,7 +290,6 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
         "wamn-blobstore",
         "wamn-authentication",
         "wamn-events",
-        "wamn-execution-host",
     ] {
         let all = linked(root, package, &[]).await?;
         ensure!(

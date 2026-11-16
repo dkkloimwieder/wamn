@@ -69,7 +69,6 @@ wamn-http = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { workspace = true, features = ["test-util"] }
 wamn-events = { workspace = true, features = ["test-util"] }
 wamn-component-artifact = { workspace = true, features = ["test-util"] }
-wamn-execution-host = { workspace = true }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 uuid = { workspace = true }

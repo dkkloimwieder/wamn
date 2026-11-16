@@ -1,9 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/jsonata", "crates/events", "crates/event-wire", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/package-artifact", "crates/execution-host", "crates/run-state", "crates/workflow", "crates/compiler", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/component-composer", "crates/engine", "crates/authority", "crates/connections", "crates/sql", "crates/http", "crates/blobstore", "crates/authentication", "crates/component-artifact", "crates/publish", "crates/release", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker"]
+members = ["crates/jsonata", "crates/events", "crates/event-wire", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "xtask/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/package-artifact", "crates/run-state", "crates/workflow", "crates/compiler", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/component-composer", "crates/engine", "crates/authority", "crates/connections", "crates/sql", "crates/http", "crates/blobstore", "crates/authentication", "crates/component-artifact", "crates/publish", "crates/release", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker"]
 default-members = [
   "crates/catalog",
-  "crates/execution-host",
   "crates/run-state",
   "crates/workflow",
   "crates/identity",
@@ -170,7 +169,6 @@ url = "2"
 uuid = "1"
 opentelemetry = { version = "=0.32.0", default-features = false }
 opentelemetry_sdk = { version = "=0.32.1", default-features = false }
-opentelemetry-appender-tracing = { version = "=0.32.0", default-features = false }
 # The component publisher and puller share this exact client and TLS family.
 # Disable the crate's test-only default feature; wash-runtime already resolves
 # the same oci-client version with rustls.
@@ -242,7 +240,6 @@ wamn-registry = { path = "crates/registry", version = "0.1.0" }
 wamn-events = { path = "crates/events", version = "0.1.0" }
 wamn-event-wire = { path = "crates/event-wire", version = "0.1.0" }
 wamn-engine = { path = "crates/engine", version = "0.1.0" }
-wamn-execution-host = { path = "crates/execution-host", version = "0.1.0" }
 postgres-protocol = "0.6.12"
 wamn-number-pattern = { path = "crates/number-pattern", version = "0.1.0" }
 wamn-platform-identity = { path = "crates/identity", version = "0.1.0" }

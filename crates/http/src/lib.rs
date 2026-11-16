@@ -21,6 +21,7 @@ use wamn_authority::connection_authority::{
 };
 
 mod authentication;
+pub mod oauth_callback;
 mod jwt;
 mod network_policy;
 pub mod transport;

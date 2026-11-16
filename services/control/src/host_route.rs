@@ -89,7 +89,7 @@ pub struct HostRouteDelivery {
     worker: Option<wamn_kubernetes::job::Worker>,
     execution: Option<Arc<dyn ControlExecution>>,
     handlers: HostRouteHandlers,
-    files: Option<Arc<crate::file_route::FileRoutes>>,
+    files: Option<Arc<wamn_blobstore::file_route::FileRoutes>>,
     connection_health: Option<Arc<crate::connection_health::ConnectionHealth>>,
     oauth: Option<Arc<wamn_http::oauth_authorization::Authorization>>,
     control_authenticator:
@@ -192,7 +192,7 @@ impl HostRouteDelivery {
     }
 
     /// Share the native file handlers with the JSON mutation routes.
-    pub fn with_files(mut self, files: Option<Arc<crate::file_route::FileRoutes>>) -> Self {
+    pub fn with_files(mut self, files: Option<Arc<wamn_blobstore::file_route::FileRoutes>>) -> Self {
         self.files = files;
         self
     }
@@ -221,7 +221,9 @@ impl HostRouteDelivery {
                 .map_err(|error| match error.refusal {
                     Some(refusal) => Refusal::Declared {
                         code: refusal.code(),
-                        detail: if refusal == crate::file_route::FileRefusal::PermissionDenied {
+                        detail: if refusal
+                            == wamn_blobstore::file_route::FileRefusal::PermissionDenied
+                        {
                             json!({"operation": attachment.reference})
                         } else {
                             json!({"field": error.field})

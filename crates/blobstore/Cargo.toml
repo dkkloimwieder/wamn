@@ -9,6 +9,10 @@ license.workspace = true
 test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connections/test-util", "wamn-sql/test-util"]
 
 [dependencies]
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+async-trait = { workspace = true }
+wamn-postgres.workspace = true
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-digest = { workspace = true, features = ["sqlx"] }
 moka = { workspace = true, features = ["sync"] }
 anyhow = { workspace = true }
@@ -30,8 +34,6 @@ wamn-registry = { workspace = true }
 wash-runtime = { workspace = true }
 
 [dev-dependencies]
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
-async-trait = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { path = ".", features = ["test-util"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
