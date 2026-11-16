@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use std::path::Path;
 
-use wamn_control_provision::{
+use wamn_provision::{
     WorkloadRoleFamily, WorkloadRoleIdentity, platform_principals_sql, sql, workload_login,
 };
 use wamn_identity_protocol::PlatformComponent;
@@ -109,7 +109,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     let other_database = current_database(other.as_str());
     let project_env_key_2_app =
         app_generation(&other_database, &PROJECT_ENV_KEY_2.parse().unwrap());
-    let mut other_script = wamn_control_provision::test_database::login_sql(
+    let mut other_script = wamn_provision::test_database::login_sql(
         WorkloadRoleFamily::App,
         &other_database,
         &project_env_key_2_app,
@@ -126,7 +126,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
 
     // Production preparation hardens the stable ACL carrier to passwordless
     // NOLOGIN/NOINHERIT and makes each project generation the only LOGIN.
-    let mut script = wamn_control_provision::test_database::login_sql(
+    let mut script = wamn_provision::test_database::login_sql(
         WorkloadRoleFamily::App,
         &database,
         &project_env_key_1_app,
@@ -210,7 +210,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(
         script,
         "INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'{}');",
-        wamn_control_provision::PlatformComponent::Provisioning.principal_id()
+        wamn_provision::PlatformComponent::Provisioning.principal_id()
     )
     .expect("writing to a String cannot fail");
     writeln!(

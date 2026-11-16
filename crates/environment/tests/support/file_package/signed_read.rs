@@ -51,18 +51,18 @@ pub(super) fn signed_read_fixture(
     let statement = include_bytes!("query/read_file_id.sql");
     std::fs::create_dir_all(package.join("query"))?;
     std::fs::write(package.join("query/read_file_id.sql"), statement)?;
-    let authored = [wamn_compiler::AuthoredSql::new(
+    let authored = [wamn_codegen::AuthoredSql::new(
         "query/read_file_id.sql",
         statement,
     )];
     let manifest =
-        wamn_compiler::derive_manifest(&catalog, super::files::PACKAGE.as_bytes(), &authored, &[])?;
+        wamn_codegen::derive_manifest(&catalog, super::files::PACKAGE.as_bytes(), &authored, &[])?;
     std::fs::create_dir_all(package.join("generated"))?;
-    let generated = wamn_compiler::generate(&wamn_compiler::GenerationInput::new(
+    let generated = wamn_codegen::generate(&wamn_codegen::GenerationInput::new(
         &catalog,
         &manifest,
         &authored,
-        &wamn_compiler::StatementTransactionality::from_paths(BTreeMap::from([(
+        &wamn_codegen::StatementTransactionality::from_paths(BTreeMap::from([(
             "query/read_file_id.sql".into(),
             false,
         )])),

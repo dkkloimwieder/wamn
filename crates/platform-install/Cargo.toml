@@ -8,7 +8,7 @@ license.workspace = true
 [features]
 default = []
 test-util = []
-ops = ["wamn-control-provision/ops"]
+ops = ["wamn-provision/ops"]
 
 [dependencies]
 anyhow.workspace = true
@@ -28,11 +28,11 @@ wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true
-wamn-control-provision.workspace = true
-wamn-platform-identity.workspace = true
+wamn-provision.workspace = true
+wamn-identity.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-oci.workspace = true
-wamn-compiler.workspace = true
+wamn-codegen.workspace = true
 wamn-catalog.workspace = true
 postgres-protocol.workspace = true
 hyper = { workspace = true }
@@ -44,7 +44,7 @@ sqlx = { workspace = true, features = ["macros"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-fixture-package = { workspace = true }
 wamn-test-postgres.workspace = true
-wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-provision = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 rcgen.workspace = true
 tokio-rustls.workspace = true

@@ -16,7 +16,7 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"
 wamn-digest.workspace = true
 wamn-identity-client = { workspace = true }
 wamn-kubernetes = { workspace = true }
-wamn-compiler = { workspace = true }
+wamn-codegen = { workspace = true }
 # Event identity and subject tokens shared with application consumers.
 wamn-event-wire = { workspace = true }
 anyhow = { workspace = true }
@@ -30,9 +30,9 @@ wamn-test-application = { workspace = true }
 
 wamn-publish = { workspace = true, features = ["test-util"] }
 wamn-environment = { workspace = true, features = ["test-util"] }
-wamn-platform-identity = { workspace = true }
+wamn-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-control-provision = { workspace = true }
+wamn-provision = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 
 

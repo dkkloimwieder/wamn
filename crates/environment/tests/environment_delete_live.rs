@@ -9,7 +9,7 @@ use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_environment::{
     environment::delete::delete_registry_rows, provision_project_env::provisioning_transaction,
 };
-use wamn_connections::connections::administration;
+use wamn_connection::connections::administration;
 use wamn_registry::Triple;
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
@@ -24,7 +24,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
 ) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut system = connect(database.as_str()).await?;
     sqlx::raw_sql("SET ROLE wamn_system")
         .execute(&mut system)
@@ -43,7 +43,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
     let mut transaction = provisioning_transaction(&mut system).await?;
     for target in [&triple, &other] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&wamn_control_provision::test_database::seed_org_project_env_sql(
+            (&wamn_provision::test_database::seed_org_project_env_sql(
                 &target.org,
                 &target.project,
                 &target.env,
@@ -58,7 +58,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits(
         .execute(&mut *transaction)
         .await
         .map(drop)?;
-    let store = wamn_connections::credentials::MemoryStore::default();
+    let store = wamn_connection::credentials::MemoryStore::default();
     for (operation, request) in [
         (
             "integration.write",

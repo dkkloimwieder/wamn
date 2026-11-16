@@ -8,8 +8,8 @@ pub mod palette;
 use anyhow::{Context as _, Result};
 pub use components::{build_guest, guest_rustflags};
 use std::{fs, path::Path};
-pub use wamn_compiler::build::{BuildRequest, default_output_root, package_output};
-use wamn_compiler::build_record::{BUILD_RECORD_FILE, BuildRecord};
+pub use wamn_codegen::build::{BuildRequest, default_output_root, package_output};
+use wamn_codegen::build_record::{BUILD_RECORD_FILE, BuildRecord};
 
 /// Build a standalone component crate through the shared guest compiler.
 pub async fn build_component(repository: &Path, manifest: &Path) -> Result<std::path::PathBuf> {
@@ -28,7 +28,7 @@ pub async fn build_component(repository: &Path, manifest: &Path) -> Result<std::
 
 /// Build into the package workspace output and write one completed record.
 pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
-    if std::env::var_os(wamn_compiler::kcl::KCL_ENV).is_none() {
+    if std::env::var_os(wamn_codegen::kcl::KCL_ENV).is_none() {
         kcl::install(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../..")
@@ -36,7 +36,7 @@ pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
         )
         .await?;
     }
-    let mut record = wamn_compiler::build::generate_package(request).await?;
+    let mut record = wamn_codegen::build::generate_package(request).await?;
     let output = package_output(&request.output_root, &record.package.id);
     record.outputs.components = components::compile_components(request, &record.package.id).await?;
     fs::write(output.join(BUILD_RECORD_FILE), record.to_bytes())

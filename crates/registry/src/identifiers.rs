@@ -11,7 +11,7 @@
 /// The number comes from the name provisioning composes, not from this crate.
 /// A per-project-env database is named
 /// `wamn-db-<org>--<env>--<project>--<instance>` and must fit
-/// `wamn-control-provision::MAX_DB_NAME_LEN` of 63 bytes, which is Postgres's
+/// `wamn-provision::MAX_DB_NAME_LEN` of 63 bytes, which is Postgres's
 /// identifier limit and the DNS-1123 label limit together. The `wamn-db-`
 /// prefix, the three `--` separators and the 8-byte instance suffix spend 22 of
 /// those bytes, so the org, the project and the env share the remaining 41.

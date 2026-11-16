@@ -335,7 +335,7 @@ pub fn application_release_name(
     application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<String> {
     Ok(
-        wamn_control_provision::environment_names::application_release_name(
+        wamn_provision::environment_names::application_release_name(
             &document.org,
             &document.project,
             &document.env,
@@ -518,7 +518,7 @@ pub(crate) async fn application_releases(
     platform: &Platform,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<BTreeMap<wamn_catalog::ApplicationName, String>> {
-    wamn_control_provision::validate_project_env(&triple.org, &triple.project, &triple.env)?;
+    wamn_provision::validate_project_env(&triple.org, &triple.project, &triple.env)?;
     let coordinate = triple.to_string();
     let filter = wamn_registry::name::application_release_filter(&triple.env);
     let mut entries = Vec::new();
@@ -562,7 +562,7 @@ pub(crate) async fn application_releases(
             "release {name} does not belong to one application"
         );
         let (application, _) = membership.into_iter().next().expect("one application");
-        let expected = wamn_control_provision::environment_names::application_release_name(
+        let expected = wamn_provision::environment_names::application_release_name(
             &triple.org,
             &triple.project,
             &triple.env,

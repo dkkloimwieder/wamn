@@ -23,7 +23,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 wasmtime-wasi-http.workspace = true
 wamn-broker.workspace = true
 wamn-catalog.workspace = true
-wamn-control-provision.workspace = true
+wamn-provision.workspace = true
 wamn-engine.workspace = true
 wamn-environment = { workspace = true, features = ["ops"] }
 wamn-platform-install.workspace = true
@@ -41,10 +41,10 @@ oci-client.workspace = true
 wamn-identity-client.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes.workspace = true
-wamn-platform-identity.workspace = true
+wamn-identity.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true
-wamn-connections = { workspace = true }
+wamn-connection = { workspace = true }
 wamn-http = { workspace = true }
 wamn-authentication = { workspace = true }
 

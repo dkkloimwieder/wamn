@@ -14,8 +14,8 @@
 //!
 //! The crate also owns the registry credential ([`registry_credentials`]) and
 //! the OCI trust roots ([`read_ca_bundles`]) that every registry client reads,
-//! the host's included. It depends on neither `wamn-component-artifact` nor `wamn-engine`,
-//! so it stays small; the artifact reference rule is in `wamn-catalog`.
+//! the host's included. This module does not use the component adapter or
+//! `wamn-engine`; the artifact reference rule is in `wamn-catalog`.
 
 pub mod http_client;
 pub mod integration;
@@ -71,7 +71,7 @@ const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 /// Read the PEM CA bundles at `paths`, in order, as extra OCI trust roots.
 ///
 /// The one reader behind the host's component source
-/// (`ComponentArtifactSourceConfig::with_ca_paths` in `wamn-component-artifact`), the
+/// (`ComponentArtifactSourceConfig::with_ca_paths` in `wamn-oci`), the
 /// package registry client here and the ctl publishers, which build their own
 /// `oci-client` for the same registry. It reads the files and does not make sure that each bundle is a usable
 /// trust root; the builder above says where that test lives and what

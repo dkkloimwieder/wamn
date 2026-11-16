@@ -72,7 +72,7 @@ mod configuration {
             },
         };
         let control = ["runtime.host.>", "runtime.operator.>", "_INBOX.>"];
-        // wamn-ctl and the provisioning Jobs run the same verbs: they manage the
+        // wamn and the provisioning Jobs run the same verbs: they manage the
         // event streams and consumers, read the advisories, and delete memory keys.
         let manage = [
             "$JS.API.STREAM.INFO.>",

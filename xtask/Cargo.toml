@@ -36,7 +36,7 @@ toml.workspace = true
 regex = "1"
 tempfile.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
-wamn-compiler.workspace = true
+wamn-codegen.workspace = true
 wamn-platform-install.workspace = true
 wamn-publish.workspace = true
 wamn-oci.workspace = true

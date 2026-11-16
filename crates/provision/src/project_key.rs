@@ -88,7 +88,7 @@ pub fn current_project_key_pattern() -> String {
 /// `CURRENT_USER`, not the named platform role. The static DDL files that carry
 /// this bootstrap already declare `AUTHORIZATION CURRENT_USER`, and naming a
 /// role that may not exist would add a new precondition to every applier —
-/// seven live acceptance tests plus the production path in `services/ctl`. The applier IS
+/// seven live acceptance tests plus the production path in `services/cli`. The applier IS
 /// the platform role in every real deployment, so `CURRENT_USER` satisfies the
 /// ownership rider without inventing a requirement.
 const BOOTSTRAP_OWNER: &str = "CURRENT_USER";

@@ -149,7 +149,7 @@ impl WamnPostgres {
 }
 
 #[async_trait::async_trait]
-impl wamn_connections::database::ProjectDatabase for WamnPostgres {
+impl wamn_connection::database::ProjectDatabase for WamnPostgres {
     async fn read_connection(
         &self,
         project: &wamn_registry::ProjectId,

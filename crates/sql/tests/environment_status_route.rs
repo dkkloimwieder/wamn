@@ -18,7 +18,7 @@ use wamn_authentication::route_authentication::{
     EnvironmentStatusReader, PlatformRouteAuthenticator,
 };
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
-use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
+use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_sql::{AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
@@ -127,11 +127,11 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         .await
         .map(drop)?;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
-        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .bind(wamn_provision::PlatformComponent::Provisioning.principal_id())
         .execute(&mut admin)
         .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::login_sql(
+        (&wamn_provision::test_database::login_sql(
             WorkloadRoleFamily::App,
             &database,
             &generation,

@@ -92,7 +92,7 @@ pub(super) fn read_package_manifests(
     let mut manifests = BTreeMap::new();
     let mut contracts = BTreeMap::new();
     for root in roots {
-        let path = wamn_compiler::package_manifest_path(root);
+        let path = wamn_codegen::package_manifest_path(root);
         let directory = crate::package_source::read_package_directory(root).map_err(|error| {
             PublishManifestError {
                 source: Some(error.into()),
@@ -187,7 +187,7 @@ fn operation_contracts(
                     .filter(|_| contract.type_ == OperationType::Get)
                     .map(str::to_owned);
                 let idempotency = (!contract.type_.is_read())
-                    .then(|| wamn_compiler::client_plan::idempotency_field(&description.input))
+                    .then(|| wamn_codegen::client_plan::idempotency_field(&description.input))
                     .flatten();
                 Ok(PackageContract {
                     operation: contract.operation.clone(),
@@ -236,7 +236,7 @@ pub fn package_route(
     let root = roots
         .get(package_id)
         .ok_or_else(|| unassembled(package_id))?;
-    let path = wamn_compiler::package_manifest_path(root);
+    let path = wamn_codegen::package_manifest_path(root);
     let bytes = std::fs::read(&path).map_err(|source| {
         PublishManifestError::with_source(
             PublishManifestErrorType::PackageManifest,
@@ -271,7 +271,7 @@ mod tests {
         for with_migrations in [true, false] {
             let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
             let root = scratch.path().join("source_fixture");
-            let output = wamn_compiler::output_root(&root);
+            let output = wamn_codegen::output_root(&root);
             std::fs::create_dir_all(&output).unwrap();
             std::fs::create_dir_all(&root).unwrap();
             std::fs::write(

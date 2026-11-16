@@ -6,12 +6,12 @@ use std::sync::OnceLock;
 
 use url::Url;
 
-use wamn_control_provision::sql;
-use wamn_control_provision::workload_role::{
+use wamn_provision::sql;
+use wamn_provision::workload_role::{
     PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType,
     workload_login,
 };
-use wamn_control_provision::{CONTROL_PORTABLE_STORE_SQL, SYSTEM_SCHEMA_SQL};
+use wamn_provision::{CONTROL_PORTABLE_STORE_SQL, SYSTEM_SCHEMA_SQL};
 
 const POSTGRES_INIT: &str = include_str!("../../../deploy/sql/postgres-init.sql");
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -107,8 +107,8 @@ fn bound_query(url: &str, statement: &str) -> String {
         url,
         &format!(
             "BEGIN; {} {statement}; COMMIT",
-            wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
+            wamn_provision::bind_platform_principal_sql(
+                wamn_provision::PlatformComponent::Provisioning,
             )
         ),
     )
@@ -302,8 +302,8 @@ fn build() -> Fixture {
         "seed two projects",
         &format!(
             "BEGIN; {} {SEED} COMMIT;",
-            wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
+            wamn_provision::bind_platform_principal_sql(
+                wamn_provision::PlatformComponent::Provisioning,
             )
         ),
     );
@@ -375,7 +375,7 @@ fn mint(db_url: &str, family: WorkloadRoleFamily) {
     apply(
         db_url,
         "prepare a workload generation",
-        &wamn_control_provision::test_database::login_sql(
+        &wamn_provision::test_database::login_sql(
             family,
             database_of(family),
             &login,

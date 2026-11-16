@@ -6,7 +6,7 @@ use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use wamn_control_provision::sql;
+use wamn_provision::sql;
 use wamn_environment::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 
 const SCHEMA: &str = "record_retention";
@@ -139,7 +139,7 @@ fn write_package(root: &Path) {
 /// stands in for one under a digest of its own bytes.
 async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     apply_package::apply_package_schema(ApplyPackageRequest {
-        migration_database_url: wamn_control_provision::test_database::package_migration_input(
+        migration_database_url: wamn_provision::test_database::package_migration_input(
             &url,
             &"record-retention-t".parse().unwrap(),
             &"fixture".parse().unwrap(),
@@ -264,7 +264,7 @@ async fn wait_for_blocker(
 async fn history_table_creation_waits_for_a_running_prune(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let url = wamn_test_postgres::url(&pool).to_string();
-    wamn_platform_identity::test_database::project_platform(&url).await;
+    wamn_identity::test_database::project_platform(&url).await;
     let mut admin = connect(&url).await;
     provision(&mut admin).await;
     let package = fixture_root("prune-record-history-lock");

@@ -7,7 +7,7 @@ use tokio::process::Command;
 
 const COMPILED_MANIFEST_NAME: &str = "wamn.json";
 use crate::{BuildRequest, package_output};
-use wamn_compiler::build_record::{self, BuildComponent, BuildRecord};
+use wamn_codegen::build_record::{self, BuildComponent, BuildRecord};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_digest::bytes_sha256;
@@ -40,7 +40,7 @@ pub(crate) async fn compile_components(
 ) -> Result<Vec<BuildComponent>> {
     let output = package_output(&request.output_root, package);
     let manifest = PackageManifest::from_slice(&fs::read(output.join(COMPILED_MANIFEST_NAME))?)?;
-    let workspace = wamn_compiler::package_workspace(&request.package_root);
+    let workspace = wamn_codegen::package_workspace(&request.package_root);
     if !workspace.join("Cargo.toml").is_file() {
         ensure!(
             manifest.components.is_empty(),
@@ -49,7 +49,7 @@ pub(crate) async fn compile_components(
         return Ok(Vec::new());
     }
     ensure!(
-        output == wamn_compiler::output_root(&request.package_root),
+        output == wamn_codegen::output_root(&request.package_root),
         "component include paths require the package workspace output root"
     );
     let repository = workspace.join("..");

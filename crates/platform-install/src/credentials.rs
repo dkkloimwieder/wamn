@@ -6,7 +6,7 @@ use serde_json::Value;
 use sqlx::Connection as _;
 use std::path::Path;
 use std::time::Duration;
-use wamn_control_provision::connection::ManagedRole;
+use wamn_provision::connection::ManagedRole;
 use wamn_kubernetes::{kubectl, secret};
 use wamn_postgres::{ConnectionConfig, SecretRef};
 /// Rebuild CNPG declarations from the registry and require the requested role to belong to it.

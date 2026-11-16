@@ -3,7 +3,7 @@
 //! Administration is inherited from explicit grants. Invalid targets are refused.
 
 use sqlx::Row as _;
-use wamn_platform_identity::{
+use wamn_identity::{
     IdentityErrorType, create_or_reuse_user,
     org::{activate_org_membership, grant_org_admin, grant_project_admin},
 };
@@ -47,9 +47,9 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
     .await
     .map(drop)
     .expect("prepare empty platform schemas");
-    wamn_control_provision::test_database::system_schema(test_database.as_str()).await;
+    wamn_provision::test_database::system_schema(test_database.as_str()).await;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1)")
-        .bind(wamn_control_provision::PlatformComponent::Provisioning.principal_id())
+        .bind(wamn_provision::PlatformComponent::Provisioning.principal_id())
         .execute(&mut client)
         .await
         .unwrap();
@@ -67,10 +67,10 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
         .expect("create ben")
         .principal_id;
 
-    use wamn_platform_identity::org::{
+    use wamn_identity::org::{
         grant_environment_admin, revoke_environment_admin, revoke_org_admin,
     };
-    use wamn_platform_identity::{control::is_project_admin, has_project_env_membership};
+    use wamn_identity::{control::is_project_admin, has_project_env_membership};
     let refused = grant_org_admin(&mut client, &ann, &"acme".parse().unwrap())
         .await
         .unwrap_err();
@@ -136,7 +136,7 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org(pool: sqlx::PgPo
         .unwrap()
     );
     assert!(
-        !wamn_platform_identity::control::is_org_admin(&mut client, &ben, &"acme".parse().unwrap())
+        !wamn_identity::control::is_org_admin(&mut client, &ben, &"acme".parse().unwrap())
             .await
             .unwrap()
     );

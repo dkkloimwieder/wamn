@@ -28,7 +28,7 @@ impl ConnectionHealth {
         Self {
             transport,
             registry: None,
-            bytes: wamn_connections::connection_facts::bounded(),
+            bytes: wamn_connection::connection_facts::bounded(),
         }
     }
 

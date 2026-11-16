@@ -328,7 +328,7 @@ async fn unfinished_claims_have_a_call_bound_and_accept_late_completion(pool: sq
     {
         let batches: &[&str] = &[
             "UPDATE platform.write_log SET created_at = clock_timestamp() - interval '31 days'",
-            wamn_control_provision::audit_retention::WRITE_LOG_RETENTION_SQL,
+            wamn_provision::audit_retention::WRITE_LOG_RETENTION_SQL,
         ];
         let mut setup_connection = wamn_postgres::connect(database.as_str()).await.unwrap();
         for batch in batches {

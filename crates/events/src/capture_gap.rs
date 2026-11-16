@@ -11,7 +11,7 @@ use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::stream::RawMessageErrorKind;
 use chrono::{DateTime, Utc};
 
-use wamn_control_provision::{
+use wamn_provision::{
     cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
 };
 use wamn_event_wire::{SourceEvent, verified_source_event_id};
@@ -331,8 +331,8 @@ async fn provisioning_transaction(
     use sqlx::Connection as _;
     let mut transaction = client.begin().await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ),
     ))
     .execute(&mut *transaction)

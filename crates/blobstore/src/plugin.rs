@@ -9,9 +9,9 @@ use object_store::{ClientOptions, ObjectStore, RetryConfig};
 use super::store::{BoundContainer, ConnectionAuthority};
 use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider};
 
-use wamn_connections::connection::ConnectionInvocation;
-use wamn_connections::connection_facts::ConnectionFacts;
-use wamn_connections::connection_memory::{ConnectionFact, ConnectionStatus};
+use wamn_connection::connection::ConnectionInvocation;
+use wamn_connection::connection_facts::ConnectionFacts;
+use wamn_connection::connection_memory::{ConnectionFact, ConnectionStatus};
 use wamn_sql::WamnPostgres;
 
 /// The WAMN blobstore host service.
@@ -35,13 +35,13 @@ impl WamnBlobstore {
     pub fn new(postgres: Arc<WamnPostgres>) -> Self {
         Self {
             postgres,
-            stores: wamn_connections::connection_facts::bounded(),
+            stores: wamn_connection::connection_facts::bounded(),
         }
     }
 
     /// Read signing and effect authority from the invocation record.
     pub fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
-        wamn_connections::invocation::invocation(&self.postgres.scopes, component_id)
+        wamn_connection::invocation::invocation(&self.postgres.scopes, component_id)
     }
 
     /// The absolute deadline of the admitted invocation.
@@ -55,7 +55,7 @@ impl WamnBlobstore {
     /// Open file storage after the native host authorizes its package binding.
     pub async fn file_store(
         &self,
-        context: &wamn_connections::invocation::ReleaseContext,
+        context: &wamn_connection::invocation::ReleaseContext,
         connection_name: &str,
         read_only: bool,
         deadline: tokio::time::Instant,
@@ -245,7 +245,7 @@ fn build_s3_store(
 /// Build Cloud Storage with pod metadata credentials and IAM signing.
 /// Explicit providers prevent fallback to stored ADC keys.
 fn build_gcs_store(container: &str) -> anyhow::Result<Arc<object_store::gcp::GoogleCloudStorage>> {
-    let (credentials, signing_credentials) = wamn_connections::pod_identity::providers()?;
+    let (credentials, signing_credentials) = wamn_connection::pod_identity::providers()?;
     let store = GoogleCloudStorageBuilder::new()
         .with_credentials(credentials)
         .with_signing_credentials(signing_credentials)

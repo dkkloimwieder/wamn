@@ -2,8 +2,8 @@
 
 use postgres_protocol::escape::escape_identifier;
 use sqlx::Connection as _;
-use wamn_control_provision::workload_role::WorkloadRoleIdentityType;
-use wamn_control_provision::{
+use wamn_provision::workload_role::WorkloadRoleIdentityType;
+use wamn_provision::{
     PlatformComponent, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login,
 };
 
@@ -27,7 +27,7 @@ pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture
     let mut admin = wamn_postgres::connect(url.as_str()).await.unwrap();
     match family.identity_type() {
         WorkloadRoleIdentityType::Control | WorkloadRoleIdentityType::Org => {
-            wamn_control_provision::test_database::system(url.as_str()).await;
+            wamn_provision::test_database::system(url.as_str()).await;
         }
         _ => {
             for batch in [
@@ -36,7 +36,7 @@ pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture
                 wamn_catalog::CATALOG_SCHEMA_SQL,
                 include_str!("../../../../deploy/sql/run-state.sql"),
                 include_str!("../../../../deploy/sql/run-queue.sql"),
-                wamn_control_provision::APP_SCHEMA_SQL,
+                wamn_provision::APP_SCHEMA_SQL,
             ] {
                 execute(&mut admin, batch).await;
             }
@@ -67,13 +67,13 @@ pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture
     let login = workload_login(family, target).unwrap();
     execute(
         &mut admin,
-        &wamn_control_provision::test_database::login_sql(family, database, &login, "grants-test"),
+        &wamn_provision::test_database::login_sql(family, database, &login, "grants-test"),
     )
     .await;
     if family == WorkloadRoleFamily::Migration {
         execute(
             &mut admin,
-            &wamn_control_provision::migration::grants_sql(&login),
+            &wamn_provision::migration::grants_sql(&login),
         )
         .await;
     }
@@ -223,7 +223,7 @@ pub async fn family(
             .bind(PlatformComponent::Executor.principal_id()).execute(&mut *transaction).await.unwrap();
         transaction.rollback().await.unwrap();
         // Seed both projects through the installed product schemas.
-        execute(&mut fixture.admin, &format!("BEGIN; {} INSERT INTO catalog.packages(project_env_key,package_id,package_version) VALUES('t1--dev--project','fixture','1.0.0'),('t2--dev--project','fixture','1.0.0'); COMMIT", wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning))).await;
+        execute(&mut fixture.admin, &format!("BEGIN; {} INSERT INTO catalog.packages(project_env_key,package_id,package_version) VALUES('t1--dev--project','fixture','1.0.0'),('t2--dev--project','fixture','1.0.0'); COMMIT", wamn_provision::bind_platform_principal_sql(PlatformComponent::Provisioning))).await;
         let mut transaction = connection.begin().await.unwrap();
         sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'viewer','fixture')")
             .bind(PlatformComponent::Executor.principal_id()).execute(&mut *transaction).await.unwrap();

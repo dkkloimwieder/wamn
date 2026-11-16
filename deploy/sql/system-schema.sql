@@ -16,7 +16,7 @@
 -- control-plane state. There are no per-project RLS base grants,
 -- NO NULLIF/CHECK(project_id <> '') pattern here. The top-level key is `org_id`;
 -- access is the `wamn_system` owner role (from wamn-q3n.2). The control-plane
--- families get their grants from `stable_surface_sql` in wamn-control-provision.
+-- families get their grants from `stable_surface_sql` in wamn-provision.
 --
 -- APPLY AS THE `wamn_system` OWNER (it owns the system DB, so it can CREATE
 -- SCHEMA): the registry is then owned by — and usable by — that role, which is
@@ -27,10 +27,10 @@
 -- created_by, updated_at, and updated_by as NOT NULL columns, and a
 -- wamn_record_history_stamp trigger that calls wamn_history.stamp_row(). An applier
 -- installs deploy/sql/record-history.sql first. The SYSTEM_SCHEMA_SQL
--- composition in wamn-control-provision carries it. That file grants to
+-- composition in wamn-provision carries it. That file grants to
 -- wamn_db_owner, so an applier that runs as wamn_system creates that role
 -- first. Every write to these relations binds a transaction principal: the identity issuer
--- and wamn-ctl bind wamn:provisioning, and test fixtures bind a principal.
+-- and wamn bind wamn:provisioning, and test fixtures bind a principal.
 --
 -- THE GENERIC DEPLOYMENT MODEL (D18, wamn-8df.3;
 -- org-owned policies + templates, wamn-8df.4): the closed tier/env CHECK
@@ -181,7 +181,7 @@ INSERT INTO registry.target (name, type, status) VALUES ('cloud', 'cloud', 'acti
 -- configuration; the bootstrap that applies this file sets it, and
 -- `reconcile-run-plane` refuses to create a project's platform rows while it is
 -- unset. The CHECK carries the same shape and the same two length limits that
--- `wamn_control_provision::validate_platform_domain` enforces: dot-separated
+-- `wamn_provision::validate_platform_domain` enforces: dot-separated
 -- labels of lowercase letters, digits and inner hyphens, each label at most 63
 -- bytes and the whole name at most 253.
 -- ---------------------------------------------------------------------------
@@ -980,8 +980,8 @@ CREATE TABLE registry.event_readers (
 
 -- ---------------------------------------------------------------------------
 -- Capture gaps (wamn-59z6, docs/operations/gcp.md#57-cdc-slot-lost): one row
--- per lost slot of a CDC reader registration. `wamn-ctl recover-capture-gap`
--- writes it, and `wamn-ctl close-capture-gap` sets `resync_at`. The reader
+-- per lost slot of a CDC reader registration. `wamn recover-capture-gap`
+-- writes it, and `wamn close-capture-gap` sets `resync_at`. The reader
 -- exits on a lost slot. Control stops its Deployment before recovery and
 -- restarts it after the operator closes the gap. `slot` keeps the lost slot's name. A null `start_lsn`
 -- means "from registration": the source stream held no event. `created_at` is

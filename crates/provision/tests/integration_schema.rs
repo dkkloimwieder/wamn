@@ -9,13 +9,13 @@ async fn run(database: &url::Url, assertions: &str) {
             "DO $$ BEGIN IF to_regrole('wamn_system') IS NULL THEN \
              CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE; \
              END IF; END $$;",
-            wamn_control_provision::sql::ensure_db_owner_role_sql(),
+            wamn_provision::sql::ensure_db_owner_role_sql(),
             &format!(
                 "ALTER DATABASE \"{}\" OWNER TO wamn_system",
                 database.path().trim_start_matches('/')
             ),
             "SET ROLE wamn_system",
-            wamn_control_provision::SYSTEM_SCHEMA_SQL,
+            wamn_provision::SYSTEM_SCHEMA_SQL,
             "BEGIN",
             include_str!("integration_schema/fixture.sql"),
             assertions,

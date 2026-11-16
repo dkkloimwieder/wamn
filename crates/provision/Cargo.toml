@@ -1,5 +1,5 @@
 [package]
-name = "wamn-control-provision"
+name = "wamn-provision"
 description = "Database role declarations and provisioning SQL."
 version.workspace = true
 edition.workspace = true
@@ -51,7 +51,7 @@ wamn-registry = { workspace = true, features = ["test-util"] }
 pg_query = "=6.2.1"
 wamn-scalar.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 
 [lints]

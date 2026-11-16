@@ -15,7 +15,7 @@
 //
 // These cases return structured results to the application test caller.
 
-#[path = "../../../services/ctl/src/read_query.rs"]
+#[path = "../../../services/cli/src/read_query.rs"]
 mod read_query;
 
 use anyhow::Context as _;

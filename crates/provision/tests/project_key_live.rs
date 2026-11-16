@@ -11,10 +11,10 @@
 
 use std::process::Command;
 
-use wamn_control_provision::project_key::{
+use wamn_provision::project_key::{
     authority_derivations_bootstrap_sql, authority_derivations_sql, project_key,
 };
-use wamn_control_provision::workload_role::{
+use wamn_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
 };
 

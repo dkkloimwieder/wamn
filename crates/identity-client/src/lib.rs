@@ -1,5 +1,5 @@
 //! The operator client of the identity service: operator-authenticated
-//! HTTPS for PAT issuance, user creation and invitations. `wamn-ctl` and the
+//! HTTPS for PAT issuance, user creation and invitations. `wamn` and the
 //! control host use it.
 
 use std::fmt;

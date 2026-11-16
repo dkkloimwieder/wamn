@@ -3,7 +3,7 @@ use anyhow::Context as _;
 use sqlx::Row as _;
 use std::fmt::Write as _;
 use std::time::Duration;
-use wamn_control_provision::{project_env_cdc_secret_name, sql};
+use wamn_provision::{project_env_cdc_secret_name, sql};
 use wamn_registry::Triple;
 
 /// Restore the CDC slot, maps and grants after package SQL creates the model schemas.
@@ -32,7 +32,7 @@ pub async fn apply_cdc_sql(
     .context("restore CDC maps and grants")?;
     let mut capture = wamn_postgres::connect(capture_database_url).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::create_failover_slot_sql(cdc_name),
+        wamn_provision::sql::create_failover_slot_sql(cdc_name),
     ))
     .execute(&mut capture)
     .await
@@ -223,7 +223,7 @@ pub async fn wait_reader_stopped(
 ) -> anyhow::Result<()> {
     use wamn_kubernetes::kubectl::kubectl;
     let project_env_key =
-        wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
+        wamn_provision::project_env_key(&triple.org, &triple.project, &triple.env);
     let selector = format!(
         "app.kubernetes.io/name=wamn-cdc-reader,app.kubernetes.io/instance={project_env_key}"
     );

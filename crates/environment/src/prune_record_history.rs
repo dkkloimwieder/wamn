@@ -32,11 +32,11 @@ use plan::prune_history_sql;
 use anyhow::Context as _;
 use postgres_protocol::escape::{escape_identifier, escape_literal};
 
-use wamn_control_provision::audit_retention::{
+use wamn_provision::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, AUDIT_RETENTION_TARGETS_SQL, WRITE_LOG_RETENTION_SQL,
     WRITE_LOG_RETENTION_TARGET_SQL,
 };
-use wamn_control_provision::{
+use wamn_provision::{
     PlatformComponent, bind_platform_principal_sql,
 };
 

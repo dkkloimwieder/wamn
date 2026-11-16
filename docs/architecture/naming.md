@@ -22,7 +22,7 @@ Derived events name their application. Captured database events name their packa
 The derived event record keeps its published `package_id` JSON key for the application name.
 Run records and trace fields also keep their published wire spelling.
 
-Authored declaration names use `wamn_compiler::source_name::SourceName`.
+Authored declaration names use `wamn_codegen::source_name::SourceName`.
 A name starts with a lowercase ASCII letter and contains lowercase letters, digits, and isolated underscores.
 It cannot end with an underscore.
 `wamn_catalog::canonical_name::CanonicalName` owns component, port, parameter, wiring, node, and attachment names in compiled facts.

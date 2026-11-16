@@ -3,7 +3,7 @@
 
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
-use wamn_control_provision::sql;
+use wamn_provision::sql;
 
 #[sqlx::test(migrations = false)]
 async fn application_mutations_require_row_security_in_each_database(pool: sqlx::PgPool) {
@@ -35,13 +35,13 @@ async fn application_mutations_require_row_security_in_each_database(pool: sqlx:
                  WHERE granted_role.rolname::text = ANY($1) ORDER BY 1,2",
         )
         .bind(
-            &wamn_control_provision::WorkloadRoleFamily::ALL
+            &wamn_provision::WorkloadRoleFamily::ALL
                 .into_iter()
                 .filter(|family| {
                     matches!(
                         family,
-                        wamn_control_provision::WorkloadRoleFamily::App
-                            | wamn_control_provision::WorkloadRoleFamily::Query
+                        wamn_provision::WorkloadRoleFamily::App
+                            | wamn_provision::WorkloadRoleFamily::Query
                     )
                 })
                 .map(|family| family.acl_role())
@@ -67,7 +67,7 @@ async fn application_mutations_require_row_security_in_each_database(pool: sqlx:
 
     let _lock = wamn_test_postgres::lock();
     let url = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(url.as_str()).await;
+    wamn_provision::test_database::system(url.as_str()).await;
     let mut client = wamn_postgres::connect(url.as_str()).await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(sql::ensure_app_acl_role_sql()))
         .execute(&mut client)

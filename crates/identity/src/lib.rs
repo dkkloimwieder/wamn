@@ -251,7 +251,7 @@ impl Principal {
 /// into trusted invocation context.
 ///
 /// ```compile_fail
-/// use wamn_platform_identity::AuthenticatedPrincipal;
+/// use wamn_identity::AuthenticatedPrincipal;
 /// let forged = AuthenticatedPrincipal { principal: todo!() };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]

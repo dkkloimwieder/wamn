@@ -17,19 +17,19 @@ use ring::rand::SystemRandom;
 use serde_json::{Value, json};
 
 use postgres_protocol::escape::escape_identifier;
-use wamn_control_provision::{
+use wamn_provision::{
     APP_ROLE, INSTANCE_SUFFIX_LEN, project_env_database_name, project_env_namespace,
     project_env_secret_name, sql, validate_project_env,
 };
-use wamn_control_provision::{Org, Placement, cluster_of};
-use wamn_platform_identity::{
+use wamn_provision::{Org, Placement, cluster_of};
+use wamn_identity::{
     IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
     authenticate_pat, create_service, resolve_subject, revoke_pat,
 };
 use wamn_registry::Triple;
 
 use wamn_identity_client::{PatClient, PatIssuerConfig};
-use wamn_control_provision::env_policies::read_env_policy;
+use wamn_provision::env_policies::read_env_policy;
 
 mod output;
 pub mod pat_secrets;

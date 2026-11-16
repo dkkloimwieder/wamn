@@ -8,14 +8,14 @@ license.workspace = true
 [features]
 default = []
 test-util = ["wamn-platform-install/test-util"]
-ops = ["wamn-control-provision/ops", "wamn-platform-install/ops"]
+ops = ["wamn-provision/ops", "wamn-platform-install/ops"]
 
 [[test]]
 name = "netsuite_publication"
 path = "../../apps/netsuite/tests/publication.rs"
 
 [dependencies]
-wamn-connections = { workspace = true }
+wamn-connection = { workspace = true }
 wamn-events.workspace = true
 wamn-platform-install.workspace = true
 wamn-postgres.workspace = true
@@ -36,15 +36,15 @@ tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "r
 tracing = { workspace = true }
 wamn-catalog = { workspace = true, features = ["sqlx"] }
 wamn-oci = { workspace = true }
-wamn-control-provision = { workspace = true }
+wamn-provision = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 postgres-protocol = { workspace = true }
-wamn-platform-identity = { workspace = true }
+wamn-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-run-state = { workspace = true }
-wamn-compiler = { workspace = true }
+wamn-codegen = { workspace = true }
 wamn-publish = { workspace = true }
 
 [dev-dependencies]
@@ -62,7 +62,7 @@ object_store.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "macros", "migrate"] }
 wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-authority = { workspace = true, features = ["test-util"] }
-wamn-connections = { workspace = true, features = ["test-util"] }
+wamn-connection = { workspace = true, features = ["test-util"] }
 wamn-sql = { workspace = true, features = ["test-util"] }
 wamn-http = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { workspace = true, features = ["test-util"] }
@@ -72,8 +72,8 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"
 uuid = { workspace = true }
 tokio-rustls = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-control-provision = { workspace = true, features = ["test-util"] }
-wamn-platform-identity = { workspace = true, features = ["test-util"] }
+wamn-provision = { workspace = true, features = ["test-util"] }
+wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }

@@ -6,7 +6,7 @@
  * interface that an application supplies. It holds no name rule: the generator
  * decides every member name and emits a field map beside each operation.
  *
- * This file is hand-written. `crates/compiler/src/client_ts.rs` emits
+ * This file is hand-written. `crates/codegen/src/client_ts.rs` emits
  * the modules that import it, and neither one repeats the other.
  */
 

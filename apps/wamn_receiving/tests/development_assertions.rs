@@ -33,7 +33,7 @@ fn declared_dev_data_access_grants(
 ) -> anyhow::Result<BTreeSet<(String, String, String, String)>> {
     let mut expected = BTreeSet::new();
     for source in sources {
-        let path = wamn_compiler::output_root(source).join("platform-policy/data-access.json");
+        let path = wamn_codegen::output_root(source).join("platform-policy/data-access.json");
         let policy: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
         anyhow::ensure!(
             policy["role"] == "wamn_app",
@@ -95,12 +95,12 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
     for source in sources {
         let directory = wamn_publish::package_source::read_package_directory(source)?;
         let metadata = wamn_catalog::package_schema::package_metadata(&directory)?;
-        let expected = wamn_compiler::migrations::migrator(
+        let expected = wamn_codegen::migrations::migrator(
             &wamn_publish::package_source::migration_root(source),
         )
         .await?;
         let table =
-            wamn_control_provision::migration::history_table(key, metadata.coordinate.package_id());
+            wamn_provision::migration::history_table(key, metadata.coordinate.package_id());
         let applied = project.list_applied_migrations(&table).await?;
         anyhow::ensure!(
             expected

@@ -1,0 +1,645 @@
+use wamn_scalar::SqlValueType;
+
+use serde_json::{Value, json};
+use wamn_catalog::schema::ForeignKeyColumn;
+use wamn_codegen::client_ir::{ClientContractIr, ReplayIr, ResponseIr, RouteIr};
+use wamn_codegen::{
+    AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
+};
+use wamn_schema_introspection::ir::{
+    CatalogIr, Column, ColumnDefault, Constraint, ForeignKeyAction, Index, IndexColumn,
+    IndexDirection, Table, View, ViewBaseTable, ViewColumn, ViewColumnOrigin,
+};
+
+/// The fixture's authored SQL, as the fixture application holds it.
+///
+/// The generator crate states no SQL of its own: `apps/platform_fixture` is
+/// the one place the fixture's query and command files live, and
+/// `wamn-fixture-package` reads them.
+pub(crate) fn authored_sql() -> Vec<(String, Vec<u8>)> {
+    wamn_fixture_package::authored_sql()
+}
+
+pub(crate) fn generate_fixture() -> GeneratedPackage {
+    generate_with(&catalog(), &manifest())
+}
+
+pub(crate) fn generate_with(catalog: &CatalogIr, value: &Value) -> GeneratedPackage {
+    try_generate_with(catalog, value).expect("the platform-owned generator fixture generates")
+}
+
+pub(crate) fn try_generate_with(
+    catalog: &CatalogIr,
+    value: &Value,
+) -> Result<GeneratedPackage, wamn_catalog::manifest::ManifestError> {
+    try_generate_with_sql(catalog, value, &authored_sql())
+}
+
+/// Generate the fixture from authored SQL that a test supplies.
+#[allow(dead_code, reason = "not every test module replaces authored SQL")]
+pub(crate) fn try_generate_with_sql(
+    catalog: &CatalogIr,
+    value: &Value,
+    authored: &[(String, Vec<u8>)],
+) -> Result<GeneratedPackage, wamn_catalog::manifest::ManifestError> {
+    let manifest = serde_json::to_vec(value).expect("serialize platform fixture manifest");
+    let parsed = wamn_catalog::manifest::PackageManifest::from_slice(&manifest)?;
+    let paths: std::collections::BTreeSet<_> = parsed
+        .models
+        .values()
+        .flat_map(|model| model.operations.values())
+        .filter_map(|operation| operation.authored_sql.as_ref())
+        .flat_map(|query| {
+            std::iter::once(query.default.as_str())
+                .chain(query.variants.iter().map(|variant| variant.path.as_str()))
+        })
+        .chain(
+            parsed
+                .custom_operations
+                .values()
+                .flat_map(|operation| operation.statements.values())
+                .map(|statement| statement.path.as_str()),
+        )
+        .collect();
+    let sources = authored
+        .iter()
+        .map(|(path, bytes)| AuthoredSql::new(path, bytes))
+        .filter(|source| paths.contains(source.path()))
+        .collect::<Vec<_>>();
+    generate(&GenerationInput::new(
+        catalog,
+        &manifest,
+        &sources,
+        &StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
+    ))
+}
+
+pub(crate) fn client_release() -> ClientContractIr {
+    client_release_of(&generate_fixture())
+}
+
+/// The same authored view contract with an aliased root key.
+#[allow(dead_code, reason = "only the sync adapter tests need an aliased key")]
+pub(crate) fn line_key_release() -> ClientContractIr {
+    let mut release = client_release();
+    let read = &mut release
+        .models
+        .iter_mut()
+        .find(|model| model.name == "feed_line")
+        .unwrap()
+        .operations[0];
+    read.lists.as_mut().unwrap().key_field = vec!["line_id".to_owned()];
+    for fields in [
+        &mut read.result_fields,
+        &mut read.route.as_mut().unwrap().response.fields,
+    ] {
+        let field = fields.iter_mut().find(|field| field.path == "id").unwrap();
+        "line_id".clone_into(&mut field.path);
+    }
+    release
+}
+
+/// The release a test's own package publishes, with the fixture's routes.
+pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr {
+    let descriptions = package.operations();
+    let routes = [
+        ("counter", "create"),
+        ("counter", "get"),
+        ("counter", "query"),
+        ("counter", "update"),
+        ("counter", "delete"),
+        ("feed-line", "screen"),
+        ("widget", "archive"),
+        ("widget", "create"),
+        ("widget", "delete"),
+        ("widget", "get"),
+        ("widget", "list"),
+        ("widget", "query"),
+        ("widget", "record_batch"),
+        ("widget", "update"),
+        // A selector reads a served list, so the second model's reads are
+        // published like every other operation. A table reads one maker
+        // through its get, to show the maker a widget names.
+        ("widget-maker", "get"),
+        ("widget-maker", "list"),
+        ("widget-maker", "query"),
+    ]
+    .into_iter()
+    .map(|(model, name)| {
+        // A contract identity spells its operation with hyphens, and a route
+        // template keeps the operation path.
+        let identity = format!("platform-fixture:{model}/{}@2.1.1", name.replace('_', "-"));
+        (
+            identity.parse().unwrap(),
+            RouteIr {
+                method: "POST".to_owned(),
+                template: if model == "feed-line" {
+                    format!("/feed_line/{name}")
+                } else {
+                    format!("/{model}/{name}")
+                },
+                input_schema: match name {
+                    _ if model == "counter" || name == "screen" => {
+                        let attachments: Value = serde_json::from_slice(package.file(wamn_codegen::publication::ATTACHMENTS).unwrap().bytes()).unwrap();
+                        attachments.as_object().unwrap().values().find(|attachment| attachment["registered-operation"] == identity).map(|attachment| attachment["definition"]["input-schema"].clone())
+                    }
+                    // The shape a real release publishes: the record key, the
+                    // revision it expects, the request identity, and the change.
+                    "update" => Some(json!({
+                        "type": "array",
+                        "items": {"type": "object", "required": ["id", "expected_edit_version", "request_id"], "properties": {
+                            "id": {"type": "string", "format": "uuid"},
+                            "expected_edit_version": {"type": "integer"},
+                            "request_id": {"type": "string"},
+                            "change": {
+                            "type": "object", "properties": {"maker_id": {
+                                "type": ["string", "null"],
+                                "format": "uuid",
+                                "x-wamn-explicit-null": "accepted"
+                            }, "note": {
+                                "type": ["string", "null"],
+                                "x-wamn-explicit-null": "accepted"
+                            }, "code": {
+                                "type": ["string", "null"],
+                                "x-wamn-explicit-null": "invalid_input"
+                            }}
+                            }}}
+                    })),
+                    // The page controls a served query publishes. The release
+                    // states no domain for the sort, which the paging contract
+                    // holds instead. Each model publishes the filters it
+                    // declares, and the maker its search.
+                    "query" => Some(json!({
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": query_controls(model)
+                        }
+                    })),
+                    // A command with lines, published the way a release
+                    // publishes one. The schema states the group's bounds and
+                    // no text, so the group's declared label has to reach the
+                    // IR through the declared contract beside it.
+                    "record_batch" => Some(json!({
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": {
+                            "type": "object",
+                            "required": ["request_id", "value"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "request_id": {"type": "string", "minLength": 1},
+                                "value": {
+                                    "type": "object",
+                                    "required": ["idempotency_key", "expected_edit_version", "grade", "line"],
+                                    "additionalProperties": false,
+                                    "properties": {
+                                        "idempotency_key": {"type": "string", "minLength": 1},
+                                        "note": {"type": ["string", "null"]},
+                                        "maker_id": {"type": ["string", "null"], "format": "uuid"},
+                                        "expected_edit_version": {"type": "string"},
+                                        "grade": {"type": "string", "enum": ["first", "second"]},
+                                        "inspector_id": {"type": ["string", "null"], "format": "uuid"},
+                                        "line": {
+                                            "type": "array",
+                                            "minItems": 1,
+                                            "maxItems": 10,
+                                            "items": {
+                                                "type": "object",
+                                                "required": ["widget_id", "amount"],
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                    "widget_id": {
+                                                        "type": "string",
+                                                        "format": "uuid"
+                                                    },
+                                                    "amount": {"type": "string"}
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    })),
+                    _ => None,
+                },
+                terminal_operation: Some(identity),
+                direct: true,
+                response: ResponseIr::default(),
+                replay: (name == "archive").then_some(ReplayIr::State),
+            },
+        )
+    })
+    .collect();
+    ClientContractIr::from_operations(&"platform_fixture".parse().unwrap(), descriptions, &routes)
+        .expect("platform fixture projects as a release")
+}
+
+/// The filter each model's query declares, as its route publishes it.
+///
+/// A selector searches by the filter on its display field, so the two models
+/// differ here: the widget filters by its code, and the maker by its name.
+fn declared_filter(model: &str) -> &'static str {
+    if model == "widget" { "code" } else { "name" }
+}
+
+/// The page controls one served query publishes: the cursor, the limit, the
+/// sort, each declared filter in its shape, and the maker's server search.
+/// The widget takes a list of note starts and whether its maker is empty. The
+/// maker takes a band of creation times.
+fn query_controls(model: &str) -> Value {
+    let mut filters = json!({
+        declared_filter(model): {"type": "array", "items": {"type": "string"}}
+    });
+    let mut controls = json!({
+        "cursor": {"type": "string"},
+        "limit": {"type": "integer"},
+        "sort": {
+            "type": "object",
+            "required": ["field", "direction"],
+            "properties": {
+                "field": {"type": "string"},
+                "direction": {"type": "string"}
+            }
+        }
+    });
+    if model == "widget" {
+        filters["note"] = json!({"type": "array", "items": {"type": "string"}});
+        filters["maker_id"] = json!({"type": "boolean"});
+    } else {
+        let bound = json!({"type": "string", "format": "date-time"});
+        filters["created_at"] = json!({
+            "type": "object",
+            "required": ["min"],
+            "properties": {"min": bound, "max": bound}
+        });
+        controls["search"] = json!({"type": "string", "minLength": 1});
+    }
+    controls["filter"] = json!({"type": "object", "properties": filters});
+    controls
+}
+
+/// The index of the widget model, which every emitter test reads.
+///
+/// The fixture holds two models now, and their order is the contract order,
+/// so a test states the model it means instead of the first one.
+#[allow(dead_code, reason = "not every test module reads the widget model")]
+pub(crate) fn widget_index(ir: &ClientContractIr) -> usize {
+    ir.models
+        .iter()
+        .position(|model| model.name == "widget")
+        .expect("the fixture declares the widget model")
+}
+
+pub(crate) fn catalog() -> CatalogIr {
+    catalog_of(true, true)
+}
+
+/// The fixture catalog with `widget.note` NOT NULL: a schema change that
+/// moves the generated contracts and edits no manifest.
+#[allow(dead_code, reason = "not every test module changes the widget table")]
+pub(crate) fn catalog_with_required_note() -> CatalogIr {
+    catalog_of(false, true)
+}
+
+/// The fixture catalog with no foreign key from `widget.maker_id`, so no
+/// column names another model's record.
+#[allow(dead_code, reason = "not every test module drops the maker key")]
+pub(crate) fn catalog_without_maker_key() -> CatalogIr {
+    catalog_of(true, false)
+}
+
+fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
+    let widget = Table::new(
+        "inventory",
+        "widget",
+        vec![
+            Column::new(
+                "id",
+                SqlValueType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("code", SqlValueType::Text, false, None, None),
+            Column::new("note", SqlValueType::Text, note_nullable, None, None),
+            // The one column that names another model's record. A selector
+            // for it is derived from this foreign key alone.
+            Column::new("maker_id", SqlValueType::Uuid, true, None, None),
+            Column::new(
+                "edit_version",
+                SqlValueType::Int32,
+                false,
+                Some(ColumnDefault::int32(1)),
+                None,
+            ),
+            Column::new(
+                "created_at",
+                SqlValueType::Timestamptz,
+                false,
+                Some(ColumnDefault::CurrentTimestamp),
+                None,
+            ),
+        ],
+        vec![
+            Constraint::primary_key("widget_id_pkey", ["id"]).expect("valid primary key"),
+            Constraint::unique("widget_code_key", ["code"]).expect("valid unique constraint"),
+            Constraint::check(
+                "widget_code_check",
+                "code = ANY (ARRAY['priority'::text, 'standard'::text])",
+            )
+            .expect("valid check constraint"),
+        ]
+        .into_iter()
+        .chain(maker_key.then(|| {
+            Constraint::foreign_key(
+                "widget_maker_id_fkey",
+                vec![ForeignKeyColumn::new("maker_id", "id")],
+                "inventory",
+                "widget_maker",
+                ForeignKeyAction::NoAction,
+                ForeignKeyAction::NoAction,
+            )
+            .expect("valid foreign key")
+        }))
+        .collect(),
+        Vec::new(),
+    );
+    // The second model. It is as small as the first: an identity, one text
+    // column, a revision, and the timestamp its query sorts by. The batch
+    // names it twice, so its revision names the inspector input (wamn-nv87,
+    // wamn-kyak). Its name keeps it after
+    // `widget` in contract order, so every model index a test states stays
+    // where it was.
+    let widget_maker = Table::new(
+        "inventory",
+        "widget_maker",
+        vec![
+            Column::new(
+                "id",
+                SqlValueType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("name", SqlValueType::Text, false, None, None),
+            Column::new(
+                "edit_version",
+                SqlValueType::Int64,
+                false,
+                Some(ColumnDefault::int64(1)),
+                None,
+            ),
+            Column::new(
+                "created_at",
+                SqlValueType::Timestamptz,
+                false,
+                Some(ColumnDefault::CurrentTimestamp),
+                None,
+            ),
+        ],
+        vec![Constraint::primary_key("widget_maker_id_pkey", ["id"]).expect("valid primary key")],
+        Vec::new(),
+    );
+    // The third model logs its changes and carries no stamp column. Its one
+    // operation, an update, gives the App role a write that history records.
+    let widget_tag = Table::new(
+        "inventory",
+        "widget_tag",
+        vec![
+            Column::new(
+                "id",
+                SqlValueType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("label", SqlValueType::Text, false, None, None),
+            Column::new(
+                "edit_version",
+                SqlValueType::Int64,
+                false,
+                Some(ColumnDefault::int64(1)),
+                None,
+            ),
+        ],
+        vec![Constraint::primary_key("widget_tag_id_pkey", ["id"]).expect("valid primary key")],
+        Vec::new(),
+    );
+    let numbered_label = Table::new(
+        "inventory",
+        "numbered_label",
+        vec![
+            Column::new(
+                "id",
+                SqlValueType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("number", SqlValueType::Text, false, None, None),
+            Column::new("stock_id", SqlValueType::Text, false, None, None),
+            Column::new(
+                "edit_version",
+                SqlValueType::Int64,
+                false,
+                Some(ColumnDefault::int64(1)),
+                None,
+            ),
+            Column::new(
+                "created_at",
+                SqlValueType::Timestamptz,
+                false,
+                Some(ColumnDefault::CurrentTimestamp),
+                None,
+            ),
+            Column::new("created_by", SqlValueType::Uuid, false, None, None),
+            Column::new(
+                "updated_at",
+                SqlValueType::Timestamptz,
+                false,
+                Some(ColumnDefault::CurrentTimestamp),
+                None,
+            ),
+            Column::new("updated_by", SqlValueType::Uuid, false, None, None),
+        ],
+        vec![
+            Constraint::primary_key("numbered_label_id_pkey", ["id"]).unwrap(),
+            Constraint::unique("numbered_label_number_key", ["number"]).unwrap(),
+        ],
+        Vec::new(),
+    );
+    let counter = Table::new(
+        "inventory",
+        "counter",
+        vec![
+            Column::new(
+                "id",
+                SqlValueType::Int64,
+                false,
+                None,
+                Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
+                    mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                }),
+            ),
+            Column::new("label", SqlValueType::Text, false, None, None),
+            Column::new(
+                "edit_version",
+                SqlValueType::Int32,
+                false,
+                Some(ColumnDefault::int32(1)),
+                None,
+            ),
+            Column::new(
+                "created_at",
+                SqlValueType::Timestamptz,
+                false,
+                Some(ColumnDefault::CurrentTimestamp),
+                None,
+            ),
+        ],
+        vec![Constraint::primary_key("counter_id_pkey", ["id"]).expect("valid primary key")],
+        Vec::new(),
+    );
+    let mut tables = vec![widget, widget_maker, widget_tag, numbered_label, counter];
+    for name in ["feed_order", "feed_item"] {
+        tables.push(Table::new(
+            "inventory",
+            name,
+            vec![
+                Column::new("id", SqlValueType::Uuid, false, None, None),
+                Column::new("label", SqlValueType::Text, false, None, None),
+            ],
+            vec![Constraint::primary_key(format!("{name}_id_pkey"), ["id"]).unwrap()],
+            Vec::new(),
+        ));
+    }
+    tables.push(Table::new(
+        "inventory",
+        "feed_line",
+        vec![
+            Column::new("id", SqlValueType::Uuid, false, None, None),
+            Column::new("order_id", SqlValueType::Uuid, true, None, None),
+            Column::new("item_id", SqlValueType::Uuid, true, None, None),
+            Column::new("label", SqlValueType::Text, false, None, None),
+            Column::new(
+                "enabled",
+                SqlValueType::Boolean,
+                false,
+                Some(ColumnDefault::boolean(true)),
+                None,
+            ),
+        ],
+        vec![
+            Constraint::primary_key("feed_line_id_pkey", ["id"]).unwrap(),
+            Constraint::foreign_key(
+                "feed_line_order_id_fkey",
+                vec![ForeignKeyColumn::new("order_id", "id")],
+                "inventory",
+                "feed_order",
+                ForeignKeyAction::NoAction,
+                ForeignKeyAction::SetNull,
+            )
+            .unwrap(),
+            Constraint::foreign_key(
+                "feed_line_item_id_fkey",
+                vec![ForeignKeyColumn::new("item_id", "id")],
+                "inventory",
+                "feed_item",
+                ForeignKeyAction::NoAction,
+                ForeignKeyAction::SetNull,
+            )
+            .unwrap(),
+        ],
+        ["order_id", "item_id"]
+            .into_iter()
+            .map(|field| {
+                Index::new(
+                    format!("feed_line_{field}_idx"),
+                    vec![IndexColumn::new(field, IndexDirection::Asc)],
+                )
+                .unwrap()
+            })
+            .collect(),
+    ));
+    let columns = [
+        ("id", "feed_line", "id", SqlValueType::Uuid),
+        ("order_id", "feed_line", "order_id", SqlValueType::Uuid),
+        ("item_id", "feed_line", "item_id", SqlValueType::Uuid),
+        ("label", "feed_line", "label", SqlValueType::Text),
+        ("enabled", "feed_line", "enabled", SqlValueType::Boolean),
+        ("order_label", "feed_order", "label", SqlValueType::Text),
+        ("item_label", "feed_item", "label", SqlValueType::Text),
+    ]
+    .into_iter()
+    .map(|(name, table, field, ty)| {
+        ViewColumn::new(name, ty).with_origin(ViewColumnOrigin {
+            schema: "inventory".into(),
+            table: table.into(),
+            column: field.into(),
+        })
+    })
+    .collect();
+    CatalogIr::new(tables).with_views(vec![View::new("inventory", "feed_screen", columns, ["feed_line", "feed_order", "feed_item"].into_iter().map(|name| ViewBaseTable::new("inventory", name)).collect()).with_definition("SELECT line.id, line.order_id, line.item_id, line.label, line.enabled, orders.label AS order_label, item.label AS item_label FROM inventory.feed_line AS line JOIN inventory.feed_order AS orders ON orders.id = line.order_id JOIN inventory.feed_item AS item ON item.id = line.item_id".into(), false)])
+}
+
+/// The name of [`unread_table`].
+#[allow(
+    dead_code,
+    reason = "not every test module needs a relation no operation reads"
+)]
+pub(crate) const UNREAD_TABLE: &str = "widget_ledger";
+
+/// A relation in the fixture schema that no fixture operation reads. A test
+/// declares it as an internal relation or an ownership-only model.
+#[allow(
+    dead_code,
+    reason = "not every test module needs a relation no operation reads"
+)]
+pub(crate) fn unread_table() -> Table {
+    Table::new(
+        "inventory",
+        UNREAD_TABLE,
+        vec![
+            Column::new(
+                "entry_id",
+                SqlValueType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("note", SqlValueType::Text, false, None, None),
+        ],
+        vec![
+            Constraint::primary_key("widget_ledger_entry_id_pkey", ["entry_id"])
+                .expect("valid primary key"),
+        ],
+        Vec::new(),
+    )
+}
+
+/// The fixture catalog with [`unread_table`].
+#[allow(
+    dead_code,
+    reason = "not every test module needs a relation no operation reads"
+)]
+pub(crate) fn catalog_with_unread_table() -> CatalogIr {
+    let mut tables = catalog().tables().to_vec();
+    tables.push(unread_table());
+    CatalogIr::new(tables).with_views(catalog().views().to_vec())
+}
+
+/// The fixture manifest, as the fixture application authors it.
+///
+/// `apps/platform_fixture/wamn.k` is the one authority, compiled to
+/// `apps/target/wamn/platform_fixture/wamn.json`. A test that needs
+/// a different shape changes this value on its own copy.
+///
+/// # Panics
+/// Panics when the fixture application's manifest is not valid JSON.
+pub(crate) fn manifest() -> Value {
+    serde_json::from_slice(&wamn_fixture_package::manifest_bytes())
+        .expect("the fixture application manifest is JSON")
+}

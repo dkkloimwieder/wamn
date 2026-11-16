@@ -7,7 +7,7 @@ use anyhow::{Context as _, ensure};
 
 use wamn_catalog::package_schema::{PackageDirectory, package_metadata};
 use wamn_catalog::manifest::PackageManifest;
-use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
+use wamn_provision::{PlatformComponent, bind_platform_principal_sql};
 
 mod entity_maps;
 mod error;
@@ -90,7 +90,7 @@ pub(crate) async fn prepare_package(root: &PackageRoot) -> anyhow::Result<Prepar
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
     let migration_root = wamn_publish::package_source::migration_root(&root.path);
-    let migrations = wamn_compiler::migrations::migrator(&migration_root).await?;
+    let migrations = wamn_codegen::migrations::migrator(&migration_root).await?;
     Ok(PreparedPackage {
         component_source: None,
         root: root.path.clone(),
@@ -166,7 +166,7 @@ async fn apply(
         .await
         .context("connect as the migration login")?;
     let login =
-        wamn_control_provision::migration::require_login(&mut executor, project_env_key).await?;
+        wamn_provision::migration::require_login(&mut executor, project_env_key).await?;
     let catalog_database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut *client)
         .await?;
@@ -187,7 +187,7 @@ async fn apply(
     .await?;
     crate::migrations::lock_session(
         &mut executor,
-        wamn_control_provision::audit_retention::AUDIT_RETENTION_LOCK_SQL,
+        wamn_provision::audit_retention::AUDIT_RETENTION_LOCK_SQL,
         &[],
     )
     .await?;
@@ -235,12 +235,12 @@ async fn apply(
             != 0;
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::migration::grants_sql(&login),
+        wamn_provision::migration::grants_sql(&login),
     ))
     .execute(&mut *tx)
     .await?;
-    let table = wamn_control_provision::migration::history_table(project_env_key, &package_id);
-    wamn_control_provision::migration::prepare_history(&mut tx, &table, &login).await?;
+    let table = wamn_provision::migration::history_table(project_env_key, &package_id);
+    wamn_provision::migration::prepare_history(&mut tx, &table, &login).await?;
     ensure_model_schemas(&mut tx, &plan, &login).await?;
     tx.commit().await?;
     let migrations_applied =
@@ -305,7 +305,7 @@ async fn ensure_model_schemas(
         )))
         .execute(&mut *connection)
         .await?;
-        wamn_control_provision::migration::grant_model_schema_access(
+        wamn_provision::migration::grant_model_schema_access(
             connection,
             login,
             schema.as_str(),

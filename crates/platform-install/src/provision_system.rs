@@ -17,8 +17,8 @@ use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
 use sqlx::migrate::Migration;
-use wamn_control_provision::migrations::MigrationDatabase;
-use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql};
+use wamn_provision::migrations::MigrationDatabase;
+use wamn_provision::{CONTROL_BOOTSTRAP_SQL, sql};
 
 /// Inputs of one `provision-system` run.
 #[derive(Debug)]
@@ -118,7 +118,7 @@ pub async fn provision_apply(input: &str) -> anyhow::Result<()> {
         .context("database host is absent")?
         .trim_end_matches("-rw");
     let kubeconfig = std::env::var_os("KUBECONFIG").map_or_default(std::path::PathBuf::from);
-    let role = wamn_control_provision::connection::managed_role(
+    let role = wamn_provision::connection::managed_role(
         "wamn_apply".parse()?,
         "wamn_db_owner",
         "wamn-apply".into(),
@@ -133,10 +133,10 @@ pub async fn provision_apply(input: &str) -> anyhow::Result<()> {
     )
     .await?;
     crate::credentials::wait_role(&mut connection, &role.name).await?;
-    sqlx::raw_sql(wamn_control_provision::apply::ensure_apply_role_sql())
+    sqlx::raw_sql(wamn_provision::apply::ensure_apply_role_sql())
         .execute(&mut connection)
         .await?;
-    sqlx::raw_sql(wamn_control_provision::apply::APPLY_GRANTS_SQL)
+    sqlx::raw_sql(wamn_provision::apply::APPLY_GRANTS_SQL)
         .execute(&mut connection)
         .await?;
     let config = crate::credentials::configuration(
@@ -273,7 +273,7 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
                 .map(drop)
                 .context("install the control store")?;
         }
-        wamn_control_provision::migration::prepare_history(
+        wamn_provision::migration::prepare_history(
             admin,
             wamn_registry::migrations::HISTORY_TABLE,
             &"wamn_system".parse()?,

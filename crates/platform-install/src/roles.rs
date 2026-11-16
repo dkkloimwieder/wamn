@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use sqlx::Connection as _;
-use wamn_control_provision::connection::{ManagedRole, managed_replication_role, managed_role};
-use wamn_control_provision::migrations::MigrationDatabase;
-use wamn_control_provision::{
+use wamn_provision::connection::{ManagedRole, managed_replication_role, managed_role};
+use wamn_provision::migrations::MigrationDatabase;
+use wamn_provision::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_login,
 };
 use wamn_registry::Triple;
@@ -29,10 +29,10 @@ pub fn platform(
             ),
             MigrationDatabase::System.managed_role(database),
             managed_role(
-                wamn_control_provision::identity_role::identity_issuer_login(
+                wamn_provision::identity_role::identity_issuer_login(
                     &crate::platform::identity::issuer(namespace.as_str()),
                 )?,
-                wamn_control_provision::identity_role::IDENTITY_ISSUER_ROLE,
+                wamn_provision::identity_role::IDENTITY_ISSUER_ROLE,
                 "wamn-identity-db".into(),
             ),
         ],
@@ -74,16 +74,16 @@ pub async fn registered(
         .bind(&policy_name)
         .fetch_one(&mut *snapshot)
         .await?;
-        let policy = wamn_control_provision::env_policies::env_policy_from_row(&policy)?;
+        let policy = wamn_provision::env_policies::env_policy_from_row(&policy)?;
         let placement = match placement.as_str() {
-            "pooled" => wamn_control_provision::Placement::Pooled {
+            "pooled" => wamn_provision::Placement::Pooled {
                 pool: pool.context("registered org pool")?,
             },
-            "dedicated" => wamn_control_provision::Placement::Dedicated,
+            "dedicated" => wamn_provision::Placement::Dedicated,
             _ => anyhow::bail!("invalid registered org placement"),
         };
-        let org = wamn_control_provision::Org { id: org, placement };
-        let project_cluster = wamn_control_provision::cluster_of(&org, &policy).name;
+        let org = wamn_provision::Org { id: org, placement };
+        let project_cluster = wamn_provision::cluster_of(&org, &policy).name;
         let triple = Triple::new(org.id, environment, project_name);
         project(
             &mut declarations,
@@ -106,7 +106,7 @@ fn project(
     system_cluster: &str,
     system_database: &str,
 ) -> anyhow::Result<()> {
-    let database = wamn_control_provision::project_env_database_name(
+    let database = wamn_provision::project_env_database_name(
         &triple.org,
         &triple.project,
         &triple.env,
@@ -145,7 +145,7 @@ fn project(
         let mut role = managed_role(
             workload_login(family, identity)?,
             family.acl_role(),
-            wamn_control_provision::workload_secret_name(
+            wamn_provision::workload_secret_name(
                 family,
                 &triple.org,
                 &triple.project,
@@ -154,7 +154,7 @@ fn project(
         );
         if family.is_platform_grain() {
             role.in_roles
-                .push(wamn_control_provision::workload_role::PLATFORM_GROUP_ROLE.into());
+                .push(wamn_provision::workload_role::PLATFORM_GROUP_ROLE.into());
         }
         declarations.entry(owner.into()).or_default().push(role);
     }
@@ -168,7 +168,7 @@ fn project(
     }
     roles.push(MigrationDatabase::Project.managed_role(&database));
     roles.push(managed_replication_role(
-        wamn_control_provision::cdc_object_name(
+        wamn_provision::cdc_object_name(
             &triple.org,
             &triple.project,
             &triple.env,
@@ -176,7 +176,7 @@ fn project(
         )
         .parse()
         .expect("derived capture login"),
-        wamn_control_provision::project_env_cdc_secret_name(
+        wamn_provision::project_env_cdc_secret_name(
             &triple.org,
             &triple.project,
             &triple.env,

@@ -12,7 +12,7 @@ A fresh platform contains zero application environments and zero application rel
 ## Local platform
 
 Use Docker, kind, Helm, kubectl, OpenSSL, and the pinned KCL compiler on the deployment host.
-Use the `wamn` and `wamn-ctl` binaries from the selected build.
+Use the `wamn` binary from the selected build.
 Keep registry, database, and broker credentials outside committed files.
 Certificate subjects must match the endpoint names that their clients verify.
 
@@ -453,7 +453,7 @@ The baseline schema owns fresh installations.
 
 The control routes use project administrator authority.
 The `external_system.*`, `integration.*`, and `connection.*` routes manage their respective identities.
-The matching `wamn-ctl` verbs call these routes with a session token.
+The matching `wamn` verbs call these routes with a session token.
 Each verb reads its JSON request from `--file`.
 The request names the project, and connection requests also name the environment in `env`.
 The first connection write reads the credential value from `--credential-file`, except for authentication type `none`.
@@ -861,7 +861,7 @@ Restart the host to change trust or pool configuration. The replacement process 
 ### Environment apply credentials
 
 Set `WAMN_SYSTEM_ADMIN_URL` to the administrator connection configuration for the ensure phase.
-Run `wamn-ctl provision-system --platform-domain DOMAIN` in the org namespace.
+Run `wamn provision-system --platform-domain DOMAIN` in the org namespace.
 For explicit PostgreSQL access, also pass the system migration login's connection through `--migration-database-url`.
 It declares the restricted apply login through CloudNativePG and publishes its connection data in the `wamn-apply` ConfigMap.
 The installer supplies that public apply connection object in the native control configuration.

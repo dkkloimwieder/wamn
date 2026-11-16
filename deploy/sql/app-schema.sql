@@ -80,7 +80,7 @@ CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION CURRENT_USER;
 -- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
 -- `crates/provision/src/project_key.rs` already gives for its own
 -- bootstrap: naming a role that may not exist adds a new precondition to every
--- applier — seven live acceptance tests plus the production path in `services/ctl` — and
+-- applier — seven live acceptance tests plus the production path in `services/cli` — and
 -- `CREATE POLICY ... TO wamn_platform` fails outright against a cluster without
 -- it.
 --
@@ -106,7 +106,7 @@ GRANT USAGE ON SCHEMA platform TO wamn_app;
 -- read every project.
 --
 -- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
--- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;
+-- pinned by a byte-equality guard in wamn-provision. Do not hand-edit;
 -- change the builder.
 --
 -- It is the BOOTSTRAP rendering because this file is applied to databases whose
@@ -212,7 +212,7 @@ GRANT SELECT ON platform."user" TO wamn_app;
 -- Roles — named roles. `admin` is the one built-in role:
 -- apply-package writes it, and it holds every operation the serving release
 -- serves with no permission rows. Every other role is authored. A user or
--- service holds a role through `wamn-ctl grant-role`. `role_name_check` is the
+-- service holds a role through `wamn grant-role`. `role_name_check` is the
 -- role slug of identity (`wamn_identity_protocol::RoleName`), so no stored
 -- role name is one that a session refuses.
 -- ---------------------------------------------------------------------------

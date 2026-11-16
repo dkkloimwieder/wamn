@@ -1,6 +1,6 @@
 [package]
 workspace = "../../apps"
-name = "wamn-modbus"
+name = "modbus"
 version.workspace = true
 edition.workspace = true
 description = "Bound Modbus TCP register operations and gateway health."

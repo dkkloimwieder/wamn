@@ -38,9 +38,9 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 wamn-publish = { workspace = true, features = ["test-util"] }
 wamn-environment = { workspace = true, features = ["test-util"] }
-wamn-platform-identity = { workspace = true }
+wamn-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-control-provision = { workspace = true, features = ["ops"] }
+wamn-provision = { workspace = true, features = ["ops"] }
 wamn-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }
 wamn-event-wire = { workspace = true }
@@ -56,7 +56,7 @@ wasmtime-wasi = { workspace = true }
 async-trait = { workspace = true }
 rustix = { workspace = true }
 wamn-record-history = { workspace = true }
-wamn-compiler = { workspace = true }
+wamn-codegen = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wat = "=1.254.2"
 

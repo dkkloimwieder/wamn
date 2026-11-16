@@ -7,7 +7,7 @@ use wamn_build::{BuildRequest, build_package};
 use anyhow::{Context as _, ensure};
 use wamn_catalog::PackageCoordinate;
 use wamn_catalog::manifest::PackageManifest;
-use wamn_compiler::{
+use wamn_codegen::{
     build::{default_output_root, package_output},
     build_record,
 };
@@ -16,10 +16,10 @@ use wamn_publish::package_artifact::{PackageRegistry, PushPackageRequest, push_p
 use wamn_publish::publish_release::{PublishReleaseRequest, publish_release};
 
 fn read_package_manifest(root: &Path) -> anyhow::Result<PackageManifest> {
-    let bytes = if wamn_compiler::is_authored(root) {
-        wamn_compiler::compile_manifest(root)?
+    let bytes = if wamn_codegen::is_authored(root) {
+        wamn_codegen::compile_manifest(root)?
     } else {
-        std::fs::read(wamn_compiler::package_manifest_path(root))?
+        std::fs::read(wamn_codegen::package_manifest_path(root))?
     };
     Ok(PackageManifest::from_slice(&bytes)?)
 }
@@ -52,7 +52,7 @@ pub async fn publish_built_from_env(
     let packages = roots
         .iter()
         .map(|root| {
-            let record = build_record::read(&wamn_compiler::output_root(root))?;
+            let record = build_record::read(&wamn_codegen::output_root(root))?;
             Ok(PackageCoordinate::new(
                 record.package.id,
                 record.package.version,
@@ -147,7 +147,7 @@ async fn build(
 /// Source directories and exact configuration inputs consumed by a package build.
 /// The digest and development watcher use this same dependency closure.
 pub fn build_inputs(root: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {
-    let workspace = wamn_compiler::package_workspace(root);
+    let workspace = wamn_codegen::package_workspace(root);
     let repository = workspace.parent().context("package workspace parent")?;
     let mut inputs = [
         root.to_owned(),
@@ -187,7 +187,7 @@ pub fn build_inputs(root: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {
 }
 
 fn content_digest(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
-    let workspace = wamn_compiler::package_workspace(root);
+    let workspace = wamn_codegen::package_workspace(root);
     let repository = workspace
         .parent()
         .context("package workspace has no repository parent")?;

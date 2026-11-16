@@ -93,7 +93,7 @@ pub struct BoundContainer {
 #[derive(Clone)]
 pub(super) enum ConnectionAuthority {
     Live {
-        facts: Arc<wamn_connections::connection_facts::ConnectionFacts>,
+        facts: Arc<wamn_connection::connection_facts::ConnectionFacts>,
         id: uuid::Uuid,
         generation: i64,
     },
@@ -147,7 +147,7 @@ impl BoundContainer {
     #[cfg(test)]
     pub(super) fn with_connection_authority(
         mut self,
-        facts: Arc<wamn_connections::connection_facts::ConnectionFacts>,
+        facts: Arc<wamn_connection::connection_facts::ConnectionFacts>,
         id: uuid::Uuid,
         generation: i64,
     ) -> Self {
@@ -175,7 +175,7 @@ impl BoundContainer {
             .ok()
             .flatten()
             .is_some_and(|fact| {
-                fact.status == wamn_connections::connection_memory::ConnectionStatus::Active
+                fact.status == wamn_connection::connection_memory::ConnectionStatus::Active
                     && fact.active_generation == *generation
             })
         {
@@ -416,9 +416,9 @@ mod tests {
     }
 
     fn connection_facts(
-        reader: wamn_connections::connection_credentials::ConnectionCredentials,
+        reader: wamn_connection::connection_credentials::ConnectionCredentials,
         project: &wamn_registry::ProjectId,
-    ) -> Arc<wamn_connections::connection_facts::ConnectionFacts> {
+    ) -> Arc<wamn_connection::connection_facts::ConnectionFacts> {
         let postgres = wamn_sql::WamnPostgres::new(wamn_sql::WamnPostgresConfig {
             credentials: None,
             guest_pool_max_size: 1,
@@ -427,8 +427,8 @@ mod tests {
             statement_timeout_ms: 1,
         })
         .unwrap();
-        Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
-            Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
+        Arc::new(wamn_connection::connection_facts::ConnectionFacts::new(
+            Arc::new(wamn_connection::connection_memory::ConnectionMemory::default()),
             Arc::new(reader),
             &Arc::new(postgres),
             &wamn_registry::project_env_key(
@@ -446,7 +446,7 @@ mod tests {
         let (container, _) = bound("p");
         let container = container.with_connection_authority(
             connection_facts(
-                wamn_connections::connection_credentials::ConnectionCredentials::empty(),
+                wamn_connection::connection_credentials::ConnectionCredentials::empty(),
                 &"project-a".parse().unwrap(),
             ),
             uuid::Uuid::nil(),
@@ -485,7 +485,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires: postgres"]
     async fn an_open_container_refuses_a_disabled_or_rotated_connection() {
-        use wamn_connections::connection_credentials::test_util::Fixture;
+        use wamn_connection::connection_credentials::test_util::Fixture;
         let _lock = wamn_test_postgres::lock();
         for rotate in [false, true] {
             let mut server = wamn_test_postgres::start(&[]).unwrap();

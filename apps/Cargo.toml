@@ -22,7 +22,7 @@ members = [
     "wamn_wms/component",
     "../guests/http-route",
     "../guests/blob-put",
-    "../guests/jsonata",
+    "../guests/jsonata-expression",
     "../crates/guest",
     "../crates/record-history",
     "../test-support/fixtures/guests/connection-http-standard",

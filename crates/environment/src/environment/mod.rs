@@ -93,7 +93,7 @@ pub async fn fill(
 ) -> anyhow::Result<()> {
     let mut system = wamn_postgres::connect(system_url).await?;
     let mut system = system.begin().await?;
-    wamn_platform_identity::org::lock_org_memberships(&mut system, target.org).await?;
+    wamn_identity::org::lock_org_memberships(&mut system, target.org).await?;
     let domain: Option<wamn_registry::platform_domain::PlatformDomain> =
         sqlx::query_scalar(wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY)
             .fetch_one(&mut *system)
@@ -146,7 +146,7 @@ pub async fn fill_platform(
     domain: &wamn_registry::platform_domain::PlatformDomain,
 ) -> anyhow::Result<()> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::platform_principals_sql(domain),
+        wamn_provision::platform_principals_sql(domain),
     ))
     .execute(project)
     .await?;

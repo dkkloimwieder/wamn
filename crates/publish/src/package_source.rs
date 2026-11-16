@@ -30,15 +30,15 @@ pub fn read_package_root(root: &PackageRoot) -> anyhow::Result<PackageDirectory>
 /// ([`read_package_root`] adds it).
 pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
     let artifact_digest = None;
-    let manifest_path = wamn_compiler::package_manifest_path(root);
+    let manifest_path = wamn_codegen::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     read_migrations(&migration_root(root), manifest_bytes, artifact_digest)
 }
 
 pub fn migration_root(root: &Path) -> PathBuf {
-    if wamn_compiler::is_authored(root) && !root.join("generated").is_dir() {
-        wamn_compiler::output_root(root)
+    if wamn_codegen::is_authored(root) && !root.join("generated").is_dir() {
+        wamn_codegen::output_root(root)
     } else {
         root.to_owned()
     }

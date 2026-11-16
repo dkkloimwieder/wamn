@@ -172,14 +172,14 @@ pub async fn plan(
     for candidate in candidates {
         let metadata = wamn_catalog::package_schema::package_metadata(&candidate.directory)?;
         let id = metadata.coordinate.package_id();
-        let migrator = wamn_compiler::migrations::migrator(
+        let migrator = wamn_codegen::migrations::migrator(
             &wamn_publish::package_source::migration_root(&candidate.root.path),
         )
         .await?;
         let migrations = if let Some(client) = &mut client {
             crate::migrations::observe(
                 client,
-                &wamn_control_provision::migration::history_table(&state.project_env_key, id),
+                &wamn_provision::migration::history_table(&state.project_env_key, id),
                 &migrator.migrations,
             )
             .await?

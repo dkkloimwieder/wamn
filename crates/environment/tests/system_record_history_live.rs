@@ -1,13 +1,13 @@
 //! Fresh system records require stamps and preserve the retirement actor.
 
-use wamn_control_provision::PlatformComponent;
+use wamn_provision::PlatformComponent;
 use wamn_test_infrastructure::record_history::assert_stamp;
 
 #[sqlx::test(migrations = false)]
 async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     let actor = PlatformComponent::Provisioning.principal_id();
@@ -30,7 +30,7 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor(poo
            VALUES ('history','project','dev','slot',now(),'fixture','0/10'); \
          INSERT INTO identity.password_attempts(bucket,started_at,attempts) VALUES ('fixture',now(),1);").execute(&mut client).await.map(drop).unwrap();
     sqlx::raw_sql("COMMIT").execute(&mut client).await.unwrap();
-    wamn_platform_identity::session_keys::publish_session_key(
+    wamn_identity::session_keys::publish_session_key(
         &mut client,
         "https://history.invalid",
     )

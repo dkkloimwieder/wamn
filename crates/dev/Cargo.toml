@@ -14,7 +14,7 @@ tracing.workspace = true
 url.workspace = true
 wamn-build.workspace = true
 wamn-catalog.workspace = true
-wamn-compiler.workspace = true
+wamn-codegen.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-engine.workspace = true
 wamn-environment.workspace = true
@@ -35,8 +35,8 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"
 uuid = { workspace = true }
 tokio-rustls = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-control-provision = { workspace = true, features = ["test-util"] }
-wamn-platform-identity = { workspace = true, features = ["test-util"] }
+wamn-provision = { workspace = true, features = ["test-util"] }
+wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }
 wit-parser = { workspace = true }

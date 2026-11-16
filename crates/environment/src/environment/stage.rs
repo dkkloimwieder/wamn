@@ -49,19 +49,19 @@ pub async fn materialize_application_principals(
         domain.context("platform-domain-unset: application principals need the platform domain")?;
     let mut project = super::analyse::connect_project(project_url).await?;
     let mut transaction = project.begin().await?;
-    sqlx::query(wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
+    sqlx::query(wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
         .bind(project_env_key)
         .fetch_one(&mut *transaction)
         .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning),
+        wamn_provision::bind_platform_principal_sql(PlatformComponent::Provisioning),
     ))
     .execute(&mut *transaction)
     .await
     .map(drop)?;
     for package in applications {
         let subject =
-            wamn_platform_identity::application_subject(project_env_key, &package.package.id)?;
+            wamn_identity::application_subject(project_env_key, &package.package.id)?;
         let principal = crate::provision_project_env::resolve_or_create_service(
             &mut system,
             &subject,
@@ -69,7 +69,7 @@ pub async fn materialize_application_principals(
         )
         .await?;
         ensure!(
-            principal.status() == wamn_platform_identity::PrincipalStatus::Active,
+            principal.status() == wamn_identity::PrincipalStatus::Active,
             "application service principal {subject:?} is disabled"
         );
         sqlx::query(
@@ -118,10 +118,10 @@ pub async fn write_runtime_grants(
         wamn_publish::publish_release::composes_integration(package, &manifest.components)
     }) {
         let subject =
-            wamn_platform_identity::application_subject(project_env_key, &package.package.id)?;
-        let principal = wamn_platform_identity::resolve_subject(
+            wamn_identity::application_subject(project_env_key, &package.package.id)?;
+        let principal = wamn_identity::resolve_subject(
             &mut system,
-            wamn_platform_identity::PrincipalType::Service,
+            wamn_identity::PrincipalType::Service,
             &subject,
         )
         .await?
@@ -129,7 +129,7 @@ pub async fn write_runtime_grants(
             format!("application principal {subject} is missing; run env initialize")
         })?;
         ensure!(
-            principal.status() == wamn_platform_identity::PrincipalStatus::Active,
+            principal.status() == wamn_identity::PrincipalStatus::Active,
             "application principal {subject} is disabled"
         );
         let active: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1 AND type='service' AND status='active')").bind(principal.id()).fetch_one(&mut **transaction).await?.get(0);
@@ -200,7 +200,7 @@ pub(super) async fn installed(
     system.commit().await?;
     Ok(analyse::read_project(
         &analyse::project_url(platform, document, &row).await?,
-        &wamn_control_provision::project_env_key(&document.org, &document.project, &document.env),
+        &wamn_provision::project_env_key(&document.org, &document.project, &document.env),
     )
     .await?
     .context("the project database is missing after step 4")?

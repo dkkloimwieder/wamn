@@ -29,7 +29,7 @@
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
-use wamn_control_provision::{APP_ROLE, DB_OWNER_ROLE, project_env_database_name, sql};
+use wamn_provision::{APP_ROLE, DB_OWNER_ROLE, project_env_database_name, sql};
 
 fn psql(url: &str, script: &str) -> std::process::Output {
     let mut child = Command::new("psql")

@@ -10,7 +10,7 @@ use sqlx::Row as _;
 use std::fmt;
 
 use wamn_identity_protocol::{ADMIN_ROLE, PrincipalId};
-use wamn_platform_identity::{IdentityError, IdentityErrorType, database_error};
+use wamn_identity::{IdentityError, IdentityErrorType, database_error};
 
 /// Whether the project database has its platform rows, which `env apply`
 /// writes first.
@@ -64,7 +64,7 @@ pub async fn require_platform_rows(client: &mut sqlx::PgConnection) -> Result<()
     } else {
         Err(IdentityError::new(
             IdentityErrorType::NotFound,
-            "the project database has no platform rows. Run `wamn-ctl env apply` first",
+            "the project database has no platform rows. Run `wamn env apply` first",
         ))
     }
 }
@@ -73,7 +73,7 @@ pub async fn require_platform_rows(client: &mut sqlx::PgConnection) -> Result<()
 /// its host reads (docs/architecture/execution.md#routing-and-availability).
 pub async fn write_environment_status(
     client: &mut sqlx::PgConnection,
-    status: wamn_platform_identity::org::EnvironmentStatus,
+    status: wamn_identity::org::EnvironmentStatus,
 ) -> Result<(), IdentityError> {
     sqlx::query(ENVIRONMENT_STATUS_ROW_SQL)
         .bind(status.as_str())
@@ -265,7 +265,7 @@ const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
 
 // The writes below run in a transaction that the caller prepared: it holds
 // the project's operation grant lock and binds the actor of the writes.
-// `wamn-ctl` binds `wamn:provisioning`, and a host route binds its caller.
+// `wamn` binds `wamn:provisioning`, and a host route binds its caller.
 
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(
@@ -510,7 +510,7 @@ pub async fn project_authority(
     coordinate: ApplicationTarget<'_>,
     principal: &PrincipalId,
 ) -> Result<(), IdentityError> {
-    wamn_platform_identity::org::lock_membership(system, principal, coordinate.org).await?;
+    wamn_identity::org::lock_membership(system, principal, coordinate.org).await?;
     let row = sqlx::query("SELECT p.type, p.status, p.email, p.display_name, p.subject, \
          EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
          identity.has_project_access(p.id,$2,$4,$3), \

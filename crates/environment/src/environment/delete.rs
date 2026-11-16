@@ -28,11 +28,11 @@ pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
 use async_nats::jetstream;
-use wamn_control_provision::sql::drop_replication_slot_sql;
-use wamn_control_provision::workload_role::{
+use wamn_provision::sql::drop_replication_slot_sql;
+use wamn_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_login,
 };
-use wamn_control_provision::{
+use wamn_provision::{
     cdc_object_name, control_administration_secret_name, project_env_database_name,
 };
 use wamn_registry::Triple;
@@ -103,7 +103,7 @@ async fn delete_locked(
     };
     let instance: wamn_registry::instance_suffix::InstanceSuffix = row.get(0);
     let database = project_env_database_name(org, project, env, &instance);
-    let project_env_key = wamn_control_provision::project_env_key(org, project, env);
+    let project_env_key = wamn_provision::project_env_key(org, project, env);
 
     resources::require_ownership(platform, triple, &database).await?;
     let applications = application_releases(platform, triple).await?;
@@ -211,7 +211,7 @@ async fn delete_locked(
     .is_empty();
     if control_present {
         let patch = serde_json::to_vec(
-            &serde_json::json!({"data":{wamn_control_provision::control_administration_key(&triple.project,&triple.env):null}}),
+            &serde_json::json!({"data":{wamn_provision::control_administration_key(&triple.project,&triple.env):null}}),
         )?;
         kubectl(
             platform,
@@ -311,7 +311,7 @@ async fn delete_locked(
     lines.push("deleted the environment's control logins (or they were gone)".into());
     if data {
         let mut roles = instance_roles(triple, &instance, &project_env_key)?;
-        roles.push(wamn_control_provision::migrations::MigrationDatabase::Project.login(&database));
+        roles.push(wamn_provision::migrations::MigrationDatabase::Project.login(&database));
         let project_connection =
             wamn_platform_install::environment::connection(admin_url, triple).await?;
         let cluster = project_connection
@@ -332,8 +332,8 @@ async fn delete_locked(
     }
 
     let configurations = [
-        wamn_control_provision::project_env_secret_name(org, project, env),
-        wamn_control_provision::project_env_cdc_secret_name(org, project, env),
+        wamn_provision::project_env_secret_name(org, project, env),
+        wamn_provision::project_env_cdc_secret_name(org, project, env),
     ];
     let mut arguments = vec!["delete", "configmap", "--ignore-not-found"];
     arguments.extend(configurations.iter().map(String::as_str));
@@ -342,9 +342,9 @@ async fn delete_locked(
         lines.push(deleted);
     }
     let mut secrets = WorkloadRoleFamily::project_env_families()
-        .map(|family| wamn_control_provision::workload_secret_name(family, org, project, env))
+        .map(|family| wamn_provision::workload_secret_name(family, org, project, env))
         .collect::<Vec<_>>();
-    secrets.push(wamn_control_provision::project_env_cdc_secret_name(
+    secrets.push(wamn_provision::project_env_cdc_secret_name(
         org, project, env,
     ));
     secrets.extend(pat_secrets);

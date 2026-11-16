@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use crate::{OperationTransaction, SessionIdentity, WamnPostgres};
-use wamn_connections::connection::ConnectionInvocation;
-use wamn_connections::invocation::{ReleaseContext, Scope};
+use wamn_connection::connection::ConnectionInvocation;
+use wamn_connection::invocation::{ReleaseContext, Scope};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_scope::{InvocationAuthority, InvocationScopes, ScopeLifetime};
 use wamn_engine::invocation_trace::InvocationTrace;
@@ -31,7 +31,7 @@ pub fn validate_context(
 pub fn bind_test_context(
     postgres: &WamnPostgres,
     scope: &str,
-    connections: Arc<wamn_connections::connection_facts::ConnectionFacts>,
+    connections: Arc<wamn_connection::connection_facts::ConnectionFacts>,
     release: Arc<wamn_engine::release_manifest::LoadedRelease>,
 ) {
     let context = Arc::new(ReleaseContext::new(release, connections).expect("fixture context"));

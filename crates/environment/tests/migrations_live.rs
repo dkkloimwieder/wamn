@@ -2,7 +2,7 @@
 
 use sqlx::SqlSafeStr as _;
 use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
-use wamn_control_provision::migration;
+use wamn_provision::migration;
 use wamn_environment::migrations;
 
 fn source(version: i64, sql: &str) -> Migration {
@@ -26,14 +26,14 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
     let database = wamn_test_postgres::url(&pool);
     let mut admin = wamn_postgres::connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+        wamn_provision::sql::ensure_app_acl_role_sql(),
     ))
     .execute(&mut admin)
     .await?;
     sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
         .execute(&mut admin)
         .await?;
-    let component = wamn_control_provision::PlatformComponent::ApplyPackage;
+    let component = wamn_provision::PlatformComponent::ApplyPackage;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(component.principal_id())
         .execute(&mut admin)
@@ -196,7 +196,7 @@ async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic
     let database = wamn_test_postgres::url(&pool);
     let mut admin = wamn_postgres::connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+        wamn_provision::sql::ensure_app_acl_role_sql(),
     ))
     .execute(&mut admin)
     .await?;
@@ -259,8 +259,8 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
     use wamn_environment::apply_package::{self, ApplyPackageRequest, PackageRoot};
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
-    let migration_input = wamn_control_provision::test_database::package_migration_input(
+    wamn_identity::test_database::project_platform(database.as_str()).await;
+    let migration_input = wamn_provision::test_database::package_migration_input(
         database.as_str(),
         &"mapping".parse().unwrap(),
         &"fixture".parse().unwrap(),
@@ -342,15 +342,15 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
 async fn platform_migrations_refuse_administrators_and_use_scope_credentials(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
-    use wamn_control_provision::migrations::MigrationDatabase;
+    use wamn_provision::migrations::MigrationDatabase;
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut administrator = wamn_postgres::connect(database.as_str()).await?;
 
     for scope in [MigrationDatabase::System, MigrationDatabase::Project] {
         assert!(scope.require_login(&mut administrator).await.is_err());
-        let input = wamn_control_provision::test_database::platform_migration_input(
+        let input = wamn_provision::test_database::platform_migration_input(
             database.as_str(),
             scope,
         )

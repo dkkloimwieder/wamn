@@ -47,7 +47,7 @@ wamn-edge --config <path> samples resolve <sample_key> <basis>
 
 ## Serve the cluster web edge
 
-The `edge-web` image runs `wamn-web-front`, a separate service from the device binary.
+The `edge-web` image runs `wamn-web`, a separate service from the device binary.
 Its JSON configuration names the HTTP listener, web bucket, identity HTTPS endpoint, identity CA file and `trusted_proxy_hops`.
 Count trusted proxies from the direct peer toward the client. Zero uses the direct peer.
 Direct requests without a forwarded header also use the peer, including Kubernetes port forwards.
@@ -56,8 +56,8 @@ Local ingress uses one. The front forwards only the selected client address for 
 TLS for browser traffic terminates at ingress.
 
 ```bash
-wamn-web-front --config <path>
-wamn-web-front --config <path> probe
+wamn-web --config <path>
+wamn-web --config <path> probe
 ```
 
 The service discovers hosts from release ConfigMaps.

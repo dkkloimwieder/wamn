@@ -22,7 +22,7 @@ serde_json = { workspace = true }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono"] }
 wamn-postgres = { workspace = true }
 wamn-registry = { workspace = true }
-wamn-control-provision = { workspace = true }
+wamn-provision = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-broker = { workspace = true }
 wamn-catalog = { workspace = true }
@@ -40,11 +40,11 @@ workspace = true
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["macros", "migrate"] }
-wamn-connections = { workspace = true, features = ["test-util"] }
+wamn-connection = { workspace = true, features = ["test-util"] }
 wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 wamn-events = { path = ".", features = ["test-util"] }
 wamn-sql = { workspace = true, features = ["test-util"] }
-wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 url.workspace = true
 wamn-test-infrastructure = { workspace = true }

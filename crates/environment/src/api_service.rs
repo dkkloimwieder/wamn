@@ -5,7 +5,7 @@ use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 use wamn_identity_client::{PatClient, PatIssuerConfig};
 use wamn_identity_protocol::RoleName;
-use wamn_platform_identity::PrincipalStatus;
+use wamn_identity::PrincipalStatus;
 use crate::application::{
     ApplicationUser, GrantAuthority, GrantChange, mutate_grant, write_service,
 };
@@ -35,7 +35,7 @@ impl std::fmt::Debug for Request {
 pub async fn create(
     request: &Request,
 ) -> anyhow::Result<wamn_identity_protocol::wire::PatResponse> {
-    wamn_control_provision::validate_project_env(&request.org, &request.project, &request.env)?;
+    wamn_provision::validate_project_env(&request.org, &request.project, &request.env)?;
     ensure!(
         request.name.parse::<wamn_registry::ProjectId>().is_ok(),
         "invalid API service name"
@@ -46,7 +46,7 @@ pub async fn create(
     );
     ensure!(
         request.lifetime > Duration::ZERO
-            && request.lifetime <= wamn_platform_identity::MAX_PAT_TTL,
+            && request.lifetime <= wamn_identity::MAX_PAT_TTL,
         "invalid PAT lifetime"
     );
     let issuer = PatClient::new(&request.identity)?;
@@ -97,8 +97,8 @@ pub async fn create(
     let key = wamn_registry::project_env_key(&request.org, &request.project, &request.env);
     let mut tx = application.begin().await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ),
     ))
     .execute(&mut *tx)

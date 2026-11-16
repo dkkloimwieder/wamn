@@ -2,13 +2,13 @@
 
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
-use wamn_control_provision::{platform_principals_sql, test_database};
+use wamn_provision::{platform_principals_sql, test_database};
 use wamn_identity_protocol::PrincipalId;
 use wamn_environment::application::{ApplicationTarget, project_authority};
-use wamn_platform_identity::org::{
+use wamn_identity::org::{
     activate_org_membership, deactivate_org_membership, grant_project_admin, lock_membership,
 };
-use wamn_platform_identity::{assign_project_role, create_or_reuse_user, create_service};
+use wamn_identity::{assign_project_role, create_or_reuse_user, create_service};
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let mut client = wamn_postgres::connect(url).await?;
@@ -114,7 +114,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
         .expect_err("inactive membership refuses after the lock wait");
         assert_eq!(
             refusal.refusal(),
-            Some(wamn_platform_identity::IdentityRefusal::UserNotActive)
+            Some(wamn_identity::IdentityRefusal::UserNotActive)
         );
         tx.rollback().await?;
         anyhow::Ok(second)
@@ -130,7 +130,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
     let audience = "urn:wamn:control:acme";
     let mut tx = first.begin().await?;
     let login =
-        wamn_platform_identity::password_login::create_login(&mut tx, &user, issuer, audience)
+        wamn_identity::password_login::create_login(&mut tx, &user, issuer, audience)
             .await?
             .expect("active global user");
     tx.commit().await?;
@@ -141,10 +141,10 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
         }),
     )?;
     assert!(
-        !wamn_platform_identity::control::control_session_is_active(&mut first, &claims).await?
+        !wamn_identity::control::control_session_is_active(&mut first, &claims).await?
     );
     assert!(
-        !wamn_platform_identity::session_token::session_is_active(
+        !wamn_identity::session_token::session_is_active(
             &mut first,
             &claims,
             &"billing".parse().unwrap(),
@@ -153,7 +153,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
         .await?
     );
     assert!(
-        !wamn_platform_identity::has_project_env_membership(
+        !wamn_identity::has_project_env_membership(
             &mut first,
             &user,
             &"acme".parse().unwrap(),
@@ -163,7 +163,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions(
         .await?
     );
     assert!(
-        !wamn_platform_identity::control::is_project_admin(
+        !wamn_identity::control::is_project_admin(
             &mut first,
             &user,
             &"acme".parse().unwrap(),
@@ -199,7 +199,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
             .url(),
     )
     .unwrap();
-    wamn_platform_identity::test_database::project_platform(target_database.as_str()).await;
+    wamn_identity::test_database::project_platform(target_database.as_str()).await;
     let mut system = connect(system_database.as_str()).await?;
     let mut target = connect(target_database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
@@ -289,7 +289,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation(
     };
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    wamn_identity::test_database::project_platform(database.as_str()).await;
     let mut client = connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&platform_principals_sql(

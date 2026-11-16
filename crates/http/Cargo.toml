@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-control-provision/test-util", "dep:wamn-control-provision", "dep:wamn-broker", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connections/test-util", "dep:wamn-sql", "wamn-sql/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "hyper/server"]
+test-util = ["wamn-provision/test-util", "dep:wamn-provision", "dep:wamn-broker", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "dep:wamn-sql", "wamn-sql/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "hyper/server"]
 
 [dependencies]
 wasmtime-wasi-http.workspace = true
@@ -45,8 +45,8 @@ uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-broker = { workspace = true, optional = true }
 wamn-authority = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-connections = { workspace = true }
-wamn-control-provision = { workspace = true, optional = true }
+wamn-connection = { workspace = true }
+wamn-provision = { workspace = true, optional = true }
 wamn-engine = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes = { workspace = true }
@@ -63,7 +63,7 @@ opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true, features = ["test-util"] }
 wamn-http = { path = ".", features = ["test-util"] }
 wamn-kubernetes = { workspace = true, features = ["test-util"] }

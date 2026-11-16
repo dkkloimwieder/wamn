@@ -4,10 +4,10 @@ use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 
-use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
+use wamn_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_identity_protocol::PAT_TOKEN_PREFIX;
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_identity::{
+use wamn_identity::{
     IdentityErrorType, PrincipalType, authenticate_pat, create_service, disable_principal,
     issue_pat, list_pats, revoke_pat,
 };
@@ -37,7 +37,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     .await
     .map(drop)
     .expect("prepare empty platform schemas");
-    wamn_control_provision::test_database::system_schema(&url).await;
+    wamn_provision::test_database::system_schema(&url).await;
     let provisioning = PlatformComponent::Provisioning.principal_id();
 
     // Issuance binds wamn:provisioning in its own transaction.
@@ -252,7 +252,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
     assert_eq!(
         listed
             .iter()
-            .map(wamn_platform_identity::PatRecord::label)
+            .map(wamn_identity::PatRecord::label)
             .collect::<Vec<_>>(),
         ["expiring", "revocable", "laptop"]
     );
@@ -293,7 +293,7 @@ async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
 
 /// Forge a token that keeps its lookup prefix but carries a different secret.
 /// Begin a transaction that binds wamn:provisioning, as the identity issuer and
-/// wamn-ctl do.
+/// wamn do.
 async fn provisioning_transaction(client: &mut Client) -> sqlx::Transaction<'_, sqlx::Postgres> {
     let mut transaction = client
         .begin()

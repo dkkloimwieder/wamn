@@ -3,7 +3,7 @@ use super::super::pool::ResolvedCredential;
 use super::*;
 use std::collections::BTreeSet;
 
-use wamn_connections::connection::{ConnectionExecutionClosure, ConnectionOrigin};
+use wamn_connection::connection::{ConnectionExecutionClosure, ConnectionOrigin};
 
 /// Guest-sql must never be usable as a platform authority, and the refusal
 /// must survive `--release`, where a `debug_assert` would not exist.
@@ -217,8 +217,8 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
             interface_version: "0.1.0".parse().unwrap(),
             operation: "platform-fixture:widget/update@1.0.0".parse().unwrap(),
         },
-        entry: wamn_connections::connection::InvocationEntry::Wiring(
-            wamn_connections::connection::WiringPosition {
+        entry: wamn_connection::connection::InvocationEntry::Wiring(
+            wamn_connection::connection::WiringPosition {
                 configuration: Default::default(),
                 application: "package_a".parse().unwrap(),
                 wiring_hash: format!("sha256:{}", "a".repeat(64))
@@ -249,15 +249,15 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     )));
     let deployment = |key: &wamn_registry::ProjectEnvKey, project: &wamn_registry::ProjectId| {
         let release = wamn_authority::connection::test_release(key);
-        let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
-            Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
-            Arc::new(wamn_connections::connection_credentials::ConnectionCredentials::empty()),
+        let facts = Arc::new(wamn_connection::connection_facts::ConnectionFacts::new(
+            Arc::new(wamn_connection::connection_memory::ConnectionMemory::default()),
+            Arc::new(wamn_connection::connection_credentials::ConnectionCredentials::empty()),
             &pg,
             key,
             project,
             &"dev".parse().unwrap(),
         ));
-        Arc::new(wamn_connections::invocation::ReleaseContext::new(release, facts).unwrap())
+        Arc::new(wamn_connection::invocation::ReleaseContext::new(release, facts).unwrap())
     };
     let first_project = deployment(
         &"test--dev--fixture".parse().unwrap(),
@@ -295,13 +295,13 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     other.identity.project = Some("other".parse().unwrap());
     let second = AuthorizedInvocation::enter(&pg, other).await.unwrap();
     assert!(Arc::ptr_eq(
-        &wamn_connections::invocation::context(&pg.scopes, "c1")
+        &wamn_connection::invocation::context(&pg.scopes, "c1")
             .unwrap()
             .connections,
         &first_project.connections
     ));
     assert!(Arc::ptr_eq(
-        &wamn_connections::invocation::context(&pg.scopes, "c2")
+        &wamn_connection::invocation::context(&pg.scopes, "c2")
             .unwrap()
             .connections,
         &second_project.connections
@@ -316,7 +316,7 @@ async fn scope_authority_is_unique_and_revoked_by_its_owner() {
     assert!(pg.session_identity("c1").is_none());
     assert!(pg.invocation("c1").is_none());
     assert!(pg.scopes.release("c1").is_none());
-    assert!(wamn_connections::invocation::context(&pg.scopes, "c1").is_err());
+    assert!(wamn_connection::invocation::context(&pg.scopes, "c1").is_err());
     assert!(pg.invocation("c2").is_some());
     drop(second);
     assert!(pg.scopes.is_empty());
@@ -445,9 +445,9 @@ pub(crate) async fn ensure_live_user_rows(admin_url: &str, principals: &[&str]) 
     let mut admin = connect_raw(admin_url).await;
     for sql in [
         ENSURE_GUEST_ACL_ROLE_SQL,
-        wamn_control_provision::sql::ensure_db_owner_role_sql(),
+        wamn_provision::sql::ensure_db_owner_role_sql(),
         wamn_catalog::CATALOG_SCHEMA_SQL,
-        wamn_control_provision::APP_SCHEMA_SQL,
+        wamn_provision::APP_SCHEMA_SQL,
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(&mut admin)
@@ -525,13 +525,13 @@ pub(crate) async fn live_guest_url(
         .await
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::project_key::authority_derivations_bootstrap_sql(),
+        wamn_provision::project_key::authority_derivations_bootstrap_sql(),
     ))
     .execute(&mut admin)
     .await
     .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::sql::grant_dynamic_sql_surface_sql(),
+        wamn_provision::sql::grant_dynamic_sql_surface_sql(),
     ))
     .execute(&mut admin)
     .await
@@ -613,7 +613,7 @@ fn rls_fixture_sql(
 ) -> String {
     let query = query_fixture_sql(probe, probe);
     let identity = include_str!("../../../../deploy/sql/record-history.sql");
-    let authority = wamn_control_provision::project_key::authority_derivations_bootstrap_sql();
+    let authority = wamn_provision::project_key::authority_derivations_bootstrap_sql();
     format!(
         "DROP SCHEMA IF EXISTS {schema} CASCADE; \
              DROP ROLE IF EXISTS {probe}; \
@@ -927,7 +927,7 @@ fn two_project_env_key_rls_fixture_sql(
         query_fixture_sql(role_b, "live-guest")
     );
     let identity = include_str!("../../../../deploy/sql/record-history.sql");
-    let authority = wamn_control_provision::project_key::authority_derivations_bootstrap_sql();
+    let authority = wamn_provision::project_key::authority_derivations_bootstrap_sql();
     format!(
         "DROP SCHEMA IF EXISTS {schema} CASCADE; \
              DO $reset$ BEGIN \
@@ -950,7 +950,7 @@ fn two_project_env_key_rls_fixture_sql(
                  VALUES ('{a}', 1), ('{a}', 2), ('{b}', 3); \
              GRANT USAGE ON SCHEMA {schema} TO {role_a}, {role_b}; \
              GRANT SELECT ON {schema}.dispositions TO {role_a}, {role_b}; {query} {dynamic}",
-        dynamic = wamn_control_provision::sql::grant_dynamic_sql_surface_sql(),
+        dynamic = wamn_provision::sql::grant_dynamic_sql_surface_sql(),
     )
 }
 
@@ -1866,7 +1866,7 @@ async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_u
 ) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    wamn_identity::test_database::project_platform(database.as_str()).await;
     let mut admin = connect_raw(database.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{LIVE_PLATFORM_PRINCIPAL}','','fixture','admin:role-refusal-fixture');

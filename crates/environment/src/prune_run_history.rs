@@ -108,8 +108,8 @@ pub async fn prune(
         .await
         .context("begin run history retention")?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::AuditRetention,
+        wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::AuditRetention,
         ),
     ))
     .execute(&mut *transaction)

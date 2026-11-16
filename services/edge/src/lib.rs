@@ -23,10 +23,9 @@
 //!
 //! This crate refuses to depend on:
 //!
-//! - Upper layers: the cloud service crates, `wamn-workflow`,
-//!   `wamn-execution-host`.
+//! - Upper layers: the cloud service crates and `wamn-workflow`.
 //! - Postgres: `tokio-postgres`, `deadpool-postgres`, `postgres-types`, and
-//!   `wamn-platform-identity`, which links `tokio-postgres`.
+//!   `wamn-identity`, which links `tokio-postgres`.
 //! - Network services: `async-nats`, `redis`.
 //! - OCI: `oci-client`, `oci-wasm`.
 //! - OTLP gRPC: `opentelemetry-otlp`, `tonic`.

@@ -24,7 +24,7 @@ pub(super) struct TxnState {
 
 pub(super) type SharedTxnState = Arc<std::sync::Mutex<TxnState>>;
 
-pub(super) use wamn_connections::database::ConnectionGuard as StatementConnectionGuard;
+pub(super) use wamn_connection::database::ConnectionGuard as StatementConnectionGuard;
 
 pub(super) fn restore_connection(connection: StatementConnectionGuard, state: &SharedTxnState) {
     let Ok(mut transaction) = state.lock() else {
@@ -229,7 +229,7 @@ pub(super) fn db_span_for_project(
         &span,
         invocation
             .as_ref()
-            .map(wamn_connections::connection::ConnectionInvocation::effect_wiring),
+            .map(wamn_connection::connection::ConnectionInvocation::effect_wiring),
     );
     span
 }

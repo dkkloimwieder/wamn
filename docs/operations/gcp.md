@@ -467,7 +467,7 @@ Use a fresh disposable platform with no `journey` project.
 Prepare the GCP chart and images with [building](building.md#platform-artifacts).
 Upload its `platformUi` digest with `wamn web upload --platform-ui` as [web upload](web-upload.md#platform-ui) describes.
 
-Build `wamn` and `wamn-ctl` beside the test executable in `$CARGO_TARGET_DIR/debug`.
+Build `wamn` and `wamn` beside the test executable in `$CARGO_TARGET_DIR/debug`.
 Install the pinned KCL compiler, gcloud, `gke-gcloud-auth-plugin`, kubectl, Helm, OpenSSL, and `script`.
 Keep Git, Cargo, the `wasm32-wasip2` toolchain, and offline build dependencies available for fixture publication.
 Set these inputs:

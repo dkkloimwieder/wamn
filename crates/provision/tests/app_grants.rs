@@ -2,11 +2,11 @@
 
 #[path = "support/grants.rs"]
 mod grants;
-use wamn_control_provision::WorkloadRoleFamily;
+use wamn_provision::WorkloadRoleFamily;
 
 #[sqlx::test(migrations = false)]
 async fn application_logins_cannot_reach_mapped_platform_logins(pool: sqlx::PgPool) {
-    use wamn_control_provision::{WorkloadRoleIdentity, workload_login};
+    use wamn_provision::{WorkloadRoleIdentity, workload_login};
 
     let (mut fixture, _lock) = grants::family(&pool, WorkloadRoleFamily::App).await;
     let database_url = wamn_test_postgres::url(&pool);
@@ -21,7 +21,7 @@ async fn application_logins_cannot_reach_mapped_platform_logins(pool: sqlx::PgPo
     .unwrap();
     grants::execute(
         &mut fixture.admin,
-        &wamn_control_provision::test_database::login_sql(
+        &wamn_provision::test_database::login_sql(
             WorkloadRoleFamily::Query,
             database,
             &query_login,
@@ -29,9 +29,9 @@ async fn application_logins_cannot_reach_mapped_platform_logins(pool: sqlx::PgPo
         ),
     )
     .await;
-    wamn_control_provision::test_database::platform_migration_input(
+    wamn_provision::test_database::platform_migration_input(
         database_url.as_str(),
-        wamn_control_provision::migrations::MigrationDatabase::Project,
+        wamn_provision::migrations::MigrationDatabase::Project,
     )
     .await
     .unwrap();

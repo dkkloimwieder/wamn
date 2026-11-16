@@ -57,7 +57,7 @@ pub async fn install_schema(client: &mut Client) -> anyhow::Result<()> {
         .execute(&mut *client)
         .await
         .map(drop)?;
-    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_provision::APP_SCHEMA_SQL)
         .execute(&mut *client)
         .await
         .map(drop)?;
@@ -69,7 +69,7 @@ async fn install_executor(
     client: &mut Client,
     admin_url: &str,
 ) -> anyhow::Result<(String, wamn_identity_protocol::LoginName)> {
-    use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
+    use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 
     let database: String = sqlx::query("SELECT current_database()::text")
         .fetch_one(&mut *client)
@@ -88,7 +88,7 @@ async fn install_executor(
     // The production builder: the stable executor surface, the `wamn_platform`
     // group edge, the generation login and its `CONNECT`.
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&wamn_control_provision::test_database::login_sql(
+        (&wamn_provision::test_database::login_sql(
             family,
             &database,
             &role,

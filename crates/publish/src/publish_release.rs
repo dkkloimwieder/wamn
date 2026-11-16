@@ -532,7 +532,7 @@ fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
         .collect();
     let manifests = roots
         .iter()
-        .map(|root| wamn_compiler::package_manifest_path(root))
+        .map(|root| wamn_codegen::package_manifest_path(root))
         .collect();
     (attachments, manifests)
 }

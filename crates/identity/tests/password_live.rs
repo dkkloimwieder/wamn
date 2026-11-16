@@ -2,13 +2,13 @@
 
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
-use wamn_control_provision::{PlatformComponent, test_database};
+use wamn_provision::{PlatformComponent, test_database};
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_identity::password::{
+use wamn_identity::password::{
     Password, PasswordErrorType, RefusalCause, authenticate_password, enroll_password,
     issue_invitation, password_work,
 };
-use wamn_platform_identity::{Principal, create_service, create_user, disable_principal};
+use wamn_identity::{Principal, create_service, create_user, disable_principal};
 
 const PASSWORD: &str = "my uncommon warehouse passphrase";
 fn password() -> Password {
@@ -52,14 +52,14 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations(pool
         INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
         VALUES ('password-test', 'dev', '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18');
         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('password-test','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('password-test','widgets','dev','password-test-secret','a1b2c3d4')").execute(&mut client).await.map(drop).unwrap();
-    wamn_platform_identity::org::activate_org_membership(
+    wamn_identity::org::activate_org_membership(
         &mut client,
         user.id(),
         &"password-test".parse().unwrap(),
     )
     .await
     .unwrap();
-    wamn_platform_identity::grant_project_env_membership(
+    wamn_identity::grant_project_env_membership(
         &mut client,
         user.id(),
         &"password-test".parse().unwrap(),
@@ -349,7 +349,7 @@ async fn concurrent_enrollment_creates_exactly_one_password(pool: sqlx::PgPool) 
 async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     pool: sqlx::PgPool,
 ) {
-    use wamn_platform_identity::{
+    use wamn_identity::{
         password::{issue_reset, reset_password},
         password_login,
     };

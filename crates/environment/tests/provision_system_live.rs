@@ -17,7 +17,7 @@ async fn connect(url: &str) -> sqlx::PgConnection {
 async fn platform_initialization_runs_sqlx_once_and_explicit_apply_advances_it(pool: sqlx::PgPool) {
     use sqlx::SqlSafeStr as _;
     use sqlx::migrate::{Migration, MigrationType};
-    use wamn_control_provision::migrations::MigrationDatabase;
+    use wamn_provision::migrations::MigrationDatabase;
     use wamn_environment::platform_migrations;
     let _lock = wamn_test_postgres::lock();
     let url = wamn_test_postgres::url(&pool).to_string();
@@ -38,7 +38,7 @@ async fn platform_initialization_runs_sqlx_once_and_explicit_apply_advances_it(p
         "CREATE TABLE registry.migration_probe(value int); INSERT INTO registry.migration_probe VALUES (1)",
     );
     let second = source(30, "INSERT INTO registry.migration_probe VALUES (2)");
-    let migration_input = wamn_control_provision::test_database::platform_migration_input(
+    let migration_input = wamn_provision::test_database::platform_migration_input(
         &*url,
         MigrationDatabase::System,
     )

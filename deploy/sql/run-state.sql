@@ -35,7 +35,7 @@ CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
 -- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
 -- `crates/provision/src/project_key.rs` already gives for its own
 -- bootstrap: naming a role that may not exist adds a new precondition to every
--- applier — seven live acceptance tests plus the production path in `services/ctl` — and
+-- applier — seven live acceptance tests plus the production path in `services/cli` — and
 -- `CREATE POLICY ... TO wamn_platform` fails outright against a cluster without
 -- it.
 --
@@ -85,7 +85,7 @@ GRANT USAGE ON SCHEMA wamn_run TO wamn_run_retention;
 -- read every project.
 --
 -- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
--- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;
+-- pinned by a byte-equality guard in wamn-provision. Do not hand-edit;
 -- change the builder.
 --
 -- It is the BOOTSTRAP rendering because this file is applied to databases whose

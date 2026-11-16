@@ -62,7 +62,7 @@ pub async fn configure(
             unconfigured,
         )
         .await?;
-        let owner = wamn_control_provision::migrations::MigrationDatabase::Project
+        let owner = wamn_provision::migrations::MigrationDatabase::Project
             .configuration(&connection.to_json()?)?;
         let mut client = wamn_postgres::connect(&owner).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(provision_project_env::privilege_sql(
@@ -74,12 +74,12 @@ pub async fn configure(
             crate::platform_migrations::restore_project(
                 &owner,
                 &crate::platform_migrations::embedded_sources(
-                    wamn_control_provision::migrations::MigrationDatabase::Project,
+                    wamn_provision::migrations::MigrationDatabase::Project,
                 ),
             )
             .await?;
         }
-        let name = wamn_control_provision::environment_names::environment_resource_name(
+        let name = wamn_provision::environment_names::environment_resource_name(
             &triple.org,
             &triple.project,
             &triple.env,
@@ -118,7 +118,7 @@ pub async fn configure(
             Some(&triple),
         )
         .await?;
-        let name = wamn_control_provision::environment_names::environment_resource_name(
+        let name = wamn_provision::environment_names::environment_resource_name(
             &triple.org,
             &triple.project,
             &triple.env,

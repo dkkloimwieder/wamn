@@ -195,7 +195,7 @@ impl ClusterRef {
 ///   `<org>-dev`, `canary` shared-with `prod` → `<org>-prod` (the T2 collapse),
 ///   `canary`(own) → `<org>-canary` (the T4 third recovery domain).
 ///
-/// This is the single source both the cluster-CR renderer (`wamn-control-provision`) and
+/// This is the single source both the cluster-CR renderer (`wamn-provision`) and
 /// the provisioning flow derive cluster names from, so
 /// a provisioned cluster and a resolved triple always agree.
 pub fn cluster_of(org: &Org, policy: &EnvPolicy) -> ClusterRef {

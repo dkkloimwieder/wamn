@@ -29,7 +29,7 @@ pub(super) async fn require_ownership(
     database: &str,
 ) -> anyhow::Result<()> {
     let namespace = &platform.target.namespace;
-    let reader = wamn_control_provision::project_env_cdc_secret_name(
+    let reader = wamn_provision::project_env_cdc_secret_name(
         &triple.org,
         &triple.project,
         &triple.env,
@@ -59,7 +59,7 @@ pub(super) async fn require_ownership(
         );
     }
     let project_env_key =
-        wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
+        wamn_provision::project_env_key(&triple.org, &triple.project, &triple.env);
     let certificate = wamn_registry::name::nats_certificate(&project_env_key);
     if let Some(object) = get(platform, namespace, "certificate", &certificate).await? {
         let user = wamn_registry::environment_nats_user(&project_env_key);
@@ -80,7 +80,7 @@ pub(super) async fn require_ownership(
 }
 
 pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
-    let name = wamn_control_provision::project_env_cdc_secret_name(
+    let name = wamn_provision::project_env_cdc_secret_name(
         &triple.org,
         &triple.project,
         &triple.env,

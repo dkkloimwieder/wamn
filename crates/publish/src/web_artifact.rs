@@ -18,7 +18,7 @@ use object_store::aws::AmazonS3Builder;
 use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutMode, PutOptions};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
-use wamn_compiler::build_record::{self, BuildRecord};
+use wamn_codegen::build_record::{self, BuildRecord};
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_oci::package_artifact::registry_credentials::read_registry_push_credentials;
 use wamn_oci::package_artifact::{Repository, registry_auth};
@@ -115,7 +115,7 @@ impl std::error::Error for WebArtifactError {
 
 /// The directory that holds `dist/` and `web.json` for one standalone build.
 pub fn artifact_output(package_root: &Path) -> PathBuf {
-    wamn_compiler::output_root(package_root).join(ARTIFACT_DIRECTORY)
+    wamn_codegen::output_root(package_root).join(ARTIFACT_DIRECTORY)
 }
 
 /// Build browser files against the contract in the package's build record.
@@ -130,7 +130,7 @@ pub fn artifact_output(package_root: &Path) -> PathBuf {
 /// or a failed Vite build.
 pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtifactError> {
     async {
-        let output = wamn_compiler::output_root(package_root);
+        let output = wamn_codegen::output_root(package_root);
         let record = build_record::read(&output)?;
         let path = output.join("wamn.json");
         let compiled = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
@@ -620,7 +620,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use wamn_compiler::build_record::{self, BuildRecord};
+    use wamn_codegen::build_record::{self, BuildRecord};
     use wamn_digest::{bytes_sha256, canonical_json_bytes};
     use wamn_oci::package_artifact::registry_pull::test_server::Server;
     use wamn_test_infrastructure::scratch::ScratchRoot;
@@ -634,7 +634,7 @@ mod tests {
         let package = scratch.path().join("apps/web_fixture");
         fs::create_dir_all(package.join("web")).unwrap();
         fs::write(package.join("web/package.json"), r#"{"version":"0.2.0"}"#).unwrap();
-        let output = wamn_compiler::output_root(&package);
+        let output = wamn_codegen::output_root(&package);
         fs::create_dir_all(&output).unwrap();
         fs::write(
             output.join(build_record::BUILD_RECORD_FILE),
@@ -740,7 +740,7 @@ fs.copyFileSync('index.html', dist + '/index.html');
         );
 
         assert_eq!(
-            build_record::read(&wamn_compiler::output_root(&package)).unwrap(),
+            build_record::read(&wamn_codegen::output_root(&package)).unwrap(),
             record
         );
         fs::write(source.join("build.cjs"), "process.exit(1);").unwrap();

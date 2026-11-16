@@ -21,14 +21,14 @@ pub(super) async fn reconcile_entity_maps(
         .collect::<BTreeSet<_>>();
     for schema in schemas {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::sql::ensure_entity_map_sql(schema),
+            wamn_provision::sql::ensure_entity_map_sql(schema),
         ))
         .execute(&mut **tx)
         .await
         .map(drop)
         .with_context(|| format!("ensure {schema}.wamn_entities"))?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::sql::ensure_cdc_exclusion_map_sql(schema),
+            wamn_provision::sql::ensure_cdc_exclusion_map_sql(schema),
         ))
         .execute(&mut **tx)
         .await
@@ -102,7 +102,7 @@ pub(super) async fn reconcile_entity_maps(
             }
         }
         let mapped = sqlx::query(sqlx::AssertSqlSafe(
-            wamn_control_provision::sql::upsert_entity_map_sql(model.schema.as_str()),
+            wamn_provision::sql::upsert_entity_map_sql(model.schema.as_str()),
         ))
         .bind(relation_owner)
         .bind(&model.model_id)
@@ -181,7 +181,7 @@ pub(super) async fn reconcile_entity_maps(
             }
         }
         let mapped = sqlx::query(sqlx::AssertSqlSafe(
-            wamn_control_provision::sql::upsert_cdc_exclusion_map_sql(excluded.schema.as_str()),
+            wamn_provision::sql::upsert_cdc_exclusion_map_sql(excluded.schema.as_str()),
         ))
         .bind(&manifest.package.id)
         .bind(&excluded.relation_id)

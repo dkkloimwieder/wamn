@@ -4,7 +4,7 @@
 async fn host_storage_and_release_history(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_platform_identity::test_database::project_platform(database.as_str()).await;
+    wamn_identity::test_database::project_platform(database.as_str()).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(include_str!(
         "fixtures/connections.sql"
     )))

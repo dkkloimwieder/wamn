@@ -4,7 +4,7 @@
 //! class, no wildcard arm, no default arm, and an added or unmapped class is a
 //! COMPILE ERROR rather than a runtime fallback. The projection onto the
 //! provisioning families lives beside `WorkloadRoleFamily` in
-//! `wamn-control-provision`, because that is where the target type is defined.
+//! `wamn-provision`, because that is where the target type is defined.
 //!
 //! # Why there is deliberately no parser
 //!

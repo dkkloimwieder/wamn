@@ -141,7 +141,7 @@ impl EnvironmentDocument {
     }
 
     pub(super) fn require_valid(&self) -> anyhow::Result<()> {
-        wamn_control_provision::validate_project_env(&self.org, &self.project, &self.env)
+        wamn_provision::validate_project_env(&self.org, &self.project, &self.env)
             .context("the environment coordinate is not valid")?;
         ensure!(
             self.revocation_seconds <= 3600,

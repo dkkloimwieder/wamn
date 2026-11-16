@@ -42,8 +42,8 @@ pub fn publication_values(
     schemas: &[wamn_catalog::canonical_name::CanonicalName],
 ) -> Value {
     json!({"publication":{"name":name,"cluster":cluster,"org":triple.org,"project":triple.project,"env":triple.env,
-        "database":wamn_control_provision::project_env_database_name(&triple.org,&triple.project,&triple.env,instance),
-        "schemas":schemas,"publish":wamn_control_provision::sql::CDC_PUBLISH}})
+        "database":wamn_provision::project_env_database_name(&triple.org,&triple.project,&triple.env,instance),
+        "schemas":schemas,"publish":wamn_provision::sql::CDC_PUBLISH}})
 }
 
 /// Keep broker-owned certificate parameters in their Helm owner's values.
@@ -70,28 +70,28 @@ pub async fn connection(
     .bind(&placement.policy_name)
     .fetch_one(&mut client)
     .await?;
-    let policy = wamn_control_provision::env_policies::env_policy_from_row(&policy)?;
+    let policy = wamn_provision::env_policies::env_policy_from_row(&policy)?;
     let instance = placement.instance_suffix;
     let placement = match placement.placement_type.as_str() {
-        "pooled" => wamn_control_provision::Placement::Pooled {
+        "pooled" => wamn_provision::Placement::Pooled {
             pool: placement
                 .pool_cluster
                 .context("registered pool is absent")?,
         },
-        "dedicated" => wamn_control_provision::Placement::Dedicated,
+        "dedicated" => wamn_provision::Placement::Dedicated,
         _ => anyhow::bail!("unknown org placement"),
     };
-    let org = wamn_control_provision::Org {
+    let org = wamn_provision::Org {
         id: triple.org.clone(),
         placement,
     };
-    let cluster = wamn_control_provision::cluster_of(&org, &policy).name;
+    let cluster = wamn_provision::cluster_of(&org, &policy).name;
     Ok(crate::credentials::configuration(
         triple.org.as_str(),
         &cluster,
         format!("{cluster}-rw.{}.svc.cluster.local", triple.org),
         5432,
-        wamn_control_provision::project_env_database_name(
+        wamn_provision::project_env_database_name(
             &triple.org,
             &triple.project,
             &triple.env,
@@ -112,14 +112,14 @@ pub async fn capture_connection(
     let instance = wamn_registry::deployment::instance_suffix(&mut client, triple)
         .await?
         .context("project deployment is absent")?;
-    config.username = wamn_control_provision::cdc_object_name(
+    config.username = wamn_provision::cdc_object_name(
         &triple.org,
         &triple.project,
         &triple.env,
         &instance,
     )
     .parse()?;
-    config.credentials.name = wamn_control_provision::project_env_cdc_secret_name(
+    config.credentials.name = wamn_provision::project_env_cdc_secret_name(
         &triple.org,
         &triple.project,
         &triple.env,
@@ -141,7 +141,7 @@ pub async fn provision(
         .name
         .strip_suffix("-ca")
         .context("CNPG cluster CA")?;
-    let role = wamn_control_provision::migrations::MigrationDatabase::Project
+    let role = wamn_provision::migrations::MigrationDatabase::Project
         .managed_role(&connection.database);
     crate::credentials::reconcile(
         registry,
@@ -152,7 +152,7 @@ pub async fn provision(
         &role,
     )
     .await?;
-    let name = wamn_control_provision::environment_names::environment_resource_name(
+    let name = wamn_provision::environment_names::environment_resource_name(
         &triple.org,
         &triple.project,
         &triple.env,
@@ -185,7 +185,7 @@ pub async fn remove_database(
     triple: &wamn_registry::Triple,
     data: bool,
 ) -> anyhow::Result<()> {
-    let name = wamn_control_provision::environment_names::environment_resource_name(
+    let name = wamn_provision::environment_names::environment_resource_name(
         &triple.org,
         &triple.project,
         &triple.env,

@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connections/test-util", ]
+test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connection/test-util", ]
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements", "wamn-engine/wasm_component_model_implements"]
 
 [dependencies]
@@ -26,12 +26,12 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
 wamn-catalog = { workspace = true, features = ["sqlx"] }
-wamn-connections = { workspace = true }
+wamn-connection = { workspace = true }
 wamn-digest = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
-wamn-platform-identity = { workspace = true }
+wamn-identity = { workspace = true }
 wamn-postgres = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-run-state = { workspace = true }
@@ -57,9 +57,9 @@ sqlx = { workspace = true, features = ["macros", "migrate"] }
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true, features = ["test-util"] }
-wamn-platform-identity = { workspace = true, features = ["test-util"] }
+wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-sql = { path = ".", features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }

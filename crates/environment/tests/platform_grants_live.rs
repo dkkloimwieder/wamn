@@ -38,7 +38,7 @@ async fn a_fresh_install_keeps_control_plane_tables_out(pool: sqlx::PgPool) {
 async fn credentials_are_inaccessible_to_application_roles(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_control_provision::test_database::system(database.as_str()).await;
+    wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN NOINHERIT; END IF; END $$").execute(&mut client).await.map(drop).unwrap();
     let exposed: Vec<String> = sqlx::query("SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND n.nspname = 'identity' AND c.relkind IN ('r','p','v','m','f') AND (has_table_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')) ORDER BY 1").fetch_all(&mut client).await.unwrap().iter().map(|row| row.get(0)).collect();

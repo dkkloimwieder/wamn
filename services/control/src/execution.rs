@@ -27,10 +27,10 @@ impl Execution {
         project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
     ) -> anyhow::Result<String> {
-        wamn_control_provision::validate_project_env(&self.org, project, environment)?;
-        let key = wamn_control_provision::control_administration_key(project, environment);
+        wamn_provision::validate_project_env(&self.org, project, environment)?;
+        let key = wamn_provision::control_administration_key(project, environment);
         let config = std::fs::read_to_string(self.administration.join(key))?;
-        wamn_control_provision::migrations::MigrationDatabase::Project.configuration(&config)
+        wamn_provision::migrations::MigrationDatabase::Project.configuration(&config)
     }
 }
 
@@ -106,14 +106,14 @@ impl crate::host_route::ControlExecution for Execution {
                 let mut database: wamn_postgres::ConnectionConfig = serde_json::from_str(
                     &self.application_database(&request.project, &request.env)?,
                 )?;
-                database.username = wamn_control_provision::cdc_object_name(
+                database.username = wamn_provision::cdc_object_name(
                     &self.org,
                     &request.project,
                     &request.env,
                     &instance,
                 )
                 .parse()?;
-                database.credentials.name = wamn_control_provision::project_env_cdc_secret_name(
+                database.credentials.name = wamn_provision::project_env_cdc_secret_name(
                     &self.org,
                     &request.project,
                     &request.env,

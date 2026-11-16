@@ -67,7 +67,7 @@ An `env:NAME` need selects its output recipe and requires a nonempty variable af
 A `bin:PROGRAM` need requires an executable on `PATH` or at the given absolute path.
 For `bin:kcl`, the selector checks `WAMN_KCL`, the pinned installation under `.tools/kcl/`, then `PATH`.
 The selector runs ignored cases only when it can supply their declared inputs.
-KCL-dependent tests in `wamn-platform-install` and `wamn-ctl` live in integration targets.
+KCL-dependent tests in `wamn-platform-install` and `wamn-cli` live in integration targets.
 They declare `bin:kcl`. Chart rendering also declares `bin:helm`.
 For a direct run, prepare KCL with `cargo xtask install-kcl`.
 Then run `cargo test -p PACKAGE --test TARGET CASE -- --ignored --exact`.
@@ -112,7 +112,7 @@ This checks its generated inputs and guest compilation. The guest has no native 
 A passing workspace test result does not establish compilation of those guest targets.
 The platform producer builds both role components through the package component builder.
 `tests/selection.toml` owns suite commands, input rules, and preparation beyond Cargo dependencies.
-Platform fixture and catalog changes select `wamn-control-provision`.
+Platform fixture and catalog changes select `wamn-provision`.
 SQL changes select the environment retention and protected-relation interfaces with `ops`.
 Control and platform deployment changes select the exact native host case.
 Every change outside documentation selects `environment_render` and `platform_render` in `wamn-environment` through prekind or Cargo selection.
@@ -139,7 +139,7 @@ It builds applications through a private PostgreSQL database.
 Root workspace targets compile without `apps/target/wamn`.
 Preparation follows only cases that match the tier, name, and suite filters.
 Test declarations select named recipes or recipes that supply their environment inputs.
-The `control-binaries` recipe builds `TARGET/debug/wamn` and `TARGET/debug/wamn-ctl`.
+The `control-binaries` recipe builds `TARGET/debug/wamn`.
 Journey cases request this recipe directly and check those executable paths.
 Package feature entries affect compilation and do not request runtime preparation.
 Application preparation builds each base before its overlays.
@@ -189,7 +189,7 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | `WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture/components/fixture.wasm` |
 | `WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm` |
 | `WAMN_GENERATED_WIDGET_UPDATE_SCHEMA` | `ROOT/apps/target/wamn/platform_fixture/routes/widget/update.json` |
-| `WAMN_RECEIVING_DEV_BIN` | `TARGET/debug/wamn-ctl` |
+| `WAMN_RECEIVING_DEV_BIN` | `TARGET/debug/wamn` |
 | `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/wasm32-wasip2/release/http_route.wasm` |
 | `WAMN_BLOB_PUT_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/blob_put.wasm` |
 | `WAMN_SYNC_BENCH_DIST` | `TARGET/sync-bench/web` |
@@ -230,7 +230,7 @@ The selection runs the aggregate journey or its focused cases once.
 The selector prepares the guest numbering refusal test through `input:numbering-refusal`. For a direct Cargo run, build its Wasm example in the existing target directory first:
 
 ```sh
-cargo build --manifest-path apps/Cargo.toml -p wamn-postgres-statements --example numbering_refusal --target wasm32-wasip2
+cargo build --manifest-path apps/Cargo.toml -p wamn-guest --example numbering_refusal --target wasm32-wasip2
 "$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database tests --url-env DATABASE_URL -- cargo test -p wamn-sql --lib query_tests::live_an_invalid_timezone_setting_is_refused -- --ignored --exact
 ```
 
@@ -263,7 +263,7 @@ It checks that the second holder acquires only after the first holder releases i
 Run these tests with the build environment in [building](building.md):
 
 ```bash
-cargo test --locked --offline -p wamn-connections resource_lease::tests -- --test-threads=1
+cargo test --locked --offline -p wamn-connection resource_lease::tests -- --test-threads=1
 cargo test --locked --offline -p wamn-environment --test integration_restart_live -- --ignored --test-threads=1
 cargo test --locked --offline -p wamn-host --bin wamn-host host::lease_tests::sigterm_drains_calls_then_hands_the_lease_to_a_ready_host -- --ignored --exact --test-threads=1
 ```
@@ -271,7 +271,7 @@ cargo test --locked --offline -p wamn-host --bin wamn-host host::lease_tests::si
 The following commands select individual test targets:
 
 ```bash
-cargo test --locked --offline -p wamn-compiler --test platform_generation
+cargo test --locked --offline -p wamn-codegen --test platform_generation
 cargo test --locked --offline -p wamn-wms-tests --lib
 cargo test --manifest-path apps/Cargo.toml --locked --offline \
   -p receiving --all-targets
@@ -311,9 +311,9 @@ Exact text remains in the cases below because the bytes or literal are the publi
 - [Connection requirement identity](../../crates/catalog/src/connection.rs), `the_requirement_hash_bytes_are_pinned`, and [catalog serialization](../../crates/schema-introspection/src/ir.rs), `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/digest/src/lib.rs) also preserves numeric spelling, signed zero and canonical key order.
 - [SHA-256 vectors](../../crates/digest/src/lib.rs), [Ed25519 vectors](../../crates/identity-protocol/src/token/tests.rs), [HMAC vectors](../../crates/http/src/authentication.rs) and [release label encoding](../../crates/engine/src/release_manifest.rs): independent encoded vectors define the digest, signature or base32 value. A digest comparison is not a source-file snapshot.
 - Frozen serialized variants, refusal codes, media types, SQLSTATEs, reserved input paths, token prefixes and protocol identifiers remain literal comparisons. Their owners are [SQL values](../../crates/scalar/src/lib.rs), [identity protocols](../../crates/identity-protocol/src), [component contracts](../../crates/catalog/src), [host route contracts](../../crates/catalog/src/host_route.rs) and the RFC protocols used by the transport. HTTP request lines, authorization schemes, metadata headers, health response tokens and canonical cache keys are wire values. Security allowlists remain independent of the implementation that installs the grants.
-- [TypeScript type spelling](../../crates/compiler/src/client_ts.rs), `every_contract_type_has_its_exact_typescript_spelling`: the test reads the non-null scalar types from the PostgreSQL WIT contract. Their TypeScript names are part of the client contract.
+- [TypeScript type spelling](../../crates/codegen/src/client_ts.rs), `every_contract_type_has_its_exact_typescript_spelling`: the test reads the non-null scalar types from the PostgreSQL WIT contract. Their TypeScript names are part of the client contract.
 - [HTML escaping](../../crates/execution-host/src/oauth_callback.rs) and its [HTTP boundary](../../crates/execution-host/tests/support/oauth_authorization.rs): `&lt;script&gt;&quot;&amp;&#39;` and `&lt;script&gt;&amp;&quot;&#39;` encode the supplied attack text. The unescaped text must stay absent.
-- [Generated TypeScript documentation](../../crates/compiler/tests/client_ts_behavior.test.ts) compares authored paragraphs with their input declarations. Generated comment headings and formatting are not asserted. Export names derive from the input operations; the public `Feed`, `Collection`, `Write` and `Changes` naming suffixes remain API literals.
+- [Generated TypeScript documentation](../../crates/codegen/tests/client_ts_behavior.test.ts) compares authored paragraphs with their input declarations. Generated comment headings and formatting are not asserted. Export names derive from the input operations; the public `Feed`, `Collection`, `Write` and `Changes` naming suffixes remain API literals.
 - [Receiving decimal arithmetic](../../apps/wamn_receiving/web/test/sync.test.tsx): `3.500`, `6.500`, `0.3`, `-0.25` and `15` are decimal values with the required scale, not formatted diagnostics.
 - [Manifest loading](../../crates/engine/src/release_manifest.rs), `an_unsupported_format_refuses_with_the_frozen_literal`: `unsupported-serving-manifest-version` is the serialized refusal that the loader must preserve.
 - [The log viewer](../../apps/platform_ui/test/environment.test.tsx) must display the supplied log bytes unchanged; its fixture owns those bytes, and the assertions read them from the recorded response.
@@ -422,11 +422,11 @@ Enable the feature on a dev-dependency. These functions do not take the process 
 
 | Setup | Function | Installs |
 | --- | --- | --- |
-| system | `wamn_control_provision::test_database::system(url).await` | the control store, applied as its database owner `wamn_system` |
+| system | `wamn_provision::test_database::system(url).await` | the control store, applied as its database owner `wamn_system` |
 | project | `wamn_catalog::test_database::project(&mut connection).await` | `CATALOG_SCHEMA_SQL` and the `wamn_app` role |
-| project+platform | `wamn_platform_identity::test_database::project_platform(url).await` | the project base grants and `deploy/sql/app-schema.sql` |
+| project+platform | `wamn_identity::test_database::project_platform(url).await` | the project base grants and `deploy/sql/app-schema.sql` |
 
-`wamn-control-provision --lib` tests names, target documents, templates, and operation grants without Postgres.
+`wamn-provision --lib` tests names, target documents, templates, and operation grants without Postgres.
 Its database tests live under `crates/provision/tests/`.
 The `apply_grants` target tests the apply login, and `control_grants` tests org isolation.
 Reader grant targets each cover one login family.
@@ -462,8 +462,8 @@ Both runners use the shared process boundary in `cargo xtask require-test-result
 The silence limit and the absolute deadline apply independently. Output cannot extend a deadline.
 The epoch interruption case lives in `wamn-engine --test deadline`.
 Pure calendar scheduling decisions live in `wamn-workflow --test schedule_decisions`.
-Admission authority stays in `wamn-control-provision --test admission_live`.
-`wamn-control-provision --test run_state_live` covers atomic admission, lease recovery, fencing and retention.
+Admission authority stays in `wamn-provision --test admission_live`.
+`wamn-provision --test run_state_live` covers atomic admission, lease recovery, fencing and retention.
 Live schedule cases call the service with its real clock and can take several minutes.
 Schedule storage stays in `wamn-environment --test workflow_schedule_live`.
 Broker acknowledgement lives in `wamn-environment --test workflow_event_nats`.
@@ -713,7 +713,7 @@ Tests must use those routes for setup and cleanup.
 `wamn-environment/tests/migrations_live.rs` covers SQLx checksums, transaction rollback, retry behavior, and failed history writes.
 It also calls package apply to refuse rebinding an existing relation to another package or entity.
 The same target checks direct migration credentials and refuses administrator sessions for platform migrations.
-`wamn-compiler/tests/build_live.rs::history_changes_append_immutable_versions_and_execute_during_build` covers generated history versioning.
+`wamn-codegen/tests/build_live.rs::history_changes_append_immutable_versions_and_execute_during_build` covers generated history versioning.
 These live targets require PostgreSQL. Compile them without starting a server with `cargo test -p <package> --test <target> --no-run`.
 Workflow authoring now has an authenticated control operation. Its deployed acceptance coverage remains with the workflow owner.
 Reset still asserts old-event disposal and environment isolation.
@@ -726,7 +726,7 @@ These tests provide no GCP coverage.
 
 All tests require Docker, kind, Helm, kubectl, OpenSSL, and a prepared KCL compiler selected by `WAMN_KCL`.
 Focused application bodies require `script` for product deletion confirmation.
-Build the native `wamn` and `wamn-ctl` binaries beside the test executable in `$CARGO_TARGET_DIR/debug`.
+Build the native `wamn` binary beside the test executable in `$CARGO_TARGET_DIR/debug`.
 Use prepared artifacts from [local platform production](building.md#local-platform-artifacts).
 Keep the complete prepared chart directory and its pinned images unchanged after installation.
 Artifact preparation builds authored scratch packages from `apps/platform_fixture` through product commands.
@@ -756,7 +756,7 @@ Install once with the product command from a shell with the prepared chart and p
 export PATH="$CARGO_TARGET_DIR/debug:$PATH"
 export WAMN_KCL="$(cargo xtask install-kcl)"
 export WAMN_RELEASE_CHART=/var/tmp/wamn-platform-chart
-cargo build --locked --offline -p wamn-ctl --bin wamn --bin wamn-ctl
+cargo build --locked --offline -p wamn-cli --bin wamn
 mkdir -p /var/tmp/wamn-kind-dep3
 sed 's/cluster_name = "wamn-local"/cluster_name = "wamn-test-dep3"/' \
   deploy/kind/cluster.k > /var/tmp/wamn-kind-dep3/cluster.k
@@ -951,8 +951,7 @@ The C4 tests use disposable PostgreSQL databases. Compile them without starting 
 ```bash
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='kache test-runner'
 cargo test --locked --offline -p wamn-environment --test files_live --test platform_grants_live --no-run
-cargo test --locked --offline -p wamn-control-provision --test family_denial_matrix --test deploy_sql_authority --no-run
-cargo test --locked --offline -p wamn-execution-host --test files_live --test host_route_live --no-run
+cargo test --locked --offline -p wamn-provision --test family_denial_matrix --test deploy_sql_authority --no-run
 cargo test --locked --offline -p wamn-schema-introspection --test file_reference_live --no-run
 ```
 
@@ -962,8 +961,7 @@ Run the live cases with Docker and the PostgreSQL binaries:
 
 ```bash
 cargo test --locked --offline -p wamn-environment --test files_live --test platform_grants_live -- --nocapture
-cargo test --locked --offline -p wamn-control-provision --test family_denial_matrix --test deploy_sql_authority -- --nocapture
-cargo test --locked --offline -p wamn-execution-host --test files_live --test host_route_live -- --nocapture
+cargo test --locked --offline -p wamn-provision --test family_denial_matrix --test deploy_sql_authority -- --nocapture
 cargo test --locked --offline -p wamn-schema-introspection --test file_reference_live -- --nocapture
 ```
 
@@ -986,17 +984,6 @@ The test generates its contracts and admits its Wasm component through the produ
 It invokes that operation through the shared operation entry as a session caller that holds only the operation grant.
 The returned URL serves the private bytes, then returns 403 after expiry. Direct `file.get` returns 403.
 This test needs no external host, guest build, NATS server, or additional environment variables.
-Run that case alone with the exports above, Docker, and the PostgreSQL binaries:
-
-```bash
-cargo test --locked --offline -p wamn-execution-host --test files_live package_operation_returns_a_private_file_signed_url_that_expires -- --exact --nocapture
-```
-
-Run its package admission test without PostgreSQL or MinIO:
-
-```bash
-cargo test --locked --offline -p wamn-execution-host --test files_live package_signed_read_admits_the_real_node_abi_and_manifest_owned_authority -- --exact
-```
 
 Public exposure tests require anonymous origin reads, the cache header, and origin 404 after unexpose.
 Raw blobstore mutations refuse the reserved private and public keys.
@@ -1018,7 +1005,7 @@ Build every package before you compile the apps workspace, the application test 
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database generation --url-env DATABASE_URL -- \
-  cargo run --locked --offline -p wamn-ctl --bin wamn -- build \
+  cargo run --locked --offline -p wamn-cli --bin wamn -- build \
   apps/platform_fixture apps/platform_fixture_overlay apps/wamn_receiving \
   apps/client_acme_receiving apps/wamn_wms apps/edge_samples apps/edge_device
 ```
@@ -1040,7 +1027,7 @@ The compiler emits no native verifier rows, bind fixtures, or source maps.
 The live build tests use PostgreSQL 18. Pass these child commands to the private-server runner:
 
 ```bash
-cargo test --locked --offline -p wamn-compiler --test build_live
+cargo test --locked --offline -p wamn-codegen --test build_live
 ```
 
 They copy the platform fixture and build it into their own output root.
@@ -1058,12 +1045,12 @@ Run `pnpm install --offline` at the repository root first.
 The compilation test skips with a message only when the workspace `tsc` executable is absent.
 
 ```bash
-cargo test --locked --offline -p wamn-compiler --test client_ts_emitter
+cargo test --locked --offline -p wamn-codegen --test client_ts_emitter
 ```
 To compile the bindings for the platform fixture, run:
 
 ```bash
-cargo run --locked --offline -p wamn-compiler --example compile_client_ts
+cargo run --locked --offline -p wamn-codegen --example compile_client_ts
 ```
 
 The command emits the fixture bindings into a temporary directory, writes a strict `tsconfig.json` beside them, and runs `tsc --project` on that directory.
@@ -1082,7 +1069,7 @@ Every web script that reads the clients writes them first through `cargo xtask h
 To write them without a web script, run:
 
 ```bash
-cargo run --locked --offline -p wamn-compiler --example materialize_host_route_client
+cargo run --locked --offline -p wamn-codegen --example materialize_host_route_client
 ```
 
 `pnpm run lint` in `apps/platform_ui` compiles them, because that package maps `@wamn/control-client` and `@wamn/control-org-client` to them.
@@ -1159,7 +1146,7 @@ Run `pnpm install --offline` at the repository root first.
 The existing manual test uses the same test code:
 
 ```bash
-TMPDIR=/var/tmp cargo run --offline -p wamn-compiler --example compile_client_components
+TMPDIR=/var/tmp cargo run --offline -p wamn-codegen --example compile_client_components
 ```
 
 The command writes temporary modules and removes them after the test.
@@ -1240,11 +1227,6 @@ cargo test -p wamn-environment --test workflow_schedule_live -- --nocapture
 
 ### Connection candidates
 
-Run the candidate route test with PostgreSQL 18, the local NATS binary, Docker, and the wasm32-wasip2 target available.
 Set `WAMN_NATIVE_C_NATS_BIN` to that NATS binary.
 The test starts private database, broker, registry, TLS, and Modbus fixtures.
 It tests good and bad candidates, version selection, cached compilation, authority refusal, and unchanged generation and credential counts.
-
-```bash
-cargo test --locked --offline -p wamn-execution-host --test control_route_live --features wamn-sql/wasm_component_model_implements,wash-runtime/washlet connection_test::candidate_http_and_modbus_health_commit_nothing -- --ignored --exact --nocapture
-```

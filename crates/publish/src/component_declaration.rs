@@ -116,7 +116,7 @@ impl Error for ComponentDeclarationError {
 pub fn authored_base_digests(
     package_root: &Path,
 ) -> Result<BTreeMap<Box<str>, wamn_digest::Digest>, ComponentDeclarationError> {
-    let manifest = wamn_compiler::package_manifest_path(package_root);
+    let manifest = wamn_codegen::package_manifest_path(package_root);
     let bytes =
         fs::read(&manifest).map_err(|source| ComponentDeclarationError::read(&manifest, source))?;
     let document: Value = serde_json::from_slice(&bytes)
@@ -165,7 +165,7 @@ pub fn render_package_declaration(
             source,
         )
     };
-    let mut declarations = wamn_compiler::publication::read_components(package_root)
+    let mut declarations = wamn_codegen::publication::read_components(package_root)
         .map_err(|source| invalid(format!("read compiled component declarations: {source:#}")))?;
     let declaration = declarations
         .remove(component)

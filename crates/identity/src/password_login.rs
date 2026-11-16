@@ -158,7 +158,7 @@ pub async fn renewal_principal(
     let Ok(token) = SecretToken::parse(SecretType::Renewal, secret) else {
         return Ok(None);
     };
-    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    let actor = wamn_provision::PlatformComponent::Provisioning.principal_id();
     let mut transaction = crate::transaction::read_connection(connection, &actor)
         .await
         .map_err(|error| database(&error))?;

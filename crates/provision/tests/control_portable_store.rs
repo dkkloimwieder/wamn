@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
-const STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
+const STORE_SQL: &str = wamn_provision::CONTROL_PORTABLE_STORE_SQL;
 
 fn psql(url: &str, script: &str) -> std::process::Output {
     let mut child = Command::new("psql")
@@ -63,7 +63,7 @@ async fn control_portable_store_enforces_the_current_record_on_postgres(pool: sq
     );
 
     script.push('\n');
-    script.push_str(wamn_control_provision::sql::ensure_db_owner_role_sql());
+    script.push_str(wamn_provision::sql::ensure_db_owner_role_sql());
     script.push_str(
         "DO $database$ BEGIN \
            EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); \

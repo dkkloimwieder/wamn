@@ -62,7 +62,7 @@ Workflow administration also uses server-selected connections and the authentica
 Capture-gap recovery selects the recorded capture role and the configured event observer. It accepts no database URL from the CLI.
 Integration publication pushes local build output first. The service verifies the published artifact before it records its version.
 
-`wamn` is the user CLI. `wamn-ctl` runs internal bootstrap steps.
+`wamn` is the user CLI and runs internal bootstrap steps.
 Deploy, rollback, status, schema, workflow, and integration administration use authenticated routes.
 They require control credentials and have no direct database fallback.
 Build, dev and eject stay local. Bootstrap stays local before control exists.

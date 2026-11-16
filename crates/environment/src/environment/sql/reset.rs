@@ -18,21 +18,21 @@ pub async fn reset_database(
     let database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut client)
         .await?;
-    let login = wamn_control_provision::migration::login(&project_env_key, &database)?;
+    let login = wamn_provision::migration::login(&project_env_key, &database)?;
     let mut tx = client.begin().await?;
     sqlx::raw_sql(crate::apply_package::LOCK_SQL)
         .execute(&mut *tx)
         .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning,
         ),
     ))
     .execute(&mut *tx)
     .await?;
     let mut migration = wamn_postgres::connect(migration_url).await?;
     let migration_login =
-        wamn_control_provision::migration::require_login(&mut migration, &project_env_key).await?;
+        wamn_provision::migration::require_login(&mut migration, &project_env_key).await?;
     ensure!(
         migration_login == login,
         "migration and owner connections name different databases"
@@ -53,7 +53,7 @@ pub async fn reset_database(
     .execute(&mut *tx)
     .await?;
     for schema in &schemas {
-        wamn_control_provision::migration::grant_model_schema_access(&mut tx, &login, schema)
+        wamn_provision::migration::grant_model_schema_access(&mut tx, &login, schema)
             .await?;
     }
     // SQLx histories are trusted platform objects, separate from application DDL ownership.
@@ -75,12 +75,12 @@ pub async fn reset_database(
         .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "{} {}",
-        wamn_control_provision::sql::grant_workload_login_sql(
-            wamn_control_provision::WorkloadRoleFamily::Migration,
+        wamn_provision::sql::grant_workload_login_sql(
+            wamn_provision::WorkloadRoleFamily::Migration,
             &database,
             &login,
         ),
-        wamn_control_provision::migration::grants_sql(&login)
+        wamn_provision::migration::grants_sql(&login)
     )))
     .execute(&mut *tx)
     .await?;

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use wamn_catalog::HostAttachment;
 use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::Store as _;
-use wamn_connections::connections::administration;
+use wamn_connection::connections::administration;
 
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 
@@ -98,7 +98,7 @@ impl ControlRoutes<'_> {
             let mut client = wamn_postgres::connect(&logins[0]).await?;
 
             let mut transaction =
-                wamn_platform_identity::transaction::read_connection(&mut client, caller).await?;
+                wamn_identity::transaction::read_connection(&mut client, caller).await?;
             let published = Value::Object(
                 versions
                     .iter()

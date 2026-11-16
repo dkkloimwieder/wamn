@@ -14,7 +14,7 @@ use wamn_identity_protocol::AuthorityClass;
 use wamn_authority::identity::{
     ReleaseIdentity, SessionIdentity,
 };
-use wamn_connections::connection::ConnectionInvocation;
+use wamn_connection::connection::ConnectionInvocation;
 
 use super::pool::{
     ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool,
@@ -490,7 +490,7 @@ impl WamnPostgres {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(!component_id.is_empty(), "component id must be present");
         self.scopes
-            .update::<wamn_connections::invocation::Scope, _>(component_id, |record| {
+            .update::<wamn_connection::invocation::Scope, _>(component_id, |record| {
                 anyhow::ensure!(record.invocation.is_none(), "invocation is already bound");
                 record.invocation = Some(invocation);
                 Ok(())
@@ -501,7 +501,7 @@ impl WamnPostgres {
     #[cfg(any(test, feature = "test-util"))]
     pub fn revoke_invocation(&self, component_id: &str) {
         self.scopes
-            .update_existing::<wamn_connections::invocation::Scope, _>(component_id, |record| {
+            .update_existing::<wamn_connection::invocation::Scope, _>(component_id, |record| {
                 record.invocation = None
             });
     }
@@ -509,7 +509,7 @@ impl WamnPostgres {
     /// The invocation currently bound to one pooled instance.
     #[must_use]
     pub fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
-        wamn_connections::invocation::invocation(&self.scopes, component_id)
+        wamn_connection::invocation::invocation(&self.scopes, component_id)
     }
 
     /// Bind workload identity and verify that its executing principal is provisioned.
@@ -560,7 +560,7 @@ impl WamnPostgres {
     ) -> anyhow::Result<()> {
         validate_identity(identity)?;
         self.scopes
-            .read::<wamn_connections::invocation::Scope, _>(component_id, |record| {
+            .read::<wamn_connection::invocation::Scope, _>(component_id, |record| {
                 record
                     .context
                     .as_ref()

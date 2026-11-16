@@ -2,7 +2,7 @@
 
 use anyhow::Context as _;
 use sqlx::Row as _;
-use wamn_control_provision::{
+use wamn_provision::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_login,
 };
 use wamn_postgres::connect;
@@ -50,7 +50,7 @@ pub(super) async fn delete_control_roles(
         }
         let mut connection = base.clone();
         connection.username = username.clone();
-        connection.credentials.name = wamn_control_provision::workload_secret_name(
+        connection.credentials.name = wamn_provision::workload_secret_name(
             family,
             &triple.org,
             &triple.project,

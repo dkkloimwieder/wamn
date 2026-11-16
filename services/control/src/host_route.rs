@@ -19,8 +19,8 @@ use wamn_engine::native_routes::{
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_identity::control::{control_projects_page, is_org_admin, org_projects_page};
-use wamn_platform_identity::paging::Order;
+use wamn_identity::control::{control_projects_page, is_org_admin, org_projects_page};
+use wamn_identity::paging::Order;
 use wamn_sql::WamnPostgres;
 
 use crate::application_route::ApplicationRoutes;
@@ -258,7 +258,7 @@ impl HostRouteDelivery {
             }
             (HostHandler::ControlMine, HostRouteHandlers::Control { control, org, .. }) => {
                 let mut transaction =
-                    wamn_platform_identity::transaction::read_pool(control, principal).await?;
+                    wamn_identity::transaction::read_pool(control, principal).await?;
                 let org_admin = is_org_admin(&mut transaction, principal, org).await?;
                 let page = control_page(payload, attachment, principal, org, None, Order::Project)?;
                 let projects = if org_admin {
@@ -288,7 +288,7 @@ impl HostRouteDelivery {
                 let mut rows = Vec::with_capacity(projects.len());
                 for project in projects {
                     let project_admin = org_admin
-                        || wamn_platform_identity::control::is_project_admin(
+                        || wamn_identity::control::is_project_admin(
                             &mut transaction,
                             principal,
                             org,

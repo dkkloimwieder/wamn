@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/jsonata", "crates/events", "crates/event-wire", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web-front", "services/identity", "services/ctl", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/run-state", "crates/workflow", "crates/compiler", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connections", "crates/sql", "crates/http", "crates/blobstore", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker", "crates/oci"]
+members = ["crates/jsonata", "crates/events", "crates/event-wire", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/run-state", "crates/workflow", "crates/codegen", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connection", "crates/sql", "crates/http", "crates/blobstore", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker", "crates/oci"]
 default-members = [
   "crates/catalog",
   "crates/run-state",
@@ -9,14 +9,14 @@ default-members = [
   "crates/component-policy",
   "crates/engine",
   "crates/authority",
-  "crates/connections",
+  "crates/connection",
   "crates/sql",
   "crates/http",
   "crates/blobstore",
   "crates/authentication",
   "crates/oci",
   "services/host",
-  "services/identity",
+  "services/identity-service",
   "crates/events",
 ]
 # Guest components are built separately for wasm32-wasip2 (see apps/*).
@@ -233,25 +233,25 @@ wamn-publish = { path = "crates/publish", version = "0.1.0" }
 wamn-platform-install = { path = "crates/platform-install", version = "0.1.0" }
 wamn-environment = { path = "crates/environment", version = "0.1.0" }
 wamn-dev = { path = "crates/dev", version = "0.1.0" }
-wamn-control-provision = { path = "crates/provision", version = "0.1.0" }
+wamn-provision = { path = "crates/provision", version = "0.1.0" }
 wamn-registry = { path = "crates/registry", version = "0.1.0" }
 wamn-events = { path = "crates/events", version = "0.1.0" }
 wamn-event-wire = { path = "crates/event-wire", version = "0.1.0" }
 wamn-engine = { path = "crates/engine", version = "0.1.0" }
 postgres-protocol = "0.6.12"
 wamn-number-pattern = { path = "crates/number-pattern", version = "0.1.0" }
-wamn-platform-identity = { path = "crates/identity", version = "0.1.0" }
+wamn-identity = { path = "crates/identity", version = "0.1.0" }
 wamn-identity-client = { path = "crates/identity-client", version = "0.1.0" }
 wamn-identity-protocol = { path = "crates/identity-protocol", version = "0.1.0" }
 wamn-record-history = { path = "crates/record-history", version = "0.1.0" }
 wamn-run-state = { path = "crates/run-state", version = "0.1.0" }
 wamn-authority = { path = "crates/authority", version = "0.1.0" }
-wamn-connections = { path = "crates/connections", version = "0.1.0" }
+wamn-connection = { path = "crates/connection", version = "0.1.0" }
 wamn-sql = { path = "crates/sql", version = "0.1.0" }
 wamn-http = { path = "crates/http", version = "0.1.0" }
 wamn-blobstore = { path = "crates/blobstore", version = "0.1.0" }
 wamn-authentication = { path = "crates/authentication", version = "0.1.0" }
-wamn-compiler = { path = "crates/compiler", version = "0.1.0" }
+wamn-codegen = { path = "crates/codegen", version = "0.1.0" }
 wamn-schema-introspection = { path = "crates/schema-introspection", version = "0.1.0" }
 wamn-test-application = { path = "test-support/application", version = "0.1.0" }
 wamn-test-infrastructure = { path = "test-support/resources", version = "0.1.0" }

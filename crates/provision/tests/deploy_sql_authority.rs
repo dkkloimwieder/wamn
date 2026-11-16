@@ -27,8 +27,8 @@
 //! Each case rebuilds cluster-wide roles and owns a fresh `wamn` database.
 
 use std::process::Command;
-use wamn_control_provision::sql;
-use wamn_control_provision::workload_role::{
+use wamn_provision::sql;
+use wamn_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
 };
 
@@ -260,8 +260,8 @@ END $$;
         &db_url,
         &format!(
             "BEGIN; {} {seed} COMMIT;",
-            wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning
+            wamn_provision::bind_platform_principal_sql(
+                wamn_provision::PlatformComponent::Provisioning
             )
         ),
     );
@@ -962,10 +962,10 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
                 &system_url,
                 &format!(
                     "SET ROLE {applier}; BEGIN; {} {} COMMIT; RESET ROLE;",
-                    wamn_control_provision::bind_platform_principal_sql(
-                        wamn_control_provision::PlatformComponent::Provisioning
+                    wamn_provision::bind_platform_principal_sql(
+                        wamn_provision::PlatformComponent::Provisioning
                     ),
-                    wamn_control_provision::SYSTEM_SCHEMA_SQL
+                    wamn_provision::SYSTEM_SCHEMA_SQL
                 ),
             );
             assert_history_grants(&system_url);
@@ -1800,8 +1800,8 @@ fn a_project_policy_refuses_without_a_transaction_identity() {
             "BEGIN; {} \
         INSERT INTO catalog.packages(project_env_key,package_id,package_version) \
         VALUES('t1--dev--project','platform_fixture','1.0.0'); COMMIT;",
-            wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning
+            wamn_provision::bind_platform_principal_sql(
+                wamn_provision::PlatformComponent::Provisioning
             )
         ),
     );

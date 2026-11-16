@@ -1,7 +1,7 @@
 //! Organization chart inputs come from the organization and its complete policy set.
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_control_provision::{EnvPolicy, Org, Placement};
+use wamn_provision::{EnvPolicy, Org, Placement};
 
 pub fn values(org: &Org, policies: &[EnvPolicy]) -> anyhow::Result<Value> {
     let mut clusters = Vec::new();

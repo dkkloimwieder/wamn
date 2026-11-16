@@ -2,7 +2,7 @@
 
 #[path = "support/grants.rs"]
 mod grants;
-use wamn_control_provision::WorkloadRoleFamily;
+use wamn_provision::WorkloadRoleFamily;
 
 #[sqlx::test(migrations = false)]
 async fn migration_refusals_and_catalog_rules(pool: sqlx::PgPool) {
