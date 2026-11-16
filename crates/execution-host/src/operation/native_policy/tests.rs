@@ -8,15 +8,15 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 use tokio::time::{Instant, timeout};
-use wamn_authority::connection::{
-    ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
-};
 use wamn_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_blobstore::plugin::WamnBlobstore;
 use wamn_broker::Publisher;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate, PackageCoordinate,
     SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest, ServingRelease,
+};
+use wamn_connections::connection::{
+    ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
 };
 use wamn_connections::connection_credentials::ConnectionCredentials;
 use wamn_connections::connection_facts::ConnectionFacts;
@@ -711,7 +711,8 @@ impl Fixture {
                 )),
                 blobstore: Arc::new(WamnBlobstore::new(Arc::clone(&postgres))),
                 context: Arc::new(
-                    wamn_sql::invocation::ReleaseContext::new(Arc::clone(&release), facts).unwrap(),
+                    wamn_connections::invocation::ReleaseContext::new(Arc::clone(&release), facts)
+                        .unwrap(),
                 ),
                 postgres,
                 logging: Arc::new(TracingLogger::default()),
@@ -826,8 +827,8 @@ impl Fixture {
                             interface_version: self.root.interface_version.clone(),
                             operation: ROOT.into(),
                         },
-                        entry: wamn_authority::connection::InvocationEntry::Wiring(
-                            wamn_authority::connection::WiringPosition {
+                        entry: wamn_connections::connection::InvocationEntry::Wiring(
+                            wamn_connections::connection::WiringPosition {
                                 configuration: Default::default(),
                                 application: "workflow".parse().unwrap(),
                                 wiring_hash: (format!("sha256:{}", "a".repeat(64)))

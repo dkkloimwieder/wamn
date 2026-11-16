@@ -1,7 +1,7 @@
 //! Resolve the authority of one admitted invocation before an external call.
 
 use crate::{ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres};
-use wamn_authority::connection::{
+use wamn_connections::connection::{
     ConnectionExecutionClosure, authorize_candidate_closure, authorize_release_closure,
     entry_lookup,
 };
@@ -13,7 +13,13 @@ pub async fn resolve(
     alias: &str,
 ) -> anyhow::Result<ConnectionEffectSnapshot> {
     use anyhow::Context as _;
-    let context = crate::invocation::context(&postgres.scopes, scope)?;
+    let context = wamn_connections::invocation::context(&postgres.scopes, scope)?;
+    postgres
+        .scopes
+        .read::<crate::invocation::Authority, _>(scope, |record| {
+            crate::invocation::validate_context(&record.identity, &context)
+        })
+        .context("scope has no SQL identity")??;
     let facts = &context.connections;
     let release = &context.release;
     let invocation = postgres

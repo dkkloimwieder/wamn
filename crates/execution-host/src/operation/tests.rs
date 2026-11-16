@@ -1,4 +1,4 @@
-use wamn_authority::connection::WiringPosition;
+use wamn_connections::connection::WiringPosition;
 
 use super::*;
 use wamn_engine::native_routes::{OperationRefusalType, authorize_registered_operation};

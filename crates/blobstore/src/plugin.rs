@@ -17,7 +17,7 @@ use super::binding::{self, BindingError};
 use super::store::{BoundContainer, ConnectionAuthority};
 use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider};
 
-use wamn_authority::connection::ConnectionInvocation;
+use wamn_connections::connection::ConnectionInvocation;
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_connections::connection_memory::{ConnectionFact, ConnectionStatus};
 use wamn_sql::WamnPostgres;
@@ -52,7 +52,7 @@ impl WamnBlobstore {
 
     /// Read signing and effect authority from the invocation record.
     pub fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
-        self.postgres.invocation(component_id)
+        wamn_connections::invocation::invocation(&self.postgres.scopes, component_id)
     }
 
     /// The absolute deadline of the admitted invocation.
@@ -66,7 +66,7 @@ impl WamnBlobstore {
     /// Open file storage after the native host authorizes its package binding.
     pub async fn file_store(
         &self,
-        context: &wamn_sql::invocation::ReleaseContext,
+        context: &wamn_connections::invocation::ReleaseContext,
         connection_name: &str,
         read_only: bool,
         deadline: tokio::time::Instant,
@@ -147,7 +147,7 @@ impl WamnBlobstore {
         component_id: &str,
         store_alias: &str,
     ) -> Result<BoundContainer, BindingError> {
-        let context = wamn_sql::invocation::context(&self.postgres.scopes, component_id)
+        let context = wamn_connections::invocation::context(&self.postgres.scopes, component_id)
             .map_err(|_| BindingError::unauthorized())?;
         let facts = &context.connections;
         let snapshot = wamn_sql::connection_binding::resolve(
@@ -405,7 +405,7 @@ pub(super) fn blobstore_span(
         &span,
         invocation
             .as_ref()
-            .map(wamn_authority::connection::ConnectionInvocation::effect_wiring),
+            .map(wamn_connections::connection::ConnectionInvocation::effect_wiring),
     );
     span
 }

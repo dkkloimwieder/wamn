@@ -731,7 +731,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
 fn test_context(
     postgres: &Arc<WamnPostgres>,
     release: Arc<LoadedRelease>,
-) -> Arc<crate::invocation::ReleaseContext> {
+) -> Arc<wamn_connections::invocation::ReleaseContext> {
     let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
         Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
@@ -741,5 +741,5 @@ fn test_context(
         super::super::DEFAULT_PROJECT,
         &release.target().environment,
     ));
-    Arc::new(crate::invocation::ReleaseContext::new(release, facts).unwrap())
+    Arc::new(wamn_connections::invocation::ReleaseContext::new(release, facts).unwrap())
 }

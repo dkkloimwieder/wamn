@@ -54,7 +54,7 @@ impl OperationMetrics {
 #[derive(Debug)]
 pub(super) struct OperationWorkload {
     start: (String, String),
-    context: Arc<crate::invocation::ReleaseContext>,
+    context: Arc<wamn_connections::invocation::ReleaseContext>,
     identity: SessionIdentity,
     operations: BTreeMap<String, OperationAuthority>,
     invoker: std::sync::RwLock<Option<std::sync::Weak<dyn OperationInvoker>>>,
@@ -65,7 +65,7 @@ struct OperationAuthority {
     read: bool,
     grant: Option<wamn_catalog::registered_operation::RegisteredOperation>,
     schema: Option<String>,
-    invocation: wamn_authority::connection::ConnectionInvocation,
+    invocation: wamn_connections::connection::ConnectionInvocation,
     application: wamn_catalog::ApplicationName,
     transaction: bool,
 }
@@ -118,7 +118,7 @@ impl WamnPostgres {
     pub fn bind_operation_workload(
         &self,
         workload: &str,
-        context: Arc<crate::invocation::ReleaseContext>,
+        context: Arc<wamn_connections::invocation::ReleaseContext>,
         reference: &str,
         component_name: &str,
         identity: SessionIdentity,
@@ -179,21 +179,21 @@ impl WamnPostgres {
                         read,
                         grant: fact.registered_operation.clone(),
                         schema: component.runtime_schema.clone(),
-                        invocation: wamn_authority::connection::ConnectionInvocation {
-                            origin: wamn_authority::connection::ConnectionOrigin {
+                        invocation: wamn_connections::connection::ConnectionInvocation {
+                            origin: wamn_connections::connection::ConnectionOrigin {
                                 package_id: component.package_id.clone(),
                                 component_digest: component.descriptor.component_digest,
                                 component: component.descriptor.component.clone(),
                                 interface_version: component.descriptor.interface_version.clone(),
                                 operation: id.clone(),
                             },
-                            entry: wamn_authority::connection::InvocationEntry::Route,
+                            entry: wamn_connections::connection::InvocationEntry::Route,
                             package_id: component.package_id.clone(),
                             component_digest: component.descriptor.component_digest,
                             component: component.descriptor.component.clone(),
                             operation: id.clone(),
                             closure:
-                                wamn_authority::connection::ConnectionExecutionClosure::Released,
+                                wamn_connections::connection::ConnectionExecutionClosure::Released,
                             effects: None,
                         },
                         application: application.to_owned(),
@@ -213,6 +213,9 @@ impl WamnPostgres {
         self.scopes
             .update::<crate::invocation::Authority, _>(workload, |record| {
                 record.identity = identity.clone();
+            });
+        self.scopes
+            .update::<wamn_connections::invocation::Scope, _>(workload, |record| {
                 record.context = Some(Arc::clone(&context));
             });
         workloads.insert(
@@ -270,6 +273,9 @@ impl WamnPostgres {
         self.scopes
             .update::<crate::invocation::Authority, _>(component, |record| {
                 record.identity = entry.identity.clone();
+            });
+        self.scopes
+            .update::<wamn_connections::invocation::Scope, _>(component, |record| {
                 record.context = Some(Arc::clone(&entry.context));
             });
         bound.insert(component.to_owned(), entry);

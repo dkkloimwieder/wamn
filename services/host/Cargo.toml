@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 wamn-digest = { workspace = true, features = ["sqlx"] }
-wamn-integrations.workspace = true
 wamn-kubernetes.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }

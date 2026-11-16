@@ -230,10 +230,10 @@ impl Releases {
         )?);
         if let Some((registry, credentials)) = &r.registry {
             operations.set_integrations(Arc::new(
-                wamn_integrations::Integrations::new(
+                wamn_connections::integrations::Integrations::new(
                     Arc::clone(&r.facts),
                     &release,
-                    &r.postgres,
+                    r.postgres.as_ref(),
                     &r.configuration.project,
                     registry.clone(),
                     credentials.clone(),

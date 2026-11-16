@@ -23,7 +23,7 @@ use wamn_execution_host::{
 };
 use wamn_identity_protocol::PlatformComponent;
 
-use wamn_authority::connection::{ConnectionExecutionClosure, InvocationEntry, WiringPosition};
+use wamn_connections::connection::{ConnectionExecutionClosure, InvocationEntry, WiringPosition};
 
 /// The pinned graph and execution identity of one queued workflow.
 #[derive(Debug)]

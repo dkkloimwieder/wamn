@@ -272,7 +272,7 @@ prerequisites = []
 inputs = ["^crates/dev/", "^crates/(authority|connections|sql|http|integrations)/", "^crates/(blobstore|authentication|component-artifact)/", "^crates/execution-host/", "^crates/events/", "^services/host/"]
 execution = "libtest"
 mode = "local"
-select_packages = ["wamn-authority", "wamn-connections", "wamn-sql", "wamn-http", "wamn-blobstore", "wamn-authentication", "wamn-events", "wamn-component-artifact", "wamn-integrations", "wamn-execution-host", "wamn-host", "wamn-dev"]
+select_packages = ["wamn-authority", "wamn-connections", "wamn-sql", "wamn-http", "wamn-blobstore", "wamn-authentication", "wamn-events", "wamn-component-artifact", "wamn-execution-host", "wamn-host", "wamn-dev"]
 resource_lock = ""
 
 [[suites]]

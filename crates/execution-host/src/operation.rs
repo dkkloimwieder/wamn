@@ -16,13 +16,13 @@ use opentelemetry::propagation::Extractor;
 use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-use wamn_authority::connection::{
-    ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
-};
 use wamn_authority::effect_span::EffectEvidence;
 use wamn_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_blobstore::plugin::WamnBlobstore;
 use wamn_catalog::AdmittedComponent;
+use wamn_connections::connection::{
+    ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
+};
 use wamn_connections::connection_facts::ConnectionFacts;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
@@ -161,13 +161,13 @@ pub use wamn_engine::invocation_trace::{InvocationSite, invocation_span};
 /// router driver runs each wiring node on the same host, so both call into the
 /// same loaded application.
 pub struct OperationHost {
-    integrations: std::sync::OnceLock<Arc<wamn_integrations::Integrations>>,
+    integrations: std::sync::OnceLock<Arc<wamn_connections::integrations::Integrations>>,
     engine: Arc<Engine>,
     pub postgres: Arc<WamnPostgres>,
     blobstore: Arc<WamnBlobstore>,
     /// Shared by every driver in this process, independently of fresh stores.
     http_transport: Arc<HttpTransport>,
-    pub context: Arc<wamn_sql::invocation::ReleaseContext>,
+    pub context: Arc<wamn_connections::invocation::ReleaseContext>,
     logging: Arc<TracingLogger>,
     allowed_hosts: Arc<[AllowedHost]>,
     pub release: Arc<LoadedRelease>,
@@ -271,7 +271,7 @@ impl OperationHost {
             blobstore,
             http_transport,
             integrations: std::sync::OnceLock::new(),
-            context: Arc::new(wamn_sql::invocation::ReleaseContext::new(
+            context: Arc::new(wamn_connections::invocation::ReleaseContext::new(
                 Arc::clone(&release),
                 facts,
             )?),
@@ -291,7 +291,7 @@ impl OperationHost {
     /// Attach retained integration readers before application stores load.
     pub fn set_integrations(
         &self,
-        integrations: Arc<wamn_integrations::Integrations>,
+        integrations: Arc<wamn_connections::integrations::Integrations>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.native.get().is_none(),

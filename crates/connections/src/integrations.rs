@@ -13,9 +13,9 @@ use wamn_engine::integration::{
 use wamn_package_artifact::registry_credentials::RegistryCredentialSource;
 use wamn_package_artifact::{PackageRegistry, Repository};
 
-use wamn_connections::connection_facts::{ConnectionFacts, bounded};
-use wamn_connections::connection_memory::{ConnectionFact, ConnectionStatus};
-use wamn_sql::WamnPostgres;
+use crate::connection_facts::{ConnectionFacts, bounded};
+use crate::connection_memory::{ConnectionFact, ConnectionStatus};
+use crate::database::ProjectDatabase;
 
 type InstanceKey = (uuid::Uuid, i64, Option<uuid::Uuid>);
 
@@ -217,7 +217,7 @@ impl Integrations {
     pub async fn new(
         facts: Arc<ConnectionFacts>,
         release: &wamn_engine::release_manifest::LoadedRelease,
-        postgres: &WamnPostgres,
+        database: &dyn ProjectDatabase,
         project: &str,
         registry: PackageRegistry,
         registry_credentials: RegistryCredentialSource,
@@ -243,13 +243,16 @@ impl Integrations {
         for component in &release.manifest().components {
             let digest = &component.descriptor.component_digest;
             let package = &component.package_id;
-            let declared: Vec<(String, String)> = postgres.executor_read(
-                project, async |connection| {
-                    use sqlx::Row as _;
-                    Ok(sqlx::query("SELECT name,interface FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3")
-                        .bind(&release.target().project_env_key).bind(package).bind(digest)
-                        .fetch_all(connection).await?.into_iter().map(|row| (row.get(0), row.get(1))).collect())
-                }).await?;
+            let mut connection = database.read_connection(project).await?;
+            let declared: Vec<(String, String)> = sqlx::query_as(
+                "SELECT name,interface FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3",
+            )
+            .bind(&release.target().project_env_key)
+            .bind(package)
+            .bind(digest)
+            .fetch_all(connection.connection())
+            .await?;
+            connection.commit().await?;
             let declared: Vec<_> = declared
                 .into_iter()
                 .filter(|(_, interface)| !host_interface(interface))
@@ -353,14 +356,14 @@ impl ConnectionDispatch for ComponentImports {
         parameters: &[wasmtime::component::Val],
     ) -> anyhow::Result<Option<anyhow::Result<Vec<wasmtime::component::Val>>>> {
         let (scopes, scope) = scope.context("integration call has no scope")?;
-        let context = wamn_sql::invocation::context(scopes, scope)?;
+        let context = crate::invocation::context(scopes, scope)?;
         anyhow::ensure!(
             Arc::ptr_eq(&context.connections, &self.resources.facts)
                 && context.release.release().manifest_digest == self.resources.manifest_digest,
             "integration invocation release mismatch"
         );
         let declared = scopes
-            .read::<wamn_sql::invocation::Authority, _>(scope, |record| {
+            .read::<crate::invocation::Scope, _>(scope, |record| {
                 record.invocation.as_ref().is_some_and(|invocation| {
                     invocation
                         .connection(context.release.manifest(), name)

@@ -22,10 +22,10 @@ use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_execution_host::file_route::{FileRefusal, FileRoutes, RegistryFileConnections};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 
-use wamn_authority::connection::{
+use wamn_blobstore::plugin::WamnBlobstore;
+use wamn_connections::connection::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
 };
-use wamn_blobstore::plugin::WamnBlobstore;
 use wasmtime_wasi_http::WasiBody;
 
 #[path = "support/application_fixture.rs"]
@@ -88,7 +88,7 @@ struct FileHost {
     routes: Arc<FileRoutes>,
     delivery: HostRouteDelivery,
     blobstore: Arc<WamnBlobstore>,
-    context: Arc<wamn_sql::invocation::ReleaseContext>,
+    context: Arc<wamn_connections::invocation::ReleaseContext>,
     registry: files::Registry,
     minio: files::Minio,
     // Keep the database server alive until its targeted clients and pools drop.
@@ -173,7 +173,7 @@ impl FileHost {
             PROJECT,
             &"dev".parse().unwrap(),
         ));
-        let context = Arc::new(wamn_sql::invocation::ReleaseContext::new(
+        let context = Arc::new(wamn_connections::invocation::ReleaseContext::new(
             Arc::clone(&release),
             Arc::clone(&facts),
         )?);
@@ -1464,8 +1464,8 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
                     invocation: component_invocation(
                         &package.component,
                         signed_read::OPERATION,
-                        wamn_authority::connection::InvocationEntry::Route,
-                        wamn_authority::connection::ConnectionExecutionClosure::Released,
+                        wamn_connections::connection::InvocationEntry::Route,
+                        wamn_connections::connection::ConnectionExecutionClosure::Released,
                         None,
                     ),
                     causation: None,

@@ -1,53 +1,14 @@
-//! Invocation authority shared by PostgreSQL, HTTP, storage and tracing.
+//! SQL identity and transaction authority for one invocation scope.
 
 use std::sync::Arc;
 
 use crate::{OperationTransaction, SessionIdentity, WamnPostgres};
-use wamn_authority::connection::{
-    ConnectionExecutionClosure, ConnectionInvocation, InvocationEntry,
-};
+use wamn_connections::connection::ConnectionInvocation;
+use wamn_connections::invocation::{ReleaseContext, Scope, validate_invocation};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
-use wamn_engine::invocation_scope::{InvocationScopes, ScopeLifetime};
+use wamn_engine::invocation_scope::{InvocationAuthority, InvocationScopes, ScopeLifetime};
 use wamn_engine::invocation_trace::InvocationTrace;
 use wamn_event_wire::Causation;
-
-/// Immutable release and project-owned connection readers for one deployment.
-#[derive(Debug)]
-pub struct ReleaseContext {
-    pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
-    pub connections: Arc<wamn_connections::connection_facts::ConnectionFacts>,
-}
-
-impl ReleaseContext {
-    pub fn new(
-        release: Arc<wamn_engine::release_manifest::LoadedRelease>,
-        connections: Arc<wamn_connections::connection_facts::ConnectionFacts>,
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            &release.target().project_env_key == connections.project_env_key()
-                && &release.target().environment == connections.environment(),
-            "connection release target mismatch"
-        );
-        Ok(Self {
-            release,
-            connections,
-        })
-    }
-}
-
-pub fn context(scopes: &InvocationScopes, scope: &str) -> anyhow::Result<Arc<ReleaseContext>> {
-    use anyhow::Context as _;
-    scopes
-        .read::<Authority, _>(scope, |record| {
-            let context = record
-                .context
-                .as_ref()
-                .context("scope has no release authority")?;
-            validate_context(&record.identity, context)?;
-            Ok(Arc::clone(context))
-        })
-        .context("scope was revoked")?
-}
 
 pub fn validate_context(
     identity: &SessionIdentity,
@@ -80,17 +41,17 @@ pub fn bind_test_context(
         record.identity.release = Some(wamn_authority::identity::ReleaseIdentity::from_loaded(
             &context.release,
         ));
-        record.context = Some(context);
     });
+    postgres
+        .scopes
+        .update::<Scope, _>(scope, |record| record.context = Some(context));
 }
 
-/// The complete host authority of one scope. Workload binding fills the same record.
+/// SQL authority retained through commit and result signing.
 #[derive(Debug, Default)]
 pub struct Authority {
     pub identity: SessionIdentity,
-    pub context: Option<Arc<ReleaseContext>>,
     pub causation: Option<Causation>,
-    pub invocation: Option<ConnectionInvocation>,
     pub transaction: Option<OperationTransaction>,
     pub wal_position: Option<String>,
     pub(crate) read: bool,
@@ -98,9 +59,7 @@ pub struct Authority {
 
 impl wamn_engine::invocation_scope::InvocationAuthority for Authority {
     fn release(&self) -> Option<Arc<wamn_engine::release_manifest::LoadedRelease>> {
-        let context = self.context.as_ref()?;
-        validate_context(&self.identity, context).ok()?;
-        Some(Arc::clone(&context.release))
+        None
     }
 }
 
@@ -133,7 +92,7 @@ pub struct InvocationRequest<'a> {
 }
 
 impl AuthorizedInvocation {
-    /// Install one authorized record. Cancellation drops the record even during a principal read.
+    /// Install both authority records. Cancellation drops them even during a principal read.
     pub async fn enter(
         postgres: &WamnPostgres,
         request: InvocationRequest<'_>,
@@ -162,14 +121,18 @@ impl AuthorizedInvocation {
         }
         let lifetime = postgres.scopes.enter(
             scope,
-            Authority {
-                identity,
-                context,
-                causation,
-                invocation,
-                read,
-                ..Authority::default()
-            },
+            [
+                Box::new(Authority {
+                    identity,
+                    causation,
+                    read,
+                    ..Authority::default()
+                }) as Box<dyn InvocationAuthority>,
+                Box::new(Scope {
+                    context,
+                    invocation,
+                }),
+            ],
             InvocationTrace::capture(),
         )?;
         let owner = Arc::new(Self { lifetime, caller });
@@ -188,31 +151,4 @@ pub(crate) fn identity(scopes: &InvocationScopes, scope: &str) -> Option<Session
     scopes
         .read::<Authority, _>(scope, |record| record.identity.clone())
         .filter(|identity| identity.project_env_key.is_some())
-}
-
-pub fn validate_invocation(invocation: &ConnectionInvocation) -> anyhow::Result<()> {
-    let entry_valid = match &invocation.entry {
-        InvocationEntry::Route => !matches!(
-            invocation.closure,
-            ConnectionExecutionClosure::Candidate { .. }
-        ),
-        InvocationEntry::Wiring(position) => {
-            !position.wiring_id.is_empty()
-                && position.wiring_version > 0
-                && !position.node_id.is_empty()
-        }
-    };
-    anyhow::ensure!(entry_valid, "connection-http-invocation-invalid");
-    if let ConnectionExecutionClosure::Candidate {
-        component,
-        interface_version,
-        ..
-    } = &invocation.closure
-    {
-        anyhow::ensure!(
-            !component.is_empty() && !interface_version.is_empty(),
-            "connection-http-candidate-closure-invalid"
-        );
-    }
-    Ok(())
 }

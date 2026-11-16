@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use wamn_connections::integrations::Integrations;
 use wamn_connections::{
     connection_credentials::ConnectionCredentials, connection_facts::ConnectionFacts,
     connection_memory::ConnectionMemory,
@@ -19,7 +20,6 @@ use wamn_connections::{
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql, sql};
 use wamn_engine::integration::{Integration, IntegrationBinding, IntegrationImports};
 use wamn_environment::environment::{bindings, document::EnvironmentDocument};
-use wamn_integrations::Integrations;
 use wamn_package_artifact::{
     PackageRegistry,
     registry_credentials::{RegistryCredentialSource, read_registry_credentials},
@@ -699,7 +699,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         let integrations = Integrations::new(
             Arc::clone(&facts),
             &release,
-            &postgres,
+            postgres.as_ref(),
             "one",
             configuration.clone(),
             RegistryCredentialSource::Fixed(read_registry_credentials(&auth, &registry.address)?),
