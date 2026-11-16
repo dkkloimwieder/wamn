@@ -8,15 +8,13 @@
 //!
 //! **Role:** connects as a targeted `wamn_run_retention` credential GENERATION
 //! (`wamn-0h0g.12.69`), never as the shared `wamn_app` login. That family's
-//! stable ACL role holds `DELETE` plus a three-column `SELECT` on `wamn_run.runs`
+//! stable ACL role holds `DELETE` plus a two-column `SELECT` on `wamn_run.runs`
 //! and nothing else anywhere in the cluster, so the credential this verb mounts
 //! can express this statement and no other. The `run_queue` row goes with the run
 //! through its `ON DELETE CASCADE`, which needs no privilege of its own.
 //! Repeated calls are safe.
 //!
-//! [`verify_retention_identity`] derives the project from the connected login
-//! and refuses another project before running the delete. The project reaches
-//! the delete as a bound parameter.
+//! The targeted database credential selects the project.
 //!
 //! **v0 is age-based only:** every terminal run is independently eligible once
 //! it ages beyond the configured window.
@@ -40,23 +38,12 @@ pub struct PruneRunHistoryRequest {
     /// success.
     pub schema: String,
 
-    pub org: wamn_registry::OrgId,
-    pub project: wamn_registry::ProjectId,
-    pub environment: wamn_registry::EnvName,
-
     /// Prune terminal runs whose `created_at` is older than this many days.
     pub retention_days: u32,
 
     /// Count what WOULD be pruned (a rolled-back delete under the same predicate)
     /// without deleting anything.
     pub dry_run: bool,
-}
-
-impl PruneRunHistoryRequest {
-    /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
-        wamn_registry::project_env_key(&self.org, &self.project, &self.environment)
-    }
 }
 
 /// Prune one project's expired terminal run history and return the number of
@@ -78,7 +65,6 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
         prune(
             &mut client,
             &request.schema,
-            &request.project_env_key(),
             request.retention_days,
             !request.dry_run,
         )
@@ -90,7 +76,7 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 }
 
 /// The reusable core: pin the session `search_path` to the project, then run the
-/// pure prune statement with the project BOUND. When `apply`, the delete commits;
+/// pure prune statement. When `apply`, the delete commits;
 /// otherwise it runs inside a rolled-back transaction so `dry_run` reports the
 /// exact affected count without mutating. Returns the number of `runs` rows
 /// removed.
@@ -99,7 +85,6 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 pub async fn prune(
     client: &mut sqlx::PgConnection,
     schema: &str,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     retention_days: u32,
     apply: bool,
 ) -> anyhow::Result<u64> {
@@ -120,13 +105,9 @@ pub async fn prune(
         .execute(&mut *transaction)
         .await
         .context("set run history schema")?;
-    let count = wamn_run_state::persistence::prune_terminal_runs(
-        &mut transaction,
-        project_env_key,
-        retention_days,
-    )
-    .await
-    .context("prune terminal runs")?;
+    let count = wamn_run_state::persistence::prune_terminal_runs(&mut transaction, retention_days)
+        .await
+        .context("prune terminal runs")?;
     if apply {
         transaction
             .commit()

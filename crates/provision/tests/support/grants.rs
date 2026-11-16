@@ -222,23 +222,10 @@ pub async fn family(
         sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'viewer','fixture')")
             .bind(PlatformComponent::Executor.principal_id()).execute(&mut *transaction).await.unwrap();
         transaction.rollback().await.unwrap();
-        // Seed both projects through the installed product schemas.
-        execute(&mut fixture.admin, &format!("BEGIN; {} INSERT INTO catalog.packages(project_env_key,package_id,package_version) VALUES('t1--dev--project','fixture','1.0.0'),('t2--dev--project','fixture','1.0.0'); COMMIT", wamn_provision::bind_platform_principal_sql(PlatformComponent::Provisioning))).await;
-        let mut transaction = connection.begin().await.unwrap();
-        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'viewer','fixture')")
-            .bind(PlatformComponent::Executor.principal_id()).execute(&mut *transaction).await.unwrap();
-        let (own, foreign): (bool,bool) = sqlx::query_as("SELECT EXISTS(SELECT FROM catalog.packages WHERE project_env_key='t1--dev--project'), EXISTS(SELECT FROM catalog.packages WHERE project_env_key<>'t1--dev--project')")
-            .fetch_one(&mut *transaction).await.unwrap();
-        assert!(
-            own && !foreign,
-            "{} reads another project's rows: own={own}, foreign={foreign}",
-            fixture.login
-        );
-        transaction.rollback().await.unwrap();
     }
     let statement = match family {
         WorkloadRoleFamily::Query => {
-            "INSERT INTO catalog.packages(project_env_key,package_id,package_version) VALUES('t1--dev--project','forged','1.0.0')"
+            "INSERT INTO catalog.packages(package_id,package_version) VALUES('forged','1.0.0')"
         }
         WorkloadRoleFamily::App | WorkloadRoleFamily::Migration => {
             "UPDATE platform.login_principal SET principal_id=principal_id"

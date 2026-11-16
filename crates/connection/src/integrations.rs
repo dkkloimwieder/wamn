@@ -230,9 +230,8 @@ impl Integrations {
             let package = &component.package_id;
             let mut connection = database.read_connection(project).await?;
             let declared: Vec<(String, String)> = sqlx::query_as(
-                "SELECT name,interface FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3",
+                "SELECT name,interface FROM catalog.connection_requirement WHERE package_id=$1 AND component_digest=$2",
             )
-            .bind(&release.target().project_env_key)
             .bind(package)
             .bind(digest)
             .fetch_all(connection.connection())

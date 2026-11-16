@@ -125,7 +125,7 @@ async fn delete_locked(
     if cr_present && !data {
         let url = project_url(platform, triple).await?;
         let live = super::drain::loaded(&super::drain::observe(platform, triple).await?);
-        let stranded = super::drain::stranded(&url, &project_env_key, env, None, &live).await?;
+        let stranded = super::drain::stranded(&url, env, None, &live).await?;
         anyhow::ensure!(
             stranded.is_empty(),
             "{}; apply a document that names their release to recover them, or delete \
@@ -143,7 +143,7 @@ async fn delete_locked(
     // Runtime state can change during the drain, outside lifecycle exclusion.
     if cr_present {
         let url = project_url(platform, triple).await?;
-        match super::drain::stranded(&url, &project_env_key, env, None, &live).await {
+        match super::drain::stranded(&url, env, None, &live).await {
             Ok(stranded) if !stranded.is_empty() && !data => bail!(
                 "{}; apply a document that names their release to recover them, or delete \
                  with --data; shared resources were retained",

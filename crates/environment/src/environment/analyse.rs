@@ -271,10 +271,7 @@ pub(crate) async fn read_row(
 
 /// Read installed SQL and release bindings as the project database owner.
 /// Only an absent database returns `None`; unreadable state returns its cause.
-pub async fn read_project(
-    url: &str,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-) -> anyhow::Result<Option<ProjectState>> {
+pub async fn read_project(url: &str) -> anyhow::Result<Option<ProjectState>> {
     let mut client = match connect_project(url).await {
         Ok(client) => client,
         Err(error)
@@ -292,10 +289,8 @@ pub async fn read_project(
     let mut transaction = client.begin().await.context("begin the project read")?;
     let mut installed = BTreeMap::<wamn_catalog::PackageName, Installed>::new();
     for row in sqlx::query(
-        "SELECT package_id, package_version FROM catalog.packages \
-              WHERE project_env_key = $1",
+        "SELECT package_id, package_version FROM catalog.packages",
     )
-    .bind(project_env_key)
     .fetch_all(&mut *transaction)
     .await
     .context("read the installed packages")?
@@ -309,9 +304,8 @@ pub async fn read_project(
     }
     let bindings = sqlx::query(
         "SELECT manifest_digest, component_digest, name, connection_id::text \
-               FROM catalog.connection_binding WHERE project_env_key = $1",
+               FROM catalog.connection_binding",
     )
-    .bind(project_env_key)
     .fetch_all(&mut *transaction)
     .await
     .context("read the connection bindings")?

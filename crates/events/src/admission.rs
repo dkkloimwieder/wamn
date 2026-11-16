@@ -32,13 +32,11 @@ pub struct ManualRunAdmission<'a> {
 /// Admit a manual workflow run and its queue entry in one transaction.
 pub async fn admit_manual_run(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     run: &ManualRunAdmission<'_>,
 ) -> Result<ManualRunAdmitted, ProductionLeaseError> {
     admission::admit_run(
         connection,
         &RunAdmission {
-            project_env_key,
             application: run.application,
             manifest_digest: run.manifest_digest,
             environment: run.environment,
@@ -77,14 +75,12 @@ pub struct EnabledWorkflow {
 /// in `environment`, or none.
 pub async fn enabled_workflow(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
     workflow_id: &wamn_catalog::canonical_name::CanonicalName,
 ) -> anyhow::Result<Option<EnabledWorkflow>> {
     let Some(row) = wamn_run_state::admission::enabled_workflow(
         connection,
-        project_env_key,
         environment,
         application,
         workflow_id,

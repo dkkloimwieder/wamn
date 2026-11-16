@@ -15,12 +15,7 @@
 -- failure rather than a degradation. Role and
 -- targeted LOGIN credential-generation lifecycle is provisioning-owned.
 --
--- Security shape mirrors the rest of the platform (s2/s3, catalog): project
--- separation from `current_user` (wamn-0h0g.22.6). Every guest-reachable table
--- FORCEs RLS keyed on
---   wamn_authority.project_key(project_env_key) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_role()) IS NOT NULL
--- and carries the matching `<table>_tkey` expression index; CHECK
--- (project_env_key <> '') forbids a ''-project row, so the minimum is structural.
+-- The database isolates the project. FORCE RLS requires a protected caller identity.
 --
 -- TARGET (what 5.7 does NOT own, reserved as nullable seams below): the durable
 -- run QUEUE + leases (5.14) co-transact with these INSERTs but own
@@ -77,62 +72,6 @@ REVOKE ALL PRIVILEGES ON SCHEMA wamn_run
     FROM PUBLIC, wamn_run_retention;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_run_retention;
-
--- ---------------------------------------------------------------------------
--- The per-database authority derivations every project policy below calls
--- (`wamn-0h0g.22.6`). Guest project authority comes from `current_user`, not
--- from an identity the session can set: a session that can set its own project can
--- read every project.
---
--- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
--- pinned by a byte-equality guard in wamn-provision. Do not hand-edit;
--- change the builder.
---
--- It is the BOOTSTRAP rendering because this file is applied to databases whose
--- names are not known here, and `project_key` must bake the name in as a literal
--- to stay `IMMUTABLE` — without which the expression indexes below are not even
--- creatable.
--- ---------------------------------------------------------------------------
-DO $wamn_authority_bootstrap$
-BEGIN
-    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
-REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
-GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".project_key(project_env_key text)
-RETURNS text
-LANGUAGE sql
-IMMUTABLE
-PARALLEL SAFE
-STRICT
-SET search_path = pg_catalog
-AS $$
-    SELECT substr(encode(sha256(
-           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')
-        || int8send(15::bigint) || convert_to('project_env_key', 'UTF8')
-        || int8send(octet_length(convert_to(project_env_key, 'UTF8'))::bigint) || convert_to(project_env_key, 'UTF8')
-        || int8send(8::bigint) || convert_to('database', 'UTF8')
-        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
-       ), 'hex'), 1, 40)
-$$;
-ALTER FUNCTION "wamn_authority".project_key(text) OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION "wamn_authority".project_key(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION "wamn_authority".project_key(text) TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".current_project_key()
-RETURNS text
-LANGUAGE sql
-STABLE
-PARALLEL SAFE
-SET search_path = pg_catalog
-AS $$
-    SELECT substring(current_user::text from '^(?:wamn_app|wamn_query)_([0-9a-f]{40})$')
-$$;
-ALTER FUNCTION "wamn_authority".current_project_key() OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION "wamn_authority".current_project_key() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION "wamn_authority".current_project_key() TO "wamn_app";$wamn_authority_derivations$,
-        '@wamn_database_literal@', quote_literal(current_database())),
-        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);
-END
-$wamn_authority_bootstrap$;
 
 -- Causation is fixed by the admission transaction. Normal run-state updates
 -- may advance status/checkpoints, but cannot rewrite event ancestry.
@@ -216,7 +155,6 @@ REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;
 -- as_sql (tied to the crate by a drift-guard test).
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.runs (
-    project_env_key         text NOT NULL CHECK (project_env_key <> ''),
     run_id          text NOT NULL DEFAULT gen_random_uuid()::text,
     package_id      text NOT NULL,
     environment     text NOT NULL,
@@ -308,26 +246,24 @@ CREATE TABLE wamn_run.runs (
         OR (trigger_source = 'schedule' AND invoked_by = 'schedule' AND invoked_by_user_id IS NULL)
         OR trigger_source = 'event')
     ),
-    PRIMARY KEY (project_env_key, run_id)
+    PRIMARY KEY (run_id)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
-CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (project_env_key, idempotency_key)
+CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 -- History listing and trusted CDC event-causation traversal.
-CREATE INDEX runs_event_root ON wamn_run.runs (project_env_key, event_root_run_id)
+CREATE INDEX runs_event_root ON wamn_run.runs (event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
 ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
-CREATE POLICY runs_project_env_key ON wamn_run.runs
+CREATE POLICY runs_identity ON wamn_run.runs
     TO wamn_app, wamn_query
-    USING (wamn_authority.project_key(project_env_key) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_role()) IS NOT NULL)
-    WITH CHECK (wamn_authority.project_key(project_env_key) = (SELECT wamn_authority.current_project_key()) AND (SELECT wamn_authority.current_role()) IS NOT NULL);
+    USING ((SELECT wamn_authority.current_role()) IS NOT NULL)
+    WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL);
 CREATE POLICY runs_platform ON wamn_run.runs
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING ((SELECT wamn_authority.current_role()) IS NOT NULL)
     WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL);
-CREATE INDEX runs_tkey
-    ON wamn_run.runs ((wamn_authority.project_key(project_env_key)));
 
 CREATE TRIGGER runs_event_lineage_immutable
 BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
@@ -354,7 +290,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 --
 -- `wamn_run_retention` (`wamn-0h0g.12.69`) is run history pruning's OWN
 -- principal, and the grant below is its ENTIRE authority anywhere in the
--- cluster: `DELETE`, plus `SELECT` on EXACTLY the three columns the prune
+-- cluster: `DELETE`, plus `SELECT` on EXACTLY the two columns the prune
 -- statement's WHERE clause reads. The `SELECT` is COLUMN-TARGETED and that is
 -- load bearing, not tidiness. `wamn_run_retention` is a member of
 -- `wamn_platform`, whose permissive policy admits every row after caller binding, so a
@@ -395,5 +331,5 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
     FROM PUBLIC, wamn_app, wamn_run_retention;
 GRANT SELECT ON wamn_run.runs TO wamn_app;
-GRANT SELECT (project_env_key, status, created_at), DELETE
+GRANT SELECT (status, created_at), DELETE
     ON wamn_run.runs TO wamn_run_retention;

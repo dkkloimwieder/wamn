@@ -90,7 +90,6 @@ struct ExhaustedExecutionIdentity {
 /// Renew a live lease under its owner and generation fence.
 pub async fn renew(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -100,7 +99,6 @@ pub async fn renew(
     validate_duration(lease_ttl_ms)?;
     let sql = renew_production_lease_sql();
     let renewed = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(project_env_key)
         .bind(run_id)
         .bind(runner)
         .bind(lease_generation)
@@ -118,7 +116,6 @@ pub async fn renew(
 /// Store the terminal outcome and remove the queue entry under the lease fence.
 pub async fn complete(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -132,7 +129,6 @@ pub async fn complete(
     let fail_type = completion.fail_type().map(FailType::as_sql);
     let sql = terminalize_sql();
     let row = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(project_env_key)
         .bind(run_id)
         .bind(run_id)
         .bind(runner)
@@ -175,7 +171,6 @@ fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionLeas
 /// Lease one run. The caller commits both `Leased` and `GrantRefused` turns.
 pub async fn lease_next(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     runner: &str,
     applications: &[wamn_catalog::ApplicationName],
     environment: &wamn_registry::EnvName,
@@ -188,7 +183,6 @@ pub async fn lease_next(
     // The select skips runs pinned to another release, so their head never
     // blocks this host's own backlog (R20). The grant below tests again the pin.
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(select_sql))
-        .bind(project_env_key)
         .bind(applications)
         .bind(environment)
         .bind(manifest_digest)
@@ -213,7 +207,6 @@ pub async fn lease_next(
 
     if selected.had_prior_lease {
         sqlx::query(sqlx::AssertSqlSafe(clear_pre_effect_state_sql()))
-            .bind(project_env_key)
             .bind(&selected.run_id)
             .fetch_one(&mut *connection)
             .await
@@ -224,7 +217,6 @@ pub async fn lease_next(
     // subtransaction.
     let advance_sql = advance_lease_attempts_sql();
     sqlx::query(sqlx::AssertSqlSafe(advance_sql))
-        .bind(project_env_key)
         .bind(&selected.run_id)
         .fetch_one(&mut *connection)
         .await
@@ -244,7 +236,6 @@ pub async fn lease_next(
             ProductionLeaseError::postgres("open production lease savepoint", &error)
         })?;
     let granted = sqlx::query(sqlx::AssertSqlSafe(grant_sql))
-        .bind(project_env_key)
         .bind(&selected.run_id)
         .bind(runner)
         .bind(lease_ttl_ms)
@@ -289,7 +280,6 @@ pub async fn lease_next(
 /// Fail and dequeue one expired run whose retry budget is spent.
 pub async fn reap_exhausted(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     applications: &[wamn_catalog::ApplicationName],
     environment: &wamn_registry::EnvName,
     grace_ms: i64,
@@ -300,7 +290,6 @@ pub async fn reap_exhausted(
     }
     let select_sql = select_exhausted_production_sql();
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(select_sql))
-        .bind(project_env_key)
         .bind(grace_ms)
         .bind(applications)
         .bind(environment)
@@ -310,7 +299,7 @@ pub async fn reap_exhausted(
     else {
         return Ok(ProductionReapResult::Empty);
     };
-    let status_text: String = row_value(&row, 2, "exhausted run status")?;
+    let status_text: String = row_value(&row, 1, "exhausted run status")?;
     let status = RunStatus::from_sql(&status_text).ok_or_else(|| {
         ProductionLeaseError::new(
             ProductionLeaseErrorType::Contract,
@@ -319,8 +308,8 @@ pub async fn reap_exhausted(
         )
     })?;
     let wiring_id: Option<wamn_catalog::canonical_name::CanonicalName> =
-        row_value(&row, 3, "exhausted wiring id")?;
-    let wiring_version: Option<i32> = row_value(&row, 4, "exhausted wiring version")?;
+        row_value(&row, 2, "exhausted wiring id")?;
+    let wiring_version: Option<i32> = row_value(&row, 3, "exhausted wiring version")?;
     let identity = match (wiring_id, wiring_version) {
         (Some(wiring_id), Some(wiring_version)) if wiring_version > 0 => {
             ExhaustedExecutionIdentity {
@@ -337,7 +326,7 @@ pub async fn reap_exhausted(
         }
     };
     let selected = ExhaustedLease {
-        run_id: row_value(&row, 1, "exhausted run id")?,
+        run_id: row_value(&row, 0, "exhausted run id")?,
         status,
         identity,
     };
@@ -358,7 +347,6 @@ pub async fn reap_exhausted(
     // D2b: this host owns the instant the reap stamps.
     let reaped_at = SystemTime::now();
     let row = sqlx::query(sqlx::AssertSqlSafe(terminalize_sql))
-        .bind(project_env_key)
         .bind(&selected.run_id)
         .bind(&body)
         .bind(chrono::DateTime::<chrono::Utc>::from(reaped_at))
@@ -503,7 +491,6 @@ where
 /// Record deadline changes under the exact lease fence.
 pub async fn record_deadline_adjustments(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -513,7 +500,6 @@ pub async fn record_deadline_adjustments(
     let row = sqlx::query(sqlx::AssertSqlSafe(
         crate::transitions::record_deadline_adjustments_sql(),
     ))
-    .bind(project_env_key)
     .bind(run_id)
     .bind(run_id)
     .bind(runner)
@@ -528,22 +514,19 @@ pub async fn record_deadline_adjustments(
 /// Whether this release still has queued work.
 pub async fn pinned_backlog(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     applications: &[wamn_catalog::ApplicationName],
     environment: &wamn_registry::EnvName,
     manifest_digest: &wamn_digest::Digest,
 ) -> Result<bool, ProductionLeaseError> {
     validate_target(applications)?;
     let sql = format!(
-        "SELECT EXISTS (SELECT 1 FROM run_queue q JOIN runs r USING (project_env_key, run_id) \
-        WHERE q.project_env_key = $1::text \
-        AND r.package_id = ANY($2::text[]) AND r.environment = $3 AND r.manifest_digest = $4 \
+        "SELECT EXISTS (SELECT 1 FROM run_queue q JOIN runs r USING (run_id) \
+        WHERE r.package_id = ANY($1::text[]) AND r.environment = $2 AND r.manifest_digest = $3 \
         AND r.status IN ('{}', '{}'))",
         RunStatus::Dispatched.as_sql(),
         RunStatus::Running.as_sql()
     );
     let row = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(project_env_key)
         .bind(applications)
         .bind(environment)
         .bind(manifest_digest)
@@ -556,11 +539,9 @@ pub async fn pinned_backlog(
 /// Delete expired terminal history on an authorized retention connection.
 pub async fn prune_terminal_runs(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     retention_days: u32,
 ) -> Result<u64, sqlx::Error> {
     sqlx::query(sqlx::AssertSqlSafe(crate::sql::prune_terminal_runs_sql()))
-        .bind(project_env_key)
         .bind(i64::from(retention_days))
         .execute(connection)
         .await

@@ -24,7 +24,6 @@ impl RunTrigger {
 /// Frozen admission facts. A repeat retains the first run's release and nodes.
 #[derive(Debug)]
 pub struct RunAdmission<'a> {
-    pub project_env_key: &'a wamn_registry::ProjectEnvKey,
     pub application: &'a wamn_catalog::ApplicationName,
     pub manifest_digest: &'a wamn_digest::Digest,
     pub environment: &'a wamn_registry::EnvName,
@@ -54,13 +53,11 @@ pub enum RunAdmitted {
 /// Read a repeat before resolving a new run against the current release.
 pub async fn existing_run(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     key: &str,
     input: &serde_json::Value,
     trigger: RunTrigger,
 ) -> Result<Option<String>, ProductionLeaseError> {
     sqlx::query(crate::queue::select_run_sql())
-        .bind(project_env_key)
         .bind(key)
         .bind(input.to_string())
         .bind(trigger.as_sql())
@@ -77,7 +74,6 @@ pub async fn admit_run(
 ) -> Result<RunAdmitted, ProductionLeaseError> {
     let input = run.input.to_string();
     let inserted = sqlx::query(sqlx::AssertSqlSafe(crate::queue::insert_run_sql()))
-        .bind(run.project_env_key)
         .bind(run.application)
         .bind(run.manifest_digest)
         .bind(run.environment)
@@ -101,7 +97,6 @@ pub async fn admit_run(
     if let Some(row) = inserted {
         let run_id: String = row.get(0);
         sqlx::query(crate::queue::insert_run_queue_sql())
-            .bind(run.project_env_key)
             .bind(&run_id)
             .execute(&mut *connection)
             .await
@@ -111,7 +106,6 @@ pub async fn admit_run(
     Ok(
         match existing_run(
             connection,
-            run.project_env_key,
             run.idempotency_key,
             run.input,
             run.trigger,
@@ -125,33 +119,31 @@ pub async fn admit_run(
 }
 
 /// The enabled version of one manual workflow. A schedule workflow is not
-/// started through `workflow.start`. Binds: `$1` `project_env_key`, `$2` environment,
-/// `$3` application, `$4` workflow id.
+/// started through `workflow.start`. Binds: `$1` environment,
+/// `$2` application, `$3` workflow id.
 const ENABLED_WORKFLOW_SQL: &str = "\
 SELECT version, graph_json::text, wiring_hash, execution_type, execution_role \
   FROM catalog.workflows \
- WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
-   AND workflow_id = $4 AND enabled AND trigger = 'manual'";
+ WHERE environment = $1 AND application = $2 \
+   AND workflow_id = $3 AND enabled AND trigger = 'manual'";
 
 /// One workflow version, enabled or not: a run finishes under the version it
-/// pinned. Binds: `$1` `project_env_key`, `$2` environment, `$3` application, `$4`
-/// workflow id, `$5` version.
+/// pinned. Binds: `$1` environment, `$2` application, `$3`
+/// workflow id, `$4` version.
 const WORKFLOW_VERSION_SQL: &str = "\
 SELECT graph_json::text, wiring_hash \
   FROM catalog.workflows \
- WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
-   AND workflow_id = $4 AND version = $5";
+ WHERE environment = $1 AND application = $2 \
+   AND workflow_id = $3 AND version = $4";
 
 /// Read an enabled manual workflow for admission.
 pub async fn enabled_workflow(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
     workflow: &wamn_catalog::canonical_name::CanonicalName,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
     sqlx::query(ENABLED_WORKFLOW_SQL)
-        .bind(project_env_key)
         .bind(environment)
         .bind(application)
         .bind(workflow)
@@ -162,14 +154,12 @@ pub async fn enabled_workflow(
 /// Read the exact workflow version frozen by an admitted run.
 pub async fn workflow_version(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
     workflow: &wamn_catalog::canonical_name::CanonicalName,
     version: i32,
 ) -> Result<Option<(String, wamn_digest::Digest)>, sqlx::Error> {
     sqlx::query(WORKFLOW_VERSION_SQL)
-        .bind(project_env_key)
         .bind(environment)
         .bind(application)
         .bind(workflow)
@@ -182,18 +172,16 @@ pub async fn workflow_version(
 const ENABLED_EVENTS_SQL: &str = "SELECT application, workflow_id, source_package, entity, \
     array_to_json(ops)::text, condition, enable_sequence, version, graph_json::text, \
     wiring_hash, execution_role FROM catalog.workflows \
-    WHERE project_env_key = $1 AND environment = $2 AND ($3::text[] IS NULL OR application = ANY($3)) \
+    WHERE environment = $1 AND ($2::text[] IS NULL OR application = ANY($2)) \
       AND enabled AND trigger = 'event' ORDER BY application, workflow_id";
 
 /// Read enabled event workflows. A null application set reads the environment.
 pub async fn event_workflows(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     applications: Option<&[wamn_catalog::ApplicationName]>,
 ) -> Result<Vec<sqlx::postgres::PgRow>, sqlx::Error> {
     sqlx::query(ENABLED_EVENTS_SQL)
-        .bind(project_env_key)
         .bind(environment)
         .bind(applications)
         .fetch_all(connection)
@@ -277,17 +265,15 @@ pub async fn history_actor(
 /// Read the enabled version used for a due schedule admission.
 pub async fn enabled_schedule(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
     workflow: &wamn_catalog::canonical_name::CanonicalName,
 ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
     sqlx::query(
         "SELECT version, graph_json::text, wiring_hash, execution_role FROM catalog.workflows \
-        WHERE project_env_key = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 \
+        WHERE environment = $1 AND application = $2 AND workflow_id = $3 \
         AND enabled AND trigger = 'schedule'",
     )
-    .bind(project_env_key)
     .bind(environment)
     .bind(application)
     .bind(workflow)
@@ -298,7 +284,6 @@ pub async fn enabled_schedule(
 /// Read schedules and their calendar minute in this environment's project time zone.
 pub async fn enabled_schedules(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     environment: &wamn_registry::EnvName,
     applications: &[wamn_catalog::ApplicationName],
     project: &wamn_registry::ProjectId,
@@ -313,14 +298,14 @@ pub async fn enabled_schedules(
     sqlx::Error,
 > {
     sqlx::query("WITH timezone AS (SELECT COALESCE((SELECT value FROM platform.setting \
-            WHERE target_type='project' AND target_id=$4 AND key='timezone'), '\"UTC\"'::jsonb) AS value) \
+            WHERE target_type='project' AND target_id=$3 AND key='timezone'), '\"UTC\"'::jsonb) AS value) \
         SELECT application, workflow_id, schedule, \
-            $5::timestamptz AT TIME ZONE CASE WHEN jsonb_typeof(timezone.value)='string' \
+            $4::timestamptz AT TIME ZONE CASE WHEN jsonb_typeof(timezone.value)='string' \
                 THEN timezone.value #>> '{}' ELSE '' END \
         FROM catalog.workflows CROSS JOIN timezone \
-        WHERE project_env_key=$1 AND environment=$2 AND application=ANY($3) \
+        WHERE environment=$1 AND application=ANY($2) \
             AND enabled AND trigger='schedule'")
-        .bind(project_env_key).bind(environment).bind(applications).bind(project).bind(tick)
+        .bind(environment).bind(applications).bind(project).bind(tick)
         .fetch_all(connection).await.and_then(|rows| rows.into_iter()
             .map(|row| Ok((row.try_get(0)?, row.get(1), row.get(2), row.get(3)))).collect())
 }

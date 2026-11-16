@@ -199,7 +199,7 @@ async fn apply(
             .as_ref()
             .ok_or_else(|| ApplyPackageError::artifact_required(&coordinate))?,
     );
-    let applied = load_applied_package(&mut tx, project_env_key, &package_id).await?;
+    let applied = load_applied_package(&mut tx, &package_id).await?;
     if !advance_schema && let Some(installed) = &applied {
         wamn_catalog::package_schema::validate_package_schema_source(
             &plan.coordinate,
@@ -226,7 +226,6 @@ async fn apply(
     if applied.is_none() {
         changed |= wamn_publish::connection_requirement::install(
             &mut tx,
-            project_env_key,
             &package.root,
             &package.manifest,
             package.component_source.as_ref(),
@@ -249,7 +248,6 @@ async fn apply(
     entity_maps::reconcile_entity_maps(&mut tx, &plan, &package.manifest).await?;
     changed |= package_version::record_package_schema(
         &mut tx,
-        project_env_key,
         &plan.coordinate,
         artifact_digest,
     )

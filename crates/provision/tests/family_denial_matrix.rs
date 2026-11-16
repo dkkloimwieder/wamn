@@ -34,7 +34,6 @@ const ENVIRONMENT: &str = "dev";
 /// The project every project-targeted generation in this acceptance test is minted for, and
 /// the project the guest may read. `PROJECT_B` is the neighbour it may not.
 const PROJECT_ENV_KEY_A: &str = "acme--dev--billing";
-const PROJECT_ENV_KEY_B: &str = "acme--dev--other";
 
 /// Throwaway password for the probe logins. Not a credential of record: the
 /// condition builds and drops these roles inside a disposable container.
@@ -100,18 +99,6 @@ fn query(url: &str, sql: &str) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
-}
-
-fn bound_query(url: &str, statement: &str) -> String {
-    query(
-        url,
-        &format!(
-            "BEGIN; {} {statement}; COMMIT",
-            wamn_provision::bind_platform_principal_sql(
-                wamn_provision::PlatformComponent::Provisioning,
-            )
-        ),
-    )
 }
 
 fn rows(url: &str, sql: &str) -> Vec<String> {
@@ -250,11 +237,11 @@ fn reset(admin: &str) {
 const SEED: &str = "\
 DO $seed$ DECLARE t text; BEGIN
 FOREACH t IN ARRAY ARRAY['acme--dev--billing','acme--dev--other'] LOOP
-  INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( t, 'widgets', '1.0.0', 'sha256:'||repeat('f',64));
+  INSERT INTO catalog.packages ( package_id, package_version, artifact_digest) VALUES ( 'widgets', '1.0.0', 'sha256:'||repeat('f',64));
   INSERT INTO catalog.releases
     (project_env_key, manifest_digest, canonical_bytes)
     VALUES (t, 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{}');
-  INSERT INTO wamn_run.runs (project_env_key, run_id, package_id, environment, status, trigger_source, wiring_id, wiring_version, wiring_hash, input_json, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json, manifest_digest) VALUES (t, 'r1', 'widgets', 'dev', 'dispatched', 'manual', 'w', 1, 'sha256:'||repeat('c',64), '{\"a\":1}', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');
+  INSERT INTO wamn_run.runs (run_id, package_id, environment, status, trigger_source, wiring_id, wiring_version, wiring_hash, input_json, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json, manifest_digest) VALUES ('r1', 'widgets', 'dev', 'dispatched', 'manual', 'w', 1, 'sha256:'||repeat('c',64), '{\"a\":1}', '00000000-0000-0000-0000-000000000001', 'admin', 'manual', '00000000-0000-0000-0000-000000000001', '{}', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');
 END LOOP;
 END $seed$;
 ";
@@ -392,36 +379,6 @@ fn fixture() -> &'static Fixture {
 // ---------------------------------------------------------------------------
 // THE PLATFORM-GRAIN ARMS
 // ---------------------------------------------------------------------------
-
-/// THE GUEST IS THE ONE FAMILY THE MINIMUM CONFINES BY ROW.
-///
-/// Its ACL says `SELECT` on `wamn_run.runs` and the server agrees; what the ACL
-/// cannot say is that it sees ONE project's row out of two. This is the arm that
-/// separates an isolated credential from a blind one for the family whose
-/// confinement is RLS-shaped rather than grant-shaped.
-#[test]
-#[ignore = "requires: postgres, bin:psql"]
-fn the_guest_family_reads_its_own_project_env_key_and_only_its_own() {
-    let fixture = fixture();
-    let login = generation(WorkloadRoleFamily::App);
-    let as_guest = login_url(&fixture.admin, &login);
-    assert_eq!(
-        bound_query(
-            &as_guest,
-            &format!(
-                "SELECT count(*)::text || ' ' || \
-                        count(*) FILTER (WHERE project_env_key = '{PROJECT_ENV_KEY_B}')::text \
-                   FROM wamn_run.runs"
-            ),
-        )
-        .split_whitespace()
-        .map(|value| value.parse::<u64>().unwrap())
-        .collect::<Vec<_>>(),
-        vec![1, 0],
-        "the guest generation does not read exactly its own project's row: a \
-         second row is a CROSS-PROJECT READ and zero rows is a silent lockout"
-    );
-}
 
 // ---------------------------------------------------------------------------
 // THE PLATFORM GROUP'S MEMBER SET, AND THE ONE RATIFIED EXCEPTION

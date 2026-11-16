@@ -31,8 +31,8 @@ use wamn_catalog::lifecycle_lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
 
 const DISABLE_SQL: &str = "\
 UPDATE catalog.workflows SET enabled = false \
- WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
-   AND workflow_id = $4 AND version = $5";
+ WHERE environment = $1 AND application = $2 \
+   AND workflow_id = $3 AND version = $4";
 
 /// The start of the refusal while another verb holds the lifecycle lock.
 pub const APPLY_IN_PROGRESS: &str = "apply in progress";
@@ -138,7 +138,6 @@ pub async fn disable_workflow(
     under_lock(system_url, triple, async || {
         let mut transaction = begin(project).await?;
         let changed = sqlx::query(DISABLE_SQL)
-            .bind(workflow.project_env_key())
             .bind(workflow.environment)
             .bind(workflow.application)
             .bind(workflow.workflow_id)

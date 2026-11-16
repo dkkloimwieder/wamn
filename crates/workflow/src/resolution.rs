@@ -194,7 +194,6 @@ pub async fn resolve_workflow(
         .executor_read(project, async |connection| {
             wamn_run_state::admission::workflow_version(
                 connection,
-                run.project_env_key,
                 run.environment,
                 run.application,
                 run.workflow_id,

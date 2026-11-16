@@ -200,7 +200,6 @@ pub(super) async fn installed(
     system.commit().await?;
     Ok(analyse::read_project(
         &analyse::project_url(platform, document, &row).await?,
-        &wamn_provision::project_env_key(&document.org, &document.project, &document.env),
     )
     .await?
     .context("the project database is missing after step 4")?

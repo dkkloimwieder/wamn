@@ -206,7 +206,6 @@ pub async fn analyse(
 /// The caller binds the transaction's principal before writing.
 pub async fn write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     digest: &wamn_digest::Digest,
     bindings: &[Binding],
 ) -> anyhow::Result<()> {
@@ -218,7 +217,7 @@ pub async fn write(
             "connection projection {} is absent or inactive; run env connections",
             binding.connection_id
         );
-        sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (project_env_key,manifest_digest,connection_id) DO NOTHING").bind(project_env_key).bind(digest).bind(&binding.connection_id).bind(binding.version).execute(&mut **tx).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO catalog.release_connection(manifest_digest,connection_id,version) VALUES ($1,$2::text::uuid,$3) ON CONFLICT (manifest_digest,connection_id) DO NOTHING").bind(digest).bind(&binding.connection_id).bind(binding.version).execute(&mut **tx).await.map(|result| result.rows_affected())?;
     }
     Ok(())
 }

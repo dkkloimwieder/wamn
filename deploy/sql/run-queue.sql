@@ -42,7 +42,6 @@ CREATE TABLE wamn_run.run_queue (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    project_env_key          text NOT NULL CHECK (project_env_key <> ''),
     run_id           text NOT NULL,
     available_at     timestamptz NOT NULL DEFAULT now(),
     lease_owner      text,
@@ -54,8 +53,8 @@ CREATE TABLE wamn_run.run_queue (
     -- Backoff cap: crates/run-state/src/queue/mod.rs.
     max_attempts     int  NOT NULL DEFAULT 20,
     enqueued_at      timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (project_env_key, run_id),
-    FOREIGN KEY (project_env_key, run_id) REFERENCES wamn_run.runs (project_env_key, run_id) ON DELETE CASCADE
+    PRIMARY KEY (run_id),
+    FOREIGN KEY (run_id) REFERENCES wamn_run.runs (run_id) ON DELETE CASCADE
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.run_queue
@@ -66,10 +65,10 @@ CREATE TRIGGER wamn_record_history_stamp
 -- `ORDER BY available_at, run_id` is index-supported;
 -- `lease_expires_at` remains the trailing in-index filter column.
 CREATE INDEX run_queue_leasable ON wamn_run.run_queue
-    (project_env_key, available_at, run_id, lease_expires_at);
+    (available_at, run_id, lease_expires_at);
 ALTER TABLE wamn_run.run_queue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.run_queue FORCE ROW LEVEL SECURITY;
-CREATE POLICY run_queue_project_env_key ON wamn_run.run_queue
+CREATE POLICY run_queue_identity ON wamn_run.run_queue
     TO wamn_platform
     USING ((SELECT wamn_authority.current_role()) IS NOT NULL)
     WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL);

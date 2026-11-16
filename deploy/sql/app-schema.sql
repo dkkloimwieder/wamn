@@ -16,7 +16,7 @@
 -- wamn-q3n.3): that is the PLATFORM-GLOBAL system DB (orgs / projects /
 -- environment_projects / sagas), owned by wamn_system, NOT project-targeted, NO RLS base grants.
 -- THIS schema belongs to one project environment database. Its tables have no
--- row security. The shared catalog retains its project policies. wamn_app's
+-- row security. The catalog requires a protected caller identity. wamn_app's
 -- WRITE authority is NOT uniform across these tables — see WRITE AUTHORITY
 -- below. Different plane, different owner, different security model — hence a
 -- different file, and deliberately NOT named system-schema.sql.
@@ -100,62 +100,6 @@ END $platform_group$;
 GRANT USAGE ON SCHEMA platform TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- The per-database authority derivations that catalog and run policies call
--- (`wamn-0h0g.22.6`). Guest project authority comes from `current_user`, not
--- from an identity the session can set: a session that can set its own project can
--- read every project.
---
--- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
--- pinned by a byte-equality guard in wamn-provision. Do not hand-edit;
--- change the builder.
---
--- It is the BOOTSTRAP rendering because this file is applied to databases whose
--- names are not known here, and `project_key` must bake the name in as a literal
--- to stay `IMMUTABLE` — without which the expression indexes below are not even
--- creatable.
--- ---------------------------------------------------------------------------
-DO $wamn_authority_bootstrap$
-BEGIN
-    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
-REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
-GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".project_key(project_env_key text)
-RETURNS text
-LANGUAGE sql
-IMMUTABLE
-PARALLEL SAFE
-STRICT
-SET search_path = pg_catalog
-AS $$
-    SELECT substr(encode(sha256(
-           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')
-        || int8send(15::bigint) || convert_to('project_env_key', 'UTF8')
-        || int8send(octet_length(convert_to(project_env_key, 'UTF8'))::bigint) || convert_to(project_env_key, 'UTF8')
-        || int8send(8::bigint) || convert_to('database', 'UTF8')
-        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
-       ), 'hex'), 1, 40)
-$$;
-ALTER FUNCTION "wamn_authority".project_key(text) OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION "wamn_authority".project_key(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION "wamn_authority".project_key(text) TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".current_project_key()
-RETURNS text
-LANGUAGE sql
-STABLE
-PARALLEL SAFE
-SET search_path = pg_catalog
-AS $$
-    SELECT substring(current_user::text from '^(?:wamn_app|wamn_query)_([0-9a-f]{40})$')
-$$;
-ALTER FUNCTION "wamn_authority".current_project_key() OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION "wamn_authority".current_project_key() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION "wamn_authority".current_project_key() TO "wamn_app";$wamn_authority_derivations$,
-        '@wamn_database_literal@', quote_literal(current_database())),
-        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);
-END
-$wamn_authority_bootstrap$;
-
--- ---------------------------------------------------------------------------
 -- User — application accounts. `id` (uuid) is org-issued at birth and has no
 -- database default. Identity
 -- only: no credential material lives here (auth is 4.2/8.1).
@@ -172,8 +116,7 @@ $wamn_authority_bootstrap$;
 -- the platform rows and their `<component>@<platform-domain>` email.
 --
 -- The database is the org boundary (owner ruling of 2026-10-23 on
--- wamn-83eth.6), so the table has no project_id, no row policy and no
--- project_key index.
+-- wamn-83eth.6), so the table has no project_id or row policy.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform."user" (
     id           uuid NOT NULL,
@@ -426,8 +369,8 @@ GRANT DELETE ON platform.write_log TO wamn_app;
 -- targets stay in the control plane, so no table here holds them.
 --
 -- The database is the org boundary (owner ruling of 2026-10-23 on
--- wamn-83eth.6), so these tables have no project_id, no row policy and no
--- project_key index. Each table has the record history of the tables above.
+-- wamn-83eth.6), so these tables have no project_id or row policy.
+-- Each table has the record history of the tables above.
 -- number_counter is the one exception: it has no history table and no log
 -- trigger, because one history entry per bump would double the writes of
 -- every create, and the write log is the audit (owner ruling, wamn-aqd0m.1).

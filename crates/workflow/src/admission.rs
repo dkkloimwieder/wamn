@@ -99,7 +99,6 @@ pub async fn admit_schedule_run(
         .executor_write(project, async |connection| {
             let Some(row) = admission::enabled_schedule(
                 connection,
-                &target.project_env_key,
                 &target.environment,
                 application,
                 workflow_id,
@@ -112,7 +111,6 @@ pub async fn admit_schedule_run(
             // Repeated ticks retain their original manifest and frozen nodes.
             if let Some(run_id) = admission::existing_run(
                 connection,
-                &target.project_env_key,
                 &key,
                 &input,
                 RunTrigger::Schedule,
@@ -141,7 +139,6 @@ pub async fn admit_schedule_run(
                 match admission::admit_run(
                     connection,
                     &RunAdmission {
-                        project_env_key: &target.project_env_key,
                         application,
                         manifest_digest: &release.release().manifest_digest,
                         environment: &target.environment,
