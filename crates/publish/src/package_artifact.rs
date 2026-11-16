@@ -582,7 +582,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         );
         let descriptor = admission.descriptor();
         descriptors.push(DescriptorFile {
-            name: source.name.clone(),
+            name: source.name,
             digest,
             bytes: wamn_digest::canonical_json_bytes(
                 &serde_json::to_value(&descriptor).context("encode a component descriptor")?,
@@ -1311,7 +1311,7 @@ mod tests {
     fn an_unpacked_artifact_packs_to_its_own_digest() {
         let root = package_tree("unpacked");
         let descriptor = descriptor();
-        let packed = pack_layers(&root, vec![descriptor.clone()]).unwrap();
+        let packed = pack_layers(&root, vec![descriptor]).unwrap();
         // A source tree has no descriptor layers, so its digest differs.
         assert_ne!(
             (pack_package(&root).unwrap().digest.to_string())

@@ -331,7 +331,7 @@ WIT namespaces also repeat across the workload representations:
 | WIT/chart `0.1.0` | `G/control-service.yaml:40,44`; both GCP HTTP workloads `:36`; both GCP materializers `:20,26,33`; `P/edge/Chart.yaml:5,6`; `P/identity/Chart.yaml:5,6`; HTTP example `:58,66`; materializer example `:68,72,77`; `R/templates/workloads.yaml:31,39,85,89,94`; `D/activation.rs:1195,1197` |
 | WIT `0.3.0` | `G/control-service.yaml:34`; both GCP HTTP workloads `:29`; HTTP example `:54`; `R/templates/workloads.yaml:25`; `D/activation.rs:547,1187` |
 | WIT `0.4.0` | `G/control-service.yaml:48`; both GCP HTTP workloads `:41`; both GCP materializers `:14,38`; HTTP example `:62,70,74`; materializer example `:64,81`; `R/templates/workloads.yaml:35,43,48,81,98`; `D/activation.rs:572,1196,1198` |
-| Guest Rust `1.99.0` | `Dockerfile:117,118,137,141,143,145,147`; native base separately uses `rust:1.99-trixie` at `Dockerfile:20` |
+| Guest Rust `1.100.0` | `Dockerfile:117,118,137,141,143,145,147`; native base separately uses `rust:1.100-trixie` at `Dockerfile:20` |
 | Local image tag `dev` | `P/identity/values.yaml:3`; `P/values-host-default.yaml:101`; also embedded in the repeated image references above |
 | Integration version `1` | `G/environments/dkk--wms--dev.k:12,13` |
 

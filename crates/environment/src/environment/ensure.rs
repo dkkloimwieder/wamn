@@ -1194,7 +1194,7 @@ mod tests {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
         let fresh = environment_host_values(&document, 70, 1, 120, None, false, None)?;
-        let mut installed = fresh.clone();
+        let mut installed = fresh;
         let image = json!({"registry":"selected.example", "repository":"host",
             "tag":format!("selected@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent"});
         let group = &mut installed["runtime-operator"]["runtime"]["hostGroups"][0];

@@ -275,9 +275,7 @@ pub async fn provision_control_role(
         },
     )?;
     let secret = wamn_control_provision::org_workload_secret_name(family, namespace);
-    let kubeconfig = std::env::var_os("KUBECONFIG")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_default();
+    let kubeconfig = std::env::var_os("KUBECONFIG").map_or_default(std::path::PathBuf::from);
     let mut connection = wamn_postgres::connect(input).await?;
     let surface = sql::stable_surface_sql(family)
         .unwrap_or_else(|| sql::ensure_workload_acl_role_sql(family));
@@ -329,9 +327,7 @@ pub async fn provision_platform_migration(
         .strip_suffix("-ca")
         .context("CNPG CA Secret must identify its cluster")?;
     let role = scope.managed_role(&config.database);
-    let kubeconfig = std::env::var_os("KUBECONFIG")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_default();
+    let kubeconfig = std::env::var_os("KUBECONFIG").map_or_default(std::path::PathBuf::from);
     reconcile(
         registry_input,
         &kubeconfig,

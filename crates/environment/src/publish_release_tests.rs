@@ -45,10 +45,10 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         }
         component
             .operations
-            .insert(operation.clone().parse().unwrap(), export);
+            .insert(operation.parse().unwrap(), export);
         components.insert(component, Vec::new()).unwrap();
         packages.insert(PackageCoordinate::new(package.clone(), "1.0.0".parse().unwrap()).unwrap());
-        manifests.insert(package.to_owned(), manifest);
+        manifests.insert(package, manifest);
     }
     let published = publish_release_with_package_manifests(
         &PublishReleaseManifest {

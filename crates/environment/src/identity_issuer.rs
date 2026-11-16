@@ -57,9 +57,7 @@ pub async fn provision_identity_issuer(
     sqlx::raw_sql(sqlx::AssertSqlSafe(grant_identity_issuer_surface_sql()))
         .execute(&mut connection)
         .await?;
-    let kubeconfig = std::env::var_os("KUBECONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_default();
+    let kubeconfig = std::env::var_os("KUBECONFIG").map_or_default(PathBuf::from);
     super::provision_project_env::workload::reconcile(
         &args.system_database_url,
         &kubeconfig,

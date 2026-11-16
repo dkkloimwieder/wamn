@@ -153,8 +153,7 @@ impl HostCommandHandler for Commands {
         let components = workload
             .wit_world
             .as_ref()
-            .map(|world| &world.components[..])
-            .unwrap_or_default();
+            .map_or_default(|world| &world.components[..]);
         for component in components {
             wamn_catalog::validate_component_start_reference(&component.image)?;
         }

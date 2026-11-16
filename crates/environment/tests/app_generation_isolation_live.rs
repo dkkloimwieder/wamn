@@ -89,8 +89,7 @@ async fn run_alone(superuser: &mut Client, statement: &str) {
     sqlx::raw_sql(sqlx::AssertSqlSafe((statement).to_string()))
         .execute(&mut *superuser)
         .await
-        .map(drop)
-        .unwrap_or_else(|error| panic!("{statement}: {error}"));
+        .map_or_else(|error| panic!("{statement}: {error}"), drop);
 }
 
 #[sqlx::test(migrations = false)]

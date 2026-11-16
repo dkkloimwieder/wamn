@@ -267,9 +267,7 @@ async fn seed(admin: &mut Client, table: &str, statement: &str, age_days: i32) -
             .to_string(),
     ))
     .execute(&mut *admin)
-    .await
-    .map(drop)
-    .unwrap_or_else(|error| panic!("write {statement}: {error}"));
+    .await.map_or_else(|error| panic!("write {statement}: {error}"), drop);
     let mut positions = sqlx::query(sqlx::AssertSqlSafe(
         (&format!(
             "UPDATE {history} SET changed_at = now() - make_interval(days => $1) \

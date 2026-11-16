@@ -649,7 +649,7 @@ impl Service<Uri> for PinnedConnector {
             let authority = format!(
                 "{}://{}",
                 uri.scheme_str().unwrap_or_default(),
-                uri.authority().map(Authority::as_str).unwrap_or_default()
+                uri.authority().map_or_default(Authority::as_str)
             );
             if authority != connector.target.authority.as_ref() {
                 return Err(input("HTTP connector authority mismatch"));

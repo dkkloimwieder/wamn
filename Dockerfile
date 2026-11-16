@@ -7,7 +7,7 @@
 # that prevent concurrent writes, and one locked native target cache per checkout.
 # One build-native stage compiles all native packages in one invocation. The
 # host executable links no provisioning or replication credential code.
-FROM rust:1.99-trixie AS toolchain
+FROM rust:1.100-trixie AS toolchain
 # libprotobuf-dev carries the well-known types (google/protobuf/*.proto)
 # that protobuf-compiler alone does not ship on Debian.
 RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git && rm -rf /var/lib/apt/lists/*

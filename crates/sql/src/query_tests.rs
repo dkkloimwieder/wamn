@@ -360,15 +360,16 @@ async fn live_an_invalid_timezone_setting_is_refused(pool: sqlx::PgPool) {
     postgres
         .set_user_id(SCOPE, &LIVE_PRINCIPAL.parse().unwrap())
         .unwrap();
-    let target = std::env::var_os("CARGO_TARGET_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
+    let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(
+        || {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .ancestors()
                 .nth(2)
                 .unwrap()
                 .join("target")
-        });
+        },
+        std::path::PathBuf::from,
+    );
     let bytes =
         std::fs::read(target.join("wasm32-wasip2/debug/examples/numbering_refusal.wasm")).unwrap();
     let (mut store, instance) = guest(Arc::clone(&postgres), SCOPE, &bytes).await;

@@ -389,8 +389,7 @@ pub fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_>>) {
         "wamn.component_digest",
         wiring
             .and_then(|wiring| wiring.component_digest)
-            .map(std::string::ToString::to_string)
-            .unwrap_or_default(),
+            .map_or_default(std::string::ToString::to_string),
     );
     span.record(
         "wamn.component_name",

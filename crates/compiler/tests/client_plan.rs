@@ -380,11 +380,7 @@ fn inputs_drop_the_supplied_revision_and_cursor_paths() {
     let plan = ClientPlan::from_ir(&ir);
     for screen in plan.screens() {
         let supplied = screen.supplied.iter().map(|field| field.path);
-        let controls = screen
-            .paging
-            .as_ref()
-            .map(|page| page.inputs())
-            .unwrap_or_default();
+        let controls = screen.paging.as_ref().map_or_default(|page| page.inputs());
         let mut accounted = paths(&screen.inputs);
         for path in supplied
             .chain(screen.revision_inputs.iter().copied())

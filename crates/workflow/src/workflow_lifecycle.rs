@@ -197,8 +197,7 @@ pub async fn enable_workflow(
     // not declare has no package of its own when its conditions are evaluated.
     let packages = declared
         .get(workflow.application)
-        .map(|application| application.packages.clone())
-        .unwrap_or_default();
+        .map_or_default(|application| application.packages.clone());
     under_lock(system_url, triple, async || {
         let mut transaction = begin(project).await?;
         enable_in(

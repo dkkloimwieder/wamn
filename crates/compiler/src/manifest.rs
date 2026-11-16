@@ -886,7 +886,7 @@ pub fn validate_operation_vocabulary(
                     format!("manifest repeats declared operation {identity}"),
                 ));
             }
-            component_by_operation.insert(identity.clone(), operation.component.as_ref());
+            component_by_operation.insert(identity, operation.component.as_ref());
         }
     }
     for (operation_name, operation) in &manifest.custom_operations {

@@ -104,9 +104,7 @@ impl Platform {
                 std::env::var("WAMN_RELEASE_NAMESPACE")
                     .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned()),
             )?,
-            std::env::var_os("WAMN_RELEASE_CHART")
-                .map(PathBuf::from)
-                .unwrap_or_default(),
+            std::env::var_os("WAMN_RELEASE_CHART").map_or_default(PathBuf::from),
             false,
         )
     }
@@ -179,15 +177,13 @@ impl Platform {
             } else {
                 PathBuf::from(variable("WAMN_REGISTRY_AUTH_FILE")?)
             },
-            oci_ca_paths: std::env::var("WAMN_OCI_CA_PATHS")
-                .map(|paths| {
-                    paths
-                        .split(':')
-                        .filter(|path| !path.is_empty())
-                        .map(PathBuf::from)
-                        .collect()
-                })
-                .unwrap_or_default(),
+            oci_ca_paths: std::env::var("WAMN_OCI_CA_PATHS").map_or_default(|paths| {
+                paths
+                    .split(':')
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from)
+                    .collect()
+            }),
             package_artifact_base: std::env::var("WAMN_PACKAGE_ARTIFACT_BASE").ok(),
             component_artifact_base: std::env::var("WAMN_COMPONENT_ARTIFACT_BASE").ok(),
             database_namespace: std::env::var("WAMN_DATABASE_NAMESPACE")

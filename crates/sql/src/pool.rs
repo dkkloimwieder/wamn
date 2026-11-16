@@ -328,7 +328,7 @@ impl StaticCredentialProvider {
                     .unwrap_or(d)
             };
             out.insert(
-                name.clone(),
+                name,
                 ProjectConfig {
                     credentials,
                     guest_pool_max_size: usize::try_from(u64_or(

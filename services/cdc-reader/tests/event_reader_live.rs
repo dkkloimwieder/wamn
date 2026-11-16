@@ -187,8 +187,7 @@ async fn read_all(
                 .headers
                 .as_ref()
                 .and_then(|h| h.get(NATS_MESSAGE_ID))
-                .map(std::string::ToString::to_string)
-                .unwrap_or_default();
+                .map_or_default(std::string::ToString::to_string);
             let wamn_event_wire::SourceEvent::Cdc(envelope) =
                 wamn_event_wire::SourceEvent::decode(&msg.payload).expect("event decodes")
             else {

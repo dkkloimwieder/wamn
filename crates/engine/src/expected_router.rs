@@ -132,9 +132,7 @@ mod tests {
             let mut connection = tokio::net::TcpStream::connect(ingress.addr())
                 .await
                 .expect("connect to native ingress");
-            let host = host
-                .map(|host| format!("Host: {host}\r\n"))
-                .unwrap_or_default();
+            let host = host.map_or_default(|host| format!("Host: {host}\r\n"));
             connection
                 .write_all(
                     format!("GET {path} HTTP/1.0\r\n{host}Connection: close\r\n\r\n").as_bytes(),

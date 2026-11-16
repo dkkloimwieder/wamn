@@ -117,9 +117,7 @@ pub async fn provision_apply(input: &str) -> anyhow::Result<()> {
         .next()
         .context("database host is absent")?
         .trim_end_matches("-rw");
-    let kubeconfig = std::env::var_os("KUBECONFIG")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_default();
+    let kubeconfig = std::env::var_os("KUBECONFIG").map_or_default(std::path::PathBuf::from);
     let role = wamn_control_provision::connection::managed_role(
         "wamn_apply".parse()?,
         "wamn_db_owner",

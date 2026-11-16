@@ -101,7 +101,7 @@ pub async fn database_state(
         .bind(project_env_key).fetch_all(&mut client).await? {
         let id: wamn_catalog::PackageName = row.try_get(0)?;
         packages.insert(id.clone(), AppliedPackage {
-            coordinate: wamn_catalog::PackageCoordinate::new(id.clone(), row.try_get::<wamn_catalog::package_version::PackageVersion, _>(1)?)?,
+            coordinate: wamn_catalog::PackageCoordinate::new(id, row.try_get::<wamn_catalog::package_version::PackageVersion, _>(1)?)?,
             artifact_digest: row.get(2),
         });
     }
@@ -492,7 +492,7 @@ mod tests {
         let mut sources = BTreeMap::from([(
             manifest.package.id.clone(),
             SchemaSource {
-                version: manifest.package.version.clone(),
+                version: manifest.package.version,
                 artifact: None,
             },
         )]);

@@ -300,8 +300,7 @@ async fn collect(target: &Target, directory: &Path, job: &Value) -> anyhow::Resu
         let cleanup_error = cleanup
             .as_ref()
             .err()
-            .map(|error| format!("\nJob cleanup failed: {error:#}"))
-            .unwrap_or_default();
+            .map_or_default(|error| format!("\nJob cleanup failed: {error:#}"));
         format!(
             "platform Job log saved at {}:\n{log}{cleanup_error}",
             path.display()

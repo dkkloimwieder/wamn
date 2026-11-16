@@ -17,9 +17,7 @@ const CAPTURED_AT: &str = "2026-09-25T12:00:00.000000Z";
 
 /// POST `body` to the route and return the status and the response body.
 async fn post(addr: SocketAddr, token: Option<&str>, body: &str) -> (u16, String) {
-    let authorization = token
-        .map(|token| format!("Authorization: Bearer {token}\r\n"))
-        .unwrap_or_default();
+    let authorization = token.map_or_default(|token| format!("Authorization: Bearer {token}\r\n"));
     let request = format!(
         "POST {PATH} HTTP/1.1\r\nHost: {HOST}\r\n{authorization}Content-Type: application/json\r\n\
          Content-Length: {}\r\nConnection: close\r\n\r\n{body}",

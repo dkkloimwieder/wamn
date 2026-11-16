@@ -546,8 +546,8 @@ mod tests {
         assert!(read_ca_bundles(&[]).unwrap().is_empty());
 
         let missing = root.join("missing.pem");
-        let error = read_ca_bundles(&[first.clone(), missing.clone()])
-            .expect_err("an unreadable bundle refuses");
+        let error =
+            read_ca_bundles(&[first.clone(), missing]).expect_err("an unreadable bundle refuses");
         assert!(std::error::Error::source(&error).is_some());
 
         std::fs::remove_file(first).unwrap();

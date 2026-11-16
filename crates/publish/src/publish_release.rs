@@ -1368,7 +1368,7 @@ mod tests {
             PublishManifestErrorType::ApplicationSelection
         );
 
-        let mut ambiguous = applications.clone();
+        let mut ambiguous = applications;
         ambiguous
             .get_mut("orders")
             .unwrap()
@@ -2107,8 +2107,7 @@ mod manifest_push {
                 .expect("set WAMN_REGISTRY_AUTH_FILE to its Docker config credential");
             // A CA names a TLS registry; without one the registry stays plain HTTP.
             let oci_ca_paths: Vec<PathBuf> = std::env::var(OCI_CA_PATHS_ENV)
-                .map(|paths| paths.split(',').map(PathBuf::from).collect())
-                .unwrap_or_default();
+                .map_or_default(|paths| paths.split(',').map(PathBuf::from).collect());
             let insecure_registry = oci_ca_paths.is_empty();
 
             let first = push_manifest_bytes(

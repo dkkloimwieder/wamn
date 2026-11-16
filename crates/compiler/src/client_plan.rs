@@ -930,7 +930,7 @@ impl<'a> ScreenPlan<'a> {
             limit_input: (limit.is_some() && declared(LIMIT_INPUT)).then_some(LIMIT_INPUT),
             cursor_input,
         });
-        let page_controls = paging.as_ref().map(Paging::inputs).unwrap_or_default();
+        let page_controls = paging.as_ref().map_or_default(Paging::inputs);
         let inputs = input_leaves
             .iter()
             .filter(|field| {
@@ -1146,8 +1146,7 @@ impl<'a> Lister<'a> {
             filter_inputs: screen
                 .paging
                 .as_ref()
-                .map(|paging| paging.filter_inputs.clone())
-                .unwrap_or_default(),
+                .map_or_default(|paging| paging.filter_inputs.clone()),
             cursor_input: screen
                 .paging
                 .as_ref()

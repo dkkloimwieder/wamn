@@ -106,8 +106,7 @@ pub async fn execute(
         let cleanup = completion
             .err()
             .or_else(|| drained.err())
-            .map(|error| format!("; cleanup: {error}"))
-            .unwrap_or_default();
+            .map_or_default(|error| format!("; cleanup: {error}"));
         anyhow::bail!(
             "{cause}{cleanup}\nstdout tail:\n{}\nstderr tail:\n{}",
             diagnostic_tail(&stdout_bytes),

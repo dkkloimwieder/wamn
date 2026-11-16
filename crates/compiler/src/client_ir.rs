@@ -943,40 +943,37 @@ fn paging_of(input: &Value) -> Option<PagingIr> {
     {
         return None;
     }
-    let mut filters: Vec<FilterIr> = filters
-        .map(|filters| {
-            filters
-                .iter()
-                .filter_map(|filter| {
-                    Some(FilterIr {
-                        field: filter.get("field")?.as_str()?.to_owned(),
-                        binding: filter.get("binding")?.as_str()?.to_owned(),
-                        match_mode: filter
-                            .get("match")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
-                        type_name: filter
-                            .get("type")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
-                        required: filter.get("required").and_then(Value::as_bool) == Some(true),
-                        default_last_days: filter
-                            .get("default")
-                            .and_then(|default| default.get("last_days"))
-                            .and_then(Value::as_u64),
-                    })
+    let mut filters: Vec<FilterIr> = filters.map_or_default(|filters| {
+        filters
+            .iter()
+            .filter_map(|filter| {
+                Some(FilterIr {
+                    field: filter.get("field")?.as_str()?.to_owned(),
+                    binding: filter.get("binding")?.as_str()?.to_owned(),
+                    match_mode: filter
+                        .get("match")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    type_name: filter
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    required: filter.get("required").and_then(Value::as_bool) == Some(true),
+                    default_last_days: filter
+                        .get("default")
+                        .and_then(|default| default.get("last_days"))
+                        .and_then(Value::as_u64),
                 })
-                .collect()
-        })
-        .unwrap_or_default();
+            })
+            .collect()
+    });
     filters.sort();
     filters.dedup();
     Some(PagingIr {
         filters,
         search: input
             .get("search")
-            .map(|search| string_list(search.get("fields")))
-            .unwrap_or_default(),
+            .map_or_default(|search| string_list(search.get("fields"))),
         sort: input.get("sort").map(|sort| SortIr {
             fields: string_list(sort.get("fields")),
             directions: string_list(sort.get("directions")),
@@ -998,7 +995,7 @@ fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
     let mut cases: Vec<ErrorCaseIr> = errors
         .and_then(|errors| errors.get("cases"))
         .and_then(Value::as_array)
-        .map(|cases| {
+        .map_or_default(|cases| {
             cases
                 .iter()
                 .filter_map(|case| {
@@ -1015,8 +1012,7 @@ fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
                     })
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     cases.sort_by(|left, right| left.literal.cmp(&right.literal));
     // One literal can name several constraints, and only some of them name a
     // field. A key every case requires stays required, and a key that some
@@ -1095,15 +1091,12 @@ fn relations_of(type_: &str, relations: Option<&Value>) -> (Vec<String>, Option<
 }
 
 fn string_list(value: Option<&Value>) -> Vec<String> {
-    let mut list: Vec<String> = value
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(|entry| entry.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut list: Vec<String> = value.and_then(Value::as_array).map_or_default(|values| {
+        values
+            .iter()
+            .filter_map(|entry| entry.as_str().map(str::to_owned))
+            .collect()
+    });
     list.sort();
     list.dedup();
     list

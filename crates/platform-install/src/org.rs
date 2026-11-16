@@ -56,9 +56,7 @@ pub async fn apply(
 ) -> anyhow::Result<()> {
     crate::credentials::with_chart_lock(registry_input, namespace, async {
         let target = wamn_kubernetes::Target {
-            kubeconfig: std::env::var_os("KUBECONFIG")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_default(),
+            kubeconfig: std::env::var_os("KUBECONFIG").map_or_default(std::path::PathBuf::from),
             context: String::new(),
             namespace: namespace.to_string(),
         };

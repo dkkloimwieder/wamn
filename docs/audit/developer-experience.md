@@ -377,7 +377,7 @@ Problem: The shared measurements contain no startup or edit latency measurements
 
 Proposal: Record the following current path once from a cold checkout and once with warm caches. Every duration below is unmeasured. Limits are failure budgets, not observed durations.
 
-1. Install Linux x86_64 host tools: Rust 1.99.0, its configured components, `clang`, `mold`, `protoc`, Node 24.21.0, pnpm 12.9.1, Python, Docker, and Compose. Install SQLx CLI 0.9.0 for SQL applications. Tests additionally require PostgreSQL 18 binaries and a native `nats-server`. Time: unmeasured.
+1. Install Linux x86_64 host tools: Rust 1.100.0, its configured components, `clang`, `mold`, `protoc`, Node 24.21.0, pnpm 12.9.1, Python, Docker, and Compose. Install SQLx CLI 0.9.0 for SQL applications. Tests additionally require PostgreSQL 18 binaries and a native `nats-server`. Time: unmeasured.
 2. Initialize submodules and select the checkout's target directory. Install web dependencies with `pnpm install --frozen-lockfile`. KCL 0.13.0 installs automatically on first use. Time: unmeasured.
 3. Build `wamn-ctl`, `wamn-host`, `wamn-identity`, and `wamn-cdc-reader` in debug mode. Time: unmeasured.
 4. Start disposable PostgreSQL 18 with `wal_level=logical` and create `wamn_system`. Start separate scheduler and event NATS services. Prepare provisioning, runtime, publisher, and materializer credentials. Render the collector, fetch its printed image, and start its Compose service. Time: unmeasured. The lane-start database readiness limit is 300 seconds (`tools/lane-start:77`).

@@ -1,7 +1,7 @@
 # Building
 
 Run commands from the repository root with the pinned toolchain and committed lock files.
-The native toolchain is Rust 1.99.0 with Clippy, rustfmt, and `wasm32-wasip2`.
+The native toolchain is Rust 1.100.0 with Clippy, rustfmt, and `wasm32-wasip2`.
 Native builds require system compiler tools and `protoc`.
 The web workspace uses Node 24.21.0 LTS and pnpm 12.9.1.
 TypeScript 7 compiles the web packages. The TypeScript 6 compatibility package supplies the API that ESLint requires.
@@ -424,7 +424,7 @@ A version change runs the same BuildKit build with new output tags. BuildKit reu
 These changes make Cargo rebuild more:
 
 - A changed `Cargo.lock`, Cargo feature, profile or `.cargo/config.toml` rebuilds the dependencies that they reach.
-- A new Rust image under the `rust:1.99-trixie` tag rebuilds everything.
+- A new Rust image under the `rust:1.100-trixie` tag rebuilds everything.
 - A change to a widely used workspace crate rebuilds every crate that depends on it, and links each native binary again.
 - A new checkout has a new key, so its first image build compiles everything.
 - BuildKit garbage collection can remove a cache. Read the caches with `docker buildx du --verbose`.

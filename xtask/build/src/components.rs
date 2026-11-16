@@ -226,11 +226,7 @@ fn require_guest(repository: &Path, name: &str, file: &Path, crate_manifest: &Pa
         file.display()
     );
     let cargo_home = std::env::var_os("CARGO_HOME").map_or_else(
-        || {
-            std::env::var_os("HOME")
-                .map(|home| Path::new(&home).join(".cargo"))
-                .unwrap_or_default()
-        },
+        || std::env::var_os("HOME").map_or_default(|home| Path::new(&home).join(".cargo")),
         PathBuf::from,
     );
     let repository = fs::canonicalize(repository)

@@ -103,7 +103,7 @@ missing_panics_doc = "allow"      #  72. Library-API doc contract, as above.
 multiple_crate_versions = "allow" #  46. Duplicate transitive versions we do not control;
                                   #      the wasmtime/async-nats pins are upstream-governed.
 return_self_not_must_use = "allow"#   8. Library-API concern, as above.
-# Rust 1.99 adds this assertion style rule. Existing empty tests already assert
+# Rust 1.100 includes this assertion style rule. Existing empty tests already assert
 # the required property; rewriting them adds no coverage.
 assert_is_empty = "allow"
 
@@ -157,7 +157,6 @@ clap = "4"
 data-encoding = "2.11"
 futures-util = "0.3"
 hex = "0.4"
-http = "1"
 http-body-util = "0.1"
 humantime = "2"
 hyper = "1"
@@ -168,11 +167,8 @@ url = "2"
 # workspace declared directly: `numeric` is `rust_decimal::Decimal` and `uuid`
 # is `uuid::Uuid`. A crate that compiles emitted bindings needs both, which is
 # why the emitter's own compilation test declares them too (wamn-10yt.45).
-rust_decimal = { version = "1", default-features = false }
 uuid = "1"
-libc = "0.2"
 opentelemetry = { version = "=0.32.0", default-features = false }
-opentelemetry-otlp = { version = "=0.32.0", default-features = false }
 opentelemetry_sdk = { version = "=0.32.1", default-features = false }
 opentelemetry-appender-tracing = { version = "=0.32.0", default-features = false }
 # The component publisher and puller share this exact client and TLS family.
@@ -231,7 +227,6 @@ wasmparser = "0.261.0"
 # `virtual_adapter-wasip2.wasm` is sha256:28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632.
 
 # Every project crate has one canonical path + version identity (M-CRATES-IN-WORKSPACE).
-wamn-control = { path = "services/control", version = "0.1.0" }
 wamn-catalog = { path = "crates/catalog", version = "0.1.0" }
 wamn-package-artifact = { path = "crates/package-artifact", version = "0.1.0" }
 wamn-fixture-package = { path = "test-support/fixtures/package", version = "0.1.0" }
