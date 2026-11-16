@@ -164,6 +164,8 @@ Wave 2 (in sequence, after wave 1):
 
 ## Epic 2: phase 2 restructure
 
+Merged to main.
+
 Rules:
 - No behaviour change. Allowed: moves, merges, renames, and deleting code that a move leaves with no caller. No new types, no new logic.
 - Done = `cargo build --workspace` and `cargo clippy --workspace --all-targets` with no new error compared with the 45 existing ones; the same in `apps/`. A local Postgres container is allowed for the `wamn build` that check needs, and only for that. Run no tests, no kind or cluster runs, nothing on GCP.
@@ -221,6 +223,8 @@ Issues:
 - 3.5: `catalog/configuration.rs::read` still selects the dropped column `registry.environment_applications.release_digest`. Its callers (`control_route/operations.rs`, `environment/document.rs`) fail at that read until 3.5 replaces them with the Helm revision.
 - 3.5: publish has no append check since Epic 1 deleted the check over all versions. 3.5 adds the check against the previous version only.
 - 3.8: these tests compile but use SQL on tables Epic 1 dropped (`catalog.releases`, `catalog.wiring_tombstones`): `crates/provision/tests/{deploy_sql_authority,family_denial_matrix,record_history}.rs`, `crates/provision/tests/fixtures/catalog_record_history.sql`, `crates/identity/tests/fixtures/connections.sql`.
+- 3.8: `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs` run the binary `wamn-ctl`, which Epic 1 deleted.
+- 3.8: `docs/operations/running-tests.md` describes test targets that no longer exist.
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
 - 3.4: merge `wamn-events` and `wamn-event-wire`. In Epic 2 the merge made a cycle, because `wamn-broker`, `wamn-run-state` and `wamn-sql` depend on `wamn-event-wire`.
 - 3.5: `wamn_catalog::manifest::installation` is a second, smaller model of the package document. Its readers move to the full model and it is deleted.

@@ -6496,7 +6496,6 @@ dependencies = [
 name = "wamn-registry"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "hex",
  "serde",
  "serde_json",

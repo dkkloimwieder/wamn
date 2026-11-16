@@ -29,7 +29,6 @@ wamn-kubernetes.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true
 wamn-provision.workspace = true
-wamn-identity.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-oci.workspace = true
 wamn-codegen.workspace = true
@@ -39,6 +38,7 @@ hyper = { workspace = true }
 
 [dev-dependencies]
 wamn-platform-install = { path = ".", features = ["test-util"] }
+wamn-identity.workspace = true
 toml.workspace = true
 sqlx = { workspace = true, features = ["macros"] }
 wamn-test-infrastructure = { workspace = true }
