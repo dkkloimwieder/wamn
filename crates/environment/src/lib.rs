@@ -17,7 +17,6 @@ pub use wamn_platform_install::provision_system;
 pub mod prune_record_history;
 #[cfg(feature = "ops")]
 pub mod prune_run_history;
-pub use wamn_events::reconcile_replica_identity;
 pub use wamn_events::replica_identity;
 
 #[cfg(test)]

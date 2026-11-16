@@ -171,63 +171,6 @@ impl wamn_connections::database::ProjectDatabase for WamnPostgres {
 }
 
 impl WamnPostgres {
-    /// Whether a released invocation still retains this deployment.
-    pub fn release_in_use(&self, release: &wamn_engine::release_manifest::LoadedRelease) -> bool {
-        self.scopes
-            .any::<wamn_connections::invocation::Scope>(|record| {
-                record.invocation.is_some()
-                    && record
-                        .context
-                        .as_ref()
-                        .is_some_and(|context| std::ptr::eq(context.release.as_ref(), release))
-            })
-    }
-}
-
-impl wamn_connections::production_lease::ExecutorDatabase for WamnPostgres {
-    async fn bound_connection(
-        &self,
-        component: &str,
-    ) -> Result<StatementConnectionGuard, ProductionLeaseError> {
-        self.project_env_key_for(component).ok_or_else(|| {
-            ProductionLeaseError::new(
-                ProductionLeaseErrorType::Identity,
-                "resolve executor identity",
-                "component has no host-injected project",
-            )
-        })?;
-        let project = self.project_for(component);
-        let schema = self.schema_for(component);
-        let runner = self.runner_for(component);
-        let user = self.user_id_for(component);
-        let operation = self.operation_for(component);
-        let application = self.application_for(component);
-        self.open_executor_transaction(
-            &project,
-            ExecutorIdentity {
-                schema: schema.as_deref(),
-                runner: runner.as_deref(),
-                user: user.as_ref(),
-                operation: operation.as_ref(),
-                application: application.as_ref(),
-            },
-            false,
-        )
-        .await
-    }
-    fn project_env_key(&self, component: &str) -> Option<wamn_registry::ProjectEnvKey> {
-        self.project_env_key_for(component)
-    }
-    fn runner(&self, component: &str) -> Option<String> {
-        self.runner_for(component)
-    }
-    fn manifest_digest(&self, component: &str) -> Option<wamn_digest::Digest> {
-        self.release_identity_for(component)
-            .map(|release| *release.manifest_digest())
-    }
-}
-
-impl WamnPostgres {
     /// Check out the application's existing SQL pool without starting a transaction.
     pub async fn application_connection(
         &self,

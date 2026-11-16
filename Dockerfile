@@ -58,7 +58,6 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
  && install -D -m 0755 target/release/wamn-control /native-output/wamn-control \
  && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn \
- && install -D -m 0755 target/release/wamn-ctl /native-output/wamn-ctl \
  && install -D -m 0755 target/release/wamn /native-output/wamn \
  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader \
  && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
@@ -114,7 +113,6 @@ FROM root-source AS ctl-deploy
 # ---- ctl image: the one-shot control-plane verbs (SR9) ----------------------
 FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 COPY --from=components /http.wasm /usr/local/share/wamn/http_route.wasm
 COPY --from=components /palette/ /usr/local/share/wamn/
 # Native workers apply manifests with kubectl, pinned by version and its
@@ -133,7 +131,6 @@ COPY --from=build-native /native-output/docker-credential-wamn /usr/local/bin/do
 ENV WAMN_KCL=/usr/local/bin/kcl
 COPY --from=ctl-deploy /build/deploy /usr/local/share/wamn/deploy
 ENV HOME=/tmp
-ENTRYPOINT ["/usr/local/bin/wamn-ctl"]
 
 # ---- native org control service and its operation worker -----------------
 FROM ctl AS control

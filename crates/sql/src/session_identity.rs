@@ -502,12 +502,6 @@ impl WamnPostgres {
         Ok(())
     }
 
-    pub(super) fn release_identity_for(&self, component_id: &str) -> Option<ReleaseIdentity> {
-        self.scopes
-            .read::<Authority, _>(component_id, |record| record.identity.release.clone())
-            .flatten()
-    }
-
     /// Declare (`Some`) or clear (`None`) the causation context of the run a
     /// component is driving (l5i9.12.2). While set, each write transaction the plugin
     /// opens for the component carries a `wamn.causation` message. Host-injected

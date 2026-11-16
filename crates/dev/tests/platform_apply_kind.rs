@@ -252,7 +252,6 @@ async fn focused(case: application_deploy::Case) -> anyhow::Result<()> {
                 case,
                 application_deploy::Case::Reset
                     | application_deploy::Case::PlatformSchema
-                    | application_deploy::Case::ConnectionAndCaller
             ),
         "this case requires an installed development cluster from the kind tool"
     );

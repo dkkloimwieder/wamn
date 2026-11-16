@@ -2,9 +2,8 @@
 
 use crate::queue::{
     advance_lease_attempts_sql, clear_pre_effect_state_sql, grant_production_lease_sql,
-    release_production_lease_sql, renew_production_lease_sql, select_exhausted_production_sql,
+    renew_production_lease_sql, select_exhausted_production_sql,
     select_production_lease_sql, terminalize_exhausted_production_sql,
-    terminalize_released_production_sql,
 };
 use crate::run_store::{
     ProductionCompletion, ProductionCompletionResult, ProductionLeaseError,
@@ -86,48 +85,6 @@ struct ExhaustedLease {
 struct ExhaustedExecutionIdentity {
     wiring_id: wamn_catalog::canonical_name::CanonicalName,
     wiring_version: i32,
-}
-
-/// Release a held lease or fail the run when its retry budget is spent.
-pub async fn release_lease(
-    connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    run_id: &str,
-    runner: &str,
-    lease_generation: i64,
-) -> Result<bool, ProductionLeaseError> {
-    validate_generation(lease_generation)?;
-    let sql = release_production_lease_sql();
-    let Some(row) = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(project_env_key)
-        .bind(run_id)
-        .bind(runner)
-        .bind(lease_generation)
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(|error| ProductionLeaseError::postgres("release production lease", &error))?
-    else {
-        return Ok(false);
-    };
-    if row_value::<bool>(&row, 0, "released run exhausted")? {
-        let identity = ExhaustedExecutionIdentity {
-            wiring_id: row_value(&row, 1, "released wiring id")?,
-            wiring_version: row_value(&row, 2, "released wiring version")?,
-        };
-        let body = generic_failure_outcome(FailType::RetryExhausted.as_sql(), &identity, run_id);
-        let sql = terminalize_released_production_sql();
-        sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(project_env_key)
-            .bind(run_id)
-            .bind(&body)
-            .bind(chrono::Utc::now())
-            .fetch_one(&mut *connection)
-            .await
-            .map_err(|error| {
-                ProductionLeaseError::postgres("terminalize release exhaustion", &error)
-            })?;
-    }
-    Ok(true)
 }
 
 /// Renew a live lease under its owner and generation fence.
@@ -566,23 +523,6 @@ pub async fn record_deadline_adjustments(
     .await
     .map_err(|error| ProductionLeaseError::postgres("store deadline report", &error))?;
     row_value(&row, 0, "deadline report fence")
-}
-
-/// Unfinished runs and their immutable application and release pins after restart.
-pub async fn unfinished_releases(
-    connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    environment: &wamn_registry::EnvName,
-) -> Result<Vec<(wamn_catalog::ApplicationName, wamn_digest::Digest, String)>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT package_id, manifest_digest, run_id FROM wamn_run.runs \
-         WHERE project_env_key=$1 AND environment=$2 AND status IN ('dispatched','running') \
-         ORDER BY package_id, manifest_digest, run_id",
-    )
-    .bind(project_env_key)
-    .bind(environment)
-    .fetch_all(connection)
-    .await
 }
 
 /// Whether this release still has queued work.

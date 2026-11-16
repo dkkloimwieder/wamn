@@ -61,15 +61,6 @@ impl ApplyPackageRequest {
     }
 }
 
-/// Read the existing component repository variable with the package registry's transport.
-pub fn component_source_from_env(
-    _: Option<&wamn_publish::package_artifact::PackageRegistry>,
-) -> anyhow::Result<
-    Option<wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
-> {
-    Ok(None)
-}
-
 /// Result of one exact package application.
 #[derive(Debug)]
 pub struct ApplyOutcome {

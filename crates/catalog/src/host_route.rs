@@ -335,27 +335,6 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Control,
-        operation: "workflow.park",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::ControlExecution,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "workflow.release",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::ControlExecution,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "workflow.runs",
-        type_: OperationType::Get,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::ControlExecution,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
         operation: "capture_gap.recover",
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,

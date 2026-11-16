@@ -1,43 +1,9 @@
 //! Shared WMS rows for local business and deployed delivery tests.
 
-use anyhow::Context as _;
-use sqlx::PgConnection as Client;
-
-const PRODUCT_ID: &str = "00000000-0000-0000-0000-000000000101";
-pub(crate) const LOCATION_A_ID: &str = "00000000-0000-0000-0000-000000000201";
-const LOCATION_B_ID: &str = "00000000-0000-0000-0000-000000000202";
-pub(crate) const PACKAGING_ID: &str = "00000000-0000-0000-0000-000000000301";
-const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
-
-pub(crate) async fn seed_fixture(
-    project: &mut Client,
-    initial_revision: i64,
-) -> anyhow::Result<()> {
-    // The fixture writes as its test principal, whose row stamps itself.
-    sqlx::raw_sql(sqlx::AssertSqlSafe((&format!(
-        "BEGIN;\n\
-         INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{FIXTURE_PRINCIPAL}'::text::uuid,'','fixture','admin:seed-wms-fixture');\n\
-         INSERT INTO platform.\"user\" (id, type, email) VALUES ('{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid');\n\
-         INSERT INTO wms.product (id, product_code) VALUES ('{PRODUCT_ID}', 'PROD-101');\n\
-         INSERT INTO wms.location (id, location_code) VALUES ('{LOCATION_A_ID}', 'LOC-A'), ('{LOCATION_B_ID}', 'LOC-B');\n\
-         INSERT INTO wms.packaging (id, packaging_code, type, location_id, status, row_version) VALUES ('{PACKAGING_ID}', 'PAL-301', 'pallet', '{LOCATION_A_ID}', 'available', {initial_revision});\n\
-         INSERT INTO wms.packaging_quantity (packaging_id, product_id, quantity, status) VALUES ('{PACKAGING_ID}', '{PRODUCT_ID}', 10, 'available');\n\
-         INSERT INTO wms.inventory_transaction (product_id, quantity, to_packaging_id, to_status, occurred_at) VALUES ('{PRODUCT_ID}', 10, '{PACKAGING_ID}', 'available', now());\n\
-         COMMIT;"
-    )).to_string())).execute(&mut *project).await.map(drop).context("seed the existing WMS application fixture")
-}
-
 #[derive(Debug, Clone)]
 pub struct RuntimePhase {
     /// The fixture packaging the contention moves.
     pub packaging_id: String,
     /// The fixture location it moves to.
     pub to_location_id: String,
-}
-
-pub(crate) fn runtime_phase() -> RuntimePhase {
-    RuntimePhase {
-        packaging_id: PACKAGING_ID.to_owned(),
-        to_location_id: LOCATION_B_ID.to_owned(),
-    }
 }

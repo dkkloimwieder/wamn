@@ -36,8 +36,7 @@ pub use database_grants::{
 
 #[doc(inline)]
 pub use cdc::{
-    CDC_PUBLISH, PUBLICATION_PROBE_SQL, create_failover_slot_sql, create_publication_schemas_sql,
-    create_publication_sql, drop_publication_sql, drop_replication_slot_sql,
+    CDC_PUBLISH, PUBLICATION_PROBE_SQL, create_failover_slot_sql, drop_replication_slot_sql,
     ensure_cdc_exclusion_map_sql, ensure_entity_map_sql, grant_replication_access_sql,
     upsert_cdc_exclusion_map_sql, upsert_entity_map_sql,
 };
@@ -190,7 +189,7 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 5] = [
 /// node digests (`wamn_run_state::queue::insert_manual_run_sql`). The list
 /// reaches no binding world, legacy flow, capture or
 /// caller-outcome column.
-pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 20] = [
+pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 19] = [
     "project_env_key",
     "package_id",
     "manifest_digest",
@@ -199,7 +198,6 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 20] = [
     "wiring_version",
     "wiring_hash",
     "trigger_source",
-    "registration_id",
     "execution_principal_id",
     "execution_role",
     "invoked_by",

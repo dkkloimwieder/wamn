@@ -2,59 +2,6 @@
 
 use super::{escape_identifier, escape_literal};
 
-/// Idempotently create the CDC publication over the project-env's app **data**
-/// schema: `CREATE PUBLICATION <pub> FOR TABLES IN SCHEMA <schema> WITH
-/// (publish = 'insert, update, delete')`, guarded by a `pg_publication` probe
-/// (Postgres has no `CREATE PUBLICATION IF NOT EXISTS`). `FOR TABLES IN SCHEMA`
-/// auto-includes tables created in the schema later, the D19 v3 replacement for
-/// the retired per-table trigger emission.
-///
-/// The publish list omits `truncate`. The event plane carries insert, update,
-/// and delete only, so the server sends no TRUNCATE frame. The reader counts
-/// any TRUNCATE that still arrives as an operational incident.
-///
-/// This guard never rewrites an existing publication. An operator re-points one
-/// with `ALTER PUBLICATION … SET TABLES IN SCHEMA`. The reader compares the
-/// live publication against this declaration at preflight and refuses a
-/// publication that differs, so a manual change stops capture instead of
-/// passing unnoticed (wamn-0h0g.19.19). A publication created before this
-/// change carries `pubtruncate`, so the reader refuses it, and the remedy is a
-/// fresh environment rather than a repair.
-///
-/// Run connected to the project-env database. Only a superuser can run it, so
-/// only local dev and the test fixtures do. The provisioner applies the CNPG
-/// `Publication` CR instead (`docs/plan/platform-ui.md` §4.10).
-pub fn create_publication_sql(publication: &str, schema: &str) -> String {
-    create_publication_schemas_sql(publication, &[schema.to_owned()])
-}
-
-/// Create one publication over the environment's captured schema set.
-pub fn create_publication_schemas_sql(publication: &str, schemas: &[String]) -> String {
-    let target = if schemas.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " FOR TABLES IN SCHEMA {}",
-            schemas
-                .iter()
-                .map(|schema| escape_identifier(schema))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-    format!(
-        "DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = {pub_lit}) THEN \
-             CREATE PUBLICATION {publication}{target} \
-               WITH (publish = {publish}); \
-           END IF; \
-         END $$;",
-        publication = escape_identifier(publication),
-        pub_lit = escape_literal(publication),
-        publish = escape_literal(CDC_PUBLISH),
-    )
-}
-
 /// Whether the CDC publication `$1` exists: one row when it does. Run
 /// connected to the project-env database, the database the publication is
 /// bound to. `apply` judges its CDC ensure by this observation
@@ -202,14 +149,6 @@ pub fn upsert_entity_map_sql(schema: &str) -> String {
            AND mapped.entity_id = EXCLUDED.entity_id",
         schema = escape_identifier(schema),
         schema_lit = escape_literal(schema),
-    )
-}
-
-/// `DROP PUBLICATION IF EXISTS "<publication>"` — teardown / condition only.
-pub fn drop_publication_sql(publication: &str) -> String {
-    format!(
-        "DROP PUBLICATION IF EXISTS {}",
-        escape_identifier(publication)
     )
 }
 

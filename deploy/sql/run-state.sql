@@ -220,8 +220,6 @@ CREATE TABLE wamn_run.runs (
     run_id          text NOT NULL DEFAULT gen_random_uuid()::text,
     package_id      text NOT NULL,
     environment     text NOT NULL,
-    attachment_id   text,
-    registration_id text,
     -- Trusted immutable CDC event ancestry is distinct from retired execution
     -- lineage. The immediate source lets admission verify the carried root/depth
     -- under project RLS.
@@ -254,24 +252,19 @@ CREATE TABLE wamn_run.runs (
     result_json     jsonb,
     deadline_adjustments_json jsonb,
     state_json      jsonb,
-    invocation_context jsonb NOT NULL DEFAULT '{}'::jsonb,
     admission_context_version text NOT NULL DEFAULT '0.1'
         CHECK (admission_context_version = '0.1'),
-    platform_revision text NOT NULL DEFAULT 'legacy',
     idempotency_key text,
-    run_deadline_at timestamptz,
     terminal_reason text,
     fail_type       text CHECK (fail_type IN ('terminal', 'retry-exhausted', 'invalid-input',
-                                              'runaway-budget', 'depth-budget',
-                                              'dispatch-budget', 'unresolvable-name',
+                                              'runaway-budget',
+                                              'unresolvable-name',
                                               'hash-invalid-bytes', 'foreign-revision',
-                                              'incompatible-contract', 'unbound-requirement')),
+                                              'incompatible-contract')),
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
     CHECK (package_id <> ''
            AND environment <> ''),
-    CHECK (jsonb_typeof(invocation_context) = 'object'
-           AND octet_length(invocation_context::text) <= 16384),
     CHECK (
       (event_source_run_id IS NULL AND event_root_run_id IS NULL AND event_depth IS NULL)
       OR
@@ -326,9 +319,6 @@ CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (project_env_key, idempote
 -- History listing and trusted CDC event-causation traversal.
 CREATE INDEX runs_event_root ON wamn_run.runs (project_env_key, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
-CREATE INDEX runs_run_deadline ON wamn_run.runs (project_env_key, run_deadline_at)
-    WHERE run_deadline_at IS NOT NULL
-      AND status IN ('dispatched', 'running');
 ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_project_env_key ON wamn_run.runs

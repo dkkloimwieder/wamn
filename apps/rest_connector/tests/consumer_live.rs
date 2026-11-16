@@ -334,8 +334,7 @@ pub async fn install(
     for package in &packages {
         apply_package(ApplyPackageRequest {
             migration_database_url: migration_database_url.clone(),
-            component_source: wamn_environment::apply_package::component_source_from_env(None)
-                .unwrap(),
+            component_source: None,
             changes: wamn_broker::Publisher::default(),
             package: package.clone(),
             database_url: database.as_str().into(),

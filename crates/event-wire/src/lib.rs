@@ -585,7 +585,6 @@ mod tests {
 
 pub use wamn_registry::name::{stream_name, stream_subjects};
 
-pub use wamn_registry::name::{delivery_advisory_stream, delivery_advisory_subjects};
 
 /// A source-event coordinate that matches the delivered NATS identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
