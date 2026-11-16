@@ -43,8 +43,8 @@ pub use readers::{SystemReader, system_reader_identity_hash, system_reader_login
 pub use wamn_identity_protocol::PlatformComponent;
 pub use workload_role::{
     ADMINISTRATION_ROLE, AUDIT_RETENTION_ROLE, CONTROL_ROLE, PLATFORM_GROUP_ROLE, RETENTION_ROLE,
-    SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityError,
-    WorkloadRoleIdentityType, workload_login, workload_role_identity_hash,
+    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityError, WorkloadRoleIdentityType,
+    workload_login, workload_role_identity_hash,
 };
 
 /// Core control-database schema, applied first by a fresh bootstrap.

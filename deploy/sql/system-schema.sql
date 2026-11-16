@@ -1611,10 +1611,6 @@ BEGIN
             GRANT USAGE ON SCHEMA registry TO wamn_control;
             EXECUTE 'GRANT EXECUTE ON FUNCTION registry.' || signature || ' TO wamn_control';
         END IF;
-        IF to_regrole('wamn_administration') IS NOT NULL THEN
-            GRANT USAGE ON SCHEMA registry TO wamn_administration;
-            EXECUTE 'GRANT EXECUTE ON FUNCTION registry.' || signature || ' TO wamn_administration';
-        END IF;
     END LOOP;
 END $connection_authority_acl$;
 

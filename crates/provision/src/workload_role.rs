@@ -8,8 +8,6 @@ use wamn_registry::app_identity_hash;
 
 use crate::name::GUEST_SECRET_PREFIX;
 
-/// Stable NOLOGIN role used by service-reader logins.
-pub const SERVICE_READER_ROLE: &str = "wamn_service_reader";
 /// Stable NOLOGIN role used by run-retention logins.
 pub const RETENTION_ROLE: &str = "wamn_run_retention";
 /// Stable NOLOGIN role used by executor-platform logins.
@@ -72,7 +70,6 @@ pub(crate) const IDENTITY_HASH_HEX_LEN: usize = 40;
 /// control family, the credential of an org's control host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
-    ServiceReader,
     App,
     Query,
     Migration,
@@ -94,8 +91,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 13] = [
-        Self::ServiceReader,
+    pub const ALL: [Self; 12] = [
         Self::App,
         Self::Query,
         Self::Migration,
@@ -113,7 +109,6 @@ impl WorkloadRoleFamily {
     /// Stable NOLOGIN ACL role inherited by this family's logins.
     pub const fn acl_role(self) -> &'static str {
         match self {
-            Self::ServiceReader => SERVICE_READER_ROLE,
             Self::App => AuthorityClass::GuestSql.acl_role(),
             Self::Query => AuthorityClass::DynamicSql.acl_role(),
             Self::Migration => crate::migration::OWNER_ROLE,
@@ -145,8 +140,7 @@ impl WorkloadRoleFamily {
             Self::App | Self::Query | Self::Migration | Self::Retention | Self::AuditRetention => {
                 WorkloadRoleIdentityType::ProjectEnvKey
             }
-            Self::ServiceReader
-            | Self::ExecutorPlatform
+            Self::ExecutorPlatform
             | Self::HttpAdmitter
             | Self::SessionRoleReader
             | Self::Administration => WorkloadRoleIdentityType::ProjectEnvironment,
@@ -188,12 +182,6 @@ impl WorkloadRoleFamily {
     /// * [`Self::AuditRetention`] is not a member either (`wamn-emtx` ruling
     ///   61), and for the same reason: no reader needs the edge. Its grants
     ///   reach only package history tables, which carry no row security.
-    ///
-    /// Everything else — the eight families whose credentials reach a
-    /// project-environment or project database and are not the guest — is a
-    /// through its two catalog reads. `ServiceReader` remains the empty-surface
-    /// case: an RLS arm with no table grant behind it admits nothing, while the
-    /// edge prevents a future first grant from silently reading zero rows.
     ///
     /// `Retention` is `ProjectEnvKey`-identity-bound and is a member anyway. Its login names
     /// carry a project DIGEST, but `current_project_key` recovers a key only from
@@ -271,7 +259,6 @@ impl WorkloadRoleFamily {
 
     pub(crate) const fn identity_domain(self) -> &'static [u8] {
         match self {
-            Self::ServiceReader => b"wamn.service-reader.identity.v0.1",
             Self::App | Self::Query => b"wamn.app.identity.v0.1",
             Self::Migration => b"wamn.migration.identity.v0.1",
             Self::Retention => b"wamn.run-retention.identity.v0.1",
@@ -295,9 +282,6 @@ impl WorkloadRoleFamily {
 /// class is a compile error here rather than a runtime fallback. If any row
 /// ever needs two families, that row returns as its own owner question rather
 /// than growing an arm.
-///
-/// The direction is deliberate and one-way. Several families (`ServiceReader` and `Retention`) carry no authority class at all, so the inverse is not
-/// a function and is not offered.
 impl From<AuthorityClass> for WorkloadRoleFamily {
     fn from(class: AuthorityClass) -> Self {
         match class {

@@ -407,6 +407,6 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- because today it would guard against a neighbour that cannot exist.
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
     FROM PUBLIC, wamn_app, wamn_run_retention;
-GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
+GRANT SELECT ON wamn_run.runs TO wamn_app;
 GRANT SELECT (project_env_key, status, created_at), DELETE
     ON wamn_run.runs TO wamn_run_retention;
