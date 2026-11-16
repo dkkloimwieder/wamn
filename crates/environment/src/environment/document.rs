@@ -79,14 +79,6 @@ pub async fn write_revocation_configuration(
     .await
 }
 
-/// A request to change the release of one application.
-#[derive(Debug, Clone, Copy)]
-pub(super) enum ReleaseChange<'a> {
-    Deploy(&'a wamn_digest::Digest),
-    Stop,
-    Rollback(Option<&'a wamn_digest::Digest>),
-}
-
 /// Read protected configuration as the provisioning component.
 pub(super) async fn read_configuration(
     connection: &mut sqlx::PgConnection,
@@ -114,28 +106,10 @@ impl EnvironmentDocument {
 
     /// Resolve applied configuration and the manifests of its selected releases.
     pub async fn read_serving(platform: &super::Platform, triple: &Triple) -> anyhow::Result<Self> {
-        let mut document = Self::read(platform, triple).await?;
-        document.resolve_releases(platform).await?;
+        let document = Self::read(platform, triple).await?;
         Ok(document)
     }
 
-    pub(super) async fn resolve_releases(
-        &mut self,
-        platform: &super::Platform,
-    ) -> anyhow::Result<()> {
-        for selection in self.applications.values_mut() {
-            if let DeclaredRelease::Digest(digest) = &selection.current {
-                let manifest = super::analyse::pull_release_manifest(platform, digest).await?;
-                selection.packages = manifest
-                    .release
-                    .packages
-                    .iter()
-                    .map(|package| package.package_id().to_owned())
-                    .collect();
-            }
-        }
-        Ok(())
-    }
 
     pub(super) async fn save(&self, connection: &mut sqlx::PgConnection) -> anyhow::Result<()> {
         ensure!(

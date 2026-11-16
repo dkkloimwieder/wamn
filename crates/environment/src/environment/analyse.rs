@@ -9,22 +9,20 @@
 
 use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
-pub(crate) use plan::notices;
 pub use plan::refusals;
 pub(crate) use plan::{newest_successful, project_url};
-use plan::{plan, replica_refusal, sequence_refusals};
+use plan::replica_refusal;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use sqlx::PgConnection as Client;
 use wamn_catalog::ServingManifest;
-use wamn_package_artifact::release_manifest_source::ReleaseManifestSource;
 use wamn_postgres::connect;
 
 use super::Platform;
-use super::document::{DeclaredRelease, EnvironmentDocument};
+use super::document::EnvironmentDocument;
 use wamn_release_control::release_chart;
 
 /// The policy facts `apply` uses.
@@ -207,170 +205,8 @@ pub fn select_application(
     })
 }
 
-/// Read the targeted application's authorities without writing control or application state.
-///
-/// # Errors
-///
-/// When an authority cannot be read, or when the document is refused. A
-/// refusal names each reason.
-pub async fn analyse(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    application: Option<&wamn_catalog::ApplicationName>,
-) -> anyhow::Result<Analysis> {
-    let mut selected = select_application(document, application)?;
-    let document = &selected;
-    let application = document
-        .applications
-        .keys()
-        .next()
-        .expect("one application")
-        .clone();
-    let release_name = application_release_name(document, &application)?;
-    let mut system = connect(&platform.system_database_url).await?;
-    let policy = read_policy(&mut system, &document.org, &document.policy).await?;
-    let row = read_row(&mut system, document).await?;
-    let project = match &row {
-        Some(row) => {
-            read_project(
-                &project_url(platform, document, row).await?,
-                &wamn_control_provision::project_env_key(
-                    &document.org,
-                    &document.project,
-                    &document.env,
-                ),
-            )
-            .await?
-        }
-        None => None,
-    };
-    let release = match &document.applications[&application].current {
-        DeclaredRelease::None => None,
-        DeclaredRelease::Digest(declared) => Some(read_release(platform, declared).await?),
-    };
-    if let Some(release) = &release {
-        selected
-            .applications
-            .get_mut(&application)
-            .expect("application was selected")
-            .packages = release
-            .manifest
-            .release
-            .packages
-            .iter()
-            .map(|package| package.package_id().to_owned())
-            .collect();
-    }
-    let document = &selected;
-    if release.is_some() {
-        super::clients::analyse(
-            platform,
-            &document.applications[&application],
-            release.as_ref(),
-        )
-        .await?;
-    }
-    let revision = read_revision(platform, &release_name).await?;
-    let live = super::drain::loaded(&super::drain::observe(platform, &document.triple()).await?);
-    let packages = match &release {
-        Some(release) => read_release_packages(platform, &release.manifest).await?,
-        None => Vec::new(),
-    };
-    let bindings = super::bindings::analyse(&mut system, document, &packages).await?;
-    let replica_refusals = replica_refusals(
-        &mut system,
-        document,
-        &bindings,
-        platform.host_group.as_deref(),
-    )
-    .await?;
-    let connections = bindings
-        .iter()
-        .filter_map(|binding| {
-            binding.resolved.clone().map(|resolved| {
-                (
-                    super::bindings::key(&binding.application, &binding.alias),
-                    resolved,
-                )
-            })
-        })
-        .collect();
-    let authorities = Authorities {
-        release_name,
-        artifact_bindings: bindings
-            .iter()
-            .filter(|binding| binding.resolved.is_none())
-            .map(|binding| super::bindings::key(&binding.application, &binding.alias))
-            .collect(),
-        connections,
-        policy,
-        row,
-        project,
-        release,
-        revision,
-        live,
-    };
-    let actor = actor();
-    let mut refusals = refusals(document, &authorities);
-    refusals.extend(replica_refusals);
-    if refusals.is_empty() {
-        refusals = sequence_refusals(&document.membership(), &packages);
-    }
-    if !refusals.is_empty() {
-        bail!("refused:\n- {}", refusals.join("\n- "));
-    }
-    let plan = plan(document, &authorities);
-    let mut notices = notices(document, &application, &authorities);
-    let report = crate::platform_migrations::observe_system(&mut system).await?;
-    if !report.warnings.is_empty() {
-        notices.push(Notice {
-            application: application.clone(),
-            identity: format!(
-                "{}/registry._sqlx_migrations",
-                wamn_postgres::identity(&platform.system_database_url)?.1
-            ),
-            observed: Observation::PlatformSchema { report },
-            next_action:
-                "Inspect system SQL with wamn platform schema diff --target system --chart DIR"
-                    .into(),
-        });
-    }
-    Ok(Analysis {
-        schema_mode: document.schema_mode(authorities.row.as_ref().map(|row| row.disposable)),
-        authorities,
-        application: application.clone(),
-        notices,
-        actor,
-        plan,
-        packages,
-    })
-}
 
-/// The package manifests of the release, read from their verified artifacts
-/// for their sequence defaults.
-pub(super) async fn read_release_packages(
-    platform: &Platform,
-    manifest: &ServingManifest,
-) -> anyhow::Result<Vec<wamn_compiler::manifest::PackageManifest>> {
-    let mut packages = Vec::new();
-    for package in &manifest.release.packages {
-        let (id, version) = (package.package_id(), package.package_version());
-        let opened = super::stage::open(platform, id, version).await?;
-        let path = wamn_compiler::package_manifest_path(opened.root());
-        let package_manifest = wamn_compiler::manifest::PackageManifest::from_slice(
-            &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-        )
-        .with_context(|| format!("parse {}", path.display()))?;
-        packages.push(package_manifest);
-    }
-    Ok(packages)
-}
 
-/// The actor: the identity principal the CLI authenticates as, or `$USER`
-/// when it has none (owner ruling 2026-10-09). `wamn-ctl` has none today.
-fn actor() -> String {
-    std::env::var("USER").unwrap_or_else(|_| "unknown".to_owned())
-}
 
 pub(crate) async fn connect_project(url: &str) -> anyhow::Result<Client> {
     let mut client = connect(url).await?;
@@ -491,58 +327,7 @@ pub async fn read_project(
     }))
 }
 
-/// Pull the release manifest `digest` from the platform's release artifacts.
-///
-/// # Errors
-///
-/// When the manifest cannot be pulled or does not hash to `digest`.
-pub async fn pull_release_manifest(
-    platform: &Platform,
-    digest: &wamn_digest::Digest,
-) -> anyhow::Result<ServingManifest> {
-    let source = if platform.registry_token_metadata {
-        ReleaseManifestSource::with_registry_token_metadata(
-            &platform.release_artifact_base,
-            platform.insecure_registry,
-        )
-    } else {
-        ReleaseManifestSource::new(
-            &platform.release_artifact_base,
-            platform.insecure_registry,
-            &platform.registry_auth_file,
-        )
-    }
-    .context("open the release manifest source")?
-    .with_ca_paths(&platform.oci_ca_paths)
-    .context("read the registry CA")?;
-    let bytes = source
-        .pull_verified(digest)
-        .await
-        .with_context(|| format!("pull release manifest {digest}"))?;
-    let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes)
-        .with_context(|| format!("read release manifest {digest}"))?;
-    Ok(manifest)
-}
 
-async fn read_release(
-    platform: &Platform,
-    digest: &wamn_digest::Digest,
-) -> anyhow::Result<ReleaseFacts> {
-    let manifest = pull_release_manifest(platform, digest).await?;
-    // The admitted descriptors the manifest carries name the release's
-    // connections (R2 (3)).
-    let required_connections = manifest
-        .components
-        .iter()
-        .flat_map(|component| &component.descriptor.connections)
-        .filter_map(|connection| connection.store_alias.name().map(ToString::to_string))
-        .collect();
-    Ok(ReleaseFacts {
-        digest: digest.to_owned(),
-        manifest,
-        required_connections,
-    })
-}
 
 /// The targeted application's Helm release and host group identity.
 pub fn application_release_name(
@@ -795,23 +580,6 @@ pub(crate) async fn application_releases(
     Ok(applications)
 }
 
-/// Whether Helm holds the release chart of the environment, in any status.
-pub(crate) async fn release_present(
-    platform: &Platform,
-    release_name: &str,
-) -> anyhow::Result<bool> {
-    let output = helm(platform, &["status", release_name]).await?;
-    if output.status.success() {
-        return Ok(true);
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    ensure!(
-        stderr.contains("not found"),
-        "helm status {release_name} exited {}: {stderr}",
-        output.status
-    );
-    Ok(false)
-}
 
 /// The host pods of the environment's host group, as `kubectl get pods -o json`.
 pub(crate) async fn read_pods(platform: &Platform, release_name: &str) -> anyhow::Result<Value> {

@@ -18,11 +18,11 @@ use oci_client::errors::OciDistributionError;
 use oci_client::manifest::{OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
 use wamn_catalog::{
-    AdmittedComponent, COMPOSED_ENTRY_REPOSITORY, ComponentArtifactReferenceError,
-    parse_component_artifact_base, validate_composed_entry_path,
+    AdmittedComponent, ComponentArtifactReferenceError,
+    parse_component_artifact_base,
 };
 use wamn_engine::artifact_source::{
-    ArtifactSource, ComponentArtifactFetchError, VerifiedEntry, verify_component_body,
+    ArtifactSource, ComponentArtifactFetchError, verify_component_body,
     verify_config_body,
 };
 use wamn_engine::component_artifact::{component_artifact_config_bytes, component_artifact_layout};
@@ -259,80 +259,7 @@ impl ArtifactSource for ComponentArtifactSource {
         Ok(component_bytes)
     }
 
-    /// Pull the entry beside the members, under the component artifact base,
-    /// by the manifest digest that the release records.
-    async fn pull_entry(
-        &self,
-        reference: &str,
-    ) -> Result<VerifiedEntry, ComponentArtifactFetchError> {
-        let deadline = tokio::time::Instant::now() + self.config.source.timeout();
-        let digest = validate_composed_entry_path(reference)
-            .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
-        let registry = self.config.source.base().registry();
-        let entry = Reference::with_digest(
-            registry.to_owned(),
-            format!(
-                "{}/{COMPOSED_ENTRY_REPOSITORY}",
-                self.config.source.base().repository()
-            ),
-            digest.to_string(),
-        );
-        let named = entry.whole();
-        let auth = self.auth(&named).await?;
-        let client = self
-            .config
-            .source
-            .client()
-            .map_err(|_| ComponentArtifactFetchError::registry_client())?;
-        // The client tests the manifest against the digest in the reference.
-        let (manifest, _) = registry_pull::retry(
-            &entry,
-            deadline,
-            || client.pull_image_manifest(&entry, &auth),
-            |error| error,
-        )
-        .await
-        .map_err(|source| {
-            transport_error(
-                &named,
-                "composed-entry-manifest-unavailable",
-                "composed-entry-manifest-invalid",
-                &source,
-            )
-        })?;
-        let [layer] = manifest.layers.as_slice() else {
-            return Err(ComponentArtifactFetchError::mismatched(
-                &named,
-                "composed-entry-layer-cardinality-mismatch",
-            ));
-        };
-        if layer.media_type != COMPOSED_ENTRY_LAYER_MEDIA_TYPE {
-            return Err(ComponentArtifactFetchError::mismatched(
-                &named,
-                "composed-entry-layer-media-type-mismatch",
-            ));
-        }
-        let bytes = registry_pull::blob(&client, &entry, layer, deadline)
-            .await
-            .map_err(|source| {
-                transport_error(
-                    &named,
-                    "composed-entry-body-unavailable",
-                    "composed-entry-body-transfer-mismatch",
-                    &source,
-                )
-            })?;
-        let layer_digest = layer
-            .digest
-            .parse()
-            .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
-        verify_component_body(&bytes, layer.size, &layer_digest, &named)?;
-        Ok(VerifiedEntry { bytes, digest })
-    }
 }
-
-/// The layer media type that publication pushes the composed entry with.
-const COMPOSED_ENTRY_LAYER_MEDIA_TYPE: &str = "application/wasm";
 
 impl ComponentArtifactSource {
     /// The pull credential of `registry`, read fresh for each pull.

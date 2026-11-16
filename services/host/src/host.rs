@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,13 +24,8 @@ use wash_runtime::washlet::AttachedHostControl;
 
 mod commands;
 mod projects;
-mod releases;
 
 use wamn_authentication::route_authentication::EnvironmentStatusReader;
-use wamn_component_artifact::component_artifact_source::{
-    ComponentArtifactSource, ComponentArtifactSourceConfig,
-};
-use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
     build_engine_with_host_memory_and_compilation_cache,
@@ -118,17 +113,6 @@ pub struct HostArgs {
     /// chart value is a pod IP and is not a valid runner identity.
     #[arg(long, env = "WAMN_RUNNER")]
     pub runner: Option<String>,
-
-    /// The environment of this host's release target, and nothing else. The
-    /// operator chart passes the pod namespace first; a release passes the
-    /// environment name again in its `extraArgs`, and the last value wins
-    /// (R1, R6).
-    #[arg(long = "environment", overrides_with = "environment")]
-    pub environment: Option<wamn_registry::EnvName>,
-
-    /// Environment chart projection listing the projects this host serves.
-    #[arg(long)]
-    pub projects: Option<PathBuf>,
 
     /// Address for the workload HTTP server
     #[arg(long = "http-addr")]
@@ -234,27 +218,6 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_OAUTH_ENCRYPTION")]
     pub oauth_encryption: Option<String>,
 
-    /// Explicit registry/repository holding digest-addressed node components.
-    #[arg(long, env = "WAMN_COMPONENT_ARTIFACT_BASE")]
-    pub component_artifact_base: Option<String>,
-
-    /// Projected `.dockerconfigjson` file for the component registry.
-    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
-    pub registry_auth_file: Option<PathBuf>,
-
-    /// Pull with a token from the GKE metadata server of this pod's Workload
-    /// Identity, asked for at each pull, in place of `--registry-auth-file`.
-    #[arg(
-        long,
-        env = "WAMN_REGISTRY_TOKEN_METADATA",
-        conflicts_with = "registry_auth_file"
-    )]
-    pub registry_token_metadata: bool,
-
-    /// Organization owning this environment host.
-    #[arg(long, env = "WAMN_ORG")]
-    pub org: Option<wamn_registry::OrgId>,
-
     /// Trusted HTTPS issuer for session routes, never discovered from a token.
     #[arg(long, env = "WAMN_SESSION_ISSUER", requires = "session_jwks_ca")]
     pub session_issuer: Option<String>,
@@ -270,24 +233,6 @@ pub struct HostArgs {
     /// Production outbound ceiling for connection-backed HTTP effects.
     #[arg(long, env = "WAMN_ALLOWED_HOSTS", value_delimiter = ',')]
     pub allowed_hosts: Vec<String>,
-}
-
-/// The registry credential selected by the host operator.
-enum RegistryPullCredential<'a> {
-    AuthFile(&'a Path),
-    TokenMetadata,
-}
-
-impl<'a> RegistryPullCredential<'a> {
-    /// Clap refuses both flags together; this refuses neither.
-    fn select(auth_file: Option<&'a Path>, token_metadata: bool) -> anyhow::Result<Self> {
-        if token_metadata {
-            return Ok(Self::TokenMetadata);
-        }
-        auth_file.map(Self::AuthFile).context(
-            "a release-backed host requires --registry-auth-file or --registry-token-metadata",
-        )
-    }
 }
 
 /// The `host.plugins` entries of the chart's host configuration file. Only
@@ -552,57 +497,16 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let postgres = Arc::new(WamnPostgres::with_provider(credentials));
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let authentication = Arc::new(projects::Authentication(Arc::clone(&projects)));
-    let source = if args.projects.is_some() {
-        let artifact_base = args
-            .component_artifact_base
-            .as_deref()
-            .context("a serving host requires --component-artifact-base")?;
-        let source_config = ComponentArtifactSourceConfig::new(
-            artifact_base,
-            args.allow_insecure_registries,
-            Duration::from_secs(30),
-        )?;
-        let source_config = match RegistryPullCredential::select(
-            args.registry_auth_file.as_deref(),
-            args.registry_token_metadata,
-        )? {
-            RegistryPullCredential::AuthFile(path) => {
-                source_config
-                    .with_registry_auth_file(path)
-                    .context("load component registry pull credential")?
-            }
-            RegistryPullCredential::TokenMetadata => source_config.with_registry_token_metadata(),
-        }
-        .with_ca_paths(&args.oci_ca_paths)
-        .context("trust the configured OCI CA bundles for component pulls")?;
-        let source = Arc::new(
-            ComponentArtifactSource::new(source_config)
-                .context("configure the component artifact registry client")?,
-        );
-        let source: Arc<dyn ArtifactSource> = source;
-        Some(source)
-    } else {
-        None
-    };
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,
         oci_pull_timeout: Some(Duration::from_secs(30)),
         oci_cache_dir: args.oci_cache_dir.clone(),
         oci_ca_paths: args.oci_ca_paths.clone(),
     };
-    let releases = source.map(|_| {
-        Arc::new(projects::Environment::new(
-            Arc::clone(&args),
-            projects,
-            Arc::clone(&postgres),
-        ))
-    });
     let flow_http = FlowHttpRouting::new(Arc::clone(&postgres.scopes))
         .with_authenticator(authentication as Arc<_>);
-    let status: Arc<dyn wamn_engine::flow_http_routing::EnvironmentStatus> = match &releases {
-        Some(environment) => Arc::clone(environment) as Arc<_>,
-        None => Arc::new(EnvironmentStatusReader::new(Arc::clone(&postgres))),
-    };
+    let status: Arc<dyn wamn_engine::flow_http_routing::EnvironmentStatus> =
+        Arc::new(EnvironmentStatusReader::new(Arc::clone(&postgres)));
     let flow_http = Arc::new(flow_http.with_environment_status(status));
     let mut plugins: Vec<Arc<dyn plugin::HostPlugin>> = vec![
         Arc::new(
@@ -665,7 +569,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
     let mut ingress_connections = None;
     let mut ingress_handler = None;
-    let mut application_http = None;
     if let Some(addr) = args.http_addr {
         // The route host lives only on the http workload's `config.host`
         // (R2), so the host expects no host before a workload binds one.
@@ -682,18 +585,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             ingress = ingress.tls(tls);
         }
         let server = Arc::new(ingress.build().await?);
-        let mut http_handler: Arc<dyn wash_runtime::host::http::HostHandler> =
+        let http_handler: Arc<dyn wash_runtime::host::http::HostHandler> =
             Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>;
-        if releases.is_some() {
-            let platform = Arc::new(
-                wamn_execution_host::platform_http::PlatformHttp::for_workloads(
-                    Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>,
-                    Arc::clone(&flow_http),
-                ),
-            );
-            http_handler = Arc::clone(&platform) as Arc<_>;
-            application_http = Some(platform);
-        }
         let connections = server.connection_limit();
         probe_state.register(Arc::new(connections.clone()));
         ingress_connections = Some(connections);
@@ -707,7 +600,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let prepared_host = builder.build().context("failed to build native host")?;
     tracing::info!(
-        router_delivery = releases.is_some(),
         "wamn-host starting (base plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres, wamn:flow-http-routing)"
     );
     let mut probe_tasks = tokio::task::JoinSet::new();
@@ -728,11 +620,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .with_host_group(args.host_group.clone())
             .with_liveness(Arc::clone(&liveness))
             .with_handler(Arc::new(commands::Commands {
-                postgres: Arc::clone(&postgres),
-                releases: releases.as_ref().map(Arc::clone),
-                http: application_http,
-                workloads: std::sync::Mutex::default(),
-                component_artifact_base: args.component_artifact_base.clone(),
                 drain: Arc::clone(&workload_drain),
             }));
     if let Some(starts) = args.max_concurrent_starts {
@@ -760,10 +647,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     );
     let drain_bound_seconds = args.drain_bound_seconds;
     let result = {
-        let queue_serving = async {
-            std::future::pending().await
-        };
-        tokio::pin!(queue_serving);
         // Polling cleanup requests shutdown. Observe the retained native state instead.
         let mut sigterm =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -778,7 +661,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 }
             }
         };
-        let queue_enabled = releases.is_some();
         let had_ingress = ingress_handler.is_some();
         let draining_connections = ingress_connections.clone();
         let stop_ingress = async move {
@@ -807,8 +689,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             stop_ingress,
             had_ingress,
             native_cleanup,
-            queue_serving.as_mut(),
-            queue_enabled,
             stop_queue,
             &probe_state,
             args.drain_delay,
@@ -888,13 +768,11 @@ async fn ingress_stopped(connections: Option<&ConnectionLimit>) {
     clippy::too_many_arguments,
     reason = "Keep the single shutdown owner, both execution paths, and their shared budget explicit"
 )]
-async fn stop_combined_after<I, Q, N>(
+async fn stop_combined_after<I, N>(
     stopped: impl std::future::Future<Output = anyhow::Result<()>>,
     stop_ingress: I,
     had_ingress: bool,
     native_cleanup: N,
-    mut queue_serving: std::pin::Pin<&mut Q>,
-    queue_enabled: bool,
     stop_queue: tokio::sync::watch::Sender<bool>,
     probes: &ProbeState,
     drain_delay: Duration,
@@ -902,16 +780,11 @@ async fn stop_combined_after<I, Q, N>(
 ) -> anyhow::Result<()>
 where
     I: std::future::Future<Output = anyhow::Result<()>>,
-    Q: std::future::Future<Output = anyhow::Result<()>>,
     N: std::future::Future<Output = anyhow::Result<()>>,
 {
     tokio::pin!(stopped);
-    let (result, queue_finished) = tokio::select! {
-        result = &mut stopped => (result, false),
-        result = &mut queue_serving, if queue_enabled => (
-            result.and(Err(anyhow::anyhow!("durable queue loop stopped unexpectedly"))),
-            true,
-        ),
+    let result = tokio::select! {
+        result = &mut stopped => result,
     };
     // One deadline for the whole sequence, set when the shutdown trigger
     // arrives (R20). Ingress stop, queue drain and native cleanup share what
@@ -935,36 +808,15 @@ where
     // Admission closes completely before the queue drains.
     let ingress_result = wamn_engine::lifecycle::bounded_cleanup(remaining(), stop_ingress).await;
     let drain_then_cleanup = async {
-        // The queue keeps leasing the runs pinned to this host's release
-        // until none remains, then stops (R20). At the deadline the host stops
-        // the queue, runs no further cleanup step and exits. The runs left keep
-        // their pin, and another host of the release releases them when their
-        // leases lapse.
-        let queue_result = if !queue_enabled || queue_finished {
-            Ok(())
-        } else if let Ok(queue_result) =
-            tokio::time::timeout_at(deadline, queue_serving.as_mut()).await
-        {
-            queue_result
-        } else {
-            tracing::warn!(
-                "the drain bound passed with runs pinned to this release; \
-                 stopping without further cleanup"
-            );
-            return (Ok(()), Ok(()));
-        };
-        // Native cleanup starts only after the queue stopped.
-        let native_result =
-            wamn_engine::lifecycle::bounded_cleanup(remaining(), native_cleanup).await;
-        (queue_result, native_result)
+        wamn_engine::lifecycle::bounded_cleanup(remaining(), native_cleanup).await
     };
-    let ((queue_result, native_result), ()) = tokio::join!(
+    let (native_result, ()) = tokio::join!(
         drain_then_cleanup,
         tokio::time::sleep(propagation_delay.min(remaining()))
     );
     let native_result =
         normalize_explicit_ingress_stop(native_result, had_ingress && ingress_result.is_ok());
-    let cleanup_result = ingress_result.and(queue_result).and(native_result);
+    let cleanup_result = ingress_result.and(native_result);
     if let Err(error) = &cleanup_result {
         tracing::error!(%error, "combined host cleanup failed; durable queue remains fenced for recovery");
     }
@@ -995,25 +847,6 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn the_host_namespace_is_the_chart_variable_and_never_the_environment() {
-        let args = parse([
-            "host",
-            "--environment",
-            "wamn-system",
-            "--environment",
-            "staging",
-        ])
-        .unwrap()
-        .args;
-        assert_eq!(args.environment.as_ref(), Some(&"staging".parse().unwrap()));
-        assert_eq!(
-            host_namespace(Some("wamn-system".to_owned())).as_deref(),
-            Some("wamn-system")
-        );
-        assert_eq!(host_namespace(Some(String::new())), None);
-        assert_eq!(host_namespace(None), None);
-    }
 
     #[derive(Debug, clap::Parser)]
     struct TestCli {
@@ -1094,18 +927,6 @@ host:
         );
     }
 
-    #[test]
-    fn a_release_environment_argument_replaces_the_chart_namespace() {
-        let args = parse([
-            "wamn-host",
-            "--environment=wamn-system",
-            "--drain-delay=5s",
-            "--environment=dev",
-        ])
-        .unwrap()
-        .args;
-        assert_eq!(args.environment.as_ref(), Some(&"dev".parse().unwrap()));
-    }
 
     #[test]
     fn chart_lifecycle_flags_parse_with_native_defaults() {
@@ -1149,326 +970,13 @@ host:
         assert!(cleanup_budget_for_plugins(7, Duration::MAX).is_err());
     }
 
-    #[tokio::test]
-    async fn cleanup_is_not_polled_before_the_shutdown_trigger() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let cleanup_polled = AtomicBool::new(false);
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let (stop_queue, _stopping) = tokio::sync::watch::channel(false);
-        let queue = std::future::pending::<anyhow::Result<()>>();
-        tokio::pin!(queue);
-        let probes = ProbeState::default();
-        let running = stop_combined_after(
-            async { stopped.await.context("test shutdown sender") },
-            async { Ok(()) },
-            false,
-            async {
-                cleanup_polled.store(true, Ordering::Relaxed);
-                Ok(())
-            },
-            queue.as_mut(),
-            false,
-            stop_queue,
-            &probes,
-            Duration::ZERO,
-            Duration::from_secs(1),
-        );
-        tokio::pin!(running);
-        tokio::select! {
-            biased;
-            _ = &mut running => panic!("service must wait for shutdown"),
-            () = tokio::task::yield_now() => {}
-        }
-        assert!(!cleanup_polled.load(Ordering::Relaxed));
-        stop.send(()).unwrap();
-        running.await.unwrap();
-        assert!(cleanup_polled.load(Ordering::Relaxed));
-    }
 
-    #[tokio::test]
-    async fn combined_shutdown_stops_queue_before_polling_both_cleanups() {
-        let probes = ProbeState::default();
-        let (stop_queue, mut stopping) = tokio::sync::watch::channel(false);
-        let native_stopping = stopping.clone();
-        let queue = async {
-            stopping.changed().await.expect("queue stop sender");
-            assert!(*stopping.borrow(), "queue stop precedes cleanup");
-            Ok(())
-        };
-        tokio::pin!(queue);
-        stop_combined_after(
-            async { Ok(()) },
-            async { Ok(()) },
-            false,
-            async {
-                assert!(
-                    *native_stopping.borrow(),
-                    "HTTP/native cleanup starts after queue admission closes"
-                );
-                Ok(())
-            },
-            queue.as_mut(),
-            true,
-            stop_queue,
-            &probes,
-            Duration::ZERO,
-            Duration::from_secs(1),
-        )
-        .await
-        .expect("combined cleanup");
-    }
 
-    /// R20: HTTP admission closes, the queue drains its pinned backlog within
-    /// the one shutdown budget, and native cleanup starts only after the queue
-    /// stopped.
-    #[tokio::test]
-    async fn shutdown_closes_admission_drains_the_queue_then_cleans_up() {
-        use std::sync::Mutex;
-        let order = Mutex::new(Vec::new());
-        let probes = ProbeState::default();
-        let (stop_queue, mut stopping) = tokio::sync::watch::channel(false);
-        let queue = async {
-            stopping.changed().await.expect("queue stop sender");
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            order.lock().unwrap().push("queue");
-            Ok(())
-        };
-        tokio::pin!(queue);
-        stop_combined_after(
-            async { Ok(()) },
-            async {
-                order.lock().unwrap().push("ingress");
-                Ok(())
-            },
-            false,
-            async {
-                order.lock().unwrap().push("native");
-                Ok(())
-            },
-            queue.as_mut(),
-            true,
-            stop_queue,
-            &probes,
-            Duration::ZERO,
-            Duration::from_secs(5),
-        )
-        .await
-        .expect("combined cleanup");
-        assert_eq!(*order.lock().unwrap(), ["ingress", "queue", "native"]);
-    }
 
-    /// R20: one budget bounds the whole sequence. With a queue drain and a
-    /// native cleanup each slower than the budget, the host stops the queue at
-    /// the deadline, runs no further cleanup step and exits cleanly, at the
-    /// deadline and not at the sum of the steps.
-    #[tokio::test(start_paused = true)]
-    async fn shutdown_sequence_exits_within_one_drain_budget() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let budget = shutdown_budget(30);
-        assert_eq!(budget, Duration::from_secs(28));
-        let native_started = AtomicBool::new(false);
-        let probes = ProbeState::default();
-        let (stop_queue, mut stopping) = tokio::sync::watch::channel(false);
-        let queue = async {
-            stopping.changed().await.expect("queue stop sender");
-            tokio::time::sleep(Duration::from_secs(100)).await;
-            Ok(())
-        };
-        tokio::pin!(queue);
-        let started = tokio::time::Instant::now();
-        stop_combined_after(
-            async { Ok(()) },
-            async {
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                Ok(())
-            },
-            false,
-            async {
-                native_started.store(true, Ordering::Relaxed);
-                tokio::time::sleep(Duration::from_secs(100)).await;
-                Ok(())
-            },
-            queue.as_mut(),
-            true,
-            stop_queue,
-            &probes,
-            Duration::from_secs(5),
-            budget,
-        )
-        .await
-        .expect("the deadline is a clean exit");
-        assert_eq!(started.elapsed(), budget);
-        assert!(
-            !native_started.load(Ordering::Relaxed),
-            "no cleanup step runs after the deadline"
-        );
-    }
 
-    #[tokio::test]
-    async fn failed_queue_is_not_polled_again_during_cleanup() {
-        let probes = ProbeState::default();
-        let (stop_queue, _stopping) = tokio::sync::watch::channel(false);
-        let queue = async { Err(anyhow::anyhow!("queue failed")) };
-        tokio::pin!(queue);
-        stop_combined_after(
-            std::future::pending(),
-            async { Ok(()) },
-            false,
-            async { Ok(()) },
-            queue.as_mut(),
-            true,
-            stop_queue,
-            &probes,
-            Duration::ZERO,
-            Duration::from_secs(1),
-        )
-        .await
-        .expect_err("queue failure remains the host result");
-    }
 
-    #[tokio::test]
-    async fn native_probe_termination_triggers_failure_and_cleanup() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-        tokio::time::timeout(Duration::from_secs(5), async {
-            let listener = probes::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
-            let address = listener.local_addr().unwrap();
-            let state = ProbeState::default();
-            state.started();
-            let mut tasks = tokio::task::JoinSet::new();
-            let probe = tasks.spawn(probes::serve(
-                listener,
-                state.clone(),
-                std::future::pending(),
-            ));
-            let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
-            client
-                .write_all(b"GET /livez HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-                .await
-                .unwrap();
-            let mut response = String::new();
-            client.read_to_string(&mut response).await.unwrap();
-            assert_eq!(
-                response
-                    .split_ascii_whitespace()
-                    .nth(1)
-                    .unwrap()
-                    .parse::<u16>()
-                    .unwrap(),
-                200
-            );
 
-            let cleanup_polled = AtomicBool::new(false);
-            let (stop_queue, _stopping) = tokio::sync::watch::channel(false);
-            let queue = std::future::pending::<anyhow::Result<()>>();
-            tokio::pin!(queue);
-            let running = stop_combined_after(
-                async {
-                    let task = tasks.join_next().await;
-                    assert!(task.as_ref().unwrap().as_ref().unwrap_err().is_cancelled());
-                    Err(probe_listener_failure(task.as_ref()))
-                },
-                async { Ok(()) },
-                false,
-                async {
-                    cleanup_polled.store(true, Ordering::Relaxed);
-                    Ok(())
-                },
-                queue.as_mut(),
-                false,
-                stop_queue,
-                &state,
-                Duration::from_secs(60),
-                Duration::from_secs(1),
-            );
-            tokio::pin!(running);
-            tokio::select! {
-                biased;
-                _ = &mut running => panic!("the live listener must not trigger cleanup"),
-                () = tokio::task::yield_now() => {}
-            }
-            assert!(!cleanup_polled.load(Ordering::Relaxed));
-            probe.abort();
-            running.await.unwrap_err();
-            assert!(cleanup_polled.load(Ordering::Relaxed));
-        })
-        .await
-        .expect("native listener failure must trigger cleanup without the traffic drain delay");
-    }
-
-    #[tokio::test]
-    async fn failure_skips_traffic_delay_and_cannot_hide_incomplete_cleanup() {
-        let (stop_queue, _stopping) = tokio::sync::watch::channel(false);
-        let queue = std::future::pending::<anyhow::Result<()>>();
-        tokio::pin!(queue);
-        let result = tokio::time::timeout(
-            Duration::from_secs(1),
-            stop_combined_after(
-                async { anyhow::bail!("native ingress stopped") },
-                async { Ok(()) },
-                false,
-                std::future::pending(),
-                queue.as_mut(),
-                false,
-                stop_queue,
-                &ProbeState::default(),
-                Duration::from_secs(60),
-                Duration::ZERO,
-            ),
-        )
-        .await
-        .expect("failure must skip the signal-only drain delay");
-        assert!(result.is_err());
-        let (stop_queue, _stopping) = tokio::sync::watch::channel(false);
-        let queue = std::future::pending::<anyhow::Result<()>>();
-        tokio::pin!(queue);
-        let result = stop_combined_after(
-            async { Ok(()) },
-            async { Ok(()) },
-            false,
-            async { anyhow::bail!("native cleanup failed") },
-            queue.as_mut(),
-            false,
-            stop_queue,
-            &ProbeState::default(),
-            Duration::ZERO,
-            Duration::from_secs(1),
-        )
-        .await;
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn a_release_backed_host_takes_exactly_one_registry_credential() {
-        let file = ["host", "--registry-auth-file", "/tmp/registry.json"];
-        let metadata = ["host", "--registry-token-metadata"];
-        let parsed = parse(file).unwrap();
-        assert!(matches!(
-            RegistryPullCredential::select(
-                parsed.args.registry_auth_file.as_deref(),
-                parsed.args.registry_token_metadata
-            ),
-            Ok(RegistryPullCredential::AuthFile(_))
-        ));
-        let parsed = parse(metadata).unwrap();
-        assert!(matches!(
-            RegistryPullCredential::select(
-                parsed.args.registry_auth_file.as_deref(),
-                parsed.args.registry_token_metadata
-            ),
-            Ok(RegistryPullCredential::TokenMetadata)
-        ));
-
-        let both = [
-            "host",
-            "--registry-auth-file",
-            "/tmp/registry.json",
-            "--registry-token-metadata",
-        ];
-        assert!(parse(both).is_err());
-        assert!(RegistryPullCredential::select(None, false).is_err());
-    }
 
     /// The chart's native memory settings reach `HostMemoryBudgets` intact.
     #[test]

@@ -56,10 +56,6 @@ pub fn roles(
     {
         roles.push(Role {
             name: RoleName::Http,
-            entry: manifest
-                .composed_entry
-                .as_ref()
-                .map(|entry| entry.reference.clone()),
             config: {
                 let mut config = target(&[]);
                 config.insert(
@@ -93,14 +89,6 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
             let mut entry = Mapping::new();
             entry.insert("name".into(), role.name.as_str().into());
             entry.insert("config".into(), Value::Mapping(role.config.clone()));
-            if let Some(recorded) = &role.entry {
-                let image = wamn_catalog::composed_entry_start_reference(
-                    Some(&input.component_base),
-                    recorded,
-                )
-                .context("the component artifact base resolves the entry")?;
-                entry.insert("entry".into(), image.into());
-            }
 
             Ok(Value::Mapping(entry))
         })
@@ -156,9 +144,6 @@ pub struct ImageSet {
 #[derive(Debug, Clone)]
 pub struct Role {
     pub name: RoleName,
-    /// The HTTP entry path recorded by the release, relative to the component
-    /// artifact base. [`values`] joins it with the component artifact base.
-    pub entry: Option<String>,
     /// `localResources.config` of the role's component.
     pub config: Mapping,
 }
@@ -186,15 +171,12 @@ pub struct ValuesInput {
     pub env: wamn_registry::EnvName,
     /// `sha256:<hex>` of the release manifest.
     pub manifest_digest: wamn_digest::Digest,
-    pub artifact_base: String,
     pub route_host: String,
     /// Exactly one application's membership, retained in Helm values for status reads.
     pub applications: wamn_catalog::EnvironmentApplications,
     pub roles: Vec<Role>,
     /// Who applied. It renders nothing and is kept with the revision (§9.2).
     pub actor: String,
-    /// Registry repository used to resolve the composed HTTP entry.
-    pub component_base: String,
 }
 
 /// What clears an operation that a killed writer left pending.

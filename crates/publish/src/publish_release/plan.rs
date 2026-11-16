@@ -1,7 +1,7 @@
 use super::{
-    AdmittedComponent, AttachmentTarget, BTreeMap, BTreeSet, ComposedApplication,
+    AttachmentTarget, BTreeMap, BTreeSet,
     DependencyDigestRule, PackageCoordinate, PublishManifestError, PublishManifestErrorType,
-    PublishReleaseManifest, PublishedRelease, ReleaseComponents, RouteContracts, ServingComponent,
+    PublishReleaseManifest, ReleaseComponents, RouteContracts, ServingComponent,
     ServingRoute, ensure, resolve_component_dependency_closure, resolve_route_component,
 };
 use anyhow::Context as _;
@@ -20,82 +20,6 @@ pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
             .map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())
-}
-
-/// The digests of an admitted application and of the members it embeds.
-pub(super) fn application_digests(
-    application: &AdmittedComponent,
-    application_bytes: &[u8],
-) -> anyhow::Result<BTreeSet<wamn_digest::Digest>> {
-    let mut digests = BTreeSet::from([application.component_digest]);
-    for payload in wasmparser::Parser::new(0).parse_all(application_bytes) {
-        if let wasmparser::Payload::ComponentSection {
-            unchecked_range, ..
-        } = payload?
-        {
-            let member = &application_bytes
-                [usize::try_from(unchecked_range.start)?..usize::try_from(unchecked_range.end)?];
-            digests.insert(wamn_digest::bytes_sha256(member));
-        }
-    }
-    Ok(digests)
-}
-
-/// Whether one application, with the members it embeds, serves every release route.
-///
-/// Publication requires exactly one declared application member to pass this test.
-pub(super) fn covers_routes(
-    published: &PublishedRelease,
-    application: &AdmittedComponent,
-    application_bytes: &[u8],
-) -> anyhow::Result<bool> {
-    let digests = application_digests(application, application_bytes)?;
-    Ok(published.manifest.routes.iter().all(|route| {
-        published.manifest.components.iter().any(|component| {
-            component.package_id == route.package_id
-                && component.descriptor.component == route.component
-                && digests.contains(&component.descriptor.component_digest)
-        })
-    }))
-}
-
-/// Record the exact composed entry before publication hashes the release.
-///
-/// The record names the released application components embedded in `entry`.
-/// The manifest retains their original digests for SQL and dependency authority.
-pub fn record_composed_entry(
-    published: &mut PublishedRelease,
-    entry: &ComposedApplication,
-    reference: &str,
-) -> anyhow::Result<()> {
-    let members: BTreeSet<_> = published
-        .manifest
-        .components
-        .iter()
-        .filter(|component| {
-            entry
-                .application_digests
-                .contains(&component.descriptor.component_digest)
-        })
-        .map(|component| wamn_catalog::ServingEntryMember {
-            package_id: component.package_id.clone(),
-            component: component.descriptor.component.clone(),
-            digest: component.descriptor.component_digest,
-        })
-        .collect();
-    ensure!(
-        members.contains(&entry.application),
-        "composed application is outside the released members"
-    );
-    let mut manifest = published.manifest.clone();
-    manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
-        reference: reference.to_owned(),
-        route_digest: entry.digest,
-        application: entry.application.clone(),
-        members,
-    });
-    *published = super::seal_release(&manifest)?;
-    Ok(())
 }
 
 pub(super) fn validate_request(

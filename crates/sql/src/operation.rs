@@ -16,7 +16,7 @@ use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTab
 use super::session_identity::{SessionIdentityError, SessionIdentityErrorType};
 use super::write_log::{Claim, WriteLogStore};
 use super::{
-    OperationTransaction, PgCommitFailure, ReleaseIdentity, SessionIdentity, WAMN_POSTGRES_ID,
+    OperationTransaction, PgCommitFailure, SessionIdentity, WAMN_POSTGRES_ID,
     WamnPostgres,
 };
 
@@ -113,132 +113,6 @@ impl WamnPostgres {
             .write()
             .expect("operation invoker lock poisoned") = Some(invoker);
         Ok(())
-    }
-
-    /// Record the host-selected entry reference and released SQL ownership.
-    pub fn bind_operation_workload(
-        &self,
-        workload: &str,
-        context: Arc<wamn_connections::invocation::ReleaseContext>,
-        reference: &str,
-        component_name: &str,
-        identity: SessionIdentity,
-    ) -> anyhow::Result<()> {
-        crate::invocation::validate_context(&identity, &context)?;
-        let release = &context.release;
-        let entry = release
-            .manifest()
-            .composed_entry
-            .as_ref()
-            .context("release has no composed entry")?;
-        anyhow::ensure!(
-            wamn_catalog::composed_entry_starts_as(&entry.reference, reference),
-            "composed entry reference differs from the release"
-        );
-        anyhow::ensure!(
-            identity.project_env_key.as_ref() == Some(&release.target().project_env_key)
-                && identity.release.as_ref() == Some(&ReleaseIdentity::from_loaded(release)),
-            "operation release mismatch"
-        );
-        let components = entry
-            .members
-            .iter()
-            .map(|member| {
-                release
-                    .manifest()
-                    .components
-                    .iter()
-                    .find(|component| {
-                        component.package_id == member.package_id
-                            && component.descriptor.component == member.component
-                            && component.descriptor.component_digest == member.digest
-                    })
-                    .expect("manifest validates entry members")
-            })
-            .collect::<Vec<_>>();
-        let mut operations = BTreeMap::new();
-        for component in &components {
-            let application = wamn_catalog::application_for_package(
-                &release.target().applications,
-                &component.package_id,
-            )
-            .with_context(|| {
-                format!(
-                    "package {} must belong to exactly one declared application",
-                    component.package_id
-                )
-            })?;
-            for (id, fact) in &component.descriptor.operations {
-                let read = release
-                    .manifest()
-                    .routes
-                    .iter()
-                    .any(|route| &route.operation == id && route.type_.is_read());
-                operations.insert(
-                    id.clone(),
-                    OperationAuthority {
-                        read,
-                        grant: fact.registered_operation.clone(),
-                        schema: component.runtime_schema.clone(),
-                        invocation: wamn_connections::connection::ConnectionInvocation {
-                            origin: wamn_connections::connection::ConnectionOrigin {
-                                package_id: component.package_id.clone(),
-                                component_digest: component.descriptor.component_digest,
-                                component: component.descriptor.component.clone(),
-                                interface_version: component.descriptor.interface_version.clone(),
-                                operation: id.clone(),
-                            },
-                            entry: wamn_connections::connection::InvocationEntry::Route,
-                            package_id: component.package_id.clone(),
-                            component_digest: component.descriptor.component_digest,
-                            component: component.descriptor.component.clone(),
-                            operation: id.clone(),
-                            closure:
-                                wamn_connections::connection::ConnectionExecutionClosure::Released,
-                            effects: None,
-                        },
-                        application: application.to_owned(),
-                        transaction: fact.host_transaction,
-                    },
-                );
-            }
-        }
-        let mut workloads = self
-            .operation_workloads
-            .write()
-            .expect("operation workloads lock poisoned");
-        anyhow::ensure!(
-            !workloads.contains_key(workload),
-            "operation workload already bound"
-        );
-        self.scopes
-            .update::<crate::invocation::Authority, _>(workload, |record| {
-                record.identity = identity.clone();
-            });
-        self.scopes
-            .update::<wamn_connections::invocation::Scope, _>(workload, |record| {
-                record.context = Some(Arc::clone(&context));
-            });
-        workloads.insert(
-            workload.to_owned(),
-            Arc::new(OperationWorkload {
-                start: (component_name.to_owned(), reference.to_owned()),
-                context,
-                identity,
-                operations,
-                invoker: std::sync::RwLock::default(),
-            }),
-        );
-        Ok(())
-    }
-
-    /// Remove a completed or cancelled start's pending reference.
-    pub fn forget_operation_start(&self, workload: &str) {
-        self.scopes.revoke(workload);
-        self.operation_workloads
-            .write()
-            .expect("operation workloads lock poisoned")
-            .remove(workload);
     }
 
     pub(super) fn bind_entry_instance(

@@ -1,9 +1,6 @@
 //! Project resources share the runtime, never their database or event authority.
 
-use super::{HostArgs, releases};
-use anyhow::Context as _;
-use std::collections::HashMap;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::RwLock;
 use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
@@ -12,7 +9,6 @@ use wamn_engine::flow_http_routing::{
     authentication_unavailable,
 };
 use wamn_sql::AuthorityClass;
-use wamn_sql::WamnPostgres;
 use wamn_sql::{
     CredentialProvider, ResolvedCredential, StaticCredentialProvider,
 };
@@ -35,7 +31,6 @@ struct Project {
         wamn_registry::ProjectEnvKey,
         Arc<PlatformRouteAuthenticator>,
     )>,
-    releases: Option<Arc<releases::Releases>>,
 }
 
 #[derive(Default)]
@@ -103,95 +98,5 @@ impl RouteAuthenticator for Authentication {
             Arc::clone(authenticator)
         };
         authenticator.authenticate(request).await
-    }
-}
-
-pub(super) struct Environment {
-    pub args: Arc<HostArgs>,
-    pub postgres: Arc<WamnPostgres>,
-    projects: Arc<Projects>,
-}
-impl std::fmt::Debug for Environment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Environment")
-            .field("org", &self.args.org)
-            .field("environment", &self.args.environment)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Environment {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "The composition root supplies the shared runtime services"
-    )]
-    pub fn new(
-        args: Arc<HostArgs>,
-        projects: Arc<Projects>,
-        postgres: Arc<WamnPostgres>,
-    ) -> Self {
-        Self {
-            args,
-            projects,
-            postgres,
-        }
-    }
-
-    fn declared(&self) -> anyhow::Result<HashSet<wamn_registry::ProjectId>> {
-        let path = self
-            .args
-            .projects
-            .as_ref()
-            .context("environment has no project projection")?;
-        let projects: HashSet<wamn_registry::ProjectId> = serde_json::from_slice(
-            &std::fs::read(path).context("read environment project projection")?,
-        )?;
-        Ok(projects)
-    }
-
-    pub async fn for_workload(
-        &self,
-        annotations: &HashMap<String, String>,
-    ) -> anyhow::Result<Arc<releases::ResidentRelease>> {
-        let key = annotations
-            .get("wamn.project_env_key")
-            .context("workload has no project deployment")?
-            .parse::<wamn_registry::ProjectEnvKey>()?;
-        let coordinate = key.triple();
-        anyhow::ensure!(
-            Some(&coordinate.org) == self.args.org.as_ref()
-                && Some(&coordinate.env) == self.args.environment.as_ref()
-                && self.declared()?.contains(&coordinate.project),
-            "workload belongs to another environment"
-        );
-        let state = self
-            .projects
-            .get(&coordinate.project)
-            .context("workload project is not ready")?;
-        let project = state
-            .read()
-            .map_err(|_| StatePoisoned("project releases"))?
-            .releases
-            .as_ref()
-            .map(Arc::clone)
-            .context("workload project is not ready")?;
-        project.for_workload(annotations).await
-    }
-
-}
-
-#[async_trait::async_trait]
-impl wamn_engine::flow_http_routing::EnvironmentStatus for Environment {
-    async fn inactive(&self, key: &wamn_registry::ProjectEnvKey) -> anyhow::Result<bool> {
-        let coordinate = key.triple();
-        if Some(&coordinate.org) != self.args.org.as_ref()
-            || Some(&coordinate.env) != self.args.environment.as_ref()
-            || !self.declared()?.contains(&coordinate.project)
-        {
-            return Ok(true);
-        }
-        self.postgres
-            .environment_inactive(&coordinate.project, key)
-            .await
     }
 }

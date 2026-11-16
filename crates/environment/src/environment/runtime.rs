@@ -42,31 +42,14 @@ fn apply_registry_configuration(
     platform.insecure_registry = configuration["insecure_registry"]
         .as_bool()
         .context("registry transport is absent")?;
-    platform.release_artifact_base = configuration["release_base"]
-        .as_str()
-        .context("release registry is absent")?
-        .into();
     platform.package_artifact_base = Some(
         configuration["package_base"]
             .as_str()
             .context("package registry is absent")?
             .into(),
     );
-    platform.component_artifact_base = Some(
-        configuration["component_base"]
-            .as_str()
-            .context("component registry is absent")?
-            .into(),
-    );
-    platform.release_artifact_base =
-        pod_artifact_base(platform.insecure_registry, &platform.release_artifact_base)?
-            .into_owned();
     if let Some(base) = &platform.package_artifact_base {
         platform.package_artifact_base =
-            Some(pod_artifact_base(platform.insecure_registry, base)?.into_owned());
-    }
-    if let Some(base) = &platform.component_artifact_base {
-        platform.component_artifact_base =
             Some(pod_artifact_base(platform.insecure_registry, base)?.into_owned());
     }
     Ok(())

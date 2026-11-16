@@ -32,8 +32,7 @@ pub fn values(document: &ClusterDocument, chart: &SelectedChart) -> anyhow::Resu
         "runtime-operator":{"operator":{"watchNamespaces":[document.org],"hostNamespaces":[document.org]}},
         "configuration":{
             "package_base":format!("{}/wamn/packages",document.registry),
-            "component_base":format!("{}/wamn/components",document.registry),
-            "release_base":format!("{}/wamn/releases",document.registry)
+            "component_base":format!("{}/wamn/components",document.registry)
         }
     });
     resources::merge(&mut values, host_settings(document));

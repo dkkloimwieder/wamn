@@ -75,7 +75,6 @@ pub fn palette() -> Vec<wamn_publish::palette::PaletteComponent> {
     components
         .into_iter()
         .map(|component| wamn_publish::palette::PaletteComponent {
-            bytes: std::fs::read(component.file).expect("read the built palette component"),
             facts: component
                 .declaration
                 .into_admitted(wamn_catalog::palette_target(

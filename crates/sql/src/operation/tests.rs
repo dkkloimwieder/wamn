@@ -28,7 +28,7 @@ use wash_runtime::wit::WitInterface;
 
 use crate::session_identity::tests::{LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url};
 use crate::{
-    ClassCredentials, ReleaseIdentity, SessionIdentity, WAMN_POSTGRES_ID, WamnPostgres,
+    ClassCredentials, SessionIdentity, WAMN_POSTGRES_ID, WamnPostgres,
     WamnPostgresConfig,
 };
 
@@ -237,20 +237,6 @@ async fn fixture(pool: &sqlx::PgPool) -> (url::Url, Arc<WamnPostgres>, Arc<Loade
     })
     .unwrap();
     let postgres = Arc::new(postgres);
-    postgres
-        .bind_operation_workload(
-            WORKLOAD,
-            test_context(&postgres, Arc::clone(&release)),
-            &entry_start(&release),
-            "entry",
-            SessionIdentity {
-                project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
-                project: Some((*super::super::DEFAULT_PROJECT).clone()),
-                release: Some(ReleaseIdentity::from_loaded(&release)),
-                ..SessionIdentity::default()
-            },
-        )
-        .unwrap();
     (database, postgres, release)
 }
 
@@ -347,20 +333,6 @@ fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {
         })
         .unwrap(),
     );
-    postgres
-        .bind_operation_workload(
-            WORKLOAD,
-            test_context(&postgres, Arc::clone(&release)),
-            &entry_start(&release),
-            "entry",
-            SessionIdentity {
-                project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
-                project: Some((*super::super::DEFAULT_PROJECT).clone()),
-                release: Some(ReleaseIdentity::from_loaded(&release)),
-                ..SessionIdentity::default()
-            },
-        )
-        .unwrap();
     (postgres, release)
 }
 
@@ -643,103 +615,4 @@ async fn anonymous_caller_on_a_granted_operation_refuses(pool: sqlx::PgPool) {
     let (database, postgres, release) = fixture(&pool).await;
     run_guest(postgres, release, 20).await;
     assert_eq!(value(&database).await, 1);
-}
-
-/// The entry reference a host with the fixture component base starts.
-fn entry_start(release: &LoadedRelease) -> String {
-    wamn_catalog::composed_entry_start_reference(
-        Some("registry.example/components"),
-        &release
-            .manifest()
-            .composed_entry
-            .as_ref()
-            .unwrap()
-            .reference,
-    )
-    .unwrap()
-}
-
-#[test]
-fn entry_binding_requires_the_started_reference_and_component_name() {
-    let release = release();
-    let postgres = WamnPostgres::new(WamnPostgresConfig {
-        credentials: None,
-        guest_pool_max_size: 1,
-        platform_pool_max_size: 1,
-        wait_timeout_ms: 1000,
-        statement_timeout_ms: 1000,
-    })
-    .unwrap();
-    let postgres = Arc::new(postgres);
-    let identity = SessionIdentity {
-        project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
-        project: Some((*super::super::DEFAULT_PROJECT).clone()),
-        release: Some(ReleaseIdentity::from_loaded(&release)),
-        ..SessionIdentity::default()
-    };
-    assert!(
-        postgres
-            .bind_operation_workload(
-                WORKLOAD,
-                test_context(&postgres, Arc::clone(&release)),
-                &format!(
-                    "registry.example/other@{}",
-                    wamn_digest::bytes_sha256(b"other")
-                ),
-                "entry",
-                identity.clone()
-            )
-            .is_err()
-    );
-    postgres
-        .bind_operation_workload(
-            WORKLOAD,
-            test_context(&postgres, Arc::clone(&release)),
-            &entry_start(&release),
-            "entry",
-            identity,
-        )
-        .unwrap();
-    // Every operation binds its package's name from the environment map.
-    assert_eq!(
-        postgres
-            .operation_workloads
-            .read()
-            .unwrap()
-            .get(WORKLOAD)
-            .unwrap()
-            .operations[OPERATION]
-            .application,
-        "receiving".parse().unwrap()
-    );
-    assert!(
-        postgres
-            .bind_entry_instance(WORKLOAD, "member", "member")
-            .is_err()
-    );
-    postgres
-        .bind_entry_instance(WORKLOAD, "entry-instance", "entry")
-        .unwrap();
-    postgres.forget_operation_start(WORKLOAD);
-    assert!(
-        postgres
-            .bind_entry_instance(WORKLOAD, "late-instance", "entry")
-            .is_err()
-    );
-}
-
-fn test_context(
-    postgres: &Arc<WamnPostgres>,
-    release: Arc<LoadedRelease>,
-) -> Arc<wamn_connections::invocation::ReleaseContext> {
-    let facts = Arc::new(wamn_connections::connection_facts::ConnectionFacts::new(
-        Arc::new(wamn_connections::connection_memory::ConnectionMemory::default()),
-        wamn_broker::Publisher::default(),
-        Arc::new(wamn_connections::connection_credentials::ConnectionCredentials::empty()),
-        postgres,
-        &release.target().project_env_key,
-        &super::super::DEFAULT_PROJECT,
-        &release.target().environment,
-    ));
-    Arc::new(wamn_connections::invocation::ReleaseContext::new(release, facts).unwrap())
 }

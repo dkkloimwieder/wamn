@@ -13,9 +13,7 @@ use wamn_compiler::{
 };
 use wamn_environment::environment::document::EnvironmentDocument;
 use wamn_publish::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
-use wamn_publish::publish_release::{
-    EntryPublicationInputs, PublishReleaseRequest, publish_release,
-};
+use wamn_publish::publish_release::{PublishReleaseRequest, publish_release};
 
 fn read_package_manifest(root: &Path) -> anyhow::Result<PackageManifest> {
     let bytes = if wamn_compiler::is_authored(root) {
@@ -100,7 +98,6 @@ async fn publish_source_from_env(
         source,
         registry,
         &variable("WAMN_COMPONENT_ARTIFACT_BASE")?,
-        &variable("WAMN_RELEASE_ARTIFACT_BASE")?,
     )
     .await
 }
@@ -251,7 +248,6 @@ async fn publish_built(
     source: SourceBuild,
     registry: PackageRegistry,
     component_artifact_base: &str,
-    release_artifact_base: &str,
 ) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
     let SourceBuild {
         application,
@@ -267,10 +263,6 @@ async fn publish_built(
         publication.package = root;
         push_package(&publication).await?;
     }
-    let route_guest = std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").map_or_else(
-        || PathBuf::from("/usr/local/share/wamn/http_route.wasm"),
-        PathBuf::from,
-    );
     let selection = document
         .applications
         .get(&application)
@@ -299,11 +291,6 @@ async fn publish_built(
             packages,
         },
         &publication.registry,
-        release_artifact_base,
-        Some(&EntryPublicationInputs {
-            component_artifact_base,
-            route_guest: &route_guest,
-        }),
     )
     .await?;
     Ok((application, digest))

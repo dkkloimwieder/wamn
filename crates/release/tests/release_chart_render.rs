@@ -4,7 +4,7 @@
 //!
 //! These tests need only the local Helm executable.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -77,7 +77,6 @@ fn input(env: &wamn_registry::EnvName) -> ValuesInput {
         project: "wms".parse().unwrap(),
         env: env.clone(),
         manifest_digest: DIGEST.parse().unwrap(),
-        artifact_base: "registry.example/releases".into(),
         route_host: "wms.acme.example".into(),
         applications: [(
             "wms".parse().unwrap(),
@@ -89,11 +88,9 @@ fn input(env: &wamn_registry::EnvName) -> ValuesInput {
         .into(),
         roles: vec![Role {
             name: RoleName::Http,
-            entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
             config,
         }],
         actor: "render".into(),
-        component_base: "registry.example/components".into(),
     }
 }
 
@@ -161,87 +158,6 @@ fn kind_name(document: &Value) -> (String, String) {
     )
 }
 
-#[test]
-fn applications_in_one_environment_have_independent_release_resources() {
-    let scratch = Scratch::new("applications");
-    let chart = stamped_chart(&scratch);
-    let mut seen = BTreeSet::new();
-    for application in ["orders", "receiving"] {
-        let mut input = input(&"prod".parse().unwrap());
-        input.applications = BTreeMap::from([(
-            application.parse().unwrap(),
-            wamn_catalog::ApplicationDefinition {
-                packages: [application.parse().unwrap()].into(),
-                connections: BTreeMap::new(),
-            },
-        )]);
-        input.route_host = format!("{application}.example");
-        let entry = format!(
-            "entries@{}",
-            wamn_digest::bytes_sha256(application.as_bytes())
-        );
-        input.roles[0].entry = Some(entry.clone());
-        let values = values(&input).unwrap();
-        let name = release_name(
-            &input.org,
-            &input.project,
-            &input.env,
-            &application.parse().unwrap(),
-        )
-        .unwrap();
-        let yaml = render_yaml(&chart, &scratch, &input.env, &values);
-        let documents = serde_yaml::Deserializer::from_str(&yaml)
-            .map(Value::deserialize)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        for object in documents.iter().filter(|object| !object.is_null()) {
-            assert!(
-                seen.insert(kind_name(object)),
-                "shared object: {:?}",
-                kind_name(object)
-            );
-            match object["kind"].as_str().unwrap() {
-                "WorkloadDeployment" => {
-                    let spec = &object["spec"]["template"]["spec"];
-                    assert_eq!(
-                        spec["hostSelector"]["hostgroup"],
-                        wamn_registry::name::environment_host_name(&input.org, &input.env)
-                    );
-                    assert_eq!(
-                        spec["components"][0]["image"],
-                        format!("registry.example/components/{entry}")
-                    );
-                    let route = spec["hostInterfaces"]
-                        .as_sequence()
-                        .unwrap()
-                        .iter()
-                        .find(|interface| {
-                            interface["namespace"] == "wasi" && interface["package"] == "http"
-                        })
-                        .unwrap();
-                    assert_eq!(route["config"]["host"], input.route_host);
-                    let service = &spec["kubernetes"]["service"]["name"];
-                    assert!(documents.iter().any(|object| object["kind"] == "Service"
-                        && &object["metadata"]["name"] == service));
-                }
-                "Service" if object["spec"]["selector"].is_mapping() => {
-                    assert_eq!(
-                        object["spec"]["selector"]["wasmcloud.com/hostgroup"],
-                        wamn_registry::name::environment_host_name(&input.org, &input.env)
-                    );
-                }
-                "ConfigMap" if object["metadata"]["name"] == name => {
-                    let carrier: serde_json::Value =
-                        serde_json::from_str(object["data"]["release.json"].as_str().unwrap())
-                            .unwrap();
-                    assert_eq!(carrier["host"], input.route_host);
-                    assert_eq!(carrier["digest"], serde_json::json!(input.manifest_digest));
-                }
-                _ => {}
-            }
-        }
-    }
-}
 
 #[test]
 fn the_platform_ui_digest_and_org_reach_the_release_row() {

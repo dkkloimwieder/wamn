@@ -34,12 +34,6 @@
 //! counts read the environment through its administration login and the
 //! control store through its existing connection. Count failures answer null.
 //!
-//! `release.profile` reads one installed release of one environment of the
-//! project from its `catalog.releases` on the environment's administration login.
-//! It answers the release's exported operations and the operations each role of the
-//! environment holds (`admin` holds every operation of the release), from its
-//! `platform.role` and `platform.permission`. It writes nothing.
-
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 use wamn_broker::Publisher;
@@ -47,7 +41,6 @@ mod connection_test;
 mod integration;
 mod operations;
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -61,10 +54,9 @@ use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
 use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
-use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::application::{
-    ApplicationTarget, permission_rows, project_authority, require_platform_rows, role_names,
+    ApplicationTarget, project_authority, require_platform_rows,
     write_environment_status,
 };
 use wamn_platform_identity::control::{
@@ -224,14 +216,6 @@ struct MemberRequest {
 struct EnvironmentRequest {
     project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReleaseRequest {
-    project: wamn_registry::ProjectId,
-    env: wamn_registry::EnvName,
-    digest: wamn_digest::Digest,
 }
 
 #[derive(Deserialize)]
@@ -536,43 +520,6 @@ impl ControlRoutes<'_> {
                     memberships,
                 )
                 .await)
-            }
-            HostHandler::ReleaseProfile => {
-                let request: ReleaseRequest = parse(payload)?;
-                if !self
-                    .read(caller, async |connection| {
-                        Ok(project_envs(connection, self.org, &request.project).await?)
-                    })
-                    .await?
-                    .iter()
-                    .any(|entry| entry.name == request.env)
-                {
-                    return Err(Refusal::Declared {
-                        code: "environment_not_found",
-                        detail: json!({ "field": "env" }),
-                    });
-                }
-                let directory = self.administration.ok_or_else(|| {
-                    anyhow::anyhow!("the control host has no administration logins")
-                })?;
-                let path =
-                    directory.join(control_administration_key(&request.project, &request.env));
-                let url = std::fs::read_to_string(&path)
-                    .with_context(|| format!("read the administration login {}", path.display()))?;
-                match release_profile(url.trim(), &request.digest, caller).await? {
-                    Some((profile, roles)) => Ok(json!({
-                        "digest": request.digest,
-                        "operations": profile.operations,
-                        "roles": roles
-                            .into_iter()
-                            .map(|(role, operations)| json!({ "role": role, "operations": operations }))
-                            .collect::<Vec<_>>(),
-                    })),
-                    None => Err(Refusal::Declared {
-                        code: "release_not_found",
-                        detail: json!({ "field": "digest" }),
-                    }),
-                }
             }
             HostHandler::MemberList => {
                 let request: MemberListTarget = parse(payload)?;
@@ -1213,64 +1160,6 @@ async fn write_application(
     }.await;
     drop(client);
     result
-}
-
-/// The release whose manifest digest is `digest`, read from the environment's
-/// `catalog.releases` on its administration login.
-const RELEASE_SQL: &str =
-    "SELECT canonical_bytes FROM catalog.releases WHERE manifest_digest = $1 LIMIT 1";
-
-/// The exported operations of the installed release `digest`
-/// (docs/architecture/execution.md#host-run-routes) and the operations each
-/// role of the environment holds, or `None` when the environment has no such
-/// release. `admin` holds every operation of the release. It writes nothing.
-async fn release_profile(
-    url: &str,
-    digest: &wamn_digest::Digest,
-    caller: &PrincipalId,
-) -> anyhow::Result<
-    Option<(
-        wamn_catalog::profile::ReleaseProfile,
-        BTreeMap<String, Vec<String>>,
-    )>,
-> {
-    let mut client = wamn_postgres::connect(url)
-        .await
-        .context("connect the administration login")?;
-
-    let mut transaction =
-        wamn_platform_identity::transaction::read_connection(&mut client, caller).await?;
-    let result = async {
-        let Some(row) = sqlx::query(RELEASE_SQL)
-            .bind(digest)
-            .fetch_optional(&mut *transaction)
-            .await?
-        else {
-            return Ok(None);
-        };
-        let (manifest, _) =
-            wamn_catalog::ServingManifest::from_canonical_bytes(&row.get::<Vec<u8>, _>(0))
-                .context("decode the release manifest")?;
-        let profile = wamn_catalog::profile::release_profile(&manifest.components);
-        require_platform_rows(&mut transaction).await?;
-        let mut roles = BTreeMap::new();
-        for role in role_names(&mut transaction).await? {
-            let operations = if role == ADMIN_ROLE {
-                profile
-                    .operations
-                    .iter()
-                    .map(|each| each.operation.to_string())
-                    .collect()
-            } else {
-                permission_rows(&mut transaction, &role).await?
-            };
-            roles.insert(role, operations);
-        }
-        anyhow::Ok(Some((profile, roles)))
-    }
-    .await?;
-    transaction.commit().await?;
-    Ok(result)
 }
 
 /// One environment's status row, in its own transaction on its

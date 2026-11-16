@@ -61,17 +61,6 @@ pub async fn install_schema(client: &mut Client) -> anyhow::Result<()> {
         .execute(&mut *client)
         .await
         .map(drop)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
-            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
-             VALUES ('{PROJECT_ENV_KEY}', '{POD_MANIFEST_DIGEST}', '{POD_MANIFEST_BYTES}'), \
-                    ('{PROJECT_ENV_KEY}', '{ROLLED_MANIFEST_DIGEST}', '{ROLLED_MANIFEST_BYTES}');"
-        ))
-            .to_string(),
-    ))
-    .execute(&mut *client)
-    .await
-    .map(drop)?;
     Ok(())
 }
 

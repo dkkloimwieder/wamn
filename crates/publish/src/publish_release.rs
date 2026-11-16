@@ -1,22 +1,9 @@
-//! Publish one immutable release.
-//!
-//! A release is its manifest digest
-//! (docs/architecture/overview.md#release-identity). The publisher composes
-//! package artifacts (§8.1): it pulls the artifact under the tag of each exact
-//! package pair from the registry only, and refuses a package with no artifact
-//! before it writes anything (R11 (2)). It resolves every component from the
-//! admitted descriptors of those artifacts, and each release component carries
-//! its descriptor. It pushes the canonical manifest bytes to OCI and writes no
-//! Postgres row: `apply` step 2 writes `catalog.releases` where it installs (R1
-//! (3), R2, §10.2).
-
-use sqlx::Row as _;
 pub(super) mod plan;
 pub use plan::{
-    application_dependency_permissions, composes_integration, parse_package, record_composed_entry,
+    application_dependency_permissions, composes_integration, parse_package,
 };
 use plan::{
-    application_digests, covers_routes, pin_runtime_schemas, project_components, project_routes,
+    pin_runtime_schemas, project_components, project_routes,
     validate_request,
 };
 
@@ -38,23 +25,15 @@ use crate::package_artifact::{OpenedPackage, PackageRegistry};
 
 mod attachments;
 mod components;
-mod entry_publication;
 mod package_sources;
 
 use attachments::{read_package_attachments, resolve_route_methods};
 use components::{resolve_component_dependency_closure, resolve_route_component};
-pub use entry_publication::EntryPublicationInputs;
 pub use package_sources::package_route;
 use package_sources::read_package_manifests;
 
-pub use manifest_push::push_manifest_bytes;
-
 #[cfg(test)]
 use attachments::merge_package_attachment_documents;
-
-const READ_RELEASE_SQL: &str = "\
-SELECT canonical_bytes FROM catalog.releases \
- WHERE project_env_key = $1 AND manifest_digest = $2";
 
 /// Inputs owned by the release publisher.
 #[derive(Debug)]
@@ -120,7 +99,6 @@ pub const RELEASE_MANIFEST_MINT_REFUSAL: &str = "release-manifest-mint-refused";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublishManifestErrorType {
-    Storage,
     Release,
     PackageManifest,
     Component,
@@ -131,17 +109,12 @@ pub enum PublishManifestErrorType {
     Document,
     DuplicateAttachmentId,
     ApplicationSelection,
-    ApplicationCoverage,
-    AmbiguousApplicationMember,
 }
 
 impl PublishManifestErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ApplicationSelection => "application-selection",
-            Self::ApplicationCoverage => "application-coverage",
-            Self::AmbiguousApplicationMember => "ambiguous-application-member",
-            Self::Storage => "storage",
             Self::Release => "release",
             Self::PackageManifest => "package-manifest",
             Self::Component => "component",
@@ -265,73 +238,15 @@ impl PublishReleaseRequest {
     }
 }
 
-/// Publish one effective release from the package artifacts in
-/// `registry`: push its manifest to `release_artifact_base` with the
-/// credential and trust roots of `registry` (§8.1), and return its manifest
-/// digest. A release with an HTTP entry needs `entry` (§8.1). It writes OCI
-/// only.
 pub async fn publish_release(
     request: PublishReleaseRequest,
     registry: &PackageRegistry,
-    release_artifact_base: &str,
-    entry: Option<&EntryPublicationInputs<'_>>,
 ) -> anyhow::Result<wamn_digest::Digest> {
     Ok(
-        publish_candidate(&request, registry, release_artifact_base, entry)
+        publish_candidate(&request, registry)
             .await?
             .digest,
     )
-}
-
-/// Built application bytes with the platform route layer, not yet selected for serving.
-#[derive(Debug)]
-pub struct ComposedApplication {
-    bytes: Box<[u8]>,
-    digest: wamn_digest::Digest,
-    application: wamn_catalog::ServingEntryMember,
-    application_digests: BTreeSet<wamn_digest::Digest>,
-}
-
-impl ComposedApplication {
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    pub fn digest(&self) -> &wamn_digest::Digest {
-        &self.digest
-    }
-}
-
-/// Build an HTTP entry from an admitted application and the pinned platform route bytes.
-pub fn compose_application(
-    application: &AdmittedComponent,
-    application_bytes: &[u8],
-    route_bytes: &[u8],
-) -> anyhow::Result<ComposedApplication> {
-    let digest = format!(
-        "sha256:{}",
-        include_str!("../../../guests/http-route/http_route.wasm.sha256")
-            .split_whitespace()
-            .next()
-            .expect("route pin exists")
-    );
-    let digest = digest.parse::<wamn_digest::Digest>()?;
-    ensure!(
-        wamn_digest::bytes_sha256(route_bytes) == digest,
-        "route layer bytes differ from pinned digest {digest}"
-    );
-    wamn_component_composer::validate_application_member(application_bytes)?;
-    let application_digests = application_digests(application, application_bytes)?;
-    Ok(ComposedApplication {
-        bytes: route_bytes.into(),
-        digest,
-        application: wamn_catalog::ServingEntryMember {
-            package_id: application.target.package_id.clone(),
-            component: application.component.clone(),
-            digest: application.component_digest,
-        },
-        application_digests,
-    })
 }
 
 fn select_application<'a>(
@@ -358,56 +273,6 @@ fn select_application<'a>(
             ),
         )
     })
-}
-
-/// Select the declared application's unique member covering its routes.
-pub fn application_member<'a>(
-    published: &PublishedRelease,
-    candidates: &[(&'a AdmittedComponent, &'a [u8])],
-    applications: &wamn_catalog::EnvironmentApplications,
-    application: Option<&wamn_catalog::ApplicationName>,
-) -> anyhow::Result<(&'a AdmittedComponent, &'a [u8])> {
-    let (name, definition) = select_application(applications, application)?;
-    let mut covering = Vec::new();
-    for (member, bytes) in candidates {
-        if definition
-            .packages
-            .contains(member.target.package_id.as_str())
-            && published.manifest.components.iter().any(|released| {
-                released.package_id == member.target.package_id
-                    && released.descriptor.component == member.component
-                    && released.descriptor.component_digest == member.component_digest
-            })
-            && covers_routes(published, member, bytes)?
-        {
-            covering.push((*member, *bytes));
-        }
-    }
-    match covering.as_slice() {
-        [member] => Ok(*member),
-        [] => Err(PublishManifestError::new(
-            PublishManifestErrorType::ApplicationCoverage,
-            format!("application {name:?} has no released member covering every route"),
-        )
-        .into()),
-        members => Err(PublishManifestError::new(
-            PublishManifestErrorType::AmbiguousApplicationMember,
-            format!(
-                "application {name:?} has multiple members covering every route: {}",
-                members
-                    .iter()
-                    .map(|(member, _)| format!(
-                        "{}::{}",
-                        member.target.package_id, member.component
-                    ))
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        )
-        .into()),
-    }
 }
 
 /// An unpublished release assembled for an edge bundle.
@@ -499,8 +364,6 @@ pub fn assemble_release(
 async fn publish_candidate(
     args: &PublishReleaseRequest,
     registry: &PackageRegistry,
-    release_artifact_base: &str,
-    entry: Option<&EntryPublicationInputs<'_>>,
 ) -> anyhow::Result<PublishedRelease> {
     let (_, application) = select_application(&args.applications, args.application.as_ref())?;
     let (coordinates, opened) =
@@ -523,67 +386,12 @@ async fn publish_candidate(
         attachments: &attachments,
         environment_is_disposable: false,
     };
-    let mut published = publish_release_with_package_manifests(
+    let published = publish_release_with_package_manifests(
         &request,
         &release_components,
         &package_manifests,
         &route_contracts,
     )?;
-    if let Some(inputs) = entry {
-        let palette = crate::palette::read(inputs.route_guest, &args.project_env_key())?;
-        let base = wamn_catalog::parse_component_artifact_base(inputs.component_artifact_base)?;
-        let credentials =
-            wamn_package_artifact::registry_credentials::read_registry_push_credentials(
-                &registry.registry_auth_file,
-                base.registry(),
-            )?;
-        for component in &palette {
-            let fact = &component.facts.component;
-            let reference: oci_client::Reference = format!(
-                "{}:{}",
-                inputs.component_artifact_base,
-                fact.component_digest.hex()
-            )
-            .parse()?;
-            crate::component_admission::publish_and_verify(
-                &reference,
-                registry.insecure_registry,
-                &registry.oci_ca_paths,
-                &component.bytes,
-                &wamn_engine::component_artifact::component_artifact_config_bytes(fact),
-                credentials.as_ref(),
-            )
-            .await?;
-            published
-                .manifest
-                .components
-                .insert(ServingComponent::project(
-                    fact,
-                    components::palette_connections(
-                        &component.facts.connections,
-                        &package_manifests,
-                    ),
-                ));
-        }
-        published = seal_release(&published.manifest)?;
-    }
-    entry_publication::publish(
-        &mut published,
-        &release_components,
-        registry,
-        &args.applications,
-        args.application.as_ref(),
-        entry,
-    )
-    .await?;
-    push_manifest_bytes(
-        &published.canonical_bytes,
-        release_artifact_base,
-        registry.insecure_registry,
-        &registry.oci_ca_paths,
-        &registry.registry_auth_file,
-    )
-    .await?;
     Ok(published)
 }
 
@@ -727,25 +535,6 @@ fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
         .map(|root| wamn_compiler::package_manifest_path(root))
         .collect();
     (attachments, manifests)
-}
-
-/// Read the canonical bytes of an installed release.
-pub async fn read_release(
-    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    manifest_digest: &wamn_digest::Digest,
-) -> Result<Option<Vec<u8>>, PublishManifestError> {
-    sqlx::query(READ_RELEASE_SQL)
-        .bind(project_env_key)
-        .bind(manifest_digest)
-        .fetch_optional(&mut **transaction)
-        .await
-        .map(|row| row.map(|row| row.get(0)))
-        .map_err(|error| storage("read the release", error))
-}
-
-fn storage(context: &'static str, error: sqlx::Error) -> PublishManifestError {
-    PublishManifestError::with_source(PublishManifestErrorType::Storage, context, error)
 }
 
 fn descriptor_components(
@@ -1253,132 +1042,6 @@ mod tests {
         assert_eq!(refusal.error_type(), PublishManifestErrorType::Document);
     }
 
-    #[test]
-    fn composition_refuses_a_route_outside_the_platform_pin() {
-        let application = closure_component("entry", None);
-        let bytes = wat::parse_str("(component)").unwrap();
-        assert!(compose_application(&application, &bytes, &bytes).is_err());
-    }
-
-    #[test]
-    fn application_membership_requires_one_covering_component() {
-        let bytes = [
-            wat::parse_str("(component)").unwrap(),
-            wat::parse_str("(component (component))").unwrap(),
-            wat::parse_str("(component (component (component)))").unwrap(),
-        ];
-        let facts: Vec<_> = ["base", "overlay", "outer"]
-            .into_iter()
-            .zip(&bytes)
-            .map(|(package, bytes)| {
-                let mut fact = closure_component("entry", None);
-                fact.target.package_id = package.parse().unwrap();
-                fact.component_digest = wamn_digest::bytes_sha256(bytes);
-                fact
-            })
-            .collect();
-        let manifest = ServingManifest::new(
-            ServingRelease {
-                packages: facts
-                    .iter()
-                    .map(|fact| {
-                        PackageCoordinate::new(
-                            fact.target.package_id.clone(),
-                            "1.0.0".parse().unwrap(),
-                        )
-                        .unwrap()
-                    })
-                    .collect(),
-            },
-            facts
-                .iter()
-                .map(|fact| ServingComponent::project(fact, Vec::new()))
-                .collect(),
-            facts[..2]
-                .iter()
-                .map(|fact| ServingRoute {
-                    package_id: fact.target.package_id.clone(),
-                    component: "entry".parse().unwrap(),
-                    operation: "run".parse().unwrap(),
-                    type_: OperationType::Get,
-                    reads: BTreeSet::new(),
-                    revision: None,
-                    idempotency: None,
-                })
-                .collect(),
-            BTreeMap::new(),
-        )
-        .unwrap();
-        let published = PublishedRelease {
-            digest: manifest.digest(),
-            canonical_bytes: manifest.canonical_bytes(),
-            manifest,
-        };
-        let applications = [(
-            "orders".parse().unwrap(),
-            wamn_catalog::ApplicationDefinition {
-                connections: std::collections::BTreeMap::new(),
-                packages: ["base".parse().unwrap(), "overlay".parse().unwrap()].into(),
-            },
-        )]
-        .into();
-        let candidates = || {
-            facts
-                .iter()
-                .zip(&bytes)
-                .map(|(fact, bytes)| (fact, bytes.as_slice()))
-                .collect::<Vec<_>>()
-        };
-        // No selector is needed for a single application. The larger outer
-        // component is outside its declared packages and cannot become its member.
-        let _ = application_member(&published, &candidates(), &applications, None).unwrap();
-
-        let error =
-            application_member(&published, &candidates()[..1], &applications, None).unwrap_err();
-        assert_eq!(
-            error
-                .downcast_ref::<PublishManifestError>()
-                .unwrap()
-                .error_type(),
-            PublishManifestErrorType::ApplicationCoverage
-        );
-
-        let mut two = applications.clone();
-        two.insert(
-            "rest".parse().unwrap(),
-            wamn_catalog::ApplicationDefinition {
-                connections: BTreeMap::new(),
-                packages: ["base".parse().unwrap()].into(),
-            },
-        );
-        assert!(application_member(&published, &candidates(), &two, None).is_err());
-        let mut both = two.clone();
-        both.get_mut("rest")
-            .unwrap()
-            .packages
-            .insert("overlay".parse().unwrap());
-        let error = application_member(&published, &candidates(), &both, None).unwrap_err();
-        assert_eq!(
-            error
-                .downcast_ref::<PublishManifestError>()
-                .unwrap()
-                .error_type(),
-            PublishManifestErrorType::ApplicationSelection
-        );
-
-        let mut ambiguous = applications;
-        ambiguous
-            .get_mut("orders")
-            .unwrap()
-            .packages
-            .insert("outer".parse().unwrap());
-        let error = application_member(&published, &candidates(), &ambiguous, None).unwrap_err();
-        let error = error.downcast_ref::<PublishManifestError>().unwrap();
-        assert_eq!(
-            error.error_type(),
-            PublishManifestErrorType::AmbiguousApplicationMember
-        );
-    }
 
     /// A package directory whose `descriptors/` holds the canonical descriptor
     /// of `fact` with one connection, as an unpacked artifact holds it.
@@ -1689,450 +1352,6 @@ mod tests {
         assert_eq!(closure.len(), 2);
         assert!(closure.contains(&base));
         assert!(closure.contains(&overlay));
-    }
-}
-
-mod manifest_push {
-    //! Push canonical format-1 serving-manifest bytes as one OCI data artifact.
-    //!
-    //! The manifest's RFC 8785 SHA-256 identity derives its immutable OCI tag. An
-    //! exact retry pulls and verifies the existing artifact and performs no push.
-    //! A tag holding any other layout or bytes refuses instead of being replaced.
-    //!
-    //! `publish-release` pushes the bytes it composed before it records them
-    //! (docs/architecture/components.md#application-http-composition).
-
-    use std::fmt;
-    use std::path::{Path, PathBuf};
-    use std::time::Duration;
-
-    use oci_client::manifest::OciImageManifest;
-    use oci_client::secrets::RegistryAuth;
-    use oci_client::{Client as OciClient, Reference};
-    use wamn_catalog::{ServingManifest, ServingRelease};
-    use wamn_package_artifact::read_ca_bundles;
-    use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
-    use wamn_package_artifact::release_manifest_artifact::{
-        RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs,
-        release_manifest_artifact_layout, release_manifest_artifact_reference,
-        verify_release_manifest_artifact_layout,
-    };
-    use wamn_package_artifact::{artifact_is_absent, registry_auth};
-
-    /// Bound each registry connect/read phase without adding a deployment knob.
-    const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
-
-    /// Stable prefix every release-manifest OCI refusal renders with.
-    pub const RELEASE_MANIFEST_PUBLISH_REFUSAL: &str = "release-manifest-publish-refused";
-
-    /// Stable classification of a release-manifest publication refusal.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum ReleaseManifestPushErrorType {
-        Document,
-        Reference,
-        Credential,
-        TrustAnchor,
-        Transport,
-        Conflict,
-    }
-
-    impl ReleaseManifestPushErrorType {
-        const fn as_str(self) -> &'static str {
-            match self {
-                Self::Document => "document",
-                Self::Reference => "reference",
-                Self::Credential => "credential",
-                Self::TrustAnchor => "trust-anchor",
-                Self::Transport => "transport",
-                Self::Conflict => "conflict",
-            }
-        }
-    }
-
-    /// Contextual refusal from the release-manifest OCI boundary.
-    #[derive(Debug)]
-    pub struct ReleaseManifestPushError {
-        type_: ReleaseManifestPushErrorType,
-        refusal: &'static str,
-        detail: String,
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
-    }
-
-    impl ReleaseManifestPushError {
-        /// Stable refusal class for callers that must not match display text.
-        pub const fn error_type(&self) -> ReleaseManifestPushErrorType {
-            self.type_
-        }
-
-        /// Stable literal naming the rejected invariant.
-        pub const fn refusal(&self) -> &'static str {
-            self.refusal
-        }
-
-        fn new(
-            type_: ReleaseManifestPushErrorType,
-            refusal: &'static str,
-            detail: impl Into<String>,
-        ) -> Self {
-            Self {
-                type_,
-                refusal,
-                detail: detail.into(),
-                source: None,
-            }
-        }
-
-        fn with_source(
-            type_: ReleaseManifestPushErrorType,
-            refusal: &'static str,
-            detail: impl Into<String>,
-            source: impl std::error::Error + Send + Sync + 'static,
-        ) -> Self {
-            Self {
-                type_,
-                refusal,
-                detail: detail.into(),
-                source: Some(Box::new(source)),
-            }
-        }
-    }
-
-    impl fmt::Display for ReleaseManifestPushError {
-        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(
-                formatter,
-                "{RELEASE_MANIFEST_PUBLISH_REFUSAL} ({}; {}): {}",
-                self.type_.as_str(),
-                self.refusal,
-                self.detail
-            )
-        }
-    }
-
-    impl std::error::Error for ReleaseManifestPushError {
-        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-            self.source.as_deref().map(|source| source as _)
-        }
-    }
-
-    /// Whether this invocation created the artifact or matched an exact retry.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum ReleaseManifestPushDisposition {
-        Pushed,
-        AlreadyPresent,
-    }
-
-    /// Verified result of pushing one canonical serving manifest.
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct PushedReleaseManifest {
-        pub digest: wamn_digest::Digest,
-        pub disposition: ReleaseManifestPushDisposition,
-        /// Effective-release coordinate carried by the pushed bytes.
-        pub release: ServingRelease,
-    }
-
-    /// Push canonical format-1 bytes or make sure that their exact artifact already exists.
-    pub async fn push_manifest_bytes(
-        canonical_bytes: &[u8],
-        artifact_base: &str,
-        insecure_registry: bool,
-        oci_ca_paths: &[PathBuf],
-        registry_auth_file: &Path,
-    ) -> Result<PushedReleaseManifest, ReleaseManifestPushError> {
-        let (admitted, digest) =
-            ServingManifest::from_canonical_bytes(canonical_bytes).map_err(|source| {
-                ReleaseManifestPushError::with_source(
-                    ReleaseManifestPushErrorType::Document,
-                    "release-manifest-document-refused",
-                    "input is not canonical format-1 ServingManifest JSON",
-                    source,
-                )
-            })?;
-        let release = admitted.release;
-        let artifact =
-            release_manifest_artifact_reference(artifact_base, &digest).map_err(|source| {
-                ReleaseManifestPushError::with_source(
-                    ReleaseManifestPushErrorType::Reference,
-                    "release-manifest-artifact-reference-refused",
-                    "artifact base or manifest digest cannot form an immutable OCI reference",
-                    source,
-                )
-            })?;
-        let credentials = read_registry_push_credentials(registry_auth_file, artifact.registry())
-            .map_err(|source| {
-            ReleaseManifestPushError::with_source(
-                ReleaseManifestPushErrorType::Credential,
-                "release-manifest-registry-credential-refused",
-                format!("load push credential for registry {}", artifact.registry()),
-                source,
-            )
-        })?;
-        let reference = Reference::with_tag(
-            artifact.registry().to_owned(),
-            artifact.repository().to_owned(),
-            artifact.tag().to_owned(),
-        );
-        let ca_bundles = read_ca_bundles(oci_ca_paths).map_err(|source| {
-            ReleaseManifestPushError::with_source(
-                ReleaseManifestPushErrorType::TrustAnchor,
-                "release-manifest-ca-bundle-unreadable",
-                format!("read CA bundles for registry {}", artifact.registry()),
-                source,
-            )
-        })?;
-        let base =
-            wamn_catalog::parse_component_artifact_base(artifact_base).map_err(|source| {
-                ReleaseManifestPushError::with_source(
-                    ReleaseManifestPushErrorType::Reference,
-                    "release-manifest-artifact-reference-refused",
-                    "invalid release artifact base",
-                    source,
-                )
-            })?;
-        let client = wamn_package_artifact::registry_source::RegistrySource::new(
-            base,
-            insecure_registry,
-            REGISTRY_IO_TIMEOUT,
-        )
-        .with_ca_bundles(ca_bundles)
-        .client()
-        .map_err(|source| {
-            ReleaseManifestPushError::with_source(
-                ReleaseManifestPushErrorType::TrustAnchor,
-                "release-manifest-registry-client-unusable",
-                format!("build the push client for registry {}", artifact.registry()),
-                source,
-            )
-        })?;
-        let auth = registry_auth(credentials.as_ref());
-
-        if probe_exact_artifact(&client, &reference, &auth, canonical_bytes, &digest).await? {
-            return Ok(PushedReleaseManifest {
-                digest,
-                disposition: ReleaseManifestPushDisposition::AlreadyPresent,
-                release,
-            });
-        }
-
-        let (layer, config, manifest) = release_manifest_artifact_layout(canonical_bytes);
-        client
-            .push(
-                &reference,
-                std::slice::from_ref(&layer),
-                config,
-                &auth,
-                Some(manifest),
-            )
-            .await
-            .map_err(|source| {
-                ReleaseManifestPushError::with_source(
-                    ReleaseManifestPushErrorType::Transport,
-                    "release-manifest-artifact-push-failed",
-                    format!("push release-manifest artifact {reference}"),
-                    source,
-                )
-            })?;
-
-        if !probe_exact_artifact(&client, &reference, &auth, canonical_bytes, &digest).await? {
-            return Err(ReleaseManifestPushError::new(
-                ReleaseManifestPushErrorType::Transport,
-                "release-manifest-artifact-not-visible",
-                format!("pushed release-manifest artifact {reference} is not readable"),
-            ));
-        }
-        Ok(PushedReleaseManifest {
-            digest,
-            disposition: ReleaseManifestPushDisposition::Pushed,
-            release,
-        })
-    }
-
-    async fn probe_exact_artifact(
-        client: &OciClient,
-        reference: &Reference,
-        auth: &RegistryAuth,
-        expected_bytes: &[u8],
-        expected_digest: &wamn_digest::Digest,
-    ) -> Result<bool, ReleaseManifestPushError> {
-        let deadline = tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT;
-        let (manifest, _) = match wamn_package_artifact::registry_pull::retry(
-            reference,
-            deadline,
-            || client.pull_image_manifest(reference, auth),
-            |error| error,
-        )
-        .await
-        {
-            Ok(found) => found,
-            Err(source) if artifact_is_absent(&source) => return Ok(false),
-            Err(source) => {
-                return Err(ReleaseManifestPushError::with_source(
-                    ReleaseManifestPushErrorType::Transport,
-                    "release-manifest-artifact-probe-failed",
-                    format!("probe release-manifest artifact {reference}"),
-                    source,
-                ));
-            }
-        };
-        let verified =
-            verify_manifest_layout(&manifest, expected_digest, expected_bytes.len(), reference)?;
-
-        let body =
-            wamn_package_artifact::registry_pull::blob(client, reference, verified.layer, deadline)
-                .await
-                .map_err(|source| {
-                    ReleaseManifestPushError::with_source(
-                        ReleaseManifestPushErrorType::Transport,
-                        "release-manifest-artifact-body-unavailable",
-                        format!("pull release-manifest body {reference}"),
-                        source,
-                    )
-                })?;
-        if body != expected_bytes {
-            return Err(conflict(
-                reference,
-                "release-manifest-artifact-body-mismatch",
-            ));
-        }
-
-        let config = wamn_package_artifact::registry_pull::blob(
-            client,
-            reference,
-            verified.config,
-            deadline,
-        )
-        .await
-        .map_err(|source| {
-            ReleaseManifestPushError::with_source(
-                ReleaseManifestPushErrorType::Transport,
-                "release-manifest-artifact-config-unavailable",
-                format!("pull release-manifest config {reference}"),
-                source,
-            )
-        })?;
-        if config != RELEASE_MANIFEST_CONFIG_BYTES {
-            return Err(conflict(
-                reference,
-                "release-manifest-artifact-config-body-mismatch",
-            ));
-        }
-        Ok(true)
-    }
-
-    /// Translate the shared layout contract's refusal into this boundary's error.
-    fn verify_manifest_layout<'a>(
-        manifest: &'a OciImageManifest,
-        expected_digest: &wamn_digest::Digest,
-        expected_size: usize,
-        reference: &Reference,
-    ) -> Result<ReleaseManifestArtifactBlobs<'a>, ReleaseManifestPushError> {
-        verify_release_manifest_artifact_layout(manifest, expected_digest, Some(expected_size))
-            .map_err(|refusal| conflict(reference, refusal.refusal()))
-    }
-
-    fn conflict(reference: &Reference, refusal: &'static str) -> ReleaseManifestPushError {
-        ReleaseManifestPushError::new(
-            ReleaseManifestPushErrorType::Conflict,
-            refusal,
-            format!("existing release-manifest artifact {reference} is not exact"),
-        )
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use wamn_component_artifact::component_artifact_source::OCI_CA_PATHS_ENV;
-        use wamn_package_artifact::release_manifest_artifact::RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE;
-
-        use super::*;
-
-        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"orders"}],"format-version":11,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[]}"#;
-
-        fn fixture_reference() -> Reference {
-            Reference::with_tag(
-                "registry.example".to_owned(),
-                "wamn/releases".to_owned(),
-                "a".repeat(64),
-            )
-        }
-
-        #[test]
-        fn unsupported_format_and_noncanonical_documents_refuse_before_transport() {
-            let unsupported = std::str::from_utf8(CANONICAL_MANIFEST)
-                .expect("fixture is UTF-8")
-                .replacen("\"format-version\":11", "\"format-version\":9", 1);
-            let _unsupported = ServingManifest::from_canonical_bytes(unsupported.as_bytes())
-                .expect_err("format nine refuses");
-
-            let mut indented = CANONICAL_MANIFEST.to_vec();
-            indented.insert(1, b' ');
-            assert!(ServingManifest::from_canonical_bytes(&indented).is_err());
-        }
-
-        #[test]
-        fn wrong_or_multi_layer_layout_refuses_as_conflict() {
-            let (_, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-                .expect("fixture is a canonical format-1 manifest");
-            let (_, _, mut manifest) = release_manifest_artifact_layout(CANONICAL_MANIFEST);
-            manifest.layers[0].media_type = "application/octet-stream".to_owned();
-            let error = verify_manifest_layout(
-                &manifest,
-                &digest,
-                CANONICAL_MANIFEST.len(),
-                &fixture_reference(),
-            )
-            .expect_err("foreign layer layout refuses");
-            assert_eq!(error.error_type(), ReleaseManifestPushErrorType::Conflict);
-
-            let duplicate = manifest.layers[0].clone();
-            manifest.layers[0].media_type = RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE.to_owned();
-            manifest.layers.push(duplicate);
-            let error = verify_manifest_layout(
-                &manifest,
-                &digest,
-                CANONICAL_MANIFEST.len(),
-                &fixture_reference(),
-            )
-            .expect_err("multiple layers refuse");
-            assert_eq!(error.error_type(), ReleaseManifestPushErrorType::Conflict);
-        }
-
-        #[tokio::test]
-        #[ignore = "requires: env:WAMN_RELEASE_MANIFEST_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE"]
-        async fn pushing_same_bytes_uploads_nothing() {
-            let artifact_base = std::env::var("WAMN_RELEASE_MANIFEST_ARTIFACT_BASE")
-                .expect("set WAMN_RELEASE_MANIFEST_ARTIFACT_BASE to a disposable repository");
-            let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")
-                .expect("set WAMN_REGISTRY_AUTH_FILE to its Docker config credential");
-            // A CA names a TLS registry; without one the registry stays plain HTTP.
-            let oci_ca_paths: Vec<PathBuf> = std::env::var(OCI_CA_PATHS_ENV)
-                .map_or_default(|paths| paths.split(',').map(PathBuf::from).collect());
-            let insecure_registry = oci_ca_paths.is_empty();
-
-            let first = push_manifest_bytes(
-                CANONICAL_MANIFEST,
-                &artifact_base,
-                insecure_registry,
-                &oci_ca_paths,
-                Path::new(&registry_auth_file),
-            )
-            .await
-            .expect("first publication converges");
-            let retry = push_manifest_bytes(
-                CANONICAL_MANIFEST,
-                &artifact_base,
-                insecure_registry,
-                &oci_ca_paths,
-                Path::new(&registry_auth_file),
-            )
-            .await
-            .expect("exact retry converges");
-
-            assert_eq!(first.digest, retry.digest);
-            assert_eq!(
-                retry.disposition,
-                ReleaseManifestPushDisposition::AlreadyPresent
-            );
-        }
     }
 }
 

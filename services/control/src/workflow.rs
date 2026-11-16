@@ -5,7 +5,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::{Connection as _, Row as _};
 use wamn_identity_protocol::PrincipalId;
-use wamn_workflow::author_workflow::{AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger};
 use wamn_workflow::workflow_lifecycle::WorkflowVersion;
 
 use crate::execution::Execution;
@@ -18,15 +17,6 @@ struct Request {
     application: Option<wamn_catalog::ApplicationName>,
     workflow_id: Option<wamn_catalog::canonical_name::CanonicalName>,
     version: Option<u32>,
-    document: Option<Value>,
-    execution_type: Option<String>,
-    execution_role: Option<String>,
-    schedule: Option<String>,
-    source_package: Option<wamn_catalog::PackageName>,
-    entity: Option<wamn_catalog::canonical_name::CanonicalName>,
-    #[serde(default)]
-    ops: Vec<wamn_catalog::WiringEventOperation>,
-    condition: Option<String>,
 }
 
 impl Execution {
@@ -65,61 +55,6 @@ impl Execution {
             .application
             .as_ref()
             .context("application is absent")?;
-        if operation == "workflow.author" {
-            anyhow::ensure!(
-                request.source_package.is_some()
-                    || (request.entity.is_none()
-                        && request.ops.is_empty()
-                        && request.condition.is_none()),
-                "event fields require a source package"
-            );
-            anyhow::ensure!(
-                request.source_package.is_none() || !request.ops.is_empty(),
-                "an event trigger requires operations"
-            );
-            let document = wamn_catalog::WiringDocument::parse(
-                request.document.as_ref().context("document is absent")?,
-            )?;
-            let execution = match (
-                request.execution_type.as_deref(),
-                request.execution_role.as_deref(),
-            ) {
-                (Some("invoker"), None) => WorkflowExecution::Invoker,
-                (Some("role"), Some(role)) => WorkflowExecution::Role(role),
-                _ => return Err(anyhow::anyhow!("invalid workflow execution authority")),
-            };
-            let trigger = match (request.schedule.as_deref(), request.source_package.as_ref()) {
-                (None, None) => WorkflowTrigger::Manual,
-                (Some(schedule), None) => WorkflowTrigger::Schedule(schedule),
-                (None, Some(source_package)) => WorkflowTrigger::Event {
-                    source_package,
-                    entity: request.entity.as_ref().context("entity is absent")?,
-                    ops: &request.ops,
-                    condition: request.condition.as_deref(),
-                },
-                _ => return Err(anyhow::anyhow!("a workflow has one trigger")),
-            };
-            let (digest, declared) =
-                wamn_environment::environment::show::serving_application(platform, &triple, name)
-                    .await?;
-            let hash = wamn_workflow::author_workflow::author_workflow_in_databases(
-                &database,
-                &AuthorWorkflowRequest {
-                    org: &self.org,
-                    project: &request.project,
-                    environment: &request.env,
-                    application: name,
-                    declared: &declared,
-                    document: &document,
-                    trigger,
-                    execution,
-                    created_by: caller,
-                    manifest_digest: &digest,
-                },
-            )
-            .await?;
-            return Ok(json!({"wiring_hash":hash}));
-        }
         let version = WorkflowVersion {
             org: &self.org,
             project: &request.project,
@@ -132,23 +67,6 @@ impl Execution {
             version: request.version.context("version is absent")?,
         };
         match operation.as_str() {
-            "workflow.enable" => {
-                let (digest, declared) = wamn_environment::environment::show::serving_application(
-                    platform, &triple, name,
-                )
-                .await?;
-                wamn_workflow::workflow_lifecycle::enable_workflow(
-                    &platform.system_database_url,
-                    &triple,
-                    &mut application,
-                    &version,
-                    caller,
-                    &digest,
-                    &declared,
-                    platform.events.as_ref(),
-                )
-                .await?;
-            }
             "workflow.disable" => {
                 wamn_workflow::workflow_lifecycle::disable_workflow(
                     &platform.system_database_url,

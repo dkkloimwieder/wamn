@@ -184,7 +184,6 @@ pub enum HostHandler {
     ProjectAdminRevoke,
     /// The exported operations of one release of an environment
     /// (docs/architecture/execution.md#host-run-routes).
-    ReleaseProfile,
     /// Make one environment active
     /// (docs/architecture/execution.md#host-run-routes).
     EnvironmentActivate,
@@ -304,20 +303,6 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
         handler: HostHandler::FileExpose,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "workflow.author",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::ControlExecution,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "workflow.enable",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::ControlExecution,
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -726,13 +711,6 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::EnvironmentStatus,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "release.profile",
-        type_: OperationType::Get,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::ReleaseProfile,
     },
     HostRoute {
         set: HostRouteSet::Control,

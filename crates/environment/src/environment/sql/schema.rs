@@ -114,44 +114,6 @@ pub async fn database_state(
     })
 }
 
-/// Resolve an explicit schema release without editing the application's code selection.
-pub async fn release_candidates(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    application: &wamn_catalog::ApplicationName,
-    release: Option<&wamn_digest::Digest>,
-) -> anyhow::Result<(wamn_digest::Digest, Vec<Candidate>)> {
-    ensure!(
-        document.applications.contains_key(application),
-        "application {application} is not declared"
-    );
-    let revision;
-    let release = if let Some(digest) = release {
-        digest
-    } else {
-        let name = analyse::application_release_name(document, application)?;
-        revision = analyse::read_revision(platform, &name)
-            .await?
-            .context("application has no current schema source")?;
-        revision
-            .manifest_digest()
-            .context("application revision has no release digest")?
-    };
-    let manifest = analyse::pull_release_manifest(platform, release).await?;
-    let mut candidates = Vec::new();
-    for package in &manifest.release.packages {
-        candidates.push(
-            open(
-                platform,
-                package.package_id(),
-                package.package_version(),
-                None,
-            )
-            .await?,
-        );
-    }
-    Ok((release.to_owned(), candidates))
-}
 
 pub(super) async fn open(
     platform: &Platform,
@@ -360,66 +322,7 @@ pub fn validate_candidates(
     Ok((packages, order))
 }
 
-pub async fn apply(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    application: &wamn_catalog::ApplicationName,
-    release: &wamn_digest::Digest,
-    migration_database_url: &str,
-) -> anyhow::Result<()> {
-    let (_, candidates) =
-        release_candidates(platform, document, application, Some(release)).await?;
-    let state = state(platform, document).await?;
-    ensure!(
-        document.schema_mode(state.disposable) == SchemaMode::Migrate,
-        "reset mode requires the environment reset operation"
-    );
-    let url = state
-        .database_url
-        .context("environment database is absent")?;
-    apply_candidates(platform, document, candidates, &url, migration_database_url).await
-}
 
-pub(super) async fn apply_candidates(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    candidates: Vec<Candidate>,
-    url: &str,
-    migration_database_url: &str,
-) -> anyhow::Result<()> {
-    let manifests = candidates
-        .iter()
-        .map(|c| wamn_compiler::manifest::PackageManifest::from_slice(&c.directory.manifest_bytes))
-        .collect::<Result<Vec<_>, _>>()?;
-    let order = stage::apply_order(
-        &manifests
-            .iter()
-            .map(|p| {
-                (
-                    &p.package.id,
-                    p.base_dependencies.values().map(|d| &d.package).collect(),
-                )
-            })
-            .collect::<Vec<_>>(),
-    )?;
-    let mut candidates = candidates.into_iter().map(Some).collect::<Vec<_>>();
-    let publisher = platform.auth_changes().await?;
-    for index in order {
-        let candidate = candidates[index].take().expect("each package applies once");
-        apply_package::apply_package_schema(apply_package::ApplyPackageRequest {
-            migration_database_url: migration_database_url.to_owned(),
-            component_source: platform.component_source()?,
-            package: candidate.root,
-            changes: publisher.clone(),
-            database_url: url.to_owned(),
-            org: document.org.clone(),
-            project: document.project.clone(),
-            environment: document.env.clone(),
-        })
-        .await?;
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
