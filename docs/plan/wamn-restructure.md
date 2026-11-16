@@ -119,7 +119,7 @@ Org → environment → project → application. One boundary per level.
 ## Crates and names
 
 - Renames: `wamn-ctl` → `wamn-cli`; `wamn-control-provision` → `wamn-provision`; `wamn-compiler` → `wamn-codegen`; `wamn-connections` → `wamn-connection`; `wamn-web-front` → `wamn-web`; `wamn-platform-identity` → `wamn-identity`; identity service package → `wamn-identity-service` in `services/identity-service`.
-- Merges: artifact crates → `wamn-oci`; `wamn-events` + `wamn-event-wire` → `wamn-event`; `wamn-postgres-statements` + `wamn-data-access` → `wamn-guest`; build + composer → `crates/build`. `wamn-release-control` goes. Role names collect in `wamn-role` in 3.1, with the T2 login set.
+- Merges: artifact crates → `wamn-oci`; `wamn-postgres-statements` + `wamn-data-access` → `wamn-guest`; build + composer → `crates/build`. `wamn-release-control` goes. Role names collect in `wamn-role` in 3.1, with the T2 login set. The `wamn-events` and `wamn-event-wire` merge waits for 3.4 (it made a dependency cycle in Epic 2).
 - Splits: `wamn-execution-host` goes: file route → `wamn-blobstore`, number counter → `wamn-sql`, OAuth callback → `wamn-http`, credential cleanup → `wamn-connection`; control route, host route, application route, environment status and connection health → control service. `crates/identity` keeps passwords, sessions, PATs, principals, org membership and control eligibility; connection administration → `wamn-connection`; project database rows, configuration rows and environment fill → `wamn-environment`. The `wamn.json` model moves to `wamn-catalog`.
 - Dependency fixes, in phase 3: no `wamn-postgres` → `wamn-kubernetes`; no `wamn-oci` → `wamn-kubernetes` (use `oci-client`); no `wamn-kubernetes` → `wamn-registry` (3.5).
 - Docs: this doc lives at `docs/plan/wamn-restructure.md`. Everything else in `docs/plan` goes, and so do `docs/history` and `docs/audit`; no stray files at the top of `docs/`. This doc and `rulings.md` are the authority until the restructure lands; where they differ, this doc rules.
@@ -191,16 +191,16 @@ Issues:
     - `connections.rs` and `connections/` → `wamn-connections`
     - `application.rs`, `configuration.rs` and `environment.rs` → `wamn-environment`
     - Everything else stays.
+    - Move `test-support/resources/credentials.rs` into `wamn-connections` under `test-util`.
   - 2.4 Remove `wamn-release-control`, and move build:
     - `release_chart::{uninstall, recover_pending}` → `wamn-kubernetes::helm`
     - `chart_version`, `read_platform_version`, `ImageSet`, `image_set` and `stamp` → `wamn-platform-install`
-    - `values`, `roles`, `release_name`, `workload_name`, `ValuesInput`, `Role`, `RoleName`, `TELEMETRY_VARIABLES` and `env_policies.rs` → `wamn-environment`
+    - `values`, `roles`, `release_name`, `workload_name`, `ValuesInput`, `Role`, `RoleName`, and `TELEMETRY_VARIABLES` → `wamn-environment`; `env_policies.rs` → `wamn-control-provision`
     - Callers use `wamn_kubernetes::Target` directly. Delete the crate.
     - Move `xtask/build` (`wamn-build`) to `crates/build`, and fold `wamn-component-composer` into it.
-  - 2.5 Move the `wamn.json` model: `compiler/src/{manifest,manifest_error,source_name}.rs` → `wamn-catalog`, merged into the existing `wamn_catalog::manifest` module.
+  - 2.5 Move the `wamn.json` model: `compiler/src/{manifest,manifest_error,source_name}.rs` → `wamn-catalog`, merged into the existing `wamn_catalog::manifest` module. The existing smaller types in `wamn_catalog::manifest` move unchanged to `wamn_catalog::manifest::installation`.
   - 2.6 Merges:
     - `component-artifact` + `package-artifact` → `wamn-oci` in `crates/oci`
-    - `events` + `event-wire` → `wamn-event` in `crates/event`
     - `postgres-statements` + `data-access` → `wamn-guest` in `crates/guest`, in the apps workspace. The generator's `wamn_postgres_statements::` paths become `wamn_guest::`.
 - 2.7 Renames. Runs last, alone. Directory names equal crate names.
   - `wamn-ctl` → `wamn-cli` in `services/cli`; the binary stays `wamn`
@@ -222,6 +222,8 @@ Issues:
 - 3.5: publish has no append check since Epic 1 deleted the check over all versions. 3.5 adds the check against the previous version only.
 - 3.8: these tests compile but use SQL on tables Epic 1 dropped (`catalog.releases`, `catalog.wiring_tombstones`): `crates/provision/tests/{deploy_sql_authority,family_denial_matrix,record_history}.rs`, `crates/provision/tests/fixtures/catalog_record_history.sql`, `crates/identity/tests/fixtures/connections.sql`.
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
+- 3.4: merge `wamn-events` and `wamn-event-wire`. In Epic 2 the merge made a cycle, because `wamn-broker`, `wamn-run-state` and `wamn-sql` depend on `wamn-event-wire`.
+- 3.5: `wamn_catalog::manifest::installation` is a second, smaller model of the package document. Its readers move to the full model and it is deleted.
 
 # Part 2: Review log
 
@@ -1514,3 +1516,5 @@ Recommend a.
 - The four workflow behaviours (W-b): `respond`, state after each node, backoff, waiting state.
 
 **Ruled (D, 2026-11-16): Epic 2 scope.** `wamn-execution-host` goes into the control service, by owner. Deferred: `wamn-role` to 3.1, name builders out of `wamn-kubernetes` to 3.5, test layout and `test-support/resources` to 3.8. Fact-forced targets: `org.rs` stays in `wamn-identity` (`control.rs` and the moved code use it); OAuth callback → `wamn-http` and connection health → control service, because `wamn-connections` would form a cycle with `wamn-http` and `wamn-blobstore`.
+
+**Ruled (D, 2026-11-16): Epic 2 targets.** `credentials.rs` → `wamn-connections` under `test-util`; `env_policies.rs` → `wamn-control-provision`; the existing catalog manifest types → `wamn_catalog::manifest::installation`; the event crates merge in 3.4.
