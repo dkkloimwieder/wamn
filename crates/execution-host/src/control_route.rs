@@ -200,6 +200,12 @@ struct ProjectRequest {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ProjectCreateRequest {
+    project: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProjectPrincipalRequest {
     project: wamn_registry::ProjectId,
     principal_id: wamn_identity_protocol::PrincipalId,
@@ -757,16 +763,20 @@ impl ControlRoutes<'_> {
                 Ok(json!({ "project": request.project, "status": status.as_str() }))
             }
             HostHandler::ProjectCreate => {
-                let request: ProjectRequest = parse(payload)?;
+                let request: ProjectCreateRequest = parse(payload)?;
+                let project = request.project.parse().map_err(|_| Refusal::Declared {
+                    code: "invalid_input",
+                    detail: json!({ "field": "project" }),
+                })?;
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
-                create_project(&mut transaction, self.org, &request.project).await?;
+                create_project(&mut transaction, self.org, &project).await?;
                 let mut drops = AuthDrops::default();
                 for row in sqlx::query(
                     "SELECT principal_id FROM identity.project_roles WHERE org=$1 AND project=$2",
                 )
                 .bind(self.org)
-                .bind(&request.project)
+                .bind(&project)
                 .fetch_all(&mut *transaction)
                 .await?
                 {
@@ -774,7 +784,7 @@ impl ControlRoutes<'_> {
                 }
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
-                Ok(json!({ "project": request.project }))
+                Ok(json!({ "project": project }))
             }
             handler => Err(Refusal::Failed(anyhow::anyhow!(
                 "the control host does not serve the host handler {handler:?}"

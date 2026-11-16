@@ -170,7 +170,7 @@ pub(super) async fn project_database(
         .await?;
     sqlx::query(
         "INSERT INTO platform.\"user\" (id, type, email, display_name) \
-             VALUES ($1::text::uuid, 'platform', 'provisioning@example.test', $2)",
+             VALUES ($1, 'platform', 'provisioning@example.test', $2)",
     )
     .bind(&PlatformComponent::Provisioning.principal_id())
     .bind(&PlatformComponent::Provisioning.principal_name())

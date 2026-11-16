@@ -41,14 +41,14 @@ BEGIN
     ] LOOP
         BEGIN
             INSERT INTO platform.file (id,application,connection_id,name,media_type,size,sha256,blob_key)
-            VALUES ('30000000-0000-4000-8000-000000000001','fixture',refused_connection,'test','text/plain',0,repeat('a',64),'_wamn_files/live/30000000-0000-4000-8000-000000000001');
+            VALUES ('30000000-0000-4000-8000-000000000001','fixture',refused_connection,'test','text/plain',0,'sha256:' || repeat('a',64),'_wamn_files/live/30000000-0000-4000-8000-000000000001');
             RAISE EXCEPTION 'file accepted a connection without host storage';
         EXCEPTION WHEN check_violation THEN NULL;
         END;
     END LOOP;
 END $$;
 INSERT INTO platform.file (id,application,connection_id,name,media_type,size,sha256,blob_key)
-VALUES ('30000000-0000-4000-8000-000000000001','fixture','20000000-0000-4000-8000-000000000002','test','text/plain',0,repeat('a',64),'_wamn_files/live/30000000-0000-4000-8000-000000000001');
+VALUES ('30000000-0000-4000-8000-000000000001','fixture','20000000-0000-4000-8000-000000000002','test','text/plain',0,'sha256:' || repeat('a',64),'_wamn_files/live/30000000-0000-4000-8000-000000000001');
 COMMIT;
 
 BEGIN;

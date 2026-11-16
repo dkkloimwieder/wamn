@@ -38,13 +38,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
         fact: AdmittedComponent {
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a--dev--project".parse().unwrap(),
-                package_id: export
-                    .split(':')
-                    .next()
-                    .expect("package namespace")
-                    .replace('-', "_")
-                    .parse()
-                    .unwrap(),
+                package_id: "loader_fixture".parse().unwrap(),
                 package_version: "1.0.0".parse().unwrap(),
             },
             component: name.parse().unwrap(),
