@@ -119,9 +119,9 @@ Org → environment → project → application. One boundary per level.
 ## Crates and names
 
 - Renames: `wamn-ctl` → `wamn-cli`; `wamn-control-provision` → `wamn-provision`; `wamn-compiler` → `wamn-codegen`; `wamn-connections` → `wamn-connection`; `wamn-web-front` → `wamn-web`; `wamn-platform-identity` → `wamn-identity`; identity service package → `wamn-identity-service` in `services/identity-service`.
-- Merges: artifact crates → `wamn-oci`; `wamn-events` + `wamn-event-wire` → `wamn-event`; `wamn-postgres-statements` + `wamn-data-access` → `wamn-guest`; build + composer → `crates/build`; role modules → `wamn-role`. `wamn-release-control` goes.
-- Splits: `wamn-execution-host` by owner (file route → `wamn-blobstore`, control route → control service, number counter → `wamn-sql`, OAuth callback → `wamn-connection`, rest → `services/host`). The non-identity half of `crates/identity` goes to its owners. The `wamn.json` model moves to `wamn-catalog`.
-- Dependency fixes: no `wamn-postgres` → `wamn-kubernetes`, no `wamn-package-artifact` → `wamn-kubernetes` (use `oci-client`), no `wamn-kubernetes` → `wamn-registry`, no `wamn-workflow` → `wamn-execution-host`.
+- Merges: artifact crates → `wamn-oci`; `wamn-events` + `wamn-event-wire` → `wamn-event`; `wamn-postgres-statements` + `wamn-data-access` → `wamn-guest`; build + composer → `crates/build`. `wamn-release-control` goes. Role names collect in `wamn-role` in 3.1, with the T2 login set.
+- Splits: `wamn-execution-host` goes: file route → `wamn-blobstore`, number counter → `wamn-sql`, OAuth callback → `wamn-http`, credential cleanup → `wamn-connection`; control route, host route, application route, environment status and connection health → control service. `crates/identity` keeps passwords, sessions, PATs, principals, org membership and control eligibility; connection administration → `wamn-connection`; project database rows, configuration rows and environment fill → `wamn-environment`. The `wamn.json` model moves to `wamn-catalog`.
+- Dependency fixes, in phase 3: no `wamn-postgres` → `wamn-kubernetes`; no `wamn-oci` → `wamn-kubernetes` (use `oci-client`); no `wamn-kubernetes` → `wamn-registry` (3.5).
 - Docs: this doc lives at `docs/plan/wamn-restructure.md`. Everything else in `docs/plan` goes, and so do `docs/history` and `docs/audit`; no stray files at the top of `docs/`. This doc and `rulings.md` are the authority until the restructure lands; where they differ, this doc rules.
 
 ## Tests
@@ -161,6 +161,57 @@ Wave 2 (in sequence, after wave 1):
 1. **2.1 Workflow library:** queue, `RouterDriver`, `contract.rs`, `read_compiled_wiring_document`, `production_lease.rs`, `release_lease`, three unused `FailType` variants, `catalog.wiring_tombstones`, five unused `runs` columns, advisory stream, `reconcile_replica_identity`, publication SQL builders and their CDC tests, the `ExecutorDatabase` impl, the `workflow.park`/`release`/`runs` operations.
 2. **2.2 Invocation path:** connection snapshot and candidate types, the three hashes, `connection_generation.rs`, `resource_lease.rs`, `connection_projection.rs`, `sql/connection_binding.rs`, `ClientIdentity`/`ConnectionIdentity`, the host-path component loader and warm list, `NativeInput::Typed`; the login families the host opens pools for and the org chart templates; the no-op `replicate` and the `Provider` type.
 3. **2.3 Release publication:** release OCI artifact, `catalog.releases`, `stage::write_release`, `run_queue::release_bytes`, `compose_application`, `entry_publication`, the entry image.
+
+## Epic 2: phase 2 restructure
+
+Rules:
+- No behaviour change. Allowed: moves, merges, renames, and deleting code that a move leaves with no caller. No new types, no new logic.
+- Done = `cargo build --workspace` and `cargo clippy --workspace --all-targets` with no new error compared with the 45 existing ones; the same in `apps/`. A local Postgres container is allowed for the `wamn build` that check needs, and only for that. Run no tests, no kind or cluster runs, nothing on GCP.
+- If a test stops compiling and an import path change does not fix it, delete the test.
+- An issue may edit any file, but only to change import paths, Cargo dependency lines and workspace members for what it moved. Resolve conflicts in those lines at merge, and regenerate Cargo.lock.
+- Moved modules keep their names and structure unless stated.
+- Generated code is regenerated, never edited by hand.
+
+Decisions:
+- `wamn-execution-host` goes. The host no longer links it, and the control service is its only user.
+- `org.rs`, `control.rs` and `paging.rs` stay in `wamn-identity`.
+- Deferred: `wamn-role` to 3.1; name builders out of `wamn-kubernetes` to 3.5; test layout (`test-util` features, test file names) and the `test-support/resources` name to 3.8.
+
+Issues:
+- 2.1 Remove change notices. Runs first, alone. Delete `AuthDrops`, `ConnectionDrops`, `Publisher`, `crates/broker/src/{auth_changes,connection_changes}.rs`, and every parameter, field and call that carries them.
+- 2.2 to 2.6 run in parallel after 2.1:
+  - 2.2 Split `wamn-execution-host`:
+    - `file_route.rs` → `wamn-blobstore`
+    - `number_counter.rs` → `wamn-sql`
+    - `oauth_callback.rs` → `wamn-http`
+    - `credential_cleanup.rs` → `wamn-connections`
+    - `control_route.rs` with `control_route/`, `host_route.rs`, `application_route.rs`, `environment_status.rs` and `connection_health.rs` → `services/control`
+    - Delete `operation.rs` (`OperationHost`), `platform_http.rs`, `file_collector.rs` and `file_collection.rs`; none has a production caller. Then delete the crate.
+  - 2.3 Split `crates/identity`:
+    - `connections.rs` and `connections/` → `wamn-connections`
+    - `application.rs`, `configuration.rs` and `environment.rs` → `wamn-environment`
+    - Everything else stays.
+  - 2.4 Remove `wamn-release-control`, and move build:
+    - `release_chart::{uninstall, recover_pending}` → `wamn-kubernetes::helm`
+    - `chart_version`, `read_platform_version`, `ImageSet`, `image_set` and `stamp` → `wamn-platform-install`
+    - `values`, `roles`, `release_name`, `workload_name`, `ValuesInput`, `Role`, `RoleName`, `TELEMETRY_VARIABLES` and `env_policies.rs` → `wamn-environment`
+    - Callers use `wamn_kubernetes::Target` directly. Delete the crate.
+    - Move `xtask/build` (`wamn-build`) to `crates/build`, and fold `wamn-component-composer` into it.
+  - 2.5 Move the `wamn.json` model: `compiler/src/{manifest,manifest_error,source_name}.rs` → `wamn-catalog`, merged into the existing `wamn_catalog::manifest` module.
+  - 2.6 Merges:
+    - `component-artifact` + `package-artifact` → `wamn-oci` in `crates/oci`
+    - `events` + `event-wire` → `wamn-event` in `crates/event`
+    - `postgres-statements` + `data-access` → `wamn-guest` in `crates/guest`, in the apps workspace. The generator's `wamn_postgres_statements::` paths become `wamn_guest::`.
+- 2.7 Renames. Runs last, alone. Directory names equal crate names.
+  - `wamn-ctl` → `wamn-cli` in `services/cli`; the binary stays `wamn`
+  - `wamn-control-provision` → `wamn-provision`
+  - `wamn-compiler` → `wamn-codegen` in `crates/codegen`
+  - `wamn-connections` → `wamn-connection` in `crates/connection`
+  - `wamn-web-front` → `wamn-web` in `services/web`; the binary is `wamn-web`
+  - The identity service package `wamn-identity` → `wamn-identity-service` in `services/identity-service`; the binary stays `wamn-identity`. Then `wamn-platform-identity` → `wamn-identity` in `crates/identity`.
+  - `guests/jsonata` → `guests/jsonata-expression`
+  - Package `wamn-modbus` → `modbus`
+  - Update the Dockerfile, chart, xtask and docs references to match. The `wamn-ctl` NATS certificate in the installation chart stays until 3.6.
 
 ## Open items
 
@@ -1461,3 +1512,5 @@ Recommend a.
 
 - The edge device after the restructure (design; Epic 1 decision 3).
 - The four workflow behaviours (W-b): `respond`, state after each node, backoff, waiting state.
+
+**Ruled (D, 2026-11-16): Epic 2 scope.** `wamn-execution-host` goes into the control service, by owner. Deferred: `wamn-role` to 3.1, name builders out of `wamn-kubernetes` to 3.5, test layout and `test-support/resources` to 3.8. Fact-forced targets: `org.rs` stays in `wamn-identity` (`control.rs` and the moved code use it); OAuth callback → `wamn-http` and connection health → control service, because `wamn-connections` would form a cycle with `wamn-http` and `wamn-blobstore`.
