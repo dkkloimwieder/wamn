@@ -1,6 +1,6 @@
 //! Append one outcome, retaining the existing row on redelivery.
 use super::exports::wamn_integration::log::append as contract;
-use wamn_postgres_statements::{Json, Transaction};
+use wamn_guest::postgres_statements::{Json, Transaction};
 mod operation {
     use super::contract;
     include!(concat!(
@@ -46,7 +46,7 @@ export_operation!(
     AppendItem,
     AppendOutcome,
     AppendError,
-    wamn_postgres_statements::operation_transaction()
+    wamn_guest::postgres_statements::operation_transaction()
         .await
         .map_err(|error| super::statement_error(&error))?,
     append

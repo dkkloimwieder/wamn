@@ -8,8 +8,8 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 use wamn_compiler::build_record::{self, BuildGenerator, BuildOutputs, BuildPackage, BuildRecord};
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
-use wamn_package_artifact::PackageRegistry;
-use wamn_package_artifact::registry_pull::test_server::Server;
+use wamn_oci::package_artifact::PackageRegistry;
+use wamn_oci::package_artifact::registry_pull::test_server::Server;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 pub fn build_fixture(client: Option<&str>) -> (BuildRecord, Vec<u8>) {

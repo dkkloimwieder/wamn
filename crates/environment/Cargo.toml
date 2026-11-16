@@ -34,7 +34,7 @@ serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
 tracing = { workspace = true }
 wamn-catalog = { workspace = true, features = ["sqlx"] }
-wamn-package-artifact = { workspace = true }
+wamn-oci = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
@@ -43,7 +43,6 @@ wamn-platform-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-run-state = { workspace = true }
-wamn-component-artifact = { workspace = true }
 wamn-compiler = { workspace = true }
 wamn-publish = { workspace = true }
 wamn-release-control = { workspace = true }
@@ -61,14 +60,13 @@ wamn-platform-install = { workspace = true, features = ["test-util"] }
 wamn-build.workspace = true
 object_store.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "macros", "migrate"] }
-wamn-package-artifact = { workspace = true, features = ["test-util"] }
+wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-authority = { workspace = true, features = ["test-util"] }
 wamn-connections = { workspace = true, features = ["test-util"] }
 wamn-sql = { workspace = true, features = ["test-util"] }
 wamn-http = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { workspace = true, features = ["test-util"] }
 wamn-events = { workspace = true, features = ["test-util"] }
-wamn-component-artifact = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }

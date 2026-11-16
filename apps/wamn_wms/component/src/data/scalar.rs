@@ -2,7 +2,7 @@
 //!
 //! Parse scalar text for SQL input. Request identity uses the supplied JSON.
 
-use wamn_postgres_statements::{Numeric, TimestampTz, Uuid};
+use wamn_guest::postgres_statements::{Numeric, TimestampTz, Uuid};
 
 use crate::data::error::{AccessError, AccessErrorType};
 
@@ -11,7 +11,7 @@ use crate::data::error::{AccessError, AccessErrorType};
 pub(crate) const CONSUMED: &str = "consumed";
 
 pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
-    wamn_data_access::scalar::uuid(value)
+    wamn_guest::data_access::scalar::uuid(value)
         .map_err(|_| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 

@@ -7,7 +7,7 @@ license.workspace = true
 
 [features]
 default = []
-test-util = ["dep:wamn-fixture-package", "dep:wamn-test-infrastructure", "wamn-package-artifact/test-util"]
+test-util = ["dep:wamn-fixture-package", "dep:wamn-test-infrastructure", "wamn-oci/test-util"]
 
 [dependencies]
 wash-runtime = { workspace = true, features = ["washlet"] }
@@ -28,10 +28,9 @@ tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "r
 wamn-catalog = { workspace = true }
 wamn-component-composer = { workspace = true }
 wasmparser = { workspace = true }
-wamn-package-artifact = { workspace = true }
+wamn-oci = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-record-history = { workspace = true }
-wamn-component-artifact = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-compiler = { workspace = true }
 wamn-fixture-package = { workspace = true, optional = true }
@@ -43,8 +42,7 @@ ring = { workspace = true }
 hex = { workspace = true }
 sqlx = { workspace = true, features = ["macros"] }
 wat = "=1.254.2"
-wamn-package-artifact = { workspace = true, features = ["test-util"] }
-wamn-component-artifact = { workspace = true, features = ["test-util"] }
+wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }

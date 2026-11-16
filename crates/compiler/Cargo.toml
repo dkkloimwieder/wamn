@@ -28,7 +28,7 @@ wit-parser = { workspace = true }
 
 [dev-dependencies]
 url.workspace = true
-wamn-postgres-statements = { path = "../postgres-statements" }
+wamn-guest = { path = "../guest" }
 uuid.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 syn = { workspace = true, features = ["full"] }

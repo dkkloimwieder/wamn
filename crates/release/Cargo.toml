@@ -18,7 +18,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-package-artifact = { workspace = true }
+wamn-oci = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-registry = { workspace = true }
 
@@ -27,7 +27,7 @@ wamn-digest.workspace = true
 wamn-postgres.workspace = true
 wamn-test-postgres.workspace = true
 sqlx = { workspace = true, features = ["macros", "migrate"] }
-wamn-package-artifact = { workspace = true, features = ["test-util"] }
+wamn-oci = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }

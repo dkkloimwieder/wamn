@@ -8,7 +8,7 @@
 //! The generated operation holds the transaction and write log for exact replay.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
+use wamn_guest::postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
 
 use crate::data::error::{self, AccessError, AccessErrorType};
 use crate::data::scalar;

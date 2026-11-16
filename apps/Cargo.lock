@@ -127,8 +127,7 @@ name = "client-acme-receiving"
 version = "0.1.0"
 dependencies = [
  "uuid",
- "wamn-data-access",
- "wamn-postgres-statements",
+ "wamn-guest",
  "wit-bindgen",
 ]
 
@@ -173,7 +172,7 @@ dependencies = [
 name = "device"
 version = "0.1.0"
 dependencies = [
- "wamn-data-access",
+ "wamn-guest",
  "wit-bindgen",
 ]
 
@@ -216,8 +215,7 @@ name = "fixture"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wamn-data-access",
- "wamn-postgres-statements",
+ "wamn-guest",
  "wit-bindgen",
 ]
 
@@ -225,8 +223,7 @@ dependencies = [
 name = "fixture-overlay"
 version = "0.1.0"
 dependencies = [
- "wamn-data-access",
- "wamn-postgres-statements",
+ "wamn-guest",
  "wit-bindgen",
 ]
 
@@ -631,7 +628,7 @@ name = "modbus-reader"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wamn-data-access",
+ "wamn-guest",
  "wit-bindgen",
 ]
 
@@ -642,7 +639,7 @@ dependencies = [
  "chrono",
  "jsonata-expression",
  "serde_json",
- "wamn-data-access",
+ "wamn-guest",
  "wit-bindgen",
 ]
 
@@ -758,9 +755,8 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "uuid",
- "wamn-data-access",
  "wamn-digest",
- "wamn-postgres-statements",
+ "wamn-guest",
  "wamn-record-history",
  "wamn-scalar",
  "wit-bindgen",
@@ -802,7 +798,7 @@ dependencies = [
  "chrono",
  "jsonata-core",
  "serde_json",
- "wamn-data-access",
+ "wamn-guest",
  "wit-bindgen",
 ]
 
@@ -812,8 +808,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "wamn-data-access",
- "wamn-postgres-statements",
+ "wamn-guest",
  "wit-bindgen",
 ]
 
@@ -828,8 +823,7 @@ name = "samples"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wamn-data-access",
- "wamn-postgres-statements",
+ "wamn-guest",
  "wit-bindgen",
 ]
 
@@ -1043,18 +1037,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-data-access"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "serde_json",
- "uuid",
- "wamn-digest",
- "wamn-postgres-statements",
- "wamn-scalar",
-]
-
-[[package]]
 name = "wamn-digest"
 version = "0.1.0"
 dependencies = [
@@ -1064,11 +1046,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-guest"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde_json",
+ "uuid",
+ "wamn-digest",
+ "wamn-number-pattern",
+ "wamn-scalar",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "wamn-integration"
 version = "0.1.0"
 dependencies = [
- "wamn-data-access",
- "wamn-postgres-statements",
+ "wamn-guest",
  "wit-bindgen",
 ]
 
@@ -1090,14 +1084,6 @@ dependencies = [
 [[package]]
 name = "wamn-number-pattern"
 version = "0.1.0"
-
-[[package]]
-name = "wamn-postgres-statements"
-version = "0.1.0"
-dependencies = [
- "wamn-number-pattern",
- "wit-bindgen",
-]
 
 [[package]]
 name = "wamn-record-history"
@@ -1357,8 +1343,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "wamn-data-access",
- "wamn-postgres-statements",
+ "wamn-guest",
  "wamn-scalar",
  "wit-bindgen",
 ]

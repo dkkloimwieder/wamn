@@ -4,7 +4,7 @@
 //! timestamps as UTC RFC 3339 with six fractional digits, so two deliveries of
 //! one sample canonicalize alike.
 
-use wamn_postgres_statements::TimestampTz;
+use wamn_guest::postgres_statements::TimestampTz;
 
 use crate::data::error::{AccessError, AccessErrorType};
 
@@ -17,6 +17,6 @@ pub(crate) fn text<'a>(field: &str, value: &'a str) -> Result<&'a str, AccessErr
 }
 
 pub(crate) fn timestamp(field: &str, value: &str) -> Result<TimestampTz, AccessError> {
-    wamn_data_access::scalar::timestamptz(value)
+    wamn_guest::data_access::scalar::timestamptz(value)
         .map_err(|_| AccessError::field(AccessErrorType::InvalidInput, field))
 }

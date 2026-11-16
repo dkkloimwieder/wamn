@@ -11,7 +11,7 @@ use wamn_release_control::release_chart::Target;
 use super::artifact_plan::SelectedChart;
 use super::document::ClusterDocument;
 
-use wamn_package_artifact::http_client::{HttpClient, Redirects};
+use wamn_oci::package_artifact::http_client::{HttpClient, Redirects};
 use wamn_registry::name::REGISTRY_PULL;
 
 /// Wait until every control host observes the environment's administration login change.
@@ -98,7 +98,7 @@ pub async fn wait_administration(
 /// Render the platform registry credential for hosts using the local registry Service.
 pub fn registry_pull_secret(document: &ClusterDocument, auth_file: &Path) -> anyhow::Result<Value> {
     let authority = document.registry.split('/').next().unwrap_or_default();
-    let credential = wamn_package_artifact::registry_credentials::read_registry_credentials(
+    let credential = wamn_oci::package_artifact::registry_credentials::read_registry_credentials(
         auth_file, authority,
     )?;
     let mut config: Value = serde_json::from_slice(&std::fs::read(auth_file)?)?;

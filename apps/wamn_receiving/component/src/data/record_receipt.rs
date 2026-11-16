@@ -10,7 +10,7 @@ use std::fmt;
 use serde_json::{Value, json};
 use uuid::Uuid;
 use wamn_digest::canonical_json_bytes;
-use wamn_postgres_statements::{Json, StatementError, TimestampTz, Transaction, Uuid as WamnUuid};
+use wamn_guest::postgres_statements::{Json, StatementError, TimestampTz, Transaction, Uuid as WamnUuid};
 
 use crate::data::error::{AccessError, AccessErrorType, AllowedConstraints};
 use crate::data::statements::wamn::receiving_record_receipt as generated;

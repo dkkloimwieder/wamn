@@ -179,7 +179,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     config.worker.administration = config.administration_dir.clone();
     let platform = Arc::new(config.platform()?);
     write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
-    let integration_registry = wamn_package_artifact::PackageRegistry {
+    let integration_registry = wamn_oci::package_artifact::PackageRegistry {
         artifact_base: config.integration_artifact_base.clone(),
         credentials: None,
         registry_auth_file: config.registry_auth_file.clone(),
@@ -189,10 +189,10 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     let registry_base =
         wamn_catalog::parse_component_artifact_base(&config.integration_artifact_base)?;
     let registry_credentials = if config.registry_token_metadata {
-        wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer
+        wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer
     } else {
-        wamn_package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
-            wamn_package_artifact::registry_credentials::read_registry_credentials(
+        wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
+            wamn_oci::package_artifact::registry_credentials::read_registry_credentials(
                 &config.registry_auth_file,
                 registry_base.registry(),
             )?,

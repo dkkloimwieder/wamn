@@ -28,8 +28,8 @@ fn invalid(message: &str) -> NodeError {
     })
 }
 
-fn statement_error(error: &wamn_postgres_statements::StatementError) -> NodeError {
-    use wamn_postgres_statements::StatementErrorType;
+fn statement_error(error: &wamn_guest::postgres_statements::StatementError) -> NodeError {
+    use wamn_guest::postgres_statements::StatementErrorType;
     let code = match error.type_() {
         StatementErrorType::SerializationFailure | StatementErrorType::ConnectionUnavailable => {
             "retry"

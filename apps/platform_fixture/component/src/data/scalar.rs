@@ -3,12 +3,12 @@
 //! Parse and re-spell, not merely validate. A command hashes the re-spelled
 //! text, so two spellings of one value make one command.
 
-use wamn_postgres_statements::{Numeric, Uuid};
+use wamn_guest::postgres_statements::{Numeric, Uuid};
 
 use crate::data::error::{AccessError, AccessErrorType};
 
 pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
-    wamn_data_access::scalar::uuid(value)
+    wamn_guest::data_access::scalar::uuid(value)
         .map_err(|_| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 
@@ -22,7 +22,7 @@ pub(crate) fn positive_numeric(field: &str, value: &str) -> Result<Numeric, Acce
     let positive = value
         .bytes()
         .any(|byte| byte.is_ascii_digit() && byte != b'0');
-    wamn_data_access::scalar::numeric(value)
+    wamn_guest::data_access::scalar::numeric(value)
         .ok()
         .filter(|parsed| positive && !parsed.0.starts_with('-'))
         .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, field))

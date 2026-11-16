@@ -5,8 +5,8 @@ use std::sync::Arc;
 use moka::sync::Cache;
 use oci_client::secrets::RegistryAuth;
 use wamn_engine::integration::{Integration, IntegrationBinding};
-use wamn_package_artifact::registry_credentials::RegistryCredentialSource;
-use wamn_package_artifact::{PackageRegistry, Repository};
+use wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource;
+use wamn_oci::package_artifact::{PackageRegistry, Repository};
 
 use wamn_http::{self, transport::HttpTransport};
 
@@ -102,7 +102,7 @@ impl ConnectionHealth {
                 RegistryAuth::Basic(credential.username().into(), credential.password().into()),
             )?;
             let bytes = Arc::new(
-                wamn_package_artifact::integration::pull_from(&repository, code, digest).await?,
+                wamn_oci::package_artifact::integration::pull_from(&repository, code, digest).await?,
             );
             self.bytes.insert(*digest, Arc::clone(&bytes));
             bytes

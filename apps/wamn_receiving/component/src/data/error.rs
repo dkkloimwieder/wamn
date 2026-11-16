@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use wamn_postgres_statements::{StatementError, StatementErrorType};
+use wamn_guest::postgres_statements::{StatementError, StatementErrorType};
 
 /// Exact named constraints an operation contract permits callers to observe.
 #[derive(Clone, Copy, Debug)]
@@ -268,7 +268,7 @@ fn named_violation(
 #[cfg(test)]
 mod tests {
     use super::{AccessErrorType, AllowedConstraints, classify};
-    use wamn_postgres_statements::StatementErrorType;
+    use wamn_guest::postgres_statements::StatementErrorType;
 
     const UPDATE_CONSTRAINTS: AllowedConstraints = AllowedConstraints {
         unique: &["allowed_unique"],

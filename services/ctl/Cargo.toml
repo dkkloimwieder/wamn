@@ -40,7 +40,7 @@ wamn-environment = { workspace = true }
 wamn-platform-install.workspace = true
 wamn-dev = { workspace = true }
 # `wamn inspect` and `wamn diff` read verified package artifacts.
-wamn-package-artifact = { workspace = true }
+wamn-oci = { workspace = true }
 # The pure provisioning SQL builders + identifier naming + credential Secret
 # rendering.
 wamn-control-provision = { workspace = true }
@@ -49,7 +49,6 @@ wamn-registry = { workspace = true }
 # MVP management authentication: stable service principals, project roles, and
 # independently issued/revoked PATs for provision-project-env.
 wamn-identity-protocol = { workspace = true }
-wamn-component-artifact = { workspace = true }
 
 [dev-dependencies]
 url = { workspace = true }
@@ -57,7 +56,7 @@ wamn-broker = { workspace = true }
 wamn-postgres.workspace = true
 wamn-kubernetes.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal", "macros", "migrate"] }
-wamn-package-artifact = { workspace = true }
+wamn-oci = { workspace = true }
 wit-parser = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 wamn-fixture-package = { workspace = true }

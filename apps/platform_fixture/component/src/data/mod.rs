@@ -18,8 +18,8 @@ pub use error::AccessError;
 ///
 /// Returns the statement's database refusal.
 pub async fn count_widgets(
-    transaction: &mut wamn_postgres_statements::Transaction,
-) -> Result<i64, wamn_postgres_statements::StatementError> {
+    transaction: &mut wamn_guest::postgres_statements::Transaction,
+) -> Result<i64, wamn_guest::postgres_statements::StatementError> {
     statements::wamn::number_issue::count_widgets(transaction)
         .await
         .map(|row| row.records.expect("COUNT returns a non-null value"))

@@ -1,6 +1,6 @@
 //! Typed WMS accessors over the frozen `wamn:postgres` host service.
 //!
-//! Runtime access uses content-addressed [`wamn_postgres_statements`]
+//! Runtime access uses content-addressed [`wamn_guest::postgres_statements`]
 //! accessors and the generated Wamn projections; this crate authors no SQL.
 //!
 //! Twenty operations: the four commands (`inventory.move`, the contended one,

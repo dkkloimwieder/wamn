@@ -12,10 +12,10 @@ use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use serde_json::{Value, json};
 use wamn_catalog::RuntimeType;
 use wamn_digest::bytes_sha256;
-use wamn_package_artifact::{PackageRegistry, Repository};
+use wamn_oci::package_artifact::{PackageRegistry, Repository};
 
-pub use wamn_package_artifact::integration::ARTIFACT_TYPE;
-use wamn_package_artifact::integration::{CONFIG_TYPE, WASM_TYPE};
+pub use wamn_oci::package_artifact::integration::ARTIFACT_TYPE;
+use wamn_oci::package_artifact::integration::{CONFIG_TYPE, WASM_TYPE};
 
 /// The immutable output of a local integration build.
 #[derive(Debug)]
@@ -221,7 +221,7 @@ pub async fn push(
         .context("published integration is absent")?;
     plan::require_published_manifest(built, &manifest, &digest)?;
     let pulled =
-        wamn_package_artifact::integration::pull(registry, &built.code, &built.digest).await?;
+        wamn_oci::package_artifact::integration::pull(registry, &built.code, &built.digest).await?;
     plan::require_published_component(built, &pulled)?;
     let engine = wamn_engine::build_engine(&[])?;
     wamn_engine::component_admission::validate_integration_admission(
@@ -240,7 +240,7 @@ pub async fn record(
     digest: &wamn_digest::Digest,
     publication: &Publication,
 ) -> anyhow::Result<()> {
-    let bytes = wamn_package_artifact::integration::pull(registry, code, digest).await?;
+    let bytes = wamn_oci::package_artifact::integration::pull(registry, code, digest).await?;
     let exports = crate::connection_requirement::exported_interfaces(&bytes)?;
     plan::require_write_interfaces(publication, &exports)?;
     let engine = wamn_engine::build_engine(&[])?;

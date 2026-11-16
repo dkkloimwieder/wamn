@@ -16,7 +16,7 @@ use wamn_identity_protocol::wire::PatResponse;
 use wamn_identity_protocol::wire::{
     InvitationRequest, IssuePatRequest, UserRequest, UserResponse as UserBody,
 };
-use wamn_package_artifact::http_client::{HttpClient, HttpError, Redirects};
+use wamn_oci::package_artifact::http_client::{HttpClient, HttpError, Redirects};
 
 /// Each provisioning request attempt stops after five seconds.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);

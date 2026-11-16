@@ -434,18 +434,18 @@ fn emit_model_export(
 
 fn support_header() -> String {
     String::from(
-        "// @generated from operation declarations; do not edit.\n#[allow(unused_imports)]\npub(crate) use wamn_data_access::InputError;\n\n",
+        "// @generated from operation declarations; do not edit.\n#[allow(unused_imports)]\npub(crate) use wamn_guest::data_access::InputError;\n\n",
     )
 }
 
 fn scalar_refusal(type_name: &str, value: &str) -> Option<String> {
     if type_name == "json" {
         return Some(format!(
-            "wamn_data_access::scalar::json(&({value}).encoded_json).map(|parsed| {{ ({value}).encoded_json = parsed.0; }}).is_err()"
+            "wamn_guest::data_access::scalar::json(&({value}).encoded_json).map(|parsed| {{ ({value}).encoded_json = parsed.0; }}).is_err()"
         ));
     }
     matches!(type_name, "uuid" | "numeric" | "timestamptz").then(|| {
-        format!("wamn_data_access::scalar::{type_name}({value}).map(|parsed| {{ *{value} = parsed.0; }}).is_err()")
+        format!("wamn_guest::data_access::scalar::{type_name}({value}).map(|parsed| {{ *{value} = parsed.0; }}).is_err()")
     })
 }
 
@@ -529,12 +529,12 @@ pub(crate) async fn run<S, F>(
 where
     F: AsyncFnMut(&mut S, contract::QueryRequest) -> Result<contract::QueryResult, contract::QueryError>,
 {
-    wamn_data_access::operation::call(request, state, |request| normalize(request).and_then(|()| limit(request)), contract::QueryError::InvalidInput, handler).await
+    wamn_guest::data_access::operation::call(request, state, |request| normalize(request).and_then(|()| limit(request)), contract::QueryError::InvalidInput, handler).await
 }
 ";
 
 /// The typed export of every query. The host retains its read metadata.
-const QUERY_EXPORT: &str = "pub(crate) type Input = contract::QueryRequest;\npub(crate) type Output = contract::QueryOutcome;\npub(crate) use wamn_data_access::export_query as export_operation;\n";
+const QUERY_EXPORT: &str = "pub(crate) type Input = contract::QueryRequest;\npub(crate) type Output = contract::QueryOutcome;\npub(crate) use wamn_guest::export_query as export_operation;\n";
 
 fn emit_mutation_validation(
     source: &mut String,
@@ -746,7 +746,7 @@ pub(crate) async fn run<S, F>(input: Vec<contract::{type_name}Item>, state: &mut
 where
     F: AsyncFnMut(&mut S, contract::{type_name}Request) -> Result<contract::{type_name}Result, contract::{type_name}Error>,
 {{
-    wamn_data_access::operation::dispatch(input.into_iter().map(|item| ({key}, item.input)), state, normalize, contract::{type_name}Error::InvalidInput, handler).await.into_iter().map(|(request_id, outcome)| {{ let _ = &request_id; contract::{type_name}Outcome {{ {outcome} }} }}).collect()
+    wamn_guest::data_access::operation::dispatch(input.into_iter().map(|item| ({key}, item.input)), state, normalize, contract::{type_name}Error::InvalidInput, handler).await.into_iter().map(|(request_id, outcome)| {{ let _ = &request_id; contract::{type_name}Outcome {{ {outcome} }} }}).collect()
 }}
 "
     )
@@ -759,7 +759,7 @@ fn export_prelude(item: &str, minimum: u32, maximum: u32, keyed: bool) -> String
         "std::iter::empty()"
     };
     format!(
-        "#[allow(dead_code)]\npub(crate) fn validate(input: &[contract::{item}]) -> Result<(), InputError> {{\nwamn_data_access::operation::validate_envelope(input.len(), {minimum}..={maximum}, {correlations})\n}}\n"
+        "#[allow(dead_code)]\npub(crate) fn validate(input: &[contract::{item}]) -> Result<(), InputError> {{\nwamn_guest::data_access::operation::validate_envelope(input.len(), {minimum}..={maximum}, {correlations})\n}}\n"
     )
 }
 

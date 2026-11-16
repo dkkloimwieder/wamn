@@ -76,7 +76,7 @@ impl HttpTransport {
     /// # Errors
     /// Returns an error if the platform TLS verifier cannot initialize.
     pub fn new() -> anyhow::Result<Self> {
-        let tls = wamn_package_artifact::http_client::platform_tls()?;
+        let tls = wamn_oci::package_artifact::http_client::platform_tls()?;
         Ok(Self::from_tls(tls))
     }
 

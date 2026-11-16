@@ -1,7 +1,7 @@
 //! Typed read handlers over the existing application operations.
 
 use crate::data::{AccessError, AccessErrorType, read};
-use wamn_postgres_statements::{Connection, Uuid};
+use wamn_guest::postgres_statements::{Connection, Uuid};
 
 pub(super) fn error_detail(
     error: &AccessError,

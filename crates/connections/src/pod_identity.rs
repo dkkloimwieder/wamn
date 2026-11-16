@@ -6,7 +6,7 @@ use object_store::{
     CredentialProvider,
     gcp::{GcpCredential, GcpSigningCredential},
 };
-use wamn_package_artifact::metadata::Metadata;
+use wamn_oci::package_artifact::metadata::Metadata;
 
 #[derive(Debug)]
 pub struct PodToken(Arc<Metadata>);

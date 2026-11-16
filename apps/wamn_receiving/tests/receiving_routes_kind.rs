@@ -4,7 +4,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use sqlx::Row as _;
 use std::path::Path;
-use wamn_package_artifact::http_client::HttpClient;
+use wamn_oci::package_artifact::http_client::HttpClient;
 use wamn_test_application::Application;
 
 #[tokio::test(flavor = "multi_thread")]

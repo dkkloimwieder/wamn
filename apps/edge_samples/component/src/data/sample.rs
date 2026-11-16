@@ -4,7 +4,7 @@
 //! holds the transaction. The command inserts the sample, whose id its default
 //! mints.
 
-use wamn_postgres_statements::Transaction;
+use wamn_guest::postgres_statements::Transaction;
 
 use crate::data::error::{self, AccessError};
 use crate::data::scalar;

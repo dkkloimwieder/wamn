@@ -14,7 +14,7 @@ use wamn_release_control::release_chart::Target;
 use super::document::{ClusterDocument, UpgradeTarget};
 use super::{artifact_plan, resources};
 use wamn_kubernetes::kubectl;
-use wamn_package_artifact::http_client::{HttpClient, Redirects};
+use wamn_oci::package_artifact::http_client::{HttpClient, Redirects};
 
 /// A current observation, never a persisted deployment record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

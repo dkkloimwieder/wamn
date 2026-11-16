@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 
 use serde_json::{Value, json};
-use wamn_postgres_statements::{StatementError, StatementErrorType};
+use wamn_guest::postgres_statements::{StatementError, StatementErrorType};
 
 /// Stable operation-contract literal for one refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -183,7 +183,7 @@ impl Constraints {
 
 #[cfg(test)]
 mod tests {
-    use wamn_postgres_statements::StatementErrorType;
+    use wamn_guest::postgres_statements::StatementErrorType;
 
     use crate::data::generated::error::{Constraints, Error};
     use crate::data::generated::widget::sql;

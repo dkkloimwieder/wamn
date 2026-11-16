@@ -23,7 +23,7 @@
 //! write log and holds the transaction, so a retry answers the stored result.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{TimestampTz, Transaction, Uuid};
+use wamn_guest::postgres_statements::{TimestampTz, Transaction, Uuid};
 
 use crate::data::error::{self, AccessError, AccessErrorType};
 use crate::data::scalar;

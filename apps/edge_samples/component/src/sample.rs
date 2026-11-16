@@ -59,7 +59,7 @@ mod record {
     }
 
     async fn handle(
-        transaction: &mut wamn_postgres_statements::Transaction,
+        transaction: &mut wamn_guest::postgres_statements::Transaction,
         request: contract::RecordRequest,
     ) -> Result<contract::RecordResult, contract::RecordError> {
         sample::record(

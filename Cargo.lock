@@ -5433,7 +5433,7 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-identity-protocol",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-registry",
 ]
@@ -5489,7 +5489,7 @@ dependencies = [
  "wamn-connections",
  "wamn-digest",
  "wamn-engine",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-registry",
  "wamn-sql",
  "wamn-test-postgres",
@@ -5612,34 +5612,15 @@ dependencies = [
  "wamn-catalog",
  "wamn-digest",
  "wamn-fixture-package",
+ "wamn-guest",
  "wamn-identity-protocol",
  "wamn-number-pattern",
  "wamn-postgres",
- "wamn-postgres-statements",
  "wamn-record-history",
  "wamn-scalar",
  "wamn-schema-introspection",
  "wamn-test-postgres",
  "wit-parser 0.254.2",
-]
-
-[[package]]
-name = "wamn-component-artifact"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "docker_credential",
- "oci-client",
- "serde_json",
- "tokio",
- "wamn-catalog",
- "wamn-digest",
- "wamn-engine",
- "wamn-package-artifact",
- "wash-runtime",
- "wasmtime",
- "wat",
 ]
 
 [[package]]
@@ -5693,7 +5674,7 @@ dependencies = [
  "wamn-engine",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-registry",
@@ -5736,7 +5717,7 @@ dependencies = [
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-platform-install",
  "wamn-postgres",
@@ -5795,7 +5776,6 @@ dependencies = [
  "wamn-build",
  "wamn-catalog",
  "wamn-compiler",
- "wamn-component-artifact",
  "wamn-control-provision",
  "wamn-dev",
  "wamn-digest",
@@ -5804,7 +5784,7 @@ dependencies = [
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-platform-install",
  "wamn-postgres",
@@ -5849,7 +5829,7 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-publish",
@@ -5973,7 +5953,6 @@ dependencies = [
  "wamn-build",
  "wamn-catalog",
  "wamn-compiler",
- "wamn-component-artifact",
  "wamn-connections",
  "wamn-control-provision",
  "wamn-digest",
@@ -5986,7 +5965,7 @@ dependencies = [
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-platform-install",
  "wamn-postgres",
@@ -6094,7 +6073,6 @@ dependencies = [
  "wamn-blobstore",
  "wamn-catalog",
  "wamn-compiler",
- "wamn-component-artifact",
  "wamn-component-composer",
  "wamn-connections",
  "wamn-control-provision",
@@ -6110,7 +6088,7 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-number-pattern",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-publish",
@@ -6131,6 +6109,19 @@ name = "wamn-fixture-package"
 version = "0.1.0"
 dependencies = [
  "sqlx",
+]
+
+[[package]]
+name = "wamn-guest"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde_json",
+ "uuid",
+ "wamn-digest",
+ "wamn-number-pattern",
+ "wamn-scalar",
+ "wit-bindgen 0.62.0",
 ]
 
 [[package]]
@@ -6164,7 +6155,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-engine",
  "wamn-identity-protocol",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-postgres",
  "wamn-registry",
  "wamn-sql",
@@ -6217,7 +6208,7 @@ dependencies = [
  "wamn-http",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-registry",
@@ -6258,7 +6249,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-identity-protocol",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-registry",
@@ -6282,7 +6273,7 @@ dependencies = [
  "tokio-rustls",
  "url",
  "wamn-identity-protocol",
- "wamn-package-artifact",
+ "wamn-oci",
 ]
 
 [[package]]
@@ -6319,7 +6310,7 @@ dependencies = [
  "uuid",
  "wamn-catalog",
  "wamn-digest",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-test-application",
  "wamn-test-postgres",
 ]
@@ -6361,12 +6352,14 @@ name = "wamn-number-pattern"
 version = "0.1.0"
 
 [[package]]
-name = "wamn-package-artifact"
+name = "wamn-oci"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "bytes",
+ "docker_credential",
  "http-auth",
  "http-body-util",
  "hyper",
@@ -6384,8 +6377,12 @@ dependencies = [
  "url",
  "wamn-catalog",
  "wamn-digest",
+ "wamn-engine",
  "wamn-kubernetes",
  "wamn-registry",
+ "wash-runtime",
+ "wasmtime",
+ "wat",
 ]
 
 [[package]]
@@ -6447,7 +6444,7 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-platform-install",
  "wamn-postgres",
@@ -6474,14 +6471,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-postgres-statements"
-version = "0.1.0"
-dependencies = [
- "wamn-number-pattern",
- "wit-bindgen 0.62.0",
-]
-
-[[package]]
 name = "wamn-publish"
 version = "0.1.0"
 dependencies = [
@@ -6502,13 +6491,12 @@ dependencies = [
  "wamn-build",
  "wamn-catalog",
  "wamn-compiler",
- "wamn-component-artifact",
  "wamn-component-composer",
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
  "wamn-fixture-package",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-record-history",
@@ -6560,7 +6548,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-publish",
@@ -6616,7 +6604,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-digest",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-registry",
@@ -6729,7 +6717,7 @@ dependencies = [
  "wamn-environment",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-postgres",
  "wamn-registry",
  "wamn-test-infrastructure",
@@ -6842,7 +6830,7 @@ dependencies = [
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-identity",
  "wamn-postgres",
  "wamn-publish",
@@ -8227,7 +8215,7 @@ dependencies = [
  "wamn-component-policy",
  "wamn-digest",
  "wamn-kubernetes",
- "wamn-package-artifact",
+ "wamn-oci",
  "wamn-platform-install",
  "wamn-postgres",
  "wamn-publish",

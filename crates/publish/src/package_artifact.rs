@@ -47,16 +47,16 @@ use wamn_catalog::{
 use wamn_compiler::AUTHORED_MANIFEST;
 use wamn_compiler::manifest::{PackageManifest, PolicyContractState};
 use wamn_engine::component_artifact::component_artifact_config_bytes;
-use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
+use wamn_oci::package_artifact::registry_credentials::read_registry_push_credentials;
 
 use crate::component_admission::{AdmitComponentRequest, admit_component, publish_and_verify};
 use crate::component_declaration::authored_base_digests;
 use wamn_digest::bytes_sha256;
-pub use wamn_package_artifact::{
+pub use wamn_oci::package_artifact::{
     COMPONENT_DESCRIPTOR_MEDIA_TYPE, NoPackageArtifact, PACKAGE_ARTIFACT_TYPE, PackageRegistry,
     PackedLayer,
 };
-use wamn_package_artifact::{CREATED_ANNOTATION, PulledPackage, Repository, is_dev_tag};
+use wamn_oci::package_artifact::{CREATED_ANNOTATION, PulledPackage, Repository, is_dev_tag};
 
 /// Media type of the three tar layers.
 pub const PACKAGE_TAR_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.tar";
@@ -132,7 +132,7 @@ impl PackedPackage {
     /// Refuses a coordinate that cannot be used as an OCI tag.
     pub fn tag(
         &self,
-    ) -> Result<wamn_package_artifact::tag::OciTag, wamn_package_artifact::tag::ParseOciTagError>
+    ) -> Result<wamn_oci::package_artifact::tag::OciTag, wamn_oci::package_artifact::tag::ParseOciTagError>
     {
         format!("{}-{}", self.package_id, self.version).parse()
     }
@@ -204,7 +204,7 @@ pub(crate) async fn connection_components(
     root: &Path,
     manifest: &PackageManifest,
     source: Option<
-        &wamn_component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
+        &wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
     >,
 ) -> anyhow::Result<
     Vec<(
@@ -215,7 +215,7 @@ pub(crate) async fn connection_components(
 > {
     let descriptors = read_descriptors(root)?;
     if !descriptors.is_empty() {
-        use wamn_component_artifact::component_artifact_source::ComponentArtifactSource;
+        use wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSource;
         use wamn_engine::artifact_source::ArtifactSource as _;
         let target = ComponentPackageCoordinate::new(
             &admission_project_env_key(),
@@ -643,7 +643,7 @@ pub enum PackagePushDisposition {
 #[derive(Debug)]
 pub struct PushedPackage {
     /// The artifact tag.
-    pub tag: wamn_package_artifact::tag::OciTag,
+    pub tag: wamn_oci::package_artifact::tag::OciTag,
     /// `sha256:<hex>` of the image manifest.
     pub digest: wamn_digest::Digest,
     /// Whether the run pushed.
@@ -751,7 +751,7 @@ pub enum PackageSource {
     /// The artifact `<package_id>-<version>` in a registry.
     Artifact {
         /// The artifact tag.
-        tag: wamn_package_artifact::tag::OciTag,
+        tag: wamn_oci::package_artifact::tag::OciTag,
         /// The package registry.
         registry: PackageRegistry,
     },
@@ -837,7 +837,7 @@ pub async fn open_package(
     package_id: &wamn_catalog::PackageName,
     version: &wamn_catalog::package_version::PackageVersion,
 ) -> anyhow::Result<OpenedPackage> {
-    let tag = format!("{package_id}-{version}").parse::<wamn_package_artifact::tag::OciTag>()?;
+    let tag = format!("{package_id}-{version}").parse::<wamn_oci::package_artifact::tag::OciTag>()?;
     let pulled = Repository::open(registry, &tag)?
         .pull()
         .await?
@@ -852,7 +852,7 @@ pub async fn open_package(
 /// `digest`, into a private temporary directory, which must pack again to
 /// `digest`.
 fn unpack_artifact(
-    tag: &wamn_package_artifact::tag::OciTag,
+    tag: &wamn_oci::package_artifact::tag::OciTag,
     pulled: &PulledPackage,
 ) -> anyhow::Result<OpenedPackage> {
     let PulledPackage {
@@ -982,7 +982,7 @@ mod tests {
     #[tokio::test]
     async fn dev_artifact_keeps_its_publication_time_when_opened_and_repacked() -> anyhow::Result<()>
     {
-        use wamn_package_artifact::registry_pull::test_server::Server;
+        use wamn_oci::package_artifact::registry_pull::test_server::Server;
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
         let root = scratch.path().join("package");
         let version = "1.0.0-dev.h0123456789ab";

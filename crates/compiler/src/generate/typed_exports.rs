@@ -187,6 +187,6 @@ pub(super) fn emit_export_adapter(type_name: &str, direct: bool, transacted: boo
         )
     };
     format!(
-        "pub(crate) type Input = {input};\npub(crate) type Output = {output};\n{error}pub(crate) use wamn_data_access::{export} as export_operation;\n"
+        "pub(crate) type Input = {input};\npub(crate) type Output = {output};\n{error}pub(crate) use wamn_guest::{export} as export_operation;\n"
     )
 }

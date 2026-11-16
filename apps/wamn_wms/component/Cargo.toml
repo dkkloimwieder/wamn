@@ -7,10 +7,9 @@ license = "Apache-2.0"
 
 [dependencies]
 wamn-scalar.workspace = true
-wamn-data-access = { workspace = true }
+wamn-guest = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-wamn-postgres-statements = { workspace = true }
 wit-bindgen = { workspace = true, features = ["async-spawn"] }
 
 [lib]

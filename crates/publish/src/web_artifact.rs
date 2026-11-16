@@ -20,8 +20,8 @@ use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutM
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
 use wamn_compiler::build_record::{self, BuildRecord};
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
-use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
-use wamn_package_artifact::{Repository, registry_auth};
+use wamn_oci::package_artifact::registry_credentials::read_registry_push_credentials;
+use wamn_oci::package_artifact::{Repository, registry_auth};
 
 use crate::package_artifact::PackageRegistry;
 
@@ -166,7 +166,7 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
 /// One deterministic tar and its canonical OCI image manifest.
 #[derive(Debug)]
 pub struct PackedWebArtifact {
-    pub tag: wamn_package_artifact::tag::OciTag,
+    pub tag: wamn_oci::package_artifact::tag::OciTag,
     pub digest: wamn_digest::Digest,
     pub manifest: Vec<u8>,
     pub tar: Vec<u8>,
@@ -203,7 +203,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
 
     let package = metadata.package.package_id();
     let tag = format!("{package}-web-{}", metadata.version);
-    let tag = tag.parse::<wamn_package_artifact::tag::OciTag>()?;
+    let tag = tag.parse::<wamn_oci::package_artifact::tag::OciTag>()?;
     let mut files = std::collections::BTreeMap::new();
     artifact_files(root, Path::new("dist"), &mut files)?;
     ensure!(
@@ -216,7 +216,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
 }
 
 fn pack_archive(
-    tag: wamn_package_artifact::tag::OciTag,
+    tag: wamn_oci::package_artifact::tag::OciTag,
     files: std::collections::BTreeMap<PathBuf, Vec<u8>>,
     artifact_type: &str,
 ) -> anyhow::Result<PackedWebArtifact> {
@@ -285,7 +285,7 @@ pub enum WebPushDisposition {
 /// The immutable tag and digest after a successful web push.
 #[derive(Debug)]
 pub struct PushedWebArtifact {
-    pub tag: wamn_package_artifact::tag::OciTag,
+    pub tag: wamn_oci::package_artifact::tag::OciTag,
     pub digest: wamn_digest::Digest,
     pub disposition: WebPushDisposition,
 }
@@ -421,7 +421,7 @@ async fn pull_archive(
         "web artifact {digest} must have one {WEB_TAR_MEDIA_TYPE} layer"
     );
     let layer = &manifest.layers[0];
-    let tar = wamn_package_artifact::registry_pull::blob(
+    let tar = wamn_oci::package_artifact::registry_pull::blob(
         &repository.client,
         &repository.reference,
         layer,
@@ -622,7 +622,7 @@ mod tests {
 
     use wamn_compiler::build_record::{self, BuildRecord};
     use wamn_digest::{bytes_sha256, canonical_json_bytes};
-    use wamn_package_artifact::registry_pull::test_server::Server;
+    use wamn_oci::package_artifact::registry_pull::test_server::Server;
     use wamn_test_infrastructure::scratch::ScratchRoot;
 
     use super::{

@@ -62,7 +62,7 @@ pub(super) fn emit_model_component(
          #[allow(unused_imports)]\n\
          use super::data::error::Error;\n\
          #[allow(unused_imports)]\n\
-         use wamn_postgres_statements::{{Connection, Transaction}};\n"
+         use wamn_guest::postgres_statements::{{Connection, Transaction}};\n"
     )
     .expect("writing to a String cannot fail");
     for (action, facts) in &compiled.operations {
