@@ -30,6 +30,7 @@ wamn-kubernetes.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true
 wamn-control-provision.workspace = true
+wamn-platform-identity.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-package-artifact.workspace = true
 wamn-release-control.workspace = true
