@@ -32,12 +32,10 @@
 -- updated_by as NOT NULL columns, and a wamn_record_history_stamp trigger that calls
 -- wamn_history.stamp_row(). An applier installs deploy/sql/record-history.sql
 -- first. CATALOG_SCHEMA_SQL carries it, so an applier that applies the catalog
--- schema first already has it. Every write binds app.user_id: provisioning
--- binds wamn:provisioning, apply-package binds wamn:apply-package, and
--- administrative SQL and test fixtures bind a provisioned principal.
+-- schema first already has it.
 -- Every table also keeps an unlimited log. Its wamn_record_history_log trigger
--- writes each row change to <table>_history, so every write also binds
--- app.operation. The HISTORY TABLES section at the end creates them.
+-- writes each row change to <table>_history.
+-- The HISTORY TABLES section at the end creates them.
 --
 -- SECURITY SHAPE: one database per project environment separates these rows.
 -- The account and configuration tables and their history tables have no project
@@ -48,9 +46,7 @@
 --
 --   PLATFORM-PROTECTED — user, role, user_role, permission, environment,
 --   and the platform configuration tables.
---   SELECT only. The trust chain consumes these rows as authorization INPUT: the
---   3.5 RLS builder compiles app.user_id and app.role into the data policies it
---   generates, and 4.2 resolves both identity fields from user + user_role. Author SQL
+--   SELECT only. The trust chain consumes these rows as authorization INPUT. Author SQL
 --   holding DML here could write itself the credential its own policies are then
 --   evaluated against, and the compiler would faithfully enforce the forgery. A
 --   project's authorization state is written BY the platform, never by the
@@ -161,7 +157,7 @@ $wamn_authority_bootstrap$;
 
 -- ---------------------------------------------------------------------------
 -- User — application accounts. `id` (uuid) is org-issued at birth and has no
--- database default; it is the app.user_id ownership target (3.5). Identity
+-- database default. Identity
 -- only: no credential material lives here (auth is 4.2/8.1).
 -- `status` conditions whether the account may authenticate (enforced by 4.2, not this
 -- schema). Email is unique in the database.
@@ -213,9 +209,7 @@ CREATE TRIGGER wamn_record_history_stamp
 GRANT SELECT ON platform."user" TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- Roles — named roles. `name` is the app.role value the 3.5 RLS builder compares
--- (a role condition is COALESCE(app.role,'') IN ('r1', …)), so the NAME is the
--- load-bearing identity (the primary key). `admin` is the one built-in role:
+-- Roles — named roles. `admin` is the one built-in role:
 -- apply-package writes it, and it holds every operation the serving release
 -- serves with no permission rows. Every other role is authored. A user or
 -- service holds a role through `wamn-ctl grant-role`. `role_name_check` is the
@@ -240,8 +234,7 @@ CREATE TRIGGER wamn_record_history_stamp
 GRANT SELECT ON platform.role TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- User↔role linkage (many-to-many). 4.2 reads this to compute a user's role for
--- the app.role identity it injects. Both sides FK ON DELETE CASCADE, so removing
+-- User↔role linkage (many-to-many). Both sides FK ON DELETE CASCADE, so removing
 -- a user or a role prunes the grant.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.user_role (

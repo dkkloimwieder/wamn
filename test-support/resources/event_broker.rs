@@ -238,37 +238,6 @@ fn prepare_with(
     })
 }
 
-/// Read back the broker files that `prepare` wrote into `work`, for a later
-/// process that attaches to the same environment.
-pub fn load(work: &Path) -> anyhow::Result<EventBroker> {
-    let directory = work.join("event-nats");
-    let user = |user: String| -> anyhow::Result<Credentials> {
-        let cert = directory.join(format!("client-{user}.crt"));
-        ensure!(cert.is_file(), "the {user} broker certificate is missing");
-        Ok(Credentials {
-            ca: directory.join("ca.crt"),
-            key: directory.join(format!("client-{user}.key")),
-            cert,
-            inbox: format!("_INBOX_{user}"),
-            user,
-        })
-    };
-    let role = |name: &str| -> anyhow::Result<Credentials> {
-        user(
-            std::fs::read_to_string(directory.join(format!("{name}-username")))
-                .with_context(|| format!("read the {name} broker username"))?,
-        )
-    };
-    Ok(EventBroker {
-        configuration: directory.join("nats.conf"),
-        provisioning: role("provisioning")?,
-        runtime: role("runtime")?,
-        publisher: role("publisher")?,
-        observer: role("observer")?,
-        development: user(DEVELOPMENT_USER.into())?,
-    })
-}
-
 fn subject_token(value: &str) -> bool {
     !value.is_empty()
         && value

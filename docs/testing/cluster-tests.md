@@ -8,7 +8,6 @@ Use [running tests](../operations/running-tests.md) for prerequisites, database 
 
 The application Rust tests own setup decisions, provisioning calls, assertions, results, and cleanup.
 Thin lifecycle entrypoints perform explicit container, cluster, and image operations.
-The [Receiving cluster owner](../../apps/wamn_receiving/tests/route_authentication_live/cluster.rs) and [WMS cluster owner](../../apps/wamn_wms/tests/cluster.rs) retain their separate application cases.
 Shared platform helpers do not own the application's business assertions.
 
 Exercise the actual released guest and its required host services.

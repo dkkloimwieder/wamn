@@ -5,9 +5,6 @@ use serde_json::{Value, json};
 use sqlx::Row as _;
 use wamn_test_application::{Application, Routes};
 
-#[path = "support/write_log.rs"]
-mod write_log;
-
 /// A retry of `widget.record_batch` with its lines in another order and its
 /// amounts spelled another way answers the stored result, because the host
 /// applies the route's canonical form before it hashes the request element. A retry with

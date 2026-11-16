@@ -74,29 +74,6 @@ pub async fn define(
     Ok(())
 }
 
-/// Rotate an existing fixture through the administration path.
-pub async fn set_reference(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
-    environment: &wamn_registry::EnvName,
-    name: &str,
-    stored: &StoreVersion,
-) -> anyhow::Result<()> {
-    wamn_platform_identity::connections::administration::execute_with_store(
-        tx,
-        org,
-        "connection.set_credential",
-        &serde_json::json!({"project":project,"env":environment,"name":name,"credential":"{}"})
-            .to_string(),
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
-        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
-        Some(&ReferencedCredentials(stored)),
-    )
-    .await?;
-    Ok(())
-}
-
 /// Create an isolated test login with the public role identity and grants.
 pub async fn database_login(
     system_input: &str,

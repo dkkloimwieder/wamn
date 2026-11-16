@@ -20,24 +20,7 @@ Record application compilation separately from required helper compilation and f
 Require the expected authenticated application result and successful cleanup before accepting an edit measurement.
 Record the source, tools, machine limits, commands, and sample count without a fixed latency threshold or permanent report requirement.
 
-## Receiving commands
-
-The [Receiving route cases](../../apps/wamn_receiving/tests/route_authentication_live/local_business.rs) cover composed receipts and screen reads.
-The command-history case stops at its missing product fault fixture.
-See the [focused commands](../operations/running-tests.md#local-application-business-tests).
-
-## WMS operations
-
-The [local WMS test](../../apps/wamn_wms/tests/local_business.rs) runs the existing operation and replay assertions with real components, authenticated HTTP, and disposable PostgreSQL.
-It retains contention, conflict, exact replay, adjust, split, merge, and aggregate assertions.
-Its initial revision exceeds JavaScript’s safe-integer limit, so inputs, results, and conflict details must preserve exact decimal strings.
-The deployed case retains label delivery and committed results after a label failure.
-
 ## Fresh overlay compatibility
-
-The [postcommit case](../../apps/wamn_receiving/tests/route_authentication_live/cluster/postcommit_case.rs) installs the candidate release fresh through the package stage.
-The [Acme test owner](../../apps/client_acme_receiving/tests/overlay_compatibility.rs) then observes the schema requirements of the candidate's unchanged overlay package artifact in that installation.
-The evidence names the overlay component by the digest the release manifest carries.
 
 An additive base and a breaking combination need a second base that no candidate carries, so they are not cluster cases.
 
@@ -45,11 +28,6 @@ This tests fresh-install compatibility, not an upgrade of an existing database.
 The installed-schema observer does not assert production schema-admission enforcement.
 
 ## Committed events
-
-The [post-commit test](../../apps/wamn_receiving/tests/postcommit.rs) uses the actual broker, materializer, and private `quality.create_inspection` handler.
-After the first completion, redelivery must reach the handler again and leave one inspection without resetting its business state.
-A distinct valid receipt creates its own inspection.
-Publishing twice is insufficient when broker deduplication prevents the second handler delivery.
 
 Deliver a routable poison event that blocks its handler, followed by an independent valid event.
 The materializer acknowledges each event after it admits the run, so the poison retries happen in the workflow queue, not in the broker.
@@ -66,8 +44,6 @@ The Receiving tests observe stamps and the log through real routes and commands:
 - In the same tests, `receiving.record_receipt` stamps the order and its receipt with one instant, and an Acme overlay update stamps the base columns.
 - The route tests also fold the purchase order history that the server served. No served image carries an Acme column, and the fold matches the purchase order that the database holds.
 - In the same tests, an operator who holds every grant except the history token gets `permission-denied` before the component runs.
-- The [materializer test](../../apps/wamn_receiving/tests/route_authentication_live/materializer.rs) shows that `quality.create_inspection` stamps `wamn:materializer` as `created_by`.
-- The materializer test also makes sure that CDC publishes no history table row. The purchase order entry and the line entry of the receipt carry the event `txid` in the low 32 bits of their transaction id.
 - The [data access test](../../apps/wamn_receiving/tests/receiving_data_access.rs) installs the declared triggers with its own SQL and tests insert, update, and no-op stamps.
 - In the same test, an Acme overlay update logs a changed-column diff that folds to the effective base and overlay row. The Receiving history read returns only its base columns. An idempotent receipt replay appends no entry.
 

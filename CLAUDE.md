@@ -4,6 +4,8 @@ CONCISE OUTPUT ONLY!
 
 This file provides instructions and context for AI coding agents working on this project.
 
+[wamn restructure, Part 1](docs/plan/wamn-restructure.md#part-1-current-state) controls the restructure and overrides conflicting repository guidance.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
 
@@ -127,7 +129,7 @@ If the product cannot drive a step that a journey needs, that is a product gap: 
 
 ### Test rules
 
-Owner ruling 2026-11-04 (`wamn-inmae`, docs/audit/test-practice.md Part C). Make sure that every test you write or rewrite follows all five rules before you push, and state in the push report which rules the diff touched. No diff that violates one merges.
+Owner ruling 2026-11-04 (`wamn-inmae`). Make sure that every test you write or rewrite follows all five rules before you push, and state in the push report which rules the diff touched. No diff that violates one merges.
 
 1. Test a contract once, at the lowest tier that can observe it; a kind or live test asserts only the state its cluster or server alone shows.
 2. Assert text, a count or a whole document only when that text, count or document is itself the contract. Corollary: derive the asserted set from the artifact under test — never hand-pin a roster of names the artifact can enumerate. A pinned roster is a change detector, and a new member it misses is an unverified consumer.
