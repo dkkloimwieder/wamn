@@ -146,7 +146,7 @@ const CONTROL_SECTIONS: readonly ShellSection[] = [
 /** What `permission.mine` answers an admin. */
 export const ADMIN = { admin: true, permissions: [] };
 
-export const CONTROL = "urn:wamn:control:acme";
+export const CONTROL = "urn:wamn:org:acme";
 
 /** What `control.mine` answers an org-admin of two projects. */
 const ORG_ADMIN = {

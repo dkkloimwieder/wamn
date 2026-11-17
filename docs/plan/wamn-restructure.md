@@ -1909,3 +1909,8 @@ Facts:
 - Login was limited to control holders (`holds_control`), and one login cost two password checks.
 - Nothing in the install fills the control administration map.
 - The environment host group has no verifier settings.
+
+**Ruled (D, 2026-11-17): Epic 6 review.** Epic 6 is accepted. The fix commit:
+- needs no mount change: `ensure.rs::host_project` already mounts `identity-ca` at `/etc/identity-ca` on the environment host group. The review had checked only the chart defaults.
+- takes the JWKS lifetime from the response's `max-age`, capped at 300 seconds, not from a wamn identity constant
+- renames the org audience to `urn:wamn:org:<org>`.

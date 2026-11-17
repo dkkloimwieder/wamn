@@ -778,7 +778,7 @@ Invocation binds and workflow callers use the guest login. Route authentication 
 Missing users, inactive users, and empty grant sets are read again on the next request.
 Cached facts expire on the local project lifetime. Token validity remains bounded by the issuer's expiry and signing keys.
 
-The org audience is `urn:wamn:control:{org}`.
+The org audience is `urn:wamn:org:{org}`.
 One password login gives one access token for the org, shared by its environments and control routes.
 Any active user with an active org membership can log in. Application roles do not decide login eligibility.
 
@@ -965,7 +965,7 @@ An `env delete` deletes every key of the environment.
 
 ### Control sessions
 
-Every org in `registry.orgs` has the org audience `urn:wamn:control:<org>`.
+Every org in `registry.orgs` has the org audience `urn:wamn:org:<org>`.
 The same token serves application and control requests. Login requires active org membership, without an administration grant.
 Control reads org and project administration separately from the system database.
 Control uses the verified subject UUID for the existing org and project eligibility reads.
@@ -1100,7 +1100,7 @@ The route returns 404 if the user does not belong to the control org. It returns
 The route returns 204 after it disables the principal. A disabled principal cannot renew a login.
 
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
-`POST /password/session` accepts `email`, `password`, and `aud`, set to `urn:wamn:control:<org>`.
+`POST /password/session` accepts `email`, `password`, and `aud`, set to `urn:wamn:org:<org>`.
 It performs one password check and signs one org token. The browser has no environment chooser.
 It checks the active user and org membership before signing the token.
 Its response contains `sub`, `access_token`, `token_type`, `expires_at`, `renewal_token`, and `login_expires_at`.

@@ -892,7 +892,7 @@ A credential read returns `no credential store in local mode` and logs that reas
 Local startup still provisions the disposable databases and starts identity, control and web services.
 Those processes use explicit operator connection URLs with verified TLS.
 They do not supply a local connection credential store.
-Identity login uses the org audience `urn:wamn:control:<org>`.
+Identity login uses the org audience `urn:wamn:org:<org>`.
 The identity chart no longer accepts session target ConfigMaps or project database reader credentials.
 The chart retains access to the identity database credential and its CA.
 

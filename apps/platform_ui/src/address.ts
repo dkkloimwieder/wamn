@@ -6,7 +6,7 @@ export type Type = "application" | "control";
 /** An audience belongs to this deployment's org. */
 export function audienceType(aud: string, config: Config): Type | undefined {
   if (aud.startsWith(`urn:wamn:project-env:${config.org}:`)) return "application";
-  return aud === `urn:wamn:control:${config.org}` ? "control" : undefined;
+  return aud === `urn:wamn:org:${config.org}` ? "control" : undefined;
 }
 
 /** Browser history belongs to the shell. Screens receive open and close callbacks. */

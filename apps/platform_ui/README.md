@@ -68,7 +68,7 @@ Sign-in, invitation, recovery, reset, and no-access pages use standalone wfe Ent
 Theme and a main landmark wrap each default viewport panel. These pages contain no dashboard Frame.
 Identity forms use `@wfe/form` and FormView. The no-access panel contains a return link.
 
-Sign-in uses the org from `/config.json` and posts once to `/password/session` with `aud=urn:wamn:control:<org>`.
+Sign-in uses the org from `/config.json` and posts once to `/password/session` with `aud=urn:wamn:org:<org>`.
 There is no environment chooser or discovery password check.
 The shell opens the org's control address after login. Pasted application addresses use the same org token.
 Breadcrumbs appear on dashboard screens and use literal uppercase text, including record names.

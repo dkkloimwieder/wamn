@@ -358,9 +358,13 @@ pub fn project_audience(
 ) -> String {
     format!("urn:wamn:project-env:{org}:{env}:{project}:{instance}")
 }
-/// The audience of one org's control service.
+
+/// The prefix of every org audience.
+pub const ORG_AUDIENCE_PREFIX: &str = "urn:wamn:org:";
+
+/// The access token audience shared by an org's environments and control routes.
 pub fn org_audience(org: &crate::OrgId) -> String {
-    format!("urn:wamn:control:{org}")
+    format!("{ORG_AUDIENCE_PREFIX}{org}")
 }
 /// The reply subject prefix of one authenticated broker user.
 pub fn inbox(user: &str) -> String {

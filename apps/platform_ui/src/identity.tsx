@@ -89,7 +89,7 @@ function OrgSignIn(props: IdentityProps & { config: Config }): JSX.Element {
         address={props.address}
         trouble={null}
         submit={async (email, password, context) => {
-          const aud = `urn:wamn:control:${props.config.org}`;
+          const aud = `urn:wamn:org:${props.config.org}`;
           await signIn(email, password, aud, props.options);
           if (!context.signal.aborted) props.address.navigate(`/${aud}`);
         }}

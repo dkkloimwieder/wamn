@@ -14,8 +14,8 @@ const CLOCK_TOLERANCE: u64 = 30;
 const FETCH_INTERVAL: Duration = Duration::from_secs(1);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_JWKS_BYTES: usize = 65_536;
-const KEY_LIFETIME: Duration =
-    Duration::from_secs(wamn_identity::session_keys::JWKS_CACHE_SECONDS.cast_unsigned());
+// The JWKS lifetime cap and the default when max-age is absent or invalid.
+const MAX_KEY_LIFETIME: Duration = Duration::from_secs(300);
 
 /// One verifier and its cache of the issuer's complete public key set.
 #[derive(Debug)]
@@ -179,7 +179,7 @@ impl AccessTokenVerifier {
             validation,
             keys: Cache::builder()
                 .max_capacity(1)
-                .time_to_live(KEY_LIFETIME)
+                .time_to_live(MAX_KEY_LIFETIME)
                 .build(),
             last_fetch: Mutex::new(None),
         })
@@ -303,7 +303,7 @@ impl AccessTokenVerifier {
         if ages.next().is_some() {
             return Err(Stage::KeyFetch.refusal("multiple JWKS Age values"));
         }
-        let remaining = KEY_LIFETIME
+        let remaining = jwks_lifetime(response.headers())
             .checked_sub(Duration::from_secs(age))
             .ok_or_else(|| Stage::KeyFetch.refusal("JWKS is stale"))?;
         let fresh_until = started + remaining;
@@ -328,6 +328,23 @@ impl AccessTokenVerifier {
             fresh_until,
         })
     }
+}
+
+fn jwks_lifetime(headers: &reqwest::header::HeaderMap) -> Duration {
+    headers
+        .get_all(reqwest::header::CACHE_CONTROL)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(|directive| directive.trim().split_once('='))
+        .find(|(name, value)| {
+            name.eq_ignore_ascii_case("max-age")
+                && !value.is_empty()
+                && value.as_bytes().iter().all(u8::is_ascii_digit)
+        })
+        .and_then(|(_, value)| value.parse().ok())
+        .map_or(MAX_KEY_LIFETIME, Duration::from_secs)
+        .min(MAX_KEY_LIFETIME)
 }
 
 fn https_url(value: &str) -> Option<reqwest::Url> {

@@ -10,9 +10,6 @@ use sqlx::Row as _;
 use crate::org::ORG_ADMIN_ROLE;
 use crate::{IdentityError, PrincipalId, database_error};
 
-/// The prefix of every org audience.
-pub const ORG_AUDIENCE_PREFIX: &str = "urn:wamn:control:";
-
 /// The project role that grants control authority in its org.
 pub const PROJECT_ADMIN_ROLE: &str = "project-admin";
 
@@ -31,7 +28,10 @@ const PROJECT_ADMIN_SQL: &str = "SELECT identity.is_project_admin($1,$2,$3) AND 
 
 /// The org of an org audience, or `None` when the audience is not one.
 pub fn org_audience_org(audience: &str) -> Option<wamn_registry::OrgId> {
-    audience.strip_prefix(ORG_AUDIENCE_PREFIX)?.parse().ok()
+    audience
+        .strip_prefix(wamn_registry::name::ORG_AUDIENCE_PREFIX)?
+        .parse()
+        .ok()
 }
 
 /// The projects of `org` where the active user principal is

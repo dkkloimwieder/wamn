@@ -27,7 +27,7 @@ export default function Layout(props: {
   };
   const projectPath = () => {
     const config = application()!;
-    return `/urn:wamn:control:${config.org}/projects/${encodeURIComponent(config.project)}`;
+    return `/urn:wamn:org:${config.org}/projects/${encodeURIComponent(config.project)}`;
   };
   const follow = (path: string, close?: () => void) => (event: MouseEvent) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -106,7 +106,7 @@ export default function Layout(props: {
     const config = application();
     const entries = config
       ? [
-          { label: config.org, href: `/urn:wamn:control:${config.org}/projects` },
+          { label: config.org, href: `/urn:wamn:org:${config.org}/projects` },
           { label: config.project, href: projectPath() },
           { label: config.env, href: root },
         ]

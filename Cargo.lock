@@ -5425,7 +5425,6 @@ dependencies = [
  "wamn-connection",
  "wamn-digest",
  "wamn-engine",
- "wamn-identity",
  "wamn-identity-protocol",
  "wamn-registry",
 ]

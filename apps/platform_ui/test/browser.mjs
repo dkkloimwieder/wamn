@@ -199,7 +199,7 @@ async function expandGroup(page, label) {
 }
 const org = required("WAMN_BROWSER_ORG");
 const base = required("WAMN_BROWSER_URL");
-const controlPath = `/urn:wamn:control:${org}`;
+const controlPath = `/urn:wamn:org:${org}`;
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const errors = [];
 async function signIn(page, email, address = base) {

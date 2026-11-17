@@ -312,7 +312,7 @@ function Session(
   }
   const keeper = keepSession({
     ...props.options,
-    aud: `urn:wamn:control:${props.org}`,
+    aud: `urn:wamn:org:${props.org}`,
     onState: (next) => {
       setState(next);
       clearTimeout(loginEnds);

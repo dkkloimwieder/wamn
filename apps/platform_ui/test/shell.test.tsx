@@ -241,7 +241,7 @@ describe("the app shell", () => {
 
   it("refuses the control audience of another org", async () => {
     const { state, fetch } = identity(false);
-    open("/urn:wamn:control:other/org", fetch);
+    open("/urn:wamn:org:other/org", fetch);
     expect(await screen.findByRole("link", { name: "Choose an audience" })).toBeDefined();
     {
       const observed = state.calls;
