@@ -385,7 +385,7 @@ Issues:
 Rulings on the scout questions (D, 2026-11-17):
 - Plugin code that Epic 1 deleted is restored from 0943187e1^, without snapshots, candidate bindings, hashes, semaphores or the KV replica.
 - 5.1:
-  - adds the host's reader for the projects file
+  - gives the host its project database logins through a `wamn-postgres` entry in the host group's `plugins` (ruled 2026-11-17, Part 2)
   - adds runtime type, exclusivity, target type, signed-result facts and the full integration reference to `wamn.application`
   - moves every binding-table reader to `wamn.application`
   - defines the one binding lookup that 5.2 and 5.3 use
@@ -1727,3 +1727,11 @@ Recommend a.
 **Ruled (D, 2026-11-16): Epic 4 review.** Epic 4 is accepted. Three fixes move to Epic 5: the deploy refuses an operation name that two components declare; the session cache keeps a grant set only under the `principal_grants` condition; the deploy refuses two versions of one host interface package. The application host routes and the file routes have had no server since Epic 1 deleted `services/host/src/host/releases.rs` (b84b5739). Serving them moves to Epic 5.
 
 **Ruled (D, 2026-11-17): Epic 5 scout questions.** All recommendations are accepted. The connection principal's status check goes (D-a): disabling a connection stops its calls. Facts: the host has had no reader for the projects file and no plugins for connections, blobstore or integrations since Epic 1 (0943187e1). Every read route answers 503 since 4.2, because the route guest calls `sign-result` for each read.
+
+**Ruled (D, 2026-11-17): host project logins (5.1 stop).** Option b, the upstream plugin entry.
+- The environment values write one `wamn-postgres` entry in the host group's `plugins`. It has `workloadConfig: deny` and lists the CNPG login Secrets in `secretFrom`.
+- Its config holds one JSON value for each project: host, port, database, the login Secret for each authority class, and pool settings.
+- The host reads `username` and `password` from each mounted Secret and does not merge them into the config, because every login Secret has the same keys.
+- Pools are built at first bind, and a changed password rebuilds them at the next bind.
+- `projects.json`, `projects_from_json` and the startup credential map go.
+- Fact: `projects.json` held only project names, and no chart mounted it on the host.
