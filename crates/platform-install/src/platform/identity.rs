@@ -135,7 +135,7 @@ pub async fn require_keys(
 ) -> anyhow::Result<()> {
     tokio::time::timeout(limit, async {
         let mut connection=wamn_postgres::connect(input).await?;
-        let active: bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.session_signing_state s JOIN identity.session_keys k ON (k.issuer,k.kid)=(s.issuer,s.active_kid) WHERE s.issuer=$1 AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL)")
+        let active: bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.session_signing_state s JOIN identity.session_keys k ON (k.issuer,k.kid)=(s.issuer,s.active_kid) WHERE s.issuer=$1 AND k.signing_cutoff IS NULL AND k.private_key_envelope IS NOT NULL)")
             .bind(issuer(org.as_str())).fetch_one(&mut connection).await?;
         ensure!(active,"identity has no active signing key");
         anyhow::Ok(())

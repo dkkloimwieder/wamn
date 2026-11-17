@@ -208,7 +208,6 @@ impl HostRouteDelivery {
                             org,
                             &serde_json::from_value::<wamn_registry::ProjectId>(project.clone())
                                 .map_err(anyhow::Error::from)?,
-                            None,
                         )
                         .await?;
                     rows.push(json!({"project":project,"project_admin":project_admin}));

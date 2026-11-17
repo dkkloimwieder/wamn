@@ -56,7 +56,7 @@ impl moka::Expiry<Key, Answer> for Expiry {
 #[derive(Debug)]
 pub(super) struct Authorization {
     postgres: Weak<WamnPostgres>,
-    envelope: Option<Arc<wamn_connection::oauth_encryption::Envelope>>,
+    envelope: Option<Arc<wamn_envelope::encryption::Envelope>>,
     applications: RwLock<HashMap<String, Weak<ApplicationConfig>>>,
     lifetimes: RwLock<HashMap<ProjectEnvKey, (ProjectId, Duration)>>,
     answers: Cache<Key, Answer>,
@@ -78,7 +78,7 @@ impl Authorization {
 
     pub(super) fn with_oauth_encryption(
         mut self,
-        envelope: Option<Arc<wamn_connection::oauth_encryption::Envelope>>,
+        envelope: Option<Arc<wamn_envelope::encryption::Envelope>>,
     ) -> Self {
         self.envelope = envelope;
         self

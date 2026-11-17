@@ -521,7 +521,7 @@ pub async fn project_authority(
          EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
          identity.has_project_access(p.id,$2,$4,$3), \
          EXISTS (SELECT 1 FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.project=$3 AND r.role='project-admin') \
-         OR identity.is_project_admin(p.id,$2,$4,$3) \
+         OR identity.is_project_admin(p.id,$2,$3) \
          FROM identity.principals p WHERE p.id=$1").bind(principal).bind(coordinate.org).bind(coordinate.project).bind(coordinate.env).fetch_optional(&mut **system).await.map_err(|error| database_error(&error))?;
     let Some(row) = row else {
         return remove_user(target, principal).await;

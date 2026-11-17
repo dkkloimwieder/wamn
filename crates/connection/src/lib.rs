@@ -7,10 +7,7 @@ pub mod connection_memory;
 pub mod database;
 pub mod integrations;
 pub mod invocation;
-pub mod oauth_encryption;
 pub mod oauth_token;
-
-pub mod pod_identity;
 
 pub mod connections;
 #[cfg(feature = "test-util")]

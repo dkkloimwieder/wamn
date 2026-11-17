@@ -65,7 +65,7 @@ impl ControlRoutes<'_> {
         let context = {
             let mut writer = self.writer.lock().await;
             let authorized = self
-                .begin_in_environment(&mut writer, attachment, caller, Some(&project), Some(env))
+                .begin_in(&mut writer, attachment, caller, Some(&project))
                 .await?;
             authorized.commit().await?;
             let urls = self.logins(&[(project.clone(), env.clone())])?;

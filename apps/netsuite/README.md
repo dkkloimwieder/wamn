@@ -42,7 +42,7 @@ The caller must keep that order as the query's actual final ordering clause.
 
 ## Pull and push
 
-The pull is an environment workflow, not part of the release: an environment admin authors `netsuite_pull` with a minute schedule and enables it ([cutover](../../docs/operations/queued-automation.md#cutover-the-netsuite-pull)).
+The pull is an environment workflow, not part of the release: a project admin authors `netsuite_pull` with a minute schedule and enables it ([cutover](../../docs/operations/queued-automation.md#cutover-the-netsuite-pull)).
 Each due moment runs `netsuite_pull` with its due time, as the `workflow` user with the role that holds the consumer command.
 The first mapping places that time in the optional `carry` field of `setting.read`.
 The window mapping builds a customer query from `last_synced_at` through the due time, ordered by `id`.

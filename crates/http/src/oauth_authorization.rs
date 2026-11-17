@@ -8,7 +8,7 @@ use sqlx::{Connection as _, Row as _};
 use url::Url;
 use zeroize::Zeroizing;
 
-use wamn_connection::oauth_encryption::{Encrypted, Envelope};
+use wamn_envelope::encryption::{Encrypted, Envelope};
 
 /// A refusal with a safe public reason. Sources never enter a callback page.
 pub struct Error {

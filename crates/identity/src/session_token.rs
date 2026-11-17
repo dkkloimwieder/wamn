@@ -4,8 +4,7 @@
 //! signs with the issuer's active key in Postgres and reads whether a session's
 //! authority is still active. No token is persisted or logged.
 
-use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _};
+use sqlx::Row as _;
 use std::{
     fmt,
     time::{SystemTime, UNIX_EPOCH},
@@ -61,39 +60,6 @@ pub fn minting_times(
     Ok((signing_at, expires_at))
 }
 
-/// Sign JWT claims using the issuer's active generation without recording a token.
-///
-/// The exchange owner must have validated identity, membership, and these roles
-/// fresh at `validation_started_at`. This primitive does not do those reads.
-/// Supplied `iat` and `exp` are replaced after acquiring the signing lock:
-/// issuance uses the actual clock and expiry stays anchored to validation.
-pub async fn sign_session_token(
-    client: &mut Client,
-    claims: SessionClaims,
-    validation_started_at: i64,
-) -> Result<IssuedSessionToken, IdentityError> {
-    let mut transaction = client.begin().await.map_err(key_database_error)?;
-    let token = match sign_session_token_in_transaction(
-        &mut transaction,
-        claims,
-        validation_started_at,
-        None,
-    )
-    .await
-    {
-        Ok(token) => token,
-        Err(error) => {
-            transaction.rollback().await.map_err(key_database_error)?;
-            return Err(error);
-        }
-    };
-    transaction.commit().await.map_err(key_database_error)?;
-    if unix_seconds()? >= token.claims.exp {
-        return Err(refused());
-    }
-    Ok(token)
-}
-
 /// Sign within the caller's login transaction and optional absolute deadline.
 ///
 /// The caller retains the signing lock through commit and must not deliver a
@@ -103,10 +69,11 @@ pub async fn sign_session_token_in_transaction(
     mut claims: SessionClaims,
     validation_started_at: i64,
     absolute_expiry: Option<i64>,
+    envelope: &wamn_envelope::encryption::Envelope,
 ) -> Result<IssuedSessionToken, IdentityError> {
     claims.validate()?;
     let issuer = claims.iss.clone();
-    let token = sign_message(transaction, &issuer, |kid, key| {
+    let token = sign_message(transaction, &issuer, envelope, |kid, key| {
         let now = unix_seconds()?;
         (claims.iat, claims.exp) = minting_times(validation_started_at, now)?;
         if let Some(deadline) = absolute_expiry {

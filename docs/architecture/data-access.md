@@ -1176,7 +1176,7 @@ The stage writes its project service row without assigning a role or permission.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 It creates the `platform.number_sequence` row of each sequence that the packages declare, as [Numbering](#numbering) describes.
 It writes a user row for each user with a membership in that project environment, and removes a user row whose membership is gone.
-Authorization derives a user’s administration from the current org, environment and project grants. The application database stores no copy of these inherited grants.
+Authorization derives a user’s administration from the current org and project grants. The application database stores no copy of these inherited grants.
 The identity owner creates that user in `identity.principals`.
 One email address names one principal for the whole platform.
 A user who works in two organizations holds one principal and two memberships.

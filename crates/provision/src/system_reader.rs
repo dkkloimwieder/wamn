@@ -29,7 +29,7 @@ pub fn grants_sql() -> String {
          GRANT INSERT ON platform.tx_identity TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), \
            wamn_authority.current_principal_id(), wamn_authority.current_role(), \
-           wamn_authority.current_application(), identity.is_project_admin(uuid,text,text,text), \
+           wamn_authority.current_application(), identity.is_project_admin(uuid,text,text), \
            identity.has_project_access(uuid,text,text,text) TO {role}; \
          GRANT SELECT ON registry.integration_type, registry.integration_type_version, \
            registry.auth_type, registry.environment_projects, registry.target, \

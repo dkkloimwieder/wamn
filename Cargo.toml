@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/role", "crates/jsonata", "crates/events", "crates/event-wire", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/run-state", "crates/workflow", "crates/codegen", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connection", "crates/sql", "crates/http", "crates/blobstore", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker", "crates/oci"]
+members = ["crates/role", "crates/jsonata", "crates/events", "crates/event-wire", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/run-state", "crates/workflow", "crates/codegen", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/sql", "crates/http", "crates/blobstore", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker", "crates/oci"]
 default-members = [
   "crates/catalog",
   "crates/run-state",
@@ -247,6 +247,7 @@ wamn-record-history = { path = "crates/record-history", version = "0.1.0" }
 wamn-run-state = { path = "crates/run-state", version = "0.1.0" }
 wamn-authority = { path = "crates/authority", version = "0.1.0" }
 wamn-connection = { path = "crates/connection", version = "0.1.0" }
+wamn-envelope = { path = "crates/envelope", version = "0.1.0" }
 wamn-sql = { path = "crates/sql", version = "0.1.0" }
 wamn-http = { path = "crates/http", version = "0.1.0" }
 wamn-blobstore = { path = "crates/blobstore", version = "0.1.0" }

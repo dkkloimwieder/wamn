@@ -242,7 +242,7 @@ impl ControlRoutes<'_> {
         let input: Value = serde_json::from_str(payload).map_err(anyhow::Error::from)?;
         let mut writer = self.writer.lock().await;
         let transaction = self
-            .begin_in_environment(
+            .begin_in(
                 &mut writer,
                 attachment,
                 caller,
@@ -251,15 +251,6 @@ impl ControlRoutes<'_> {
                     .map(str::parse::<wamn_registry::ProjectId>)
                     .transpose()
                     .map_err(anyhow::Error::from)?
-                    .as_ref(),
-                input["env"]
-                    .as_str()
-                    .map(str::parse::<wamn_registry::EnvName>)
-                    .transpose()
-                    .map_err(|_| Refusal::Declared {
-                        code: "invalid_input",
-                        detail: json!({"field":"env"}),
-                    })?
                     .as_ref(),
             )
             .await?;
@@ -291,26 +282,9 @@ impl ControlRoutes<'_> {
                 .await?
             }
             HostRouteAuthority::ProjectAdmin => {
-                let target: Value =
-                    serde_json::from_str(payload).map_err(|error| Refusal::Failed(error.into()))?;
                 let project = parse::<ProjectTarget>(payload)?.project;
                 self.read(caller, async |connection| {
-                    Ok(self
-                        .admits_environment(
-                            connection,
-                            caller,
-                            Some(&project),
-                            target["env"]
-                                .as_str()
-                                .map(str::parse::<wamn_registry::EnvName>)
-                                .transpose()
-                                .map_err(|_| Refusal::Declared {
-                                    code: "invalid_input",
-                                    detail: json!({"field":"env"}),
-                                })?
-                                .as_ref(),
-                        )
-                        .await?)
+                    Ok(self.admits(connection, caller, Some(&project)).await?)
                 })
                 .await?
             }
@@ -546,13 +520,7 @@ impl ControlRoutes<'_> {
                 let principal: PrincipalId = request.principal_id;
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self
-                    .begin_in_environment(
-                        &mut writer,
-                        attachment,
-                        caller,
-                        Some(&request.project),
-                        Some(&request.env),
-                    )
+                    .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
                 grant_member(
                     &mut transaction,
@@ -578,13 +546,7 @@ impl ControlRoutes<'_> {
                 let principal: PrincipalId = request.principal_id;
                 let mut writer = self.writer.lock().await;
                 let mut transaction = self
-                    .begin_in_environment(
-                        &mut writer,
-                        attachment,
-                        caller,
-                        Some(&request.project),
-                        Some(&request.env),
-                    )
+                    .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
                 revoke_member(
                     &mut transaction,
@@ -967,26 +929,14 @@ impl ControlRoutes<'_> {
         self.begin_in(writer, attachment, caller, None).await
     }
 
+    /// Open the write transaction of one route: bind the caller and the
+    /// sealed operation id, and test the route's role again inside it.
     async fn begin_in<'c>(
         &self,
         writer: &'c mut Client,
         attachment: &HostAttachment,
         caller: &PrincipalId,
         project: Option<&wamn_registry::ProjectId>,
-    ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
-        self.begin_in_environment(writer, attachment, caller, project, None)
-            .await
-    }
-
-    /// Open the write transaction of one route: bind the caller and the
-    /// sealed operation id, and test the route's role again inside it.
-    async fn begin_in_environment<'c>(
-        &self,
-        writer: &'c mut Client,
-        attachment: &HostAttachment,
-        caller: &PrincipalId,
-        project: Option<&wamn_registry::ProjectId>,
-        environment: Option<&wamn_registry::EnvName>,
     ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
         let mut transaction = writer.begin().await?;
         sqlx::query(
@@ -997,10 +947,7 @@ impl ControlRoutes<'_> {
         .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())?;
-        if !self
-            .admits_environment(&mut transaction, caller, project, environment)
-            .await?
-        {
+        if !self.admits(&mut transaction, caller, project).await? {
             return Err(denied(attachment));
         }
         Ok(transaction)
@@ -1014,23 +961,11 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         project: Option<&wamn_registry::ProjectId>,
     ) -> Result<bool, Refusal> {
-        self.admits_environment(client, caller, project, None).await
-    }
-
-    async fn admits_environment(
-        &self,
-        client: &mut sqlx::PgConnection,
-        caller: &PrincipalId,
-        project: Option<&wamn_registry::ProjectId>,
-        environment: Option<&wamn_registry::EnvName>,
-    ) -> Result<bool, Refusal> {
         if is_org_admin(client, caller, self.org).await? {
             return Ok(true);
         }
         Ok(match project {
-            Some(project) => {
-                is_project_admin(client, caller, self.org, project, environment).await?
-            }
+            Some(project) => is_project_admin(client, caller, self.org, project).await?,
             None => false,
         })
     }
