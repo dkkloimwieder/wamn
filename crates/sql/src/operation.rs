@@ -176,7 +176,13 @@ struct OpenOperation {
     write: bool,
     source: CanonicalName,
     settled: bool,
-    signed_fields: bool,
+    signed_result: Option<SigningAuthority>,
+}
+
+#[derive(Debug)]
+struct SigningAuthority {
+    workload: Arc<OperationWorkload>,
+    deadline: tokio::time::Instant,
 }
 
 impl OpenOperation {
@@ -348,17 +354,45 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
         let current = current
             .as_ref()
             .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
-        if !current.signed_fields {
+        let Some(signing) = current.signed_result.as_ref() else {
             return Ok(Ok(payload));
-        }
-        Ok(Err(
-            wamn_engine::operation::node_types::NodeError::Terminal(
-                wamn_engine::operation::node_types::ErrorDetail {
-                    code: Some("result_signing_unavailable".into()),
-                    message: "result signing is not available until connections return".into(),
-                },
-            ),
-        ))
+        };
+        let Some(signer) = current
+            .postgres
+            .result_signer
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+        else {
+            return Ok(Err(
+                wamn_engine::operation::node_types::NodeError::Terminal(
+                    wamn_engine::operation::node_types::ErrorDetail {
+                        code: Some("result_signing_unavailable".into()),
+                        message: "result signing is not configured".into(),
+                    },
+                ),
+            ));
+        };
+        Ok(signer
+            .sign(crate::result_signing::ResultSigning {
+                workload: &signing.workload.workload,
+                operation: &current.operation,
+                caller: current.authority.caller.as_ref(),
+                reads: signing
+                    .workload
+                    .application
+                    .components
+                    .iter()
+                    .find_map(|component| component.operations.get(&current.operation))
+                    .and_then(|operation| operation.signed_result.as_ref())
+                    .expect("admitted signed operation retains its result facts"),
+                payload,
+                deadline: current
+                    .postgres
+                    .scopes
+                    .execution(current.scope())
+                    .map_or(signing.deadline, |execution| execution.deadline()),
+            })
+            .await)
     }
 
     async fn finish_read(
@@ -688,7 +722,10 @@ async fn begin(
         source,
         write: !authorize_only,
         settled: true,
-        signed_fields: admitted.signed_fields,
+        signed_result: admitted.signed_fields.then(|| SigningAuthority {
+            workload: Arc::clone(&facts),
+            deadline: tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+        }),
     };
     if authorize_only {
         let transaction = open
@@ -856,7 +893,7 @@ impl WamnPostgres {
                 write: true,
                 source: operation.clone(),
                 settled: true,
-                signed_fields: false,
+                signed_result: None,
             };
             let claim = claim_operation(
                 &open,

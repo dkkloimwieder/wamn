@@ -93,7 +93,6 @@ pub struct HostRouteDelivery {
     worker: Option<wamn_kubernetes::job::Worker>,
     execution: Option<Arc<dyn ControlExecution>>,
     handlers: HostRouteHandlers,
-    files: Option<Arc<wamn_blobstore::file_route::FileRoutes>>,
     connection_health: Option<Arc<crate::connection_health::ConnectionHealth>>,
     oauth: Option<Arc<wamn_http::oauth_authorization::Authorization>>,
     control_authenticator:
@@ -118,7 +117,6 @@ impl HostRouteDelivery {
             worker: None,
             execution: None,
             registry_token_metadata: false,
-            files: None,
             connection_health: None,
             oauth: None,
             control_authenticator: None,
@@ -198,11 +196,6 @@ impl HostRouteDelivery {
     }
 
     /// Share the native file handlers with the JSON mutation routes.
-    pub fn with_files(mut self, files: Option<Arc<wamn_blobstore::file_route::FileRoutes>>) -> Self {
-        self.files = files;
-        self
-    }
-
     async fn handle(
         &self,
         attachment: &HostAttachment,
@@ -210,34 +203,6 @@ impl HostRouteDelivery {
         request_id: Option<&str>,
         payload: &str,
     ) -> Result<serde_json::Value, Refusal> {
-        if matches!(
-            attachment.route.handler,
-            HostHandler::FilePut
-                | HostHandler::FileGet
-                | HostHandler::FileDelete
-                | HostHandler::FileExpose
-        ) {
-            let files = self
-                .files
-                .as_ref()
-                .ok_or_else(|| Refusal::Failed(anyhow::anyhow!("file handlers unavailable")))?;
-            return files
-                .handle(attachment, caller, payload)
-                .await
-                .map_err(|error| match error.refusal {
-                    Some(refusal) => Refusal::Declared {
-                        code: refusal.code(),
-                        detail: if refusal
-                            == wamn_blobstore::file_route::FileRefusal::PermissionDenied
-                        {
-                            json!({"operation": attachment.reference})
-                        } else {
-                            json!({"field": error.field})
-                        },
-                    },
-                    None => Refusal::Failed(error.into()),
-                });
-        }
         let principal = caller.principal_id();
         match (attachment.route.handler, &self.handlers) {
             (

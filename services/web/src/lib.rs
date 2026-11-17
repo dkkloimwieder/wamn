@@ -53,7 +53,6 @@ struct Route {
     host: String,
     release: String,
     api: String,
-    files: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -331,11 +330,10 @@ async fn respond(
         return Ok(boxed(empty(StatusCode::NOT_FOUND)));
     };
     let path = request.uri().path();
-    let file_request = !route.files.is_empty()
-        && path
-            .strip_prefix("/api/")
-            .and_then(|path| path.split_once('/'))
-            .is_some_and(|(_, path)| path == "files" || path.starts_with("files/"));
+    let file_request = path
+        .strip_prefix("/api/")
+        .and_then(|path| path.split_once('/'))
+        .is_some_and(|(_, path)| path == "files" || path.starts_with("files/"));
     let api_request = path.starts_with("/api/");
     let password_request = path.starts_with("/password/");
     if api_request
@@ -345,8 +343,6 @@ async fn respond(
     {
         let upstream = if password_request {
             identity
-        } else if file_request {
-            route.files.as_str()
         } else {
             route.api.as_str()
         };
@@ -643,7 +639,7 @@ mod tests {
         use serde_json::json;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
-        let route = json!({"host":"app.example", "release":"app", "api":endpoint, "files":""});
+        let route = json!({"host":"app.example", "release":"app", "api":endpoint});
         let web_digest = (format!("sha256:{}", "a".repeat(64)))
             .parse::<wamn_digest::Digest>()
             .unwrap();

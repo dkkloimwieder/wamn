@@ -32,6 +32,7 @@ pub mod bindings;
 pub mod confinement;
 pub mod drain;
 pub mod files;
+mod host;
 pub mod intake;
 pub mod plugin;
 pub mod store;

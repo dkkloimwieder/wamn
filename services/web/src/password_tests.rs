@@ -50,7 +50,8 @@ async fn password_proxy_preserves_the_client_address_and_cookie() -> anyhow::Res
     let discovery_task = tokio::spawn(async move {
         let (stream, _) = discovery.accept().await.unwrap();
         let service = service_fn(|_| async {
-            let route = serde_json::json!({"host":"app.example", "release":"app", "api":"http://unused", "files":""});
+            let route =
+                serde_json::json!({"host":"app.example", "release":"app", "api":"http://unused"});
             let objects = serde_json::json!({"items":[{"metadata":{"name":"app","namespace":"hosts"},"data":{"route.json":route.to_string()}}]});
             Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(
                 serde_json::to_vec(&objects).unwrap(),

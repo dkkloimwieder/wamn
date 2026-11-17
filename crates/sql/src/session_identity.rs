@@ -78,6 +78,8 @@ impl std::fmt::Debug for WamnPostgres {
 }
 
 pub struct WamnPostgres {
+    pub(super) result_signer:
+        std::sync::OnceLock<std::sync::Weak<dyn crate::result_signing::ResultSigner>>,
     pub(super) connection_cache:
         std::sync::OnceLock<Arc<dyn wamn_connection::connection_facts::ConnectionCache>>,
     pub(super) authorization:
@@ -214,6 +216,7 @@ impl WamnPostgres {
     /// Plugin over an explicit [`CredentialProvider`] (multi-project / tests).
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
         Self {
+            result_signer: std::sync::OnceLock::new(),
             authorization: std::sync::OnceLock::new(),
             provider,
             host_projects: std::collections::BTreeMap::new(),
@@ -227,6 +230,36 @@ impl WamnPostgres {
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
         }
+    }
+
+    /// Install native result signing before any workloads bind.
+    pub fn set_result_signer(&self, signer: &Arc<dyn crate::result_signing::ResultSigner>) {
+        self.result_signer
+            .set(Arc::downgrade(signer))
+            .expect("result signer is installed once");
+    }
+
+    /// Hold a file's session lock on the configured platform login until drop.
+    pub async fn lock_file(
+        &self,
+        project: &wamn_registry::ProjectId,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<sqlx::PgConnection> {
+        let (connection, policy) = self
+            .checkout_platform(project, AuthorityClass::Platform)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        // A session lock must never return to a pool still holding its lock.
+        let mut connection = connection.detach();
+        sqlx::query("SELECT set_config('lock_timeout', $1, false)")
+            .bind(format!("{}ms", policy.statement_timeout_ms))
+            .execute(&mut connection)
+            .await?;
+        sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
+            .bind(format!("wamn:file:{id}"))
+            .execute(&mut connection)
+            .await?;
+        Ok(connection)
     }
 
     /// Install the host's authorization memory before binding any workloads.
