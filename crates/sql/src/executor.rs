@@ -150,6 +150,16 @@ impl WamnPostgres {
 
 #[async_trait::async_trait]
 impl wamn_connection::database::ProjectDatabase for WamnPostgres {
+    async fn oauth_connection(
+        &self,
+        project: &wamn_registry::ProjectId,
+    ) -> anyhow::Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
+        let (connection, _) = self
+            .checkout_platform(project, AuthorityClass::Platform)
+            .await?;
+        Ok(connection)
+    }
+
     async fn read_connection(
         &self,
         project: &wamn_registry::ProjectId,

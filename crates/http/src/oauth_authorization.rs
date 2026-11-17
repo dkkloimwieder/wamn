@@ -3,7 +3,7 @@
 use std::{fmt, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
-use serde_json::{Value, json};
+use serde_json::Value;
 use sqlx::{Connection as _, Row as _};
 use url::Url;
 use zeroize::Zeroizing;
@@ -114,16 +114,27 @@ impl Authorization {
         if context["auth_type"] != "oauth2_authorization_code" {
             return Err(refused("unsupported authentication type"));
         }
-        let (url, state, verifier) =
-            crate::oauth::authorize(&context["parameters"]["auth"], &self.redirect_uri)
-                .map_err(|error| failed("invalid authorization parameters", error))?;
+        let (url, state, verifier) = crate::oauth::authorize(
+            &context["parameters"]["auth"],
+            &self.redirect_uri,
+            &format!(
+                "{}/{}",
+                context["project"]
+                    .as_str()
+                    .ok_or_else(|| refused("missing project"))?,
+                context["env"]
+                    .as_str()
+                    .ok_or_else(|| refused("missing environment"))?
+            ),
+        )
+        .map_err(|error| failed("invalid authorization parameters", error))?;
         let verifier = Zeroizing::new(verifier);
         let encrypted = self
             .envelope
             .encrypt(verifier.as_bytes())
             .await
             .map_err(|error| failed("authorization state encryption failed", error))?;
-        sqlx::query("INSERT INTO identity.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at) \
+        sqlx::query("INSERT INTO platform.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at) \
             VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+interval '10 minutes')").bind(&state).bind(connection).bind(generation).bind(&encrypted.ciphertext).bind(&encrypted.wrapped_key).bind(&encrypted.nonce).bind(&encrypted.key_id).bind(caller).execute(&mut **tx)
             .await.map_err(|error| failed("authorization state write failed", error))?;
         Ok(url)
@@ -133,14 +144,13 @@ impl Authorization {
     pub async fn callback(
         &self,
         database: &mut sqlx::PgConnection,
-        org: &wamn_registry::OrgId,
         query: &str,
     ) -> Result<(), Error> {
         let mut tx = database
             .begin()
             .await
             .map_err(|error| failed("callback transaction failed", error))?;
-        match self.exchange(&mut tx, org, query).await {
+        match self.exchange(&mut tx, query).await {
             Ok(()) => tx
                 .commit()
                 .await
@@ -157,7 +167,6 @@ impl Authorization {
     async fn exchange(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        org: &wamn_registry::OrgId,
         query: &str,
     ) -> Result<(), Error> {
         let query: Callback = callback_parameters(query)?;
@@ -175,7 +184,7 @@ impl Authorization {
                 .ok_or_else(|| refused("missing authorization code"))?,
         );
         let row = sqlx::query("SELECT connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at>clock_timestamp() AS unexpired \
-            FROM registry.lock_oauth_authorization($1)").bind(&state).fetch_optional(&mut **tx).await
+            FROM platform.oauth_authorization WHERE state=$1 FOR UPDATE").bind(&state).fetch_optional(&mut **tx).await
             .map_err(|error| failed("authorization state read failed", error))?.ok_or_else(|| refused("unknown or replayed state"))?;
         if !row.get::<bool, _>("unexpired") {
             return Err(refused("expired state"));
@@ -186,21 +195,15 @@ impl Authorization {
             .await
             .map_err(|error| failed("callback identity failed", error))?;
         let connection: uuid::Uuid = row.get("connection_id");
-        let context = wamn_connection::connections::administration::configure(
-            tx,
-            org,
-            "connection.oauth_callback",
-            &json!({"id":connection}),
-        )
-        .await
-        .map_err(|error| failed("connection unavailable", error))?;
+        let context: Value = sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('parameters',g.parameters,'credential',jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id WHERE c.id=$1 AND c.status='active' FOR NO KEY UPDATE OF c")
+            .bind(connection).fetch_optional(&mut **tx).await.map_err(|error|failed("connection unavailable",error))?.ok_or_else(||refused("connection unavailable"))?;
         if context["active_generation"].as_i64() != Some(row.get("generation")) {
             return Err(refused("connection generation changed"));
         }
         if context["auth_type"] != "oauth2_authorization_code" {
             return Err(refused("connection authentication type changed"));
         }
-        sqlx::query("DELETE FROM identity.oauth_authorization WHERE state=$1")
+        sqlx::query("DELETE FROM platform.oauth_authorization WHERE state=$1")
             .bind(&state)
             .execute(&mut **tx)
             .await
@@ -287,6 +290,32 @@ impl Authorization {
             .await
             .map(Zeroizing::new)
     }
+}
+
+/// Select only the project and environment named by an opaque authorization state.
+/// The matching state row in that database remains the authority for the exchange.
+///
+/// # Errors
+/// Returns a refusal for missing, duplicate or malformed state coordinates.
+pub fn callback_target(
+    query: &str,
+) -> Result<(wamn_registry::ProjectId, wamn_registry::EnvName), Error> {
+    let state = callback_parameters(query)?
+        .state
+        .ok_or_else(|| refused("missing state"))?;
+    let mut parts = state.split('/');
+    let project = parts
+        .next()
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| refused("invalid state project"))?;
+    let environment = parts
+        .next()
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| refused("invalid state environment"))?;
+    if parts.next().is_none_or(str::is_empty) || parts.next().is_some() {
+        return Err(refused("invalid state"));
+    }
+    Ok((project, environment))
 }
 
 struct Callback {

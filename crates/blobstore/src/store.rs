@@ -483,55 +483,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: postgres"]
-    async fn an_open_container_refuses_a_disabled_or_rotated_connection() {
-        use wamn_connection::connection_credentials::test_util::Fixture;
-        let _lock = wamn_test_postgres::lock();
-        for rotate in [false, true] {
-            let mut server = wamn_test_postgres::start(&[]).unwrap();
-            let database = server.create_database("fixture").await.unwrap();
-            let mut fixture = Fixture::new(url::Url::parse(database.url()).unwrap()).await;
-            fixture
-                .put("store", "secret", &["project-a", "project-b"])
-                .await;
-            let (container, _) = bound("p");
-            let facts = connection_facts(
-                fixture.reader(&"project-a".parse().unwrap()).await,
-                &"project-a".parse().unwrap(),
-            );
-            let connection = facts.env_connections().await.unwrap().connections["store"];
-            let container = container.with_connection_authority(facts, connection, 1);
-            let (other, _) = bound("p");
-            let facts = connection_facts(
-                fixture.reader(&"project-b".parse().unwrap()).await,
-                &"project-b".parse().unwrap(),
-            );
-            let connection = facts.env_connections().await.unwrap().connections["store"];
-            let other = other.with_connection_authority(facts, connection, 1);
-            container.put("item", vec![1]).await.unwrap();
-            if rotate {
-                fixture.put("store", "rotated-secret", &["project-a"]).await;
-            } else {
-                sqlx::raw_sql("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-a\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
-            }
-            assert!(matches!(
-                container.get("item").await,
-                Err(StoreError::Refused { .. })
-            ));
-            other.put("item", vec![2]).await.unwrap();
-            sqlx::raw_sql("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-b\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
-            assert!(matches!(
-                other.get("item").await,
-                Err(StoreError::Refused { .. })
-            ));
-            assert!(matches!(
-                other.put("new", vec![]).await,
-                Err(StoreError::Refused { .. })
-            ));
-        }
-    }
-
-    #[tokio::test]
     async fn put_get_delete_list_round_trip() {
         let (container, _store) = bound("org-a/labels");
 

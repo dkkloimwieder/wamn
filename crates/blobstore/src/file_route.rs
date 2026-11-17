@@ -185,10 +185,8 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
 /// Login-targeted registry lookup of active store generations.
 /// Existing files use their connection identity without a binding.
 pub struct RegistryFileConnections {
-    pub client: Option<sqlx::PgPool>,
     pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
     pub facts: Arc<wamn_connection::connection_facts::ConnectionFacts>,
-    pub org: wamn_registry::OrgId,
     pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
 }
@@ -203,25 +201,42 @@ impl fmt::Debug for RegistryFileConnections {
 #[async_trait::async_trait]
 impl FileConnections for RegistryFileConnections {
     async fn generations(&self) -> Result<Vec<FileConnection>, FileError> {
-        let client = self.client.as_ref().ok_or_else(|| {
-            failed(
-                "collector",
-                anyhow::anyhow!("connection reader unavailable"),
-            )
-        })?;
         let mut generations = Vec::new();
-        for row in sqlx::query(wamn_registry::sql::EXECUTION_HOST_SRC_FILE_ROUTE_GENERATIONS)
-            .bind(&self.org)
-            .bind(&self.project)
-            .bind(&self.environment)
-            .fetch_all(client)
-            .await?
+        for (name, id) in self
+            .facts
+            .env_connections()
+            .await
+            .map_err(|error| failed("collector", error))?
+            .connections
         {
+            let Some(fact) = self
+                .facts
+                .connection(&id)
+                .await
+                .map_err(|error| failed("collector", error))?
+            else {
+                continue;
+            };
+            if fact.status != wamn_connection::connection_memory::ConnectionStatus::Active {
+                continue;
+            }
+            let generation = self
+                .facts
+                .generation(&id, fact.active_generation)
+                .await
+                .map_err(|error| failed("collector", error))?;
+            if generation.runtime_type != "host"
+                || !matches!(generation.integration_type.as_str(), "gcs" | "s3" | "disk")
+            {
+                continue;
+            }
+            let mut definition = generation.parameters.clone();
+            definition["provider"] = serde_json::json!(generation.integration_type);
             generations.push(FileConnection {
-                id: row.try_get(0)?,
-                name: row.try_get(1)?,
-                generation: row.try_get(2)?,
-                definition: row.try_get(3)?,
+                id: id.to_string(),
+                name,
+                generation: fact.active_generation,
+                definition,
                 read_only: false,
             });
         }

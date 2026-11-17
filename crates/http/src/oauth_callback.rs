@@ -7,8 +7,7 @@ use wasmtime_wasi_http::WasiBody;
 /// Answer only the exact callback path and GET method, without a session.
 pub async fn response(
     oauth: &Authorization,
-    database_url: &str,
-    org: &wamn_registry::OrgId,
+    directory: &std::path::Path,
     request: hyper::Request<WasiBody>,
 ) -> hyper::Response<WasiBody> {
     if request.uri().path() != "/oauth/callback" {
@@ -17,15 +16,23 @@ pub async fn response(
     if request.method() != hyper::Method::GET {
         return page(405, "OAuth callback requires GET");
     }
-    let Ok(mut database) = wamn_postgres::connect(database_url).await else {
+    let query = request.uri().query().unwrap_or_default();
+    let (project, environment) = match crate::oauth_authorization::callback_target(query) {
+        Ok(target) => target,
+        Err(error) => return page(400, &error.reason),
+    };
+    let path = directory.join(wamn_registry::name::control_administration_key(
+        &project,
+        &environment,
+    ));
+    let Ok(database_url) = tokio::fs::read_to_string(path).await else {
+        return page(503, "callback database unavailable");
+    };
+    let Ok(mut database) = wamn_postgres::connect(database_url.trim()).await else {
         return page(503, "callback database unavailable");
     };
     let result = oauth
-        .callback(
-            &mut database,
-            org,
-            request.uri().query().unwrap_or_default(),
-        )
+        .callback(&mut database, request.uri().query().unwrap_or_default())
         .await;
     drop(database);
     match result {

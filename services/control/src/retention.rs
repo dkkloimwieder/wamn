@@ -26,6 +26,9 @@ async fn prune_identities(
         )
         .execute(&mut *transaction)
         .await?;
+        if scope == wamn_provision::migrations::MigrationDatabase::Project {
+            wamn_connection::credential_cleanup::collect(&mut transaction).await?;
+        }
         transaction.commit().await?;
         Ok(())
     })

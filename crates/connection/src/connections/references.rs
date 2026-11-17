@@ -9,7 +9,6 @@ use super::{ConnectionError, refuse};
 fn projection_relation(group: &str) -> Result<&'static str, ConnectionError> {
     match group {
         "connection" => Ok("platform.connection"),
-        "integration" => Ok("platform.integration"),
         "external_system" => Ok("platform.external_system"),
         _ => Err(refuse("invalid_input", "operation")),
     }
@@ -55,36 +54,32 @@ pub async fn refuse_environment_references(
         }
     } else if group == "external_system" {
         // A foreign key identifies every record source, including application tables.
-        for row in sqlx::query("SELECT quote_ident(n.nspname)||'.'||quote_ident(t.relname), quote_ident(a.attname) \
+        for row in sqlx::query(
+            "SELECT quote_ident(n.nspname)||'.'||quote_ident(t.relname), quote_ident(a.attname) \
              FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid \
              JOIN pg_namespace n ON n.oid=t.relnamespace \
              JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1] \
              WHERE c.contype='f' AND c.confrelid='platform.external_system'::regclass \
-               AND cardinality(c.conkey)=1 AND NOT (n.nspname='platform' AND t.relname='integration')").fetch_all(&mut **tx).await? {
+               AND cardinality(c.conkey)=1",
+        )
+        .fetch_all(&mut **tx)
+        .await?
+        {
             let relation: String = row.get(0);
             let column: String = row.get(1);
-            if sqlx::query(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT FROM {relation} WHERE {column}=$1::text::uuid)").clone())).bind(id).fetch_one(&mut **tx).await?.get::<bool, _>(0) {
+            if sqlx::query(sqlx::AssertSqlSafe(
+                format!("SELECT EXISTS(SELECT FROM {relation} WHERE {column}=$1::text::uuid)")
+                    .clone(),
+            ))
+            .bind(id)
+            .fetch_one(&mut **tx)
+            .await?
+            .get::<bool, _>(0)
+            {
                 return Err(refuse("referenced", "record"));
             }
         }
     }
-    Ok(())
-}
-
-/// Remove only the deleted identity from each database after the system commit.
-pub async fn remove_projection(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    group: &str,
-    id: &str,
-) -> Result<(), ConnectionError> {
-    let relation = projection_relation(group)?;
-    sqlx::query(sqlx::AssertSqlSafe(
-        format!("DELETE FROM {relation} WHERE id=$1::text::uuid").clone(),
-    ))
-    .bind(id)
-    .execute(&mut **tx)
-    .await
-    .map(|result| result.rows_affected())?;
     Ok(())
 }
 

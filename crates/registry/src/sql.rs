@@ -206,19 +206,10 @@ pub fn close_capture_gap_sql() -> &'static str {
      RETURNING resync_at"
 }
 
-/// Delete every connection of one environment, with no reference refusal, and
-/// disable their service principals. Generations, credential rows and the
-/// token row cascade. Params: `$1` org, `$2` project, `$3` env.
-/// Returns the number of removed credentials.
+/// Disable an environment's connection principals and remove their control links.
+/// Params: org, project, environment. Returns the number of removed links.
 pub fn delete_environment_connections_sql() -> &'static str {
-    "WITH removed AS ( \
-       DELETE FROM registry.connection WHERE org = $1 AND project = $2 AND env = $3 \
-       RETURNING id, service_principal_id), \
-     disabled AS ( \
-       UPDATE identity.principals SET status = 'disabled', disabled_at = transaction_timestamp() \
-       WHERE id IN (SELECT service_principal_id FROM removed) AND status <> 'disabled') \
-     SELECT count(*) FROM identity.credential k \
-     JOIN removed r ON r.id = k.connection_id"
+    "WITH removed AS (DELETE FROM registry.connection_principal WHERE org=$1 AND project=$2 AND env=$3 RETURNING principal_id), disabled AS (UPDATE identity.principals SET status='disabled',disabled_at=transaction_timestamp() WHERE id IN (SELECT principal_id FROM removed) AND status<>'disabled') SELECT count(*) FROM removed"
 }
 /// Environment exclusion key shared by lifecycle operations and CDC publication.
 /// Acquire this key before an application key or a database mutation lock.
@@ -238,19 +229,7 @@ pub const ENVIRONMENT_DISPOSABLE: &str =
     "SELECT disposable FROM registry.environments WHERE org=$1 AND env=$2";
 
 /// crates/execution-host/src/credential_cleanup.rs::collect registry statement.
-pub const EXECUTION_HOST_SRC_CREDENTIAL_CLEANUP_COLLECT: &str =
-    "SELECT store,ref,version FROM registry.retired_connection_credential($1)";
-
-/// crates/execution-host/src/file_route.rs::generations registry statement.
-pub const EXECUTION_HOST_SRC_FILE_ROUTE_GENERATIONS: &str = "SELECT connection_id::text, connection_name, generation, parameters FROM registry.read_file_connection($1,$2,$3)";
-
-/// crates/execution-host/src/control_route/integration.rs::integration_administration_in registry statement.
-pub const EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND project=$2 \
-             AND ($3::text IS NULL OR env=$3) ORDER BY env";
-
-/// crates/connection/src/oauth_token.rs::lock registry statement.
-pub const PLATFORM_RUNTIME_SRC_OAUTH_TOKEN_LOCK: &str =
-    "SELECT registry.lock_oauth_connection($1,$2,$3,$4)";
+pub const EXECUTION_HOST_SRC_CREDENTIAL_CLEANUP_COLLECT: &str = "SELECT k.store,k.ref,k.version FROM platform.credential k JOIN platform.connection c ON c.id=k.connection_id JOIN platform.connection_generation active ON (active.connection_id,active.generation)=(c.id,c.active_generation) JOIN LATERAL (SELECT max(generation) AS generation FROM platform.connection_generation WHERE connection_id=c.id AND credential_id=k.id) last_use ON true JOIN LATERAL (SELECT created_at FROM platform.connection_generation WHERE connection_id=c.id AND generation>last_use.generation ORDER BY generation LIMIT 1) successor ON true WHERE active.credential_id IS DISTINCT FROM k.id AND successor.created_at<now()-interval '5 minutes'";
 
 /// crates/identity/src/application.rs::project_authority registry statement.
 pub const IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY: &str =
@@ -320,22 +299,6 @@ pub const IDENTITY_PLATFORM_SRC_ORG_ENV_IN_PROJECT_SQL: &str = "SELECT EXISTS (S
 pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_IN_ORG_SQL: &str =
     "SELECT EXISTS (SELECT 1 FROM registry.projects WHERE org = $1 AND id = $2)";
 
-/// crates/identity/src/connections/administration.rs::configure registry statement.
-pub const IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE: &str =
-    "SELECT registry.configure_connection($1,$2,$3::text::jsonb)::text";
-
-/// crates/identity/src/connections/administration.rs::configure registry statement.
-pub const IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_2: &str =
-    "SELECT registry.configure_integration_type($1,$2,$3::text::jsonb)::text";
-
-/// crates/identity/src/connections/administration.rs::configure registry statement.
-pub const IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_3: &str =
-    "SELECT registry.configure_integration($1,$2,$3::text::jsonb)::text";
-
-/// crates/identity/src/connections/administration.rs::configure registry statement.
-pub const IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_4: &str =
-    "SELECT registry.configure_external_system($1,$2,$3::text::jsonb)::text";
-
 /// crates/dev/src/pat_secrets_tests.rs::auth_drops_mint_pat_records_the_committed_project_role_drop registry statement.
 pub const CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMMITTED_PROJECT_ROLE_DROP: &str = "INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('org', 'pooled', 'test'); INSERT INTO registry.projects (org, id) VALUES ('org', 'project')";
 
@@ -343,13 +306,13 @@ pub const CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMM
 pub const CONTROL_DEV_SRC_DEV_TARGET_DATABASE_RECORDED_DISPOSABLE: &str = "SELECT disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org=$1 AND project=$2 AND env=$3";
 
 /// crates/provision/src/sql.rs::control_surface_grants_sql registry statement.
-pub const CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL: &str = " GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid), identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_control;";
+pub const CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL: &str = " GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_control;";
 
 /// Grant the functions required to initialize control row policies for a reader.
 /// The caller supplies a quoted role identifier.
 pub fn grant_control_policy_execute_sql(role: &str) -> String {
     format!(
-        " GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid) TO {role};",
+        " GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid) TO {role};",
     )
 }
 
@@ -384,10 +347,6 @@ pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_STATUS_STRANDED_RUNS: &str =
 /// crates/environment/src/environment/delete.rs::delete_locked registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED: &str = "SELECT instance_suffix, policy_name FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";
-
-/// crates/environment/src/environment/bindings.rs::analyse registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_BINDINGS_ANALYSE: &str =
-    "SELECT * FROM registry.resolve_environment_connection($1,$2,$3,$4,$5,$6)";
 
 /// crates/environment/src/environment/delete/rows.rs::delete_registry_rows registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS: &str =

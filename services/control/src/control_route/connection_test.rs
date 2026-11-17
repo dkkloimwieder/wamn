@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use wamn_catalog::HostAttachment;
+use wamn_connection::connections::administration;
 use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::Store as _;
-use wamn_connection::connections::administration;
 
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 
@@ -65,11 +65,17 @@ impl ControlRoutes<'_> {
             .expect("connection request requires an environment");
         let context = {
             let mut writer = self.writer.lock().await;
-            let mut transaction = self
+            let authorized = self
                 .begin_in_environment(&mut writer, attachment, caller, Some(&project), Some(env))
                 .await?;
+            authorized.commit().await?;
+            let urls = self.logins(&[(project.clone(), env.clone())])?;
+            let mut client = wamn_postgres::connect(&urls[0]).await?;
+            let mut transaction =
+                wamn_identity::transaction::read_connection(&mut client, caller).await?;
             let context = administration::configure(
                 &mut transaction,
+                &mut writer,
                 self.org,
                 "connection.test",
                 &json!({"project":project,"env":env,"name":request["name"]}),

@@ -1,7 +1,9 @@
-//! Project-targeted integration administration and private credential writes.
+//! Connection administration in one project database, with system-owned type metadata.
 
 use serde_json::{Value, json};
-use sqlx::Row as _;
+use sqlx::{Connection as _, Row as _};
+use uuid::Uuid;
+use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::{Store, StoreVersion};
 
 use super::{ConnectionError, refuse};
@@ -14,101 +16,35 @@ fn store_error(source: wamn_kubernetes::Error) -> ConnectionError {
     }
 }
 
-/// Execute a route with a store selected from the target environment.
-pub async fn execute(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &wamn_registry::OrgId,
-    operation: &str,
-    payload: &str,
-) -> Result<Value, ConnectionError> {
-    execute_in(tx, org, operation, payload, None, None).await
-}
-
-/// The store injection point for administration tests.
-pub async fn execute_with_store(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &wamn_registry::OrgId,
-    operation: &str,
-    payload: &str,
-    store: Option<&dyn Store>,
-) -> Result<Value, ConnectionError> {
-    execute_in(tx, org, operation, payload, store, None).await
-}
-
-/// Execute a connection write against every version retained by live releases.
-pub async fn execute_in_environment(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    environment: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &wamn_registry::OrgId,
-    operation: &str,
-    payload: &str,
-) -> Result<Value, ConnectionError> {
-    execute_in(tx, org, operation, payload, None, Some(environment)).await
-}
-
-async fn execute_in(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &wamn_registry::OrgId,
-    operation: &str,
-    payload: &str,
-    store: Option<&dyn Store>,
-    environment: Option<&mut sqlx::Transaction<'_, sqlx::Postgres>>,
-) -> Result<Value, ConnectionError> {
-    let mut request: Value =
-        serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))?;
-    validate_request(operation, &request)?;
-    // Remove the value before any database call, including reads and lock queries.
-    let credential = request.as_object_mut().unwrap().remove("credential");
-    let mut result = if matches!(
-        operation,
-        "connection.write" | "connection.copy" | "connection.set_credential"
-    ) {
-        generation(
-            tx,
-            org,
-            operation,
-            (request.clone(), credential),
-            store,
-            environment,
-        )
-        .await?
-    } else {
-        configure(tx, org, operation, &request).await?
-    };
-    if request["project"]
-        .as_str()
-        .and_then(|project| project.parse::<wamn_registry::ProjectId>().ok())
-        .is_some()
-        && matches!(operation, "integration.enable" | "integration.disable")
-        && let Some(result) = result.as_object_mut()
-    {
-        let _ = result.remove("connections");
-    }
-    Ok(result)
-}
-
 /// Validate the non-secret request shape before any database call.
 pub fn validate_request(operation: &str, request: &Value) -> Result<(), ConnectionError> {
     let object = request
         .as_object()
         .ok_or_else(|| refuse("invalid_input", "value"))?;
     let allowed: &[&str] = match operation {
-        "integration_type.list" | "external_system.list" | "integration.list" => &["project"],
+        "integration_type.list" => &["project"],
+        "external_system.list" | "integration.list" | "connection.list" => &["project", "env"],
         "external_system.write"
         | "external_system.delete"
         | "integration.get"
         | "integration.enable"
         | "integration.disable"
-        | "integration.delete" => &["project", "name"],
-        "integration.write" => &[
+        | "integration.delete"
+        | "connection.authorize"
+        | "connection.get"
+        | "connection.enable"
+        | "connection.disable"
+        | "connection.delete" => &["project", "env", "name"],
+        "connection.write" => &[
             "project",
+            "env",
             "name",
             "integration_type",
             "auth_type",
             "external_system",
+            "parameters",
+            "credential",
         ],
-        "connection.list" => &["project", "env"],
-        "connection.write" => &["project", "env", "name", "parameters", "credential"],
         "connection.test" => &[
             "project",
             "env",
@@ -119,11 +55,6 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
         ],
         "connection.copy" => &["project", "env", "name", "source_env"],
         "connection.set_credential" => &["project", "env", "name", "credential"],
-        "connection.authorize"
-        | "connection.get"
-        | "connection.enable"
-        | "connection.disable"
-        | "connection.delete" => &["project", "env", "name"],
         _ => return Err(refuse("invalid_input", "operation")),
     };
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {
@@ -131,8 +62,8 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
     }
     for field in [
         "project",
-        "name",
         "env",
+        "name",
         "integration_type",
         "auth_type",
         "source_env",
@@ -161,21 +92,282 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
     if operation == "connection.test"
         && request
             .get("version")
-            .filter(|value| !value.is_null())
-            .is_some_and(|value| {
-                value
-                    .as_i64()
-                    .is_none_or(|version| version <= 0 || version > i64::from(i32::MAX))
-            })
+            .filter(|v| !v.is_null())
+            .is_some_and(|v| v.as_i64().is_none_or(|v| v <= 0 || v > i64::from(i32::MAX)))
     {
         return Err(refuse("invalid_input", "version"));
     }
     Ok(())
 }
 
-/// Call only the security-definer family that owns the requested group.
-pub async fn configure(
+/// Execute against the selected project; source is the separately opened copy source.
+pub async fn execute(
+    project: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    system: &mut sqlx::PgConnection,
+    caller: PrincipalId,
+    org: &wamn_registry::OrgId,
+    operation: &str,
+    payload: &str,
+    source: Option<&mut sqlx::PgConnection>,
+) -> Result<Value, ConnectionError> {
+    let mut request: Value =
+        serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))?;
+    validate_request(operation, &request)?;
+    let credential = request
+        .as_object_mut()
+        .expect("validated object")
+        .remove("credential");
+    if matches!(
+        operation,
+        "connection.write" | "connection.copy" | "connection.set_credential"
+    ) {
+        let existing: Option<Value> = sqlx::query_scalar(
+            "SELECT to_jsonb(c) FROM platform.connection c WHERE name=$1 FOR UPDATE",
+        )
+        .bind(request["name"].as_str())
+        .fetch_optional(&mut **project)
+        .await?;
+        let context = match existing {
+            Some(row) => row,
+            None if operation == "connection.write" => {
+                json!({"id":Uuid::new_v4(),"integration_type":request["integration_type"],"auth_type":request["auth_type"]})
+            }
+            None => return Err(refuse("not_found", "connection")),
+        };
+        let id: Uuid = serde_json::from_value(context["id"].clone())
+            .expect("UUID from PostgreSQL or generator");
+        let new = context["active_generation"].is_null();
+        let metadata: Option<Value> = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('auth_schema',a.parameter_schema,'credential_schema',a.credential_schema) FROM registry.integration_type t JOIN registry.integration_type_auth allowed ON allowed.integration_type=t.code JOIN registry.auth_type a ON a.code=allowed.auth_type WHERE t.code=$1 AND a.code=$2")
+            .bind(context["integration_type"].as_str()).bind(context["auth_type"].as_str()).fetch_optional(&mut *system).await?;
+        let metadata = metadata.ok_or_else(|| refuse("invalid_input", "auth_type"))?;
+        let versions: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(v) FROM registry.integration_type_version v WHERE integration_type=$1 ORDER BY version")
+            .bind(context["integration_type"].as_str()).fetch_all(&mut *system).await?;
+        let schemas: Vec<Value> = versions
+            .iter()
+            .map(|v| v["parameter_schema"].clone())
+            .collect();
+        if schemas.is_empty() {
+            return Err(refuse("invalid_input", "integration_type"));
+        }
+        let previous: Option<(Value,Option<Uuid>)> = sqlx::query_as("SELECT parameters,credential_id FROM platform.connection_generation WHERE connection_id=$1 AND generation=$2")
+            .bind(id).bind(context["active_generation"].as_i64()).fetch_optional(&mut **project).await?;
+        if operation == "connection.copy" {
+            let source = source.ok_or_else(|| refuse("invalid_input", "source_env"))?;
+            let copied: Option<(String,String,Value)> = sqlx::query_as("SELECT c.integration_type,c.auth_type,g.parameters FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1")
+                .bind(request["name"].as_str()).fetch_optional(source).await?;
+            let (kind, auth, parameters) =
+                copied.ok_or_else(|| refuse("not_found", "connection"))?;
+            if context["integration_type"] != kind || context["auth_type"] != auth {
+                return Err(refuse("immutable_field", "integration_type"));
+            }
+            request["parameters"] = parameters;
+        } else if operation == "connection.set_credential" {
+            request["parameters"] = previous.as_ref().expect("existing generation").0.clone();
+        }
+        validate_connection_parameters(
+            &request["parameters"],
+            previous.as_ref().map(|p| &p.0),
+            &schemas,
+            &metadata["auth_schema"],
+        )?;
+        let published: Value = versions
+            .iter()
+            .map(|v| (v["version"].to_string(), v["parameter_schema"].clone()))
+            .collect();
+        for schema in required_connection_versions(project, &id.to_string(), &published).await? {
+            validate_version_parameters(&request["parameters"], &schema)?;
+        }
+        let external: Option<Uuid> = if let Some(name) = request["external_system"].as_str() {
+            Some(
+                sqlx::query_scalar("SELECT id FROM platform.external_system WHERE name=$1")
+                    .bind(name)
+                    .fetch_optional(&mut **project)
+                    .await?
+                    .ok_or_else(|| refuse("not_found", "external_system"))?,
+            )
+        } else {
+            None
+        };
+        if operation == "connection.write"
+            && !new
+            && (context["integration_type"] != request["integration_type"]
+                || context["auth_type"] != request["auth_type"]
+                || context["external_system_id"] != json!(external))
+        {
+            return Err(refuse("immutable_field", "connection"));
+        }
+        let auth = context["auth_type"].as_str().expect("stored auth type");
+        let stored = if let Some(credential) = credential {
+            if auth == "none" {
+                return Err(refuse("invalid_input", "credential"));
+            }
+            let value = credential
+                .as_str()
+                .ok_or_else(|| refuse("invalid_input", "credential"))?;
+            let parsed: Value =
+                serde_json::from_str(value).map_err(|_| refuse("invalid_input", "credential"))?;
+            if !validates(&parsed, &metadata["credential_schema"]) {
+                return Err(refuse("invalid_input", "credential"));
+            }
+            let target = wamn_registry::Triple::new(
+                org.to_owned(),
+                request["env"]
+                    .as_str()
+                    .expect("validated env")
+                    .parse()
+                    .map_err(|_| refuse("invalid_input", "env"))?,
+                request["project"]
+                    .as_str()
+                    .expect("validated project")
+                    .parse()
+                    .map_err(|_| refuse("invalid_input", "project"))?,
+            );
+            let store =
+                wamn_kubernetes::kubernetes::KubernetesStore::in_cluster().map_err(store_error)?;
+            Some(store_credential(&store, &target, value).await?)
+        } else {
+            None
+        };
+        let credential_id = stored
+            .as_ref()
+            .map(|v| serde_json::from_value::<Uuid>(v["id"].clone()).expect("generated UUID"))
+            .or_else(|| previous.as_ref().and_then(|p| p.1));
+        if (auth == "none") != credential_id.is_none() {
+            return Err(refuse("invalid_input", "credential"));
+        }
+        if new {
+            let mut tx = system.begin().await?;
+            bind_actor(&mut tx, caller, operation).await?;
+            let target: Option<Uuid> = sqlx::query_scalar(
+                "SELECT target_id FROM registry.environments WHERE org=$1 AND env=$2",
+            )
+            .bind(org)
+            .bind(request["env"].as_str())
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten();
+            let target = target.ok_or_else(|| refuse("invalid_input", "target_id"))?;
+            let mut resource = metadata["resource_key_template"]
+                .as_str()
+                .map(str::to_owned);
+            if let Some(resource) = &mut resource {
+                let template = resource.clone();
+                for part in template.split('{').skip(1) {
+                    let field = part
+                        .split_once('}')
+                        .ok_or_else(|| refuse("invalid_input", "resource_key"))?
+                        .0;
+                    if !schemas
+                        .iter()
+                        .any(|s| s["properties"][field]["immutable"] == true)
+                    {
+                        return Err(refuse("invalid_input", "resource_key"));
+                    }
+                    let value: Option<String> = sqlx::query_scalar("SELECT $1::jsonb ->> $2::text")
+                        .bind(&request["parameters"])
+                        .bind(field)
+                        .fetch_one(&mut **project)
+                        .await?;
+                    let value = value.ok_or_else(|| refuse("invalid_input", "resource_key"))?;
+                    *resource = resource.replace(&format!("{{{field}}}"), &value);
+                }
+            }
+            let principal = Uuid::new_v4();
+            sqlx::query("INSERT INTO registry.connection_principal(principal_id,org,project,env) VALUES($1,$2,$3,$4)")
+                .bind(principal).bind(org).bind(request["project"].as_str()).bind(request["env"].as_str()).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO identity.principals(id,type,subject,display_name) VALUES($1,'service',$2,$3)")
+                .bind(principal).bind(format!("connection-{id}")).bind(request["name"].as_str()).execute(&mut *tx).await?;
+            tx.commit().await?;
+            sqlx::query("INSERT INTO platform.connection(id,name,integration_type,auth_type,external_system_id,target_id,resource_key,active_generation,service_principal_id) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8)")
+                .bind(id).bind(request["name"].as_str()).bind(context["integration_type"].as_str()).bind(auth).bind(external).bind(target).bind(resource).bind(principal).execute(&mut **project).await.map_err(connection_write_error)?;
+        }
+        let next: i64=sqlx::query_scalar("SELECT coalesce(max(generation),0)+1 FROM platform.connection_generation WHERE connection_id=$1").bind(id).fetch_one(&mut **project).await?;
+        if let Some(stored) = &stored {
+            sqlx::query("INSERT INTO platform.credential(id,connection_id,store,ref,version,hint) VALUES($1,$2,$3,$4,$5,$6)")
+                .bind(credential_id).bind(id).bind(stored["store"].as_str()).bind(stored["ref"].as_str()).bind(stored["version"].as_str()).bind(stored["hint"].as_str()).execute(&mut **project).await?;
+        }
+        if previous.as_ref().map(|p| &p.0["auth"]) != Some(&request["parameters"]["auth"])
+            || (stored.is_some()
+                && matches!(
+                    auth,
+                    "oauth2_client_credentials" | "oauth2_client_credentials_jwt"
+                ))
+        {
+            sqlx::query("DELETE FROM platform.oauth_token WHERE connection_id=$1")
+                .bind(id)
+                .execute(&mut **project)
+                .await?;
+        } else if stored.is_some() && auth == "oauth2_authorization_code" {
+            sqlx::query(
+                "UPDATE platform.oauth_token SET expires_at='-infinity' WHERE connection_id=$1",
+            )
+            .bind(id)
+            .execute(&mut **project)
+            .await?;
+        }
+        sqlx::query("DELETE FROM platform.oauth_authorization WHERE connection_id=$1")
+            .bind(id)
+            .execute(&mut **project)
+            .await?;
+        sqlx::query("INSERT INTO platform.connection_generation(connection_id,generation,parameters,credential_id) VALUES($1,$2,$3,$4)")
+            .bind(id).bind(next).bind(&request["parameters"]).bind(credential_id).execute(&mut **project).await?;
+        sqlx::query("UPDATE platform.connection SET active_generation=$2 WHERE id=$1")
+            .bind(id)
+            .bind(next)
+            .execute(&mut **project)
+            .await?;
+        return summary(project, system, org, &request, id).await;
+    }
+    configure(project, system, org, operation, &request).await
+}
+
+fn connection_write_error(error: sqlx::Error) -> ConnectionError {
+    if error
+        .as_database_error()
+        .is_some_and(sqlx::error::DatabaseError::is_unique_violation)
+    {
+        refuse("resource_in_use", "resource_key")
+    } else {
+        error.into()
+    }
+}
+
+async fn bind_actor(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    caller: PrincipalId,
+    operation: &str,
+) -> Result<(), ConnectionError> {
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)").bind(caller).bind(operation).execute(&mut **tx).await?;
+    Ok(())
+}
+
+/// Disable and unlink the principal after the project delete has committed.
+pub async fn finish_delete(
+    system: &mut sqlx::PgConnection,
+    caller: PrincipalId,
+    org: &wamn_registry::OrgId,
+    result: &Value,
+) -> Result<(), ConnectionError> {
+    if let Some(principal) = result["principal_id"].as_str() {
+        let principal: Uuid = principal.parse().expect("stored UUID");
+        let mut tx = system.begin().await?;
+        bind_actor(&mut tx, caller, "connection.delete").await?;
+        sqlx::query("UPDATE identity.principals SET status='disabled',disabled_at=transaction_timestamp() WHERE id=$1 AND EXISTS(SELECT FROM registry.connection_principal WHERE principal_id=$1 AND org=$2)")
+            .bind(principal).bind(org).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM registry.connection_principal WHERE principal_id=$1 AND org=$2")
+            .bind(principal)
+            .bind(org)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+    }
+    super::references::destroy_credentials(&result["credentials"]).await
+}
+
+/// Read system type metadata and project rows without a system connection function.
+pub async fn configure(
+    project: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    system: &mut sqlx::PgConnection,
     org: &wamn_registry::OrgId,
     operation: &str,
     request: &Value,
@@ -183,181 +375,137 @@ pub async fn configure(
     if request.get("credential").is_some() {
         return Err(refuse("invalid_input", "credential"));
     }
-    let sql = match operation.split_once('.').map(|(group, _)| group) {
-        Some("external_system") => {
-            wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_4
-        }
-        Some("integration") => {
-            wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_3
-        }
-        Some("integration_type") => {
-            wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_2
-        }
-        Some("connection") => {
-            wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE
-        }
-        _ => return Err(refuse("invalid_input", "operation")),
-    };
-    let text: String = sqlx::query(sqlx::AssertSqlSafe((sql).to_string()))
-        .bind(org)
-        .bind(operation)
-        .bind(request.to_string())
-        .fetch_one(&mut **tx)
-        .await?
-        .get(0);
-    let result: Value = serde_json::from_str(&text).expect("PostgreSQL JSON");
-    if let Some(code) = result["error"].as_str() {
-        let code = match code {
-            "invalid_input" => "invalid_input",
-            "not_found" => "not_found",
-            "immutable_field" => "immutable_field",
-            "unsupported_auth_type" => "unsupported_auth_type",
-            "resource_in_use" => "resource_in_use",
-            "referenced" => "referenced",
-            _ => "database_error",
-        };
-        let field = match result["field"].as_str() {
-            Some("name") => "name",
-            Some("project") => "project",
-            Some("integration") => "integration",
-            Some("connection") => "connection",
-            Some("external_system") => "external_system",
-            Some("auth_type") => "auth_type",
-            Some("target_id") => "target_id",
-            Some("resource_key") => "resource_key",
-            Some("credential") => "credential",
-            _ => "value",
-        };
-        return Err(refuse(code, field));
+    if operation == "integration_type.list" {
+        return Ok(
+            sqlx::query_scalar("SELECT registry.configure_integration_type($1,$2,$3)")
+                .bind(org)
+                .bind(operation)
+                .bind(request)
+                .fetch_one(system)
+                .await?,
+        );
     }
-    Ok(result)
+    let name = request["name"].as_str();
+    if operation.starts_with("external_system.") {
+        return match operation {
+            "external_system.list" => Ok(sqlx::query_scalar("SELECT jsonb_build_object('external_systems',coalesce(jsonb_agg(to_jsonb(s) ORDER BY name),'[]'::jsonb)) FROM platform.external_system s").fetch_one(&mut **project).await?),
+            "external_system.write" => { sqlx::query("INSERT INTO platform.external_system(name) VALUES($1) ON CONFLICT(name) DO NOTHING").bind(name).execute(&mut **project).await?; Ok(json!({"name":name})) },
+            "external_system.delete" => {
+                let id: Uuid=sqlx::query_scalar("SELECT id FROM platform.external_system WHERE name=$1 FOR UPDATE").bind(name).fetch_optional(&mut **project).await?.ok_or_else(||refuse("not_found","name"))?;
+                super::references::refuse_environment_references(project,"external_system",&id.to_string()).await?;
+                sqlx::query("DELETE FROM platform.external_system WHERE id=$1").bind(id).execute(&mut **project).await?;
+                Ok(json!({"name":name}))
+            },
+            _ => Err(refuse("invalid_input","operation")),
+        };
+    }
+    if matches!(operation, "connection.list" | "integration.list") {
+        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM platform.connection ORDER BY name")
+            .fetch_all(&mut **project)
+            .await?;
+        let mut rows = Vec::new();
+        for id in ids {
+            rows.push(summary(project, system, org, request, id).await?);
+        }
+        return Ok(if operation == "connection.list" {
+            json!({"connections":rows})
+        } else {
+            json!({"integrations":rows})
+        });
+    }
+    let lookup = if operation == "connection.test" {
+        "SELECT id FROM platform.connection WHERE name=$1"
+    } else {
+        "SELECT id FROM platform.connection WHERE name=$1 FOR NO KEY UPDATE"
+    };
+    let id: Uuid = sqlx::query_scalar(lookup)
+        .bind(name)
+        .fetch_optional(&mut **project)
+        .await?
+        .ok_or_else(|| refuse("not_found", "connection"))?;
+    let mut row = summary(project, system, org, request, id).await?;
+    match operation {
+        "connection.get" | "integration.get" => Ok(row),
+        "connection.authorize" => {
+            if row["auth_type"] != "oauth2_authorization_code" {
+                return Err(refuse("unsupported_auth_type", "auth_type"));
+            }
+            Ok(row)
+        }
+        "connection.test" => {
+            if row["auth_type"] == "oauth2_authorization_code" {
+                return Err(refuse("unsupported_auth_type", "auth_type"));
+            }
+            let metadata: Value=sqlx::query_scalar("SELECT jsonb_build_object('runtime_type',t.runtime_type,'auth_schema',a.parameter_schema,'credential_schema',a.credential_schema,'versions',(SELECT jsonb_object_agg(v.version,to_jsonb(v)) FROM registry.integration_type_version v WHERE v.integration_type=t.code),'schemas',(SELECT jsonb_agg(parameter_schema ORDER BY version) FROM registry.integration_type_version WHERE integration_type=t.code)) FROM registry.integration_type t CROSS JOIN registry.auth_type a WHERE t.code=$1 AND a.code=$2")
+                .bind(row["integration_type"].as_str()).bind(row["auth_type"].as_str()).fetch_one(system).await?;
+            for (key, value) in metadata.as_object().expect("object") {
+                row[key] = value.clone();
+            }
+            row["credential"] = credential_reference(project, id).await?;
+            Ok(row)
+        }
+        "connection.enable"
+        | "integration.enable"
+        | "connection.disable"
+        | "integration.disable" => {
+            sqlx::query("UPDATE platform.connection SET status=$2 WHERE id=$1")
+                .bind(id)
+                .bind(if operation.ends_with(".enable") {
+                    "active"
+                } else {
+                    "disabled"
+                })
+                .execute(&mut **project)
+                .await
+                .map_err(connection_write_error)?;
+            Ok(
+                json!({"id":id,"name":name,"env":request["env"],"principal_id":row["service_principal_id"]}),
+            )
+        }
+        "connection.delete" | "integration.delete" => {
+            super::references::refuse_environment_references(
+                project,
+                "connection",
+                &id.to_string(),
+            )
+            .await?;
+            let credentials: Value=sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('store',store,'ref',ref,'version',version)),'[]'::jsonb) FROM platform.credential WHERE connection_id=$1").bind(id).fetch_one(&mut **project).await?;
+            sqlx::query("DELETE FROM platform.connection WHERE id=$1")
+                .bind(id)
+                .execute(&mut **project)
+                .await?;
+            Ok(
+                json!({"id":id,"name":name,"env":request["env"],"principal_id":row["service_principal_id"],"credentials":credentials}),
+            )
+        }
+        _ => Err(refuse("invalid_input", "operation")),
+    }
 }
 
-async fn generation(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &wamn_registry::OrgId,
-    operation: &str,
-    (mut request, credential): (Value, Option<Value>),
-    store: Option<&dyn Store>,
-    environment: Option<&mut sqlx::Transaction<'_, sqlx::Postgres>>,
+async fn credential_reference(
+    project: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: Uuid,
 ) -> Result<Value, ConnectionError> {
-    request["action"] = operation.into();
-    let context = configure(tx, org, "connection.prepare", &request).await?;
-    let schemas = context["schemas"]
-        .as_array()
-        .filter(|schemas| !schemas.is_empty())
-        .ok_or_else(|| refuse("invalid_input", "integration_type"))?;
-    if operation == "connection.copy" {
-        let mut source = request.clone();
-        source["env"] = source["source_env"].take();
-        request["parameters"] = configure(tx, org, "connection.source_parameters", &source).await?;
-    } else if operation == "connection.set_credential" {
-        request["parameters"] = context["parameters"].clone();
-    }
-    validate_connection_parameters(
-        &request["parameters"],
-        context.get("parameters"),
-        schemas,
-        &context["auth_schema"],
-    )?;
-    let required = if let Some(environment) = environment {
-        required_connection_versions(
-            environment,
-            context["id"].as_str().expect("connection id"),
-            &context["versions"],
-        )
-        .await?
-    } else {
-        Vec::new()
-    };
-    for schema in required {
-        validate_version_parameters(&request["parameters"], &schema)?;
-    }
-    let auth = context["auth_type"].as_str().expect("database auth type");
-    let stored = if let Some(credential) = credential {
-        if auth == "none" {
-            return Err(refuse("invalid_input", "credential"));
-        }
-        let value = credential
-            .as_str()
-            .ok_or_else(|| refuse("invalid_input", "credential"))?;
-        let parsed: Value =
-            serde_json::from_str(value).map_err(|_| refuse("invalid_input", "credential"))?;
-        if !validates(&parsed, &context["credential_schema"]) {
-            return Err(refuse("invalid_input", "credential"));
-        }
-        let owned_store;
-        let store = if let Some(store) = store {
-            store
-        } else {
-            owned_store =
-                wamn_kubernetes::kubernetes::KubernetesStore::in_cluster().map_err(store_error)?;
-            &owned_store
-        };
-        Some(
-            store_credential(
-                store,
-                &wamn_registry::Triple::new(
-                    org.clone(),
-                    request["env"]
-                        .as_str()
-                        .unwrap()
-                        .parse()
-                        .map_err(|_| refuse("invalid_input", "env"))?,
-                    request["project"]
-                        .as_str()
-                        .unwrap()
-                        .parse()
-                        .map_err(|_| refuse("invalid_input", "project"))?,
-                ),
-                value,
-            )
-            .await?,
-        )
-    } else {
-        if auth != "none" && context["credential_id"].is_null() {
-            return Err(refuse("invalid_input", "credential"));
-        }
-        None
-    };
-    if let Some(stored) = &stored {
-        request["stored_credential"] = stored.clone();
-    }
-    // The generation transaction also invalidates OAuth tokens and pending authorizations.
-    let result = configure(tx, org, "connection.finish", &request).await;
-    if result.is_err()
-        && let Some(stored) = stored
-    {
-        if let Some(store) = store {
-            let _ = store
-                .destroy(
-                    stored["ref"].as_str().unwrap(),
-                    stored["version"].as_str().unwrap(),
-                )
-                .await;
-            return result;
-        }
-        let backend = wamn_kubernetes::kubernetes::KubernetesStore::in_cluster();
-        if let Ok(backend) = backend {
-            let _ = backend
-                .destroy(
-                    stored["ref"].as_str().unwrap(),
-                    stored["version"].as_str().unwrap(),
-                )
-                .await;
-        }
-    }
-    let result = result?;
-    let _ = context["principal_id"]
-        .as_str()
-        .expect("database principal")
-        .parse::<wamn_identity_protocol::PrincipalId>()
-        .map_err(|source| ConnectionError {
-            code: "invalid_input",
-            field: "principal_id",
-            source: Some(Box::new(source)),
-        })?;
-    Ok(result)
+    Ok(sqlx::query_scalar("SELECT jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) JOIN platform.credential k ON k.id=g.credential_id WHERE c.id=$1").bind(id).fetch_optional(&mut **project).await?.unwrap_or(Value::Null))
+}
+
+async fn summary(
+    project: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    system: &mut sqlx::PgConnection,
+    org: &wamn_registry::OrgId,
+    request: &Value,
+    id: Uuid,
+) -> Result<Value, ConnectionError> {
+    let mut row: Value=sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('parameters',g.parameters,'hint',k.hint,'credential_created_at',k.created_at,'credential_created_by',k.created_by,'refresh_status',o.refresh_status,'expires_at',o.expires_at) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id LEFT JOIN platform.oauth_token o ON o.connection_id=c.id WHERE c.id=$1")
+        .bind(id).fetch_one(&mut **project).await?;
+    let metadata: Value=sqlx::query_scalar("SELECT jsonb_build_object('versions',coalesce(jsonb_agg(version ORDER BY version),'[]'::jsonb),'deprecated_fields',(SELECT coalesce(jsonb_agg(DISTINCT f.key),'[]'::jsonb) FROM registry.integration_type_version v,jsonb_each(v.parameter_schema->'properties') f WHERE v.integration_type=$1 AND f.value->>'deprecated'='true')) FROM registry.integration_type_version WHERE integration_type=$1")
+        .bind(row["integration_type"].as_str()).fetch_one(system).await?;
+    row["versions"] = metadata["versions"].clone();
+    row["deprecated_fields"] = metadata["deprecated_fields"].clone();
+    row["org"] = json!(org);
+    row["project"] = request["project"].clone();
+    row["env"] = request["env"].clone();
+    Ok(row)
 }
 
 async fn store_credential(

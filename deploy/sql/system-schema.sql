@@ -1047,161 +1047,14 @@ REVOKE ALL ON FUNCTION registry.keep_environment_target() FROM PUBLIC;
 CREATE TRIGGER environment_target_immutable BEFORE UPDATE OF target_id ON registry.environments
     FOR EACH ROW EXECUTE FUNCTION registry.keep_environment_target();
 
-CREATE TABLE registry.external_system (
-    id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    org     text NOT NULL,
+CREATE TABLE registry.connection_principal (
+    principal_id uuid PRIMARY KEY REFERENCES identity.principals (id) DEFERRABLE INITIALLY DEFERRED,
+    org text NOT NULL,
     project text NOT NULL,
-    name    text NOT NULL CHECK (name ~ '^[a-z][a-z0-9_-]{0,62}$'),
-    UNIQUE (org, project, name),
-    UNIQUE (id, org, project),
-    FOREIGN KEY (org, project) REFERENCES registry.projects (org, id)
+    env text NOT NULL,
+    FOREIGN KEY (org, env, project)
+        REFERENCES registry.environment_projects (org, env, project) ON DELETE CASCADE
 );
-CREATE TABLE registry.integration (
-    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    org                text NOT NULL,
-    project            text NOT NULL,
-    integration_type   text NOT NULL,
-    auth_type          text NOT NULL,
-    external_system_id uuid,
-    name               text NOT NULL CHECK (name ~ '^[a-z][a-z0-9_-]{0,62}$'),
-    status             text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
-    UNIQUE (org, project, name),
-    UNIQUE (id, org, project, integration_type),
-    FOREIGN KEY (org, project) REFERENCES registry.projects (org, id),
-    FOREIGN KEY (external_system_id, org, project)
-        REFERENCES registry.external_system (id, org, project),
-    FOREIGN KEY (integration_type, auth_type)
-        REFERENCES registry.integration_type_auth (integration_type, auth_type)
-);
-ALTER TABLE registry.environments ADD UNIQUE (org, env, target_id);
-CREATE TABLE registry.connection (
-    id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    integration_id       uuid NOT NULL,
-    org                  text NOT NULL,
-    project              text NOT NULL,
-    env                  text NOT NULL,
-    integration_type     text NOT NULL,
-    target_id            uuid NOT NULL,
-    resource_key         text,
-    active_generation    bigint NOT NULL,
-    service_principal_id uuid NOT NULL UNIQUE,
-    principal_type       text NOT NULL DEFAULT 'service' CHECK (principal_type = 'service'),
-    status               text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
-    UNIQUE (integration_id, env),
-    FOREIGN KEY (integration_id, org, project, integration_type)
-        REFERENCES registry.integration (id, org, project, integration_type),
-    FOREIGN KEY (org, env, project) REFERENCES registry.environment_projects (org, env, project) ON DELETE CASCADE,
-    FOREIGN KEY (org, env, target_id) REFERENCES registry.environments (org, env, target_id) ON DELETE CASCADE,
-    FOREIGN KEY (service_principal_id, principal_type)
-        REFERENCES identity.principals (id, type)
-);
-CREATE UNIQUE INDEX connection_resource_per_target
-    ON registry.connection (target_id, resource_key)
-    WHERE resource_key IS NOT NULL AND status = 'active';
-CREATE TABLE identity.credential (
-    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    connection_id uuid NOT NULL REFERENCES registry.connection (id) ON DELETE CASCADE,
-    store         text NOT NULL CHECK (store = 'k8s'),
-    ref           text NOT NULL,
-    version       text NOT NULL,
-    hint          text,
-    created_at    timestamptz NOT NULL,
-    created_by    uuid NOT NULL,
-    UNIQUE (id, connection_id)
-);
-CREATE TABLE identity.oauth_token (                    -- host-only; every OAuth type, shared across pods
-    connection_id  uuid PRIMARY KEY REFERENCES registry.connection (id) ON DELETE CASCADE,
-    ciphertext     bytea NOT NULL,                       -- AES-256-GCM: access token; refresh token for authorization code
-    nonce          bytea NOT NULL,
-    wrapped_key    bytea NOT NULL,                       -- the row's AES-256 data key, wrapped by the envelope key
-    key_id         text NOT NULL,                        -- the envelope key: a Cloud KMS key version (local: key file id)
-    expires_at     timestamptz NOT NULL,
-    refresh_status text NOT NULL DEFAULT 'ok' CHECK (refresh_status IN ('ok', 'failing')),
-    updated_at     timestamptz NOT NULL                  -- fetch and refresh lock the connection row, not this one
-);
--- authorization code: no row = not authorized; calls refused until connection.authorize completes
--- client credentials (secret or JWT): no row = no token yet; the first call fetches one
--- every fetch and refresh: FOR NO KEY UPDATE on the registry.connection row (it always exists), re-read this row,
--- call the provider only if the token is missing or due; connection.write and set_credential lock the same row
---   client credentials: delete this row when the credential or parameters.auth changes
---   authorization code: delete this row when parameters.auth changes (authorize again);
---                       set expires_at = '-infinity' when only the secret changes (the refresh token stays)
-
-CREATE TABLE identity.oauth_authorization (            -- one pending connection.authorize; single use
-    state         text PRIMARY KEY,                      -- 32 random bytes, base64url
-    connection_id uuid NOT NULL REFERENCES registry.connection (id) ON DELETE CASCADE,
-    generation    bigint NOT NULL,                       -- a newer active generation refuses the callback
-    code_verifier bytea NOT NULL,                        -- PKCE, encrypted like the token (wrapped_key, nonce, key_id below)
-    wrapped_key   bytea NOT NULL,
-    nonce         bytea NOT NULL,
-    key_id        text NOT NULL,
-    created_by    uuid NOT NULL,
-    expires_at    timestamptz NOT NULL                   -- 10 minutes after creation
-);
-
-CREATE TABLE registry.connection_generation (
-    connection_id uuid NOT NULL REFERENCES registry.connection (id) ON DELETE CASCADE,
-    generation    bigint NOT NULL CHECK (generation > 0),
-    parameters    jsonb NOT NULL DEFAULT '{}',
-    credential_id uuid,
-    created_at    timestamptz NOT NULL,
-    created_by    uuid NOT NULL,
-    PRIMARY KEY (connection_id, generation),
-    FOREIGN KEY (credential_id, connection_id)
-        REFERENCES identity.credential (id, connection_id)
-);
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT ON identity.credential
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by');
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT ON registry.connection_generation
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by');
-ALTER TABLE registry.connection ADD FOREIGN KEY (id, active_generation)
-    REFERENCES registry.connection_generation (connection_id, generation) DEFERRABLE INITIALLY DEFERRED;
-
-CREATE FUNCTION registry.reject_connection_generation_change() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog AS $$
-BEGIN
-    IF TG_OP = 'DELETE' AND NOT EXISTS (
-        SELECT FROM registry.connection WHERE id = OLD.connection_id
-    ) THEN
-        RETURN OLD;
-    END IF;
-    RAISE EXCEPTION 'connection_generation_is_immutable' USING ERRCODE = '55000';
-END $$;
-REVOKE ALL ON FUNCTION registry.reject_connection_generation_change() FROM PUBLIC;
-CREATE TRIGGER connection_generation_immutable BEFORE UPDATE OR DELETE ON registry.connection_generation
-    FOR EACH ROW EXECUTE FUNCTION registry.reject_connection_generation_change();
-CREATE TRIGGER credential_immutable BEFORE UPDATE OR DELETE ON identity.credential
-    FOR EACH ROW EXECUTE FUNCTION registry.reject_connection_generation_change();
-
-CREATE FUNCTION registry.keep_active_generation() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog AS $$
-BEGIN
-    IF NEW.active_generation < OLD.active_generation THEN
-        RAISE EXCEPTION 'active_generation_cannot_decrease' USING ERRCODE = '55000';
-    END IF;
-    RETURN NEW;
-END $$;
-REVOKE ALL ON FUNCTION registry.keep_active_generation() FROM PUBLIC;
-CREATE TRIGGER connection_generation_forward BEFORE UPDATE OF active_generation ON registry.connection
-    FOR EACH ROW EXECUTE FUNCTION registry.keep_active_generation();
-
-CREATE FUNCTION registry.keep_integration_name() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog AS $$
-BEGIN
-    IF NEW.name IS DISTINCT FROM OLD.name THEN
-        RAISE EXCEPTION 'name_is_immutable' USING ERRCODE = '55000';
-    END IF;
-    RETURN NEW;
-END $$;
-REVOKE ALL ON FUNCTION registry.keep_integration_name() FROM PUBLIC;
-CREATE TRIGGER integration_name_immutable BEFORE UPDATE OF name ON registry.integration
-    FOR EACH ROW EXECUTE FUNCTION registry.keep_integration_name();
-CREATE TRIGGER external_system_name_immutable BEFORE UPDATE OF name ON registry.external_system
-    FOR EACH ROW EXECUTE FUNCTION registry.keep_integration_name();
 
 -- Administration reads and writes use the same restricted function families.
 CREATE FUNCTION registry.configure_integration_type(org_id text, operation text, payload jsonb) RETURNS jsonb
@@ -1220,307 +1073,6 @@ BEGIN
             'auth_types',(SELECT jsonb_agg(a.auth_type ORDER BY a.auth_type)
                           FROM registry.integration_type_auth a WHERE a.integration_type=t.code)) ORDER BY t.code)
         FROM registry.integration_type t), '[]'::jsonb));
-END $$;
-
-CREATE FUNCTION registry.configure_external_system(org_id text, operation text, payload jsonb) RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_variable
-DECLARE
-    project_id text := payload->>'project';
-    row_name text := payload->>'name';
-    row_id uuid;
-BEGIN
-    IF (COALESCE(pg_has_role(session_user,to_regrole('wamn_control'),'member'),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper)) AND org_id IS DISTINCT FROM registry.control_org() THEN
-        RAISE EXCEPTION 'org access refused' USING ERRCODE='42501';
-    END IF;
-    PERFORM pg_advisory_xact_lock(hashtextextended('connections:' || org_id, 0));
-    IF operation = 'external_system.list' THEN
-        RETURN jsonb_build_object('external_systems', COALESCE((
-            SELECT jsonb_agg(to_jsonb(s) ORDER BY s.name) FROM registry.external_system s
-            WHERE org=org_id AND project=project_id), '[]'::jsonb));
-    ELSIF operation = 'external_system.write' THEN
-        INSERT INTO registry.external_system(org,project,name) VALUES(org_id,project_id,row_name)
-        ON CONFLICT (org,project,name) DO NOTHING;
-    ELSIF operation = 'external_system.delete' THEN
-        SELECT id INTO row_id FROM registry.external_system
-        WHERE org=org_id AND project=project_id AND name=row_name FOR UPDATE;
-        IF row_id IS NULL THEN
-            RETURN jsonb_build_object('error','not_found','field','name');
-        END IF;
-        IF EXISTS(SELECT FROM registry.integration WHERE external_system_id=row_id) THEN
-            RETURN jsonb_build_object('error','referenced','field','integration');
-        END IF;
-        DELETE FROM registry.external_system WHERE id=row_id;
-    ELSE
-        RETURN jsonb_build_object('error','invalid_input','field','operation');
-    END IF;
-    RETURN jsonb_build_object('name',row_name);
-END $$;
-
-CREATE FUNCTION registry.configure_integration(org_id text, operation text, payload jsonb) RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_variable
-DECLARE
-    project_id text := payload->>'project';
-    row_name text := payload->>'name';
-    system_id uuid;
-    existing registry.integration;
-BEGIN
-    IF (COALESCE(pg_has_role(session_user,to_regrole('wamn_control'),'member'),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper)) AND org_id IS DISTINCT FROM registry.control_org() THEN
-        RAISE EXCEPTION 'org access refused' USING ERRCODE='42501';
-    END IF;
-    PERFORM pg_advisory_xact_lock(hashtextextended('connections:' || org_id, 0));
-    IF operation = 'integration.lock_project' THEN
-        PERFORM FROM registry.projects WHERE org=org_id AND id=project_id FOR UPDATE;
-        IF NOT FOUND THEN
-            RETURN jsonb_build_object('error','not_found','field','project');
-        END IF;
-        RETURN '{}'::jsonb;
-    END IF;
-    IF operation = 'integration.list' THEN
-        RETURN jsonb_build_object('integrations', COALESCE((SELECT jsonb_agg(to_jsonb(i) ORDER BY i.name)
-            FROM registry.integration i WHERE org=org_id AND project=project_id), '[]'::jsonb));
-    END IF;
-    SELECT * INTO existing FROM registry.integration
-    WHERE org=org_id AND project=project_id AND name=row_name FOR UPDATE;
-    IF operation = 'integration.write' THEN
-        IF payload->>'external_system' IS NOT NULL THEN
-            SELECT id INTO system_id FROM registry.external_system
-            WHERE org=org_id AND project=project_id AND name=payload->>'external_system';
-            IF system_id IS NULL THEN
-                RETURN jsonb_build_object('error','not_found','field','external_system');
-            END IF;
-        END IF;
-        IF NOT EXISTS(SELECT FROM registry.integration_type_auth
-            WHERE integration_type=payload->>'integration_type' AND auth_type=payload->>'auth_type') THEN
-            RETURN jsonb_build_object('error','invalid_input','field','auth_type');
-        END IF;
-        IF existing.id IS NOT NULL THEN
-            IF ROW(existing.integration_type,existing.auth_type,existing.external_system_id)
-                IS DISTINCT FROM ROW(payload->>'integration_type',payload->>'auth_type',system_id) THEN
-                RETURN jsonb_build_object('error','immutable_field','field','integration');
-            END IF;
-        ELSE
-            INSERT INTO registry.integration(org,project,name,integration_type,auth_type,external_system_id)
-            VALUES(org_id,project_id,row_name,payload->>'integration_type',payload->>'auth_type',system_id);
-        END IF;
-    ELSIF existing.id IS NULL THEN
-        RETURN jsonb_build_object('error','not_found','field','name');
-    ELSIF operation = 'integration.get' THEN
-        RETURN to_jsonb(existing);
-    ELSIF operation IN ('integration.enable','integration.disable') THEN
-        UPDATE registry.integration SET status=CASE WHEN operation='integration.enable' THEN 'active' ELSE 'disabled' END
-        WHERE id=existing.id;
-        -- The caller deletes the memory key of each connection after the commit.
-        RETURN jsonb_build_object('name',row_name,'connections',COALESCE((
-            SELECT jsonb_agg(jsonb_build_object('env',c.env,'id',c.id) ORDER BY c.env)
-            FROM registry.connection c WHERE c.integration_id=existing.id), '[]'::jsonb));
-    ELSIF operation = 'integration.delete' THEN
-        IF EXISTS(SELECT FROM registry.connection WHERE integration_id=existing.id) THEN
-            RETURN jsonb_build_object('error','referenced','field','connection');
-        END IF;
-        DELETE FROM registry.integration WHERE id=existing.id;
-    ELSE
-        RETURN jsonb_build_object('error','invalid_input','field','operation');
-    END IF;
-    RETURN jsonb_build_object('name',row_name);
-END $$;
-
--- Read connection metadata without exposing store references to API readers.
-CREATE FUNCTION registry.connection_summary(requested_connection uuid) RETURNS jsonb
-LANGUAGE sql STABLE SET search_path = pg_catalog SET TimeZone = 'UTC' AS $$
-    SELECT to_jsonb(c) || jsonb_build_object('name',i.name,'parameters',g.parameters,'hint',k.hint,
-        'credential_created_at',k.created_at,'credential_created_by',k.created_by,
-        'integration_status',i.status,'auth_type',i.auth_type,
-        'deprecated_fields',(SELECT COALESCE(jsonb_agg(DISTINCT f.key),'[]'::jsonb)
-            FROM registry.integration_type_version v, jsonb_each(v.parameter_schema->'properties') f
-            WHERE v.integration_type=c.integration_type AND f.value->>'deprecated'='true'),
-        'versions',(SELECT jsonb_agg(v.version ORDER BY v.version)
-                    FROM registry.integration_type_version v WHERE v.integration_type=c.integration_type))
-    || CASE WHEN i.auth_type IN ('oauth2_client_credentials','oauth2_client_credentials_jwt','oauth2_authorization_code')
-        THEN jsonb_build_object('refresh_status',o.refresh_status,'expires_at',o.expires_at) ELSE '{}'::jsonb END
-    FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id
-    JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
-    LEFT JOIN identity.credential k ON k.id=g.credential_id
-    LEFT JOIN identity.oauth_token o ON o.connection_id=c.id
-    WHERE c.id=requested_connection
-$$;
-
-CREATE FUNCTION registry.configure_connection(org_id text, operation text, payload jsonb) RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_variable
-DECLARE
-    project_id text := payload->>'project';
-    environment text := payload->>'env';
-    row_name text := payload->>'name';
-    selected registry.integration;
-    existing registry.connection;
-    target uuid;
-    principal uuid;
-    next_generation bigint;
-    credential uuid;
-    parameters jsonb;
-    template text;
-    field text;
-    resource text;
-    credentials jsonb;
-BEGIN
-    IF (COALESCE(pg_has_role(session_user,to_regrole('wamn_control'),'member'),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper)) AND org_id IS DISTINCT FROM registry.control_org() THEN
-        RAISE EXCEPTION 'org access refused' USING ERRCODE = '42501';
-    END IF;
-    IF operation = 'connection.oauth_callback' THEN
-        SELECT * INTO existing FROM registry.connection
-        WHERE id=(payload->>'id')::uuid AND org=org_id FOR NO KEY UPDATE;
-        IF existing.id IS NULL THEN
-            RETURN jsonb_build_object('error','not_found','field','connection');
-        END IF;
-        RETURN registry.connection_summary(existing.id) || jsonb_build_object('credential',(
-            SELECT jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)
-            FROM registry.connection_generation g JOIN identity.credential k ON k.id=g.credential_id
-            WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation)));
-    END IF;
-    IF operation <> 'connection.test' THEN
-        PERFORM pg_advisory_xact_lock(hashtextextended('connections:' || org_id, 0));
-    END IF;
-    IF operation = 'connection.list' THEN
-        RETURN jsonb_build_object('connections',COALESCE((SELECT jsonb_agg(registry.connection_summary(c.id) ORDER BY i.name)
-            FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id
-            WHERE c.org=org_id AND c.project=project_id AND c.env=environment), '[]'::jsonb));
-    END IF;
-    SELECT * INTO selected FROM registry.integration
-    WHERE org=org_id AND project=project_id AND name=row_name;
-    IF selected.id IS NULL THEN
-        RETURN jsonb_build_object('error','not_found','field','integration');
-    END IF;
-    IF operation = 'connection.test' THEN
-        IF NOT EXISTS(SELECT FROM registry.environment_projects WHERE org=org_id AND project=project_id AND env=environment) THEN
-            RETURN jsonb_build_object('error','not_found','field','env');
-        END IF;
-        IF selected.auth_type = 'oauth2_authorization_code' THEN
-            RETURN jsonb_build_object('error','unsupported_auth_type','field','auth_type');
-        END IF;
-        SELECT * INTO existing FROM registry.connection
-        WHERE integration_id=selected.id AND env=environment;
-        RETURN jsonb_build_object('id',existing.id,'integration_type',selected.integration_type,
-            'runtime_type',(SELECT runtime_type FROM registry.integration_type WHERE code=selected.integration_type),
-            'auth_type',selected.auth_type,
-            'parameters',(SELECT parameters FROM registry.connection_generation WHERE (connection_id,generation)=(existing.id,existing.active_generation)),
-            'credential',(SELECT jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)
-                FROM registry.connection_generation g JOIN identity.credential k ON k.id=g.credential_id
-                WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation)),
-            'credential_schema',(SELECT credential_schema FROM registry.auth_type WHERE code=selected.auth_type),
-            'auth_schema',(SELECT parameter_schema FROM registry.auth_type WHERE code=selected.auth_type),
-            'versions',(SELECT jsonb_object_agg(v.version,to_jsonb(v)) FROM registry.integration_type_version v WHERE v.integration_type=selected.integration_type),
-            'schemas',(SELECT jsonb_agg(parameter_schema ORDER BY version) FROM registry.integration_type_version WHERE integration_type=selected.integration_type));
-    END IF;
-    SELECT * INTO existing FROM registry.connection
-    WHERE integration_id=selected.id AND env=environment FOR UPDATE;
-    IF operation = 'connection.prepare' THEN
-        IF existing.id IS NULL THEN
-            IF payload->>'action' <> 'connection.write' THEN
-                RETURN jsonb_build_object('error','not_found','field','connection');
-            END IF;
-            SELECT target_id INTO target FROM registry.environments
-            WHERE org=org_id AND env=environment;
-            IF target IS NULL THEN
-                RETURN jsonb_build_object('error','invalid_input','field','target_id');
-            END IF;
-            existing.id := gen_random_uuid();
-            INSERT INTO identity.principals(type,subject,display_name)
-            VALUES('service','connection-' || existing.id::text, row_name) RETURNING id INTO principal;
-            SELECT resource_key_template INTO template FROM registry.integration_type WHERE code=selected.integration_type;
-            resource := template;
-            IF template IS NOT NULL THEN
-                FOR field IN SELECT (regexp_matches(template, '\{([^{}]+)\}', 'g'))[1] LOOP
-                    IF NOT EXISTS(SELECT FROM registry.integration_type_version v
-                        WHERE v.integration_type=selected.integration_type
-                        AND v.parameter_schema->'properties'->field->>'immutable'='true')
-                        OR payload->'parameters'->>field IS NULL THEN
-                        RETURN jsonb_build_object('error','invalid_input','field','resource_key');
-                    END IF;
-                    resource := replace(resource,'{' || field || '}',payload->'parameters'->>field);
-                END LOOP;
-            END IF;
-            INSERT INTO registry.connection(id,integration_id,org,project,env,integration_type,target_id,resource_key,
-                active_generation,service_principal_id)
-            VALUES(existing.id,selected.id,org_id,project_id,environment,selected.integration_type,target,resource,1,principal)
-            RETURNING * INTO existing;
-        END IF;
-        SELECT g.credential_id,g.parameters INTO credential,parameters FROM registry.connection_generation g
-        WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation);
-        RETURN jsonb_build_object('id',existing.id,'integration_type',selected.integration_type,
-            'auth_type',selected.auth_type,'principal_id',existing.service_principal_id,
-            'parameters',parameters,'credential_id',credential,
-            'credential_schema',(SELECT credential_schema FROM registry.auth_type WHERE code=selected.auth_type),
-            'auth_schema',(SELECT parameter_schema FROM registry.auth_type WHERE code=selected.auth_type),
-            'store','k8s',
-            'versions',(SELECT jsonb_object_agg(version,parameter_schema)
-                       FROM registry.integration_type_version WHERE integration_type=selected.integration_type),
-            'schemas',(SELECT jsonb_agg(parameter_schema ORDER BY version)
-                       FROM registry.integration_type_version WHERE integration_type=selected.integration_type));
-    ELSIF existing.id IS NULL THEN
-        RETURN jsonb_build_object('error','not_found','field','connection');
-    ELSIF operation = 'connection.authorize' THEN
-        IF selected.auth_type <> 'oauth2_authorization_code' THEN
-            RETURN jsonb_build_object('error','unsupported_auth_type','field','auth_type');
-        END IF;
-        RETURN registry.connection_summary(existing.id);
-    ELSIF operation = 'connection.get' THEN
-        RETURN registry.connection_summary(existing.id);
-    ELSIF operation = 'connection.source_parameters' THEN
-        RETURN (SELECT g.parameters FROM registry.connection_generation g
-                WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation));
-    ELSIF operation = 'connection.finish' THEN
-        -- The row lock owns allocation. Every write affects this environment alone.
-        SELECT COALESCE(max(g.generation),0)+1 INTO next_generation
-        FROM registry.connection_generation g WHERE g.connection_id=existing.id;
-        SELECT g.credential_id,g.parameters INTO credential,parameters FROM registry.connection_generation g
-        WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation);
-        IF payload->'stored_credential' IS NOT NULL THEN
-            credential := (payload->'stored_credential'->>'id')::uuid;
-            INSERT INTO identity.credential(id,connection_id,store,ref,version,hint)
-            VALUES(credential,existing.id,payload->'stored_credential'->>'store',payload->'stored_credential'->>'ref',
-                payload->'stored_credential'->>'version',payload->'stored_credential'->>'hint');
-        END IF;
-        IF (selected.auth_type='none') <> (credential IS NULL) THEN
-            RETURN jsonb_build_object('error','invalid_input','field','credential');
-        END IF;
-        IF parameters->'auth' IS DISTINCT FROM payload->'parameters'->'auth' THEN
-            DELETE FROM identity.oauth_token WHERE connection_id=existing.id;
-        ELSIF payload->'stored_credential' IS NOT NULL THEN
-            IF selected.auth_type IN ('oauth2_client_credentials','oauth2_client_credentials_jwt') THEN
-                DELETE FROM identity.oauth_token WHERE connection_id=existing.id;
-            ELSIF selected.auth_type='oauth2_authorization_code' THEN
-                UPDATE identity.oauth_token SET expires_at='-infinity' WHERE connection_id=existing.id;
-            END IF;
-        END IF;
-        DELETE FROM identity.oauth_authorization WHERE connection_id=existing.id;
-        INSERT INTO registry.connection_generation(connection_id,generation,parameters,credential_id)
-        VALUES(existing.id,next_generation,payload->'parameters',credential);
-        UPDATE registry.connection SET active_generation=next_generation WHERE id=existing.id;
-        RETURN registry.connection_summary(existing.id);
-    ELSIF operation IN ('connection.enable','connection.disable') THEN
-        IF operation='connection.enable' AND existing.resource_key IS NOT NULL AND EXISTS(
-            SELECT FROM registry.connection c WHERE c.target_id=existing.target_id AND c.resource_key=existing.resource_key
-            AND c.status='active' AND c.id<>existing.id) THEN
-            RETURN jsonb_build_object('error','resource_in_use','field','resource_key');
-        END IF;
-        UPDATE registry.connection SET status=CASE WHEN operation='connection.enable' THEN 'active' ELSE 'disabled' END
-        WHERE id=existing.id;
-    ELSIF operation = 'connection.delete' THEN
-        SELECT COALESCE(jsonb_agg(jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)), '[]'::jsonb)
-        INTO credentials FROM identity.credential k WHERE k.connection_id=existing.id;
-        DELETE FROM registry.connection WHERE id=existing.id;
-        UPDATE identity.principals SET status='disabled',disabled_at=transaction_timestamp() WHERE id=existing.service_principal_id;
-        RETURN jsonb_build_object('name',row_name,'credentials',credentials,'principal_id',existing.service_principal_id,
-            'id',existing.id,'env',environment);
-    ELSE
-        RETURN jsonb_build_object('error','invalid_input','field','operation');
-    END IF;
-    RETURN jsonb_build_object('name',row_name,'principal_id',existing.service_principal_id,
-        'id',existing.id,'env',environment);
-EXCEPTION WHEN unique_violation THEN
-    RETURN jsonb_build_object('error','resource_in_use','field','resource_key');
 END $$;
 
 CREATE FUNCTION registry.publish_integration(
@@ -1592,15 +1144,12 @@ BEGIN
 END $$;
 
 
-REVOKE ALL ON FUNCTION registry.connection_summary(uuid) FROM PUBLIC;
+
 
 DO $connection_authority_acl$
 DECLARE signature text;
 BEGIN
     FOREACH signature IN ARRAY ARRAY[
-        'configure_connection(text,text,jsonb)',
-        'configure_external_system(text,text,jsonb)',
-        'configure_integration(text,text,jsonb)',
         'configure_integration_type(text,text,jsonb)',
         'publish_integration(text,integer,text,jsonb,text,text[],text[])'
     ] LOOP
@@ -1620,273 +1169,22 @@ CREATE TRIGGER wamn_record_history_stamp
 
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."oauth_authorization" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."oauth_token" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.retired_connection_credential(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_projection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_projection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, DELETE ON registry.connection_principal TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control";   DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$;
   END IF;
 END $control_surface$;
 
-CREATE FUNCTION registry.retired_connection_credential(org_id text)
-RETURNS TABLE(store text, ref text, version text)
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
- SELECT k.store,k.ref,k.version
- FROM identity.credential k
- JOIN registry.connection c ON c.id=k.connection_id
- JOIN registry.connection_generation active ON active.connection_id=c.id AND active.generation=c.active_generation
- JOIN LATERAL (
-   SELECT max(g.generation) AS generation FROM registry.connection_generation g
-   WHERE g.connection_id=c.id AND g.credential_id=k.id
- ) last_use ON true
- JOIN LATERAL (
-   SELECT g.created_at FROM registry.connection_generation g
-   WHERE g.connection_id=c.id AND g.generation>last_use.generation
-   ORDER BY g.generation LIMIT 1
- ) successor ON true
- WHERE (NOT (COALESCE(pg_has_role(session_user,to_regrole('wamn_control'),'member'),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper)) OR org_id=registry.control_org()) AND c.org=org_id AND active.credential_id IS DISTINCT FROM k.id
-   AND successor.created_at < now() - interval '5 minutes'
-$$;
-ALTER FUNCTION registry.retired_connection_credential(text) OWNER TO wamn_system;
-REVOKE ALL ON FUNCTION registry.retired_connection_credential(text) FROM PUBLIC;
-
-DO $$ BEGIN
- IF to_regrole('wamn_control') IS NOT NULL THEN
-   GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO wamn_control;
- END IF;
-END $$;
-
--- The control host copies only one project's rows and one environment's connections.
-CREATE FUNCTION registry.connection_projection(org_id text, project_id text, environment_id text)
-RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
- SELECT jsonb_build_object(
-   'external_system', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',s.id,'name',s.name) ORDER BY s.id),'[]')
-     FROM registry.external_system s WHERE s.org=org_id AND s.project=project_id),
-   'integration', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',i.id,'integration_type',i.integration_type,
-     'external_system_id',i.external_system_id,'name',i.name,'status',i.status) ORDER BY i.id),'[]')
-     FROM registry.integration i WHERE i.org=org_id AND i.project=project_id),
-   'connection', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',c.id,'integration_id',c.integration_id,
-     'integration_type',c.integration_type,'status',CASE WHEN c.status='active' AND i.status='active' THEN 'active' ELSE 'disabled' END) ORDER BY c.id),'[]')
-     FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id
-     WHERE c.org=org_id AND c.project=project_id AND c.env=environment_id),
-   'principal', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',p.id,'connection_id',c.id,'subject',p.subject,
-     'display_name',p.display_name,'status',p.status,'platform_domain',m.platform_domain) ORDER BY p.id),'[]')
-     FROM registry.connection c JOIN identity.principals p ON p.id=c.service_principal_id CROSS JOIN registry.meta m
-     WHERE c.org=org_id AND c.project=project_id AND c.env=environment_id)
- ) WHERE NOT (COALESCE(pg_has_role(session_user,to_regrole('wamn_control'),'member'),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper)) OR org_id=registry.control_org()
-$$;
-ALTER FUNCTION registry.connection_projection(text,text,text) OWNER TO wamn_system;
-REVOKE ALL ON FUNCTION registry.connection_projection(text,text,text) FROM PUBLIC;
-DO $$ BEGIN
- IF to_regrole('wamn_control') IS NOT NULL THEN
-   GRANT EXECUTE ON FUNCTION registry.connection_projection(text,text,text) TO wamn_control;
- END IF;
-END $$;
-
--- The reader login fixes the environment and exposes only active host stores.
-CREATE FUNCTION registry.read_file_connection(org_id text, project_id text, environment_id text, requested_connection uuid DEFAULT NULL)
-RETURNS TABLE(connection_id uuid, connection_name text, generation bigint, parameters jsonb)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_column
-BEGIN
- RETURN QUERY
- SELECT c.id, i.name, c.active_generation, g.parameters || jsonb_build_object('provider',c.integration_type)
- FROM wamn_authority.author_login_projects login
- JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
- JOIN registry.integration i ON i.id=c.integration_id AND i.status='active'
- JOIN registry.integration_type t ON t.code=c.integration_type AND t.runtime_type='host'
- JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
- JOIN identity.principals p ON p.id=c.service_principal_id AND p.status='active'
- WHERE login.login_identity=session_user AND login.org_id=$1 AND login.project_id=$2
-   AND login.environment=$3 AND c.status='active' AND c.integration_type IN ('gcs','s3','disk')
-   AND ($4 IS NULL OR c.id=$4)
- ORDER BY c.id;
-END $$;
-ALTER FUNCTION registry.read_file_connection(text,text,text,uuid) OWNER TO wamn_system;
-REVOKE ALL ON FUNCTION registry.read_file_connection(text,text,text,uuid) FROM PUBLIC;
-DO $$ BEGIN
- IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
-   GRANT EXECUTE ON FUNCTION registry.read_file_connection(text,text,text,uuid) TO wamn_conn_reader;
- END IF;
-END $$;
-
-
--- Deployment reads project authority without an administration write grant.
-CREATE FUNCTION registry.resolve_environment_connection(org_id text, project_id text, environment text, target_name text, integration_name text, selected_version integer)
-RETURNS TABLE(id text, integration_type text, runtime_type text, parameters jsonb, parameter_schema jsonb, digest text, operations text, generation bigint, exclusive boolean, exports text[], write_interfaces text[])
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_variable
-BEGIN
- RETURN QUERY
- SELECT c.id::text, i.integration_type, t.runtime_type, g.parameters, v.parameter_schema,
-        v.digest, v.operations, c.active_generation, t.exclusive, v.exports, v.write_interfaces
- FROM registry.integration i
- JOIN registry.connection c ON c.integration_id=i.id AND c.env=environment AND c.status='active'
- JOIN registry.environment_projects p ON (p.org,p.env,p.project)=(c.org,c.env,c.project)
- JOIN registry.environments e ON (e.org,e.env,e.target_id)=(c.org,c.env,c.target_id)
- JOIN registry.target destination ON destination.id=e.target_id AND destination.name=target_name AND destination.status='active'
- JOIN registry.integration_type t ON t.code=i.integration_type
- LEFT JOIN registry.integration_type_version v ON v.integration_type=i.integration_type AND v.version=selected_version
- JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
- WHERE i.org=org_id AND i.project=project_id AND i.name=integration_name AND i.status='active';
-END $$;
-ALTER FUNCTION registry.resolve_environment_connection(text,text,text,text,text,integer) OWNER TO wamn_system;
-REVOKE ALL ON FUNCTION registry.resolve_environment_connection(text,text,text,text,text,integer) FROM PUBLIC;
-GRANT USAGE ON SCHEMA registry TO wamn_system;
-GRANT EXECUTE ON FUNCTION registry.resolve_environment_connection(text,text,text,text,text,integer),
- registry.connection_projection(text,text,text) TO wamn_system;
-
--- The connection memory reads (docs/architecture/execution.md#connection-memory).
--- The reader login fixes the environment. The fact is mutable; every other
--- read returns rows that never change under their keys.
-CREATE FUNCTION registry.read_connection_fact(org_id text, project_id text, environment text, requested_connection uuid)
-RETURNS TABLE(active_generation bigint, active boolean, credential_id uuid,
- exclusive boolean, target_id uuid, resource_key text, target_type text, service_principal_id uuid)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_variable
-BEGIN
- RETURN QUERY
- SELECT c.active_generation, c.status='active' AND i.status='active' AND p.status='active', g.credential_id,
-   t.exclusive, c.target_id, c.resource_key, target.type, c.service_principal_id
- FROM wamn_authority.author_login_projects login
- JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
- JOIN registry.integration i ON i.id=c.integration_id
- JOIN registry.integration_type t ON t.code=c.integration_type
- JOIN registry.target target ON target.id=c.target_id
- JOIN identity.principals p ON p.id=c.service_principal_id
- JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
- WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
-   AND login.environment=environment AND c.id=requested_connection;
-END $$;
-
--- Serialize OAuth refresh with credential rotation, under the reader's environment.
-CREATE FUNCTION registry.lock_oauth_connection(org_id text, project_id text, environment text, requested_connection uuid)
-RETURNS bigint
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_variable
-DECLARE generation bigint;
-BEGIN
- SELECT c.active_generation INTO generation
- FROM wamn_authority.author_login_projects login
- JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
- WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
-   AND login.environment=environment AND c.id=requested_connection AND c.status='active'
- FOR NO KEY UPDATE OF c;
- RETURN generation;
-END $$;
-ALTER FUNCTION registry.lock_oauth_connection(text,text,text,uuid) OWNER TO wamn_system;
-REVOKE ALL ON FUNCTION registry.lock_oauth_connection(text,text,text,uuid) FROM PUBLIC;
-
-CREATE FUNCTION registry.read_connection_generation(org_id text, project_id text, environment text, requested_connection uuid, requested_generation bigint)
-RETURNS TABLE(name text, integration_type text, runtime_type text, auth_type text, external_system text, parameters jsonb)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_variable
-BEGIN
- RETURN QUERY
- SELECT i.name, c.integration_type, t.runtime_type, i.auth_type, i.external_system_id::text,
-        g.parameters
- FROM wamn_authority.author_login_projects login
- JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
- JOIN registry.integration i ON i.id=c.integration_id
- JOIN registry.integration_type t ON t.code=c.integration_type
- JOIN registry.connection_generation g ON g.connection_id=c.id AND g.generation=requested_generation
- WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
-   AND login.environment=environment AND c.id=requested_connection;
-END $$;
-
-CREATE FUNCTION registry.read_connection_secret(org_id text, project_id text, environment text, requested_credential uuid)
-RETURNS TABLE(store text, ref text, version text)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_variable
-BEGIN
- RETURN QUERY
- SELECT k.store, k.ref, k.version
- FROM wamn_authority.author_login_projects login
- JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
- JOIN identity.credential k ON k.connection_id=c.id
- WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
-   AND login.environment=environment AND k.id=requested_credential;
-END $$;
-
-CREATE FUNCTION registry.read_env_connections(org_id text, project_id text, environment text)
-RETURNS TABLE(name text, id uuid)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_variable
-BEGIN
- RETURN QUERY
- SELECT i.name, c.id
- FROM wamn_authority.author_login_projects login
- JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
- JOIN registry.integration i ON i.id=c.integration_id
- WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
-   AND login.environment=environment
- ORDER BY i.name;
-END $$;
-
--- A NULL version selects the newest published version of the type.
-CREATE FUNCTION registry.read_integration_version(requested_type text, requested_version integer)
-RETURNS TABLE(version integer, digest text)
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
- SELECT v.version, v.digest FROM registry.integration_type_version v
- WHERE v.integration_type=requested_type AND (requested_version IS NULL OR v.version=requested_version)
- ORDER BY v.version DESC LIMIT 1
-$$;
-ALTER FUNCTION registry.read_connection_fact(text,text,text,uuid) OWNER TO wamn_system;
-ALTER FUNCTION registry.read_connection_generation(text,text,text,uuid,bigint) OWNER TO wamn_system;
-ALTER FUNCTION registry.read_connection_secret(text,text,text,uuid) OWNER TO wamn_system;
-ALTER FUNCTION registry.read_env_connections(text,text,text) OWNER TO wamn_system;
-ALTER FUNCTION registry.read_integration_version(text,integer) OWNER TO wamn_system;
-REVOKE ALL ON FUNCTION registry.read_connection_fact(text,text,text,uuid),
- registry.read_connection_generation(text,text,text,uuid,bigint),
- registry.read_connection_secret(text,text,text,uuid),
- registry.read_env_connections(text,text,text),
- registry.read_integration_version(text,integer) FROM PUBLIC;
-DO $$ BEGIN
- IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
-  GRANT EXECUTE ON FUNCTION registry.lock_oauth_connection(text,text,text,uuid),
-   registry.read_connection_fact(text,text,text,uuid),
-   registry.read_connection_generation(text,text,text,uuid,bigint),
-   registry.read_connection_secret(text,text,text,uuid),
-   registry.read_env_connections(text,text,text),
-   registry.read_integration_version(text,integer) TO wamn_conn_reader;
- END IF;
-END $$;
-
--- Policy helpers keep unrelated readers from needing control-table privileges.
 CREATE FUNCTION registry.control_principal(principal uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
     SELECT EXISTS (SELECT FROM identity.org_memberships m WHERE m.principal_id=principal AND m.org=registry.control_org())
-        OR EXISTS (SELECT FROM registry.connection c WHERE c.service_principal_id=principal AND c.org=registry.control_org())
+        OR EXISTS (SELECT FROM registry.connection_principal c WHERE c.principal_id=principal AND c.org=registry.control_org())
 $$;
 REVOKE ALL ON FUNCTION registry.control_principal(uuid) FROM PUBLIC;
-CREATE FUNCTION registry.control_connection(connection uuid) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
-    SELECT EXISTS (SELECT FROM registry.connection c WHERE c.id=connection AND c.org=registry.control_org())
-$$;
-REVOKE ALL ON FUNCTION registry.control_connection(uuid) FROM PUBLIC;
-
-DO $$ BEGIN
-    IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
-        GRANT USAGE ON SCHEMA identity TO wamn_conn_reader;
-        GRANT SELECT, INSERT, UPDATE, DELETE ON identity.oauth_token, identity.oauth_authorization TO wamn_conn_reader;
-        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid) TO wamn_conn_reader;
-    END IF;
-END $$;
-
 DO $identity_membership_read$ BEGIN
     IF to_regrole('wamn_system_reader') IS NOT NULL THEN
         GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_system_reader;
-        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid) TO wamn_system_reader;
+        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid) TO wamn_system_reader;
     END IF;
 END $identity_membership_read$;
-
--- The pending state supplies the callback's principal before ordinary row security applies.
-CREATE FUNCTION registry.lock_oauth_authorization(pending_state text)
-RETURNS SETOF identity.oauth_authorization
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT pending.* FROM identity.oauth_authorization pending
-    WHERE pending.state = pending_state
-      AND registry.control_connection(pending.connection_id)
-    FOR UPDATE
-$$;
-ALTER FUNCTION registry.lock_oauth_authorization(text) OWNER TO wamn_system;
-REVOKE ALL ON FUNCTION registry.lock_oauth_authorization(text) FROM PUBLIC;
 
 DO $control_security$
 DECLARE relation_name text; predicate text;
@@ -1896,18 +1194,15 @@ BEGIN
         'registry.environments', 'registry.environment_projects',
         'registry.environment_applications', 'registry.environment_application_connections',
         'registry.environment_integrations',
-        'registry.external_system', 'registry.integration', 'registry.connection',
+        'registry.connection_principal',
         'identity.org_memberships', 'identity.org_roles', 'identity.environment_roles',
         'identity.project_roles', 'identity.project_env_memberships',
-        'identity.principals', 'identity.password_logins',
-        'identity.oauth_authorization', 'identity.oauth_token'
+        'identity.principals', 'identity.password_logins'
     ] LOOP
         predicate := CASE relation_name
           WHEN 'registry.orgs' THEN 'id = registry.control_org()'
           WHEN 'identity.principals' THEN 'registry.control_principal(id)'
           WHEN 'identity.password_logins' THEN 'registry.control_principal(principal_id)'
-          WHEN 'identity.oauth_authorization' THEN 'registry.control_connection(connection_id)'
-          WHEN 'identity.oauth_token' THEN 'registry.control_connection(connection_id)'
           ELSE 'org = registry.control_org()' END;
         -- The policy also exists when bootstrap creates the ACL role later.
         predicate := '(SELECT wamn_authority.current_principal_id()) IS NOT NULL AND CASE WHEN COALESCE(pg_has_role(session_user,to_regrole(''wamn_control''),''member''),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper) THEN (' || predicate || ') ELSE true END';
@@ -1915,7 +1210,7 @@ BEGIN
         EXECUTE format('CREATE POLICY control_org ON %s USING (%s) WITH CHECK (%s)',relation_name,predicate,predicate);
     END LOOP;
     IF to_regrole('wamn_control') IS NOT NULL THEN
-        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid) TO wamn_control;
+        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid) TO wamn_control;
         GRANT SELECT ON registry.environments, identity.environment_roles TO wamn_control;
         GRANT INSERT, UPDATE, DELETE ON identity.environment_roles TO wamn_control;
     END IF;

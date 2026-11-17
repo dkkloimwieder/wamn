@@ -24,6 +24,3 @@ pub const SYSTEM_MIGRATION_ROLE: &str = "wamn_platform_sql";
 pub const POSTGRES_ROLE: &str = "postgres";
 /// PostgreSQL checkpoint privilege used by CDC.
 pub const CHECKPOINT_ROLE: &str = "pg_checkpoint";
-
-/// Connection reader retained until project connection tables move.
-pub const CONNECTION_READER_ROLE: &str = "wamn_conn_reader";

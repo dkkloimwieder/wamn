@@ -17,6 +17,7 @@ use std::{
 };
 
 use anyhow::{Context as _, ensure};
+pub use host_route::{ControlExecution, HostRouteDelivery, HostRouteHandlers};
 use http_body_util::BodyExt as _;
 use serde::Deserialize;
 use serde_json::json;
@@ -24,7 +25,6 @@ use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_environment::environment::Platform;
-pub use host_route::{ControlExecution, HostRouteDelivery, HostRouteHandlers};
 use wamn_identity_client::PatIssuerConfig;
 
 /// Public component configuration. Database passwords stay in CNPG Secrets.
@@ -207,7 +207,6 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let database = config.database.to_json()?;
     let pool = wamn_postgres::pool(&database, 4).await?;
-    let cleanup_pool = pool.clone();
     let identity_databases = config.administration_dir.clone();
     let identity_system = config.apply_database.to_json()?;
     let keys = wamn_authentication::session_keys::IssuerKeys::new(
@@ -275,11 +274,9 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         ))
         .with_oauth(oauth.as_ref().map(Arc::clone)),
     );
-    let database: Arc<str> = database.into();
-    let org = Arc::new(config.org);
+    let callback_databases = Arc::new(config.administration_dir);
     let routing = Arc::new(FlowHttpRouting::new(Arc::default()));
     let listener = tokio::net::TcpListener::bind(config.http_addr).await?;
-    let cleanup_org = Arc::clone(&org);
     let mut maintenance = tokio::task::JoinSet::new();
     maintenance.spawn(async move {
         let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -288,19 +285,6 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             ticks.tick().await;
             if let Err(error) = retention::identities(&identity_databases, &identity_system).await {
                 tracing::warn!(%error, "transaction identity retention failed");
-            }
-            let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                wamn_connection::credential_cleanup::collect(
-                    &mut *cleanup_pool.acquire().await?,
-                    &cleanup_org,
-                )
-                .await
-            })
-            .await;
-            match result {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => tracing::warn!(%error, "credential collection failed"),
-                Err(error) => tracing::warn!(%error, "credential collection timed out"),
             }
         }
     });
@@ -318,19 +302,17 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
                 let handlers = Arc::clone(&handlers);
                 let routing = Arc::clone(&routing);
                 let oauth = oauth.as_ref().map(Arc::clone);
-                let database = Arc::clone(&database);
-                let org = Arc::clone(&org);
+                let callback_databases = Arc::clone(&callback_databases);
                 connections.spawn(async move {
                     let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
                         let handlers = Arc::clone(&handlers);
                         let routing = Arc::clone(&routing);
                         let oauth = oauth.as_ref().map(Arc::clone);
-                        let database = Arc::clone(&database);
-                        let org = Arc::clone(&org);
+                        let callback_databases = Arc::clone(&callback_databases);
                         async move {
                             let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
                             let response = if request.uri().path() == "/oauth/callback" && let Some(oauth) = oauth {
-                                wamn_http::oauth_callback::response(&oauth, &database, &org, request).await
+                                wamn_http::oauth_callback::response(&oauth, &callback_databases, request).await
                             } else { handlers.http(&routing, request).await };
                             Ok::<_, std::convert::Infallible>(response)
                         }

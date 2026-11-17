@@ -35,27 +35,15 @@ pub async fn write(
                 &document.triple(),
             )
             .await?;
-            let mut client = wamn_postgres::connect(&platform.system_database_url).await?;
-            let mut tx = client
-                .begin()
-                .await
-                .context("begin the connection writes")?;
-            sqlx::raw_sql("SET LOCAL ROLE wamn_system")
-                .execute(&mut *tx)
-                .await
-                .map(drop)?;
-            sqlx::raw_sql(sqlx::AssertSqlSafe(
-                wamn_provision::bind_platform_principal_sql(
-                    wamn_provision::PlatformComponent::Provisioning,
-                ),
-            ))
-            .execute(&mut *tx)
-            .await
-            .map(drop)?;
-            let mut writes = Writes {
-                tx: &mut tx,
-                org: &document.org,
-            };
+            let row=super::analyse::read_row(&mut *lock.client().await,document).await?.context("environment is not provisioned")?;
+            let url=super::analyse::project_url(platform,document,&row).await?;
+            let mut client=super::analyse::connect_project(&url).await?;
+            let mut system=wamn_postgres::connect(&platform.system_database_url).await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE {}", wamn_role::SYSTEM_ROLE))).execute(&mut system).await?;
+            let mut tx=client.begin().await?;
+            let caller=wamn_provision::PlatformComponent::Provisioning.principal_id();
+            sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','','connection.write')").bind(caller).execute(&mut *tx).await?;
+            let mut writes=Writes{tx:&mut tx,system:&mut system,org:&document.org,caller};
             let mut lines = Vec::new();
             for name in document.integrations.keys() {
                 let integration = read(documents, &format!("{name}.integration.json"))?;
@@ -69,11 +57,12 @@ pub async fn write(
                     "the documents of integration {name} name another integration or environment"
                 );
                 if let Some(system) = integration["external_system"].as_str() {
-                    let external = read(documents, &format!("{system}.external-system.json"))?;
+                    let mut external = read(documents, &format!("{system}.external-system.json"))?;
+                    external["env"]=json!(document.env);
                     let listed = writes
                         .run(
                             "external_system.list",
-                            &json!({"project": document.project}),
+                            &json!({"project": document.project,"env":document.env}),
                         )
                         .await?;
                     if !listed["external_systems"]
@@ -84,13 +73,11 @@ pub async fn write(
                         lines.push(format!("wrote external system {system}"));
                     }
                 }
-                let key = json!({"project": document.project, "name": name});
-                if writes.stored("integration.get", &key).await?.is_none() {
-                    writes.run("integration.write", &integration).await?;
-                    lines.push(format!("wrote integration {name}"));
-                }
                 let key = json!({"project": document.project, "env": document.env, "name": name});
                 let mut request = connection.clone();
+                for field in ["integration_type","auth_type","external_system"] {
+                    request[field]=integration[field].clone();
+                }
                 match writes.stored("connection.get", &key).await? {
                     Some(stored) if stored["parameters"] == connection["parameters"] => continue,
                     // A first write of an authenticated integration stores an empty
@@ -122,11 +109,22 @@ fn read(documents: &Path, file: &str) -> anyhow::Result<Value> {
 struct Writes<'a, 'c> {
     tx: &'a mut sqlx::Transaction<'c, sqlx::Postgres>,
     org: &'a wamn_registry::OrgId,
+    system: &'a mut sqlx::PgConnection,
+    caller: wamn_identity_protocol::PrincipalId,
 }
 
 impl Writes<'_, '_> {
     async fn call(&mut self, operation: &str, request: &Value) -> Result<Value, ConnectionError> {
-        administration::execute(self.tx, self.org, operation, &request.to_string()).await
+        administration::execute(
+            self.tx,
+            self.system,
+            self.caller,
+            self.org,
+            operation,
+            &request.to_string(),
+            None,
+        )
+        .await
     }
 
     async fn run(&mut self, operation: &str, request: &Value) -> anyhow::Result<Value> {

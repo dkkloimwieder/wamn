@@ -5,6 +5,12 @@
       "type": "text",
       "nullable": false,
       "values": []
+    },
+    {
+      "path": "env",
+      "type": "text",
+      "nullable": false,
+      "values": []
     }
   ]
 }

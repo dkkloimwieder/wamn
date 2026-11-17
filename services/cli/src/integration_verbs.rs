@@ -36,7 +36,6 @@ enum IntegrationCommand {
         #[arg(long = "write-interface")]
         write_interfaces: Vec<String>,
     },
-    Write(crate::component_verbs::ConfigurationArgs),
     List(crate::component_verbs::ConfigurationArgs),
     Get(crate::component_verbs::ConfigurationArgs),
     Disable(crate::component_verbs::ConfigurationArgs),
@@ -72,9 +71,6 @@ pub async fn run(args: IntegrationArgs) -> anyhow::Result<()> {
                 "parameter_schema":publication.parameter_schema,"operations":publication.operations,"write_interfaces":publication.write_interfaces,
             })).await?;
             built
-        }
-        IntegrationCommand::Write(args) => {
-            return crate::component_verbs::configuration(args, "integration.write").await;
         }
         IntegrationCommand::List(args) => {
             return crate::component_verbs::configuration(args, "integration.list").await;

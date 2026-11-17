@@ -88,7 +88,6 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
         .map(|relation| ("catalog", *relation))
         .chain([
             ("platform", "connection"),
-            ("platform", "integration"),
             ("platform", "permission"),
             ("platform", "setting"),
             ("platform", "user"),
@@ -213,7 +212,7 @@ pub fn ensure_platform_group_role_sql() -> String {
 /// (docs/architecture/data-access.md#actors). `number_counter` is not one of
 /// them: only `platform.bump_counter`, `platform.assign_counter` and
 /// `platform.set_counter` write it.
-pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
+pub const ADMINISTRATION_RELATIONS: [&str; 14] = [
     "user",
     "role",
     "user_role",
@@ -222,7 +221,10 @@ pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
     "external_system",
     "connection",
     "file",
-    "integration",
+    "connection_generation",
+    "credential",
+    "oauth_token",
+    "oauth_authorization",
     "number_sequence",
     "setting",
 ];
@@ -275,13 +277,7 @@ pub const IDENTITY_READER_COLUMNS: [(&str, &[&str]); 1] =
 
 /// Non-secret connection functions available to the control host.
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
-    "lock_oauth_authorization(text)",
-    "retired_connection_credential(text)",
-    "connection_projection(text,text,text)",
     "publish_integration(text,integer,text,jsonb,text,text[],text[])",
-    "configure_connection(text,text,jsonb)",
-    "configure_external_system(text,text,jsonb)",
-    "configure_integration(text,text,jsonb)",
     "configure_integration_type(text,text,jsonb)",
 ];
 
@@ -295,14 +291,12 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// and environment grants of the org operations, and it reads the projects and
 /// environments those grants cover. The `project.create` route writes a
 /// project. It also stores encrypted OAuth tokens and pending authorizations.
-pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 16] = [
-    ("identity", "oauth_authorization", CONTROL_WRITE),
-    ("identity", "oauth_token", CONTROL_WRITE),
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 19] = [
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
     ("identity", "environment_roles", CONTROL_WRITE),
     ("identity", "password_logins", &["SELECT"]),
-    ("identity", "principals", &["SELECT"]),
+    ("identity", "principals", &["SELECT", "INSERT", "UPDATE"]),
     ("identity", "project_env_memberships", CONTROL_WRITE),
     ("identity", "project_roles", CONTROL_WRITE),
     ("registry", "environment_projects", &["SELECT"]),
@@ -313,6 +307,15 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 16] = [
         &["SELECT"],
     ),
     ("registry", "environment_integrations", &["SELECT"]),
+    (
+        "registry",
+        "connection_principal",
+        &["SELECT", "INSERT", "DELETE"],
+    ),
+    ("registry", "integration_type", &["SELECT"]),
+    ("registry", "integration_type_version", &["SELECT"]),
+    ("registry", "integration_type_auth", &["SELECT"]),
+    ("registry", "auth_type", &["SELECT"]),
     ("registry", "target", &["SELECT"]),
     ("registry", "environments", &["SELECT"]),
     ("registry", "projects", &["SELECT", "INSERT"]),

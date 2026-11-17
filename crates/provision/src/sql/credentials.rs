@@ -46,8 +46,25 @@ pub fn grant_workload_login_sql(
 
 /// Grant the dynamic SQL role reads without inheriting any application writer.
 pub fn grant_dynamic_sql_surface_sql() -> String {
+    let role = escape_identifier(wamn_role::QUERY_ROLE);
     format!(
-        "{} DO $read$ DECLARE target record; BEGIN FOR target IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname NOT IN ('information_schema', 'wamn_history') LOOP EXECUTE format('GRANT USAGE ON SCHEMA %I TO wamn_query', target.nspname); EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO wamn_query', target.nspname); END LOOP; FOR target IN SELECT c.oid::regclass AS relation FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization') LOOP EXECUTE format('REVOKE ALL ON %s FROM wamn_query', target.relation); END LOOP; END $read$; REVOKE ALL ON platform.tx_identity, platform.login_principal FROM wamn_query; GRANT INSERT ON platform.tx_identity TO wamn_query; GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO wamn_query;",
+        "{} DO $read$ DECLARE target record; relation record; BEGIN \
+         FOR target IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname NOT IN ('information_schema', 'wamn_history') LOOP \
+           EXECUTE format('GRANT USAGE ON SCHEMA %I TO {role}', target.nspname); \
+           FOR relation IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
+             WHERE n.nspname=target.nspname AND c.relkind IN ('r','p','v','m','f') \
+             AND NOT (n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization')) LOOP \
+             EXECUTE format('GRANT SELECT ON %I.%I TO {role}', target.nspname, relation.relname); \
+           END LOOP; \
+         END LOOP; \
+         FOR target IN SELECT c.oid::regclass AS relation FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
+           WHERE n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization') LOOP \
+           EXECUTE format('REVOKE ALL ON %s FROM {role}', target.relation); \
+         END LOOP; END $read$; \
+         REVOKE ALL ON platform.tx_identity, platform.login_principal FROM {role}; \
+         GRANT INSERT ON platform.tx_identity TO {role}; \
+         GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), \
+           wamn_authority.current_role(), wamn_authority.current_application() TO {role};",
         super::ensure_project_roles_sql()
     )
 }

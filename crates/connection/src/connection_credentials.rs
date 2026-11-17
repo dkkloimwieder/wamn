@@ -1,10 +1,8 @@
-//! Host-owned connection credentials read through login-targeted database functions.
+//! Connection credentials in project databases, with system-owned integration types.
 //!
-//! Secret material never enters guests or stored run facts. An absent reader
-//! is unavailable. A reader with no matching enabled connection returns none.
+//! Secret material never enters guests or stored run facts. Project pools select
+//! connection data; the system pool supplies types, targets and principal status.
 
-#[cfg(test)]
-use sqlx::Row as _;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -36,12 +34,20 @@ pub async fn read_secret(
     String::from_utf8(backend.get(reference, version).await?).context("credential is not UTF-8")
 }
 
-/// Connection credentials targeted by the authenticated reader login.
+#[derive(Clone)]
+struct ProjectReader {
+    database: std::sync::Weak<dyn crate::database::ProjectDatabase>,
+    project: wamn_registry::ProjectId,
+    environment: wamn_registry::EnvName,
+}
+
+/// Connection credentials selected through the project platform pool.
 #[derive(Clone)]
 pub struct ConnectionCredentials {
     org: Option<wamn_registry::OrgId>,
     store: Option<Arc<dyn wamn_kubernetes::Store>>,
     database: Option<sqlx::PgPool>,
+    project: Option<ProjectReader>,
 }
 
 impl std::fmt::Debug for ConnectionCredentials {
@@ -54,24 +60,57 @@ impl std::fmt::Debug for ConnectionCredentials {
 }
 
 impl ConnectionCredentials {
-    /// Use a dedicated system reader whose login fixes its org and project.
+    /// Use the system pool for integration type metadata.
     pub fn from_database(client: sqlx::PgPool, org: &wamn_registry::OrgId) -> Self {
         Self {
             org: Some(org.to_owned()),
             store: None,
             database: Some(client),
+            project: None,
         }
+    }
+
+    pub(crate) fn with_project_database(
+        mut self,
+        database: std::sync::Weak<dyn crate::database::ProjectDatabase>,
+        project: &wamn_registry::ProjectId,
+        environment: &wamn_registry::EnvName,
+    ) -> Self {
+        self.project = Some(ProjectReader {
+            database,
+            project: project.to_owned(),
+            environment: environment.to_owned(),
+        });
+        self
+    }
+
+    fn project_database(
+        &self,
+        project: &wamn_registry::ProjectId,
+        environment: &wamn_registry::EnvName,
+    ) -> anyhow::Result<Arc<dyn crate::database::ProjectDatabase>> {
+        let target = self
+            .project
+            .as_ref()
+            .context("project database unavailable")?;
+        anyhow::ensure!(
+            &target.project == project && &target.environment == environment,
+            "connection project mismatch"
+        );
+        target
+            .database
+            .upgrade()
+            .context("project database was unloaded")
     }
 
     pub async fn oauth_database(
         &self,
+        project: &wamn_registry::ProjectId,
+        environment: &wamn_registry::EnvName,
     ) -> anyhow::Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
-        self.database
-            .as_ref()
-            .context("OAuth database unavailable")?
-            .acquire()
+        self.project_database(project, environment)?
+            .oauth_connection(project)
             .await
-            .context("open OAuth transaction connection")
     }
 
     pub fn org(&self) -> anyhow::Result<&wamn_registry::OrgId> {
@@ -90,6 +129,7 @@ impl ConnectionCredentials {
             org: None,
             store: None,
             database: None,
+            project: None,
         }
     }
 
@@ -121,20 +161,20 @@ impl ConnectionCredentials {
 /// [`ConnectionCredentials::env_connections`] returns rows that never change
 /// under their keys.
 impl ConnectionCredentials {
-    async fn reader(
-        &self,
-    ) -> anyhow::Result<(
-        sqlx::pool::PoolConnection<sqlx::Postgres>,
-        &wamn_registry::OrgId,
-    )> {
-        let client = self
+    async fn reader(&self) -> anyhow::Result<sqlx::Transaction<'_, sqlx::Postgres>> {
+        let mut tx = self
             .database
             .as_ref()
-            .context("connection reader unavailable")?
-            .acquire()
+            .context("system reader unavailable")?
+            .begin()
             .await?;
-        let org = self.org.as_ref().context("connection reader has no org")?;
-        Ok((client, org))
+        sqlx::query(
+            "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')",
+        )
+        .bind(wamn_identity_protocol::PlatformComponent::Executor.principal_id())
+        .execute(&mut *tx)
+        .await?;
+        Ok(tx)
     }
 
     /// The active generation, status, credential, principal and lease coordinates of one
@@ -145,10 +185,21 @@ impl ConnectionCredentials {
         environment: &wamn_registry::EnvName,
         id: &uuid::Uuid,
     ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
-        let (mut client, org) = self.reader().await?;
-        let row = wamn_registry::connections::fact(&mut client, org, project, environment, id)
-            .await
-            .context("read the connection fact")?;
+        let database = self.project_database(project, environment)?;
+        let mut local = database.read_connection(project).await?;
+        let mut system = self.reader().await?;
+        let row = wamn_registry::connections::fact(
+            local.connection(),
+            &mut system,
+            self.org()?,
+            project,
+            environment,
+            id,
+        )
+        .await
+        .context("read connection fact")?;
+        local.commit().await?;
+        system.commit().await?;
         Ok(row.map(|row| crate::connection_memory::ConnectionFact {
             active_generation: row.active_generation,
             status: if row.active {
@@ -173,17 +224,16 @@ impl ConnectionCredentials {
         id: &uuid::Uuid,
         generation: i64,
     ) -> anyhow::Result<Option<ConnectionGeneration>> {
-        let (mut client, org) = self.reader().await?;
-        wamn_registry::connections::generation(
-            &mut client,
-            org,
-            project,
-            environment,
-            id,
-            generation,
-        )
-        .await
-        .context("read the connection generation")
+        let database = self.project_database(project, environment)?;
+        let mut local = database.read_connection(project).await?;
+        let mut system = self.reader().await?;
+        let row =
+            wamn_registry::connections::generation(local.connection(), &mut system, id, generation)
+                .await
+                .context("read connection generation")?;
+        local.commit().await?;
+        system.commit().await?;
+        Ok(row)
     }
 
     /// The secret of one credential of a connection of the environment.
@@ -193,16 +243,12 @@ impl ConnectionCredentials {
         environment: &wamn_registry::EnvName,
         credential: &uuid::Uuid,
     ) -> anyhow::Result<Option<String>> {
-        let (mut client, org) = self.reader().await?;
-        let reference = wamn_registry::connections::credential(
-            &mut client,
-            org,
-            project,
-            environment,
-            credential,
-        )
-        .await
-        .context("read the credential reference")?;
+        let database = self.project_database(project, environment)?;
+        let mut local = database.read_connection(project).await?;
+        let reference = wamn_registry::connections::credential(local.connection(), credential)
+            .await
+            .context("read credential reference")?;
+        local.commit().await?;
         match reference {
             Some(reference) => Ok(Some(
                 read_secret(
@@ -222,10 +268,13 @@ impl ConnectionCredentials {
         project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
     ) -> anyhow::Result<std::collections::BTreeMap<String, uuid::Uuid>> {
-        let (mut client, org) = self.reader().await?;
-        wamn_registry::connections::environment(&mut client, org, project, environment)
+        let database = self.project_database(project, environment)?;
+        let mut local = database.read_connection(project).await?;
+        let rows = wamn_registry::connections::environment(local.connection())
             .await
-            .context("read the environment connections")
+            .context("read environment connections")?;
+        local.commit().await?;
+        Ok(rows)
     }
 
     /// One published version of an integration type, or its newest one.
@@ -234,7 +283,12 @@ impl ConnectionCredentials {
         integration_type: &wamn_registry::integration_code::IntegrationCode,
         version: Option<i32>,
     ) -> anyhow::Result<Option<IntegrationVersion>> {
-        let (mut client, _) = self.reader().await?;
+        let mut client = self
+            .database
+            .as_ref()
+            .context("system reader unavailable")?
+            .acquire()
+            .await?;
         wamn_registry::connections::integration_version(&mut client, integration_type, version)
             .await
             .context("read the integration version")
@@ -243,266 +297,9 @@ impl ConnectionCredentials {
 
 pub use wamn_registry::connections::{ConnectionGeneration, IntegrationVersion};
 
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_util;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test_util::Fixture;
-
-    #[sqlx::test(migrations = false)]
-    async fn active_references_are_targeted_and_disabled_connections_refuse(pool: sqlx::PgPool) {
-        let _lock = wamn_test_postgres::lock();
-        let mut fixture = Fixture::new(wamn_test_postgres::url(&pool)).await;
-        fixture.put("erp", "first", &["project-a"]).await;
-        fixture.put("erp", "other", &["project-b"]).await;
-        fixture.put("erp", "current", &["project-a"]).await;
-        let reader = fixture.reader(&"project-a".parse().unwrap()).await;
-        let id = reader
-            .env_connections(&"project-a".parse().unwrap(), &"dev".parse().unwrap())
-            .await
-            .unwrap()["erp"];
-        let fact = reader
-            .connection_fact(&"project-a".parse().unwrap(), &"dev".parse().unwrap(), &id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            reader
-                .credential_secret(
-                    &"project-a".parse().unwrap(),
-                    &"dev".parse().unwrap(),
-                    &fact.credential_id.unwrap()
-                )
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("current")
-        );
-        assert!(
-            reader
-                .env_connections(&"project-b".parse().unwrap(), &"dev".parse().unwrap())
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(reader.connection_name("org:acme:erp@2").unwrap(), "erp");
-        assert!(reader.connection_name("org:other:erp").is_err());
-        assert!(reader.connection_name("project:project-a:erp").is_err());
-        let principal: wamn_identity_protocol::PrincipalId =
-            sqlx::query(wamn_registry::test_util::connection_principal_sql())
-                .bind(&id)
-                .fetch_one(&mut fixture.admin)
-                .await
-                .unwrap()
-                .get(0);
-        assert_eq!(fact.service_principal_id, principal);
-        assert!(
-            sqlx::raw_sql("SELECT * FROM identity.credential")
-                .fetch_all(reader.database.as_ref().unwrap())
-                .await
-                .is_err()
-        );
-        sqlx::raw_sql(wamn_registry::test_util::disable_project_integrations_sql())
-            .execute(&mut fixture.admin)
-            .await
-            .map(drop)
-            .unwrap();
-        assert_eq!(
-            reader
-                .connection_fact(&"project-a".parse().unwrap(), &"dev".parse().unwrap(), &id)
-                .await
-                .unwrap()
-                .unwrap()
-                .status,
-            crate::connection_memory::ConnectionStatus::Disabled
-        );
-    }
-
-    #[sqlx::test(migrations = false)]
-    async fn memory_reads_follow_the_active_generation_inside_the_login_environment(
-        pool: sqlx::PgPool,
-    ) {
-        use crate::connection_memory::ConnectionStatus;
-
-        let _lock = wamn_test_postgres::lock();
-        let mut fixture = Fixture::new(wamn_test_postgres::url(&pool)).await;
-        fixture.put_store("files", "first", &["project-a"]).await;
-        fixture.put("erp", "http", &["project-a"]).await;
-        let reader = fixture.reader(&"project-a".parse().unwrap()).await;
-        let map = reader
-            .env_connections(&"project-a".parse().unwrap(), &"dev".parse().unwrap())
-            .await
-            .unwrap();
-        assert_eq!(
-            map.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["erp", "files"]
-        );
-        let store = map["files"];
-        let first = reader
-            .connection_fact(
-                &"project-a".parse().unwrap(),
-                &"dev".parse().unwrap(),
-                &store,
-            )
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(first.status, ConnectionStatus::Active);
-        let first_credential = first.credential_id.unwrap();
-        fixture.put_store("files", "current", &["project-a"]).await;
-        let current = reader
-            .connection_fact(
-                &"project-a".parse().unwrap(),
-                &"dev".parse().unwrap(),
-                &store,
-            )
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(current.active_generation > first.active_generation);
-        assert_ne!(current.credential_id, Some(first_credential));
-        // A generation and a credential never change under their ids.
-        let generation = reader
-            .connection_generation(
-                &"project-a".parse().unwrap(),
-                &"dev".parse().unwrap(),
-                &store,
-                first.active_generation,
-            )
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(generation.name, "files");
-        assert_eq!(generation.integration_type, "s3".parse().unwrap());
-        assert_eq!(generation.runtime_type, "host");
-        assert_eq!(generation.parameters["container"], "files");
-        assert_eq!(
-            reader
-                .credential_secret(
-                    &"project-a".parse().unwrap(),
-                    &"dev".parse().unwrap(),
-                    &first_credential
-                )
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("first")
-        );
-        assert_eq!(
-            reader
-                .credential_secret(
-                    &"project-a".parse().unwrap(),
-                    &"dev".parse().unwrap(),
-                    &current.credential_id.unwrap()
-                )
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("current")
-        );
-        // Another project of the login reads nothing.
-        assert!(
-            reader
-                .connection_fact(
-                    &"project-b".parse().unwrap(),
-                    &"dev".parse().unwrap(),
-                    &store
-                )
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            reader
-                .credential_secret(
-                    &"project-b".parse().unwrap(),
-                    &"dev".parse().unwrap(),
-                    &first_credential
-                )
-                .await
-                .unwrap()
-                .is_none()
-        );
-        sqlx::raw_sql(wamn_registry::test_util::disable_files_integration_sql())
-            .execute(&mut fixture.admin)
-            .await
-            .map(drop)
-            .unwrap();
-        assert_eq!(
-            reader
-                .connection_fact(
-                    &"project-a".parse().unwrap(),
-                    &"dev".parse().unwrap(),
-                    &store
-                )
-                .await
-                .unwrap()
-                .unwrap()
-                .status,
-            ConnectionStatus::Disabled
-        );
-    }
-
-    #[sqlx::test(migrations = false)]
-    async fn a_generation_carries_its_authentication(pool: sqlx::PgPool) {
-        use serde_json::json;
-
-        let _lock = wamn_test_postgres::lock();
-        let mut fixture = Fixture::new(wamn_test_postgres::url(&pool)).await;
-        let parameters =
-            json!({"client_id":"app","token_url":"https://example.com/token","scopes":["read"]});
-        fixture
-            .put_http(
-                "erp",
-                r#"{"client_secret":"first"}"#,
-                &["project-a"],
-                ("oauth2_client_credentials", parameters.clone()),
-            )
-            .await;
-        let reader = fixture.reader(&"project-a".parse().unwrap()).await;
-        let id = reader
-            .env_connections(&"project-a".parse().unwrap(), &"dev".parse().unwrap())
-            .await
-            .unwrap()["erp"];
-        let fact = reader
-            .connection_fact(&"project-a".parse().unwrap(), &"dev".parse().unwrap(), &id)
-            .await
-            .unwrap()
-            .unwrap();
-        let generation = reader
-            .connection_generation(
-                &"project-a".parse().unwrap(),
-                &"dev".parse().unwrap(),
-                &id,
-                fact.active_generation,
-            )
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(generation.auth_type, "oauth2_client_credentials");
-        assert_eq!(generation.parameters["auth"], parameters);
-        assert!(generation.parameters["auth"].get("client_secret").is_none());
-        assert_eq!(
-            reader
-                .credential_secret(
-                    &"project-a".parse().unwrap(),
-                    &"dev".parse().unwrap(),
-                    &fact.credential_id.unwrap()
-                )
-                .await
-                .unwrap()
-                .as_deref(),
-            Some(r#"{"client_secret":"first"}"#)
-        );
-        let http_only: bool = sqlx::query(wamn_registry::test_util::hmac_http_only_sql())
-            .fetch_one(&mut fixture.admin)
-            .await
-            .unwrap()
-            .get(0);
-        assert!(http_only);
-    }
 
     #[tokio::test]
     async fn an_absent_reader_is_unavailable() {

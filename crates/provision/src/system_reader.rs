@@ -32,7 +32,8 @@ pub fn grants_sql() -> String {
            wamn_authority.current_application(), identity.is_project_admin(uuid,text,text,text), \
            identity.has_project_access(uuid,text,text,text) TO {role}; \
          GRANT SELECT ON registry.integration_type, registry.integration_type_version, \
-           registry.auth_type, registry.environment_projects TO {role};"
+           registry.auth_type, registry.environment_projects, registry.target, \
+           registry.connection_principal TO {role};"
     );
     for relation in crate::sql::IDENTITY_READER_RELATIONS {
         sql.push_str(&format!(

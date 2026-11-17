@@ -44,12 +44,6 @@
       "values": []
     },
     {
-      "path": "integration_id",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
       "path": "active_generation",
       "type": "bigint",
       "nullable": false,
@@ -75,12 +69,6 @@
     },
     {
       "path": "auth_type",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "integration_status",
       "type": "text",
       "nullable": false,
       "values": []

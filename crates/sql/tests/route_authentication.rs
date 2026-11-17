@@ -2,21 +2,14 @@
 #![cfg(feature = "test-util")]
 
 use serde_json::{Value, json};
+use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
 use wamn_catalog::PAT_AUTHENTICATION_MODE;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHttpRouting};
-
-use hmac::{Hmac, KeyInit as _, Mac as _};
-use sha2::Sha256;
-use sqlx::Row as _;
-use std::sync::Arc;
-use wamn_authentication::route_authentication::PlatformRouteAuthenticator;
 
 const UNAUTHORIZED: (u16, &str) = (401, "unauthorized");
 const UNAVAILABLE: (u16, &str) = (503, "authentication-unavailable");
 
-use self::test_util::{routing, routing_policy};
-#[path = "support/route_authentication/signature.rs"]
-mod signature;
+use self::test_util::routing;
 
 #[tokio::test]
 async fn pat_mode_is_recognized_and_an_absent_backend_is_one_generic_outage() {
