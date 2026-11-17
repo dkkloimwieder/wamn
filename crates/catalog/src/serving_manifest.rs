@@ -129,9 +129,6 @@ pub const UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL: &str =
 /// Name prefix of the immutable, digest-named ConfigMap carrying the manifest.
 pub const RELEASE_MANIFEST_CONFIGMAP_PREFIX: &str = "release-manifest-";
 
-/// Directory the manifest ConfigMap is projected into on every pod.
-pub const RELEASE_MANIFEST_MOUNT_PATH: &str = "/etc/wamn/release-manifest";
-
 /// The manifest ConfigMap's single key and mounted file name.
 pub const RELEASE_MANIFEST_FILE_NAME: &str = "manifest.json";
 

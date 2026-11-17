@@ -1,5 +1,6 @@
 //! Write edge bundles from built packages and admitted component bytes.
 
+use wamn_catalog::edge_bundle::local_component_path;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -12,7 +13,6 @@ use wamn_catalog::edge_bundle::{
 };
 use wamn_catalog::{PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingManifest};
 use wamn_digest::bytes_sha256;
-use wamn_engine::artifact_source::local_component_path;
 use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_registry::project_env_key;
 

@@ -2,7 +2,7 @@
 use crate::engine::MAX_HOST_CALL_DURATION;
 use crate::flow_http_routing::AuthenticatedCaller;
 use std::fmt;
-use wamn_catalog::{AdmittedComponentOperation, HostAttachment, ServingManifest};
+use wamn_catalog::{AdmittedComponentOperation, HostAttachment, HostRouteSet};
 
 pub const OPERATION_METRICS_ID: &str = "wamn-operation";
 pub const PERMISSION_DENIED: &str = "permission-denied";
@@ -71,11 +71,11 @@ pub struct DeliveryReport {
 }
 /// Admit one native platform endpoint under its authenticated attachment.
 pub fn resolve_authorized_host_route(
-    manifest: &ServingManifest,
+    routes: HostRouteSet,
     id: &wamn_catalog::canonical_name::CanonicalName,
     caller: Option<&AuthenticatedCaller>,
 ) -> Option<Result<&'static HostAttachment, DeliveryError>> {
-    let attachment = manifest.host_attachment(id)?;
+    let (_, attachment) = routes.attachments().find(|(name, _)| *name == id)?;
     if caller.is_none_or(|caller| caller.attachment_id() != id) {
         return Some(Err(DeliveryError::InvalidRequest));
     }

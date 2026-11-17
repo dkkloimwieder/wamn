@@ -39,3 +39,11 @@ pub struct EdgeBundle {
 pub struct EdgeGrants {
     pub roles: BTreeMap<String, BTreeSet<String>>,
 }
+
+/// Exact local filename for an admitted digest, without path interpretation.
+pub fn local_component_path(
+    directory: &std::path::Path,
+    digest: &wamn_digest::Digest,
+) -> std::path::PathBuf {
+    directory.join(format!("{}.wasm", digest.hex()))
+}

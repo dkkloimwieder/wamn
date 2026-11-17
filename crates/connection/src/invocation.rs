@@ -7,13 +7,13 @@ use wamn_engine::invocation_scope::InvocationScopes;
 /// Immutable release and project-owned connection readers for one deployment.
 #[derive(Debug)]
 pub struct ReleaseContext {
-    pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+    pub release: Arc<wamn_catalog::serving_context::ServingContext>,
     pub connections: Arc<crate::connection_facts::ConnectionFacts>,
 }
 
 impl ReleaseContext {
     pub fn new(
-        release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+        release: Arc<wamn_catalog::serving_context::ServingContext>,
         connections: Arc<crate::connection_facts::ConnectionFacts>,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
@@ -35,13 +35,7 @@ pub struct Scope {
     pub invocation: Option<ConnectionInvocation>,
 }
 
-impl wamn_engine::invocation_scope::InvocationAuthority for Scope {
-    fn release(&self) -> Option<Arc<wamn_engine::release_manifest::LoadedRelease>> {
-        self.context
-            .as_ref()
-            .map(|context| Arc::clone(&context.release))
-    }
-}
+impl wamn_engine::invocation_scope::InvocationAuthority for Scope {}
 
 /// Read the deployment selected by the host for this scope.
 pub fn context(scopes: &InvocationScopes, scope: &str) -> anyhow::Result<Arc<ReleaseContext>> {

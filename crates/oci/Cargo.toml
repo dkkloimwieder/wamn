@@ -12,7 +12,7 @@ test = false
 
 [features]
 sqlx = ["dep:sqlx"]
-test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "tokio/io-util", "tokio/net", "tokio/rt"]
+test-util = ["wamn-catalog/test-util", "tokio/io-util", "tokio/net", "tokio/rt"]
 
 [dependencies]
 wamn-digest = { workspace = true }
@@ -21,7 +21,6 @@ oci-client = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
 wamn-catalog = { workspace = true }
-wamn-engine = { workspace = true }
 sqlx = { workspace = true, optional = true, features = ["postgres"] }
 wamn-registry = { workspace = true }
 wamn-kubernetes = { workspace = true }

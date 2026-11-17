@@ -448,7 +448,7 @@ impl WamnPostgres {
     /// identity verifies its digest against the admission pin of every run it
     /// leases. The bench harness and live tests call this directly; the host
     /// path feeds it from the loaded
-    /// [`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease), whose
+    /// [`ServingContext`](wamn_catalog::serving_context::ServingContext), whose
     /// digest is derived from verified manifest content. Absent leaves the identity
     /// verifying nothing.
     ///
@@ -669,7 +669,9 @@ impl WamnPostgres {
         self.operation_workloads
             .write()
             .expect("operation workloads lock poisoned")
-            .retain(|scope, _| !scope.starts_with(workload_id));
+            .retain(|scope, entry| {
+                entry.workload.as_ref() != workload_id && !scope.starts_with(workload_id)
+            });
     }
 
     /// The grants of the signed roles of a verified session that the active

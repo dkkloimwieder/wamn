@@ -5,7 +5,7 @@ use std::sync::Arc;
 #[cfg(any(test, feature = "test-util"))]
 use wamn_catalog::ServingManifest;
 #[cfg(any(test, feature = "test-util"))]
-use wamn_engine::release_manifest::LoadedRelease;
+use wamn_catalog::serving_context::ServingContext;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -18,7 +18,7 @@ mod bindings {
 pub use bindings::wamn::connection::http::ConnectionError;
 /// A package release for host service fixtures that execute no released component.
 #[cfg(any(test, feature = "test-util"))]
-pub fn test_release(project_env_key: &wamn_registry::ProjectEnvKey) -> Arc<LoadedRelease> {
+pub fn test_release(project_env_key: &wamn_registry::ProjectEnvKey) -> Arc<ServingContext> {
     let manifest = ServingManifest::new(
         wamn_catalog::ServingRelease {
             packages: [wamn_catalog::PackageCoordinate::new(
@@ -34,10 +34,10 @@ pub fn test_release(project_env_key: &wamn_registry::ProjectEnvKey) -> Arc<Loade
     )
     .expect("host service fixture manifest");
     Arc::new(
-        LoadedRelease::load_canonical_bytes(
+        ServingContext::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "host service fixture",
-            wamn_engine::release_manifest::ReleaseTarget::new(
+            wamn_catalog::serving_context::ReleaseTarget::new(
                 project_env_key.clone(),
                 "dev".parse().expect("valid fixture coordinate"),
             ),

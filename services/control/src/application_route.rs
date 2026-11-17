@@ -17,6 +17,10 @@
 //! environment declares, against the release the host serves, as the identity
 //! the workflow names.
 
+use wamn_catalog::serving_context::ServingContext;
+use wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
+use wamn_identity_protocol::PrincipalId;
+use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_events::admission::{ManualRunAdmission, ManualRunAdmitted};
 
@@ -28,11 +32,8 @@ use wamn_catalog::{
     HostAttachment, HostHandler, HostRouteAuthority, condition_workflow_document,
     resolve_workflow_components, sealed_operation_reference,
 };
-use wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
+use wamn_engine::application::WorkloadRoutes;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
-use wamn_engine::release_manifest::LoadedRelease;
-use wamn_identity_protocol::PrincipalId;
-use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
 use wamn_environment::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
@@ -46,7 +47,7 @@ use crate::control_route::{Refusal, parse};
 pub(crate) struct ApplicationRoutes<'a> {
     pub(crate) postgres: &'a WamnPostgres,
     pub(crate) project: &'a wamn_registry::ProjectId,
-    pub(crate) release: &'a LoadedRelease,
+    pub(crate) config: &'a WorkloadRoutes,
     /// The identity reader of `wamn_system` and the org, for the covering
     /// fact of `user.list` and the covering test of an `admin` revoke.
     pub(crate) identity: Option<(&'a sqlx::PgPool, &'a wamn_registry::OrgId)>,
@@ -158,7 +159,14 @@ fn start_refusal(code: &'static str, field: &str) -> Refusal {
     }
 }
 
-impl ApplicationRoutes<'_> {
+/// The workflow reader retains its manifest until step 3.4.
+pub(crate) struct WorkflowRoutes<'a> {
+    pub(crate) postgres: &'a WamnPostgres,
+    pub(crate) project: &'a wamn_registry::ProjectId,
+    pub(crate) release: &'a ServingContext,
+}
+
+impl WorkflowRoutes<'_> {
     /// Admit one run of the enabled version of a workflow of an application the
     /// environment declares
     /// (docs/architecture/execution.md#environment-workflows). The stored graph
@@ -271,7 +279,9 @@ impl ApplicationRoutes<'_> {
             }
         }
     }
+}
 
+impl ApplicationRoutes<'_> {
     /// Serve one application route. `request_id` is the request id of a
     /// write, which `number_counter.set` logs in the write log.
     pub(crate) async fn handle(
@@ -287,7 +297,7 @@ impl ApplicationRoutes<'_> {
                 .set_counter(attachment, principal, request_id, request)
                 .await;
         }
-        let project_env_key = &self.release.target().project_env_key;
+        let project_env_key = &self.config.project_env_key;
         self.serve(attachment, principal, payload, project_env_key)
             .await
     }
@@ -312,7 +322,7 @@ impl ApplicationRoutes<'_> {
                             &id,
                             org,
                             self.project,
-                            Some(&self.release.target().environment),
+                            Some(&self.config.application.environment),
                         )
                         .await?;
                         listed.push(json!({
@@ -456,7 +466,7 @@ impl ApplicationRoutes<'_> {
         request_id: Option<&str>,
         request: CounterSetRequest,
     ) -> Result<Value, Refusal> {
-        require_counter_application(&self.release.target().applications, &request.application)
+        require_counter_application(&self.config.application.application, &request.application)
             .map_err(|refusal| counter_set_refusal(&refusal))?;
         let set = CounterSet {
             application: request.application,
@@ -468,7 +478,7 @@ impl ApplicationRoutes<'_> {
         let value = wamn_sql::number_counter::set_number_counter(
             self.postgres,
             self.project,
-            &self.release.target().project_env_key,
+            &self.config.project_env_key,
             principal,
             &attachment.operation,
             request_id.unwrap_or_default(),
@@ -501,7 +511,7 @@ impl ApplicationRoutes<'_> {
         lock: bool,
         work: impl AsyncFnOnce(&mut Client) -> Result<Value, Refusal>,
     ) -> Result<Value, Refusal> {
-        let project_env_key = &self.release.target().project_env_key;
+        let project_env_key = &self.config.project_env_key;
         self.postgres
             .administration_transaction(
                 self.project,
@@ -524,20 +534,16 @@ impl ApplicationRoutes<'_> {
     /// role: whether the role holds it and whether a role can take it (§4.6).
     fn permission_list(&self, role: &str, rows: &[String]) -> Value {
         let served: BTreeSet<&str> = self
-            .release
-            .manifest()
+            .config
+            .application
             .components
             .iter()
-            .flat_map(|component| component.descriptor.operations.values())
-            .filter_map(|operation| operation.registered_operation.as_ref())
-            .map(|operation| sealed_operation_reference(operation.as_str()))
+            .flat_map(|component| &component.operations)
+            .filter(|(_, operation)| operation.public)
+            .map(|(operation, _)| sealed_operation_reference(operation.as_str()))
             .collect();
-        let host: BTreeMap<String, HostRouteAuthority> = self
-            .release
-            .manifest()
-            .host_routes
-            .iter()
-            .flat_map(|set| set.attachments())
+        let host: BTreeMap<String, HostRouteAuthority> = wamn_catalog::HostRouteSet::Application
+            .attachments()
             .map(|(_, attachment)| (attachment.reference.clone(), attachment.route.authority))
             .collect();
         let mut operations = served.clone();
@@ -565,10 +571,10 @@ impl ApplicationRoutes<'_> {
 }
 
 fn require_counter_application(
-    applications: &wamn_catalog::EnvironmentApplications,
+    served: &wamn_catalog::ApplicationName,
     application: &wamn_catalog::ApplicationName,
 ) -> Result<(), CounterSetRefusal> {
-    if applications.contains_key(application) {
+    if served == application {
         Ok(())
     } else {
         Err(CounterSetRefusal::InvalidInput {
@@ -580,26 +586,6 @@ fn require_counter_application(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn counter_set_accepts_only_a_declared_application_name() {
-        let applications = serde_json::from_value(json!({
-            "receiving": {"packages": ["base", "overlay"]}
-        }))
-        .unwrap();
-        assert!(
-            require_counter_application(&applications, &"receiving".parse().expect("valid name"))
-                .is_ok()
-        );
-        for name in ["base", "overlay", "unknown"] {
-            assert!(matches!(
-                require_counter_application(&applications, &name.parse().unwrap()),
-                Err(CounterSetRefusal::InvalidInput {
-                    field: "application"
-                })
-            ));
-        }
-    }
 
     /// `workflow.start` takes no user id: the caller is the authenticated one
     /// (docs/architecture/execution.md#environment-workflows).

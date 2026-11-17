@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# The route plugin's authentication entry points for integration tests.
+# Integration and invocation scope fixtures.
 test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
@@ -25,8 +25,6 @@ wamn-identity-protocol = { workspace = true }
 # A route request's credential type reads the PAT prefix. The crate is pure.
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-# The `wamn.release` label value: the manifest digest as lowercase base32.
-data-encoding = { workspace = true }
 hex = { workspace = true }
 # Invocation tracing.
 opentelemetry = { workspace = true, features = ["trace"] }
@@ -49,7 +47,6 @@ wit-parser.workspace = true
 
 [dev-dependencies]
 url = { workspace = true }
-tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }
 # The engine tests encode their guests from WAT in-process. Same exact pins as
 # wamn-oci.

@@ -53,6 +53,7 @@ impl OperationMetrics {
 /// Immutable authority installed by the host before a workload starts.
 #[derive(Debug)]
 pub(super) struct OperationWorkload {
+    pub(super) workload: Box<str>,
     identity: SessionIdentity,
     operations: BTreeMap<CanonicalName, OperationAuthority>,
 }
@@ -69,6 +70,7 @@ struct OperationAuthority {
 impl WamnPostgres {
     pub(super) fn bind_entry_instance(
         &self,
+        workload: &str,
         component: &str,
         config: wamn_catalog::application_config::ApplicationConfig,
     ) -> anyhow::Result<()> {
@@ -114,6 +116,7 @@ impl WamnPostgres {
             .insert(
                 component.to_owned(),
                 Arc::new(OperationWorkload {
+                    workload: workload.into(),
                     identity,
                     operations,
                 }),
@@ -580,6 +583,15 @@ async fn begin(
     if admitted.read && !authorize_only {
         return Err(Refusal::ReadsClaimNothing);
     }
+    // A caller handle belongs to a configured route of this workload.
+    if let Some(caller) = caller
+        && postgres
+            .scopes
+            .routes(workload)
+            .is_none_or(|routes| routes.route(caller.attachment_id()).is_none())
+    {
+        return Err(Refusal::InvalidCaller);
+    }
     let delivery = uuid::Uuid::new_v4().to_string();
     let source = caller.map_or_else(
         || operation.clone(),
@@ -657,9 +669,6 @@ async fn begin(
         Claim::Conflict => Err(Refusal::Conflict),
     }
 }
-
-#[cfg(test)]
-mod tests;
 
 async fn claim_operation(
     open: &OpenOperation,

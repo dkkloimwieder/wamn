@@ -1,14 +1,10 @@
 //! Digest-verified supply of admitted component bytes.
 //!
-//! [`ArtifactSource`] is the one way a host gets the bytes of an admitted
-//! component. Every source returns only bytes validated against that fact. This
-//! module holds the trait, the digest tests, and the local file source. The
-//! OCI registry source lives in `wamn-oci` and implements the same trait.
-//! No source owns a catalog read, cache, instance pool, router behavior, or
-//! retry policy.
+//! The edge reads local component files and verifies their admitted digests.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use wamn_catalog::edge_bundle::local_component_path;
 
 use async_trait::async_trait;
 use wamn_catalog::AdmittedComponent;
@@ -23,16 +19,11 @@ pub trait ArtifactSource: Send + Sync {
         &self,
         component: &AdmittedComponent,
     ) -> Result<Vec<u8>, ComponentArtifactFetchError>;
-
 }
 
 /// Stable classification of a refused component artifact pull.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentArtifactFetchErrorType {
-    /// The supplied admitted digest cannot name an immutable artifact.
-    InvalidReference,
-    /// `oci-client` rejected the transport configuration, so no client exists.
-    RegistryClient,
     /// The registry or named artifact is not currently available.
     Unavailable,
     /// The registry answered with bytes or metadata that contradict admission.
@@ -50,29 +41,6 @@ impl ComponentArtifactFetchError {
     /// Stable refusal class for callers that must not match display text.
     pub fn error_type(&self) -> ComponentArtifactFetchErrorType {
         self.type_
-    }
-
-    /// Stable literal naming the exact refused invariant or transfer phase.
-    pub fn refusal(&self) -> &'static str {
-        self.refusal
-    }
-
-    /// The admitted digest cannot name an immutable artifact.
-    pub fn invalid_reference() -> Self {
-        Self {
-            type_: ComponentArtifactFetchErrorType::InvalidReference,
-            reference: None,
-            refusal: "component-artifact-digest-invalid",
-        }
-    }
-
-    /// The bundles were readable but at least one is not usable as a trust root.
-    pub fn registry_client() -> Self {
-        Self {
-            type_: ComponentArtifactFetchErrorType::RegistryClient,
-            reference: None,
-            refusal: "component-artifact-registry-client-unusable",
-        }
     }
 
     /// The artifact at `reference` is not currently available.
@@ -155,7 +123,6 @@ impl ArtifactSource for LocalComponentSource {
         )?;
         Ok(bytes)
     }
-
 }
 
 /// Refuse a component body its descriptor size or admitted digest contradicts.
@@ -180,34 +147,6 @@ pub fn verify_component_body(
     Ok(())
 }
 
-/// Refuse a config body that differs from the admitted config bytes.
-pub fn verify_config_body(
-    bytes: &[u8],
-    descriptor_size: i64,
-    expected_bytes: &[u8],
-    reference: &str,
-) -> Result<(), ComponentArtifactFetchError> {
-    if i64::try_from(bytes.len()).unwrap_or(i64::MAX) != descriptor_size {
-        return Err(ComponentArtifactFetchError::mismatched(
-            reference,
-            "component-artifact-config-body-size-mismatch",
-        ));
-    }
-    if bytes != expected_bytes {
-        return Err(ComponentArtifactFetchError::mismatched(
-            reference,
-            "component-artifact-config-body-mismatch",
-        ));
-    }
-    Ok(())
-}
-
-/// Exact local filename for an admitted digest, without path interpretation.
-pub fn local_component_path(directory: &Path, digest: &wamn_digest::Digest) -> PathBuf {
-    let tag = digest.hex();
-    directory.join(format!("{tag}.wasm"))
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -219,7 +158,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::component_artifact::component_artifact_config_bytes;
 
     fn admitted(bytes: &[u8]) -> AdmittedComponent {
         normalize_component_fact(
@@ -283,54 +221,5 @@ mod tests {
             ComponentArtifactFetchErrorType::Unavailable
         );
         std::fs::remove_dir(root).unwrap();
-    }
-
-
-    #[test]
-    fn bodies_are_independently_verified_before_component_bytes_return() {
-        let bytes = b"component-bytes";
-        let component = admitted(bytes);
-        verify_component_body(
-            bytes,
-            i64::try_from(bytes.len()).unwrap(),
-            &component.component_digest,
-            "reference",
-        )
-        .expect("exact body verifies");
-
-        let wrong_size = verify_component_body(
-            bytes,
-            i64::try_from(bytes.len() + 1).unwrap(),
-            &component.component_digest,
-            "reference",
-        )
-        .expect_err("descriptor size drift refuses");
-        assert_eq!(
-            wrong_size.refusal(),
-            "component-artifact-body-size-mismatch"
-        );
-
-        let wrong_digest =
-            verify_component_body(b"other", 5, &component.component_digest, "reference")
-                .expect_err("body digest drift refuses");
-        assert_eq!(
-            wrong_digest.refusal(),
-            "component-artifact-body-digest-mismatch"
-        );
-
-        let config = component_artifact_config_bytes(&component);
-        verify_config_body(
-            &config,
-            i64::try_from(config.len()).unwrap(),
-            &config,
-            "reference",
-        )
-        .expect("exact config verifies");
-        let wrong_config = verify_config_body(b"{}", 2, &config, "reference")
-            .expect_err("different config facts refuse");
-        assert_eq!(
-            wrong_config.refusal(),
-            "component-artifact-config-body-mismatch"
-        );
     }
 }

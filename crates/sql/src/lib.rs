@@ -366,7 +366,7 @@ impl HostPlugin for WamnPostgres {
                 .get(wamn_catalog::application_config::APPLICATION_CONFIG)
             {
                 let config = serde_json::from_str(config)?;
-                self.bind_entry_instance(component.id(), config)?;
+                self.bind_entry_instance(component.workload_id(), component.id(), config)?;
             }
             // A control root links the interface without operation authority.
             // Calls on an unbound instance refuse before accessing SQL or identity.

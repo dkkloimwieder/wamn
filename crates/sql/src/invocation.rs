@@ -18,7 +18,7 @@ pub fn validate_context(
         identity.project_env_key.as_ref() == Some(&context.release.target().project_env_key)
             && identity.project.as_ref() == Some(context.connections.project())
             && identity.release.as_ref()
-                == Some(&wamn_authority::identity::ReleaseIdentity::from_loaded(
+                == Some(&wamn_authority::identity::ReleaseIdentity::from_context(
                     &context.release
                 )),
         "invocation release authority mismatch"
@@ -32,13 +32,13 @@ pub fn bind_test_context(
     postgres: &WamnPostgres,
     scope: &str,
     connections: Arc<wamn_connection::connection_facts::ConnectionFacts>,
-    release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+    release: Arc<wamn_catalog::serving_context::ServingContext>,
 ) {
     let context = Arc::new(ReleaseContext::new(release, connections).expect("fixture context"));
     postgres.scopes.update::<Authority, _>(scope, |record| {
         record.identity.project_env_key = Some(context.release.target().project_env_key.clone());
         record.identity.project = Some(context.connections.project().to_owned());
-        record.identity.release = Some(wamn_authority::identity::ReleaseIdentity::from_loaded(
+        record.identity.release = Some(wamn_authority::identity::ReleaseIdentity::from_context(
             &context.release,
         ));
     });
@@ -57,11 +57,7 @@ pub struct Authority {
     pub(crate) read: bool,
 }
 
-impl wamn_engine::invocation_scope::InvocationAuthority for Authority {
-    fn release(&self) -> Option<Arc<wamn_engine::release_manifest::LoadedRelease>> {
-        None
-    }
-}
+impl wamn_engine::invocation_scope::InvocationAuthority for Authority {}
 
 /// An admitted call retains this owner through commit, replay and result signing.
 #[derive(Debug)]

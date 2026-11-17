@@ -73,7 +73,7 @@ pub use route_identity::{
 pub use serving_manifest::{
     AttachmentAuthPolicy, AttachmentRef, AttachmentTarget, INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL,
     MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE, OperationType, PAT_AUTHENTICATION_MODE,
-    RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH,
+    RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,
     RouteAttachment, SERVING_MANIFEST_FORMAT_VERSION, SESSION_AUTHENTICATION_MODE,
     ServedAttachment, ServingAttachment, ServingComponent, ServingComposedEntry,
     ServingEntryMember, ServingManifest, ServingRelation, ServingRelease, ServingRoute,
@@ -265,3 +265,5 @@ pub mod resource_names;
 pub mod configuration;
 /// Environment and application rollout locks.
 pub mod lifecycle_lock;
+
+pub mod serving_context;

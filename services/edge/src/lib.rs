@@ -54,3 +54,8 @@ pub mod serve;
 pub mod status;
 
 pub mod store;
+
+pub mod artifact_source;
+pub mod release_manifest;
+
+mod routing;

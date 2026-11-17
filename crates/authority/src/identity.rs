@@ -1,10 +1,8 @@
 //! Host-attested session identity and connection snapshots.
 
-use wamn_engine::release_manifest::LoadedRelease;
-
 /// The release a pod carries — the manifest digest derived from the verified
 /// content of its mounted serving manifest
-/// ([`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease)).
+/// ([`ServingManifest`](wamn_catalog::ServingManifest)).
 ///
 /// Admission pins the release digest. The production identity verifies that pin
 /// against the binding pod's digest. The value is host-injected identity,
@@ -23,9 +21,9 @@ pub struct ReleaseIdentity {
 
 impl ReleaseIdentity {
     /// The identity of the release a pod loaded.
-    pub fn from_loaded(release: &LoadedRelease) -> Self {
+    pub fn from_context(context: &wamn_catalog::serving_context::ServingContext) -> Self {
         Self {
-            manifest_digest: release.release().manifest_digest,
+            manifest_digest: context.release().manifest_digest,
         }
     }
 

@@ -19,6 +19,8 @@
 //! signature signs that same digest. The loader refuses any file whose bytes do
 //! not match.
 
+use crate::artifact_source::{ArtifactSource as _, LocalComponentSource};
+use crate::release_manifest::{load_canonical_bytes, validate_component_in_release};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
@@ -28,11 +30,10 @@ use wamn_catalog::edge_bundle::{
     BUNDLE_FILE_NAME, BUNDLE_FORMAT, COMPONENTS_FILE_NAME, EdgeBundle, GRANTS_FILE_NAME,
     INGRESS_FILE_NAME,
 };
+use wamn_catalog::serving_context::{ReleaseTarget, ServingContext};
 use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME};
 use wamn_digest::bytes_sha256;
-use wamn_engine::artifact_source::{ArtifactSource as _, LocalComponentSource};
 use crate::native_operation::native_workload::NativeComponent;
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget, validate_component_in_release};
 
 use crate::grants::Grants;
 
@@ -40,7 +41,7 @@ use crate::grants::Grants;
 /// validated against the pinned bundle digest.
 pub struct EdgeRelease {
     bundle_digest: wamn_digest::Digest,
-    release: Arc<LoadedRelease>,
+    release: Arc<ServingContext>,
     components: Arc<[AdmittedComponent]>,
     /// The verified bytes of each component, in the order of `components`.
     bodies: Vec<Vec<u8>>,
@@ -86,12 +87,8 @@ impl EdgeRelease {
         }
 
         let manifest_bytes = read_pinned(directory, RELEASE_MANIFEST_FILE_NAME, &bundle.manifest)?;
-        let release = LoadedRelease::load_canonical_bytes(
-            &manifest_bytes,
-            RELEASE_MANIFEST_FILE_NAME,
-            target,
-        )
-        .map_err(|error| rejected(error.to_string()))?;
+        let release = load_canonical_bytes(&manifest_bytes, RELEASE_MANIFEST_FILE_NAME, target)
+            .map_err(|error| rejected(error.to_string()))?;
 
         let components_bytes = read_pinned(directory, COMPONENTS_FILE_NAME, &bundle.components)?;
         let components: Vec<AdmittedComponent> = serde_json::from_slice(&components_bytes)
@@ -129,7 +126,7 @@ impl EdgeRelease {
     }
 
     /// The loaded serving manifest and its identity.
-    pub fn release(&self) -> &Arc<LoadedRelease> {
+    pub fn release(&self) -> &Arc<ServingContext> {
         &self.release
     }
 
@@ -164,7 +161,7 @@ impl EdgeRelease {
 /// Require exactly one admitted fact for each manifest component, each one
 /// carried by the release.
 fn require_one_fact_per_component(
-    release: &LoadedRelease,
+    release: &ServingContext,
     components: &[AdmittedComponent],
 ) -> Result<(), EdgeReleaseError> {
     let mut seen = BTreeSet::new();

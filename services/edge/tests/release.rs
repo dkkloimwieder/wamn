@@ -1,5 +1,6 @@
 //! A release bundle loaded from a directory, and every refusal of one.
 
+use wamn_catalog::serving_context::ReleaseTarget;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -15,7 +16,6 @@ use wamn_catalog::{
 };
 use wamn_digest::bytes_sha256;
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
-use wamn_engine::release_manifest::ReleaseTarget;
 
 const PROJECT_ENV_KEY: &str = "t1--edge--scale";
 const PACKAGE: &str = "scale";

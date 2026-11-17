@@ -23,7 +23,6 @@ use serde::Deserialize;
 use serde_json::json;
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
-use wamn_engine::release_manifest::LoadedRelease;
 use wamn_environment::environment::Platform;
 use wamn_identity_client::PatIssuerConfig;
 
@@ -237,20 +236,17 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         .transpose()?;
     let transport = Arc::new(wamn_http::transport::HttpTransport::new()?);
     let handlers = Arc::new(
-        HostRouteDelivery::new(
-            Arc::new(LoadedRelease::control_root()),
-            HostRouteHandlers::Control {
-                control: pool.clone(),
-                writer: Arc::new(tokio::sync::Mutex::new(
-                    wamn_postgres::connect(&database).await?,
-                )),
-                identity: Some(config.identity.connection()),
-                issuer: config.session_issuer,
-                administration: Some(config.administration_dir.clone()),
-                status: Arc::new(crate::environment_status::KubernetesSource),
-                org: config.org.clone(),
-            },
-        )
+        HostRouteDelivery::new(HostRouteHandlers::Control {
+            control: pool.clone(),
+            writer: Arc::new(tokio::sync::Mutex::new(
+                wamn_postgres::connect(&database).await?,
+            )),
+            identity: Some(config.identity.connection()),
+            issuer: config.session_issuer,
+            administration: Some(config.administration_dir.clone()),
+            status: Arc::new(crate::environment_status::KubernetesSource),
+            org: config.org.clone(),
+        })
         .with_control_authenticator(Arc::new(ControlRouteAuthenticator::new(verifier)))
         .with_control_execution(Arc::new(execution::Execution {
             org: config.org.clone(),

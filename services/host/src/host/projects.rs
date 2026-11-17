@@ -83,7 +83,7 @@ impl RouteAuthenticator for Authentication {
         &self,
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let coordinate = wamn_registry::ProjectEnvKey::triple(&request.target.project_env_key);
+        let coordinate = wamn_registry::ProjectEnvKey::triple(request.target);
         let state = self
             .0
             .get(&coordinate.project)
@@ -93,7 +93,7 @@ impl RouteAuthenticator for Authentication {
             let (_, authenticator) = state
                 .authentication
                 .as_ref()
-                .filter(|(key, _)| key == &request.target.project_env_key)
+                .filter(|(key, _)| key == request.target)
                 .ok_or_else(authentication_unavailable)?;
             Arc::clone(authenticator)
         };
