@@ -351,7 +351,10 @@ Issues:
   - `connections`: for each declared connection name, the connection id, read or write mode, the interface, and the integration type digest when the type is wasm or native
   - the file facts that the file routes and the blobstore plugin need and that today come from the release document
 - The deploy takes the bindings from `environment/bindings.rs::analyse` and writes them into `wamn.application`. `bindings::write` stops writing the catalog. `catalog.release_connection` and `catalog.connection_binding` go, with their grants, writers and readers. `catalog.connection_requirement` stays.
-- The chart's host interfaces are the route guest's set plus each platform package the components import (`wamn:postgres`, `wamn:connection`, `wasmcloud:blobstore`), and one named entry for each declared integration interface. A package that no component imports is not rendered.
+- The chart's host interfaces are the route guest's set plus each platform package the components import (`wamn:postgres`, `wamn:connection`, `wasmcloud:blobstore`, `wamn:integration`). A package that no component imports is not rendered.
+- Each declared connection of a wasm integration type becomes a sibling component in the workload. It is named after the declared connection name, pinned by digest, has `allowedHosts` set to the connection's authority, and has `wamn.integration` set to the connection id. wasmCloud links the application's labelled import to it.
+- The deploy refuses one declared name bound to two connections in one workload, and a declared name equal to another component's name.
+- The authority is fixed on `platform.connection`. A new host is a new connection.
 - The deploy refuses two versions of one host interface package, because the operator allows only one unnamed entry for each namespace and package.
 - The deploy refuses an operation name that two components declare, among operations that have a type. Palette exports are exempt.
 
@@ -360,7 +363,9 @@ Issues:
 - Per call: the binding from `wamn.application` for the component and the declared name; the connection row, its generation and its secret from the host's local `moka` cache, with the project lifetime and positive answers only; then send. A 401 or 403 removes the cached row from the local cache and reads it once again.
 - Connection answers use the same `moka` cache as grants (`services/host/src/host/authentication.rs`).
 - These go: `ConnectionFacts::release`, `ConnectionFacts::version`, `ConnectionFacts::release_component_bindings_ready`, and what is left in `ConnectionMemory` from the deleted replica. The host makes no system database read for connections.
-- The host pulls a wasm integration's code by the digest in `wamn.application`. The host's integration loader stays.
+- The host's integration loader goes. wamn does not pull or compile integration code.
+- `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status, reads the generation and credential from the cache, and takes the exclusive lock. Dropping the resource releases the lock.
+- Control `connection_test` refuses wasm types until the open item on health probes resolves.
 - Exclusive resource, for each call:
   - Take a local mutex keyed by `(target_id, resource_key)`.
   - On a connection from the platform pool, run `BEGIN`, then `SET LOCAL lock_timeout` to the invocation's remaining time, then `SELECT pg_advisory_xact_lock(key)`.
@@ -416,7 +421,7 @@ Rulings on the scout questions (D, 2026-11-17):
 - 3.4: the workflow authoring check reads `catalog.packages` and the live workload, not the release document.
 - 3.6: the control service takes the issuer from `session_issuer` and stage takes it from `platform.identity_issuer`. They become the one identity issuer address setting (E6, K).
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
-- Integration code as sibling components in the application workload, linked by named import, in place of the host's integration loader. The runtime routes an import labelled with a component name to that component. Research, not ruled.
+- Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
 - 3.4: `workflow.start` refuses in the host until the workflow service serves it.
 - 3.5: `registry.environment_application_connections` and `registry.environment_integrations` change with the environment file (one version for each connection name).
 - 3.3: the project rows mark inherited admin, and `user.list` reads that mark there in place of `is_project_admin` against the system database.
@@ -1735,3 +1740,15 @@ Recommend a.
 - Pools are built at first bind, and a changed password rebuilds them at the next bind.
 - `projects.json`, `projects_from_json` and the startup credential map go.
 - Fact: `projects.json` held only project names, and no chart mounted it on the host.
+
+**Ruled (D, 2026-11-17): integrations are sibling components (option c).** Loading components is wasmCloud's job, so the host's integration loader goes.
+- Each wasm-type connection a component declares is a sibling component in the application workload, named after the import label and pinned by digest, with `allowedHosts` set to the connection's authority. wasmCloud links the labelled import to it.
+- The disabled-connection check, fresh credentials and the exclusive lock move into the `wamn:integration/bound` guard (`begin` returns a `call` resource for each call).
+- The authority is fixed for each connection. Before this ruling, an authority edit applied on the next call.
+- Rejected:
+  - a: `world()` updated from start requests
+  - b: a wasmCloud patch for matching
+  - each integration as its own workload: no linking between workloads
+  - build-time composition: a rebuild for each version
+  - component host plugins: not in release images, and one version for each host group
+- This matches the 2026-10-21 ruling (a request-time service is composed into the consuming application) and the 2026-10-31 ruling (each connection name is a named import routed by label).
