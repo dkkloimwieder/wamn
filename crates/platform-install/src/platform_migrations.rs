@@ -46,19 +46,21 @@ pub async fn apply_target(
     database: MigrationDatabase,
     sources: &[Migration],
 ) -> anyhow::Result<usize> {
-    let (schema, owner, lock) = match database {
+    let (schema, lock) = match database {
         MigrationDatabase::System => (
             "registry",
-            "wamn_system",
             "SELECT pg_advisory_xact_lock(hashtextextended('wamn.platform.system-schema:' || current_database(), 0))",
         ),
         MigrationDatabase::Project => (
             "platform",
-            "wamn_db_owner",
             "SELECT pg_advisory_xact_lock(hashtextextended('wamn.package.data-access:' || current_database(), 0))",
         ),
     };
     let login = database.require_login(client).await?;
+    let database_name: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(&mut *client)
+        .await?;
+    let owner = postgres_protocol::escape::escape_identifier(&database.owner_role(&database_name));
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(&login)
         .bind(wamn_provision::PlatformComponent::ApplyPackage.principal_id())
@@ -93,31 +95,21 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
     if present {
         return Ok(false);
     }
-    sqlx::raw_sql(wamn_provision::sql::ensure_db_owner_role_sql())
+    sqlx::raw_sql(include_str!("../../../deploy/sql/project-roles.sql"))
         .execute(&mut *client)
         .await?;
-    sqlx::raw_sql(
-        "DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $$",
-    )
-    .execute(&mut *client)
-    .await?;
-
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::sql::ensure_platform_group_role_sql(),
-    ))
-    .execute(&mut *client)
-    .await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::sql::ensure_app_acl_role_sql(),
-    ))
-    .execute(&mut *client)
-    .await?;
-    sqlx::raw_sql("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE")
-        .execute(&mut *client)
+    let database: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(&mut *client)
         .await?;
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
-        .execute(&mut *client)
-        .await?;
+    let owner = wamn_provision::migration::login(&database);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "ALTER DATABASE {} OWNER TO {}; SET ROLE {}",
+        postgres_protocol::escape::escape_identifier(&database),
+        postgres_protocol::escape::escape_identifier(owner.as_str()),
+        postgres_protocol::escape::escape_identifier(owner.as_str()),
+    )))
+    .execute(&mut *client)
+    .await?;
     let result = async {
         sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
             .execute(&mut *client)
@@ -131,6 +123,14 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
         sqlx::raw_sql(include_str!("../../../deploy/sql/run-queue.sql"))
             .execute(&mut *client)
             .await?;
+        for surface in [
+            wamn_provision::sql::grant_dynamic_sql_surface_sql(),
+            wamn_provision::sql::grant_platform_surface_sql(),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
+                .execute(&mut *client)
+                .await?;
+        }
         anyhow::Ok(())
     }
     .await;
@@ -139,13 +139,5 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
     }
     sqlx::raw_sql("RESET ROLE").execute(&mut *client).await?;
     result?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::sql::grant_dynamic_sql_surface_sql(),
-    ))
-    .execute(&mut *client)
-    .await?;
-    sqlx::raw_sql(wamn_provision::MIGRATION_PRIVILEGES_SQL)
-        .execute(client)
-        .await?;
     Ok(true)
 }

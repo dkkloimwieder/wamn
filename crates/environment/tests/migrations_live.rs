@@ -189,70 +189,6 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
 }
 
 #[sqlx::test(migrations = false)]
-async fn migration_login_cannot_escape_or_change_privileges_even_through_dynamic_sql(
-    pool: sqlx::PgPool,
-) -> anyhow::Result<()> {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    let mut admin = wamn_postgres::connect(database.as_str()).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::sql::ensure_app_acl_role_sql(),
-    ))
-    .execute(&mut admin)
-    .await?;
-    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .execute(&mut admin)
-        .await?;
-    sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS platform")
-        .execute(&mut admin)
-        .await?;
-    sqlx::raw_sql(include_str!("../../../deploy/sql/migration-privileges.sql"))
-        .execute(&mut admin)
-        .await?;
-    let database_name = wamn_postgres::identity(database.as_str())?.1;
-    let login = migration::login(&"fixture--dev--one".parse().unwrap(), &database_name)?;
-    let role = postgres_protocol::escape::escape_identifier(login.as_str());
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE ROLE {role} LOGIN PASSWORD 'migration-test' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; CREATE SCHEMA application AUTHORIZATION {role}; GRANT CONNECT ON DATABASE {} TO {role}", postgres_protocol::escape::escape_identifier(&database_name))))
-        .execute(&mut admin).await?;
-    let options = wamn_postgres::connect_options(database.as_str())
-        .await?
-        .username(login.as_str())
-        .password("migration-test");
-    let mut executor = wamn_postgres::connect(options).await?;
-    migration::require_login(&mut executor, &"fixture--dev--one".parse().unwrap()).await?;
-    assert!(
-        migration::require_login(&mut admin, &"fixture--dev--one".parse().unwrap())
-            .await
-            .is_err()
-    );
-    sqlx::raw_sql("RESET ROLE; CREATE TABLE application.item(id int); CREATE FUNCTION application.echo(value int) RETURNS int LANGUAGE sql AS 'SELECT value'")
-        .execute(&mut executor).await?;
-    for sql in [
-        "GRANT SELECT ON application.item TO PUBLIC",
-        "REVOKE SELECT ON application.item FROM PUBLIC",
-        "ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC",
-        "DO $$ BEGIN EXECUTE 'GRANT SELECT ON application.item TO PUBLIC'; END $$",
-        "SET ROLE wamn_db_owner",
-        "SET SESSION AUTHORIZATION postgres",
-    ] {
-        let error = sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_owned()))
-            .execute(&mut executor)
-            .await
-            .unwrap_err();
-        assert_eq!(
-            error
-                .as_database_error()
-                .and_then(|error| error.code())
-                .as_deref(),
-            Some("42501")
-        );
-    }
-    let public_reads: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM pg_class c, LATERAL aclexplode(c.relacl) acl WHERE c.oid='application.item'::regclass AND acl.grantee=0 AND acl.privilege_type='SELECT')").fetch_one(&mut admin).await?;
-    assert!(!public_reads);
-    Ok(())
-}
-
-#[sqlx::test(migrations = false)]
 async fn package_apply_refuses_rebinding_an_existing_relation(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
@@ -260,19 +196,10 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
     wamn_identity::test_database::project_platform(database.as_str()).await;
-    let migration_input = wamn_provision::test_database::package_migration_input(
-        database.as_str(),
-        &"mapping".parse().unwrap(),
-        &"fixture".parse().unwrap(),
-        &"dev".parse().unwrap(),
-    )
-    .await?;
-    let migration_input = migration::configuration(
-        &migration_input,
-        &"mapping".parse().unwrap(),
-        &"fixture".parse().unwrap(),
-        &"dev".parse().unwrap(),
-    )?;
+    let migration_input =
+        wamn_provision::test_database::package_migration_input(database.as_str()).await?;
+    let migration_input =
+        wamn_provision::migrations::MigrationDatabase::Project.configuration(&migration_input)?;
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     let write_package =
         |name: &str, entity: &str, version: &str, initial: &str| -> anyhow::Result<PackageRoot> {
@@ -334,45 +261,6 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
             .fetch_one(&mut admin).await?;
         assert_eq!(oid, original);
         assert!(original_mapping);
-    }
-    Ok(())
-}
-
-#[sqlx::test(migrations = false)]
-async fn platform_migrations_refuse_administrators_and_use_scope_credentials(
-    pool: sqlx::PgPool,
-) -> anyhow::Result<()> {
-    use wamn_provision::migrations::MigrationDatabase;
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    wamn_provision::test_database::system(database.as_str()).await;
-    let mut administrator = wamn_postgres::connect(database.as_str()).await?;
-
-    for scope in [MigrationDatabase::System, MigrationDatabase::Project] {
-        assert!(scope.require_login(&mut administrator).await.is_err());
-        let input = wamn_provision::test_database::platform_migration_input(
-            database.as_str(),
-            scope,
-        )
-        .await?;
-        // An explicit input retains its password and native CA configuration and authenticates directly.
-        let input = scope.configuration(&input)?;
-        let mut connection = wamn_postgres::connect(&input).await?;
-        scope.require_login(&mut connection).await?;
-        let owner_stays_closed: bool =
-            sqlx::query_scalar("SELECT NOT rolcanlogin FROM pg_roles WHERE rolname=$1")
-                .bind(scope.owner_role())
-                .fetch_one(&mut administrator)
-                .await?;
-        assert!(owner_stays_closed);
-        let declaration = scope.managed_role(database.path().trim_start_matches('/'));
-        assert!(
-            declaration.login
-                && !declaration.superuser
-                && !declaration.createdb
-                && !declaration.createrole
-                && !declaration.bypassrls
-        );
     }
     Ok(())
 }

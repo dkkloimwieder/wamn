@@ -9,7 +9,7 @@ async fn run(database: &url::Url, assertions: &str) {
             "DO $$ BEGIN IF to_regrole('wamn_system') IS NULL THEN \
              CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE; \
              END IF; END $$;",
-            wamn_provision::sql::ensure_db_owner_role_sql(),
+            wamn_provision::sql::ensure_project_roles_sql(),
             &format!(
                 "ALTER DATABASE \"{}\" OWNER TO wamn_system",
                 database.path().trim_start_matches('/')
@@ -356,9 +356,9 @@ async fn apply_cannot_write_system_connection_authority(pool: sqlx::PgPool) {
     run(&wamn_test_postgres::url(&pool), "DO $$ DECLARE relation text; privilege text; BEGIN
         FOREACH relation IN ARRAY ARRAY['connection','integration','connection_generation'] LOOP
             FOREACH privilege IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
-                ASSERT NOT has_table_privilege('wamn_db_owner','registry.'||relation,privilege), relation||':'||privilege;
+                ASSERT NOT has_table_privilege('wamn_apply','registry.'||relation,privilege), relation||':'||privilege;
             END LOOP;
-            ASSERT NOT has_any_column_privilege('wamn_db_owner','registry.'||relation,'INSERT,UPDATE'),relation;
+            ASSERT NOT has_any_column_privilege('wamn_apply','registry.'||relation,'INSERT,UPDATE'),relation;
         END LOOP;
     END $$;").await;
 }

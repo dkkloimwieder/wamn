@@ -181,7 +181,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations(pool
             .unwrap()
             .is_none()
     );
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_system")
         .execute(&mut client)
         .await
         .map(drop)

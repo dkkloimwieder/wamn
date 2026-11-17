@@ -23,8 +23,8 @@ pub fn platform(
         cluster.to_owned(),
         vec![
             managed_role(
-                "wamn_apply".parse().expect("platform login"),
-                "wamn_db_owner",
+                wamn_role::APPLY_ROLE.parse().expect("platform login"),
+                "",
                 "wamn-apply".into(),
             ),
             MigrationDatabase::System.managed_role(database),
@@ -32,7 +32,7 @@ pub fn platform(
                 wamn_provision::identity_role::identity_issuer_login(
                     &crate::platform::identity::issuer(namespace.as_str()),
                 )?,
-                wamn_provision::identity_role::IDENTITY_ISSUER_ROLE,
+                wamn_role::IDENTITY_ISSUER_ROLE,
                 "wamn-identity-db".into(),
             ),
         ],
@@ -59,9 +59,24 @@ pub async fn registered(
     let mut declarations = platform(namespace, cluster, database)?;
     let mut connection = wamn_postgres::connect(registry_input).await?;
     let mut snapshot = connection.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         .execute(&mut *snapshot)
         .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(wamn_provision::bind_platform_principal_sql(
+        wamn_provision::PlatformComponent::Provisioning,
+    )))
+    .execute(&mut *snapshot).await?;
+    sqlx::query("SET TRANSACTION READ ONLY").execute(&mut *snapshot).await?;
+    let environments: Vec<wamn_registry::EnvName> =
+        sqlx::query_scalar("SELECT env FROM registry.environments WHERE org=$1")
+            .bind(namespace)
+            .fetch_all(&mut *snapshot)
+            .await?;
+    for environment in environments {
+        declarations.entry(cluster.into()).or_default().push(
+            wamn_provision::system_reader::managed_role(namespace, &environment, database),
+        );
+    }
     let projects: Vec<ProjectFact> = sqlx::query_as(wamn_registry::sql::INSTALL_PROJECTS)
         .bind(namespace)
         .fetch_all(&mut *snapshot)
@@ -142,31 +157,35 @@ fn project(
                 unreachable!("org family is not provisioned per project")
             }
         };
-        let mut role = managed_role(
-            workload_login(family, identity)?,
-            family.acl_role(),
-            wamn_provision::workload_secret_name(
-                family,
-                &triple.org,
-                &triple.project,
-                &triple.env,
-            ),
-        );
-        if family.is_platform_grain() {
-            role.in_roles
-                .push(wamn_provision::workload_role::PLATFORM_GROUP_ROLE.into());
-        }
+        let role = if family == WorkloadRoleFamily::Migration {
+            MigrationDatabase::Project.managed_role(database)
+        } else if family == WorkloadRoleFamily::Platform {
+            wamn_provision::workload_role::platform_managed_role(database)
+        } else {
+            managed_role(
+                workload_login(family, identity)?,
+                family.acl_role(),
+                wamn_provision::workload_secret_name(
+                    family,
+                    &triple.org,
+                    &triple.project,
+                    &triple.env,
+                ),
+            )
+        };
         declarations.entry(owner.into()).or_default().push(role);
     }
     let roles = declarations.entry(cluster.into()).or_default();
-    if !roles.iter().any(|role| role.name.as_str() == "wamn_apply") {
+    if !roles
+        .iter()
+        .any(|role| role.name.as_str() == wamn_role::APPLY_ROLE)
+    {
         roles.push(managed_role(
-            "wamn_apply".parse().expect("platform login"),
-            "wamn_db_owner",
+            wamn_role::APPLY_ROLE.parse().expect("platform login"),
+            "",
             "wamn-apply".into(),
         ));
     }
-    roles.push(MigrationDatabase::Project.managed_role(&database));
     roles.push(managed_replication_role(
         wamn_provision::cdc_object_name(
             &triple.org,
@@ -200,37 +219,9 @@ pub fn values(declarations: &Declarations) -> anyhow::Result<Value> {
                     "superuser":false,"createdb":false,"createrole":false,"inherit":false,"replication":false,"bypassrls":false}));
             }
         }
-        let platform = roles.contains_key("wamn_platform");
-        if let Some(owner) = roles.get_mut("wamn_db_owner") {
-            owner["inRoles"] = if platform {
-                vec!["wamn_platform"]
-            } else {
-                Vec::new()
-            }
-            .into();
-        }
-        let migrations = logins
-            .iter()
-            .filter(|login| {
-                login.ensure == "present" && login.name.as_str().starts_with("wamn_migration_")
-            })
-            .map(|login| login.name.as_str())
-            .collect::<Vec<_>>();
         let mut roles = roles.into_values().collect::<Vec<_>>();
         for login in logins {
-            let mut value = serde_json::to_value(login)?;
-            // NOLOGIN owner roles do not inherit a second membership by default.
-            // The actual owner login needs direct membership for package DDL and RLS.
-            if login.ensure == "present"
-                && login.in_roles.iter().any(|group| group == "wamn_db_owner")
-            {
-                let memberships = value["inRoles"].as_array_mut().unwrap();
-                memberships.extend(migrations.iter().map(|name| json!(name)));
-                if platform {
-                    memberships.push("wamn_platform".into());
-                }
-            }
-            roles.push(value);
+            roles.push(serde_json::to_value(login)?);
         }
         result.insert(cluster.to_owned(), roles.into());
     }

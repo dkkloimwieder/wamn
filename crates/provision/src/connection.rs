@@ -46,7 +46,11 @@ pub fn managed_role(
         inherit: true,
         replication: false,
         bypassrls: false,
-        in_roles: vec![acl_role.into()],
+        in_roles: if acl_role.is_empty() {
+            Vec::new()
+        } else {
+            vec![acl_role.into()]
+        },
         password_secret: PasswordSecret { name: secret },
     }
 }
@@ -57,7 +61,7 @@ pub fn managed_replication_role(
     secret: String,
 ) -> ManagedRole {
     let mut role = managed_role(name, "", secret);
-    role.in_roles = vec!["pg_checkpoint".into()];
+    role.in_roles = vec![wamn_role::CHECKPOINT_ROLE.into()];
     role.inherit = false;
     role.replication = true;
     role

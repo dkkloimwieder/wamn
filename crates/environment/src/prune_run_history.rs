@@ -6,12 +6,8 @@
 //! terminal state (completed / failed / infrastructure-failure) are eligible; a
 //! `dispatched`/`running` run is never pruned.
 //!
-//! **Role:** connects as a targeted `wamn_run_retention` credential GENERATION
-//! (`wamn-0h0g.12.69`), never as the shared `wamn_app` login. That family's
-//! stable ACL role holds `DELETE` plus a two-column `SELECT` on `wamn_run.runs`
-//! and nothing else anywhere in the cluster, so the credential this verb mounts
-//! can express this statement and no other. The `run_queue` row goes with the run
-//! through its `ON DELETE CASCADE`, which needs no privilege of its own.
+//! **Role:** connects as the project's `wamn_platform` login. The `run_queue`
+//! row goes with the run through its `ON DELETE CASCADE`.
 //! Repeated calls are safe.
 //!
 //! The targeted database credential selects the project.
@@ -25,7 +21,7 @@ use sqlx::Connection as _;
 /// Inputs of one terminal run history prune.
 #[derive(Debug)]
 pub struct PruneRunHistoryRequest {
-    /// Postgres URL for this project's `wamn_run_retention` login
+    /// Postgres URL for this project's `wamn_platform` login
     /// — the NOSUPERUSER/NOBYPASSRLS role whose whole authority is the terminal
     /// run delete. The verb refuses any other identity.
     pub database_url: String,
@@ -57,9 +53,11 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
         );
     }
 
-    let mut client = wamn_postgres::connect(&request.database_url)
-        .await
-        .context("retention credential connect")?;
+    let mut client = wamn_postgres::connect(
+        &wamn_provision::workload_role::platform_configuration(&request.database_url)?,
+    )
+    .await
+    .context("retention credential connect")?;
 
     let result = async {
         prune(

@@ -13,6 +13,7 @@ ops = []
 test-util = []
 
 [dependencies]
+wamn-role.workspace = true
 wamn-catalog.workspace = true
 anyhow.workspace = true
 wamn-postgres.workspace = true

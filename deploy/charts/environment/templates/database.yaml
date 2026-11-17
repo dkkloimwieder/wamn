@@ -10,7 +10,7 @@ metadata:
   {{- end }}
 spec:
   name: {{ .name }}
-  owner: wamn_db_owner
+  owner: {{ required "database.owner is required" .owner }}
   cluster: {name: {{ .cluster }}}
   ensure: {{ default "present" .ensure }}
   databaseReclaimPolicy: {{ default "retain" .reclaimPolicy }}

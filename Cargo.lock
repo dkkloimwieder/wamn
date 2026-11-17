@@ -5566,6 +5566,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-record-history",
  "wamn-registry",
+ "wamn-role",
  "wamn-scalar",
  "wit-parser 0.254.2",
 ]
@@ -5666,6 +5667,7 @@ dependencies = [
  "wamn-number-pattern",
  "wamn-postgres",
  "wamn-record-history",
+ "wamn-role",
  "wamn-scalar",
  "wamn-schema-introspection",
  "wamn-test-postgres",
@@ -5762,6 +5764,7 @@ dependencies = [
  "wamn-provision",
  "wamn-publish",
  "wamn-registry",
+ "wamn-role",
  "wamn-sql",
  "wamn-workflow",
  "wasmtime-wasi-http",
@@ -5938,6 +5941,7 @@ dependencies = [
  "wamn-provision",
  "wamn-publish",
  "wamn-registry",
+ "wamn-role",
  "wamn-run-state",
  "wamn-schema-introspection",
  "wamn-sql",
@@ -6181,6 +6185,7 @@ dependencies = [
  "uuid",
  "wamn-digest",
  "wamn-identity-protocol",
+ "wamn-role",
  "zeroize",
 ]
 
@@ -6217,6 +6222,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
+ "wamn-role",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "zeroize",
@@ -6344,6 +6350,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
+ "wamn-role",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
 ]
@@ -6386,6 +6393,7 @@ dependencies = [
  "wamn-provision",
  "wamn-record-history",
  "wamn-registry",
+ "wamn-role",
  "wamn-run-state",
  "wamn-scalar",
  "wamn-test-postgres",
@@ -6507,6 +6515,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-role"
+version = "0.1.0"
+
+[[package]]
 name = "wamn-run-state"
 version = "0.1.0"
 dependencies = [
@@ -6589,6 +6601,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
+ "wamn-role",
  "wamn-run-state",
  "wamn-scalar",
  "wamn-sql",

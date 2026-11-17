@@ -437,7 +437,7 @@ impl Drop for Minio {
 pub async fn age_metadata(fixture: &mut Fixture) -> anyhow::Result<()> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("CREATE ROLE file_aged_owner LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
-         GRANT wamn_administration TO file_aged_owner; \
+         GRANT wamn_platform TO file_aged_owner; \
          ALTER TABLE platform.file OWNER TO file_aged_owner")
             .to_string(),
     ))

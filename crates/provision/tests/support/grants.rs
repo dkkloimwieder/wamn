@@ -32,7 +32,7 @@ pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture
         _ => {
             for batch in [
                 &sql::ensure_app_acl_role_sql(),
-                sql::ensure_db_owner_role_sql(),
+                sql::ensure_project_roles_sql(),
                 wamn_catalog::CATALOG_SCHEMA_SQL,
                 include_str!("../../../../deploy/sql/run-state.sql"),
                 include_str!("../../../../deploy/sql/run-queue.sql"),
@@ -227,7 +227,7 @@ pub async fn family(
         WorkloadRoleFamily::Query => {
             "INSERT INTO catalog.packages(package_id,package_version) VALUES('forged','1.0.0')"
         }
-        WorkloadRoleFamily::App | WorkloadRoleFamily::Migration => {
+        WorkloadRoleFamily::App | WorkloadRoleFamily::Migration | WorkloadRoleFamily::Platform => {
             "UPDATE platform.login_principal SET principal_id=principal_id"
         }
     };
@@ -235,7 +235,18 @@ pub async fn family(
     // The family cannot gain the owner's role through SET ROLE.
     refuses(
         &fixture.url,
-        &format!("SET ROLE {}", escape_identifier("wamn_db_owner")),
+        &format!(
+            "SET ROLE {}",
+            escape_identifier(
+                wamn_provision::migration::login(
+                    url::Url::parse(&fixture.url)
+                        .unwrap()
+                        .path()
+                        .trim_start_matches('/')
+                )
+                .as_str()
+            )
+        ),
     )
     .await;
     (fixture, lock)

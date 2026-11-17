@@ -116,7 +116,7 @@ impl WamnPostgres {
             ProductionLeaseError::with_source(ProductionLeaseErrorType::Storage, operation, error)
         };
         let (connection, policy) = self
-            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
+            .checkout_platform(project, AuthorityClass::Platform)
             .await
             .map_err(|error| failure("checkout executor connection", error))?;
         // Cancellation destroys a connection whose transaction has not ended.
@@ -127,7 +127,7 @@ impl WamnPostgres {
             .unwrap_or_else(|| PlatformComponent::Executor.principal_id());
         self.begin_with_identity(
             connection.connection(),
-            AuthorityClass::ExecutorPlatform,
+            AuthorityClass::Platform,
             read_only,
             identity.schema,
             identity.runner,

@@ -27,9 +27,9 @@
 -- created_by, updated_at, and updated_by as NOT NULL columns, and a
 -- wamn_record_history_stamp trigger that calls wamn_history.stamp_row(). An applier
 -- installs deploy/sql/record-history.sql first. The SYSTEM_SCHEMA_SQL
--- composition in wamn-provision carries it. That file grants to
--- wamn_db_owner, so an applier that runs as wamn_system creates that role
--- first. Every write to these relations binds a transaction principal: the identity issuer
+-- composition in wamn-provision carries it. The system database owner,
+-- wamn_system, owns its record history helpers. Every write to these relations
+-- binds a transaction principal: the identity issuer
 -- and wamn bind wamn:provisioning, and test fixtures bind a principal.
 --
 -- THE GENERIC DEPLOYMENT MODEL (D18, wamn-8df.3;
@@ -1728,9 +1728,9 @@ BEGIN
 END $$;
 ALTER FUNCTION registry.resolve_environment_connection(text,text,text,text,text,integer) OWNER TO wamn_system;
 REVOKE ALL ON FUNCTION registry.resolve_environment_connection(text,text,text,text,text,integer) FROM PUBLIC;
-GRANT USAGE ON SCHEMA registry TO wamn_db_owner;
+GRANT USAGE ON SCHEMA registry TO wamn_system;
 GRANT EXECUTE ON FUNCTION registry.resolve_environment_connection(text,text,text,text,text,integer),
- registry.connection_projection(text,text,text) TO wamn_db_owner;
+ registry.connection_projection(text,text,text) TO wamn_system;
 
 -- The connection memory reads (docs/architecture/execution.md#connection-memory).
 -- The reader login fixes the environment. The fact is mutable; every other
@@ -1870,9 +1870,9 @@ DO $$ BEGIN
 END $$;
 
 DO $identity_membership_read$ BEGIN
-    IF to_regrole('wamn_identity_reader') IS NOT NULL THEN
-        GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_identity_reader;
-        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid) TO wamn_identity_reader;
+    IF to_regrole('wamn_system_reader') IS NOT NULL THEN
+        GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_system_reader;
+        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), registry.control_connection(uuid) TO wamn_system_reader;
     END IF;
 END $identity_membership_read$;
 
@@ -1950,7 +1950,7 @@ REVOKE ALL ON FUNCTION identity.has_project_access(uuid,text,text,text) FROM PUB
 DO $authority_grants$
 DECLARE reader text;
 BEGIN
-    FOREACH reader IN ARRAY ARRAY['wamn_identity_reader','wamn_identity_issuer','wamn_control','wamn_system','wamn_apply'] LOOP
+    FOREACH reader IN ARRAY ARRAY['wamn_system_reader','wamn_identity_issuer','wamn_control','wamn_system','wamn_apply'] LOOP
         IF to_regrole(reader) IS NOT NULL THEN
             EXECUTE format('GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO %I',reader);
         END IF;

@@ -76,27 +76,7 @@
 
 CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION CURRENT_USER;
 
--- The shared platform group role that catalog and run policies target
--- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
--- `crates/provision/src/project_key.rs` already gives for its own
--- bootstrap: naming a role that may not exist adds a new precondition to every
--- applier — seven live acceptance tests plus the production path in `services/cli` — and
--- `CREATE POLICY ... TO wamn_platform` fails outright against a cluster without
--- it.
---
--- EXCEPTION-guarded under the shared `wamn_role_bootstrap` advisory lock, the
--- `ensure_platform_group_role_sql` shape. Roles are CLUSTER-global, so two
--- appliers that do not both take the lock can each observe the role absent and
--- both issue `CREATE ROLE`.
-DO $platform_group$ BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
-                 WHERE rolname = 'wamn_platform') THEN
-    CREATE ROLE wamn_platform NOLOGIN NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-  END IF;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $platform_group$;
+-- Provisioning installs the shared privilege roles before applying this schema.
 GRANT USAGE ON SCHEMA platform TO wamn_app;
 
 -- ---------------------------------------------------------------------------

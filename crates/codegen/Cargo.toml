@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-role.workspace = true
 wamn-postgres.workspace = true
 tempfile.workspace = true
 postgres-protocol = { workspace = true }

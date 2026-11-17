@@ -701,7 +701,7 @@ impl WamnPostgres {
         project: &wamn_registry::ProjectId,
     ) -> anyhow::Result<String> {
         let (mut connection, _policy) = self
-            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .checkout_platform(project, AuthorityClass::Platform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let statement = sqlx::Executor::prepare(
@@ -747,7 +747,7 @@ impl WamnPostgres {
             project,
             project_env_key,
             principal,
-            AuthorityClass::CallableHttp,
+            AuthorityClass::Platform,
         )
         .await
     }
@@ -830,13 +830,13 @@ impl WamnPostgres {
         work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
     ) -> anyhow::Result<Result<T, E>> {
         let (mut connection, policy) = self
-            .checkout_platform(project, AuthorityClass::Administration)
+            .checkout_platform(project, AuthorityClass::Platform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
             .begin_with_identity(
                 &mut connection,
-                AuthorityClass::Administration,
+                AuthorityClass::Platform,
                 false,
                 None,
                 None,

@@ -11,6 +11,7 @@ sqlx = ["dep:sqlx"]
 test-util = []
 
 [dependencies]
+wamn-role.workspace = true
 
 sqlx = { workspace = true, features = ["postgres", "uuid", "derive"], optional = true }
 
