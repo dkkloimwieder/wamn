@@ -25,7 +25,6 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
                 &"fixture".parse().unwrap(),
                 &"dev".parse().unwrap(),
             ),
-            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:fixture'); UPDATE registry.meta SET platform_domain='example.invalid'",
         ];
         let mut setup_connection = wamn_postgres::connect(system.as_str()).await.unwrap();
         for batch in batches {
@@ -63,19 +62,6 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         &"dev".parse().unwrap(),
     )
     .await?;
-    let service =
-        *wamn_identity::create_service(&mut authority, "automation", "Automation")
-            .await?
-            .id();
-    wamn_identity::assign_project_role(
-        &mut authority,
-        &service,
-        &"fill".parse().unwrap(),
-        &"fixture".parse().unwrap(),
-        "project-admin",
-    )
-    .await?;
-
     authority.commit().await?;
 
     let project = url::Url::parse(
@@ -110,27 +96,6 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
             .fetch_one(&mut client)
             .await?;
     assert!(present);
-    let service_row: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) =
-        sqlx::query_as(
-            "SELECT created_at, updated_at FROM platform.\"user\" WHERE id=$1::text::uuid",
-        )
-        .bind(service.to_string())
-        .fetch_one(&mut client)
-        .await?;
-    fill(
-        system.as_str(),
-        project.as_str(),
-        "https://identity.example.invalid",
-        target,
-    )
-    .await?;
-    let preserved: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
-        "SELECT created_at, updated_at FROM platform.\"user\" WHERE id=$1::text::uuid",
-    )
-    .bind(service.to_string())
-    .fetch_one(&mut client)
-    .await?;
-    assert_eq!(preserved, service_row);
     let mut authority = wamn_test_postgres::transaction(
         &mut authority_connection,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),

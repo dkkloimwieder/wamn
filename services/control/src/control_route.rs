@@ -124,6 +124,21 @@ impl From<IdentityError> for Refusal {
 }
 
 fn operation_refusal(error: anyhow::Error) -> Refusal {
+    use wamn_environment::application::service::{ServiceError, ServiceErrorType};
+
+    if let Some(service) = error.downcast_ref::<ServiceError>() {
+        return match service.type_ {
+            ServiceErrorType::InvalidInput(field) => Refusal::Declared {
+                code: "invalid_input",
+                detail: json!({"field":field}),
+            },
+            ServiceErrorType::NotFound(field) => Refusal::Declared {
+                code: "not_found",
+                detail: json!({"field":field}),
+            },
+            _ => Refusal::Failed(error),
+        };
+    }
     match error.downcast_ref::<wamn_kubernetes::job::ObservationError>() {
         Some(refusal) => Refusal::Declared {
             code: match refusal.type_ {

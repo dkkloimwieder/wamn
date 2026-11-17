@@ -116,7 +116,11 @@
     "environment/configure.errors.json",
     "environment/delete.errors.json",
     "environment/operation_status.errors.json",
-    "pat/revoke.errors.json"
+    "pat/issue.errors.json",
+    "pat/list.errors.json",
+    "pat/revoke.errors.json",
+    "service_principal/create.errors.json",
+    "service_principal/disable.errors.json"
   ],
   "operation.started": [
     "application/deploy.result.json",

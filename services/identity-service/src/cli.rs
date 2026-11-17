@@ -89,7 +89,7 @@ enum Command {
         tls_cert: PathBuf,
         #[arg(long, env = "WAMN_IDENTITY_TLS_KEY")]
         tls_key: PathBuf,
-        /// Dedicated CA for control user management and operator PAT issuance.
+        /// Dedicated client-certificate CA for control user management.
         #[arg(long, env = "WAMN_IDENTITY_OPERATOR_CA")]
         operator_ca: Option<PathBuf>,
         /// Exact subject of the control client certificate, CN=control-<org>.

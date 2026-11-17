@@ -740,7 +740,8 @@ The route declares PAT authentication, session authentication, or both.
 Receiving and Acme publish both modes on their existing authenticated application routes.
 Both modes use the same operation permissions. Private event handlers remain private.
 A personal access token, or PAT, is an opaque bearer credential.
-PAT authentication reads the current service principal and its credential.
+The host uses its project platform login to check the token and the active service row.
+A connection PAT also needs an active connection whose service principal matches the token.
 Authorization reads the principal’s operation permissions in the target project database.
 The host keeps both answers in its [auth memory](#auth-memory).
 Service credentials use their authored application grants and cannot mint a user session.
@@ -753,16 +754,15 @@ A caller that holds `admin` holds every operation of the serving release. Any ot
 Missing, revoked, expired, or mismatched authority returns 401.
 An unavailable project identity or grant read refuses admission with 503.
 Logout, reset, account disablement, and membership removal prevent further renewal. Issued access tokens expire within 900 seconds.
-PAT resolution uses its own credential checks. The host's [local cache](#auth-memory) bounds the lifetime of cached project facts.
+A revoked PAT or disabled service stops authenticating when the cached answer expires.
 Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
 
 Create an API identity with `wamn create-api-service`.
 Supply the project, environment, name, display name, one or more `--role` values, and `--lifetime-seconds`.
 The verb uses `WAMN_CONTROL_URL` and `WAMN_TOKEN`. The session selects the org.
-The native service selects the owning database connections and PAT issuer credentials.
+Control reads the project login from its administration map.
 `--emit-secret` names a private JSON output file. The verb prints only the principal id.
-It creates or reuses the service, grants authored roles in the selected environment, then requests its PAT from identity.
-A partial creation can be retried. An API service cannot receive the reserved `admin` role through this verb.
+Control creates or reuses the service, grants its roles, and issues its PAT in one project transaction. An API service cannot receive the reserved `admin` role through this verb.
 
 ### Auth memory
 
@@ -772,6 +772,7 @@ Deploy writes the environment input `revocation_seconds` into the workload's `wa
 The value sets the project cache lifetime and ranges from 0 to 3600 seconds. Zero disables caching.
 
 The host verifies every session token. A positive subject lookup maps the issuer and subject to the active user UUID.
+A PAT cache key also includes the hash of the whole token. The host checks token expiry on every admission.
 On a grant cache miss, one read of `platform."user"`, `platform.user_role`, and `platform.permission` supplies the UUID's permissions.
 Invocation binds and workflow callers use the guest login. Route authentication uses the host's platform login.
 Missing users, inactive users, and empty grant sets are read again on the next request.

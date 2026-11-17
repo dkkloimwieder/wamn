@@ -27,12 +27,19 @@ pub struct Delete {
 #[derive(Debug, Args)]
 pub struct RevokePat {
     #[arg(long)]
+    pub project: wamn_registry::ProjectId,
+    #[arg(long)]
+    pub env: wamn_registry::EnvName,
+    #[arg(long)]
     pub prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
 }
 
 pub async fn revoke_pat(args: RevokePat) -> anyhow::Result<()> {
     let result = ControlHost::from_env()?
-        .call("pat.revoke", &json!({"token_prefix":args.prefix}))
+        .call(
+            "pat.revoke",
+            &json!({"project":args.project,"env":args.env,"token_prefix":args.prefix}),
+        )
         .await?;
     println!("{result}");
     Ok(())

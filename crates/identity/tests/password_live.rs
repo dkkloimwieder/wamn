@@ -8,7 +8,7 @@ use wamn_identity::password::{
     Password, PasswordErrorType, RefusalCause, authenticate_password, enroll_password,
     issue_invitation, password_work,
 };
-use wamn_identity::{Principal, create_service, create_user, disable_principal};
+use wamn_identity::{Principal, create_user, disable_principal};
 
 const PASSWORD: &str = "my uncommon warehouse passphrase";
 fn password() -> Password {
@@ -223,16 +223,6 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse(pool: sq
         .cause(),
         Some(RefusalCause::Expired)
     );
-    let service = create_service(&mut client, "password-service", "Service")
-        .await
-        .unwrap();
-    assert_eq!(
-        issue_invitation(&mut client, &actor(), service.id())
-            .await
-            .unwrap_err()
-            .cause(),
-        Some(RefusalCause::NoSuchAccount)
-    );
     assert_eq!(
         issue_invitation(&mut client, &actor(), &actor())
             .await
@@ -247,14 +237,6 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse(pool: sq
             .and_then(|error| error.code())
             .as_deref(),
         Some("23514")
-    );
-    let error = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'invitation', clock_timestamp() + interval '1 hour')").bind(wamn_digest::Digest::from([2u8; 32])).bind(&service.id().to_string().as_str()).execute(&mut client).await.map(|result| result.rows_affected()).unwrap_err();
-    assert_eq!(
-        error
-            .as_database_error()
-            .and_then(|error| error.code())
-            .as_deref(),
-        Some("23503")
     );
     let invitation = issue_invitation(&mut client, &actor(), user.id())
         .await

@@ -46,9 +46,6 @@ pub async fn configure(
             emit_role_sql: None,
             emit_privilege_sql: None,
             emit_secret: None,
-            pat_issuer: platform.pat_issuer.clone(),
-            emit_management_author_pat_secret: None,
-            emit_operator_pat_secret: None,
         })
         .await?;
         let unconfigured = super::document::read_configuration(&mut *lock.client().await, &triple)

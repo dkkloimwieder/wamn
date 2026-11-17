@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:pat/list@0.9.0",
+  "type": "get",
+  "label": "pat.list",
+  "grant": "wamn-control:pat/list@0.9.0",
+  "permission_token": "pat.list",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

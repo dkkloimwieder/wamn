@@ -779,6 +779,22 @@ impl WamnPostgres {
         Ok(held_grants(&grants))
     }
 
+    /// Read PAT admission directly on the project platform login.
+    pub async fn read_project_pat(
+        &self,
+        project: &wamn_registry::ProjectId,
+        token: &wamn_identity_protocol::secret::PatToken,
+    ) -> anyhow::Result<Option<Arc<wamn_authentication::authorization::ProjectPat>>> {
+        let (mut connection, _) = self.checkout_platform(project, AuthorityClass::Platform).await?;
+        match wamn_authentication::authorization::project_pat(&mut connection, token).await {
+            Ok(principal) => Ok(principal),
+            Err(error) => {
+                self.destroy(connection);
+                Err(principal_read_error("read the project PAT", error).into())
+            }
+        }
+    }
+
     /// The user row, roles and permissions of one principal, from the host's
     /// memory or, on a miss, from one read under the callable-HTTP authority
     /// with no session identity. The read also answers the provisioned-principal
@@ -991,13 +1007,12 @@ impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
         &self,
         project: &wamn_registry::ProjectId,
         key: &wamn_registry::ProjectEnvKey,
-        reader: &sqlx::PgPool,
-        token: &str,
-    ) -> anyhow::Result<Option<wamn_identity::AuthenticatedPrincipal>> {
+        token: &wamn_identity_protocol::secret::PatToken,
+    ) -> anyhow::Result<Option<Arc<wamn_authentication::authorization::ProjectPat>>> {
         if let Some(store) = self.authorization.get() {
-            return store.route_pat(project, key, reader, token).await;
+            return store.route_pat(project, key, token).await;
         }
-        wamn_authentication::authorization::route_pat(reader, token).await
+        self.read_project_pat(project, token).await
     }
 
     async fn environment_inactive(

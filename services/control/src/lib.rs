@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::json;
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_environment::environment::Platform;
-use wamn_identity_client::{PatIssuerConfig, users::UserClient};
+use wamn_identity_client::users::UserClient;
 
 /// Public component configuration. Database passwords stay in CNPG Secrets.
 #[derive(Debug, Deserialize)]
@@ -117,15 +117,6 @@ impl Identity {
         )
         .map(Some)
     }
-
-    fn connection(&self) -> PatIssuerConfig {
-        PatIssuerConfig {
-            endpoint: self.endpoint.clone(),
-            client_cert: self.client_cert.clone(),
-            client_key: self.client_key.clone(),
-            server_ca: self.server_ca.clone(),
-        }
-    }
 }
 
 impl Configuration {
@@ -170,7 +161,6 @@ impl Configuration {
             database_host: None,
             database_port: 5432,
             host_group: None,
-            pat_issuer: self.identity.connection(),
             identity_issuer: self.session_issuer.clone(),
             events: self.events.as_ref().map(|events| wamn_broker::EventBroker {
                 nats: self.nats.connection(),
@@ -264,7 +254,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             platform_database: config.apply_database.clone(),
             event_observer: config.event_observer.as_ref().map(Nats::connection),
             administration: config.administration_dir.clone(),
-            identity: config.identity.connection(),
+            control_database: database,
             platform,
             system_database: wamn_provision::migrations::MigrationDatabase::System
                 .configuration(&config.apply_database.to_json()?)?,

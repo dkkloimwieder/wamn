@@ -8,35 +8,12 @@ use wamn_role::IDENTITY_ISSUER_ROLE;
 pub const IDENTITY_ISSUER_DATABASE: &str = "wamn_system";
 /// Tables that allow full row mutations by the signing authority.
 pub const IDENTITY_ISSUER_TABLES: [&str; 2] = ["session_keys", "session_signing_state"];
-/// Columns that allow PAT issuance without update or deletion authority.
-pub const IDENTITY_ISSUER_PAT_INSERT_COLUMNS: [&str; 6] = [
-    "principal_id",
-    "principal_type",
-    "token_prefix",
-    "token_hash",
-    "label",
-    "expires_at",
-];
-/// Fresh exchange inputs and non-secret metadata returned by PAT issuance.
-pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 10] = [
+/// Reads for the identity issuer.
+pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 9] = [
     (
         "identity",
         "principals",
         &["id", "type", "subject", "display_name", "status"],
-    ),
-    (
-        "identity",
-        "pats",
-        &[
-            "id",
-            "principal_id",
-            "token_prefix",
-            "token_hash",
-            "label",
-            "created_at",
-            "revoked_at",
-            "expires_at",
-        ],
     ),
     (
         "identity",
@@ -204,16 +181,6 @@ pub fn grant_identity_issuer_surface_sql() -> String {
         )
         .expect("writing to a String cannot fail");
     }
-    let columns = IDENTITY_ISSUER_PAT_INSERT_COLUMNS
-        .iter()
-        .map(|column| escape_identifier(column))
-        .collect::<Vec<_>>()
-        .join(", ");
-    write!(
-        sql,
-        " GRANT INSERT ({columns}) ON TABLE identity.pats TO {role};"
-    )
-    .expect("writing to a String cannot fail");
     for (table, privilege, columns) in IDENTITY_ISSUER_PASSWORD_COLUMNS {
         let columns = columns
             .iter()

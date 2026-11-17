@@ -239,14 +239,6 @@ pub fn nats_certificate(key: &crate::ProjectEnvKey) -> String {
 pub fn control_nats_certificate(org: &crate::OrgId) -> String {
     format!("wamn-nats-control-{org}")
 }
-/// The operator presenter Secret.
-pub fn operator_secret(
-    org: &crate::OrgId,
-    project: &crate::ProjectId,
-    env: &crate::EnvName,
-) -> String {
-    format!("wamn-pat-operator-{}", project_env_key(org, project, env))
-}
 /// The prefix shared by a project deployment's event subjects.
 pub fn event_prefix(
     org: &crate::OrgId,

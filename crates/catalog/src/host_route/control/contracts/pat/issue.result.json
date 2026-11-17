@@ -1,0 +1,34 @@
+{
+  "fields": [
+    {
+      "path": "principal_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "token",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "token_prefix",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "created_at",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "expires_at",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

@@ -740,7 +740,7 @@ Focused application bodies also require these publication inputs:
 The registry authority must match `cluster.k`, normally `localhost:5001`.
 Tests read product-created service credentials from Secrets.
 Control routes require a password-login session and refuse a PAT (personal access token).
-Application routes use an owner PAT issued through identity's operator endpoint.
+Application routes use a project service PAT issued through the control route.
 
 Supply `WAMN_TEST_OWNER_PASSWORD` for the existing platform's owner before the first focused run.
 The first run enrolls an owner without a password through `/password/enroll`, with the product's local invitation.

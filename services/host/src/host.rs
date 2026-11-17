@@ -612,7 +612,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None
     };
     let authentication = Arc::new(
-        PlatformRouteAuthenticator::new(Arc::clone(&authorization), None, verifier)
+        PlatformRouteAuthenticator::new(Arc::clone(&authorization), verifier)
             .with_connection_cache(Arc::clone(&authorization) as _),
     );
     let host_config = HostConfig {

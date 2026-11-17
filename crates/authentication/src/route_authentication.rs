@@ -3,7 +3,7 @@
 //! The route plugin in [`wamn_engine::flow_http_routing`] resolves each
 //! attachment and its policy. For a policy that names a credential it calls
 //! [`PlatformRouteAuthenticator`]. That authenticator verifies a PAT through
-//! the system identity reader, or an access token through the configured issuer.
+//! its project database, or an access token through the configured issuer.
 //! It reads authorization from the project database. Signature policies verify the
 //! raw body with the bound connection credential and return its active principal.
 
@@ -18,7 +18,7 @@ use wamn_engine::flow_http_routing::{
     RouteAuthenticator, RouteCredential, authentication_unavailable, required_bearer_token,
     route_credential, signature_unauthorized, unauthorized,
 };
-use wamn_identity::PrincipalType;
+use wamn_identity_protocol::secret::PatToken;
 
 use crate::access_token::AccessTokenVerifier;
 use crate::authorization::AuthorizationStore;
@@ -65,7 +65,6 @@ impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusRead
 pub struct PlatformRouteAuthenticator {
     postgres: Arc<dyn AuthorizationStore>,
     connection_cache: Option<Arc<dyn wamn_connection::connection_facts::ConnectionCache>>,
-    identity_reader: Option<sqlx::PgPool>,
     verifier: Option<AccessTokenVerifier>,
 }
 
@@ -73,13 +72,11 @@ impl PlatformRouteAuthenticator {
     /// Bind a host to its authorization store and configured issuer.
     pub fn new<S: AuthorizationStore + 'static>(
         postgres: Arc<S>,
-        identity_reader: Option<sqlx::PgPool>,
         verifier: Option<AccessTokenVerifier>,
     ) -> Self {
         Self {
             postgres,
             connection_cache: None,
-            identity_reader,
             verifier,
         }
     }
@@ -285,13 +282,10 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             wamn.attachment_id = %attachment_id,
         );
         async {
-            let identity_reader = self
-                .identity_reader
-                .as_ref()
-                .ok_or_else(authentication_unavailable)?;
+            let token = token.parse::<PatToken>().map_err(|_| unauthorized())?;
             let principal = self
                 .postgres
-                .route_pat(project, target, identity_reader, token)
+                .route_pat(project, target, &token)
                 .instrument(tracing::info_span!("wamn.auth.identity"))
                 .await
                 .map_err(|error| {
@@ -299,47 +293,37 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     authentication_unavailable()
                 })?
                 .ok_or_else(unauthorized)?;
-            let credential_deadline = principal.pat_deadline();
-            let principal = principal.principal();
-            match principal.principal_type() {
-                PrincipalType::Platform | PrincipalType::User => return Err(unauthorized()),
-                PrincipalType::Service if principal.subject().starts_with("connection-") => {
-                    let connection = principal
-                        .subject()
-                        .strip_prefix("connection-")
-                        .and_then(|id| id.parse::<uuid::Uuid>().ok())
-                        .ok_or_else(unauthorized)?;
-                    let facts = self.connection_facts(target)?;
-                    let active = facts
-                        .connection(&connection)
-                        .await
-                        .map_err(|_| authentication_unavailable())?;
-                    if !active.is_some_and(|fact| {
-                        fact.status == ConnectionStatus::Active
-                            && fact.service_principal_id == *principal.id()
-                    }) {
-                        return Err(unauthorized());
-                    }
+            if let Some(id) = principal.subject.strip_prefix("connection-") {
+                let connection = id.parse::<uuid::Uuid>().map_err(|_| unauthorized())?;
+                let facts = self.connection_facts(target)?;
+                let active = facts
+                    .connection(&connection)
+                    .await
+                    .map_err(|_| authentication_unavailable())?;
+                if !active.is_some_and(|fact| {
+                    fact.status == ConnectionStatus::Active
+                        && fact.service_principal_id == principal.principal
+                }) {
+                    return Err(unauthorized());
                 }
-                PrincipalType::Service => {}
             }
             // A service receives its roles through `wamn grant-role`.
             let permissions = self
                 .postgres
-                .user_operation_permissions(project, target, principal.id())
+                .user_operation_permissions(project, target, &principal.principal)
                 .instrument(tracing::info_span!("wamn.auth.permissions"))
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "route operation grants unavailable");
                     authentication_unavailable()
                 })?;
-            if credential_deadline.is_none_or(|deadline| std::time::SystemTime::now() >= deadline) {
+            if std::time::SystemTime::now() >= principal.deadline {
                 return Err(unauthorized());
             }
             let active_role = permissions.pat_role();
             Ok(Some(AuthenticatedCaller::new(
                 attachment_id.clone(),
-                *principal.id(),
+                principal.principal,
                 CredentialType::Pat,
                 permissions.admin,
                 permissions.references.into_iter().collect(),

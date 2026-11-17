@@ -1,15 +1,7 @@
-//! Request and response bodies shared by the identity service and its client.
+//! Identity request and response bodies shared by native adapters.
 
 use crate::PrincipalId;
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct IssuePatRequest<S = String> {
-    pub principal_id: PrincipalId,
-    pub label: S,
-    pub lifetime_seconds: u64,
-}
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

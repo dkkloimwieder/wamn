@@ -43,7 +43,6 @@ wamn-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 postgres-protocol = { workspace = true }
 wamn-identity = { workspace = true }
-wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-run-state = { workspace = true }
 wamn-codegen = { workspace = true }

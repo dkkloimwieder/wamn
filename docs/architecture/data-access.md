@@ -1076,7 +1076,7 @@ These catalog and target tables exist only in the system database and grant no a
 An environment stores its target identity on first apply. The target cannot change. `target_application` and the target platform connection remain separate work.
 
 The system database (`wamn_system`) stamps its identity authority relations.
-These relations are `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.
+These relations are `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, and `identity.project_env_memberships`.
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
 The full system schema also stamps `registry.meta`, `orgs`, `env_policies`, `environments`, `projects`, `environment_projects`, `retired_project_envs`, `capture_gap`,.
 It stamps `identity.session_keys`, `session_signing_state`, and `password_attempts` too.
@@ -1091,29 +1091,21 @@ Initialization creates the `NOLOGIN` owner roles before installing these helpers
 A separate managed migration login inherits the selected owner role and runs the platform migration sequence.
 `SYSTEM_SCHEMA_SQL` does not carry `record-history-app-grants.sql`.
 
-`identity.principals.type` is `user`, `service`, or `platform`.
+`identity.principals.type` is `user` or `platform`.
 A `platform` row carries its `wamn:<component>` name in `subject` and in `display_name`, and its derived id.
 The `principals_platform_principal_check` constraint pins that subject, display name, and id.
 It also refuses a `wamn:` display name on another type, and the subject pattern of another type refuses a colon.
 Only `wamn:provisioning` writes in the system database, so the schema creates only its row.
 The schema binds `wamn:provisioning` for the transaction that creates the row, so the row stamps itself.
 A platform principal cannot authenticate.
-The `identity.pats` foreign key carries the principal type, and a CHECK refuses a token for a platform principal.
-Every path that turns a stored principal into a caller also refuses the platform type.
+The system identity issuer binds `wamn:provisioning` when it writes.
+Control binds the calling administrator when it writes a project service row or a PAT.
 
-The identity issuer and wamn bind `wamn:provisioning` in each write transaction.
-wamn-identity issues each token in its own transaction.
-wamn creates service principals, assigns project roles, grants and revokes memberships, and revokes tokens in the same way.
-A drop tells hosts to discard a cached authorization fact.
-Service creation and project-role assignment record identity drops.
-Provisioning publishes each drop after its transaction commits, including the role assignment before PAT issuance.
-Package apply and local configuration reconciliation record a drop when they create the built-in `admin` role.
-Their transaction owners publish the drops after commit through `wamn_broker::Publisher`.
-Publication keeps the existing behavior when NATS is absent or a deletion fails.
-Platform installation writes org memberships and org roles in the same way.
-A control route of the control serving root binds the calling org admin, as the [execution page](execution.md#host-run-routes) states.
-Test fixtures bind `wamn:provisioning` for platform setup, or a principal row that they insert.
-The trigger keeps `created_at`, so an expired-token fixture moves `expires_at` to just after `created_at`.
+Project service principals are `platform."user"` rows with type `service` and issuer `wamn`.
+Their subject identifies the service. Their email uses that subject and `registry.meta.platform_domain`.
+Project PATs live in `platform.pat` and reference the local service principal.
+The platform login can select, insert, and update PAT rows. Guest SQL cannot read them.
+Each PAT has history stamps. The table has no row history.
 
 ### History read
 
@@ -1167,9 +1159,8 @@ The guarantee is bounded historical state:
 Stamps and log entries are correct for writes through the supported platform paths.
 On those paths, the triggers exist and every writer binds its executing principal and its operation.
 `environment::apply` applies `app-schema.sql` to the project database and writes its platform rows.
-It writes a service row for each service principal of the project.
 The release stage also creates one service principal for each application with a scheduled workflow, targeted to that environment.
-The stage writes its project service row without assigning a role or permission.
+The stage writes the service row and its dependency grants in the project database.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 It creates the `platform.number_sequence` row of each sequence that the packages declare, as [Numbering](#numbering) describes.
 It writes a user row for each eligible user with project environment membership or inherited administration.
@@ -1202,10 +1193,7 @@ The history read has two more limits:
 - The fold does not compare the current row with the newest entry. It cannot see a change that the log did not record, such as a change while the retention was `"none"`.
 - The fold does not follow a column that a migration adds or drops between entries.
 
-The system database has two more limits:
-
-- The issuer and the revoker of a token bind `wamn:provisioning`.
-- The system database keeps stamps only. A delete gets no stamp, so role, membership, and PAT removals stay unattributed.
+The system database keeps stamps only. A delete has no stamp.
 
 ## Event capture
 

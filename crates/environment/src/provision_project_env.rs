@@ -1,6 +1,5 @@
 //! Render and record an environment. CNPG owns its database and role passwords.
 
-use sqlx::PgConnection as Client;
 pub(super) mod plan;
 pub use plan::{privilege_sql, role_posture_sql, role_sql};
 
@@ -10,11 +9,12 @@ use std::fs::{File, OpenOptions, Permissions};
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use anyhow::Context as _;
 use ring::rand::SystemRandom;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 use postgres_protocol::escape::escape_identifier;
 use wamn_provision::{
@@ -22,30 +22,18 @@ use wamn_provision::{
     validate_project_env,
 };
 use wamn_provision::{Org, Placement, cluster_of};
-use wamn_identity::{
-    IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
-    authenticate_pat, create_service, resolve_subject, revoke_pat,
-};
 use wamn_registry::Triple;
 
-use wamn_identity_client::{PatClient, PatIssuerConfig};
 use wamn_provision::env_policies::read_env_policy;
 
 mod output;
-pub mod pat_secrets;
 pub(crate) mod registry;
 pub(crate) mod workload;
 
-use pat_secrets::issue_pat_secrets;
 use registry::{mint_instance_suffix, record_project_env};
 
 pub(crate) use output::write_output;
-pub use output::{
-    ensure_distinct_secret_paths, ensure_secret_path, read_json, secret_annotation, secret_value,
-    write_secret_json,
-};
-pub(crate) use pat_secrets::resolve_or_create_service;
-pub use pat_secrets::{IssuedPatSecret, revoke_provisioning_pat};
+pub use output::{ensure_secret_path, write_secret_json};
 pub use registry::{
     read_project_env_instance, read_project_env_policy, require_connected, resolve_cluster,
 };
@@ -120,17 +108,7 @@ pub struct ProvisionProjectEnvRequest {
     pub emit_privilege_sql: Option<PathBuf>,
 
     /// Write the database credential `Secret` (JSON) here. It must name a file.
-    /// Absent only for a run that issues a PAT and writes no database Secret.
     pub emit_secret: Option<PathBuf>,
-
-    /// Operator authentication for PAT issuance through `wamn-identity`.
-    pub pat_issuer: PatIssuerConfig,
-
-    /// Issue a management-author PAT and write its Kubernetes `Secret` JSON here.
-    pub emit_management_author_pat_secret: Option<PathBuf>,
-
-    /// Issue an operator PAT and write its Kubernetes `Secret` JSON here.
-    pub emit_operator_pat_secret: Option<PathBuf>,
 }
 
 /// The names and rendered artifacts of one provisioned project-env.
@@ -146,8 +124,6 @@ pub struct ProvisionProjectEnvOutcome {
     pub database_values: Value,
     pub role_sql: String,
     pub privilege_sql: String,
-    /// The PAT Secrets issued and written, in issuance order.
-    pub pat_secrets: Vec<IssuedPatSecret>,
 }
 
 pub use wamn_platform_install::transaction::provisioning_transaction;
@@ -161,48 +137,6 @@ pub async fn provision_project_env(
     if let Some(path) = db_secret_path {
         ensure_secret_path(path, "--emit-secret")?;
     }
-    if let Some(path) = args.emit_management_author_pat_secret.as_deref() {
-        ensure_secret_path(path, "--emit-management-author-pat-secret")?;
-    }
-    if let Some(path) = args.emit_operator_pat_secret.as_deref() {
-        ensure_secret_path(path, "--emit-operator-pat-secret")?;
-    }
-    ensure_distinct_secret_paths([
-        ("--emit-secret", db_secret_path),
-        (
-            "--emit-management-author-pat-secret",
-            args.emit_management_author_pat_secret.as_deref(),
-        ),
-        (
-            "--emit-operator-pat-secret",
-            args.emit_operator_pat_secret.as_deref(),
-        ),
-    ])?;
-    let issues_pat =
-        args.emit_management_author_pat_secret.is_some() || args.emit_operator_pat_secret.is_some();
-    // A run with any provisioning output provisions and may also mint. A run
-    // with only PAT outputs mints for a recorded environment and writes nothing
-    // to the registry (wamn-rjtf).
-    let provisions = args.emit_database.is_some()
-        || args.emit_role_sql.is_some()
-        || args.emit_privilege_sql.is_some()
-        || db_secret_path.is_some();
-    let mints_only = issues_pat && !provisions;
-    if mints_only && (args.secret_namespace.is_some() || args.disposable.is_some()) {
-        anyhow::bail!(
-            "--secret-namespace and --disposable belong to a provisioning run, which passes an --emit-* output"
-        );
-    }
-    if issues_pat && args.system_database_url.is_none() {
-        anyhow::bail!(
-            "PAT issuance requires --system-database-url to resolve the stable service principal"
-        );
-    }
-    // Refuse incomplete TLS configuration before registry writes or artifacts.
-    let pat_client = issues_pat
-        .then(|| PatClient::new(&args.pat_issuer))
-        .transpose()?;
-
     let org = &args.org;
     let project = &args.project;
     let env = &args.env;
@@ -219,21 +153,17 @@ pub async fn provision_project_env(
         "--system-database-url is required to read or mint the project-env instance suffix",
     )?;
     let secret_name = project_env_secret_name(org, project, env);
-    let instance = if mints_only {
-        read_project_env_instance(system_url, &triple).await?
-    } else {
-        record_project_env(
-            system_url,
-            &triple,
-            args.policy.as_ref(),
-            &args.target,
-            &secret_name,
-            args.secret_namespace.as_deref(),
-            &mint_instance_suffix()?,
-            args.disposable,
-        )
-        .await?
-    };
+    let instance = record_project_env(
+        system_url,
+        &triple,
+        args.policy.as_ref(),
+        &args.target,
+        &secret_name,
+        args.secret_namespace.as_deref(),
+        &mint_instance_suffix()?,
+        args.disposable,
+    )
+    .await?;
 
     // Pick the target cluster: an explicit `--cluster` wins (render-only / manual);
     // otherwise derive it from the org's placement + the env policy (`cluster_of`).
@@ -271,21 +201,6 @@ pub async fn provision_project_env(
         write_secret_json(path, &secret_doc)?;
     }
 
-    let pat_secrets = match pat_client.as_ref() {
-        Some(pat_client) => {
-            issue_pat_secrets(
-                system_url,
-                pat_client,
-                &triple,
-                &args.namespace,
-                args.emit_management_author_pat_secret.as_deref(),
-                args.emit_operator_pat_secret.as_deref(),
-            )
-            .await?
-        }
-        None => Vec::new(),
-    };
-
     Ok(ProvisionProjectEnvOutcome {
         namespace: project_env_namespace(org, project, env, &instance),
         triple,
@@ -295,7 +210,6 @@ pub async fn provision_project_env(
         database_values,
         role_sql,
         privilege_sql,
-        pat_secrets,
     })
 }
 

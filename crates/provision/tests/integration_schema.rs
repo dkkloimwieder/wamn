@@ -364,31 +364,6 @@ async fn apply_cannot_write_system_connection_authority(pool: sqlx::PgPool) {
 }
 
 #[sqlx::test(migrations = false)]
-async fn environment_delete_removes_its_connections_and_disables_their_principals(
-    pool: sqlx::PgPool,
-) {
-    run(&wamn_test_postgres::url(&pool), &format!(
-        "DO $test$ DECLARE removed bigint; expected bigint; BEGIN
-           SELECT count(*) INTO expected FROM identity.credential k
-             JOIN registry.connection c ON c.id=k.connection_id
-             WHERE c.org='acme' AND c.project='app' AND c.env='dev';
-           EXECUTE $sql${}$sql$ INTO removed USING 'acme','app','dev';
-           ASSERT removed=expected;
-           DELETE FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev';
-           ASSERT NOT EXISTS(SELECT FROM registry.connection);
-           ASSERT NOT EXISTS(SELECT FROM registry.connection_generation);
-           ASSERT NOT EXISTS(SELECT FROM identity.credential);
-           ASSERT (SELECT array_agg(status||':'||(disabled_at IS NOT NULL) ORDER BY subject) FROM identity.principals
-                   WHERE subject IN ('first','second','third'))
-                  =ARRAY['disabled:true','disabled:true','active:false'];
-           ASSERT EXISTS(SELECT FROM registry.integration WHERE name='first');
-           ASSERT EXISTS(SELECT FROM registry.external_system WHERE name='erp');
-         END $test$;",
-        wamn_registry::sql::delete_environment_connections_sql()
-    )).await;
-}
-
-#[sqlx::test(migrations = false)]
 async fn environment_row_delete_cascades_to_its_connections(pool: sqlx::PgPool) {
     run(&wamn_test_postgres::url(&pool), "DO $$ BEGIN
            DELETE FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev';

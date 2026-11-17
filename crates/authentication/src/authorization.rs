@@ -1,7 +1,8 @@
 //! Authorization reads owned by authentication, over a host-authorized connection.
 
 use sqlx::Row as _;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc, time::SystemTime};
+use wamn_identity_protocol::{PrincipalId, secret::PatToken};
 use wamn_authority::auth_cache::PrincipalGrants;
 
 /// The status row of the environment, which `wamn_app` reads under its
@@ -124,16 +125,13 @@ pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
         Ok(())
     }
 
-    /// Admit the system PAT; connection ownership remains a separate check.
+    /// Admit a project PAT; connection ownership remains a separate check.
     async fn route_pat(
         &self,
-        _project: &wamn_registry::ProjectId,
-        _key: &wamn_registry::ProjectEnvKey,
-        reader: &sqlx::PgPool,
-        token: &str,
-    ) -> anyhow::Result<Option<wamn_identity::AuthenticatedPrincipal>> {
-        route_pat(reader, token).await
-    }
+        project: &wamn_registry::ProjectId,
+        key: &wamn_registry::ProjectEnvKey,
+        token: &PatToken,
+    ) -> anyhow::Result<Option<Arc<ProjectPat>>>;
 
     async fn environment_inactive(
         &self,
@@ -162,17 +160,40 @@ pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
     ) -> anyhow::Result<PrincipalGrants>;
 }
 
-/// Read PAT admission without retaining the answer, for control and edge callers.
-pub async fn route_pat(
-    reader: &sqlx::PgPool,
-    token: &str,
-) -> anyhow::Result<Option<wamn_identity::AuthenticatedPrincipal>> {
-    let mut transaction = wamn_identity::transaction::read_pool(
-        reader,
-        &wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
+/// The active local service admitted by a PAT.
+#[derive(Debug)]
+pub struct ProjectPat {
+    pub principal: PrincipalId,
+    pub subject: Box<str>,
+    pub deadline: SystemTime,
+}
+
+/// Check one PAT on the host's platform login.
+pub async fn project_pat(
+    project: &mut sqlx::PgConnection,
+    token: &PatToken,
+) -> Result<Option<Arc<ProjectPat>>, sqlx::Error> {
+    let row = sqlx::query(
+        r#"SELECT u.id, u.sub, p.hash, p.expires_at
+           FROM platform.pat p JOIN platform."user" u ON u.id=p.user_id
+           WHERE p.prefix=$1 AND p.revoked_at IS NULL AND p.expires_at > now()
+             AND u.issuer='wamn' AND u.type='service' AND u.status='active'"#,
     )
+    .bind(token.lookup())
+    .fetch_optional(project)
     .await?;
-    let principal = wamn_identity::authenticate_route_pat(&mut transaction, token).await?;
-    transaction.commit().await?;
-    Ok(principal)
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let hash: wamn_digest::Digest = row.try_get("hash")?;
+    if !token.matches(&hash) {
+        return Ok(None);
+    }
+    let deadline: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc> =
+        row.try_get("expires_at")?;
+    Ok(Some(Arc::new(ProjectPat {
+        principal: row.try_get("id")?,
+        subject: row.try_get::<&str, _>("sub")?.into(),
+        deadline: deadline.into(),
+    })))
 }

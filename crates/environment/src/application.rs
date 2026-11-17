@@ -6,6 +6,8 @@
 //! releasing that lock. Authored grants use `mutate_grant` inside the application
 //! transaction. The CLI calls the HTTP routes.
 
+pub mod service;
+
 use sqlx::Row as _;
 use std::fmt;
 
@@ -19,9 +21,6 @@ const PLATFORM_ROWS_SQL: &str =
 const USER_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
     (id, issuer, sub, type, email, display_name) VALUES ($1, $2, $3, 'user', $4, $5) \
     ON CONFLICT (id) DO NOTHING";
-
-const SERVICE_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
-    (id, issuer, sub, type, email, display_name) VALUES ($1, $2, $3, 'service', $4, $5)";
 
 const ROLE_SQL: &str = "INSERT INTO platform.role (name) VALUES ($1) \
     ON CONFLICT (name) DO NOTHING";
@@ -95,40 +94,6 @@ pub async fn write_user(
         .bind(user.principal_id.to_string())
         .bind(user.email)
         .bind(user.display_name)
-        .execute(&mut *client)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(|error| database_error(&error))?;
-    Ok(())
-}
-
-/// Write the user row of the service principal `service`.
-pub async fn write_service(
-    client: &mut sqlx::PgConnection,
-    issuer: &str,
-    service: ApplicationUser<'_>,
-) -> Result<(), IdentityError> {
-    sqlx::query(SERVICE_ROW_SQL)
-        .bind(service.principal_id)
-        .bind(issuer)
-        .bind(service.principal_id.to_string())
-        .bind(service.email)
-        .bind(service.display_name)
-        .execute(&mut *client)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(|error| database_error(&error))?;
-    Ok(())
-}
-
-/// Remove the `admin` row of the principal. Its other roles stay.
-pub async fn remove_admin(
-    client: &mut sqlx::PgConnection,
-    principal_id: &PrincipalId,
-) -> Result<(), IdentityError> {
-    sqlx::query(DROP_USER_ROLE_SQL)
-        .bind(principal_id)
-        .bind(ADMIN_ROLE)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -517,67 +482,17 @@ pub async fn project_authority(
     issuer: &str,
 ) -> Result<(), IdentityError> {
     wamn_identity::org::lock_membership(system, principal, coordinate.org).await?;
-    let row = sqlx::query("SELECT p.type, p.status, p.email, p.display_name, p.subject, \
+    let row = sqlx::query("SELECT p.type, p.status, p.email, p.display_name, \
          EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
          identity.has_project_access(p.id,$2,$4,$3), \
-         CASE WHEN p.type = 'service' THEN EXISTS (SELECT 1 FROM identity.project_roles r \
-             WHERE r.principal_id=p.id AND r.org=$2 AND r.project=$3 AND r.role='project-admin') \
-             ELSE identity.is_project_admin(p.id,$2,$3) END \
+         identity.is_project_admin(p.id,$2,$3) \
          FROM identity.principals p WHERE p.id=$1").bind(principal).bind(coordinate.org).bind(coordinate.project).bind(coordinate.env).fetch_optional(&mut **system).await.map_err(|error| database_error(&error))?;
     let Some(row) = row else {
         return remove_user(target, principal).await;
     };
     let type_: String = row.get(0);
     let active = row.get::<String, _>(1) == "active";
-    let admin: bool = row.get(7);
-    if type_ == "service" {
-        // Services derive administration from their project role, without user membership.
-        let present = sqlx::query("SELECT 1 FROM platform.\"user\" WHERE id=$1")
-            .bind(principal)
-            .fetch_optional(&mut *target)
-            .await
-            .map_err(|error| database_error(&error))?
-            .is_some();
-        if active && admin && !present {
-            let domain: String = sqlx::query(
-                wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY,
-            )
-            .fetch_one(&mut **system)
-            .await
-            .map_err(|error| database_error(&error))?
-            .get(0);
-            let email = format!("{}@{domain}", row.get::<String, _>(4));
-            write_service(
-                target,
-                issuer,
-                ApplicationUser {
-                    principal_id: principal,
-                    email: &email,
-                    display_name: &row.get::<String, _>(3),
-                },
-            )
-            .await?;
-        }
-        if active && admin {
-            sqlx::query(ROLE_SQL)
-                .bind(ADMIN_ROLE)
-                .execute(&mut *target)
-                .await
-                .map(|result| result.rows_affected())
-                .map_err(|error| database_error(&error))?;
-            sqlx::query(USER_ROLE_SQL)
-                .bind(principal)
-                .bind(ADMIN_ROLE)
-                .execute(&mut *target)
-                .await
-                .map(|result| result.rows_affected())
-                .map_err(|error| database_error(&error))?;
-        } else {
-            remove_admin(target, principal).await?;
-        }
-        return Ok(());
-    }
-    if type_ != "user" || !active || !row.get::<bool, _>(5) || !row.get::<bool, _>(6) {
+    if type_ != "user" || !active || !row.get::<bool, _>(4) || !row.get::<bool, _>(5) {
         return remove_user(target, principal).await;
     }
     let email: String = row.get(2);
@@ -588,8 +503,15 @@ pub async fn project_authority(
         display_name: &display_name,
     };
     write_user(target, issuer, user).await?;
+    let admin: bool = row.get(6);
     if !admin {
-        return remove_admin(target, principal).await;
+        return sqlx::query(DROP_USER_ROLE_SQL)
+            .bind(principal)
+            .bind(ADMIN_ROLE)
+            .execute(&mut *target)
+            .await
+            .map(drop)
+            .map_err(|error| database_error(&error));
     }
     sqlx::query(ROLE_SQL)
         .bind(ADMIN_ROLE)

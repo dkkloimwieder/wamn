@@ -13,7 +13,6 @@ path = "src/bin/wamn.rs"
 wamn-codegen.workspace = true
 wamn-build.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
-wamn-identity-client = { workspace = true }
 anyhow = { workspace = true }
 # `string`: `wamn-0h0g.22.16` derives the workload-generation flag set from the
 # closed WorkloadRoleFamily vocabulary, so arg ids and long names are computed

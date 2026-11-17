@@ -1,11 +1,10 @@
-//! The identity authority serves public keys, user login, and operator credential issuance.
+//! The identity authority serves public keys, user login, and operator user management.
 
 use sqlx::Connection as _;
 use sqlx::PgConnection as Client;
 pub mod cli;
 pub mod mail;
 mod password;
-mod pat;
 mod session;
 mod users;
 
@@ -139,8 +138,6 @@ struct Inner {
     request_slots: Semaphore,
     envelope: wamn_envelope::encryption::Envelope,
     database: Mutex<Database>,
-    // PAT issuance needs a transaction, so it holds its own connection.
-    issuance: Mutex<Database>,
 }
 
 pub(crate) struct Database {
@@ -210,7 +207,6 @@ impl IdentityService {
     pub async fn connect(config: IdentityConfig) -> Result<Self, IdentityServiceError> {
         let envelope = signing_envelope()?;
         let database = connect(&config).await?;
-        let issuance = Mutex::new(connect(&config).await?);
         let passwords = if let Some(mail) = config.mail {
             Some(password::State::new(mail, &config.connection).await?)
         } else {
@@ -227,7 +223,6 @@ impl IdentityService {
                 passwords,
                 request_slots: Semaphore::new(8),
                 database: Mutex::new(database),
-                issuance,
             }),
         })
     }
@@ -299,14 +294,6 @@ impl IdentityService {
             && let Some(state) = &self.inner.passwords
         {
             return Ok(password::respond(&self.inner, state, request, source).await);
-        }
-        if request.method() == Method::POST
-            && request.uri().path() == "/pats"
-            && request.uri().query().is_none()
-        {
-            return Ok(
-                pat::respond(&self.inner, request, certificate != PeerCertificate::None).await,
-            );
         }
         let response = if request.method() != Method::GET || request.uri().query().is_some() {
             response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec())
