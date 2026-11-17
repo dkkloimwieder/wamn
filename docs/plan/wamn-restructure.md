@@ -27,7 +27,7 @@ Org → environment → project → application. One boundary per level.
 | Application | The host's permission check and the wasm sandbox. The project is the trust unit. |
 
 - The system database (`registry`, `identity`) has its own cluster in namespace `platform`.
-- Logins per project database: migration (owner), application, read-only (dynamic SQL), platform (all host platform work). One system database reader per environment. Each login has a connection limit.
+- Logins per project database: migration (owner), application, read-only (dynamic SQL), platform (all host platform work, retention included), and the CDC replication login. Until 3.6 each login is suffixed per project database and inherits the plain NOLOGIN group role; plain login names come with one cluster per project database. One system database reader per environment. Each login has a connection limit (3.6).
 - One operation service account per environment.
 - `project_env_key` is not stored in project databases (no column, no row policy, no `project_key()` functions).
 
@@ -41,6 +41,7 @@ Org → environment → project → application. One boundary per level.
 - Admin inheritance (org, environment, project admin) is stored as rows in each project database. No system database read per request.
 - `platform."user"` keeps `id` (UUID) as primary key and is unique on `(issuer, sub)`. One writer: `wamn_environment::application`. The four platform principals are seed rows in the schema.
 - Roles and ACLs are run-time data. The permission vocabulary is derived from the schema and the operations. Applications ship with an `admin` role only. Bounds on calls are a project setting.
+- Guest SQL (`wamn_app`, `wamn_query`) gets no grant on `platform.credential`, `platform.oauth_token` or `platform.oauth_authorization`.
 
 ## Request path
 
@@ -59,6 +60,8 @@ Org → environment → project → application. One boundary per level.
 - Exclusive resources: a local mutex per resource plus a blocking `pg_advisory_lock` with a lock timeout, held for the call.
 - HTTP client cache key: invocation scope, target, connection id, generation. No in-flight semaphores.
 - The environment file states each connection's version once.
+- A physical resource belongs to one project: `(target_id, resource_key)` is unique within one project database.
+- A connection's service principal stays in the system database. `registry.connection_principal` links it to its org, project and environment for control row security.
 
 ## Workflows
 
@@ -262,6 +265,8 @@ Issues:
 - One writer: `wamn_environment::application::{write_user, write_service}`. `wamn_environment::environment::stage` writes through it.
 - The four platform principals (`wamn:provisioning`, `wamn:apply-package`, `wamn:executor`, `wamn:audit-retention`) become seed rows in `app-schema.sql`, with the ids already fixed in `user_platform_principal_check`. Delete `wamn_provision::platform_principals`.
 - The host's lookup by `(iss, sub)` is step 3.3. Do not change it here.
+
+Rulings on the scout questions (D, 2026-11-16): logins stay suffixed per project database until 3.6; `registry.connection_principal` keeps control row security for connection principals; `configuration.rs` loses its external system, integration and connection writes; the workflow user is a fifth seed row; stage and the control service take the issuer from the identity issuer address setting; the `Database` owner in `database.yaml` is the project's migration login, and `clusters.yaml` waits for 3.6.
 
 ## Open items
 
@@ -1574,3 +1579,5 @@ Recommend a.
 **Ruled (D, 2026-11-16): Epic 2 targets.** `credentials.rs` → `wamn-connections` under `test-util`; `env_policies.rs` → `wamn-control-provision`; the existing catalog manifest types → `wamn_catalog::manifest::installation`; the event crates merge in 3.4.
 
 **Ruled (D, 2026-11-16): Epic 3 scope.** `platform."user"` keeps `id` and adds `UNIQUE (issuer, sub)` (1a); the platform principals are seed rows (2a); connection limits wait for 3.6 (3a); the epic is checked by applying the schema to a fresh local Postgres (4a); `catalog.release_connection` and `catalog.connection_binding` lose `project_env_key` now and are deleted in 3.2 (5a). Fact: admin inheritance is already stored as rows (`application::project_authority`, run on org and project admin grants), so N3 needs no work.
+
+**Ruled (D, 2026-11-16): Epic 3 scout questions.** 21 questions answered (see the Epic 3 section of Part 1). Facts behind the changed answers: project databases share the org cluster, so logins span all of them (11); `control_principal` is the row policy of `identity.principals` (Q1, Q3); `configuration.rs` connection writes have no caller with rows (10); `workflow_user_id()` is a fixed constant (17).
