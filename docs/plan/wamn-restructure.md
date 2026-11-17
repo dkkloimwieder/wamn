@@ -356,6 +356,7 @@ Issues:
 - The deploy refuses one declared name bound to two connections in one workload, and a declared name equal to another component's name.
 - The authority is fixed on `platform.connection`. A new host is a new connection.
 - Connection create, connection edit and the deploy refuse an IPv6 literal authority for wasm types, because the operator CRD's `allowedHosts` pattern has no bracketed IPv6 form. A hostname that resolves to the device works.
+- The deploy refuses a binding whose connection's target is not the environment's target, for every connection type. A connection meant only for a local target never reaches a cloud workload.
 - The deploy refuses two versions of one host interface package, because the operator allows only one unnamed entry for each namespace and package.
 - The deploy refuses an operation name that two components declare, among operations that have a type. Palette exports are exempt.
 
@@ -367,6 +368,7 @@ Issues:
 - The host's integration loader goes. wamn does not pull or compile integration code.
 - `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status, reads the generation and credential from the cache, and takes the exclusive lock. Dropping the resource releases the lock. The lock wait is bounded by a `lock_timeout` of `MAX_HOST_CALL_DURATION`, on a connection the plugin owns. A cancelled caller closes that connection, which releases the lock.
 - Control `connection_test` refuses wasm types until the open item on health probes resolves.
+- The host socket floor stays (`allow_private: false`, `deny_special: true`). Integration siblings in the cloud reach public addresses only.
 - Exclusive resource, for each call:
   - Take a local mutex keyed by `(target_id, resource_key)`.
   - On a connection from the platform pool, run `BEGIN`, then `SET LOCAL lock_timeout` to the invocation's remaining time, then `SELECT pg_advisory_xact_lock(key)`.
@@ -423,6 +425,7 @@ Rulings on the scout questions (D, 2026-11-17):
 - 3.6: the control service takes the issuer from `session_issuer` and stage takes it from `platform.identity_issuer`. They become the one identity issuer address setting (E6, K).
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
+- Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
 - 3.4: `workflow.start` refuses in the host until the workflow service serves it.
 - 3.5: `registry.environment_application_connections` and `registry.environment_integrations` change with the environment file (one version for each connection name).
 - 3.3: the project rows mark inherited admin, and `user.list` reads that mark there in place of `is_project_admin` against the system database.
@@ -1758,3 +1761,9 @@ Recommend a.
 - An IPv6 literal authority is refused for wasm types at connection create, connection edit and deploy. The operator CRD's `allowedHosts` pattern accepts hostnames and IPv4 addresses but no bracketed IPv6 form. A hostname also permits the DNS lookup and raw socket connections to the addresses it returns.
 - `begin` bounds the lock wait with a `lock_timeout` of `MAX_HOST_CALL_DURATION` (30 seconds). The sibling cannot see the caller's deadline, and the calling attempt has the same bound.
 - Rejected: a patch to the operator CRD, and a refusal only at deploy.
+
+**Ruled (D, 2026-11-17): socket floor and connection targets.**
+- The wamn-d0w4 floor stays: `allow_private: false` for every guest on a cloud host. Modbus belongs at the edge, not in the cloud cluster.
+- The deploy refuses a binding whose connection's target is not the environment's target, for every connection type, so connections meant only for a local target never go to the cloud.
+- Fact: the deleted integration loader allowed a private address for each integration through its own engine. A shared host engine cannot do that.
+- Rejected: `allow_private: true` on cloud hosts, and an upstream range grant for each component.
