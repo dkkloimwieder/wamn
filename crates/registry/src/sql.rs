@@ -279,15 +279,15 @@ pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_MEMBERS_SQL: &str = "SELECT p.id,p.e
 pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_ENVS_SQL: &str = "SELECT env, status FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org = $1 AND project = $2 \
     AND ($3::text IS NULL OR env > $3) ORDER BY env LIMIT $4";
 
-/// crates/identity/src/org.rs::ENVIRONMENT_STATUS_SQL registry statement.
+/// crates/environment/src/org.rs::ENVIRONMENT_STATUS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_ENVIRONMENT_STATUS_SQL: &str = "UPDATE registry.environments SET status = $4 \
     WHERE org = $1 AND env = ANY($3) AND EXISTS (SELECT FROM registry.environment_projects p WHERE p.org=$1 AND p.env=registry.environments.env AND p.project=$2)";
 
-/// crates/identity/src/org.rs::ORG_ENVIRONMENTS_SQL registry statement.
+/// crates/environment/src/org.rs::ORG_ENVIRONMENTS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_ORG_ENVIRONMENTS_SQL: &str = "SELECT project, env FROM registry.environment_projects \
     WHERE org = $1 AND ($2::text IS NULL OR project = $2) ORDER BY project, env";
 
-/// crates/identity/src/org.rs::CREATE_PROJECT_SQL registry statement.
+/// crates/environment/src/org.rs::CREATE_PROJECT_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_CREATE_PROJECT_SQL: &str =
     "INSERT INTO registry.projects (org, id) VALUES ($1, $2) ON CONFLICT (org, id) DO NOTHING";
 
