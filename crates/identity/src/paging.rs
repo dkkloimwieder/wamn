@@ -17,8 +17,6 @@ pub enum Order {
     Environment,
     /// Email ascending, then principal UUID ascending.
     Principal,
-    /// Control (0), then application (1), each by audience ascending.
-    Audience,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -59,15 +57,6 @@ fn parse_key(order: Order, key: &Value) -> Result<Option<PrincipalId>, IdentityE
                 .parse()
                 .map(Some)
                 .map_err(|_| invalid("cursor"));
-        }
-        (Order::Audience, [type_, audience]) => {
-            matches!(type_.as_u64(), Some(0 | 1))
-                && text(audience)
-                && (type_.as_u64() != Some(0)
-                    || audience
-                        .as_str()
-                        .and_then(crate::control::control_audience_org)
-                        .is_some())
         }
         _ => false,
     };
@@ -155,11 +144,6 @@ impl ListPage {
     /// The principal at the end of the previous page.
     pub fn after_principal(&self) -> Option<&PrincipalId> {
         self.after_principal.as_ref()
-    }
-
-    /// The audience type, or none on the first page.
-    pub fn after_type(&self) -> Option<u64> {
-        self.cursor.key.get(0).and_then(Value::as_u64)
     }
 
     /// Trim the lookahead row and attach metadata beside the existing row wrapper.

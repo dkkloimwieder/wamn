@@ -15,8 +15,6 @@ pub mod migration;
 pub mod migrations;
 mod name;
 pub mod operation_grants;
-/// The two T1 control-database read consumers' targeted credential contract.
-pub mod session_target;
 pub mod sql;
 pub mod system_reader;
 pub mod transaction_identity;

@@ -25,11 +25,6 @@ localMail: ""
 # Restart the service after a CA change to close existing TLS connections.
 operatorCaSecret: ""
 
-# Each entry contains a target ConfigMap name and its public connection configuration.
-# The connection names the reader credential and CA Secrets in this namespace.
-# Restart after credential rotation.
-sessionTargetSecrets: []
-
 # The NATS that logouts, resets and replay revocations go to, so
 # every host drops the login from its auth memory
 # (docs/architecture/execution.md#auth-memory). tlsSecret holds ca.crt,

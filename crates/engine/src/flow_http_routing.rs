@@ -409,8 +409,6 @@ pub fn required_bearer_token(headers: &[Header]) -> Result<&str, AuthRejection> 
 
 /// The session cookie the identity service sets for the cookie carrier.
 const SESSION_COOKIE: &str = "__Host-wamn-session";
-/// The request header that repeats the readable CSRF cookie.
-const CSRF_HEADER: &str = "x-wamn-csrf";
 
 /// Find the one session cookie across every `cookie` header; a duplicate refuses.
 pub fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection> {
@@ -430,39 +428,13 @@ pub fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection>
     Ok(found)
 }
 
-/// Make sure of the signed double-submit of a cookie session.
-///
-/// A cookie token must carry the `csrf` JWT claim. When the route requires it, one
-/// `x-wamn-csrf` header must hash to that JWT claim.
+/// Refuse cookie sessions until web owns CSRF and the host verifier is replaced.
 pub fn require_csrf(
-    requires_csrf: bool,
-    claims_csrf: Option<&wamn_digest::Digest>,
-    headers: &[Header],
+    _requires_csrf: bool,
+    _claims_csrf: Option<&wamn_digest::Digest>,
+    _headers: &[Header],
 ) -> Result<(), AuthRejection> {
-    let claim = claims_csrf.ok_or_else(unauthorized)?;
-    if !requires_csrf {
-        return Ok(());
-    }
-    let mut values = headers
-        .iter()
-        .filter(|header| header.name.eq_ignore_ascii_case(CSRF_HEADER));
-    let value = values.next().ok_or_else(unauthorized)?;
-    if values.next().is_some() {
-        return Err(unauthorized());
-    }
-    let digest = wamn_digest::bytes_sha256(value.value.as_bytes());
-    // Compare fixed-size digest bytes in constant time.
-    let difference = digest
-        .as_bytes()
-        .iter()
-        .zip(claim.as_bytes())
-        .fold(0_u8, |difference, (left, right)| {
-            difference | (left ^ right)
-        });
-    if difference != 0 {
-        return Err(unauthorized());
-    }
-    Ok(())
+    Err(unauthorized())
 }
 
 /// The refusal for a missing, malformed or rejected credential.
@@ -691,37 +663,6 @@ mod tests {
                 &session_cookie(&duplicated).expect_err("a duplicate session cookie refuses"),
             );
         }
-    }
-
-    #[test]
-    fn csrf_requires_the_claim_and_one_header_that_hashes_to_it() {
-        let token = "csrf-token-value";
-        let claim = wamn_digest::bytes_sha256(token.as_bytes());
-        require_csrf(true, Some(&claim), &[header("X-Wamn-Csrf", token)])
-            .expect("a matching header passes");
-        for (claims_csrf, headers) in [
-            (Some(&claim), vec![]),
-            (Some(&claim), vec![header("x-wamn-csrf", "wrong")]),
-            (
-                Some(&claim),
-                vec![header("x-wamn-csrf", token), header("x-wamn-csrf", token)],
-            ),
-            (None, vec![header("x-wamn-csrf", token)]),
-        ] {
-            assert_unauthorized(
-                &require_csrf(true, claims_csrf, &headers).expect_err("the CSRF condition refuses"),
-            );
-        }
-    }
-
-    #[test]
-    fn csrf_not_required_skips_the_header_but_still_needs_the_claim() {
-        let claim = wamn_digest::bytes_sha256(b"csrf-token-value");
-        require_csrf(false, Some(&claim), &[]).expect("no header is needed");
-        assert_unauthorized(
-            &require_csrf(false, None, &[])
-                .expect_err("a cookie token without the JWT claim refuses"),
-        );
     }
 
     #[test]

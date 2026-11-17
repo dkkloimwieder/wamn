@@ -108,7 +108,7 @@ curl -i -H 'Host: control.wamn.localhost' http://127.0.0.1:8080/wamn_control/con
 ```
 
 This request must return HTTP 401.
-A permitted control query requires a password-login session for the control audience.
+A permitted control query requires a password-login token for the org audience.
 The local TLS ingress listens on host port 443.
 Port 80 reaches the same ingress controller.
 The edge certificate covers the application hostnames.
@@ -638,7 +638,7 @@ The private `.env` is ignored by Git and needs owner-only read and write permiss
 No home-directory path is required.
 
 For local email configuration, copy `.env.example` to `.env` before adding the key and verified sender.
-Keep the existing issuer, database, TLS, operator CA, and session target configuration.
+Keep the existing issuer, database, TLS, and operator CA configuration.
 External delivery requires both Resend values. Kind deployment instead selects local mail as described in [local access](#local-access-and-owner-invitation).
 The CLI also accepts `--resend-api-key` and `--resend-from`. Prefer environment input for the secret.
 
@@ -887,10 +887,9 @@ A credential read returns `no credential store in local mode` and logs that reas
 Local startup still provisions the disposable databases and starts identity, control and web services.
 Those processes use explicit operator connection URLs with verified TLS.
 They do not supply a local connection credential store.
-Session target files accept an explicit role URL for these local processes.
-Cluster session targets use native credential and CA references.
-Each `sessionTargetSecrets` chart entry contains its ConfigMap `name` and its public `connection` configuration.
-The chart grants identity access to the credential and CA named by that configuration, including dedicated cluster CAs.
+Identity login uses the org audience `urn:wamn:control:<org>`.
+The identity chart no longer accepts session target ConfigMaps or project database reader credentials.
+The chart retains access to the identity database credential and its CA.
 
 The HTTP interface keeps its `credential-unavailable` result.
 

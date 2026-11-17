@@ -15,7 +15,7 @@ The engine owns HTTP authentication and the generated `wamn:operation` binding.
 The separate HTTP component reads released route data through `wasi:config` and calls typed application exports through that binding.
 The cloud implements the operation boundary over PostgreSQL. The edge implements it over its own SQLx SQLite store.
 `RouteAuthenticator` reads the credential of a protected route.
-The cloud uses [`PlatformRouteAuthenticator`](../../crates/authentication/src/route_authentication.rs), and the edge uses its local session verifier.
+The cloud uses [`PlatformRouteAuthenticator`](../../crates/authentication/src/route_authentication.rs), and the edge refuses protected routes until its identity design is defined.
 Publish decides authorization, and the runtime trusts the loaded release.
 An application's components compose at build into one component, so a call inside an application reaches no host.
 The host begins a transaction for an operation whose admitted operation declares one, whatever SQL it holds. The required permission is the entry's own operation, and nothing derives into it.
@@ -741,13 +741,14 @@ The host keeps both answers in its [auth memory](#auth-memory).
 Service credentials use their authored application grants and cannot mint a user session.
 The route authenticator requires neither the platform operator subject nor a system `admin` role.
 
-A session token carries the user roles selected at minting and its revocable authority.
-For each new request, the host makes sure of the principal, environment membership, and password login.
-It intersects signed roles with the held roles and their permissions for the active project user.
+An org access token identifies the principal. It carries no roles or server-side login authority.
+The host and control currently refuse session requests until their RFC 9068 verification is installed.
+The legacy session permission path refuses admission until the host verifier is replaced.
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference.
 Missing, revoked, expired, or mismatched authority returns 401.
 An unavailable identity read refuses admission with 503. The read has a five-second timeout.
-Logout, reset, account disablement, membership removal, and PAT revocation reach an admitted PAT or session with the next drop of the [auth memory](#auth-memory).
+Logout, reset, account disablement, and membership removal prevent further renewal. Issued access tokens expire within 900 seconds.
+PAT revocation retains the existing [auth memory](#auth-memory) behavior.
 A host that cannot receive drops caches nothing, so it reads every request.
 The configured revocation bound applies when a drop is lost.
 Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
@@ -799,42 +800,33 @@ The identity service and `wamn` read the connection from `WAMN_NATS_URL`, `WAMN_
 `WAMN_NATS_TLS_SERVER_NAME` names the server certificate when a port-forward reaches the server.
 A lost delete waits for at most the configured bound.
 
-The exact audience is `urn:wamn:project-env:{org}:{env}:{project}:{instance_suffix}`.
-The configured environment supplies its current suffix.
-Identity offers and mints no audience of an environment whose `registry.environments.status` is `inactive`, so the shell does not list it.
+The org audience is `urn:wamn:control:{org}`.
+One password login gives one access token for the org, shared by its environments and control routes.
+Any active user with an active org membership can log in. Application roles do not decide login eligibility.
 
-Session tokens use Ed25519 keys with `alg=EdDSA` and `typ=wamn-session+jwt`.
-They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, `jti`, and `authority`.
-`authority` is the object `{"login":"<login UUID>"}`.
-The optional `csrf` JWT claim is the SHA-256 digest of a CSRF token, as `sha256:` and 64 lowercase hex digits. Only the cookie carrier sets it.
-The password issuer binds the existing login record.
-The `kid` selects a key only within the configured issuer.
-Wrong issuer, organization, audience, algorithm, signature, or time bounds returns 401.
-Unknown roles grant no implicit authority, and an empty permission set returns 403.
+Identity signs RFC 9068 access tokens with Ed25519 keys.
+The header contains `alg=EdDSA`, `typ=at+jwt`, and `kid`.
+The claims are `iss`, `sub` (the principal UUID), `aud`, `exp`, `iat`, `jti`, and `client_id=wamn-web`.
+Tokens contain no `roles`, `org`, `authority`, or `csrf` claim.
+The `kid` selects a key within the configured issuer.
 
-A browser presents the session token in the `__Host-wamn-session` cookie instead of the `Authorization` header.
-The host reads that cookie only when the request has no `Authorization` header and the route admits a session.
-A request that carries both refuses with 401, and so does a repeated session cookie.
-The host verifies a cookie token as it verifies a bearer token, and then applies the CSRF test.
-A cookie token without the `csrf` JWT claim refuses with 401.
-The CSRF test needs one `x-wamn-csrf` header whose SHA-256 digest equals the JWT claim.
-A read route (type `get`, `query` or `projection`) needs no header, because a read changes nothing.
-Every other route and every attachment to a wiring requires the header. The cookie carries the `csrf` JWT claim on every route.
-
-The token lifetime is at most 900 seconds, with 30 seconds of time tolerance.
+The token lifetime stays at most 900 seconds.
 Minting anchors expiry to the start of credential validation and records the actual signing time in `iat`.
 A delayed mint cannot restart the lifetime.
-The host reconsiders admission freshness after permission reads.
-Age bounds limit delayed admission without promising that identity remains unchanged during a pause.
+Renewal requires an active principal, an active org membership, and a live password login.
+Logout, disable, reset, expiry, or renewal replay prevents further renewal.
+Authentication deadlines govern new admission and do not cancel accepted work.
 
-Authentication deadlines bound new admission and do not cancel work already accepted.
+The [signer](../../crates/identity/src/session_token.rs) owns the access-token claims and minting bounds.
+The previous session profile and its shared claim types are removed.
+Until the RFC 9068 verifier is installed, host and control session admission refuse every session.
+The edge refuses every protected route until its identity design is defined.
+PAT and signature policies on the application host retain their existing behavior.
 
-The [session token owner](../../crates/identity-protocol/src/token.rs) defines the token and time rules.
-The [session verifier](../../crates/identity-protocol/src/verifier.rs) takes its keys from a key source: the issuer over HTTPS in the cloud, or a key file on the edge.
-The browser client holds no token. `@wamn/web-runtime` signs in with the cookie carrier and renews on load and before expiry.
-Password sessions have no PAT fallback. Renewal happens only when an application request needs a new access token.
-A local credential refusal occurs before HTTP submission and records a refused operation, not an unknown server outcome.
-Failed renewal or login expiry requires explicit login and submission. Quitting clears local credentials and requests server logout.
+Identity temporarily retains its cookie carrier, including the readable CSRF cookie, without a signed CSRF claim.
+Host cookie admission refuses requests while cookie and CSRF handling move to the web service.
+The browser keeps no tokens in its body or storage.
+The shared browser runtime signs in directly to the deployment's org and renews on load and before expiry.
 
 ### Connection memory
 
@@ -995,12 +987,10 @@ An `env delete` deletes every key of the environment.
 
 ### Control sessions
 
-Every org in `registry.orgs` has the control audience `urn:wamn:control:<org>`, and nothing configures it.
-Discovery offers it to a user with an org, environment or project administration grant in that org, also when the request names a project, so an application shell offers it beside the environments.
-A control session comes from a password login.
-It carries no roles.
-For each request, the control host reads the password login of the session, the active principal and its `org-admin` and `project-admin` roles in the org.
-A revoked role therefore refuses the next request and the next renewal with 401.
+Every org in `registry.orgs` has the org audience `urn:wamn:control:<org>`.
+The same token serves application and control requests. Login requires active org membership, without an administration grant.
+Control administration remains a separate read of the system database.
+Control session admission currently refuses requests until the RFC 9068 verifier is installed.
 
 ### Consistent session access
 
@@ -1008,8 +998,7 @@ Sessions and PATs use the same operation permission condition: the caller holds 
 Every user session receives the same current authority tests without operation-specific password prompts.
 Renewal stays automatic during active use and never extends the absolute login deadline.
 
-The identity reader needs SELECT on `identity.password_logins` in addition to its existing identity tables.
-Session-only hosts also require their targeted `WAMN_SYSTEM_URL` identity reader.
+Password login liveness belongs to identity. The legacy active-session reads currently refuse admission.
 
 Server authorization is authoritative. The UI may hide unavailable actions, but the router or host handler always enforces authority.
 
@@ -1042,13 +1031,12 @@ The fixed application-administration operations are **not grantable** to authore
 
 `admin` is the only built-in application role.
 
-The host refuses a session when any signed role is absent from the user's current grants.
-It also refuses a service principal presented as a user session.
+Tokens carry no signed roles. Session admission currently refuses requests until the host verifier is installed.
 A service principal has no user active role, even when it holds an application permission.
 Principal and grant writes record `AuthDrops`, and their callers publish the deletions after commit.
 A failed deletion is logged without retry. The auth cache TTL bounds stale access.
 
-A session with an unknown or unheld signed role, or a disabled principal, receives 401. A failure to read the database receives 503.
+A session currently receives 401 while the host verifier is replaced.
 
 Every other role:
 
@@ -1061,11 +1049,7 @@ Every other role:
 
 A user may hold no application role.
 
-For a user session:
-
-- permission-row changes take effect on the next request;
-- role revocation takes effect on the next request because current `user_role` still intersects the signed role names;
-- role grant takes effect at renewal or new sign-in because the new role name is not in the existing token.
+Session roles come from the project database. The access token carries no role selection.
 
 For a PAT caller, current roles are read per request, so grant and revoke both take effect on the next request.
 
@@ -1076,14 +1060,14 @@ The identity service exposes password HTTP endpoints. Receiving supports hidden 
 
 The [login storage library](../../crates/identity/src/password_login.rs) supplies database primitives for renewal and revocation.
 The HTTP service and terminal use these primitives for renewal and server-side logout.
-Each login binds one user, issuer, and exact environment audience.
+Each login binds one user, issuer, and org audience.
 Its authentication time and eight-hour absolute deadline remain fixed.
 Successful renewal extends the inactivity deadline by 30 minutes, capped at the absolute deadline.
 
 The database stores only canonical digest text for random, single-use renewal credentials.
 Reusing a consumed credential revokes its login family, the sequence of replacement credentials for one login.
 The caller commits that refusal so revocation persists.
-Every login and renewal repeats the current membership, environment instance, project-user status, and assigned-role tests.
+Every login and renewal requires an active principal and active membership in the requested org.
 Credential rotation and access-token signing share one transaction after those tests.
 The service delivers credentials only after that transaction commits.
 Access-token expiry cannot exceed the login's absolute deadline.
@@ -1134,7 +1118,8 @@ The email folds to lower case and is also the subject. `enrolled` is true when t
 An email that the identity rules refuse answers 400 with the reason, and a disabled user answers 409.
 
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
-`POST /password/session` accepts `email`, `password`, and `aud`.
+`POST /password/session` accepts `email`, `password`, and `aud`, set to `urn:wamn:control:<org>`.
+It performs one password check and signs one org token. The browser has no environment chooser.
 It reads membership, environment status, the active user and roles before it signs the token.
 Its response contains `sub`, `access_token`, `token_type`, `expires_at`, `renewal_token`, and `login_expires_at`.
 The two expiry fields contain Unix seconds. `token_type` is `Bearer`.
@@ -1179,23 +1164,7 @@ The web shell does the same at `/recover` and `/reset#<secret>`, and then opens 
 For mailbox loss, an authorized administrator updates the existing principal's email through the [operator procedure](../operations/deployment.md#mailbox-loss-recovery).
 That transaction consumes outstanding email secrets and revokes renewal families. The user then uses normal recovery at the replacement address.
 
-`POST /password/environments` accepts `email`, `password`, optional `org` and `project` filters, and optional `limit` and `cursor` members.
-It uses the control lists' paging rules above: limits 1 through 100, default 100, and whole results when both paging members are absent.
-After password authentication, it returns authorized control audiences, then authorized application audiences, each ordered by audience.
-Its response retains `environments` and adds nullable `next_cursor` and `total` members with the same meaning as the control lists.
-A control entry carries only `aud` and `org`. The project filter does not exclude control entries.
-The cursor key contains the type (control 0, application 1) and audience.
-Its cursor binding identifies the authenticated principal and the exact optional org and project filters.
-Invalid limits or cursors return HTTP 400 with `{"error":"password request refused"}`.
-
-Discovery stops after enough authorized candidates establish the page and continuation.
-Authorization can reject candidates, so a page can examine more candidates than its limit.
-Every page authenticates again and uses the existing five-attempt login bucket. HTTP 429 retains `Retry-After`.
-
-Discovery returns no session, PAT, application address, or database credential.
-It shares the login throttle and request deadline with session issuance.
-An unavailable authority read fails the whole request instead of returning an incomplete list.
-Session issuance repeats the access tests after selection. A discovery result grants no access.
+`/password/environments` and the session target declarations are removed.
 
 The issuer never supplies application addresses.
 
@@ -1224,7 +1193,9 @@ A fetch permits five seconds and 65,536 response bytes.
 A stale set refuses authentication even for a previously known key.
 Final admission cannot extend freshness after slow permission reads.
 
-The identity service publishes a public key before activating it for signing.
+The identity service activates a key only after its committed publication is at least 330 seconds old.
+This bound is the advertised 300-second JWKS cache lifetime plus `KEY_PUBLICATION_MARGIN_SECONDS` (30 seconds).
+Scheduled rotation publishes first, then waits for that bound before activation. Explicit activation obeys the same bound.
 A transaction lock establishes the stop-signing boundary before retirement.
 Public keys remain available for 930 seconds after that boundary.
 An emergency key removal does not activate a replacement.
@@ -1317,14 +1288,14 @@ The [address owner](../../apps/platform_ui/src/address.ts) keeps the audience in
 A screen receives the transport, address parameters, query values, permitted actions, `open(path)`, and `close()`.
 The shell fills action paths from the address parameters.
 Reloading a screen renews its cookie session without browser storage. A screen without a session asks for the password at that address.
-The [identity pages](../../apps/platform_ui/src/identity.tsx) offer reachable audiences after sign-in and open a single audience automatically.
-An account with no audience sees "No access has been granted." and receives no session.
+The [identity pages](../../apps/platform_ui/src/identity.tsx) sign in directly to the org from `/config.json` and open its control address.
+A pasted application address uses the same org audience for login and renewal.
 
 The [page components](../../apps/platform_ui/src/page.tsx) wrap dashboards in wfe `Theme` and `DashboardShell` at viewport height.
 Sign-in, invitation, recovery, reset, and no-access pages use standalone `EntryPanel` pages.
 Unknown or forbidden addresses and missing records use the same standalone layout, with a heading, explanation, and return link.
 These pages have no sidebar or breadcrumbs.
-An audience with no available screens keeps its dashboard header and offers a link to audience selection, without a navigation pane.
+An audience with no available screens keeps its dashboard header and offers a link to the org sign-in page, without a navigation pane.
 
 The [left pane](../../apps/platform_ui/src/control-navigation.tsx) follows the hierarchy organization > project > environment.
 Its context switcher searches sibling choices and returns to the parent. Expandable groups expose the projects and environments that the caller administers.
@@ -1334,14 +1305,14 @@ The [administration routes](../../apps/platform_ui/src/administration.tsx) expos
 
 The dashboard header carries breadcrumbs, the links that show the current location, and the User menu with Sign out.
 [Layout](../../apps/platform_ui/src/layout.tsx) renders every breadcrumb as literal ALL CAPS text, including record names.
-Identity pages and audience selection omit breadcrumbs.
+Identity pages omit breadcrumbs.
 Links navigate, and buttons act. [RecordLink and NavigationLink](../../apps/platform_ui/src/page.tsx) use native anchors with real addresses and preserve modified clicks.
 
 A table that can grow fills its panel, places its actions in `toolbarActions`, and pages its rows.
 The [table screen style](../../apps/platform_ui/src/page.css) fills the available space without outer padding.
 [Table routes](../../apps/platform_ui/src/projects.tsx) use `scroll="content"`.
 [Records](../../apps/platform_ui/src/records.tsx) supplies wfe `TableView` with toolbar actions and pagination, the controls that select a page of rows.
-The project, user, environment, member, control-project, and audience lists request `limit: 25` from their servers.
+The project, user, environment, member, and control-project lists request `limit: 25` from their servers.
 The application keeps prior cursors for Previous and replaces rows only after a successful request.
 A filter change or reload starts a new traversal. Pending requests disable the page controls.
 The UI passes `totalRows` only when the server supplies a non-null total. Unknown totals show only the current page number.

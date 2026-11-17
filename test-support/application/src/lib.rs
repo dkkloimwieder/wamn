@@ -157,10 +157,7 @@ impl Application {
     }
 
     pub async fn audience(&self) -> anyhow::Result<String> {
-        Ok(wamn_provision::session_target::session_audience(
-            &self.document.triple(),
-            &self.instance_suffix().await?,
-        )?)
+        Ok(wamn_registry::name::org_audience(&self.document.org))
     }
 
     async fn instance_suffix(

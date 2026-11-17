@@ -214,9 +214,8 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
 
     let application = Arc::new(application);
     let scopes = Arc::new(wamn_engine::invocation_scope::InvocationScopes::default());
-    let routing = FlowHttpRouting::new(Arc::clone(&scopes)).with_authenticator(Arc::new(
-        EdgeAuthenticator::new(verifier, Arc::clone(&release)),
-    ));
+    let routing = FlowHttpRouting::new(Arc::clone(&scopes))
+        .with_authenticator(Arc::new(EdgeAuthenticator::new(verifier)));
     let operation = Arc::new(EdgeOperation::new(
         Arc::clone(&release),
         application,

@@ -235,19 +235,6 @@ pub const EXECUTION_HOST_SRC_CREDENTIAL_CLEANUP_COLLECT: &str = "SELECT k.store,
 pub const IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY: &str =
     "SELECT platform_domain FROM registry.meta";
 
-/// crates/identity/src/control.rs::CONTROL_ORGS_SQL registry statement.
-pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
-    JOIN identity.principals p ON p.id = $1 \
-    WHERE p.type = 'user' AND p.status = 'active' \
-    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=o.id AND m.status='active') \
-    AND (EXISTS (SELECT 1 FROM identity.project_roles r \
-    WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $2) \
-    OR EXISTS (SELECT 1 FROM identity.org_roles r \
-    WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $3) \
-    OR EXISTS (SELECT 1 FROM identity.environment_roles r WHERE r.principal_id=p.id AND r.org=o.id)) \
-    AND ($4::text IS NULL OR o.id = $4) AND ($5::text IS NULL OR o.id > $5) \
-    ORDER BY o.id LIMIT $6";
-
 /// crates/identity/src/control.rs::ORG_PROJECTS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONTROL_ORG_PROJECTS_SQL: &str = "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM registry.environment_projects e JOIN registry.environments v USING (org,env) \
     WHERE e.org = p.org AND e.project = p.id AND v.status = 'active') \
@@ -355,15 +342,6 @@ pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS: 
 /// crates/publish/src/integration.rs::publish registry statement.
 pub const CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH: &str =
     "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5,$6,$7)";
-
-/// services/identity-service/src/session.rs::CURRENT_TARGET_SQL registry statement.
-pub const IDENTITY_SRC_SESSION_CURRENT_TARGET_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.environment_projects JOIN registry.environments USING (org,env) \
-    WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4 \
-    AND status = 'active')";
-
-/// services/identity-service/src/session.rs::REGISTERED_ORG_SQL registry statement.
-pub const IDENTITY_SRC_SESSION_REGISTERED_ORG_SQL: &str =
-    "SELECT EXISTS (SELECT 1 FROM registry.orgs WHERE id = $1)";
 
 /// Every project deployment affected by an environment lifecycle change.
 pub const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND env=ANY($2) ORDER BY env,project";

@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
-use wamn_identity_protocol::verifier::{SessionTestClock, SessionVerifier};
 
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use rustls::pki_types::PrivatePkcs8KeyDer;
@@ -22,32 +21,10 @@ use tokio_rustls::TlsAcceptor;
 use wamn_authentication::session_keys::{IssuerKeys, IssuerKeysConfig, TestClock};
 
 pub(super) const ISSUER: &str = "https://identity.example.test/issuer";
-pub(super) const ORG: &str = "org-a";
-pub(super) const AUDIENCE: &str = "urn:wamn:project-env:org-a:dev:project:instance-one";
 
 fn pair() -> Ed25519KeyPair {
     // Fixed test-only seed. Production signing keys never enter this crate.
     Ed25519KeyPair::from_seed_unchecked(&[7; 32]).expect("fixture signing key")
-}
-
-pub(super) fn header() -> Value {
-    json!({"alg": "EdDSA", "typ": "wamn-session+jwt", "kid": "key-one"})
-}
-
-pub(super) fn claims() -> Value {
-    json!({"iss": ISSUER, "sub": "ed7056a9-5639-455f-9640-4678458794c0",
-        "org": ORG, "aud": AUDIENCE, "roles": ["purchase-reader"],
-        "iat": 1000, "exp": 1900, "authority": {"login": "ed7056a9-5639-455f-9640-4678458794c0"}, "jti": "session-test"})
-}
-
-pub(super) fn signed(header: &Value, claims: &Value) -> String {
-    let message = format!(
-        "{}.{}",
-        URL_SAFE_NO_PAD.encode(serde_json::to_vec(header).expect("header bytes")),
-        URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).expect("JWT claim bytes")),
-    );
-    let signature = pair().sign(message.as_bytes());
-    format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature.as_ref()))
 }
 
 const JWKS_PATH: &str = "/.well-known/jwks.json?fixed=1";
@@ -228,13 +205,6 @@ impl Server {
         let config = IssuerKeysConfig::new(ISSUER, &self.endpoint, &self.ca_pem)
             .expect("configured HTTPS issuer");
         IssuerKeys::with_test_clock(config)
-    }
-
-    pub(super) fn verifier(&self) -> (SessionVerifier<IssuerKeys>, SessionTestClock, TestClock) {
-        let (keys, key_clock) = self.cache();
-        let (verifier, token_clock) = SessionVerifier::with_test_clock(keys, ORG, AUDIENCE, 1000)
-            .expect("trusted verifier audience");
-        (verifier, token_clock, key_clock)
     }
 
     pub(super) fn count(&self) -> usize {

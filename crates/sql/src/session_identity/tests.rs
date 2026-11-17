@@ -1561,58 +1561,6 @@ fn session_and_pat_callers_act_with_their_single_role() {
     assert_eq!(held_grants(&inactive, None).active_role(), None);
 }
 
-#[sqlx::test(migrations = false)]
-async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_user_role(
-    pool: sqlx::PgPool,
-) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    wamn_identity::test_database::project_platform(database.as_str()).await;
-    let mut admin = connect_raw(database.as_str()).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{LIVE_PLATFORM_PRINCIPAL}','','fixture','admin:role-refusal-fixture');
-         INSERT INTO platform.\"user\"(id,type,email) VALUES
-          ('00000000-0000-4000-8000-000000000081','user','user@example.test'),
-          ('00000000-0000-4000-8000-000000000082','service','service@example.test');
-         INSERT INTO platform.role(name) VALUES ('human-reader'),('service-reader');
-         INSERT INTO platform.user_role(user_id,role_name) VALUES
-          ('00000000-0000-4000-8000-000000000081','human-reader'),
-          ('00000000-0000-4000-8000-000000000082','service-reader');"
-    ))).execute(&mut admin).await.map(drop).unwrap();
-    let user = wamn_authentication::authorization::principal_grants(
-        &mut admin,
-        &"00000000-0000-4000-8000-000000000081"
-            .parse::<wamn_identity_protocol::PrincipalId>()
-            .unwrap(),
-    )
-    .await
-    .unwrap();
-    let service = wamn_authentication::authorization::principal_grants(
-        &mut admin,
-        &"00000000-0000-4000-8000-000000000082"
-            .parse::<wamn_identity_protocol::PrincipalId>()
-            .unwrap(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        session_grants(&user, &["human-reader".parse().unwrap()])
-            .unwrap()
-            .active_role()
-            .as_deref(),
-        Some("human-reader")
-    );
-    assert!(session_grants(&user, &["unheld".parse().unwrap()]).is_err());
-    assert!(session_grants(&user, &["service-reader".parse().unwrap()]).is_err());
-    assert!(session_grants(&service, &["service-reader".parse().unwrap()]).is_err());
-    assert_eq!(held_grants(&service, None).active_role(), None);
-    assert_eq!(
-        held_grants(&service, None).pat_role().as_deref(),
-        Some("service-reader")
-    );
-    assert!(!held_grants(&service, None).roles.contains("human-reader"));
-}
-
 #[tokio::test]
 async fn workflow_caller_retains_typed_connection_unavailable() -> anyhow::Result<()> {
     let postgres = WamnPostgres::with_provider(std::sync::Arc::new(StaticCredentialProvider::new(

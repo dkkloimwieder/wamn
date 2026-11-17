@@ -354,22 +354,13 @@ The guest cannot supply `project_env_key`, project, or environment authority.
 Causation depth bounds recursion. Workflow refuses an event above depth 16.
 These delivery rules do not create exactly-once application effects.
 
-## Session role reader
+## Org password login
 
-`POST /password/session` signs in a user and returns a bounded session token.
-The request supplies the audience and cannot supply roles, an `project_env_key`, or a database URL.
-A mounted target declaration selects the exact audience, `project_env_key`, database, and dedicated `SessionRoleReader` credential.
-
-That role reads active users and their role assignments within the selected project.
-It cannot write application data, read permission tables, or use catalog and execution authority.
-The query binds the principal explicitly. The target selects its environment database.
-The service reads roles for each login.
-An inactive user or empty role set refuses login.
-
-Connections are lazy and retained only for active configured targets.
-An unused target opens no connection.
-A retained connection never transfers to another audience or `project_env_key`.
-The [execution page](execution.md#caller-authentication) owns token acceptance and revocation bounds.
+`POST /password/session` accepts an org audience in `aud` and performs one password check.
+An active user with an active membership in that org receives one RFC 9068 access token.
+Identity reads no application roles and opens no project database connection for login or renewal.
+Session target declarations and the environment discovery route are removed.
+The [execution page](execution.md#caller-authentication) owns the token profile and renewal bounds.
 
 ## PAT issuance
 

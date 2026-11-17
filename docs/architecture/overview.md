@@ -61,7 +61,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/authentication` | `wamn-authentication`: route authentication and session verification |
 | `crates/identity` | `wamn-identity`: identity authority and its SQL |
 | `crates/identity-client` | `wamn-identity-client`: HTTPS client for identity administration |
-| `crates/identity-protocol` | `wamn-identity-protocol`: principal IDs, database login names, roles, credential formats, and session tokens |
+| `crates/identity-protocol` | `wamn-identity-protocol`: principal IDs, database login names, roles, credential formats, and public key documents |
 | `crates/guest` | `wamn-guest`: guest cursors, pages, scalar conversion, operation SQL, and document numbering |
 | `crates/record-history` | `wamn-record-history`: reconstruction of a row from its history |
 | `guests/http-route` | HTTP matching and JSON invocation of typed application operations |
@@ -177,7 +177,7 @@ A project admin administers the applications and connections of that project.
 Each grant writes only its own row in `identity.org_roles`, `identity.environment_roles`, or `identity.project_roles`.
 The platform copies no inherited roles or memberships.
 
-Session issuance and host permission reads derive application administration from these same grants.
+Host permission reads derive application administration from these same grants. Org token issuance requires active org membership.
 A revoke removes only the explicit grant that it names.
 Other explicit grants and ordinary memberships stay.
 Inactive org membership grants no access.

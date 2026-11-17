@@ -1,22 +1,13 @@
-import { createEffect, createSignal, onCleanup, Show, type Component } from "solid-js";
+import { createSignal, Show, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { FieldError, Input } from "@wfe/components/fields";
-import { createServerPage, Records } from "./records";
 import { createForm, type FormContext } from "@wfe/form";
 import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
 import { emailError } from "./email";
-import {
-  enroll,
-  environmentPage,
-  recover,
-  resetPassword,
-  signIn,
-  type Environment,
-  type SessionOptions,
-} from "@wamn/web-runtime";
+import { enroll, recover, resetPassword, signIn, type SessionOptions } from "@wamn/web-runtime";
 import type { Address } from "./address";
 import type { Config } from "./config";
-import { EntryPage, Frame, NavigationLink } from "./page";
+import { EntryPage, NavigationLink } from "./page";
 
 interface IdentityProps {
   readonly title: string;
@@ -90,126 +81,20 @@ export function SignInForm(props: {
   );
 }
 
-/** Identity names the reachable audiences; the session reads their permissions. */
-function ChooseEnvironment(props: IdentityProps & { config: Config }): JSX.Element {
-  const [credentials, setCredentials] = createSignal<{ email: string; password: string } | null>(null);
-  let login: Credentials | undefined;
-  const page = createServerPage<Environment>(async (input) => {
-    if (!login) throw new Error("Enter your email and password.");
-    const result = await environmentPage(login.email, login.password, props.config, input, props.options);
-    return { ...result, rows: result.environments };
-  });
-  createEffect(
-    () => props.config.org,
-    () => {
-      login = undefined;
-      setCredentials(null);
-      page.reset();
-    },
-  );
-  const [trouble, setTrouble] = createSignal<string | null>(null);
-  const [entering, setEntering] = createSignal(false);
-  let active = true;
-  onCleanup(() => {
-    active = false;
-  });
-  const enter = async (email: string, password: string, aud: string, signal?: AbortSignal) => {
-    setTrouble(null);
-    setEntering(true);
-    try {
-      await signIn(email, password, aud, props.options);
-      if (active && !signal?.aborted) props.address.navigate(`/${aud}`);
-    } finally {
-      if (active) setEntering(false);
-    }
-  };
+/** Sign in directly to the org this deployment serves. */
+function OrgSignIn(props: IdentityProps & { config: Config }): JSX.Element {
   return (
-    <Show
-      when={credentials() === null || page.rows().length > 0}
-      fallback={
-        <EntryPage title="No access">
-          <p>No access has been granted.</p>
-          <NavigationLink
-            href="/"
-            navigate={(path) => {
-              setCredentials(null);
-              props.address.navigate(path);
-            }}
-          >
-            Return to sign in
-          </NavigationLink>
-        </EntryPage>
-      }
-    >
-      <Show
-        when={credentials()}
-        fallback={
-          <EntryPage title="Sign in">
-            <SignInForm
-              address={props.address}
-              trouble={null}
-              submit={async (email, password, context) => {
-                login = { email, password };
-                const found = await page.refresh();
-                if (context.signal.aborted || !found) return;
-                const only = found.rows.length === 1 && found.nextCursor === null ? found.rows[0] : undefined;
-                if (only) await enter(email, password, only.aud, context.signal);
-                else setCredentials({ email, password });
-              }}
-            />
-          </EntryPage>
-        }
-      >
-        {(held) => {
-          const Entry = (props: { environment: Environment }) => (
-            <a
-              href={`/${props.environment.aud}`}
-              aria-disabled={entering() ? "true" : undefined}
-              style={{ color: "var(--ui-accent)" }}
-              onClick={(event) => {
-                if (
-                  event.defaultPrevented ||
-                  event.button !== 0 ||
-                  event.ctrlKey ||
-                  event.metaKey ||
-                  event.shiftKey ||
-                  event.altKey
-                )
-                  return;
-                event.preventDefault();
-                if (entering()) return;
-                void enter(held().email, held().password, props.environment.aud).catch((error: unknown) => {
-                  if (active) setTrouble(signInFailed(error));
-                });
-              }}
-            >
-              {props.environment.project === undefined ? "Control" : props.environment.env}
-            </a>
-          );
-          return (
-            <Frame header={<span>Choose an audience</span>} scroll="content">
-              <div class="platform-table-screen">
-                <Records
-                  refresh={page.refresh}
-                  paging={page}
-                  id="audiences"
-                  title="Audiences"
-                  rows={page.rows()}
-                  rowKey={(entry) => entry.aud}
-                  columns={[
-                    { id: "org", header: "Org", accessorKey: "org" },
-                    { id: "project", header: "Project", accessorKey: "project" },
-                    { id: "environment", header: "Environment" },
-                  ]}
-                  cells={{ environment: (cell) => <Entry environment={cell.row} /> }}
-                />
-                <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
-              </div>
-            </Frame>
-          );
+    <EntryPage title="Sign in">
+      <SignInForm
+        address={props.address}
+        trouble={null}
+        submit={async (email, password, context) => {
+          const aud = `urn:wamn:control:${props.config.org}`;
+          await signIn(email, password, aud, props.options);
+          if (!context.signal.aborted) props.address.navigate(`/${aud}`);
         }}
-      </Show>
-    </Show>
+      />
+    </EntryPage>
   );
 }
 
@@ -338,7 +223,7 @@ function RecoverPassword(props: IdentityProps): JSX.Element {
 }
 
 const pages = new Map<string, Component<IdentityProps & { config: Config }>>([
-  ["", ChooseEnvironment],
+  ["", OrgSignIn],
   ["/invite", AcceptInvitation],
   ["/recover", RecoverPassword],
   ["/reset", ResetPassword],

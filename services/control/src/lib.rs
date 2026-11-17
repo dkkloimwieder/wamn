@@ -219,7 +219,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     let verifier = wamn_identity_protocol::verifier::SessionVerifier::new(
         keys,
         config.org.as_str(),
-        &wamn_identity::control::control_audience(&config.org)?,
+        &wamn_identity::control::org_audience(&config.org)?,
     )?;
     let oauth = config
         .oauth_encryption

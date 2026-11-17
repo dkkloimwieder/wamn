@@ -19,7 +19,7 @@ function mount(
     held?: string[];
   } = {},
 ) {
-  const session = identity(true, [], { admin: options.admin ?? true, permissions: [] });
+  const session = identity(true, { admin: options.admin ?? true, permissions: [] });
   let roles = ["admin", "reader", ...Array.from({ length: options.manyRoles ? 25 : 0 }, (_, i) => `role-${i}`)];
   const selected = new Set<string>(options.granted ? [`reader:${READ}`] : []);
   const held = new Set<string>(options.held ?? ["admin"]);

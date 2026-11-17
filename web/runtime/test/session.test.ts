@@ -6,8 +6,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  environmentPage,
-  environments,
   keepSession,
   renew,
   signIn,
@@ -196,32 +194,6 @@ describe("the transport carrier", () => {
 const TIMES = '{"sub":"user-1","expires_at":1000,"login_expires_at":28000}';
 
 describe("the session calls", () => {
-  it("lists the environments of the account", async () => {
-    const stub = stubFetch([
-      () =>
-        new Response('{"environments":[{"aud":"a","org":"o","project":"p","env":"e"}]}', {
-          status: 200,
-        }),
-    ]);
-    const found = await environments("me@example.test", "pw", { org: "o", project: "p" }, { fetch: stub.fetch });
-    {
-      const observed = found;
-      expect(observed).toHaveProperty(["length"], 1);
-      expect(observed).toHaveProperty(["0", "aud"], "a");
-      expect(observed).toHaveProperty(["0", "org"], "o");
-      expect(observed).toHaveProperty(["0", "project"], "p");
-      expect(observed).toHaveProperty(["0", "env"], "e");
-    }
-    expect(stub.seen[0]?.url).toBe("/password/environments");
-    {
-      const observed = bodyOf(stub.seen[0]);
-      expect(observed).toHaveProperty(["email"], "me@example.test");
-      expect(observed).toHaveProperty(["password"], "pw");
-      expect(observed).toHaveProperty(["org"], "o");
-      expect(observed).toHaveProperty(["project"], "p");
-    }
-  });
-
   it("signs in, renews and signs out with the cookie carrier", async () => {
     const stub = stubFetch([
       () => new Response(TIMES, { status: 200 }),
@@ -650,44 +622,5 @@ describe("the session keeper", () => {
       const observed = clock.pending();
       expect(observed).toHaveProperty(["length"], 0);
     }
-  });
-});
-
-describe("audience paging", () => {
-  it("sends the page request and preserves unknown totals", async () => {
-    const stub = stubFetch([
-      () =>
-        new Response(
-          JSON.stringify({ environments: [{ aud: "control", org: "acme" }], next_cursor: "next", total: null }),
-        ),
-    ]);
-    {
-      const observed = await environmentPage(
-        "a@example.test",
-        "password",
-        { org: "acme", project: "widgets" },
-        { limit: 25, cursor: "previous" },
-        stub,
-      );
-      expect(observed).toHaveProperty(["environments", "length"], 1);
-      expect(observed).toHaveProperty(["environments", "0", "aud"], "control");
-      expect(observed).toHaveProperty(["environments", "0", "org"], "acme");
-      expect(observed).toHaveProperty(["nextCursor"], "next");
-      expect(observed).toHaveProperty(["total"], null);
-    }
-    {
-      const observed = bodyOf(stub.seen[0]);
-      expect(observed).toHaveProperty(["email"], "a@example.test");
-      expect(observed).toHaveProperty(["password"], "password");
-      expect(observed).toHaveProperty(["org"], "acme");
-      expect(observed).toHaveProperty(["project"], "widgets");
-      expect(observed).toHaveProperty(["limit"], 25);
-      expect(observed).toHaveProperty(["cursor"], "previous");
-    }
-  });
-  it("reports the login throttle without automatically retrying", async () => {
-    const stub = stubFetch([() => new Response("", { status: 429, headers: { "retry-after": "60" } })]);
-    await expect(environmentPage("a@example.test", "password", { org: "acme" }, { limit: 25 }, stub)).rejects.toThrow();
-    expect(stub.seen).toHaveLength(1);
   });
 });

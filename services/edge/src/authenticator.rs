@@ -1,41 +1,29 @@
-//! The edge's credential mechanism for a protected route.
-//!
-//! A session token is verified over the key file that the release installs,
-//! and its roles map to permissions through the release grants. The box keeps
-//! no session state and runs no active-session read, so a verified token's
-//! roles hold until the token expires, 930 seconds at most (spec section 4.4).
-//! A PAT has no mechanism on the box.
-
-use std::sync::Arc;
+//! Protected edge routes refuse requests until the edge identity design is defined.
 
 use wamn_engine::flow_http_routing::{
-    AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, RouteAuthenticator,
-    RouteCredential, require_csrf, route_credential, unauthorized,
+    AuthRejection, AuthenticatedCaller, AuthenticationRequest, RouteAuthenticator, RouteCredential,
+    route_credential, unauthorized,
 };
 use wamn_identity_protocol::file_keys::FileKeys;
 use wamn_identity_protocol::verifier::SessionVerifier;
 
-use crate::release::EdgeRelease;
-
-/// Sessions over the key file, with permissions from the release grants.
+/// Legacy edge verifier with protected routes closed.
 pub struct EdgeAuthenticator {
     verifier: SessionVerifier<FileKeys>,
-    release: Arc<EdgeRelease>,
 }
 
 impl std::fmt::Debug for EdgeAuthenticator {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("EdgeAuthenticator")
-            .field("bundle_digest", &self.release.bundle_digest())
             .finish_non_exhaustive()
     }
 }
 
 impl EdgeAuthenticator {
-    /// Authenticate sessions with `verifier` against the grants of `release`.
-    pub fn new(verifier: SessionVerifier<FileKeys>, release: Arc<EdgeRelease>) -> Self {
-        Self { verifier, release }
+    /// Retain the configured legacy key source while protected routes are closed.
+    pub fn new(verifier: SessionVerifier<FileKeys>) -> Self {
+        Self { verifier }
     }
 }
 
@@ -45,33 +33,13 @@ impl RouteAuthenticator for EdgeAuthenticator {
         &self,
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let RouteCredential::Session { token, csrf } = route_credential(&request)? else {
+        let RouteCredential::Session { token, .. } = route_credential(&request)? else {
             return Err(unauthorized());
         };
-        let session = self
-            .verifier
+        self.verifier
             .verify(token)
             .await
             .map_err(|_| unauthorized())?;
-        let claims = session.claims();
-        if let Some(required) = csrf {
-            require_csrf(required, claims.csrf.as_ref(), request.headers)?;
-        }
-        Ok(Some(AuthenticatedCaller::new(
-            request.attachment_id.clone(),
-            claims.sub,
-            CredentialType::Session,
-            false,
-            self.release
-                .grants()
-                .permissions(&claims.roles)
-                .iter()
-                .map(|permission| wamn_catalog::sealed_operation_reference(permission).to_owned())
-                .collect(),
-            match claims.roles.as_slice() {
-                [role] => Some(role.as_str().into()),
-                _ => None,
-            },
-        )))
+        Err(unauthorized())
     }
 }

@@ -367,7 +367,7 @@ pub fn project_audience(
     format!("urn:wamn:project-env:{org}:{env}:{project}:{instance}")
 }
 /// The audience of one org's control service.
-pub fn control_audience(org: &crate::OrgId) -> String {
+pub fn org_audience(org: &crate::OrgId) -> String {
     format!("urn:wamn:control:{org}")
 }
 /// The reply subject prefix of one authenticated broker user.

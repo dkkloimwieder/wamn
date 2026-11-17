@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connection/test-util", ]
+test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connection/test-util", ]
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements", "wamn-engine/wasm_component_model_implements"]
 
 [dependencies]
@@ -45,7 +45,6 @@ hmac.workspace = true
 jsonwebtoken.workspace = true
 http-route = { path = "../../guests/http-route" }
 wamn-authentication = { workspace = true, features = ["test-util"] }
-wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 tokio-rustls = { workspace = true }
 sha2 = { workspace = true }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }

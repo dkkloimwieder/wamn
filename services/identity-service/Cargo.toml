@@ -46,7 +46,6 @@ chrono = { workspace = true, features = ["std"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-provision = { workspace = true, features = ["test-util"] }
 jsonwebtoken = { workspace = true }
-wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-registry = { workspace = true }

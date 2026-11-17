@@ -182,7 +182,7 @@ describe("Projects and Project", () => {
   });
 
   it("lists only control.mine projects for a project admin without calling project.list", async () => {
-    const session = identity(true, [], undefined, {
+    const session = identity(true, undefined, {
       org_admin: false,
       projects: [
         { project: "widgets", project_admin: true },
@@ -439,7 +439,7 @@ describe("Project member", () => {
     async (action) => {
       const principalId = "12345678-1234-4000-8000-000000000001";
       let removed = false;
-      const session = identity(true, [], undefined, {
+      const session = identity(true, undefined, {
         org_admin: false,
         projects: [{ project: "widgets", project_admin: true }],
       });
@@ -500,7 +500,7 @@ describe("Project member", () => {
     const principalId = "12345678-1234-4000-8000-000000000001";
     let environments = ["dev"];
     const writes: unknown[] = [];
-    const session = identity(true, [], undefined, {
+    const session = identity(true, undefined, {
       org_admin: false,
       projects: [{ project: "widgets", project_admin: true }],
     });
