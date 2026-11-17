@@ -355,6 +355,7 @@ Issues:
 - Each declared connection of a wasm integration type becomes a sibling component in the workload. It is named after the declared connection name, pinned by digest, has `allowedHosts` set to the connection's authority, and has `wamn.integration` set to the connection id. wasmCloud links the application's labelled import to it.
 - The deploy refuses one declared name bound to two connections in one workload, and a declared name equal to another component's name.
 - The authority is fixed on `platform.connection`. A new host is a new connection.
+- Connection create, connection edit and the deploy refuse an IPv6 literal authority for wasm types, because the operator CRD's `allowedHosts` pattern has no bracketed IPv6 form. A hostname that resolves to the device works.
 - The deploy refuses two versions of one host interface package, because the operator allows only one unnamed entry for each namespace and package.
 - The deploy refuses an operation name that two components declare, among operations that have a type. Palette exports are exempt.
 
@@ -364,7 +365,7 @@ Issues:
 - Connection answers use the same `moka` cache as grants (`services/host/src/host/authentication.rs`).
 - These go: `ConnectionFacts::release`, `ConnectionFacts::version`, `ConnectionFacts::release_component_bindings_ready`, and what is left in `ConnectionMemory` from the deleted replica. The host makes no system database read for connections.
 - The host's integration loader goes. wamn does not pull or compile integration code.
-- `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status, reads the generation and credential from the cache, and takes the exclusive lock. Dropping the resource releases the lock.
+- `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status, reads the generation and credential from the cache, and takes the exclusive lock. Dropping the resource releases the lock. The lock wait is bounded by a `lock_timeout` of `MAX_HOST_CALL_DURATION`, on a connection the plugin owns. A cancelled caller closes that connection, which releases the lock.
 - Control `connection_test` refuses wasm types until the open item on health probes resolves.
 - Exclusive resource, for each call:
   - Take a local mutex keyed by `(target_id, resource_key)`.
@@ -1752,3 +1753,8 @@ Recommend a.
   - build-time composition: a rebuild for each version
   - component host plugins: not in release images, and one version for each host group
 - This matches the 2026-10-21 ruling (a request-time service is composed into the consuming application) and the 2026-10-31 ruling (each connection name is a named import routed by label).
+
+**Ruled (D, 2026-11-17): integration authority and lock wait.**
+- An IPv6 literal authority is refused for wasm types at connection create, connection edit and deploy. The operator CRD's `allowedHosts` pattern accepts hostnames and IPv4 addresses but no bracketed IPv6 form. A hostname also permits the DNS lookup and raw socket connections to the addresses it returns.
+- `begin` bounds the lock wait with a `lock_timeout` of `MAX_HOST_CALL_DURATION` (30 seconds). The sibling cannot see the caller's deadline, and the calling attempt has the same bound.
+- Rejected: a patch to the operator CRD, and a refusal only at deploy.
