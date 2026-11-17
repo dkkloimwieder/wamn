@@ -1,16 +1,15 @@
-//! Publication refusals and the checkpoint command through the native host.
+//! The runtime schema assigned to the NetSuite component during release assembly.
 #[path = "../../rest_connector/tests/support.rs"]
 mod support;
 
 use std::collections::BTreeSet;
-use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
+use wamn_catalog::PackageCoordinate;
 use wamn_publish::publish_release::{PublishReleaseRequest, assemble_release};
 
 struct Fixture {
     args: PublishReleaseRequest,
     roots: Vec<std::path::PathBuf>,
     admissions: Vec<wamn_publish::component_admission::ComponentAdmission>,
-    documents: Vec<(ComponentPackageCoordinate, WiringDocument)>,
 }
 
 fn fixture() -> Fixture {
@@ -30,32 +29,6 @@ fn fixture() -> Fixture {
         BTreeSet::from([*base.component_digest(), *destination.component_digest()]),
     );
     let admissions = vec![base, destination, component];
-    let target = ComponentPackageCoordinate {
-        project_env_key: "rest--test--publication".parse().unwrap(),
-        package_id: "netsuite".parse().unwrap(),
-        package_version: "0.1.1".parse().unwrap(),
-    };
-    let documents: Vec<_> = [
-        "netsuite_pull",
-        "netsuite_push",
-        "record_get",
-        "record_create",
-        "record_update",
-        "suiteql_query",
-        "restlet_call",
-    ]
-    .into_iter()
-    .map(|name| {
-        let document: WiringDocument = serde_json::from_value(
-            serde_json::from_slice::<serde_json::Value>(
-                &std::fs::read(connector.join(format!("tests/workflows/{name}.json"))).unwrap(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        (target.clone(), document)
-    })
-    .collect();
     let args = PublishReleaseRequest {
         applications: serde_json::from_value(serde_json::json!({"netsuite": {"packages": ["wamn_integration", "netsuite", "rest_consumer_fixture"]}})).unwrap(),
         application: None,
@@ -71,22 +44,19 @@ fn fixture() -> Fixture {
         args,
         roots,
         admissions,
-        documents,
     }
 }
 
 #[test]
 #[ignore = "requires: input:netsuite"]
-fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
+fn publication_selects_the_integration_runtime_schema() {
     let palette = support::palette();
     let Fixture {
         args,
         roots,
         admissions,
-        documents,
     } = fixture();
     let assembled = assemble_release(&args, &roots, &admissions, &palette).unwrap();
-    condition_documents(&args, &assembled.published.manifest, &documents).unwrap();
     assert_eq!(
         assembled
             .published
@@ -99,44 +69,4 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
             .as_deref(),
         Some("wamn_integration")
     );
-    let mut wrong_port = documents.clone();
-    wrong_port[0]
-        .1
-        .edges
-        .iter_mut()
-        .find(|edge| edge.from == "rows")
-        .unwrap()
-        .from_port = "main".parse().unwrap();
-    assert!(condition_documents(&args, &assembled.published.manifest, &wrong_port).is_err());
-    // Environment workflows resolve the node operation against the release,
-    // not the package-local operation-dependency alias.
-    let mut wrong_dependency = documents;
-    wrong_dependency[0]
-        .1
-        .nodes
-        .get_mut("record")
-        .unwrap()
-        .operation = "rest-consumer-fixture:item/other@0.1.0".parse().unwrap();
-    assert!(condition_documents(&args, &assembled.published.manifest, &wrong_dependency).is_err());
-}
-
-fn condition_documents(
-    args: &PublishReleaseRequest,
-    manifest: &wamn_catalog::ServingManifest,
-    documents: &[(ComponentPackageCoordinate, WiringDocument)],
-) -> anyhow::Result<()> {
-    let packages = args
-        .packages
-        .iter()
-        .map(|p| p.package_id().to_owned())
-        .collect();
-    for (_, document) in documents {
-        wamn_catalog::condition_workflow_document(
-            &args.project_env_key(),
-            &packages,
-            manifest,
-            document,
-        )?;
-    }
-    Ok(())
 }

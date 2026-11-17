@@ -10,7 +10,7 @@ Author, enable and disable use `--coordinate <org>/<env>/<project>` and control 
 `author`, `enable`, and `disable` take the organization and project from `--coordinate`.
 `list`, `park`, `release`, and `runs` require `--project`.
 Workflow administration uses `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
-The server selects the database, serving release and authenticated author.
+The server selects the database and authenticated author.
 `author` requires these flags:
 
 - `--coordinate <org>/<env>/<project>`
@@ -48,10 +48,10 @@ wamn workflow start \
 The command prints the stored run id.
 `--application` names an application that the environment document declares under `applications`.
 The host refuses another name with `application_not_declared`.
-The host admits the enabled version against the release it serves.
-It evaluates the graph conditions against that release and refuses `workflow_not_served` when the graph fails its conditions or its hash differs from the stored hash.
+The host admits the enabled workflow version.
+Each node resolves by sibling name and export in the live workload's `wamn.application`.
 A workflow with no enabled version refuses `workflow_not_enabled`.
-The run records the release, the graph hash, the component digest of each node, the principal and role it executes as, and the caller as its invoker.
+The run records the graph hash, the principal and role it executes as, and the caller as its invoker.
 An identical retry by the same caller returns that id and creates no second queue row.
 The same key with another input refuses `idempotency_conflict`.
 The run and queue row commit in one transaction.
@@ -129,7 +129,6 @@ Set the coordinate `<org>/<project>/<env>`, its composed environment key, and yo
      --execution-type role --execution-role netsuite-pull --schedule '* * * * *'
    ```
 
-   Authorship validates the graph against the serving release.
 4. Enable it:
 
    ```bash

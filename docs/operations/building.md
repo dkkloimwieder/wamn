@@ -424,10 +424,3 @@ To inspect the Cargo home mapping, repeat the build with a second `CARGO_HOME` p
 Put `input-schema` and `output-schema` in each JSONata node's `params`.
 Use the source port's exact schema for the input and the target port's exact schema for the output.
 Include their item and required-field rules.
-Admission derives the node's ports from these declarations.
-Workflow admission evaluates at most three samples from the declared input schema with the guest's JSONata engine.
-A refusal names the node and failing sample.
-Fix the expression or its promised schema before authoring the workflow again.
-The router validates each result once against the declared output schema before routing or completion.
-Targets reuse this validation because their schemas must match.
-Samples cannot cover every input.

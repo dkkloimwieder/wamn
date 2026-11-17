@@ -202,8 +202,7 @@ TMPDIR=/var/tmp RUSTC_WRAPPER='' CARGO_TARGET_DIR="$PWD/target" \
   -p netsuite --target x86_64-unknown-linux-gnu --lib
 ```
 
-Run the publication test after the package build.
-It makes sure of the pull checkpoint through the application role and the refusal of invalid ports and dependencies:
+Run the publication test after the package build to check the runtime schema assigned to NetSuite.
 
 ```sh
 TMPDIR=/var/tmp RUSTC_WRAPPER='' cargo test --locked --offline \

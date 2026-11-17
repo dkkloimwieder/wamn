@@ -117,7 +117,6 @@ wamn-broker = { path = "crates/broker", version = "0.1.0" }
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 wamn-digest = { path = "crates/digest", version = "0.1.0" }
 wamn-scalar = { path = "crates/scalar", version = "0.1.0" }
-wamn-jsonata = { path = "crates/jsonata", version = "0.1.0" }
 wit-component = "=0.254.2"
 wit-parser = "=0.254.2"
 wamn-kubernetes = { path = "crates/kubernetes", version = "0.1.0" }
