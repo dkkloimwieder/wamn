@@ -53,6 +53,7 @@ pub struct Binding {
     pub authority: Option<String>,
     pub integration_type: wamn_registry::integration_code::IntegrationCode,
     pub exclusive: bool,
+    pub call_limit: Option<i32>,
     pub generation: i64,
     pub mode: ConnectionMode,
     pub digest: Option<wamn_digest::Digest>,
@@ -212,6 +213,19 @@ pub async fn analyse(
             } else {
                 None
             };
+            let call_limit = sqlx::query_scalar::<_, Option<i32>>(
+                "SELECT call_limit FROM registry.environment_application_connections \
+                 WHERE org=$1 AND env=$2 AND project=$3 AND application=$4 AND alias=$5 AND connection_name=$6",
+            )
+            .bind(&document.org)
+            .bind(&document.env)
+            .bind(&document.project)
+            .bind(application)
+            .bind(name.as_str())
+            .bind(&integration.name)
+            .fetch_optional(&mut *system)
+            .await?
+            .flatten();
             bindings.push(Binding {
                 application: application.clone(),
                 alias: name.to_string(),
@@ -236,6 +250,7 @@ pub async fn analyse(
                 authority: authority.clone(),
                 integration_type,
                 exclusive: row.get(8),
+                call_limit,
                 generation: row.get(7),
                 mode: declaration.mode,
                 digest: row.get(5),

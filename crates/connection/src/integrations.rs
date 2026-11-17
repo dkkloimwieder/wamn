@@ -1,7 +1,7 @@
 //! The bound guard of integration sibling components; wasmCloud owns their code.
 
 use crate::connection_facts::{ConnectionCache, ConnectionFacts};
-use crate::database::ResourceLock;
+use crate::database::{CallLimit, CallLimitReached, ResourceLock};
 use anyhow::Context as _;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -49,6 +49,7 @@ struct Bound {
 struct State {
     workload: String,
     id: uuid::Uuid,
+    call_limit: Option<CallLimit>,
     bound: OnceLock<Bound>,
 }
 
@@ -68,7 +69,7 @@ fn world() -> WitWorld {
     }
 }
 
-/// Fixed-interface host plugin; each importing sibling supplies only its connection id.
+/// Fixed-interface host plugin; each sibling supplies its connection and application.
 #[derive(Debug)]
 pub struct IntegrationBound {
     cache: Arc<dyn ConnectionCache>,
@@ -95,18 +96,28 @@ impl HostPlugin for IntegrationBound {
         item: &mut WorkloadItem<'a>,
         _: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        let id = item
+        let id: uuid::Uuid = item
             .local_resources()
             .config
             .get(INTEGRATION_CONFIG)
             .context("integration sibling has no wamn.integration")?
             .parse()?;
+        let config = &item.local_resources().config;
+        let application: wamn_catalog::ApplicationName = config
+            .get("wamn.integration.application")
+            .context("integration sibling has no application")?
+            .parse()?;
+        let call_limit = config
+            .get("wamn.integration.call_limit")
+            .map(|limit| CallLimit::new(&id, application.as_str(), limit.parse()?))
+            .transpose()?;
         let WorkloadItem::Component(component) = &*item else {
             anyhow::bail!("integration must be a sibling component");
         };
         let state = Arc::new(State {
             workload: component.workload_id().to_owned(),
             id,
+            call_limit,
             bound: OnceLock::new(),
         });
         self.states
@@ -168,6 +179,7 @@ impl bound::Host for ActiveCtx<'_> {
             .ok_or_else(|| wash_runtime::wasmtime::Error::msg("integration authority absent"))
     }
     async fn begin(&mut self) -> wash_runtime::wasmtime::Result<Result<Resource<Call>, String>> {
+        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
         let state = self.try_get_plugin::<State>(ID)?;
         let result = async {
             let bound = state.bound.get().context("integration unresolved")?;
@@ -180,16 +192,16 @@ impl bound::Host for ActiveCtx<'_> {
                 answer.fact.status == crate::connection_memory::ConnectionStatus::Active,
                 "connection disabled"
             );
-            let lock = if bound.exclusive {
+            let lock = if bound.exclusive || state.call_limit.is_some() {
                 Some(
                     ResourceLock::acquire(
                         &bound.facts.reader(),
                         bound.facts.project(),
                         bound.facts.environment(),
                         &*bound.facts.locks()?,
-                        &answer.fact,
-                        tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
-                        true,
+                        bound.exclusive.then_some(&answer.fact),
+                        deadline,
+                        state.call_limit,
                     )
                     .await?,
                 )
@@ -219,7 +231,12 @@ impl bound::Host for ActiveCtx<'_> {
             Ok(call) => Ok(Ok(self.table.push(call)?)),
             Err(error) => {
                 tracing::warn!(connection = %state.id, error = %error, "integration begin refused");
-                Ok(Err("connection unavailable".into()))
+                Ok(Err(if error.is::<CallLimitReached>() {
+                    "call limit reached"
+                } else {
+                    "connection unavailable"
+                }
+                .into()))
             }
         }
     }

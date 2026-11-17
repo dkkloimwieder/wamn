@@ -823,6 +823,7 @@ CREATE TABLE registry.environment_application_connections (
     alias text NOT NULL CHECK (alias <> ''),
     connection_name text NOT NULL CHECK (connection_name ~ '^[a-z][a-z0-9_-]{0,62}$'),
     connection_version integer CHECK (connection_version > 0),
+    call_limit integer CHECK (call_limit > 0),
     PRIMARY KEY (org, env, project, application, alias),
     FOREIGN KEY (org, env, project, application)
         REFERENCES registry.environment_applications (org, env, project, application) ON DELETE CASCADE

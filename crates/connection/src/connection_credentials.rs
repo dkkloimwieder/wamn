@@ -108,16 +108,6 @@ impl ConnectionCredentials {
             .await
     }
 
-    pub async fn owned_database(
-        &self,
-        project: &wamn_registry::ProjectId,
-        environment: &wamn_registry::EnvName,
-    ) -> anyhow::Result<sqlx::PgConnection> {
-        self.project_database(project, environment)?
-            .owned_connection(project)
-            .await
-    }
-
     pub fn org(&self) -> anyhow::Result<&wamn_registry::OrgId> {
         self.org.as_ref().context("connection reader has no org")
     }
