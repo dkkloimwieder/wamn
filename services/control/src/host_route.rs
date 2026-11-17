@@ -57,6 +57,8 @@ pub enum HostRouteHandlers {
         writer: Arc<tokio::sync::Mutex<sqlx::PgConnection>>,
         /// The operator client of the identity service, for `user.invite`.
         identity: Option<PatIssuerConfig>,
+        /// The configured identity issuer address used for project user rows.
+        issuer: String,
         /// The mounted Secret `wamn-control-administration-<org>`: one file
         /// per environment that holds its administration login.
         administration: Option<std::path::PathBuf>,
@@ -344,6 +346,7 @@ impl HostRouteDelivery {
                     control,
                     writer,
                     identity,
+                    issuer,
                     administration,
                     status,
                     org,
@@ -353,6 +356,7 @@ impl HostRouteDelivery {
                     control,
                     writer,
                     identity: identity.as_ref(),
+                    issuer,
                     administration: administration.as_deref(),
                     status: status.as_ref(),
                     operation_jobs: self.operation_jobs.as_ref(),

@@ -140,6 +140,7 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) writer: &'a Mutex<Client>,
     /// The operator client of the identity service, for `user.invite`.
     pub(crate) identity: Option<&'a PatIssuerConfig>,
+    pub(crate) issuer: &'a str,
     /// The mounted Secret of the org's administration logins, one file per
     /// environment.
     pub(crate) administration: Option<&'a Path>,
@@ -928,7 +929,16 @@ impl ControlRoutes<'_> {
                 project,
                 env,
             };
-            match write_application(&mut system, &url, target, attachment, caller, principal).await
+            match write_application(
+                &mut system,
+                &url,
+                target,
+                attachment,
+                caller,
+                principal,
+                self.issuer,
+            )
+            .await
             {
                 Ok(()) => {}
                 Err(error) => {
@@ -1102,6 +1112,7 @@ async fn write_application(
     attachment: &HostAttachment,
     caller: &PrincipalId,
     principal: &PrincipalId,
+    issuer: &str,
 ) -> anyhow::Result<()> {
     let mut client = wamn_postgres::connect(url).await?;
 
@@ -1109,7 +1120,7 @@ async fn write_application(
         let mut transaction = client.begin().await?;
         sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)").bind(caller).bind(&attachment.operation).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
         require_platform_rows(&mut transaction).await?;
-        project_authority(system, &mut transaction, target, principal).await?;
+        project_authority(system, &mut transaction, target, principal, issuer).await?;
         transaction.commit().await?;
         anyhow::Ok(())
     }.await;

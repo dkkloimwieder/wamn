@@ -22,7 +22,7 @@ use wamn_publish::package_artifact::{OpenedPackage, PackageSource, open_package_
 ///
 /// Returns an error if an identity is disabled or a database write fails.
 pub async fn materialize_application_principals(
-    system_url: &str,
+    platform: &Platform,
     project_url: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
     manifest: &wamn_catalog::ServingManifest,
@@ -39,7 +39,7 @@ pub async fn materialize_application_principals(
     if applications.is_empty() {
         return Ok(());
     }
-    let mut system = connect(system_url).await?;
+    let mut system = connect(&platform.system_database_url).await?;
     let domain: Option<String> =
         sqlx::query(wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY)
             .fetch_one(&mut system)
@@ -72,16 +72,24 @@ pub async fn materialize_application_principals(
             principal.status() == wamn_identity::PrincipalStatus::Active,
             "application service principal {subject:?} is disabled"
         );
-        sqlx::query(
-            "INSERT INTO platform.\"user\" (id, type, email, display_name) \
-             VALUES ($1, 'service', $2, $3) ON CONFLICT (id) DO NOTHING",
+        let present: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1)",
         )
         .bind(principal.id())
-        .bind(format!("{subject}@{domain}"))
-        .bind(&subject)
-        .execute(&mut *transaction)
-        .await
-        .map(|result| result.rows_affected())?;
+        .fetch_one(&mut *transaction)
+        .await?;
+        if !present {
+            crate::application::write_service(
+                &mut transaction,
+                &platform.identity_issuer,
+                crate::application::ApplicationUser {
+                    principal_id: principal.id(),
+                    email: &format!("{subject}@{domain}"),
+                    display_name: &subject,
+                },
+            )
+            .await?;
+        }
         let role = format!(
             "application-{}",
             package.package.id.as_str().replace('_', "-")

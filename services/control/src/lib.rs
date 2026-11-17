@@ -152,6 +152,7 @@ impl Configuration {
             database_port: 5432,
             host_group: None,
             pat_issuer: self.identity.connection(),
+            identity_issuer: self.session_issuer.clone(),
             events: self.events.as_ref().map(|events| wamn_broker::EventBroker {
                 nats: self.nats.connection(),
                 stream_replicas: events.stream_replicas,
@@ -245,6 +246,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
                     wamn_postgres::connect(&database).await?,
                 )),
                 identity: Some(config.identity.connection()),
+                issuer: config.session_issuer,
                 administration: Some(config.administration_dir.clone()),
                 status: Arc::new(crate::environment_status::KubernetesSource),
                 org: config.org.clone(),

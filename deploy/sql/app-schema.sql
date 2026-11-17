@@ -111,15 +111,16 @@ GRANT USAGE ON SCHEMA platform TO wamn_app;
 -- names its type. A platform row carries its `wamn:<component>` name in
 -- `display_name` and the id that `wamn-identity-protocol` derives from that name.
 -- `user_platform_principal_check` pins each (display_name, id) pair and
--- refuses a `wamn:` name on any other type. PostgreSQL has no UUIDv5, so a
--- Rust test compares these literals with the derivation. Provisioning writes
--- the platform rows and their `<component>@<platform-domain>` email.
+-- refuses a `wamn:` name on any other type. The schema seeds
+-- the platform rows and the workflow service before installing their triggers.
 --
 -- The database is the org boundary (owner ruling of 2026-10-23 on
 -- wamn-83eth.6), so the table has no project_id or row policy.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform."user" (
     id           uuid NOT NULL,
+    issuer       text NOT NULL,
+    sub          text NOT NULL,
     type         text NOT NULL,
     email        text NOT NULL,
     display_name text,
@@ -129,6 +130,7 @@ CREATE TABLE platform."user" (
     updated_at   timestamptz NOT NULL,
     updated_by   uuid NOT NULL,
     PRIMARY KEY (id),
+    UNIQUE (issuer, sub),
     UNIQUE (email),
     CONSTRAINT user_status_check
         CHECK (status IN ('active', 'disabled', 'invited')),
@@ -145,6 +147,19 @@ CREATE TABLE platform."user" (
                     ELSE display_name IS NULL OR display_name NOT LIKE 'wamn:%'
                END)
 );
+INSERT INTO platform."user"
+    (id, issuer, sub, type, email, display_name, created_at, created_by, updated_at, updated_by)
+SELECT id::uuid, 'wamn:platform', id, type, email, display_name,
+       transaction_timestamp(), '770df186-ac15-579e-b46b-c297cae2011b'::uuid,
+       transaction_timestamp(), '770df186-ac15-579e-b46b-c297cae2011b'::uuid
+FROM (VALUES
+    ('770df186-ac15-579e-b46b-c297cae2011b', 'platform', 'provisioning@platform.invalid', 'wamn:provisioning'),
+    ('7695180f-4b9a-581f-84ef-d7e9cdbd2b77', 'platform', 'apply-package@platform.invalid', 'wamn:apply-package'),
+    ('d318d033-29ea-5cb0-ab56-24340413fbcc', 'platform', 'executor@platform.invalid', 'wamn:executor'),
+    ('34cbd151-990e-5800-93be-4fba8878b943', 'platform', 'audit-retention@platform.invalid', 'wamn:audit-retention'),
+    ('42b638ce-4892-52a4-95a9-316c4c0e820d', 'service', 'workflow@platform.invalid', 'workflow')
+) AS seed(id, type, email, display_name);
+
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON platform."user"
     FOR EACH ROW

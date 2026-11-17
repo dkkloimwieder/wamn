@@ -94,6 +94,7 @@ pub async fn configure(
         crate::environment::fill(
             system_owner,
             &owner,
+            &platform.identity_issuer,
             crate::application::ApplicationTarget {
                 org: &triple.org,
                 project: &triple.project,
