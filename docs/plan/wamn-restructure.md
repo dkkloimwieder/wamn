@@ -366,7 +366,7 @@ Issues:
 - Connection answers use the same `moka` cache as grants (`services/host/src/host/authentication.rs`).
 - These go: `ConnectionFacts::release`, `ConnectionFacts::version`, `ConnectionFacts::release_component_bindings_ready`, and what is left in `ConnectionMemory` from the deleted replica. The host makes no system database read for connections.
 - The host's integration loader goes. wamn does not pull or compile integration code.
-- `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status, reads the generation and credential from the cache, and takes the exclusive lock. Dropping the resource releases the lock. The lock wait is bounded by a `lock_timeout` of `MAX_HOST_CALL_DURATION`, on a connection the plugin owns. A cancelled caller closes that connection, which releases the lock.
+- `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status, reads the generation and credential from the cache, and takes the exclusive lock. Dropping the resource releases the lock. The lock wait is bounded by `MAX_HOST_CALL_DURATION`. 5.5 moves the lock to a pooled connection and adds the call limit.
 - Control `connection_test` refuses wasm types until the open item on health probes resolves.
 - The host socket floor stays (`allow_private: false`, `deny_special: true`). Integration siblings in the cloud reach public addresses only.
 - Exclusive resource, for each call:
@@ -389,6 +389,11 @@ Issues:
 - The host serves `HostRouteSet::Application` (permission.mine, roles, grants, users, counters) on the path from 5.3, built from `wamn.application`.
 - The Application half of `services/control/src/host_route.rs` and `application_route.rs` moves into `services/host`. The control service keeps the Control half.
 - `workflow.start` refuses with the existing unavailable refusal until 3.4, and the `workflow` field leaves the handler.
+- `user.list` lists users and roles from the project database, without the `admin_covered` field until 3.3. The host has no system database login.
+
+5.5 Call limit and a pooled exclusive lock. Runs in parallel with 5.4.
+- `begin` uses one pooled connection and one round trip: `BEGIN; SET LOCAL lock_timeout; SELECT platform.call_slot(...)` when the binding has a call limit, then `pg_advisory_xact_lock` when the connection is exclusive. The lock wait is bounded by `MAX_HOST_CALL_DURATION`. A cancelled caller drops the guard, which destroys the connection and releases both. A call with neither guard touches no Postgres.
+- Call limit: `registry.environment_application_connections.call_limit` caps the calls one application has in flight on one connection, across every host. The deploy writes it into the sibling's config. `begin` takes one of N advisory slots, keyed by the connection and the application, and retries with backoff until the deadline.
 
 Rulings on the scout questions (D, 2026-11-17):
 - Plugin code that Epic 1 deleted is restored from 0943187e1^, without snapshots, candidate bindings, hashes, semaphores or the KV replica.
@@ -428,7 +433,10 @@ Rulings on the scout questions (D, 2026-11-17):
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
 - 3.4: `workflow.start` refuses in the host until the workflow service serves it.
 - 3.5: `registry.environment_application_connections` and `registry.environment_integrations` change with the environment file (one version for each connection name).
-- 3.3: the project rows mark inherited admin, and `user.list` reads that mark there in place of `is_project_admin` against the system database.
+- 3.3: the project rows mark inherited admin, and `user.list` reads that mark there in place of `is_project_admin` against the system database. Until then `user.list` leaves out `admin_covered`.
+- Native integration types (for example the NetSuite ODBC driver) are native Rust host plugins compiled into the wamn host, as wasmCloud advises for drivers with no WASI binding. Decide this when the first one is built.
+- Version authority for integrations: for each connection in each environment (current), or pinned by the platform release. 3.5.
+- Host component plugins (`host-component-plugins`) suit platform-wide wasm capabilities with fixed bindings. They are not used for connection-bound integrations.
 - 3.4: lookup of an operation by name is valid only for typed operations. The workflow service dispatches palette nodes by component.
 
 # Part 2: Review log
@@ -1767,3 +1775,12 @@ Recommend a.
 - The deploy refuses a binding whose connection's target is not the environment's target, for every connection type, so connections meant only for a local target never go to the cloud.
 - Fact: the deleted integration loader allowed a private address for each integration through its own engine. A shared host engine cannot do that.
 - Rejected: `allow_private: true` on cloud hosts, and an upstream range grant for each component.
+
+**Ruled (D, 2026-11-17): integration placement, call limit and lock cost.**
+- Wasm integrations stay sibling components (c).
+- Host component plugins were weighed and not chosen for connection-bound integrations. They run one shared store for each host, with one `allowedHosts` for each plugin; bindings in host config roll the hosts; and a plugin that exhausts its restarts stops every workload's calls until the host restarts.
+- Native drivers become native host plugins.
+- A call limit for each application on a connection is enforced with Postgres advisory slots, because a limit kept in host memory counts only one host pod.
+- The exclusive lock moves to a pooled connection and one round trip (5.5). Fact: the 5.2 draft opened a new Postgres connection for each exclusive call.
+
+**Decided (2026-11-17): 5.4 `user.list`.** `user.list` works in the host without `admin_covered` until 3.3, and the host gets no system database login. Fact: admin role grants and revokes are always refused, so `user.list` was the only reader of the system identity reader.
