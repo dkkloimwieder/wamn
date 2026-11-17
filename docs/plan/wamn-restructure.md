@@ -75,10 +75,11 @@ Org → environment → project → application. One boundary per level.
 
 - wamn keeps its own identity service for now, built so a SaaS provider can replace it.
 - The host verifies standard JWTs from settings (issuer, JWKS address, audience, algorithms) with `jsonwebtoken` and `jwks-cache`, with RFC 9068 checks, and reads only `iss`, `sub`, `aud`, `exp`. Roles come from the project database.
+- One token audience for each org: one login gives one token for every environment of the org and for the control routes.
 - Cookies and CSRF live in `wamn-web`; the host sees only bearer tokens.
 - Session liveness is the provider's job: 15-minute tokens, no renewal after logout or disable.
 - User management (create, invite, disable, list) goes through control routes and one adapter. The installer and `api_service` stop calling identity over the operator-certificate HTTP hop.
-- API users are service principals with PATs.
+- API users are service principals with PATs. Service principals and their PATs live only in the project database (`platform."user"` type `service` with issuer `wamn`, and `platform.pat`). The host checks them with its project login.
 - Fixes due: environment login works; one control-eligibility rule; the PAT route checks the certificate subject until that hop goes; `x-forwarded-for` trusted only from known proxies; a route for disabling a user; the signing key encrypted; one Argon2 check per login; two identity replicas.
 - Edge: no user login while it cannot reach identity (E1). The offline window is an environment setting, default 24 hours; identity publishes the next key that far ahead. Future options: longer edge sessions (E2), local login on the device (E3).
 
@@ -405,6 +406,94 @@ Rulings on the scout questions (D, 2026-11-17):
 - The host registers `/wamn_control` and the file stream prefix as `<workload>/platform-http` through a `HostHandler` wrapper. The `files` field leaves `route.json`.
 - `workflow.start` answers `workflow_not_served`.
 
+## Epic 6: step 3.3, identity
+
+Rules:
+- Only the work listed here. The edge device design, and the edge publishing keys ahead, are later work.
+- Done means all of these pass:
+  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
+  - The schema-apply check.
+  - `helm template` of the release chart with values for the largest application in `apps/` that builds. The Helm release record must stay under 1 MiB. Report the size.
+  - A local Postgres container is allowed for these checks only.
+- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
+- No kind or cluster runs, nothing on GCP.
+- Generated code is regenerated, never edited by hand.
+
+Issues:
+
+6.1 Token profile. Runs first.
+- Identity signs RFC 9068 access tokens:
+  - header `typ: at+jwt`, `alg: EdDSA`, `kid`
+  - claims `iss`, `sub` (the principal id), `aud`, `exp`, `iat`, `jti`, `client_id` (`wamn-web`)
+  - no `roles`, `org`, `authority` or `csrf` claims
+- `aud` is one audience for each org: the value that `control_audience(org)` produces today, renamed the org audience.
+- One login is one password check (one Argon2 check) and gives one org token. Session targets, `with_session_targets` and `/password/environments` go.
+- The lifetime stays 900 seconds. Renewal is refused after logout or disable.
+- The `wamn-session+jwt` profile and its types in `wamn-identity-protocol` go.
+
+6.2 Verification in the host and control.
+- Host and control verify tokens with `jsonwebtoken` and `jwks-cache`, from settings:
+  - issuer, JWKS address, audience and allowed algorithms (`EdDSA`)
+  - the CA bundle that the JWKS fetch trusts
+- RFC 9068 checks: `typ`, an exact `iss`, `aud`, `exp` with 30 seconds of tolerance, and `iat` not in the future.
+- The host resolves the caller to `platform."user"` by `(iss, sub)` in the project database, cached in the host's moka cache (positive answers only). A missing row or an inactive status is refused.
+- Sessions and PATs both read grants with `user_operation_permissions`. These go:
+  - `session_operation_permissions`, `session_grants` and roles read from tokens
+  - `IssuerKeys` (`authentication/session_keys.rs`), `SessionVerifier` and `VerifiedSession`
+  - `session_is_active` and `control_session_is_active`
+- Cookie and CSRF handling leave the host (`engine/flow_http_routing.rs`). The host accepts only `Authorization: Bearer`.
+- Control keeps its control-eligibility read on the system database.
+
+6.3 Cookies and CSRF in `wamn-web`.
+- `wamn-web` proxies login, renewal and logout. It takes the tokens from identity's JSON response and sets these `__Host-` cookies:
+  - the session token: HttpOnly, Secure
+  - the renewal token: HttpOnly, Secure
+  - a readable CSRF token, which is a signed double submit: an HMAC with the web service's key over the session token's `jti` and a random value
+- For unsafe methods, `wamn-web` requires the CSRF header to match the cookie and the signature.
+- When it forwards a request, `wamn-web` replaces the cookies with `Authorization: Bearer`.
+- The HMAC key is a Secret that the web chart mounts.
+- Identity's cookie carrier (`password.rs`, `CSRF_COOKIE`, `cookie_response`) goes. Identity returns tokens as JSON only.
+
+6.4 Admin rows for users.
+- `project_authority` writes the `admin` user role row for a user who holds org admin or project admin, and removes it when the user stops holding it. Every path that changes org or project admin calls it.
+- Admin grants and revokes through `mutate_grant` stay refused, so every `admin` row is inherited.
+- `user.list` puts `admin_covered` back, as "holds `admin`".
+
+6.5 Service principals and PATs in the project database.
+- `app-schema.sql` gets `platform.pat`:
+  - `id`, `user_id` (references `platform."user"`), a unique `prefix`, `hash`, `label`, `expires_at`, `revoked_at`, plus the history stamps
+  - the platform login gets SELECT, INSERT and UPDATE
+  - no grant to `wamn_app` or `wamn_query`
+- The PAT token format and hash from `wamn-identity-protocol` are reused.
+- Service principals are `platform."user"` rows with `type = 'service'`, `issuer = 'wamn'`, and `sub` set to today's subject strings (for example `connection-<id>`).
+- Control routes create and disable service principals, and issue, list and revoke their PATs, for one project environment.
+- The host checks a PAT on its project login:
+  - the prefix lookup, the hash, the expiry, the revocation, and the row's type and status
+  - the existing connection-principal check
+  - cached like grants
+- These go:
+  - the service principal rows and `create_service` in identity
+  - `issue_pat`, `authenticate_pat`, `authenticate_route_pat`, `list_pats` and `revoke_pat`
+  - the `identity.pats` table and the `/pats` route
+  - `identity-client`'s PAT issuer
+  - the host's `identity_reader`
+- `api_service.rs` and `provision_project_env/pat_secrets.rs` use the new path.
+
+6.6 User management through control.
+- Control routes for users: create, invite, disable and list.
+- One adapter in the control service calls identity over the operator-certificate HTTPS hop. Identity checks that the certificate subject is the control service's. Control is the only caller.
+- The installer and `api_service` stop calling identity directly and use control routes.
+- Identity gets a route for `disable_principal`. A disabled user cannot renew.
+
+6.7 Identity fixes.
+- Identity trusts `x-forwarded-for` only from a configured number of trusted proxy hops, the way `wamn-web` does.
+- The signing private key is encrypted with the envelope that OAuth tokens use (`connection/oauth_encryption.rs`: a key file or Cloud KMS).
+- Two identity replicas (`deploy/charts/identity`). Password requests use a database pool, not a new connection for each request. Key rotation stays correct with two replicas.
+- One control-eligibility rule: `environment-admin` goes, with its table, the SQL branch (`system-schema.sql`, near line 1222), `grant_environment_admin` and `revoke_environment_admin`.
+
+6.8 Leftovers in `crates/identity` (N6).
+- `set_environment_status`, `status_environments`, `org_environments` and `create_project` move from `wamn_identity::org` to `wamn-environment`.
+
 ## Open items
 
 - Checks in phase 3: Helm values size for the largest application (3.2); each KCL `check:` rule also in Rust or SQL (3.5); `/_wamn/residency` goes unless 3.5 needs it; 3.5 creates the operation service account and application principals.
@@ -418,7 +507,6 @@ Rulings on the scout questions (D, 2026-11-17):
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
 - 3.4: merge `wamn-events` and `wamn-event-wire`. In Epic 2 the merge made a cycle, because `wamn-broker`, `wamn-run-state` and `wamn-sql` depend on `wamn-event-wire`.
 - 3.5: `wamn_catalog::manifest::installation` is a second, smaller model of the package document. Its readers move to the full model and it is deleted.
-- 3.3: the host resolves the caller's user row by `(iss, sub)`.
 - 3.6: a connection limit for each login, set in the CloudNativePG managed roles.
 - 3.4, 3.5 and Epic 5 each delete their own `ServingManifest` readers. `ServingManifest` goes with the last of them.
 - 3.4: the workflow authoring check reads `catalog.packages` and the live workload, not the release document.
@@ -428,7 +516,6 @@ Rulings on the scout questions (D, 2026-11-17):
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
 - 3.4: `workflow.start` refuses in the host until the workflow service serves it.
 - 3.5: `registry.environment_application_connections` and `registry.environment_integrations` change with the environment file (one version for each connection name).
-- 3.3: the project rows mark inherited admin, and `user.list` reads that mark there in place of `is_project_admin` against the system database. Until then `user.list` leaves out `admin_covered`.
 - Native integration types (for example the NetSuite ODBC driver) are native Rust host plugins compiled into the wamn host, as wasmCloud advises for drivers with no WASI binding. Decide this when the first one is built.
 - Version authority for integrations: for each connection in each environment (current), or pinned by the platform release. 3.5.
 - Host component plugins (`host-component-plugins`) suit platform-wide wasm capabilities with fixed bindings. They are not used for connection-bound integrations.
@@ -1791,3 +1878,14 @@ Recommend a.
 - Rejected: pool sizing by the deploy, a separate lock pool, a bigger fixed pool, and lease rows.
 
 **Ruled (D, 2026-11-17): Epic 5 review.** Epic 5 is accepted. The cleanup removes the unused `wamn-broker` dependency, the uncalled `ReleaseIdentity::from_context` and its stale comment, and the stale `cargo xtask host-route-clients` references. The test-only `test_release` fixture that builds a `ServingContext` stays until 3.8.
+
+**Ruled (D, 2026-11-17): Epic 6 scope.**
+- One token audience for each org.
+- PATs move into the project database, and service principals live only there (issuer `wamn`).
+- The signing key uses the OAuth envelope.
+- `environment-admin` is deleted.
+- Control is the only caller of identity, over the operator-certificate hop with the subject checked.
+- All eight issues.
+- Facts:
+  - The host authenticated no user and no API user after Epic 5: it had no session verifiers and no system login for `route_pat`.
+  - `project_authority` wrote admin rows only for services.
