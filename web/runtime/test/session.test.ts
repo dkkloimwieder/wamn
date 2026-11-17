@@ -85,7 +85,7 @@ describe("the transport carrier", () => {
   it("sends the cookies and the CSRF token, and no authorization, in cookie mode", async () => {
     const call = await send({
       cookie: true,
-      cookies: () => "theme=dark; __Host-wamn-csrf=c5rf; other=x",
+      cookies: () => "theme=dark; __Host-wamn-web-csrf=c5rf; other=x",
     });
     expect(call?.init.credentials).toBe("include");
     expect(new Headers(call?.init.headers).has("authorization")).toBe(false);
@@ -97,7 +97,7 @@ describe("the transport carrier", () => {
   });
 
   it("reads the CSRF cookie again on each request", async () => {
-    let jar = "__Host-wamn-csrf=first";
+    let jar = "__Host-wamn-web-csrf=first";
     const stub = stubFetch([completed, completed]);
     const transport = createTransport({
       baseUrl: "",
@@ -106,7 +106,7 @@ describe("the transport carrier", () => {
       fetch: stub.fetch,
     });
     await transport.invoke(request);
-    jar = "__Host-wamn-csrf=second";
+    jar = "__Host-wamn-web-csrf=second";
     await transport.invoke(request);
     {
       const observed = stub.seen.map((call) => headersOf(call)["x-wamn-csrf"]);
@@ -157,7 +157,7 @@ describe("the transport carrier", () => {
     const transport = createTransport({
       baseUrl: "https://example.test",
       cookie: true,
-      cookies: () => "__Host-wamn-csrf=c5rf",
+      cookies: () => "__Host-wamn-web-csrf=c5rf",
       fetch: stub.fetch,
     });
     const read = { ...request, method: "GET", items: [{ id: "a" }] };
@@ -194,7 +194,7 @@ describe("the transport carrier", () => {
 const TIMES = '{"sub":"user-1","expires_at":1000,"login_expires_at":28000}';
 
 describe("the session calls", () => {
-  it("signs in, renews and signs out with the cookie carrier", async () => {
+  it("signs in, renews and signs out through the web proxy", async () => {
     const stub = stubFetch([
       () => new Response(TIMES, { status: 200 }),
       () => new Response(TIMES, { status: 200 }),
@@ -223,11 +223,8 @@ describe("the session calls", () => {
       expect(observed).toHaveProperty(["0", "email"], "me@example.test");
       expect(observed).toHaveProperty(["0", "password"], "pw");
       expect(observed).toHaveProperty(["0", "aud"], "aud-1");
-      expect(observed).toHaveProperty(["0", "carrier"], "cookie");
       expect(observed).toHaveProperty(["1", "aud"], "aud-1");
-      expect(observed).toHaveProperty(["1", "carrier"], "cookie");
       expect(observed).toHaveProperty(["2", "aud"], "aud-1");
-      expect(observed).toHaveProperty(["2", "carrier"], "cookie");
     }
     for (const call of stub.seen) {
       expect(call.init.method).toBe("POST");

@@ -13,6 +13,7 @@ The chart renders the configuration as `WAMN_OAUTH_ENCRYPTION`. Installation sup
 `trustedProxyHops` defaults to one for the forwarding web proxy. The service defaults to zero when run without the chart.
 Zero uses the TLS peer address. A positive value counts backward through all `x-forwarded-for` header values and comma-separated addresses.
 Restrict direct access to the service when trusting forwarded addresses.
+Identity returns password-route tokens in JSON. The web proxy sets and validates the browser cookies.
 
 The database stores the packed JSON envelope in `identity.session_keys.private_key_envelope` as bytes.
 The envelope contains `ciphertext`, `nonce`, `wrapped_key` and `key_id`. Retirement erases the entire column.

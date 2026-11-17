@@ -796,9 +796,10 @@ It allows 30 seconds of clock tolerance for expiry and future issuance.
 The edge refuses every protected route until its identity design is defined.
 PAT and signature policies on the application host retain their existing behavior.
 
-Identity temporarily retains its cookie carrier, including the readable CSRF cookie, without a signed CSRF claim.
-Host and control admit sessions only through `Authorization: Bearer`. Browser forwarding of that header belongs to the web service.
-The browser keeps no tokens in its body or storage.
+Identity returns tokens as JSON to `wamn-web`, which sets the browser cookies and returns only the principal ID and expiry times.
+The web proxy checks CSRF on unsafe cookie-authenticated requests and forwards the session as a bearer token.
+Host and control admit sessions only through `Authorization: Bearer`.
+The browser stores access and renewal tokens in HttpOnly cookies.
 The shared browser runtime signs in directly to the deployment's org and renews on load and before expiry.
 
 ### Connection memory
@@ -1091,7 +1092,7 @@ An email that the identity rules refuse answers 400 with the reason, and a disab
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
 `POST /password/session` accepts `email`, `password`, and `aud`, set to `urn:wamn:control:<org>`.
 It performs one password check and signs one org token. The browser has no environment chooser.
-It reads membership, environment status, the active user and roles before it signs the token.
+It checks the active user and org membership before signing the token.
 Its response contains `sub`, `access_token`, `token_type`, `expires_at`, `renewal_token`, and `login_expires_at`.
 The two expiry fields contain Unix seconds. `token_type` is `Bearer`.
 
@@ -1104,17 +1105,22 @@ It returns HTTP 204, including when the credential is already unusable.
 `POST /password/logout-all` accepts the same fields and requires a currently usable renewal credential.
 It revokes all password login families for that user and returns HTTP 204.
 Neither operation requires continued application access. Neither revokes PATs.
-Previously issued password tokens fail new admission after logout commits.
+Previously issued access tokens expire on their own deadline. Logout prevents renewal.
 
-`/password/session`, `/password/renew`, and `/password/logout` accept an optional `carrier`, `"bearer"` by default or `"cookie"`.
-With `"cookie"`, the reply body holds only `sub`, `expires_at`, and `login_expires_at`, and the tokens travel in three cookies.
-`__Host-wamn-session` holds the session token. It is HttpOnly, with `Path=/`.
-`__Host-wamn-csrf` holds a new random CSRF token. The page reads it, so it is not HttpOnly.
-`__Secure-wamn-renewal` holds the renewal token. It is HttpOnly, with `Path=/password`.
-All three are `Secure` and `SameSite=Strict` and carry no `Domain`.
-The session and CSRF cookies live as long as the token. The renewal cookie lives as long as the login.
-Renew and logout read the renewal token from its cookie and refuse a `renewal_token` in the body.
-Logout clears all three cookies with `Max-Age=0`. `/password/logout-all` accepts only the bearer carrier.
+At the web proxy, login and renewal reply with `sub`, `expires_at`, and `login_expires_at`.
+`__Host-wamn-session` and `__Host-wamn-renewal` hold the access and renewal tokens and use `HttpOnly`.
+`__Host-wamn-web-csrf` is readable by the page. It contains a random nonce and a signature.
+Web computes the signature with HMAC-SHA256 over the access token's `jti` and the nonce.
+All three cookies use `Path=/`, `Secure`, and `SameSite=Strict` and expire at the login deadline.
+API admission still enforces the access token's own expiry.
+Unsafe requests authenticated by cookie, including renewal and logout, must send the CSRF cookie value in `x-wamn-csrf` and pass the HMAC check.
+Login, enrollment, recovery, and reset require a same-origin HTTPS `Origin` header.
+
+Web takes the renewal token from its cookie for renewal and logout and sends it to identity in JSON.
+Logout clears all three cookies with `Max-Age=0`. Identity's `/password/logout-all` takes a renewal token in JSON.
+Before forwarding, web removes all three cookies and the CSRF header.
+If the session cookie supplied an access token, web puts it in `Authorization: Bearer`.
+An explicit authorization header alongside a session cookie is refused.
 
 `POST /password/recover` accepts `email` and shares the global, source, and account limits.
 The service sends a reset secret only for an active user with an established password.
