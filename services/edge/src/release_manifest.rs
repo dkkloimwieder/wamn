@@ -1,15 +1,8 @@
-//! An immutable verified release for one project deployment and digest.
-//!
-//! The manifest bytes determine release identity. The deployment supplies its
-//! trusted project, environment and application membership. Readers share this
-//! loaded instance while the release has active invocations or unfinished runs.
-//! Identical component bytes do not share deployment authority or credentials.
+//! The edge's verified serving manifest loader.
+use wamn_catalog::serving_context::{ReleaseTarget, ServingContext};
+use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME, ServingManifest};
+use std::path::Path;
 
-use std::{path::Path, sync::Arc};
-
-use wamn_catalog::{
-    AdmittedComponent, RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, ServingManifest,
-};
 
 /// Stable classification for a refused release load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,217 +43,50 @@ impl std::fmt::Display for ReleaseLoadError {
 
 impl std::error::Error for ReleaseLoadError {}
 
-/// The release a pod carries, derived from its verified manifest content.
+/// Load and verify from an explicit mount root.
 ///
-/// This is the manifest digest the production lease uses to verify the run's
-/// admission pin (`ReleaseIdentity`). It is
-/// host-injected identity, never guest-supplied — and, since it comes out of the
-/// same bytes the readers resolve against, the two cannot disagree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CarriedRelease {
-    /// The serving manifest's digest — `runs.manifest_digest`. Derived from the
-    /// manifest's own canonical bytes.
-    pub manifest_digest: wamn_digest::Digest,
-}
-
-/// The project, environment and application a host serves, from the
-/// host configuration.
-///
-/// The serving manifest carries none of them (R1). The host derives the
-/// project from its `(org, project, environment)` coordinate, takes the
-/// targeted application that `environment.k` declares, and every reader takes it
-/// from here.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReleaseTarget {
-    /// The composed `org--env--project` key of the project environment.
-    pub project_env_key: wamn_registry::ProjectEnvKey,
-    /// The short environment name, such as `dev`.
-    pub environment: wamn_registry::EnvName,
-    /// The single application name and its packages
-    /// (docs/architecture/execution.md#workflows).
-    pub applications: wamn_catalog::EnvironmentApplications,
-}
-
-impl ReleaseTarget {
-    /// A target of one project and environment that declares no application.
-    pub fn new(
-        project_env_key: wamn_registry::ProjectEnvKey,
-        environment: wamn_registry::EnvName,
-    ) -> Self {
-        Self {
-            project_env_key,
-            environment,
-            applications: wamn_catalog::EnvironmentApplications::new(),
-        }
-    }
-
-    /// This target with the targeted application membership.
-    #[must_use]
-    pub fn with_applications(
-        mut self,
-        applications: wamn_catalog::EnvironmentApplications,
-    ) -> Self {
-        self.applications = applications;
-        self
-    }
-}
-
-/// A verified serving manifest bound to one project deployment.
-#[derive(Debug)]
-pub struct LoadedRelease {
-    release: CarriedRelease,
-    manifest: ServingManifest,
+/// Reads are blocking `std::fs`: this runs exactly once during host
+/// construction, before the pod serves anything, and never on a request
+/// path.
+pub fn load_from(
+    manifest_root: &Path,
     target: ReleaseTarget,
-    components: Arc<[AdmittedComponent]>,
+) -> Result<ServingContext, ReleaseLoadError> {
+    // ConfigMap projections are byte-exact, and `from_canonical_bytes` admits
+    // only the canonical encoding — so these bytes are used as read, with no
+    // trimming. A trailing newline is a different document.
+    let manifest_path = manifest_root.join(RELEASE_MANIFEST_FILE_NAME);
+    let bytes = std::fs::read(&manifest_path).map_err(|error| {
+        ReleaseLoadError::new(
+            ReleaseLoadErrorType::ManifestUnreadable,
+            format!("read serving manifest {}: {error}", manifest_path.display()),
+        )
+    })?;
+    load_canonical_bytes(&bytes, &manifest_path.display().to_string(), target)
 }
 
-impl LoadedRelease {
-    /// Load and verify from the standard mount path.
-    ///
-    /// A pod whose manifest is absent, unreadable, unparseable or non-canonical
-    /// must not serve that release. Other releases can continue.
-    pub fn load(target: ReleaseTarget) -> Result<Self, ReleaseLoadError> {
-        Self::load_from(Path::new(RELEASE_MANIFEST_MOUNT_PATH), target)
-    }
-
-    /// Load and verify from an explicit mount root.
-    ///
-    /// Reads are blocking `std::fs`: this runs exactly once during host
-    /// construction, before the pod serves anything, and never on a request
-    /// path.
-    pub fn load_from(
-        manifest_root: &Path,
-        target: ReleaseTarget,
-    ) -> Result<Self, ReleaseLoadError> {
-        // ConfigMap projections are byte-exact, and `from_canonical_bytes` admits
-        // only the canonical encoding — so these bytes are used as read, with no
-        // trimming. A trailing newline is a different document.
-        let manifest_path = manifest_root.join(RELEASE_MANIFEST_FILE_NAME);
-        let bytes = std::fs::read(&manifest_path).map_err(|error| {
-            ReleaseLoadError::new(
-                ReleaseLoadErrorType::ManifestUnreadable,
-                format!("read serving manifest {}: {error}", manifest_path.display()),
-            )
-        })?;
-        Self::load_canonical_bytes(&bytes, &manifest_path.display().to_string(), target)
-    }
-
-    /// Load and verify bytes a carrier has already delivered whole.
-    ///
-    /// `origin` names that carrier in refusals — a mount path, or the OCI
-    /// reference a
-    /// `ReleaseManifestSource`
-    /// validated the bytes against. It takes no part in verification: identity
-    /// still comes only out of the bytes.
-    pub fn load_canonical_bytes(
-        bytes: &[u8],
-        origin: &str,
-        target: ReleaseTarget,
-    ) -> Result<Self, ReleaseLoadError> {
-        let (manifest, manifest_digest) =
-            ServingManifest::from_canonical_bytes(bytes).map_err(|error| {
-                ReleaseLoadError::new(
-                    ReleaseLoadErrorType::ManifestRejected,
-                    format!("serving manifest {origin} refused: {error}"),
-                )
-            })?;
-
-        if target.applications.len() > 1 {
-            return Err(ReleaseLoadError::new(
-                ReleaseLoadErrorType::ManifestRejected,
-                "a loaded release serves at most one application",
-            ));
-        }
-        if let Some((application, membership)) = target.applications.first_key_value()
-            && manifest
-                .release
-                .packages
-                .iter()
-                .any(|package| !membership.packages.contains(package.package_id()))
-        {
-            return Err(ReleaseLoadError::new(
-                ReleaseLoadErrorType::ManifestRejected,
-                format!("release carries a package outside application {application}"),
-            ));
-        }
-        let components = manifest
-            .admitted_components(&target.project_env_key)
-            .map_err(|error| {
-                ReleaseLoadError::new(ReleaseLoadErrorType::ManifestRejected, error.to_string())
-            })?;
-        for component in &components {
-            wamn_catalog::verify_stored_effect_projection(component).map_err(|error| {
-                ReleaseLoadError::new(ReleaseLoadErrorType::ManifestRejected, error.to_string())
-            })?;
-        }
-        Ok(Self {
-            release: CarriedRelease { manifest_digest },
-            manifest,
-            target,
-            components: components.into(),
-        })
-    }
-
-    /// The control serving root
-    /// (docs/architecture/execution.md#host-run-routes). It is built with the
-    /// platform and serves only the control host routes: it has no package,
-    /// component, route, attachment or database. Its fixed target names no real
-    /// project or environment, and a control host reads neither.
-    pub fn control_root() -> Self {
-        let manifest = ServingManifest {
-            composed_entry: None,
-            format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
-            release: wamn_catalog::ServingRelease {
-                packages: std::collections::BTreeSet::default(),
-            },
-            components: std::collections::BTreeSet::default(),
-            routes: std::collections::BTreeSet::default(),
-            attachments: std::collections::BTreeMap::default(),
-
-            host_routes: [wamn_catalog::HostRouteSet::Control].into(),
-        };
-        Self {
-            release: CarriedRelease {
-                manifest_digest: manifest.digest(),
-            },
-            manifest,
-            target: ReleaseTarget::new(
-                "platform--control--service"
-                    .parse()
-                    .expect("control coordinates"),
-                "control".parse().expect("control environment"),
-            ),
-            components: Vec::new().into(),
-        }
-    }
-
-    /// The release this pod carries.
-    pub fn release(&self) -> &CarriedRelease {
-        &self.release
-    }
-
-    /// The verified manifest. Every reader takes it from here.
-    pub fn manifest(&self) -> &ServingManifest {
-        &self.manifest
-    }
-
-    /// Admitted facts validated once when this release loads.
-    pub fn components(&self) -> &Arc<[AdmittedComponent]> {
-        &self.components
-    }
-
-    /// The project and environment this host serves, from its configuration.
-    pub fn target(&self) -> &ReleaseTarget {
-        &self.target
-    }
+/// Verify bytes delivered by an edge release bundle.
+pub fn load_canonical_bytes(
+    bytes: &[u8],
+    origin: &str,
+    target: ReleaseTarget,
+) -> Result<ServingContext, ReleaseLoadError> {
+    let (manifest, _) = ServingManifest::from_canonical_bytes(bytes).map_err(|error| {
+        ReleaseLoadError::new(
+            ReleaseLoadErrorType::ManifestRejected,
+            format!("serving manifest {origin} refused: {error}"),
+        )
+    })?;
+    ServingContext::new(manifest, target).map_err(|error| {
+        ReleaseLoadError::new(ReleaseLoadErrorType::ManifestRejected, error.to_string())
+    })
 }
 
 /// Refuse an admitted component fact that the loaded release does not carry.
 ///
-/// The cloud host reads the facts from the catalog and the edge reads them
-/// from its release bundle. Both run this one test before loading a component.
+/// The edge reads these facts from its release bundle before loading a component.
 pub fn validate_component_in_release(
-    release: &LoadedRelease,
+    release: &ServingContext,
     component: &AdmittedComponent,
 ) -> anyhow::Result<()> {
     let manifest = release.manifest();
@@ -294,20 +120,6 @@ pub fn validate_component_in_release(
     Ok(())
 }
 
-/// The `wamn.release` label value of a release: its 32 digest bytes as RFC 4648
-/// base32, unpadded and lowercase, 52 characters.
-///
-/// A Kubernetes label value holds at most 63 characters, so the hex digest does
-/// not fit. Base32 carries the whole digest exactly. The host puts this value
-/// in its heartbeat, the operator copies it onto the `Host` resource, and the
-/// `release` chart's `hostSelector` matches it
-/// (docs/architecture/overview.md#environment-lifecycle).
-pub fn release_label(digest: &wamn_digest::Digest) -> String {
-    data_encoding::BASE32_NOPAD
-        .encode(digest.as_bytes())
-        .to_ascii_lowercase()
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -319,6 +131,7 @@ mod tests {
     };
 
     use super::*;
+    use super as loader;
 
     const COMPONENT: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -371,7 +184,7 @@ mod tests {
             targeted.applications["catalog"].clone(),
         );
         assert_eq!(
-            LoadedRelease::load_canonical_bytes(&bytes, "fixture", targeted)
+            loader::load_canonical_bytes(&bytes, "fixture", targeted)
                 .unwrap_err()
                 .error_type(),
             ReleaseLoadErrorType::ManifestRejected
@@ -384,7 +197,7 @@ mod tests {
             .packages
             .clear();
         assert_eq!(
-            LoadedRelease::load_canonical_bytes(&bytes, "fixture", targeted)
+            loader::load_canonical_bytes(&bytes, "fixture", targeted)
                 .unwrap_err()
                 .error_type(),
             ReleaseLoadErrorType::ManifestRejected
@@ -397,7 +210,7 @@ mod tests {
         let mut component = manifest.components.pop_first().unwrap();
         component.descriptor.imports = vec!["wamn:postgres/client@0.1.0".to_owned()];
         manifest.components.insert(component);
-        let error = LoadedRelease::load_canonical_bytes(
+        let error = loader::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "effect projection",
             target(),
@@ -412,7 +225,7 @@ mod tests {
         let mut component = manifest.components.pop_first().unwrap();
         component.descriptor.imports = vec!["wasi:clocks/monotonic-clock@0.2.3".to_owned()];
         manifest.components.insert(component);
-        LoadedRelease::load_canonical_bytes(
+        loader::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "effect projection",
             target(),
@@ -458,8 +271,8 @@ mod tests {
             self
         }
 
-        fn load(&self) -> Result<LoadedRelease, ReleaseLoadError> {
-            LoadedRelease::load_from(&self.manifest_dir(), target())
+        fn load(&self) -> Result<ServingContext, ReleaseLoadError> {
+            loader::load_from(&self.manifest_dir(), target())
         }
     }
 
@@ -611,7 +424,7 @@ mod tests {
     #[test]
     fn an_admitted_component_the_release_does_not_carry_is_refused() {
         let release =
-            LoadedRelease::load_canonical_bytes(&fixture().canonical_bytes(), "fixture", target())
+            loader::load_canonical_bytes(&fixture().canonical_bytes(), "fixture", target())
                 .expect("the fixture loads");
         validate_component_in_release(&release, &carried_fact()).expect("the carried fact passes");
 

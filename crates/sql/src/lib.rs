@@ -352,18 +352,11 @@ impl HostPlugin for WamnPostgres {
             let WorkloadItem::Component(component) = item else {
                 anyhow::bail!("operation authority requires an entry component");
             };
-            if self
-                .operation_workloads
-                .read()
-                .expect("operation workloads lock poisoned")
-                .contains_key(component.workload_id())
-            {
-                self.bind_entry_instance(
-                    component.workload_id(),
-                    component.id(),
-                    component.name(),
-                )?;
-            }
+            self.bind_entry_instance(
+                component.workload_id(),
+                component.id(),
+                &component.local_resources().config,
+            )?;
             // A control root links the interface without operation authority.
             // Calls on an unbound instance refuse before accessing SQL or identity.
         }

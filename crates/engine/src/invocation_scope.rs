@@ -10,25 +10,28 @@ use tokio::time::Instant;
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
+use crate::flow_http_routing::RouteProvider;
 use crate::invocation_trace::InvocationTrace;
-use crate::release_manifest::LoadedRelease;
 
-/// Host-owned authority exposes its release without coupling service types.
+/// Host-owned authority exposes routing facts without coupling service types.
 pub trait InvocationAuthority: Any + Send + Sync {
-    fn release(&self) -> Option<Arc<LoadedRelease>>;
+    fn routes(&self) -> Option<Arc<dyn RouteProvider>> {
+        None
+    }
 }
 
 pub const INVOCATION_SCOPES_ID: &str = "wamn:invocation-scopes";
 
 #[derive(Default)]
-struct ReleaseScope(Option<Arc<LoadedRelease>>);
-impl InvocationAuthority for ReleaseScope {
-    fn release(&self) -> Option<Arc<LoadedRelease>> {
+struct RoutingScope(Option<Arc<dyn RouteProvider>>);
+impl InvocationAuthority for RoutingScope {
+    fn routes(&self) -> Option<Arc<dyn RouteProvider>> {
         self.0.as_ref().map(Arc::clone)
     }
 }
 
 struct Record {
+    workload: Option<Box<str>>,
     trace: InvocationTrace,
     authorities: HashMap<TypeId, Box<dyn InvocationAuthority>>,
     execution: InvocationExecution,
@@ -140,6 +143,7 @@ impl InvocationScopes {
             .write()
             .expect("invocation scopes lock poisoned");
         let record = records.entry(scope.to_owned()).or_insert_with(|| Record {
+            workload: None,
             trace: InvocationTrace::capture(),
             authorities: HashMap::new(),
             execution: InvocationExecution::default(),
@@ -192,6 +196,7 @@ impl InvocationScopes {
         records.insert(
             scope.clone(),
             Record {
+                workload: None,
                 trace,
                 authorities: authorities
                     .into_iter()
@@ -214,25 +219,37 @@ impl InvocationScopes {
     ) -> anyhow::Result<ScopeLifetime> {
         self.enter(
             scope,
-            [Box::new(ReleaseScope::default()) as Box<dyn InvocationAuthority>],
+            [Box::new(RoutingScope::default()) as Box<dyn InvocationAuthority>],
             trace,
         )
     }
 
-    /// Bind a release for a workload that supplies no other service authority.
-    pub fn bind_release(&self, scope: &str, release: Arc<LoadedRelease>) {
-        self.update::<ReleaseScope, _>(scope, |record| record.0 = Some(release));
+    /// Associate a bound component's authority with its runtime workload.
+    pub fn bind_workload(&self, scope: &str, workload: &str) {
+        if let Some(record) = self
+            .records
+            .write()
+            .expect("invocation scopes lock poisoned")
+            .get_mut(scope)
+        {
+            record.workload = Some(workload.into());
+        }
     }
 
-    /// Resolve the immutable release selected by the host for this scope.
-    pub fn release(&self, scope: &str) -> Option<Arc<LoadedRelease>> {
+    /// Bind the host's route facts for a workload component.
+    pub fn bind_routes(&self, scope: &str, routes: Arc<dyn RouteProvider>) {
+        self.update::<RoutingScope, _>(scope, |record| record.0 = Some(routes));
+    }
+
+    /// Resolve the route facts selected by the host for this scope.
+    pub fn routes(&self, scope: &str) -> Option<Arc<dyn RouteProvider>> {
         self.records
             .read()
             .expect("invocation scopes lock poisoned")
             .get(scope)?
             .authorities
             .values()
-            .find_map(|authority| authority.release())
+            .find_map(|authority| authority.routes())
     }
 
     /// Record the execution span once native initialization completes.
@@ -294,7 +311,9 @@ impl InvocationScopes {
         self.records
             .write()
             .expect("invocation scopes lock poisoned")
-            .retain(|scope, _| !scope.starts_with(workload));
+            .retain(|scope, record| {
+                record.workload.as_deref() != Some(workload) && !scope.starts_with(workload)
+            });
     }
 
     pub fn is_empty(&self) -> bool {
@@ -357,12 +376,12 @@ mod tests {
         let lifetime = scopes
             .enter(
                 "request".to_owned(),
-                [Box::new(ReleaseScope::default()) as Box<dyn InvocationAuthority>],
+                [Box::new(RoutingScope::default()) as Box<dyn InvocationAuthority>],
                 InvocationTrace::capture(),
             )
             .unwrap();
-        assert!(scopes.any::<ReleaseScope>(|_| true));
+        assert!(scopes.any::<RoutingScope>(|_| true));
         drop(lifetime);
-        assert!(!scopes.any::<ReleaseScope>(|_| true));
+        assert!(!scopes.any::<RoutingScope>(|_| true));
     }
 }

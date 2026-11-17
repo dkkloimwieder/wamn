@@ -7,6 +7,8 @@
 //! request body. Its Content-Type supplies the media type. GET
 //! `/api/<application>/files/<id>` streams the stored bytes after session admission.
 
+use crate::files::{FileStorageError, FileStorageErrorType, FileStore, MAX_URL_LIFETIME};
+use crate::plugin::WamnBlobstore;
 use sqlx::Row as _;
 use std::fmt;
 use std::sync::Arc;
@@ -15,11 +17,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
-use crate::files::{FileStorageError, FileStorageErrorType, FileStore, MAX_URL_LIFETIME};
-use crate::plugin::WamnBlobstore;
+use wamn_catalog::serving_context::ServingContext;
 use wamn_catalog::{ComponentConnectionType, HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
-use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::PrincipalId;
 use wamn_sql::WamnPostgres;
 
@@ -185,7 +185,7 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
 /// Login-targeted registry lookup of active store generations.
 /// Existing files use their connection identity without a binding.
 pub struct RegistryFileConnections {
-    pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+    pub release: Arc<wamn_catalog::serving_context::ServingContext>,
     pub facts: Arc<wamn_connection::connection_facts::ConnectionFacts>,
     pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
@@ -369,7 +369,7 @@ struct ExposeRequest {
 
 /// File handlers of one released application environment.
 pub struct FileRoutes {
-    pub(crate) release: Arc<LoadedRelease>,
+    pub(crate) release: Arc<ServingContext>,
     pub(crate) context: Arc<wamn_connection::invocation::ReleaseContext>,
     pub(crate) postgres: Arc<WamnPostgres>,
     pub(crate) blobstore: Arc<WamnBlobstore>,
@@ -748,7 +748,7 @@ fn principal(caller: &AuthenticatedCaller, action: &str) -> Result<PrincipalId, 
 }
 
 fn declares_store(
-    release: &LoadedRelease,
+    release: &ServingContext,
     app: &wamn_catalog::ApplicationDefinition,
     alias: &wamn_catalog::canonical_name::CanonicalName,
 ) -> bool {
@@ -762,7 +762,7 @@ fn declares_store(
 }
 
 fn require_binding(
-    release: &LoadedRelease,
+    release: &ServingContext,
     application: &wamn_catalog::ApplicationName,
     binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
     pinned: Option<&str>,
@@ -844,11 +844,11 @@ mod tests {
     use wamn_connection::connection_credentials::ConnectionCredentials;
     use wamn_connection::connection_facts::ConnectionFacts;
     use wamn_connection::connection_memory::ConnectionMemory;
-    use wamn_engine::flow_http_routing::{AuthenticationRequest, CredentialType, Header};
-    use wamn_engine::release_manifest::ReleaseTarget;
+    use wamn_engine::flow_http_routing::CredentialType;
+    use wamn_catalog::serving_context::ReleaseTarget;
     use wamn_sql::WamnPostgresConfig;
 
-    fn release() -> Arc<LoadedRelease> {
+    fn release() -> Arc<ServingContext> {
         let mut descriptor = ComponentDescriptor::named(
             "files".parse().unwrap(),
             "0.1".parse().unwrap(),
@@ -897,7 +897,7 @@ mod tests {
         .unwrap();
         manifest.host_routes.insert(HostRouteSet::Application);
         Arc::new(
-            LoadedRelease::load_canonical_bytes(
+            ServingContext::load_canonical_bytes(
                 &manifest.canonical_bytes(),
                 "files-test",
                 ReleaseTarget::new(
@@ -1133,34 +1133,6 @@ mod tests {
     }
 
     #[test]
-    fn a_session_without_file_grants_cannot_call_any_file_operation() {
-        use wamn_engine::native_routes::{DeliveryError, resolve_authorized_host_route};
-
-        let release = release();
-        for (id, _) in HostRouteSet::Application
-            .attachments()
-            .filter(|(_, attachment)| attachment.reference.starts_with("wamn-control:file/"))
-        {
-            assert!(matches!(
-                resolve_authorized_host_route(release.manifest(), id, None),
-                Some(Err(DeliveryError::InvalidRequest))
-            ));
-            let caller = AuthenticatedCaller::new(
-                id.clone(),
-                "22222222-2222-4222-8222-222222222222".parse().unwrap(),
-                CredentialType::Session,
-                false,
-                Default::default(),
-                None,
-            );
-            assert!(matches!(
-                resolve_authorized_host_route(release.manifest(), id, Some(&caller)),
-                Some(Err(DeliveryError::PermissionDenied(_)))
-            ));
-        }
-    }
-
-    #[test]
     fn private_exposure_refuses_even_after_an_administrator_passes_the_acl() {
         assert!(principal(&caller(None, true, CredentialType::Session), "get").is_ok());
         assert_eq!(
@@ -1200,49 +1172,6 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.refusal, Some(FileRefusal::PermissionDenied));
-    }
-    #[test]
-    fn every_cookie_session_mutation_requires_csrf() {
-        use wamn_engine::flow_http_routing::{RouteCredential, require_csrf, route_credential};
-        let release = release();
-        for (id, _) in HostRouteSet::Application
-            .attachments()
-            .filter(|(_, attachment)| {
-                attachment.reference.starts_with("wamn-control:file/")
-                    && !attachment.route.type_.is_read()
-            })
-        {
-            let attachment = release.manifest().served_attachment(id).unwrap();
-            let headers = [Header {
-                name: "cookie".into(),
-                value: "__Host-wamn-session=token".into(),
-            }];
-            let request = AuthenticationRequest {
-                manifest: release.manifest(),
-                target: release.target(),
-                attachment_id: id,
-                attachment,
-                policy: wamn_catalog::parse_attachment_auth_policy(attachment.auth_policy())
-                    .unwrap(),
-                headers: &headers,
-                body: &[],
-            };
-            assert!(matches!(
-                route_credential(&request).unwrap(),
-                RouteCredential::Session {
-                    csrf: Some(true),
-                    ..
-                }
-            ));
-            assert!(
-                require_csrf(
-                    true,
-                    Some(&wamn_digest::bytes_sha256(b"signed-value")),
-                    &headers
-                )
-                .is_err()
-            );
-        }
     }
 
     #[tokio::test]

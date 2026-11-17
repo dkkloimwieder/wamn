@@ -201,7 +201,7 @@ impl Integrations {
     /// Read immutable declarations before the application stores load.
     pub async fn new(
         facts: Arc<ConnectionFacts>,
-        release: &wamn_engine::release_manifest::LoadedRelease,
+        release: &wamn_catalog::serving_context::ServingContext,
         database: &dyn ProjectDatabase,
         project: &wamn_registry::ProjectId,
         registry: PackageRegistry,

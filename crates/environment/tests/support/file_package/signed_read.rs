@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use serde_json::json;
+use wamn_catalog::edge_bundle::local_component_path;
+use wamn_catalog::serving_context::{ReleaseTarget, ServingContext};
 use wamn_catalog::{AdmittedComponent, HostRouteSet, ServingComponent, ServingManifest};
-use wamn_engine::artifact_source::local_component_path;
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_publish::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -16,7 +16,7 @@ pub(super) const ATTACHMENT: &str = "file-signed-read";
 pub(super) const LIFETIME: u64 = 3;
 
 pub(super) struct SignedReadFixture {
-    pub(super) release: Arc<LoadedRelease>,
+    pub(super) release: Arc<ServingContext>,
     pub(super) component: AdmittedComponent,
     pub(super) scratch: ScratchRoot,
 }
@@ -136,7 +136,7 @@ pub(super) fn signed_read_fixture(
         }},
         "host-routes": [HostRouteSet::Application]
     }))?;
-    let release = Arc::new(LoadedRelease::load_canonical_bytes(
+    let release = Arc::new(ServingContext::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "signed read file fixture",
         ReleaseTarget::new(project_env_key.clone(), "dev".parse().unwrap()).with_applications(

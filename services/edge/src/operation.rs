@@ -250,7 +250,8 @@ impl HostPlugin for EdgeOperation {
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
         self.scopes
-            .bind_release(item.id(), Arc::clone(self.release.release()));
+            .bind_routes(item.id(), Arc::clone(&self.release) as _);
+        self.scopes.bind_workload(item.id(), item.workload_id());
         item.add_plugin(
             wamn_engine::invocation_scope::INVOCATION_SCOPES_ID,
             Arc::clone(&self.scopes) as _,

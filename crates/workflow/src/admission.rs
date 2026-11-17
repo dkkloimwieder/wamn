@@ -3,7 +3,7 @@ use anyhow::Context as _;
 use chrono::{DateTime, SecondsFormat, Utc};
 use sqlx::Row as _;
 use wamn_catalog::WiringDocument;
-use wamn_engine::release_manifest::LoadedRelease;
+use wamn_catalog::serving_context::ServingContext;
 use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
 use wamn_run_state::admission::{self, RunAdmission, RunAdmitted, RunTrigger};
 use wamn_run_state::run_store::{ProductionLeaseError, ProductionLeaseErrorType};
@@ -38,7 +38,7 @@ pub(crate) fn parse_graph(json: &str) -> anyhow::Result<WiringDocument> {
 
 /// Condition the graph and freeze every resolved node digest once at admission.
 pub(crate) fn node_digests(
-    release: &LoadedRelease,
+    release: &ServingContext,
     application: &wamn_catalog::ApplicationName,
     graph: &WiringDocument,
     hash: &wamn_digest::Digest,
@@ -79,7 +79,7 @@ pub(crate) fn node_digests(
 pub async fn admit_schedule_run(
     postgres: &WamnPostgres,
     project: &wamn_registry::ProjectId,
-    release: &LoadedRelease,
+    release: &ServingContext,
     application: &wamn_catalog::ApplicationName,
     workflow_id: &wamn_catalog::canonical_name::CanonicalName,
     tick: DateTime<Utc>,

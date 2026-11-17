@@ -1,39 +1,18 @@
-//! Digest-verified OCI supply of admitted component bytes.
-//!
-//! This module owns only artifact transfer. Callers provide a complete admitted
-//! component fact and explicit registry configuration; the source derives the
-//! immutable reference, verifies the manifest and both blobs, and returns only
-//! component bytes validated against that fact. It owns no catalog read, cache,
-//! instance pool, or router behavior. The source implements
-//! [`ArtifactSource`] from `wamn-engine`, which holds the digest tests and the
-//! local file source.
+//! Stock OCI component reads for publication and workload image selection.
 
 use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use async_trait::async_trait;
-use oci_client::Reference;
-use oci_client::errors::OciDistributionError;
-use oci_client::manifest::{OciDescriptor, OciImageManifest};
-use oci_client::secrets::RegistryAuth;
-use wamn_catalog::{
-    AdmittedComponent, ComponentArtifactReferenceError,
-    parse_component_artifact_base,
-};
-use wamn_engine::artifact_source::{
-    ArtifactSource, ComponentArtifactFetchError, verify_component_body,
-    verify_config_body,
-};
-use wamn_engine::component_artifact::{component_artifact_config_bytes, component_artifact_layout};
 use crate::package_artifact::registry_credentials::{
     RegistryCredentialSource, RegistryCredentials, RegistryCredentialsError,
     read_registry_credentials,
 };
-use crate::package_artifact::{ComponentArtifactCaError, read_ca_bundles, registry_pull};
+use crate::package_artifact::{ComponentArtifactCaError, read_ca_bundles};
+use oci_client::Reference;
+use wamn_catalog::{ComponentArtifactReferenceError, parse_component_artifact_base};
 
 use crate::package_artifact::registry_source::RegistrySource;
-use crate::package_artifact::registry_transport::transport_is_mismatched;
 
 /// Explicit, validated configuration for one component artifact repository.
 #[derive(Clone, PartialEq, Eq)]
@@ -54,37 +33,6 @@ impl ComponentArtifactSourceConfig {
     }
 
     /// Trust the PEM CA bundles at `paths` for pulls from this source.
-    ///
-    /// This source builds its own `oci-client`, so the process-wide trust roots
-    /// a host installs through `wash_runtime::oci::set_extra_ca_certificates`
-    /// do not reach it. Without this it sees only the roots `oci-client`
-    /// compiles in, and an in-cluster registry behind a private CA is
-    /// unreachable short of dropping verification altogether.
-    ///
-    /// This duplication is measured and recorded, not an oversight: vanilla
-    /// wash-runtime keeps the matching reader `oci::extra_ca_certificates()`
-    /// private and re-exports no `oci_client` symbol, so installed trust cannot
-    /// be read back into a foreign `ClientConfig`. Its only public transfer
-    /// surface, `oci::{pull_component, push_component}`, is fixed to
-    /// `WASM_LAYER_MEDIA_TYPE` + `WasmConfig` and cannot carry this artifact's
-    /// platform-owned layer and config blob — the config blob being the very
-    /// admission fact [`ArtifactSource::pull_verified`] tests again. See
-    /// `docs/architecture/native-alignment.md#retained-wamn-implementations`
-    /// (`wamn-kdhw`) for the exit condition; do not "fix" this by routing the
-    /// pull through `pull_component`.
-    ///
-    /// Pass the same paths the host passed to that call, and call it first:
-    /// validation lives there, and it refuses a bundle that is unreadable or
-    /// unusable as a trust root rather than starting a host that will reject
-    /// every pull. That refusal names the exact unreadable path.
-    /// [`ComponentArtifactSource::new`] catches the rest: a bundle that reads
-    /// but does not parse is refused there, without a name. It is refused
-    /// rather than tolerated because `oci-client`'s `Client::new` answers a
-    /// rejected configuration with a wholly default client, discarding the
-    /// registry protocol and the timeouts along with the trust roots and
-    /// leaving only a warning to say so.
-    ///
-    /// Empty `paths` leave this source on the compiled-in roots.
     pub fn with_ca_paths(mut self, paths: &[PathBuf]) -> Result<Self, ComponentArtifactCaError> {
         self.source = self.source.with_ca_bundles(read_ca_bundles(paths)?);
         Ok(self)
@@ -133,20 +81,6 @@ impl fmt::Debug for ComponentArtifactSourceConfig {
 ///
 /// The spelling wash's own host CLI uses (`crates/wash/src/cli/host.rs`).
 pub const OCI_CA_PATHS_ENV: &str = "WASH_OCI_CA_PATHS";
-
-/// Classify a registry transport failure as a mismatch or as absence.
-fn transport_error(
-    reference: &str,
-    unavailable: &'static str,
-    mismatched: &'static str,
-    source: &OciDistributionError,
-) -> ComponentArtifactFetchError {
-    if transport_is_mismatched(source) {
-        ComponentArtifactFetchError::mismatched(reference, mismatched)
-    } else {
-        ComponentArtifactFetchError::unavailable(reference, unavailable)
-    }
-}
 
 /// OCI registry source that returns only verified component bytes.
 ///
@@ -211,112 +145,9 @@ impl ComponentArtifactSource {
     ///
     /// The client is built once here, so an unusable configuration refuses
     /// before the first pull.
-    pub fn new(config: ComponentArtifactSourceConfig) -> Result<Self, ComponentArtifactFetchError> {
-        config
-            .source
-            .client()
-            .map_err(|_| ComponentArtifactFetchError::registry_client())?;
+    pub fn new(config: ComponentArtifactSourceConfig) -> anyhow::Result<Self> {
+        config.source.client()?;
         Ok(Self { config })
-    }
-}
-
-#[async_trait]
-impl ArtifactSource for ComponentArtifactSource {
-    async fn pull_verified(
-        &self,
-        component: &AdmittedComponent,
-    ) -> Result<Vec<u8>, ComponentArtifactFetchError> {
-        let deadline = tokio::time::Instant::now() + self.config.source.timeout();
-        let artifact = self
-            .config
-            .source
-            .base()
-            .reference(&component.component_digest);
-        let reference = Reference::with_tag(
-            artifact.registry().to_owned(),
-            artifact.repository().to_owned(),
-            artifact.tag().to_owned(),
-        );
-        let named = artifact.to_string();
-        let expected_config = component_artifact_config_bytes(component);
-
-        let auth = self.auth(&named).await?;
-        let client = self
-            .config
-            .source
-            .client()
-            .map_err(|_| ComponentArtifactFetchError::registry_client())?;
-
-        let (manifest, _) = registry_pull::retry(
-            &reference,
-            deadline,
-            || client.pull_image_manifest(&reference, &auth),
-            |error| error,
-        )
-        .await
-        .map_err(|source| {
-            transport_error(
-                &named,
-                "component-artifact-manifest-unavailable",
-                "component-artifact-manifest-invalid",
-                &source,
-            )
-        })?;
-        let descriptors = verify_manifest(
-            &manifest,
-            &component.component_digest,
-            expected_config.len(),
-            &named,
-        )?;
-
-        let component_bytes =
-            registry_pull::blob(&client, &reference, descriptors.component, deadline)
-                .await
-                .map_err(|source| {
-                    transport_error(
-                        &named,
-                        "component-artifact-body-unavailable",
-                        "component-artifact-body-transfer-mismatch",
-                        &source,
-                    )
-                })?;
-        verify_component_body(
-            &component_bytes,
-            descriptors.component.size,
-            &component.component_digest,
-            &named,
-        )?;
-
-        let config_bytes = registry_pull::blob(&client, &reference, descriptors.config, deadline)
-            .await
-            .map_err(|source| {
-                transport_error(
-                    &named,
-                    "component-artifact-config-unavailable",
-                    "component-artifact-config-transfer-mismatch",
-                    &source,
-                )
-            })?;
-        verify_config_body(
-            &config_bytes,
-            descriptors.config.size,
-            &expected_config,
-            &named,
-        )?;
-
-        Ok(component_bytes)
-    }
-
-}
-
-impl ComponentArtifactSource {
-    /// The pull credential of `registry`, read fresh for each pull.
-    async fn auth(&self, named: &str) -> Result<RegistryAuth, ComponentArtifactFetchError> {
-        self.config
-            .source
-            .auth()
-            .await
-            .map_err(|error| ComponentArtifactFetchError::unavailable(named, error.refusal()))
     }
 }
 
@@ -327,202 +158,5 @@ impl fmt::Debug for ComponentArtifactSource {
             .field("registry", &self.config.source.base().registry())
             .field("repository", &self.config.source.base().repository())
             .finish_non_exhaustive()
-    }
-}
-
-#[derive(Debug)]
-struct VerifiedManifest<'a> {
-    component: &'a OciDescriptor,
-    config: &'a OciDescriptor,
-}
-
-fn verify_manifest<'a>(
-    manifest: &'a OciImageManifest,
-    expected_component_digest: &wamn_digest::Digest,
-    expected_config_size: usize,
-    reference: &str,
-) -> Result<VerifiedManifest<'a>, ComponentArtifactFetchError> {
-    let refuse = |literal| ComponentArtifactFetchError::mismatched(reference, literal);
-    let expected_layout = component_artifact_layout(&[], &[]);
-    if manifest.schema_version != expected_layout.manifest_schema_version() {
-        return Err(refuse("component-artifact-manifest-schema-mismatch"));
-    }
-    if manifest.layers.len() != expected_layout.layer_count() {
-        return Err(refuse("component-artifact-layer-cardinality-mismatch"));
-    }
-    let component = &manifest.layers[0];
-    if component.media_type != expected_layout.layer_media_type() {
-        return Err(refuse("component-artifact-layer-media-type-mismatch"));
-    }
-    if component.digest.parse::<wamn_digest::Digest>().ok() != Some(*expected_component_digest) {
-        return Err(refuse("component-artifact-layer-digest-mismatch"));
-    }
-    if component.size < 0 {
-        return Err(refuse("component-artifact-layer-size-mismatch"));
-    }
-
-    let config = &manifest.config;
-    if config.media_type != expected_layout.config_media_type() {
-        return Err(refuse("component-artifact-config-media-type-mismatch"));
-    }
-    if config.size != i64::try_from(expected_config_size).unwrap_or(i64::MAX) {
-        return Err(refuse("component-artifact-config-size-mismatch"));
-    }
-    Ok(VerifiedManifest { component, config })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use wamn_digest::bytes_sha256;
-
-    use serde_json::json;
-    use wamn_catalog::{
-        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
-        ComponentPortDeclaration, normalize_component_fact,
-    };
-
-    use super::*;
-    use wamn_engine::artifact_source::ComponentArtifactFetchErrorType;
-
-    fn admitted(bytes: &[u8]) -> AdmittedComponent {
-        normalize_component_fact(
-            ComponentDeclaration {
-                connections: Vec::new(),
-                target: ComponentPackageCoordinate {
-                    project_env_key: "org-a--dev--project".parse().unwrap(),
-                    package_id: "orders".parse().unwrap(),
-                    package_version: "1.0.0".parse().unwrap(),
-                },
-                component: "transform".parse().unwrap(),
-                interface_version: "0.1.0".parse().unwrap(),
-                operations: BTreeMap::from([(
-                    "run".parse().unwrap(),
-                    ComponentOperationDeclaration {
-                        committed_result_schema: None,
-                        registered_operation: None,
-                        input_ports: vec![ComponentPortDeclaration {
-                            name: "input".parse().unwrap(),
-                            schema: json!({}),
-                        }],
-                        output_ports: Vec::new(),
-                        parameters: Vec::new(),
-                    },
-                )]),
-            },
-            bytes_sha256(bytes),
-            ["wasi:logging/logging@0.1.0".to_owned()],
-            Vec::new(),
-        )
-        .expect("fixture admits")
-        .component
-    }
-
-    fn descriptor(media_type: &str, digest: &wamn_digest::Digest, size: i64) -> OciDescriptor {
-        OciDescriptor {
-            media_type: media_type.to_owned(),
-            digest: digest.to_string(),
-            size,
-            ..OciDescriptor::default()
-        }
-    }
-
-    fn manifest(component: &AdmittedComponent, component_size: i64) -> OciImageManifest {
-        let config = component_artifact_config_bytes(component);
-        let layout = component_artifact_layout(&[], &config);
-        OciImageManifest {
-            schema_version: layout.manifest_schema_version(),
-            config: descriptor(
-                layout.config_media_type(),
-                &bytes_sha256(&config),
-                i64::try_from(config.len()).expect("fixture config size fits"),
-            ),
-            layers: vec![descriptor(
-                layout.layer_media_type(),
-                &component.component_digest,
-                component_size,
-            )],
-            ..OciImageManifest::default()
-        }
-    }
-
-    #[test]
-    fn manifest_must_match_both_descriptors_and_exactly_one_layer() {
-        let component = admitted(b"component-bytes");
-        let config = component_artifact_config_bytes(&component);
-        let exact = manifest(&component, 15);
-        verify_manifest(
-            &exact,
-            &component.component_digest,
-            config.len(),
-            "registry.example/wamn/components:tag",
-        )
-        .expect("exact manifest verifies");
-
-        let cases: [(&str, OciImageManifest); 6] = [
-            ("schema", {
-                let mut value = exact.clone();
-                value.schema_version = 1;
-                value
-            }),
-            ("cardinality", {
-                let mut value = exact.clone();
-                value.layers.push(value.layers[0].clone());
-                value
-            }),
-            ("layer-media", {
-                let mut value = exact.clone();
-                value.layers[0].media_type = "application/wasm".to_owned();
-                value
-            }),
-            ("layer-digest", {
-                let mut value = exact.clone();
-                value.layers[0].digest = bytes_sha256(b"other").to_string();
-                value
-            }),
-            ("config-media", {
-                let mut value = exact.clone();
-                value.config.media_type = "application/json".to_owned();
-                value
-            }),
-            ("config-size", {
-                let mut value = exact;
-                value.config.size += 1;
-                value
-            }),
-        ];
-        for (_case, value) in cases {
-            let error = verify_manifest(
-                &value,
-                &component.component_digest,
-                config.len(),
-                "registry.example/wamn/components:tag",
-            )
-            .expect_err("manifest drift refuses");
-            assert_eq!(
-                error.error_type(),
-                ComponentArtifactFetchErrorType::Mismatched
-            );
-        }
-    }
-
-    #[test]
-    fn registry_transport_errors_never_expose_upstream_context() {
-        let error = transport_error(
-            "registry.example/wamn/components:tag",
-            "component-artifact-manifest-unavailable",
-            "component-artifact-manifest-invalid",
-            &OciDistributionError::ServerError {
-                code: 500,
-                url: "https://user:secret@registry.example/v2/private".to_owned(),
-                message: "registry-controlled-response-body".to_owned(),
-            },
-        );
-        let rendered = format!("{error:?} {error}");
-        assert!(!rendered.contains("secret"));
-        assert!(!rendered.contains("private"));
-        assert!(!rendered.contains("registry-controlled-response-body"));
-        assert!(std::error::Error::source(&error).is_none());
     }
 }

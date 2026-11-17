@@ -5866,7 +5866,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "data-encoding",
  "hex",
  "hyper",
  "opentelemetry",
@@ -5876,7 +5875,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-opentelemetry",
- "tracing-subscriber",
  "url",
  "wamn-catalog",
  "wamn-component-policy",

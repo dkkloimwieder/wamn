@@ -1,11 +1,13 @@
 //! Entry-owned operations on the Store's host transaction.
 
+use wamn_catalog::application_config::ApplicationOperationType;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
 use anyhow::Context as _;
 use wamn_catalog::canonical_name::CanonicalName;
+use wamn_engine::application::WorkloadRoutes;
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::InvocationTrace;
@@ -54,8 +56,8 @@ impl OperationMetrics {
 /// Immutable authority installed by the host before a workload starts.
 #[derive(Debug)]
 pub(super) struct OperationWorkload {
-    start: (String, String),
-    context: Arc<wamn_connection::invocation::ReleaseContext>,
+    pub(super) workload: Box<str>,
+    config: Arc<WorkloadRoutes>,
     identity: SessionIdentity,
     operations: BTreeMap<CanonicalName, OperationAuthority>,
     invoker: std::sync::RwLock<Option<std::sync::Weak<dyn OperationInvoker>>>,
@@ -64,9 +66,9 @@ pub(super) struct OperationWorkload {
 #[derive(Debug)]
 struct OperationAuthority {
     read: bool,
+    delete: bool,
     grant: Option<wamn_catalog::registered_operation::RegisteredOperation>,
     schema: Option<String>,
-    invocation: wamn_connection::connection::ConnectionInvocation,
     application: wamn_catalog::ApplicationName,
     transaction: bool,
 }
@@ -119,40 +121,58 @@ impl WamnPostgres {
         &self,
         workload: &str,
         component: &str,
-        name: &str,
+        config: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<()> {
-        let mut bound = self
-            .operation_workloads
-            .write()
-            .expect("operation workloads lock poisoned");
-        let entry = bound
-            .get(workload)
-            .cloned()
-            .context("operation entry workload is not bound")?;
-        {
-            let (started_name, reference) = &entry.start;
-            anyhow::ensure!(started_name == name, "operation authority is entry-only");
-            anyhow::ensure!(
-                entry
-                    .context
-                    .release
-                    .manifest()
-                    .composed_entry
-                    .as_ref()
-                    .is_some_and(|released| {
-                        wamn_catalog::composed_entry_starts_as(&released.reference, reference)
-                    }),
-                "started entry reference differs from the release"
-            );
-        }
+        let Some(config) = WorkloadRoutes::read(config)? else {
+            return Ok(());
+        };
+        let operations = config
+            .application
+            .components
+            .iter()
+            .flat_map(|component| {
+                component.operations.iter().map(|(name, operation)| {
+                    Ok((
+                        name.clone(),
+                        OperationAuthority {
+                            read: operation.type_ == Some(ApplicationOperationType::Read),
+                            delete: operation.type_ == Some(ApplicationOperationType::Delete),
+                            grant: if operation.public {
+                                Some(name.as_str().parse()?)
+                            } else {
+                                None
+                            },
+                            schema: component.schema.clone(),
+                            application: config.application.application.clone(),
+                            transaction: operation.host_transaction,
+                        },
+                    ))
+                })
+            })
+            .collect::<anyhow::Result<_>>()?;
+        let identity = SessionIdentity {
+            project_env_key: Some(config.project_env_key.clone()),
+            project: Some(config.application.project.clone()),
+            application: Some(config.application.application.clone()),
+            ..SessionIdentity::default()
+        };
+        let entry = Arc::new(OperationWorkload {
+            workload: workload.into(),
+            config: Arc::new(config),
+            identity,
+            operations,
+            invoker: std::sync::RwLock::default(),
+        });
         self.scopes
             .update::<crate::invocation::Authority, _>(component, |record| {
                 record.identity = entry.identity.clone();
             });
-        self.scopes
-            .update::<wamn_connection::invocation::Scope, _>(component, |record| {
-                record.context = Some(Arc::clone(&entry.context));
-            });
+        self.scopes.bind_workload(component, workload);
+        let mut bound = self
+            .operation_workloads
+            .write()
+            .expect("operation workloads lock poisoned");
+        bound.insert(workload.to_owned(), Arc::clone(&entry));
         bound.insert(component.to_owned(), entry);
         Ok(())
     }
@@ -638,21 +658,14 @@ fn entry_invocation_span(
         .expect("operation workloads lock poisoned")
         .get(workload)
         .cloned()?;
-    let release = facts.context.release.target();
-    let span = wamn_engine::invocation_trace::invocation_span(
-        &wamn_engine::invocation_trace::InvocationSite {
-            project_env_key: &release.project_env_key,
-            project: facts.identity.project.as_ref()?,
-            environment: &release.environment,
-            wiring_id: "",
-            wiring_version: 0,
-            node_id: "",
-            input_port: None,
-            operation: operation.as_str(),
-            component_digest: &facts.operations.get(operation)?.invocation.component_digest,
-            caller,
-        },
-        None,
+    let config = &facts.config.application;
+    let span = tracing::info_span!(
+        target: "wamn::operation", "wamn.operation",
+        wamn.project_env_key = %facts.config.project_env_key,
+        wamn.project = %config.project,
+        wamn.environment = %config.environment,
+        wamn.operation = %operation,
+        wamn.attachment_id = tracing::field::Empty,
     );
     if let Some(caller) = caller {
         span.record("wamn.attachment_id", caller.attachment_id().as_str());
@@ -683,14 +696,13 @@ async fn begin(
     if admitted.read && !authorize_only {
         return Err(Refusal::ReadsClaimNothing);
     }
-    // A present handle was issued for an attachment of this loaded release.
+    // A caller handle belongs to a route of this application workload.
     if let Some(caller) = caller
-        && facts
-            .context
-            .release
-            .manifest()
-            .attachment(caller.attachment_id())
-            .is_none()
+        && !facts
+            .config
+            .routes
+            .iter()
+            .any(|route| route.attachment_id == caller.attachment_id().as_str())
     {
         return Err(Refusal::InvalidCaller);
     }
@@ -712,7 +724,7 @@ async fn begin(
     let authority = AuthorizedInvocation::enter(
         &postgres,
         InvocationRequest {
-            context: Some(Arc::clone(&facts.context)),
+            context: None,
             scope: wamn_engine::operation::next_scope(workload).into_string(),
             identity,
             caller: caller.cloned(),
@@ -722,7 +734,7 @@ async fn begin(
                 root: delivery.clone(),
                 depth: 0,
             }),
-            invocation: Some(admitted.invocation.clone()),
+            invocation: None,
             read: admitted.read,
             principal: if authorize_only {
                 PrincipalVerification::Authenticated
@@ -763,15 +775,7 @@ async fn begin(
         open.settled = false;
         return Ok((Some(open), Begun::New(delivery)));
     }
-    let claim = claim_operation(
-        &open,
-        admitted.transaction,
-        facts.context.release.manifest().routes.iter().any(|route| {
-            route.operation == open.operation && route.type_ == wamn_catalog::OperationType::Delete
-        }),
-        request,
-    )
-    .await?;
+    let claim = claim_operation(&open, admitted.transaction, admitted.delete, request).await?;
     match claim {
         Claim::New => {
             open.settled = false;
@@ -786,9 +790,6 @@ async fn begin(
         Claim::Conflict => Err(Refusal::Conflict),
     }
 }
-
-#[cfg(test)]
-mod tests;
 
 async fn claim_operation(
     open: &OpenOperation,

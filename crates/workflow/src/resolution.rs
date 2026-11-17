@@ -180,7 +180,7 @@ pub fn resolve_workflow_in_release(
 pub async fn resolve_workflow(
     postgres: &WamnPostgres,
     project: &wamn_registry::ProjectId,
-    release: &wamn_engine::release_manifest::LoadedRelease,
+    release: &wamn_catalog::serving_context::ServingContext,
     run: &WorkflowRunKey<'_>,
 ) -> anyhow::Result<ResolvedActiveWiring> {
     anyhow::ensure!(

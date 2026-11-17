@@ -4,6 +4,7 @@
 //! invocation binding. Activation tests the deadline, that the operation is
 //! admitted and released, and the released-operation grant under the caller.
 
+use wamn_catalog::serving_context::ServingContext;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, RwLock};
 
@@ -15,7 +16,6 @@ use wamn_engine::native_routes::authorize_released_operation;
 use wamn_engine::operation::invocation_policy::{InvocationPolicy, InvocationScope};
 use wamn_engine::operation::native_call::{NativeCallFailure, NativeInvocation};
 use wamn_engine::operation::native_workload::native_component_name;
-use wamn_engine::release_manifest::LoadedRelease;
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
@@ -63,7 +63,7 @@ pub struct EdgePolicy {
 
 impl EdgePolicy {
     /// A policy over `components`, each with its released operations.
-    pub fn new(components: &[AdmittedComponent], release: &LoadedRelease) -> anyhow::Result<Self> {
+    pub fn new(components: &[AdmittedComponent], release: &ServingContext) -> anyhow::Result<Self> {
         let mut policies = BTreeMap::new();
         for fact in components {
             release

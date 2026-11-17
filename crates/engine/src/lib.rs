@@ -7,7 +7,7 @@
 //! - [`lifecycle`]: bounded service shutdown and native liveness supervision.
 //! - [`HostPlugin`]: the plugin trait. It is wash-runtime's trait, re-exported.
 //!   The engine owns no plugin trait of its own.
-//! - [`flow_http_routing`]: HTTP authentication from the loaded release.
+//! - [`flow_http_routing`]: HTTP authentication from workload configuration.
 //! - [`native_routes`]: native host requests and operation authorization.
 //! - [`entry_operation`]: the generated host side of `wamn:operation`, the
 //!   entry-owned operation boundary of the http-route guest. Each host
@@ -15,12 +15,6 @@
 //! - [`expected_router`]: the native HTTP router that refuses an unbound
 //!   release hostname as unavailable.
 //! - [`component_admission`]: pure byte admission for project components.
-//! - [`component_artifact`]: the wire contract for digest-addressed component
-//!   artifacts.
-//! - [`artifact_source`]: the [`ArtifactSource`](artifact_source::ArtifactSource)
-//!   trait that supplies verified component bytes, its digest tests, and the
-//!   local file source. The OCI registry source lives in the host service crates.
-//! - [`release_manifest`]: an immutable release manifest for a project deployment.
 //! - [`invocation_trace`]: restores host-captured tracing context when native
 //!   dispatch polls host callbacks.
 //! - [`component_imports`]: a compiled component's ordered world imports.
@@ -47,9 +41,8 @@
 //! off. The owner accepted that list (finding `wamn-qt1t`), so the dependency
 //! test ignores what is reached only through wash-runtime and pins that list.
 
-pub mod artifact_source;
+pub mod application;
 pub mod component_admission;
-pub mod component_artifact;
 pub mod engine;
 pub mod entry_operation;
 pub mod expected_router;
@@ -60,7 +53,6 @@ pub mod invocation_trace;
 pub mod lifecycle;
 pub mod native_routes;
 pub mod operation;
-pub mod release_manifest;
 mod route_bindings;
 
 pub use engine::{

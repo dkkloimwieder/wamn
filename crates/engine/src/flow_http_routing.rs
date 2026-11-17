@@ -4,10 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde_json::Value;
-use wamn_catalog::{
-    AttachmentAuthPolicy, AttachmentRef, AttachmentType, OperationType, ServedAttachment,
-    ServingManifest, parse_attachment_auth_policy,
-};
+use wamn_catalog::{AttachmentAuthPolicy, parse_attachment_auth_policy};
 use wamn_identity_protocol::PAT_TOKEN_PREFIX;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -15,7 +12,6 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::release_manifest::{LoadedRelease, ReleaseTarget};
 use crate::route_bindings::wamn::flow_http_routing::routing;
 /// The request header and the refusal that cross a [`RouteAuthenticator`].
 pub use crate::route_bindings::wamn::flow_http_routing::routing::{AuthRejection, Header};
@@ -154,17 +150,18 @@ impl AuthenticatedCaller {
     }
 }
 
-/// This process was given no release, so it can answer no route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NoRelease;
-
-impl std::fmt::Display for NoRelease {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("this process carries no release manifest")
-    }
+/// Authentication facts resolved by the host for one route.
+#[derive(Debug, Clone, Copy)]
+pub struct RoutePolicy<'a> {
+    pub policy: &'a Value,
+    pub read: bool,
 }
 
-impl std::error::Error for NoRelease {}
+/// The host's route policies, supplied by workload config or an edge bundle.
+pub trait RouteProvider: Send + Sync + std::fmt::Debug {
+    fn target(&self) -> &wamn_registry::ProjectEnvKey;
+    fn route(&self, id: &wamn_catalog::canonical_name::CanonicalName) -> Option<RoutePolicy<'_>>;
+}
 
 /// The host's mechanism for a route whose policy names a credential.
 ///
@@ -199,12 +196,10 @@ pub trait EnvironmentStatus: Send + Sync + std::fmt::Debug {
 /// One request to a protected route, as the route plugin resolved it.
 #[derive(Clone, Copy)]
 pub struct AuthenticationRequest<'a> {
-    /// The loaded release that carries the attachment.
-    pub manifest: &'a ServingManifest,
     /// The project and environment of the host that serves the route.
-    pub target: &'a ReleaseTarget,
+    pub target: &'a wamn_registry::ProjectEnvKey,
     pub attachment_id: &'a wamn_catalog::canonical_name::CanonicalName,
-    pub attachment: ServedAttachment<'a>,
+    pub read: bool,
     /// The attachment's parsed policy. It is never `none`.
     pub policy: AttachmentAuthPolicy<'a>,
     pub headers: &'a [Header],
@@ -258,59 +253,30 @@ impl FlowHttpRouting {
         self
     }
 
-    /// Authenticate native or guest headers under the released attachment policy.
-    /// The native handler also enforces its operation grant before serving a file.
-    pub async fn authenticate(
+    /// Apply a host-resolved policy, including a fixed native host route.
+    pub async fn authenticate_policy(
         &self,
-        loaded: &LoadedRelease,
+        target: &wamn_registry::ProjectEnvKey,
         attachment_id: &wamn_catalog::canonical_name::CanonicalName,
+        route: RoutePolicy<'_>,
         headers: &[Header],
         body: &[u8],
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let attachment = loaded
-            .manifest()
-            .served_attachment(attachment_id)
-            .ok_or_else(authentication_unavailable)?;
-        self.authenticate_accepted(
-            loaded,
-            attachment_id,
-            attachment.auth_policy(),
-            headers,
-            body,
-        )
-        .await
-    }
-    async fn authenticate_accepted(
-        &self,
-        loaded_release: &LoadedRelease,
-        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
-        accepted: &Value,
-        headers: &[Header],
-        body: &[u8],
-    ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let manifest = loaded_release.manifest();
         if let Some(environment) = &self.environment {
-            let inactive = environment
-                .inactive(&loaded_release.target().project_env_key)
-                .await
-                .map_err(|error| {
-                    tracing::warn!(error = %error, "environment status unavailable");
-                    authentication_unavailable()
-                })?;
+            let inactive = environment.inactive(target).await.map_err(|error| {
+                tracing::warn!(error = %error, "environment status unavailable");
+                authentication_unavailable()
+            })?;
             if inactive {
                 return Err(AuthRejection {
                     status: ENVIRONMENT_INACTIVE_STATUS,
-                    code: ENVIRONMENT_INACTIVE_CODE.to_string(),
+                    code: ENVIRONMENT_INACTIVE_CODE.to_owned(),
                 });
             }
         }
-        let attachment = manifest
-            .served_attachment(attachment_id)
-            .filter(|attachment| carries_http_route(attachment.attachment_type()))
-            .ok_or_else(authentication_unavailable)?;
-        let policy = parse_attachment_auth_policy(accepted).ok_or_else(|| AuthRejection {
+        let policy = parse_attachment_auth_policy(route.policy).ok_or_else(|| AuthRejection {
             status: UNSUPPORTED_POLICY_STATUS,
-            code: UNSUPPORTED_POLICY_CODE.to_string(),
+            code: UNSUPPORTED_POLICY_CODE.to_owned(),
         })?;
         if policy == AttachmentAuthPolicy::None {
             return Ok(None);
@@ -324,10 +290,9 @@ impl FlowHttpRouting {
         })?;
         authenticator
             .authenticate(AuthenticationRequest {
-                manifest,
-                target: loaded_release.target(),
+                target,
                 attachment_id,
-                attachment,
+                read: route.read,
                 policy,
                 headers,
                 body,
@@ -335,78 +300,25 @@ impl FlowHttpRouting {
             .await
     }
 
-    /// Bind the released policy for interface tests without a workload store.
-    #[cfg(feature = "test-util")]
-    pub fn for_test(release: Option<Arc<LoadedRelease>>) -> Self {
-        let scopes = Arc::new(crate::invocation_scope::InvocationScopes::default());
-        if let Some(release) = release {
-            scopes.bind_release("authentication-fixture", release);
-        }
-        Self::new(scopes)
-    }
-
-    /// Exercise production route authentication from an integration test.
-    #[cfg(feature = "test-util")]
-    pub async fn authenticate_authorization_for_test(
+    async fn authenticate_accepted(
         &self,
+        routes: &dyn RouteProvider,
         attachment_id: &wamn_catalog::canonical_name::CanonicalName,
-        authorization: Option<&str>,
-    ) -> Result<Option<AuthenticatedCaller>, (u16, String)> {
-        let headers = authorization
-            .map(|value| Header {
-                name: "authorization".to_string(),
-                value: value.to_string(),
-            })
-            .into_iter()
-            .collect::<Vec<_>>();
-        let release = self.scopes.release("authentication-fixture").ok_or((
-            AUTHENTICATION_UNAVAILABLE_STATUS,
-            AUTHENTICATION_UNAVAILABLE_CODE.to_owned(),
-        ))?;
-        self.authenticate(&release, attachment_id, &headers, &[])
-            .await
-            .map_err(|rejection| (rejection.status, rejection.code))
-    }
-
-    /// Exercise production route authentication with exact request headers.
-    #[cfg(feature = "test-util")]
-    pub async fn authenticate_headers_for_test(
-        &self,
-        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
-        headers: &[(&str, &str)],
-    ) -> Result<Option<AuthenticatedCaller>, (u16, String)> {
-        self.authenticate_request_for_test(attachment_id, headers, &[])
-            .await
-    }
-
-    /// Exercise production authentication with the exact request body.
-    #[cfg(feature = "test-util")]
-    pub async fn authenticate_request_for_test(
-        &self,
-        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
-        headers: &[(&str, &str)],
+        accepted: &Value,
+        headers: &[Header],
         body: &[u8],
-    ) -> Result<Option<AuthenticatedCaller>, (u16, String)> {
-        let headers = headers
-            .iter()
-            .map(|(name, value)| Header {
-                name: (*name).to_string(),
-                value: (*value).to_string(),
-            })
-            .collect::<Vec<_>>();
-        let release = self.scopes.release("authentication-fixture").ok_or((
-            AUTHENTICATION_UNAVAILABLE_STATUS,
-            AUTHENTICATION_UNAVAILABLE_CODE.to_owned(),
-        ))?;
-        self.authenticate(&release, attachment_id, &headers, body)
+    ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
+        let route = routes
+            .route(attachment_id)
+            .ok_or_else(authentication_unavailable)?;
+        if route.policy != accepted {
+            return Err(authentication_unavailable());
+        }
+        self.authenticate_policy(routes.target(), attachment_id, route, headers, body)
             .await
-            .map_err(|rejection| (rejection.status, rejection.code))
     }
 }
 
-fn carries_http_route(type_: AttachmentType) -> bool {
-    matches!(type_, AttachmentType::Http | AttachmentType::Studio)
-}
 #[derive(Clone, Copy)]
 pub enum RouteCredential<'a> {
     /// A session token. `csrf` is `Some` when the token came by the session
@@ -442,8 +354,7 @@ pub fn route_credential<'a>(
     request: &AuthenticationRequest<'a>,
 ) -> Result<RouteCredential<'a>, AuthRejection> {
     let AuthenticationRequest {
-        manifest,
-        attachment,
+        read,
         policy,
         headers,
         ..
@@ -461,7 +372,7 @@ pub fn route_credential<'a>(
     if let Some(token) = cookie.filter(|_| policy.allows_session()) {
         return Ok(RouteCredential::Session {
             token,
-            csrf: Some(!serves_read(manifest, attachment)),
+            csrf: Some(!read),
         });
     }
     let session = policy.allows_session()
@@ -517,31 +428,6 @@ pub fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection>
         }
     }
     Ok(found)
-}
-
-/// Whether an attachment only reads: it targets a route whose operation type is
-/// one of `OperationType::READ_TYPES`. A wiring can write, so it never reads
-/// only.
-pub fn serves_read(manifest: &ServingManifest, attachment: ServedAttachment<'_>) -> bool {
-    route_type(manifest, attachment).is_some_and(OperationType::is_read)
-}
-
-/// The operation type of the route an attachment targets. A wiring has none.
-fn route_type(
-    manifest: &ServingManifest,
-    attachment: ServedAttachment<'_>,
-) -> Option<OperationType> {
-    let attachment = match attachment {
-        ServedAttachment::Authored(AttachmentRef::Route(attachment)) => attachment,
-        ServedAttachment::Host(attachment) => return Some(attachment.route.type_),
-    };
-    manifest
-        .route(
-            &attachment.package_id,
-            &attachment.component,
-            &attachment.operation,
-        )
-        .map(|route| route.type_)
 }
 
 /// Make sure of the signed double-submit of a cookie session.
@@ -616,6 +502,11 @@ impl HostPlugin for FlowHttpRouting {
         }
     }
 
+    async fn on_workload_unbind(&self, workload: &str, _: WitInterfaces<'_>) -> anyhow::Result<()> {
+        self.scopes.revoke_workload(workload);
+        Ok(())
+    }
+
     /// `world` only decides whether this callback fires; the linker entry is made
     /// here or the guest's import resolves to nothing.
     async fn on_workload_item_bind<'a>(
@@ -625,6 +516,12 @@ impl HostPlugin for FlowHttpRouting {
     ) -> anyhow::Result<()> {
         if !interfaces.contains("wamn", "flow-http-routing", &["routing"]) {
             return Ok(());
+        }
+        if let Some(routes) =
+            crate::application::WorkloadRoutes::read(&item.local_resources().config)?
+        {
+            self.scopes.bind_routes(item.id(), Arc::new(routes));
+            self.scopes.bind_workload(item.id(), item.workload_id());
         }
         add_to_linker(item.linker()?)?;
         Ok(())
@@ -665,7 +562,7 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
                     .collect::<Vec<_>>(),
             );
             let plugin = plugin_of(&ctx)?;
-            let release = plugin.scopes.release(&ctx.component_id);
+            let release = plugin.scopes.routes(&ctx.component_id);
             if release.is_some() {
                 let lifetime = plugin
                     .scopes
@@ -682,7 +579,13 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
                 };
                 let accepted: Value = serde_json::from_str(&accepted)?;
                 let caller = match plugin
-                    .authenticate_accepted(&release, &attachment_id, &accepted, &headers, &body)
+                    .authenticate_accepted(
+                        release.as_ref(),
+                        &attachment_id,
+                        &accepted,
+                        &headers,
+                        &body,
+                    )
                     .await
                 {
                     Ok(caller) => caller,

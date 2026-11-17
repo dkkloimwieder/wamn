@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use serde::Deserialize;
-use wamn_engine::release_manifest::ReleaseTarget;
+use wamn_catalog::serving_context::ReleaseTarget;
 use wamn_registry::project_env_key;
 
 /// The variable that names the configuration file.
@@ -296,7 +296,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::EdgeConfig;
-    use wamn_engine::release_manifest::ReleaseTarget;
+    use wamn_catalog::serving_context::ReleaseTarget;
 
     const EXAMPLE: &str = include_str!("../edge.example.toml");
 

@@ -271,16 +271,13 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         &self,
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let coordinate = wamn_registry::ProjectEnvKey::triple(&request.target.project_env_key);
-        if coordinate.env != request.target.environment {
-            return Err(authentication_unavailable());
-        }
+        let coordinate = wamn_registry::ProjectEnvKey::triple(request.target);
         let project = &coordinate.project;
         if let AttachmentAuthPolicy::Signature { header, credential } = request.policy {
             let principal = self
                 .authenticate_signature(
                     self.projects
-                        .get(&request.target.project_env_key)
+                        .get(request.target)
                         .ok_or_else(signature_unauthorized)?
                         .as_ref(),
                     header,
@@ -291,7 +288,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .await?;
             let grants = self
                 .postgres
-                .principal_grants(project, &request.target.project_env_key, &principal)
+                .principal_grants(project, request.target, &principal)
                 .await
                 .map_err(|_| authentication_unavailable())?;
             if !grants.active || grants.user {
@@ -299,7 +296,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             }
             let permissions = self
                 .postgres
-                .user_operation_permissions(project, &request.target.project_env_key, &principal)
+                .user_operation_permissions(project, request.target, &principal)
                 .await
                 .map_err(|_| authentication_unavailable())?;
             return Ok(Some(AuthenticatedCaller::new(
@@ -324,7 +321,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     token,
                     csrf.map(|required| (headers, required)),
                     project,
-                    &target.project_env_key,
+                    target,
                 )
                 .await
                 .map(Some);
@@ -368,10 +365,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         .strip_prefix("connection-")
                         .and_then(|id| id.parse::<uuid::Uuid>().ok())
                         .ok_or_else(unauthorized)?;
-                    let facts = self
-                        .projects
-                        .get(&target.project_env_key)
-                        .ok_or_else(unauthorized)?;
+                    let facts = self.projects.get(target).ok_or_else(unauthorized)?;
                     let active = facts
                         .connection(&connection)
                         .await
@@ -388,7 +382,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             // A service receives its roles through `wamn grant-role`.
             let permissions = self
                 .postgres
-                .user_operation_permissions(project, &target.project_env_key, principal.id())
+                .user_operation_permissions(project, target, principal.id())
                 .instrument(tracing::info_span!("wamn.auth.permissions"))
                 .await
                 .map_err(|error| {
@@ -480,11 +474,7 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
         &self,
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        self.authenticate_control(
-            request.attachment_id,
-            wamn_engine::flow_http_routing::serves_read(request.manifest, request.attachment),
-            request.headers,
-        )
-        .await
+        self.authenticate_control(request.attachment_id, request.read, request.headers)
+            .await
     }
 }

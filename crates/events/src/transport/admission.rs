@@ -13,7 +13,7 @@ impl WamnJetstream {
         &self,
         postgres: &wamn_sql::WamnPostgres,
         project: &wamn_registry::ProjectId,
-        release: &wamn_engine::release_manifest::LoadedRelease,
+        release: &wamn_catalog::serving_context::ServingContext,
         sources: &[(
             &wamn_catalog::ApplicationName,
             &wamn_catalog::PackageName,
@@ -22,7 +22,7 @@ impl WamnJetstream {
         admit: impl AsyncFn(
             &wamn_sql::WamnPostgres,
             &wamn_registry::ProjectId,
-            &wamn_engine::release_manifest::LoadedRelease,
+            &wamn_catalog::serving_context::ServingContext,
             &EventBatchAdmission<'_>,
         ) -> Result<(), wamn_run_state::run_store::ProductionLeaseError>,
     ) -> anyhow::Result<()> {
