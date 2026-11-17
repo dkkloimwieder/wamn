@@ -15,7 +15,7 @@ use wamn_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_connection::connection::ConnectionInvocation;
 
 use super::pool::{
-    ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool, ResolvedCredential,
+    ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool,
     StaticCredentialProvider, WamnPostgresConfig,
 };
 use super::{DEFAULT_PROJECT, PgError};
@@ -196,14 +196,6 @@ fn validate_session_identity(
 }
 
 impl WamnPostgres {
-    pub(super) fn resolve_platform_connection(
-        &self,
-        project: &wamn_registry::ProjectId,
-    ) -> anyhow::Result<Option<ResolvedCredential>> {
-        self.provider
-            .resolve(project, AuthorityClass::Platform, None)
-    }
-
     /// Plugin over a single default database (the [`WamnPostgresConfig`]
     /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
     /// returns `connection-unavailable`.

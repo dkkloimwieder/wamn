@@ -163,9 +163,9 @@ impl ConnectionHttp {
                     &*facts
                         .locks()
                         .map_err(|_| ConnectionError::CredentialUnavailable)?,
-                    &answer.fact,
+                    Some(&answer.fact),
                     execution.deadline(),
-                    false,
+                    None,
                 )
                 .await
                 .map_err(|_| ConnectionError::Timeout)?,

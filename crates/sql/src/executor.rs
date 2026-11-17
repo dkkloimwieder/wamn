@@ -150,15 +150,6 @@ impl WamnPostgres {
 
 #[async_trait::async_trait]
 impl wamn_connection::database::ProjectDatabase for WamnPostgres {
-    async fn owned_connection(
-        &self,
-        project: &wamn_registry::ProjectId,
-    ) -> anyhow::Result<sqlx::PgConnection> {
-        let config = self
-            .resolve_platform_connection(project)?
-            .ok_or_else(|| anyhow::anyhow!("platform login unavailable"))?;
-        wamn_postgres::connect(&config.database_url).await
-    }
     async fn oauth_connection(
         &self,
         project: &wamn_registry::ProjectId,
