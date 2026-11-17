@@ -46,6 +46,14 @@ pub fn roles(
         ApplicationOperationType,
     };
     let mut components = Vec::new();
+    let mut declared_connections = std::collections::BTreeMap::new();
+    let mut integrations = std::collections::BTreeMap::new();
+    let component_names: std::collections::BTreeSet<_> = manifest
+        .components
+        .iter()
+        .map(component_name)
+        .chain(std::iter::once("flow-http".to_owned()))
+        .collect();
     let mut typed_operations = std::collections::BTreeSet::new();
     for component in &manifest.components {
         let name = component_name(component);
@@ -85,6 +93,20 @@ pub fn roles(
             } else {
                 continue;
             };
+            ensure!(
+                !component_names.contains(&binding.alias),
+                "declared connection {} conflicts with a component name",
+                binding.alias
+            );
+            if let Some(previous) =
+                declared_connections.insert(&binding.alias, &binding.connection_id)
+            {
+                ensure!(
+                    previous == &binding.connection_id,
+                    "declared name {} is bound to two connections in one workload",
+                    binding.alias
+                );
+            }
             let integration = if binding.runtime_type == wamn_catalog::RuntimeType::Wasm {
                 let base = wamn_catalog::parse_component_artifact_base(integration_repository)?;
                 Some(format!(
@@ -99,6 +121,20 @@ pub fn roles(
             } else {
                 None
             };
+            if let Some(image) = &integration {
+                let authority = binding
+                    .authority
+                    .as_deref()
+                    .context("wasm connection has no fixed authority")?;
+                integrations.entry(&binding.alias).or_insert_with(|| {
+                    serde_json::json!({
+                        "name": binding.alias,
+                        "image": image,
+                        "authority": authority,
+                        "connection": binding.connection_id,
+                    })
+                });
+            }
             connections.push(ApplicationConnection {
                 name: alias,
                 selector,
@@ -194,18 +230,18 @@ pub fn roles(
     Ok(vec![Role {
         name: RoleName::Http,
         config,
-        host_interfaces: host_interfaces(manifest, bindings)?,
+        host_interfaces: host_interfaces(manifest, !integrations.is_empty())?,
+        integration_components: integrations.into_values().collect(),
     }])
 }
 
-/// Host imports: platform packages are unnamed; integration declarations keep their labels.
+/// Unnamed platform imports, including bound when the workload has integration siblings.
 pub fn host_interfaces(
     manifest: &ServingManifest,
-    bindings: &[crate::environment::bindings::Binding],
+    has_integrations: bool,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let mut packages =
         std::collections::BTreeMap::<(&str, &str), (&str, std::collections::BTreeSet<&str>)>::new();
-    let mut named = std::collections::BTreeSet::new();
     for component in &manifest.components {
         for import in &component.descriptor.imports {
             let Some((package, rest)) = import.split_once('/') else {
@@ -225,25 +261,10 @@ pub fn host_interfaces(
             );
             entry.1.insert(interface);
         }
-        for binding in bindings.iter().filter(|binding| {
-            binding.components.contains(&component_name(component))
-                && binding.runtime_type == wamn_catalog::RuntimeType::Wasm
-        }) {
-            named.insert((binding.alias.as_str(), binding.interface.as_str()));
-        }
     }
     let mut interfaces: Vec<_> = packages.into_iter().map(|((namespace, package), (version, interfaces))| serde_json::json!({"namespace":namespace,"package":package,"version":version,"interfaces":interfaces})).collect();
-    for (name, interface) in named {
-        let (package, rest) = interface
-            .split_once('/')
-            .context("integration interface package")?;
-        let (namespace, package) = package
-            .split_once(':')
-            .context("integration interface namespace")?;
-        let (interface, version) = rest
-            .rsplit_once('@')
-            .context("integration interface version")?;
-        interfaces.push(serde_json::json!({"name":name,"namespace":namespace,"package":package,"version":version,"interfaces":[interface]}));
+    if has_integrations {
+        interfaces.push(serde_json::json!({"namespace":"wamn","package":"integration","version":"0.1.0","interfaces":["bound"]}));
     }
     Ok(interfaces)
 }
@@ -289,6 +310,16 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     );
     values.insert("roles".into(), Value::Sequence(roles));
     values.insert(
+        "components".into(),
+        serde_yaml::to_value(
+            input
+                .roles
+                .iter()
+                .flat_map(|role| &role.integration_components)
+                .collect::<Vec<_>>(),
+        )?,
+    );
+    values.insert(
         "hostInterfaces".into(),
         serde_yaml::to_value(
             input
@@ -321,6 +352,7 @@ pub struct Role {
     /// `localResources.config` of the role's component.
     pub config: Mapping,
     pub host_interfaces: Vec<serde_json::Value>,
+    pub integration_components: Vec<serde_json::Value>,
 }
 
 /// The roles a release can imply (R4).

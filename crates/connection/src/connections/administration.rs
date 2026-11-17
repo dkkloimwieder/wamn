@@ -42,6 +42,7 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
             "integration_type",
             "auth_type",
             "external_system",
+            "authority",
             "parameters",
             "credential",
         ],
@@ -128,6 +129,10 @@ pub async fn execute(
         .as_object_mut()
         .expect("validated object")
         .remove("credential");
+    let requested_authority = request
+        .as_object_mut()
+        .expect("validated object")
+        .remove("authority");
     if matches!(
         operation,
         "connection.write" | "connection.copy" | "connection.set_credential"
@@ -151,6 +156,34 @@ pub async fn execute(
         let metadata: Option<Value> = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('auth_schema',a.parameter_schema,'credential_schema',a.credential_schema) FROM registry.integration_type t JOIN registry.integration_type_auth allowed ON allowed.integration_type=t.code JOIN registry.auth_type a ON a.code=allowed.auth_type WHERE t.code=$1 AND a.code=$2")
             .bind(context["integration_type"].as_str()).bind(context["auth_type"].as_str()).fetch_optional(&mut *system).await?;
         let metadata = metadata.ok_or_else(|| refuse("invalid_input", "auth_type"))?;
+        let authority = if operation == "connection.write" {
+            match (
+                metadata["runtime_type"].as_str(),
+                requested_authority.as_ref(),
+            ) {
+                (Some("wasm"), Some(Value::String(value))) => {
+                    use wash_runtime::host::allowed_hosts::AllowedHost;
+                    if !matches!(
+                        value.parse::<AllowedHost>(),
+                        Ok(AllowedHost::Authority(authority))
+                            if authority.port_u16().is_some()
+                                && !value.contains('@')
+                                && value.trim() == value
+                    ) {
+                        return Err(refuse("invalid_input", "authority"));
+                    }
+                    Some(value.as_str())
+                }
+                (Some("wasm"), _) => return Err(refuse("invalid_input", "authority")),
+                (_, None | Some(Value::Null)) => None,
+                _ => return Err(refuse("invalid_input", "authority")),
+            }
+        } else {
+            context["authority"].as_str()
+        };
+        if !new && context["authority"].as_str() != authority {
+            return Err(refuse("immutable_field", "authority"));
+        }
         let versions: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(v) FROM registry.integration_type_version v WHERE integration_type=$1 ORDER BY version")
             .bind(context["integration_type"].as_str()).fetch_all(&mut *system).await?;
         let schemas: Vec<Value> = versions
@@ -164,16 +197,22 @@ pub async fn execute(
             .bind(id).bind(context["active_generation"].as_i64()).fetch_optional(&mut **project).await?;
         if operation == "connection.copy" {
             let source = source.ok_or_else(|| refuse("invalid_input", "source_env"))?;
-            let copied: Option<(String,String,Value)> = sqlx::query_as("SELECT c.integration_type,c.auth_type,g.parameters FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1")
+            let copied: Option<(String,String,Value,Option<String>)> = sqlx::query_as("SELECT c.integration_type,c.auth_type,g.parameters,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1")
                 .bind(request["name"].as_str()).fetch_optional(source).await?;
-            let (kind, auth, parameters) =
+            let (kind, auth, parameters, source_authority) =
                 copied.ok_or_else(|| refuse("not_found", "connection"))?;
             if context["integration_type"] != kind || context["auth_type"] != auth {
                 return Err(refuse("immutable_field", "integration_type"));
             }
+            if source_authority.as_deref() != authority {
+                return Err(refuse("immutable_field", "authority"));
+            }
             request["parameters"] = parameters;
         } else if operation == "connection.set_credential" {
             request["parameters"] = previous.as_ref().expect("existing generation").0.clone();
+        }
+        if metadata["runtime_type"] == "wasm" && request["parameters"].get("authority").is_some() {
+            return Err(refuse("invalid_input", "parameters"));
         }
         validate_connection_parameters(
             &request["parameters"],
@@ -285,6 +324,12 @@ pub async fn execute(
                         .split_once('}')
                         .ok_or_else(|| refuse("invalid_input", "resource_key"))?
                         .0;
+                    if field == "authority"
+                        && let Some(authority) = authority
+                    {
+                        *resource = resource.replace("{authority}", authority);
+                        continue;
+                    }
                     if !schemas
                         .iter()
                         .any(|s| s["properties"][field]["immutable"] == true)
@@ -306,8 +351,8 @@ pub async fn execute(
             sqlx::query("INSERT INTO identity.principals(id,type,subject,display_name) VALUES($1,'service',$2,$3)")
                 .bind(principal).bind(format!("connection-{id}")).bind(request["name"].as_str()).execute(&mut *tx).await?;
             tx.commit().await?;
-            sqlx::query("INSERT INTO platform.connection(id,name,integration_type,auth_type,external_system_id,target_id,resource_key,active_generation,service_principal_id) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8)")
-                .bind(id).bind(request["name"].as_str()).bind(context["integration_type"].as_str()).bind(auth).bind(external).bind(target).bind(resource).bind(principal).execute(&mut **project).await.map_err(connection_write_error)?;
+            sqlx::query("INSERT INTO platform.connection(id,name,integration_type,auth_type,external_system_id,target_id,resource_key,active_generation,service_principal_id,authority) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,$9)")
+                .bind(id).bind(request["name"].as_str()).bind(context["integration_type"].as_str()).bind(auth).bind(external).bind(target).bind(resource).bind(principal).bind(authority).execute(&mut **project).await.map_err(connection_write_error)?;
         }
         let next: i64=sqlx::query_scalar("SELECT coalesce(max(generation),0)+1 FROM platform.connection_generation WHERE connection_id=$1").bind(id).fetch_one(&mut **project).await?;
         if let Some(stored) = &stored {
