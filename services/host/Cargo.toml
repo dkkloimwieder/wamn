@@ -12,6 +12,8 @@ bytes.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 wasmtime-wasi-http.workspace = true
+wamn-http.workspace = true
+uuid.workspace = true
 wamn-postgres.workspace = true
 wamn-broker = { workspace = true }
 mimalloc = { workspace = true }

@@ -4,10 +4,13 @@ package wamn:integration@0.1.0;
 interface bound {
   /// One exact host and port, with brackets around an IPv6 address.
   authority: func() -> string;
-  /// The validated generation parameters, without auth, as JSON.
-  parameters: func() -> string;
-  /// Only custom authentication exposes a credential to integration code.
-  credential: func() -> option<string>;
+  resource call {
+    /// The validated generation parameters, without auth, as JSON.
+    parameters: func() -> string;
+    /// Only custom authentication exposes a credential to integration code.
+    credential: func() -> option<string>;
+  }
+  begin: func() -> result<call, string>;
 }
 
 interface health {

@@ -61,7 +61,14 @@ spec:
           image: {{ .image | quote }}
           imagePullPolicy: Always
           localResources:
+            {{- with .authority }}
+            allowedHosts: [{{ . | quote }}]
+            {{- end }}
             allowedIpNameLookups: []
+            {{- with .connection }}
+            config:
+              wamn.integration: {{ . | quote }}
+            {{- end }}
         {{- end }}
 {{- else }}
 {{- fail (printf "unknown role %q: the application role is http" .name) }}

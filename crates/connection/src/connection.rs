@@ -12,8 +12,6 @@ use wamn_catalog::application_config::{ApplicationConfig, ApplicationConnection}
 /// authorized export; an effect span records the host function separately.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionInvocation {
-    /// The root component, unchanged by nested calls.
-    pub origin: ConnectionOrigin,
     /// Where the invocation entered the release, unchanged by nested calls.
     pub entry: InvocationEntry,
     pub package_id: wamn_catalog::PackageName,
@@ -35,29 +33,42 @@ impl ConnectionInvocation {
         let component = application.components.iter().find(|component| {
             component.package == self.package_id
                 && component.digest == self.component_digest
-                && component
-                    .name
-                    .strip_prefix(self.package_id.as_str())
-                    .and_then(|suffix| suffix.strip_prefix('-'))
-                    == Some(self.component.as_str())
+                && component.name == self.component.as_str()
         })?;
         component.operations.get(&self.operation)?;
-        let binding = wamn_catalog::application_config::binding(
-            application,
-            &component.name,
-            alias.as_str(),
-        )?;
-        let selected = match &binding.selector {
-            wamn_catalog::ComponentConnectionAlias::Name(name) => name == alias,
-            selector => {
-                self.entry
-                    .wiring()
-                    .and_then(|position| selector.resolve(&position.configuration))
-                    .as_ref()
-                    == Some(alias)
-            }
-        };
-        selected.then_some(binding)
+        wamn_catalog::application_config::binding(application, &component.name, alias.as_str())
+    }
+
+    /// Build call authority from the configured operation and its exact sibling.
+    pub fn for_operation(
+        application: &ApplicationConfig,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
+    ) -> anyhow::Result<Self> {
+        use anyhow::Context as _;
+        let (component, policy) = application
+            .components
+            .iter()
+            .find_map(|component| {
+                component
+                    .operations
+                    .get(operation)
+                    .map(|policy| (component, policy))
+            })
+            .context("operation component missing")?;
+        anyhow::ensure!(
+            component.name == policy.component,
+            "operation component disagrees"
+        );
+        let name: wamn_catalog::canonical_name::CanonicalName = component.name.parse()?;
+        Ok(Self {
+            entry: InvocationEntry::Route,
+            package_id: component.package.clone(),
+            component_digest: component.digest,
+            component: name,
+            operation: operation.clone(),
+            closure: ConnectionExecutionClosure::Released,
+            effects: None,
+        })
     }
 
     /// The span coordinates of this invocation. A route has no wiring
@@ -120,20 +131,9 @@ pub struct WiringPosition {
     >,
 }
 
-/// Host-attested root identity for an effect's exact dependency path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConnectionOrigin {
-    pub package_id: wamn_catalog::PackageName,
-    pub component_digest: wamn_digest::Digest,
-    pub component: wamn_catalog::canonical_name::CanonicalName,
-    pub interface_version: wamn_catalog::canonical_name::CanonicalName,
-    pub operation: wamn_catalog::canonical_name::CanonicalName,
-}
-
 /// Host-owned authority closure for one component invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionExecutionClosure {
-    /// A digest-verified serving manifest owns the component and wiring.
+    /// Workload configuration owns the declared component and connection bindings.
     Released,
-
 }

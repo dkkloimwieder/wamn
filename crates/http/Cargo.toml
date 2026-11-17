@@ -9,6 +9,7 @@ license.workspace = true
 test-util = ["wamn-provision/test-util", "dep:wamn-provision", "dep:wamn-broker", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "dep:wamn-sql", "wamn-sql/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "hyper/server"]
 
 [dependencies]
+async-trait.workspace = true
 wasmtime-wasi-http.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 tempfile = { workspace = true, optional = true }

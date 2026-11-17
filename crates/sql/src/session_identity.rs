@@ -11,13 +11,11 @@ use tracing::Instrument as _;
 use wamn_event_wire::Causation;
 use wamn_identity_protocol::AuthorityClass;
 
-use wamn_authority::identity::{
-    ReleaseIdentity, SessionIdentity,
-};
+use wamn_authority::identity::{ReleaseIdentity, SessionIdentity};
 use wamn_connection::connection::ConnectionInvocation;
 
 use super::pool::{
-    ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool,
+    ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool, ResolvedCredential,
     StaticCredentialProvider, WamnPostgresConfig,
 };
 use super::{DEFAULT_PROJECT, PgError};
@@ -82,6 +80,8 @@ impl std::fmt::Debug for WamnPostgres {
 pub struct WamnPostgres {
     pub(super) result_signer:
         std::sync::OnceLock<std::sync::Weak<dyn crate::result_signing::ResultSigner>>,
+    pub(super) connection_cache:
+        std::sync::OnceLock<Arc<dyn wamn_connection::connection_facts::ConnectionCache>>,
     pub(super) authorization:
         std::sync::OnceLock<Arc<dyn wamn_authentication::authorization::AuthorizationStore>>,
     pub(super) operation_metrics: super::operation::OperationMetrics,
@@ -196,6 +196,14 @@ fn validate_session_identity(
 }
 
 impl WamnPostgres {
+    pub(super) fn resolve_platform_connection(
+        &self,
+        project: &wamn_registry::ProjectId,
+    ) -> anyhow::Result<Option<ResolvedCredential>> {
+        self.provider
+            .resolve(project, AuthorityClass::Platform, None)
+    }
+
     /// Plugin over a single default database (the [`WamnPostgresConfig`]
     /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
     /// returns `connection-unavailable`.
@@ -217,6 +225,7 @@ impl WamnPostgres {
             pools: std::sync::RwLock::new(HashMap::new()),
             scopes: Arc::default(),
             operation_workloads: std::sync::RwLock::default(),
+            connection_cache: std::sync::OnceLock::new(),
             operation_metrics: super::operation::OperationMetrics::default(),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),

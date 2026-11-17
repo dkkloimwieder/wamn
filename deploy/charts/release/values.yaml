@@ -33,9 +33,9 @@ platformUi: null
 # Organization whose platform UI configuration the edge serves.
 org: ""
 roles: []
-# Application sibling components pinned by OCI manifest digest.
+# Application and integration sibling components pinned by OCI manifest digest.
 components: []
-# Platform and named integration interfaces imported by these components.
+# Unnamed platform interfaces imported by these components.
 hostInterfaces: []
 
 # Shared environment host selected by application workloads.

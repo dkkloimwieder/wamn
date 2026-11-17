@@ -10,8 +10,7 @@ use wamn_blobstore::file_route::{FileRoutes, RegistryFileConnections};
 use wamn_blobstore::plugin::WamnBlobstore;
 use wamn_catalog::application_config::ApplicationConfig;
 use wamn_catalog::{SignedFileField, SignedFileResultClass};
-use wamn_connection::connection_credentials::ConnectionCredentials;
-use wamn_connection::connection_facts::ConnectionFacts;
+use wamn_connection::connection_facts::ConnectionCache;
 use wamn_connection::invocation::ReleaseContext;
 use wamn_engine::operation::node_types::{ErrorDetail, NodeError};
 use wamn_sql::WamnPostgres;
@@ -25,6 +24,7 @@ struct ApplicationFiles {
 pub(super) struct Files {
     postgres: Weak<WamnPostgres>,
     blobstore: Arc<WamnBlobstore>,
+    connections: Arc<dyn ConnectionCache>,
     applications: RwLock<HashMap<String, Arc<ApplicationFiles>>>,
 }
 
@@ -35,10 +35,15 @@ impl std::fmt::Debug for Files {
 }
 
 impl Files {
-    pub(super) fn new(postgres: &Arc<WamnPostgres>, blobstore: Arc<WamnBlobstore>) -> Self {
+    pub(super) fn new(
+        postgres: &Arc<WamnPostgres>,
+        blobstore: Arc<WamnBlobstore>,
+        connections: Arc<dyn ConnectionCache>,
+    ) -> Self {
         Self {
             postgres: Arc::downgrade(postgres),
             blobstore,
+            connections,
             applications: RwLock::default(),
         }
     }
@@ -79,19 +84,7 @@ impl Files {
                     .upgrade()
                     .context("file database was unloaded")?;
                 let application = &state.application;
-                let key = wamn_registry::name::project_env_key(
-                    &application.org,
-                    &application.project,
-                    &application.environment,
-                );
-                let facts = Arc::new(ConnectionFacts::new(
-                    Arc::default(),
-                    Arc::new(ConnectionCredentials::empty()),
-                    &postgres,
-                    &key,
-                    &application.project,
-                    &application.environment,
-                ));
+                let facts = Arc::clone(&self.connections).facts(Arc::clone(application))?;
                 let context = Arc::new(ReleaseContext::new(
                     Arc::clone(application),
                     Arc::clone(&facts),

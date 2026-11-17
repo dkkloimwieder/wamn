@@ -9,7 +9,6 @@ license.workspace = true
 test-util = ["dep:wamn-postgres", "dep:url", "wamn-registry/test-util", "wamn-kubernetes/test-util", "wamn-provision/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", ]
 
 [dependencies]
-oci-client.workspace = true
 wamn-engine.workspace = true
 wash-runtime.workspace = true
 wasmtime.workspace = true
@@ -32,7 +31,6 @@ tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "m
 tracing = { workspace = true }
 url = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
-wamn-broker = { workspace = true }
 wamn-authority = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-provision = { workspace = true, optional = true }

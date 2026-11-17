@@ -38,6 +38,12 @@
       "values": []
     },
     {
+      "path": "authority",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
       "path": "auth_type",
       "type": "text",
       "nullable": false,

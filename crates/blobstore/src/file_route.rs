@@ -227,32 +227,30 @@ impl FileConnections for RegistryFileConnections {
             .map_err(|error| failed("collector", error))?
             .connections
         {
-            let Some(fact) = self
+            let Some(answer) = self
                 .facts
-                .connection(&id)
+                .answer(&id)
                 .await
                 .map_err(|error| failed("collector", error))?
             else {
                 continue;
             };
-            if fact.status != wamn_connection::connection_memory::ConnectionStatus::Active {
+            if answer.fact.status != wamn_connection::connection_memory::ConnectionStatus::Active {
                 continue;
             }
             let generation = self
                 .facts
-                .generation(&id, fact.active_generation)
+                .generation(&id, answer.fact.active_generation)
                 .await
                 .map_err(|error| failed("collector", error))?;
-            if generation.runtime_type != "host"
-                || !matches!(generation.integration_type.as_str(), "gcs" | "s3" | "disk")
-            {
+            if !matches!(generation.integration_type.as_str(), "gcs" | "s3" | "disk") {
                 continue;
             }
             let mut definition = generation.parameters.clone();
             definition["provider"] = serde_json::json!(generation.integration_type);
             generations.push(FileConnection {
                 id: id.to_string(),
-                generation: fact.active_generation,
+                generation: answer.fact.active_generation,
                 definition,
                 read_only: false,
             });
@@ -306,28 +304,28 @@ impl FileConnections for RegistryFileConnections {
                 )
             }
         };
-        let fact = self
+        let answer = self
             .facts
-            .connection(&id)
+            .answer(&id)
             .await
             .map_err(|error| failed("binding", error))?
-            .filter(|fact| {
-                fact.status == wamn_connection::connection_memory::ConnectionStatus::Active
+            .filter(|answer| {
+                answer.fact.status == wamn_connection::connection_memory::ConnectionStatus::Active
             })
             .ok_or_else(|| refused(FileRefusal::BindingRefused, "connection"))?;
         let generation = self
             .facts
-            .generation(&id, fact.active_generation)
+            .generation(&id, answer.fact.active_generation)
             .await
             .map_err(|error| failed("binding", error))?;
-        if generation.runtime_type != "host"
-            || !matches!(generation.integration_type.as_str(), "gcs" | "s3")
-        {
+        // These are native storage providers. A stored file remains readable even
+        // when this application has no current declaration for its connection.
+        if !matches!(generation.integration_type.as_str(), "gcs" | "s3") {
             return Err(refused(FileRefusal::BindingRefused, "connection"));
         }
         Ok(FileConnection {
             id: id.to_string(),
-            generation: fact.active_generation,
+            generation: answer.fact.active_generation,
             definition: generation.parameters.clone(),
             read_only,
         })

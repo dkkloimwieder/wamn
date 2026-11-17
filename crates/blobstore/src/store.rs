@@ -169,16 +169,10 @@ impl BoundContainer {
             #[cfg(any(test, feature = "test-util"))]
             ConnectionAuthority::Fixture => return Ok(()),
         };
-        if !facts
-            .connection(id)
-            .await
-            .ok()
-            .flatten()
-            .is_some_and(|fact| {
-                fact.status == wamn_connection::connection_memory::ConnectionStatus::Active
-                    && fact.active_generation == *generation
-            })
-        {
+        if !facts.answer(id).await.ok().flatten().is_some_and(|answer| {
+            answer.fact.status == wamn_connection::connection_memory::ConnectionStatus::Active
+                && answer.fact.active_generation == *generation
+        }) {
             return Err(StoreError::Refused {
                 verb,
                 reason: "the connection is disabled, unavailable, or its generation changed",

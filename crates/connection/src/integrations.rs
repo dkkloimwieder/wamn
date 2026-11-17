@@ -1,402 +1,246 @@
-//! Resolve integration calls through the connection memory.
+//! The bound guard of integration sibling components; wasmCloud owns their code.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-
+use crate::connection_facts::{ConnectionCache, ConnectionFacts};
+use crate::database::ResourceLock;
 use anyhow::Context as _;
-use moka::sync::Cache;
-use oci_client::secrets::RegistryAuth;
-use tokio::sync::Mutex;
-use wamn_engine::integration::{
-    ConnectionDispatch, Integration, IntegrationBinding, IntegrationImports,
-};
-use wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource;
-use wamn_oci::package_artifact::{PackageRegistry, Repository};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock, RwLock};
+use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
+use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
+use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+use wash_runtime::wasmtime::component::Resource;
+use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::connection_facts::{ConnectionFacts, bounded};
-use crate::connection_memory::{ConnectionFact, ConnectionStatus};
+const ID: &str = "wamn-integration-bound";
+const BOUND: &str = "wamn:integration/bound@0.1.0";
+pub const INTEGRATION_CONFIG: &str = "wamn.integration";
 
-type InstanceKey = (uuid::Uuid, i64, Option<uuid::Uuid>);
+mod bindings {
+    wash_runtime::wasmtime::component::bindgen!({
+        path: "../../wit/wamn-integration",
+        inline: "package wamn:integration-host; world host { import wamn:integration/bound@0.1.0; }",
+        world: "wamn:integration-host/host",
+        imports: { default: async | trappable },
+        with: { "wamn:integration/bound.call": super::Call },
+        wasmtime_crate: wash_runtime::wasmtime,
+    });
+}
+use bindings::wamn::integration::bound;
 
-#[derive(Debug, Clone)]
-struct LinkedRead {
-    digest: wamn_digest::Digest,
-    instance: Arc<Integration>,
+/// One checked resource owns the lock until the guest or its store drops it.
+pub struct Call {
+    parameters: String,
+    credential: Option<String>,
+    lock: Option<ResourceLock>,
+}
+
+impl std::fmt::Debug for Call {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Call").finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug)]
-struct ReadState {
-    linked: Cache<InstanceKey, LinkedRead>,
-    bytes: HashMap<wamn_digest::Digest, Arc<Vec<u8>>>,
-}
-
-struct ReadResources {
+struct Bound {
     facts: Arc<ConnectionFacts>,
-    application: Arc<wamn_catalog::application_config::ApplicationConfig>,
-    registry: PackageRegistry,
-    registry_credentials: RegistryCredentialSource,
-    state: Mutex<ReadState>,
+    exclusive: bool,
 }
-
-impl std::fmt::Debug for ReadResources {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ReadResources")
-            .field("application", &self.application.application)
-            .finish_non_exhaustive()
-    }
-}
-
 #[derive(Debug)]
-struct ComponentReads {
-    resources: Arc<ReadResources>,
-    component: String,
-    names: HashSet<String>,
+struct State {
+    workload: String,
+    id: uuid::Uuid,
+    bound: OnceLock<Bound>,
 }
 
 #[async_trait::async_trait]
-impl ConnectionDispatch for ComponentReads {
-    async fn call(
-        &self,
-        name: &str,
-        interface: &str,
-        function: &str,
-        parameters: &[wasmtime::component::Val],
-    ) -> anyhow::Result<Option<anyhow::Result<Vec<wasmtime::component::Val>>>> {
-        if !self.names.contains(name) {
-            return Ok(None);
-        }
-        if wamn_catalog::application_config::binding(
-            &self.resources.application,
-            &self.component,
-            name,
-        )
-        .is_none()
-        {
-            return Ok(None);
-        }
-        let Some(instance) = self.resolve(name).await? else {
-            return Ok(None);
-        };
-        let values = instance.call(interface, function, parameters).await;
-        Ok(Some(values))
+impl HostPlugin for State {
+    fn id(&self) -> &'static str {
+        ID
     }
-
-    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>> {
-        if !self.names.contains(name) {
-            return Ok(None);
-        }
-        let resources = &self.resources;
-        // Serialize fact observations and first links so an old observation cannot
-        // evict a newer link, and concurrent misses prepare only one instance.
-        let mut state = resources.state.lock().await;
-        let Some(binding) = wamn_catalog::application_config::binding(
-            &resources.application,
-            &self.component,
-            name,
-        ) else {
-            return Ok(None);
-        };
-        let id = binding.connection_id.parse()?;
-        let fact = resources.facts.connection(&id).await?;
-        state.observe(id, fact.as_ref());
-        let Some(fact) = fact.filter(|fact| fact.status == ConnectionStatus::Active) else {
-            return Ok(None);
-        };
-        let key = (id, fact.active_generation, fact.credential_id);
-        let generation = resources
-            .facts
-            .generation(&id, fact.active_generation)
-            .await?;
-        if generation.runtime_type != "wasm" {
-            return Ok(None);
-        }
-        let reference = binding
-            .integration
-            .as_deref()
-            .context("wasm integration has no reference")?;
-        let (repository_name, digest) = reference
-            .rsplit_once('@')
-            .context("integration reference is not pinned")?;
-        let digest: wamn_digest::Digest = digest.parse()?;
-        let digest = &digest;
-        if let Some(linked) = state.linked.get(&key)
-            && linked.digest == *digest
-        {
-            return Ok(Some(linked.instance));
-        }
-        let authority = generation.parameters["authority"]
-            .as_str()
-            .context("wasm connection needs authority")?;
-        let credential = match fact
-            .credential_id
-            .filter(|_| generation.auth_type == "custom")
-        {
-            Some(id) => Some(resources.facts.secret(&id).await?.expose().to_owned()),
-            None => None,
-        };
-        let bound = IntegrationBinding::new(authority, credential)?
-            .with_parameters(generation.parameters.clone(), &generation.auth_type);
-        let bytes = if let Some(bytes) = state.bytes.get(digest) {
-            Arc::clone(bytes)
-        } else {
-            let registry_name = wamn_catalog::parse_component_artifact_base(repository_name)?;
-            let credential = resources
-                .registry_credentials
-                .credentials(registry_name.registry())
-                .await?;
-            let repository = Repository::with_auth(
-                &PackageRegistry {
-                    artifact_base: repository_name.to_owned(),
-                    ..resources.registry.clone()
-                },
-                digest,
-                RegistryAuth::Basic(
-                    credential.username().to_owned(),
-                    credential.password().to_owned(),
-                ),
-            )?;
-            let bytes = Arc::new(
-                wamn_oci::package_artifact::integration::pull_from(
-                    &repository,
-                    &generation.integration_type,
-                    digest,
-                )
-                .await?,
-            );
-            state.bytes.insert(digest.to_owned(), Arc::clone(&bytes));
-            bytes
-        };
-        let instance = Arc::new(Integration::load(&bytes, bound).await?);
-        state.linked.insert(
-            key,
-            LinkedRead {
-                digest: digest.to_owned(),
-                instance: Arc::clone(&instance),
-            },
-        );
-        Ok(Some(instance))
+    fn world(&self) -> WitWorld {
+        world()
+    }
+}
+fn world() -> WitWorld {
+    WitWorld {
+        imports: HashSet::from([WitInterface::from(BOUND)]),
+        exports: HashSet::new(),
     }
 }
 
-impl ReadState {
-    fn observe(&mut self, id: uuid::Uuid, fact: Option<&ConnectionFact>) {
-        for (key, _) in &self.linked {
-            if key.0 == id
-                && fact.is_none_or(|fact| {
-                    fact.status != ConnectionStatus::Active
-                        || (key.1, key.2) != (fact.active_generation, fact.credential_id)
-                })
-            {
-                self.linked.invalidate(key.as_ref());
-            }
-        }
-    }
-}
-
-/// Process-owned imports with immutable declarations and shared links by identity.
+/// Fixed-interface host plugin; each importing sibling supplies only its connection id.
 #[derive(Debug)]
-pub struct Integrations {
-    imports: HashMap<(wamn_digest::Digest, wamn_catalog::PackageName), Arc<IntegrationImports>>,
-    declarations: HashMap<(wamn_digest::Digest, wamn_catalog::PackageName), HashSet<String>>,
-    resources: Arc<ReadResources>,
+pub struct IntegrationBound {
+    cache: Arc<dyn ConnectionCache>,
+    states: RwLock<HashMap<String, Arc<State>>>,
 }
-
-impl Integrations {
-    /// Read immutable declarations before the application stores load.
-    pub fn new(
-        facts: Arc<ConnectionFacts>,
-        release: Arc<wamn_catalog::application_config::ApplicationConfig>,
-        project: &wamn_registry::ProjectId,
-        registry: PackageRegistry,
-        registry_credentials: RegistryCredentialSource,
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            facts.project_env_key()
-                == &wamn_registry::name::project_env_key(
-                    &release.org,
-                    &release.project,
-                    &release.environment
-                )
-                && facts.environment() == &release.environment
-                && facts.project() == project,
-            "integration project authority mismatch"
-        );
-        let resources = Arc::new(ReadResources {
-            facts,
-            application: release,
-            registry,
-            registry_credentials,
-            state: Mutex::new(ReadState {
-                linked: bounded(),
-                bytes: HashMap::new(),
-            }),
-        });
-        let mut imports = HashMap::new();
-        let mut declarations = HashMap::new();
-        for component in &resources.application.components {
-            let digest = &component.digest;
-            let package = &component.package;
-            let declared: Vec<_> = component
-                .connections
-                .iter()
-                .map(|binding| (binding.name.to_string(), binding.interface.clone()))
-                .collect();
-            let declared: Vec<_> = declared
-                .into_iter()
-                .filter(|(_, interface)| !host_interface(interface))
-                .collect();
-            let names: HashSet<_> = declared.iter().map(|(name, _)| name.clone()).collect();
-            let interfaces = declared
-                .into_iter()
-                .map(|(_, interface)| interface)
-                .collect();
-            let dispatch = Arc::new(ComponentReads {
-                resources: Arc::clone(&resources),
-                component: component.name.clone(),
-                names: names.clone(),
-            });
-            let key = (*digest, package.clone());
-            declarations.insert(key.clone(), names);
-            imports.insert(
-                key,
-                Arc::new(IntegrationImports::from_dispatch(dispatch, interfaces)),
-            );
+impl IntegrationBound {
+    pub fn new(cache: Arc<dyn ConnectionCache>) -> Self {
+        Self {
+            cache,
+            states: RwLock::default(),
         }
-        Ok(Self {
-            imports,
-            declarations,
-            resources,
-        })
     }
-
-    pub fn interfaces(&self) -> HashSet<wash_runtime::wit::WitInterface> {
-        self.imports
-            .values()
-            .flat_map(|imports| imports.interfaces())
-            .map(wash_runtime::wit::WitInterface::from)
-            .collect()
+}
+#[async_trait::async_trait]
+impl HostPlugin for IntegrationBound {
+    fn id(&self) -> &'static str {
+        ID
     }
-
-    pub fn imports(
+    fn world(&self) -> WitWorld {
+        world()
+    }
+    async fn on_workload_item_bind<'a>(
         &self,
-        component: &wamn_digest::Digest,
-        package: &wamn_catalog::PackageName,
-    ) -> anyhow::Result<Arc<IntegrationImports>> {
-        self.imports
-            .get(&(component.to_owned(), package.to_owned()))
-            .cloned()
-            .context("connection component is not declared")
-    }
-
-    /// Link only the labels declared by the exact component and package owners.
-    pub async fn add_to_linker(
-        &self,
-        item: &mut wash_runtime::engine::workload::WorkloadItem<'_>,
-        owners: &[(&wamn_digest::Digest, &wamn_catalog::PackageName)],
+        item: &mut WorkloadItem<'a>,
+        _: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        let mut routes = HashMap::new();
-        let mut interfaces = HashSet::new();
-        for &(component, package) in owners {
-            let key = (component.to_owned(), package.to_owned());
-            let Some(names) = self.declarations.get(&key) else {
-                continue;
-            };
-            let imports = self.imports(component, package)?;
-            for name in names {
-                routes
-                    .entry(name.clone())
-                    .or_insert_with(Vec::new)
-                    .push(Arc::clone(&imports));
-            }
-            interfaces.extend(imports.interfaces().map(str::to_owned));
-        }
-        let names = routes.keys().cloned().collect();
-        let imports = Arc::new(IntegrationImports::from_dispatch(
-            Arc::new(ComponentImports {
-                routes,
-                resources: Arc::clone(&self.resources),
-            }),
-            interfaces,
-        ));
-        imports.add_to_linker(item, &names).await
-    }
-}
-
-fn host_interface(interface: &str) -> bool {
-    interface.starts_with("wamn:connection/") || interface == "wasmcloud:blobstore" || interface.starts_with("wasmcloud:blobstore/")
-}
-
-#[derive(Debug)]
-struct ComponentImports {
-    resources: Arc<ReadResources>,
-    routes: HashMap<String, Vec<Arc<IntegrationImports>>>,
-}
-
-#[async_trait::async_trait]
-impl ConnectionDispatch for ComponentImports {
-    async fn call_scoped(
-        &self,
-        scope: Option<(&wamn_engine::invocation_scope::InvocationScopes, &str)>,
-        name: &str,
-        interface: &str,
-        function: &str,
-        parameters: &[wasmtime::component::Val],
-    ) -> anyhow::Result<Option<anyhow::Result<Vec<wasmtime::component::Val>>>> {
-        let alias: wamn_catalog::canonical_name::CanonicalName = name.parse()?;
-        let (scopes, scope) = scope.context("integration call has no scope")?;
-        let context = crate::invocation::context(scopes, scope)?;
-        anyhow::ensure!(
-            Arc::ptr_eq(&context.connections, &self.resources.facts)
-                && *context.release == *self.resources.application,
-            "integration invocation release mismatch"
-        );
-        let declared = scopes
-            .read::<crate::invocation::Scope, _>(scope, |record| {
-                record.invocation.as_ref().is_some_and(|invocation| {
-                    invocation.connection(&context.release, &alias).is_some()
-                })
-            })
-            .unwrap_or(false);
-        if !declared {
-            return Ok(None);
-        }
-        self.call(name, interface, function, parameters).await
-    }
-
-    async fn call(
-        &self,
-        name: &str,
-        interface: &str,
-        function: &str,
-        parameters: &[wasmtime::component::Val],
-    ) -> anyhow::Result<Option<anyhow::Result<Vec<wasmtime::component::Val>>>> {
-        // Keep the existing refusal when composed owners bind a label differently.
-        if self.resolve(name).await?.is_none() {
-            return Ok(None);
-        }
-        self.routes[name][0]
-            .call(name, interface, function, parameters)
-            .await
-    }
-
-    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>> {
-        let Some(imports) = self.routes.get(name) else {
-            return Ok(None);
+        let id = item
+            .local_resources()
+            .config
+            .get(INTEGRATION_CONFIG)
+            .context("integration sibling has no wamn.integration")?
+            .parse()?;
+        let WorkloadItem::Component(component) = &*item else {
+            anyhow::bail!("integration must be a sibling component");
         };
-        let mut resolved = None;
-        for imports in imports {
-            let Some(instance) = imports.resolve(name).await? else {
-                return Ok(None);
+        let state = Arc::new(State {
+            workload: component.workload_id().to_owned(),
+            id,
+            bound: OnceLock::new(),
+        });
+        self.states
+            .write()
+            .expect("integration states lock poisoned")
+            .insert(component.id().to_owned(), Arc::clone(&state));
+        item.add_plugin(ID, state);
+        bound::add_to_linker::<_, SharedCtx>(
+            item.linker()?,
+            wash_runtime::engine::ctx::extract_active_ctx,
+        )?;
+        Ok(())
+    }
+    async fn on_workload_resolved(
+        &self,
+        _workload: &ResolvedWorkload,
+        component_id: &str,
+    ) -> anyhow::Result<()> {
+        let state = self
+            .states
+            .read()
+            .expect("integration states lock poisoned")
+            .get(component_id)
+            .map(Arc::clone)
+            .context("integration state missing")?;
+        let (facts, exclusive) = Arc::clone(&self.cache).integration(&state.workload, &state.id)?;
+        let bound = Bound { facts, exclusive };
+        state
+            .bound
+            .set(bound)
+            .map_err(|_| anyhow::anyhow!("integration already resolved"))?;
+        Ok(())
+    }
+    async fn on_workload_unbind(&self, workload: &str, _: WitInterfaces<'_>) -> anyhow::Result<()> {
+        self.states
+            .write()
+            .expect("integration states lock poisoned")
+            .retain(|_, state| state.workload != workload);
+        Ok(())
+    }
+}
+impl bound::Host for ActiveCtx<'_> {
+    async fn authority(&mut self) -> wash_runtime::wasmtime::Result<String> {
+        let state = self.try_get_plugin::<State>(ID)?;
+        let bound = state
+            .bound
+            .get()
+            .ok_or_else(|| wash_runtime::wasmtime::Error::msg("integration unresolved"))?;
+        let answer = bound
+            .facts
+            .answer(&state.id)
+            .await
+            .map_err(|error| wash_runtime::wasmtime::Error::msg(error.to_string()))?
+            .ok_or_else(|| wash_runtime::wasmtime::Error::msg("connection unavailable"))?;
+        answer
+            .fact
+            .authority
+            .clone()
+            .ok_or_else(|| wash_runtime::wasmtime::Error::msg("integration authority absent"))
+    }
+    async fn begin(&mut self) -> wash_runtime::wasmtime::Result<Result<Resource<Call>, String>> {
+        let state = self.try_get_plugin::<State>(ID)?;
+        let result = async {
+            let bound = state.bound.get().context("integration unresolved")?;
+            let answer = bound
+                .facts
+                .answer(&state.id)
+                .await?
+                .context("connection unavailable")?;
+            anyhow::ensure!(
+                answer.fact.status == crate::connection_memory::ConnectionStatus::Active,
+                "connection disabled"
+            );
+            let lock = if bound.exclusive {
+                Some(
+                    ResourceLock::acquire(
+                        &bound.facts.reader(),
+                        bound.facts.project(),
+                        bound.facts.environment(),
+                        &*bound.facts.locks()?,
+                        &answer.fact,
+                        tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+                        true,
+                    )
+                    .await?,
+                )
+            } else {
+                None
             };
-            if let Some(previous) = &resolved {
-                anyhow::ensure!(
-                    Arc::ptr_eq(previous, &instance),
-                    "unbound: component bindings differ for {name}"
-                );
+            let mut parameters = answer.generation.parameters.clone();
+            if let Some(parameters) = parameters.as_object_mut() {
+                parameters.remove("auth");
             }
-            resolved = Some(instance);
+            let credential = if answer.generation.auth_type == "custom" {
+                answer
+                    .secret
+                    .as_ref()
+                    .map(|secret| secret.expose().to_owned())
+            } else {
+                None
+            };
+            Ok::<_, anyhow::Error>(Call {
+                parameters: parameters.to_string(),
+                credential,
+                lock,
+            })
         }
-        Ok(resolved)
+        .await;
+        match result {
+            Ok(call) => Ok(Ok(self.table.push(call)?)),
+            Err(error) => {
+                tracing::warn!(connection = %state.id, error = %error, "integration begin refused");
+                Ok(Err("connection unavailable".into()))
+            }
+        }
+    }
+}
+impl bound::HostCall for ActiveCtx<'_> {
+    async fn parameters(&mut self, call: Resource<Call>) -> wash_runtime::wasmtime::Result<String> {
+        Ok(self.table.get(&call)?.parameters.clone())
+    }
+    async fn credential(
+        &mut self,
+        call: Resource<Call>,
+    ) -> wash_runtime::wasmtime::Result<Option<String>> {
+        Ok(self.table.get(&call)?.credential.clone())
+    }
+    async fn drop(&mut self, call: Resource<Call>) -> wash_runtime::wasmtime::Result<()> {
+        let mut call = self.table.delete(call)?;
+        if let Some(lock) = call.lock.take() {
+            lock.release()
+                .await
+                .map_err(|error| wash_runtime::wasmtime::Error::msg(error.to_string()))?;
+        }
+        Ok(())
     }
 }

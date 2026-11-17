@@ -43,7 +43,6 @@ pub mod engine;
 pub mod entry_operation;
 pub mod expected_router;
 pub mod flow_http_routing;
-pub mod integration;
 pub mod invocation_scope;
 pub mod invocation_trace;
 pub mod lifecycle;

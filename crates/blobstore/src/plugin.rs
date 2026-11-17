@@ -22,8 +22,8 @@ use super::store::{BoundContainer, ConnectionAuthority};
 use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider};
 
 use wamn_connection::connection::ConnectionInvocation;
-use wamn_connection::connection_facts::ConnectionFacts;
-use wamn_connection::connection_memory::{ConnectionFact, ConnectionStatus};
+use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionFacts};
+use wamn_connection::connection_memory::ConnectionStatus;
 use wamn_sql::WamnPostgres;
 
 /// The WAMN blobstore host service.
@@ -78,20 +78,19 @@ impl WamnBlobstore {
                     ),
                 "file connection target mismatch"
             );
-            let fact = active_fact(facts, &id)
+            let answer = active_answer(facts, &id)
                 .await?
                 .context("file connection disabled")?;
-            let configuration = facts.generation(&id, fact.active_generation).await?;
+            let configuration = facts.generation(&id, answer.fact.active_generation).await?;
             anyhow::ensure!(
-                configuration.runtime_type == "host"
-                    && matches!(configuration.integration_type.as_str(), "s3" | "gcs"),
+                matches!(configuration.integration_type.as_str(), "s3" | "gcs"),
                 "not a file connection"
             );
             let bound = BlobstoreDefinition::parse_for(
                 &configuration.parameters,
                 provider(&configuration.integration_type)?,
             )?;
-            let client = self.client(facts, id, &fact, &bound).await?;
+            let client = self.client(id, &answer, &bound)?;
             let container = BoundContainer::new(
                 Arc::clone(&client.store),
                 bound.container,
@@ -99,7 +98,7 @@ impl WamnBlobstore {
                 ConnectionAuthority::Live {
                     facts: Arc::clone(facts),
                     id,
-                    generation: fact.active_generation,
+                    generation: answer.fact.active_generation,
                 },
             )
             .with_read_only(read_only);
@@ -148,16 +147,16 @@ impl WamnBlobstore {
                 .ok_or_else(|| anyhow::anyhow!("no connection mode"))?;
             let id = binding.connection_id.parse()?;
             let facts = &context.connections;
-            let fact = active_fact(facts, &id)
+            let answer = active_answer(facts, &id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("connection disabled"))?;
-            let generation = facts.generation(&id, fact.active_generation).await?;
+            let generation = facts.generation(&id, answer.fact.active_generation).await?;
             anyhow::ensure!(generation.runtime_type == "host", "not a native store");
             let bound = BlobstoreDefinition::parse_for(
                 &generation.parameters,
                 provider(&binding.integration_type)?,
             )?;
-            let client = self.client(facts, id, &fact, &bound).await?;
+            let client = self.client(id, &answer, &bound)?;
             Ok::<_, anyhow::Error>(
                 BoundContainer::new(
                     Arc::clone(&client.store),
@@ -166,7 +165,7 @@ impl WamnBlobstore {
                     ConnectionAuthority::Live {
                         facts: Arc::clone(facts),
                         id,
-                        generation: fact.active_generation,
+                        generation: answer.fact.active_generation,
                     },
                 )
                 .with_read_only(read_only),
@@ -179,22 +178,23 @@ impl WamnBlobstore {
         })
     }
 
-    async fn client(
+    fn client(
         &self,
-        facts: &Arc<ConnectionFacts>,
         id: uuid::Uuid,
-        fact: &ConnectionFact,
+        answer: &ConnectionAnswer,
         bound: &BlobstoreDefinition,
     ) -> anyhow::Result<Arc<StoreClient>> {
-        let key = (id, fact.active_generation);
+        let key = (id, answer.fact.active_generation);
         if let Some(client) = self.stores.get(&key) {
             return Ok(client);
         }
         let secret = if bound.provider == BlobstoreProvider::S3 {
-            let credential = fact
-                .credential_id
-                .ok_or_else(|| anyhow::anyhow!("storage credential unavailable"))?;
-            Some(facts.secret(&credential).await?)
+            Some(
+                answer
+                    .secret
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("storage credential unavailable"))?,
+            )
         } else {
             None
         };
@@ -243,14 +243,14 @@ fn provider(
 }
 
 /// The fact of connection `id` while it is active.
-async fn active_fact(
+async fn active_answer(
     facts: &ConnectionFacts,
     id: &uuid::Uuid,
-) -> anyhow::Result<Option<ConnectionFact>> {
+) -> anyhow::Result<Option<Arc<ConnectionAnswer>>> {
     Ok(facts
-        .connection(id)
+        .answer(id)
         .await?
-        .filter(|fact| fact.status == ConnectionStatus::Active))
+        .filter(|answer| answer.fact.status == ConnectionStatus::Active))
 }
 
 /// Build the S3 client for one binding.
