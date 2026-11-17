@@ -28,7 +28,6 @@ mod session_identity;
 mod types;
 pub mod write_log;
 
-pub use operation::OperationInvoker;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
 pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
@@ -348,15 +347,27 @@ impl HostPlugin for WamnPostgres {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
+        if let Some(store) = self.authorization.get()
+            && let Some(config) = item
+                .local_resources()
+                .config
+                .get(wamn_catalog::application_config::APPLICATION_CONFIG)
+        {
+            let application = serde_json::from_str(config)?;
+            store.configure_application(&application)?;
+        }
         if interfaces.contains("wamn", "operation", &["operation"]) {
             let WorkloadItem::Component(component) = item else {
                 anyhow::bail!("operation authority requires an entry component");
             };
-            self.bind_entry_instance(
-                component.workload_id(),
-                component.id(),
-                &component.local_resources().config,
-            )?;
+            if let Some(config) = component
+                .local_resources()
+                .config
+                .get(wamn_catalog::application_config::APPLICATION_CONFIG)
+            {
+                let config = serde_json::from_str(config)?;
+                self.bind_entry_instance(component.workload_id(), component.id(), config)?;
+            }
             // A control root links the interface without operation authority.
             // Calls on an unbound instance refuse before accessing SQL or identity.
         }

@@ -18,11 +18,7 @@
 //! - [`invocation_trace`]: restores host-captured tracing context when native
 //!   dispatch polls host callbacks.
 //! - [`component_imports`]: a compiled component's ordered world imports.
-//! - [`operation`]: [`invoke_operation`](operation::invoke_operation), the one
-//!   export call that routes and wiring nodes share, and the traits the host
-//!   implements for it.
-//! - [`warm_reuse`]: the reviewed component digests that native loading keeps
-//!   warm.
+//! - [`operation`]: the workload operation dispatch plugin and shared node types.
 //!
 //! This crate refuses to depend on:
 //!

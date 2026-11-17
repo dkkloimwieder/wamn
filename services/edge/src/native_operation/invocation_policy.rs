@@ -91,7 +91,7 @@ pub struct InvocationScope<P: InvocationPolicy> {
     pub id: Box<str>,
     pub closed: Mutex<bool>,
     policy: Arc<P>,
-    pub execution: crate::invocation_scope::InvocationExecution,
+    pub execution: wamn_engine::invocation_scope::InvocationExecution,
 }
 
 impl<P: InvocationPolicy> InvocationScope<P> {
@@ -104,7 +104,7 @@ impl<P: InvocationPolicy> InvocationScope<P> {
             id,
             closed: Mutex::new(false),
             policy,
-            execution: crate::invocation_scope::InvocationExecution::new(deadline),
+            execution: wamn_engine::invocation_scope::InvocationExecution::new(deadline),
         }
     }
 

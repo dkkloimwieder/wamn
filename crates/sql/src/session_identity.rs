@@ -80,6 +80,8 @@ impl std::fmt::Debug for WamnPostgres {
 }
 
 pub struct WamnPostgres {
+    pub(super) authorization:
+        std::sync::OnceLock<Arc<dyn wamn_authentication::authorization::AuthorizationStore>>,
     pub(super) operation_metrics: super::operation::OperationMetrics,
     pub(super) operation_workloads:
         std::sync::RwLock<HashMap<String, Arc<super::operation::OperationWorkload>>>,
@@ -147,8 +149,8 @@ impl std::fmt::Display for UnprovisionedPrincipal {
 impl std::error::Error for UnprovisionedPrincipal {}
 
 /// Reject a malformed session identity before it is bound (R16). Since R2 these
-/// validators are NO LONGER the injection boundary — every identity value binds as a
-/// parameter into [`transactions::IDENTITY_SQL`], so a `'`/`;`/`--` value is inert data — but a
+/// validators are not the injection boundary: identity values use PostgreSQL
+/// literal escaping in the begin batch, so a `'`/`;`/`--` value is inert data, but a
 /// malformed identity still fails closed: they define what a *legal* id is (and
 /// the no-hyphen `valid_schema` rule still matters where a schema name is quoted
 /// into DDL elsewhere).
@@ -200,6 +202,7 @@ impl WamnPostgres {
     /// Plugin over an explicit [`CredentialProvider`] (multi-project / tests).
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
         Self {
+            authorization: std::sync::OnceLock::new(),
             provider,
             pools: std::sync::RwLock::new(HashMap::new()),
             scopes: Arc::default(),
@@ -208,6 +211,16 @@ impl WamnPostgres {
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
         }
+    }
+
+    /// Install the host's authorization memory before binding any workloads.
+    pub fn set_authorization_store(
+        &self,
+        store: Arc<dyn wamn_authentication::authorization::AuthorizationStore>,
+    ) {
+        self.authorization
+            .set(store)
+            .expect("host authorization store is installed once");
     }
 
     /// Build from the deployment's configuration: the default project from the
@@ -575,24 +588,6 @@ impl WamnPostgres {
         Ok(())
     }
 
-    pub(crate) async fn verify_scope_principal(&self, scope: &str) -> anyhow::Result<()> {
-        let identity = self
-            .session_identity(scope)
-            .ok_or_else(|| anyhow::anyhow!("invocation scope was revoked"))?;
-        if let Some(user) = identity.user_id.as_ref() {
-            self.require_provisioned_principal(
-                identity
-                    .project_env_key
-                    .as_ref()
-                    .context("project environment identity is absent")?,
-                identity.project.as_ref().unwrap_or(&DEFAULT_PROJECT),
-                user,
-            )
-            .await?;
-        }
-        Ok(())
-    }
-
     /// Read one `platform."user"` row and refuse the principal that owns none
     /// (`wamn-0h0g.9.19`).
     ///
@@ -911,8 +906,8 @@ pub(crate) mod tests;
 
 /// A durable-queue lease owner. An identity-format contract: bounded
 /// `[A-Za-z0-9_-]`, no quotes/backslashes. Since R2 this is NO LONGER the
-/// injection boundary on the plugin path — the runner binds as a parameter into
-/// `IDENTITY_SQL`, so a quote/backslash is inert data — but a malformed owner still
+/// injection boundary on the plugin path: the begin batch escapes the runner
+/// as a PostgreSQL literal, so a quote/backslash is inert data, but a malformed owner still
 /// fails closed.
 pub fn valid_runner(runner: &str) -> bool {
     !runner.is_empty()
@@ -923,8 +918,8 @@ pub fn valid_runner(runner: &str) -> bool {
 }
 
 /// A `search_path` schema name. Stricter than a project: no hyphens. Since R2 the
-/// value binds as a parameter into `IDENTITY_SQL` on the plugin path rather than
-/// being spliced into SQL — but the no-hyphen rule still matters where a schema
+/// value uses PostgreSQL literal escaping in the begin batch, but the no-hyphen
+/// rule still matters where a schema
 /// name is quoted into DDL elsewhere (e.g. the migrate / copy paths), and a
 /// malformed schema still fails closed.
 pub fn valid_schema(schema: &str) -> bool {
@@ -963,11 +958,27 @@ pub(crate) fn validate_identity(identity: &SessionIdentity) -> anyhow::Result<()
 
 #[async_trait::async_trait]
 impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
+    async fn route_pat(
+        &self,
+        project: &wamn_registry::ProjectId,
+        key: &wamn_registry::ProjectEnvKey,
+        reader: &sqlx::PgPool,
+        token: &str,
+    ) -> anyhow::Result<Option<wamn_identity::AuthenticatedPrincipal>> {
+        if let Some(store) = self.authorization.get() {
+            return store.route_pat(project, key, reader, token).await;
+        }
+        wamn_authentication::authorization::route_pat(reader, token).await
+    }
+
     async fn environment_inactive(
         &self,
         project: &wamn_registry::ProjectId,
         key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<bool> {
+        if let Some(store) = self.authorization.get() {
+            return store.environment_inactive(project, key).await;
+        }
         self.environment_inactive(project, key).await
     }
 
@@ -978,6 +989,11 @@ impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
         roles: &[wamn_identity_protocol::RoleName],
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
+        if let Some(store) = self.authorization.get() {
+            return store
+                .session_operation_permissions(project, key, roles, principal)
+                .await;
+        }
         self.session_operation_permissions(project, key, roles, principal)
             .await
     }
@@ -988,6 +1004,11 @@ impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
         key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
+        if let Some(store) = self.authorization.get() {
+            return store
+                .user_operation_permissions(project, key, principal)
+                .await;
+        }
         self.user_operation_permissions(project, key, principal)
             .await
     }
@@ -998,6 +1019,9 @@ impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
         key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
+        if let Some(store) = self.authorization.get() {
+            return store.principal_grants(project, key, principal).await;
+        }
         self.principal_grants(project, key, principal).await
     }
 }

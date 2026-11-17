@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
-use crate::engine::{build_engine_with_host_memory, host_memory_budgets};
+use wamn_engine::engine::{build_engine_with_host_memory, host_memory_budgets};
 use tokio::time::{Instant, timeout_at};
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::dispatch::DispatchTarget;
@@ -242,7 +242,7 @@ async fn assert_readiness(case: Case) {
 
 fn isolated(name: &str, case: Case) {
     if std::env::var(CHILD_MARKER).as_deref() != Ok(name) {
-        let full_name = format!("operation::native_call::tests::{name}");
+        let full_name = format!("native_operation::native_call::tests::{name}");
         let output = Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", &full_name, "--nocapture", "--include-ignored"])
             .env(CHILD_MARKER, name)

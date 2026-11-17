@@ -1,16 +1,13 @@
 //! Entry-owned operations on the Store's host transaction.
 
-use wamn_catalog::application_config::ApplicationOperationType;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
+use crate::invocation::{AuthorizedInvocation, InvocationRequest};
 use anyhow::Context as _;
 use wamn_catalog::canonical_name::CanonicalName;
-use wamn_engine::application::WorkloadRoutes;
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
-use wamn_engine::invocation_trace::InvocationTrace;
 use wamn_engine::native_routes::DeliveryClass;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
@@ -57,10 +54,8 @@ impl OperationMetrics {
 #[derive(Debug)]
 pub(super) struct OperationWorkload {
     pub(super) workload: Box<str>,
-    config: Arc<WorkloadRoutes>,
     identity: SessionIdentity,
     operations: BTreeMap<CanonicalName, OperationAuthority>,
-    invoker: std::sync::RwLock<Option<std::sync::Weak<dyn OperationInvoker>>>,
 }
 
 #[derive(Debug)]
@@ -69,111 +64,63 @@ struct OperationAuthority {
     delete: bool,
     grant: Option<wamn_catalog::registered_operation::RegisteredOperation>,
     schema: Option<String>,
-    application: wamn_catalog::ApplicationName,
     transaction: bool,
 }
 
-/// The application host calls typed exports while borrowing route authority.
-#[async_trait::async_trait]
-pub trait OperationInvoker: Send + Sync + std::fmt::Debug {
-    async fn invoke(
-        &self,
-        authority: Arc<AuthorizedInvocation>,
-        operation: CanonicalName,
-        context: wamn_engine::operation::node_types::NodeContext,
-        input: String,
-    ) -> anyhow::Result<
-        Result<
-            wamn_engine::operation::node_types::Emission,
-            wamn_engine::operation::node_types::NodeError,
-        >,
-    >;
-    async fn sign_result(
-        &self,
-        authority: Arc<AuthorizedInvocation>,
-        operation: CanonicalName,
-        payload: String,
-    ) -> anyhow::Result<String>;
-}
-
 impl WamnPostgres {
-    /// Attach the resident application host to its HTTP workload.
-    pub fn bind_operation_invoker(
-        &self,
-        workload: &str,
-        invoker: std::sync::Weak<dyn OperationInvoker>,
-    ) -> anyhow::Result<()> {
-        let workloads = self
-            .operation_workloads
-            .read()
-            .expect("operation workloads lock poisoned");
-        let entry = workloads
-            .get(workload)
-            .context("operation workload is not bound")?;
-        *entry
-            .invoker
-            .write()
-            .expect("operation invoker lock poisoned") = Some(invoker);
-        Ok(())
-    }
-
     pub(super) fn bind_entry_instance(
         &self,
         workload: &str,
         component: &str,
-        config: &std::collections::HashMap<String, String>,
+        config: wamn_catalog::application_config::ApplicationConfig,
     ) -> anyhow::Result<()> {
-        let Some(config) = WorkloadRoutes::read(config)? else {
-            return Ok(());
-        };
-        let operations = config
-            .application
-            .components
-            .iter()
-            .flat_map(|component| {
-                component.operations.iter().map(|(name, operation)| {
-                    Ok((
-                        name.clone(),
-                        OperationAuthority {
-                            read: operation.type_ == Some(ApplicationOperationType::Read),
-                            delete: operation.type_ == Some(ApplicationOperationType::Delete),
-                            grant: if operation.public {
-                                Some(name.as_str().parse()?)
-                            } else {
-                                None
-                            },
-                            schema: component.schema.clone(),
-                            application: config.application.application.clone(),
-                            transaction: operation.host_transaction,
-                        },
-                    ))
-                })
-            })
-            .collect::<anyhow::Result<_>>()?;
+        use wamn_catalog::application_config::ApplicationOperationType;
         let identity = SessionIdentity {
-            project_env_key: Some(config.project_env_key.clone()),
-            project: Some(config.application.project.clone()),
-            application: Some(config.application.application.clone()),
+            project_env_key: Some(wamn_registry::name::project_env_key(
+                &config.org,
+                &config.project,
+                &config.environment,
+            )),
+            project: Some(config.project),
+            application: Some(config.application),
             ..SessionIdentity::default()
         };
-        let entry = Arc::new(OperationWorkload {
-            workload: workload.into(),
-            config: Arc::new(config),
-            identity,
-            operations,
-            invoker: std::sync::RwLock::default(),
-        });
-        self.scopes
-            .update::<crate::invocation::Authority, _>(component, |record| {
-                record.identity = entry.identity.clone();
-            });
-        self.scopes.bind_workload(component, workload);
-        let mut bound = self
-            .operation_workloads
+        let operations = config
+            .components
+            .into_iter()
+            .flat_map(|component| {
+                component
+                    .operations
+                    .into_iter()
+                    .map(move |(name, operation)| {
+                        let grant = operation
+                            .public
+                            .then(|| name.as_str().parse())
+                            .transpose()?;
+                        Ok((
+                            name,
+                            OperationAuthority {
+                                read: operation.type_ == Some(ApplicationOperationType::Read),
+                                delete: operation.type_ == Some(ApplicationOperationType::Delete),
+                                grant,
+                                schema: component.schema.clone(),
+                                transaction: operation.host_transaction,
+                            },
+                        ))
+                    })
+            })
+            .collect::<anyhow::Result<_>>()?;
+        self.operation_workloads
             .write()
-            .expect("operation workloads lock poisoned");
-        bound.insert(workload.to_owned(), Arc::clone(&entry));
-        bound.insert(component.to_owned(), entry);
+            .expect("operation workloads lock poisoned")
+            .insert(
+                component.to_owned(),
+                Arc::new(OperationWorkload {
+                    workload: workload.into(),
+                    identity,
+                    operations,
+                }),
+            );
         Ok(())
     }
 }
@@ -325,76 +272,52 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
         let store = accessor
             .with(|mut access| state(access.get().table).cloned())
             .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
-        let (authority, invoker) = {
+        let authority = {
             let current = store.open.lock().await;
             let open = current
                 .as_ref()
                 .filter(|open| !open.settled && open.operation == operation)
                 .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation authority differs"))?;
-            let workloads = open
-                .postgres
-                .operation_workloads
-                .read()
-                .expect("operation workloads lock poisoned");
-            let workload = workloads
-                .get(store.workload.as_ref())
-                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation workload missing"))?;
-            let invoker = workload
-                .invoker
-                .read()
-                .expect("operation invoker lock poisoned")
-                .as_ref()
-                .and_then(std::sync::Weak::upgrade)
-                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation invoker missing"))?;
-            (Arc::clone(&open.authority), invoker)
+            Arc::clone(&open.authority)
         };
+        let (invoker, postgres) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                ctx.try_get_plugin::<wamn_engine::operation::WamnOperation>("wamn-operation")?,
+                ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)?,
+            ))
+        })?;
         invoker
-            .invoke(authority, operation, context, input)
+            .invoke(
+                &store.workload,
+                &postgres.scopes,
+                Arc::from(authority.id()),
+                operation,
+                context,
+                input,
+            )
             .await
             .map_err(wash_runtime::wasmtime::Error::from_anyhow)
     }
 
     async fn sign_result(
         accessor: &Accessor<T, Self>,
-        payload: String,
+        _payload: String,
     ) -> wash_runtime::wasmtime::Result<Result<String, wamn_engine::operation::node_types::NodeError>>
     {
         let store = accessor
             .with(|mut access| state(access.get().table).cloned())
             .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
-        let (authority, operation, invoker) = {
-            let current = store.open.lock().await;
-            let open = current
-                .as_ref()
-                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
-            let workloads = open
-                .postgres
-                .operation_workloads
-                .read()
-                .expect("operation workloads lock poisoned");
-            let entry = workloads
-                .get(store.workload.as_ref())
-                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation workload missing"))?;
-            let invoker = entry
-                .invoker
-                .read()
-                .expect("operation invoker lock poisoned")
-                .as_ref()
-                .and_then(std::sync::Weak::upgrade)
-                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation invoker missing"))?;
-            (Arc::clone(&open.authority), open.operation.clone(), invoker)
-        };
-        Ok(invoker
-            .sign_result(authority, operation, payload)
-            .await
-            .map_err(|error| {
-                wamn_engine::operation::node_types::NodeError::Terminal(
-                    wamn_engine::operation::node_types::ErrorDetail {
-                        code: Some("internal_error".into()),
-                        message: error.to_string(),
-                    },
-                )
-            }))
+        let current = store.open.lock().await;
+        current
+            .as_ref()
+            .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
+        Ok(Err(wamn_engine::operation::node_types::NodeError::Terminal(
+            wamn_engine::operation::node_types::ErrorDetail {
+                code: Some("result_signing_unavailable".into()),
+                message: "result signing is not available until connections return".into(),
+            },
+        )))
     }
 
     async fn finish_read(
@@ -600,12 +523,6 @@ async fn enter<T: 'static + Send>(
     );
     let trace = accessor
         .with(|mut access| wamn_engine::invocation_trace::invocation_trace(&mut access.get()));
-    let trace = trace.in_scope(|| {
-        entry_invocation_span(&postgres, &store.workload, caller.as_ref(), &operation)
-            .map_or_else(InvocationTrace::capture, |span| {
-                span.in_scope(InvocationTrace::capture)
-            })
-    });
     let result = trace
         .clone()
         .run(begin(
@@ -643,36 +560,6 @@ async fn enter<T: 'static + Send>(
     }
 }
 
-/// Open the entry operation's `wamn.component.invoke` span in the current span.
-///
-/// An unknown operation opens none; [`begin`] refuses it.
-fn entry_invocation_span(
-    postgres: &WamnPostgres,
-    workload: &str,
-    caller: Option<&AuthenticatedCaller>,
-    operation: &CanonicalName,
-) -> Option<tracing::Span> {
-    let facts = postgres
-        .operation_workloads
-        .read()
-        .expect("operation workloads lock poisoned")
-        .get(workload)
-        .cloned()?;
-    let config = &facts.config.application;
-    let span = tracing::info_span!(
-        target: "wamn::operation", "wamn.operation",
-        wamn.project_env_key = %facts.config.project_env_key,
-        wamn.project = %config.project,
-        wamn.environment = %config.environment,
-        wamn.operation = %operation,
-        wamn.attachment_id = tracing::field::Empty,
-    );
-    if let Some(caller) = caller {
-        span.record("wamn.attachment_id", caller.attachment_id().as_str());
-    }
-    Some(span)
-}
-
 async fn begin(
     postgres: Arc<WamnPostgres>,
     workload: &str,
@@ -696,13 +583,12 @@ async fn begin(
     if admitted.read && !authorize_only {
         return Err(Refusal::ReadsClaimNothing);
     }
-    // A caller handle belongs to a route of this application workload.
+    // A caller handle belongs to a configured route of this workload.
     if let Some(caller) = caller
-        && !facts
-            .config
-            .routes
-            .iter()
-            .any(|route| route.attachment_id == caller.attachment_id().as_str())
+        && postgres
+            .scopes
+            .routes(workload)
+            .is_none_or(|routes| routes.route(caller.attachment_id()).is_none())
     {
         return Err(Refusal::InvalidCaller);
     }
@@ -718,7 +604,6 @@ async fn begin(
             .or_else(|| facts.identity.schema.clone()),
         user_id: caller.map(|caller| caller.principal_id().to_owned()),
         operation: Some(operation.clone()),
-        application: Some(admitted.application.clone()),
         ..facts.identity.clone()
     };
     let authority = AuthorizedInvocation::enter(
@@ -736,14 +621,8 @@ async fn begin(
             }),
             invocation: None,
             read: admitted.read,
-            principal: if authorize_only {
-                PrincipalVerification::Authenticated
-            } else {
-                PrincipalVerification::Required
-            },
         },
     )
-    .await
     .map_err(|error| {
         if error
             .downcast_ref::<wamn_engine::native_routes::OperationRefusal>()

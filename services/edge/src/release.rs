@@ -33,7 +33,7 @@ use wamn_catalog::edge_bundle::{
 use wamn_catalog::serving_context::{ReleaseTarget, ServingContext};
 use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME};
 use wamn_digest::bytes_sha256;
-use wamn_engine::operation::native_workload::NativeComponent;
+use crate::native_operation::native_workload::NativeComponent;
 
 use crate::grants::Grants;
 

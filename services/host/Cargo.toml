@@ -16,9 +16,13 @@ wamn-registry = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-authentication = { workspace = true }
+wamn-authority = { workspace = true }
+wamn-identity = { workspace = true }
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel", "wasmcloud-nats", "wasm_component_model_implements"] }
 anyhow = { workspace = true }
+moka = { workspace = true, features = ["sync"] }
+sqlx = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

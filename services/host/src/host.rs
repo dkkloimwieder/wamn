@@ -22,6 +22,7 @@ use wash_runtime::plugin;
 use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::washlet::AttachedHostControl;
 
+mod authentication;
 mod commands;
 mod projects;
 
@@ -495,6 +496,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let projects = Arc::new(projects::Projects::default());
     let credentials = Arc::new(projects::Credentials(Arc::clone(&projects)));
     let postgres = Arc::new(WamnPostgres::with_provider(credentials));
+    postgres.set_authorization_store(Arc::new(authentication::Authorization::new(
+        Arc::downgrade(&postgres),
+    )));
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let authentication = Arc::new(projects::Authentication(Arc::clone(&projects)));
     let host_config = HostConfig {
@@ -516,6 +520,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         ),
         logging,
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
+        Arc::new(wamn_engine::operation::WamnOperation::new(
+            Arc::clone(&postgres) as Arc<dyn plugin::HostPlugin>,
+        )),
         Arc::<WamnPostgres>::clone(&postgres),
         // wamn-0h0g.15.96: READER 3 of the loaded release. Route projection stays wholly
         // in-memory; a PAT-protected route additionally carries the targeted

@@ -13,8 +13,11 @@
 //! across a release answers the stored result. The entry boundary returns
 //! result text without parsing it.
 
+use futures_util::TryStreamExt as _;
+use postgres_protocol::escape;
 use sqlx::Row as _;
 use sqlx::postgres::PgRow as Row;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use super::operation_transaction::OperationTransaction;
@@ -44,28 +47,55 @@ pub const FINISH_SQL: &str = "UPDATE platform.write_log SET result = $3::text \
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
      RETURNING idempotency_key";
 
-/// Refuse a missing claim or caller row before recording success and committing.
-pub(super) const COMMIT_FINISH_SQL: &str = "WITH finished AS (UPDATE platform.write_log SET result = $3::text \
-     WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
-       AND (SELECT (wamn_authority.current_identity()).xid) = $4::text::xid8 \
-     RETURNING idempotency_key) SELECT CASE \
-     WHEN (SELECT (wamn_authority.current_identity()).xid) = $4::text::xid8 \
-     THEN 1 / count(*)::integer = 1 ELSE false END FROM finished";
+/// Whether the identity check completed before a commit batch failed.
+#[derive(Debug)]
+pub(super) struct CommitError {
+    pub(super) source: sqlx::Error,
+    pub(super) identity_checked: bool,
+}
 
-/// Refuse a host transaction whose original caller row is no longer current.
-/// The caller commits only after this query succeeds.
-pub(super) async fn check_commit_identity(
+/// Check identity, finish the claim, emit causation and commit in one batch.
+pub(super) async fn commit_transaction(
     connection: &mut sqlx::PgConnection,
     xid: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    finish: Option<&[String; 3]>,
+    run: Option<&wamn_event_wire::Causation>,
+) -> Result<(), CommitError> {
+    let mut batch = format!(
         "SELECT 1 / COALESCE(\
-         ((SELECT (wamn_authority.current_identity()).xid) = $1::text::xid8)::integer, 0)",
-    )
-    .bind(xid)
-    .execute(connection)
-    .await
-    .map(drop)
+         ((SELECT (wamn_authority.current_identity()).xid) = {}::text::xid8)::integer, 0);",
+        escape::escape_literal(xid),
+    );
+    if let Some([operation, key, output]) = finish {
+        write!(
+            batch,
+            "WITH finished AS (UPDATE platform.write_log SET result = {}::text \
+             WHERE operation = {}::text AND idempotency_key = {}::text AND result IS NULL \
+             RETURNING idempotency_key) SELECT 1 / count(*)::integer FROM finished;",
+            escape::escape_literal(output),
+            escape::escape_literal(operation),
+            escape::escape_literal(key),
+        )
+        .expect("writing write log completion to String cannot fail");
+    }
+    if let Some(run) = run {
+        batch.push_str(&super::session_identity::transactions::causation_sql(run));
+    }
+    batch.push_str("COMMIT;");
+    let mut results = sqlx::raw_sql(sqlx::AssertSqlSafe(batch)).execute_many(connection);
+    let mut identity_checked = false;
+    loop {
+        match results.try_next().await {
+            Ok(Some(_)) => identity_checked = true,
+            Ok(None) => return Ok(()),
+            Err(source) => {
+                return Err(CommitError {
+                    source,
+                    identity_checked,
+                });
+            }
+        }
+    }
 }
 
 /// Free the key of a two-step claim whose request element was refused.

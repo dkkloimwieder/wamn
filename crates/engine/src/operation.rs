@@ -1,28 +1,28 @@
-//! One export call of one admitted component, shared by every entry.
-//!
-//! The router driver calls [`invoke_operation`] for each node of a wiring walk.
-//! The route path calls it once for a route, with no walk. The deadline and the
-//! native call belong here, so both entries run a component the same way. The
-//! host gives the loaded application through [`ApplicationHost`] and grants the
-//! authority of each call through [`InvocationPolicy`].
+//! Dispatch application operations through the workload's resolved component targets.
 
-use std::fmt;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use anyhow::Context as _;
-use wamn_catalog::AdmittedComponent;
+use tokio::sync::oneshot;
+use tokio::time::Instant;
+use wamn_catalog::application_config::{APPLICATION_CONFIG, ApplicationConfig};
+use wamn_catalog::canonical_name::CanonicalName;
+use wash_runtime::engine::ctx::SharedCtx;
+use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
+use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
+use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+use wash_runtime::wasmtime::component::{Accessor, Instance, Val};
+use wash_runtime::wit::{WitInterface, WitWorld};
 
-pub(crate) mod ambient_cli;
-pub mod invocation_policy;
+use crate::invocation_scope::{InvocationExecution, InvocationScopes};
+use crate::invocation_trace::InvocationTrace;
+
+pub mod ambient_cli;
 pub mod json;
 pub mod native_call;
-pub mod native_workload;
-
-pub use invocation_policy::{ApplicationHost, InvocationPolicy};
-use native_call::{NativeInput, NativeInvocation, NativeOutcome};
-pub use native_workload::NativeApplication;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -35,168 +35,326 @@ mod bindings {
 
 pub use bindings::wamn::node::types as node_types;
 
-/// The application that one operation call runs in.
-pub enum OperationClosure<'a, P: InvocationPolicy> {
-    /// The carried release, loaded once from its complete component list.
-    Released(&'a Arc<[AdmittedComponent]>),
-    /// A candidate application that the caller loaded and unbinds.
-    Candidate(&'a Arc<NativeApplication<P>>),
+/// Host plugin that retains application targets; SQL owns the operation interface.
+pub struct WamnOperation {
+    host: Arc<dyn HostPlugin>,
+    bindings: RwLock<HashMap<String, Arc<Binding>>>,
 }
 
-impl<P: InvocationPolicy> Clone for OperationClosure<'_, P> {
-    fn clone(&self) -> Self {
-        *self
-    }
+struct Binding {
+    workload: String,
+    application: ApplicationConfig,
+    targets: OnceLock<BTreeMap<String, ComponentTarget>>,
 }
 
-impl<P: InvocationPolicy> Copy for OperationClosure<'_, P> {}
-
-impl<P: InvocationPolicy> fmt::Debug for OperationClosure<'_, P> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Released(components) => formatter
-                .debug_tuple("Released")
-                .field(&components.len())
-                .finish(),
-            Self::Candidate(_) => formatter.write_str("Candidate"),
-        }
-    }
+struct ComponentTarget {
+    dispatch: DispatchTarget,
+    warm: bool,
 }
 
-/// One export call of one admitted component.
-pub struct OperationCall<'a, P: InvocationPolicy> {
-    pub closure: OperationClosure<'a, P>,
-    pub component: &'a AdmittedComponent,
-    pub operation: &'a wamn_catalog::canonical_name::CanonicalName,
-    pub context: node_types::NodeContext,
-    pub input: &'a serde_json::Value,
-    /// The bounded deadline, the same value as `context.deadline_ms`.
-    pub deadline_ms: u64,
-    /// The facts of this call that only the policy reads.
-    pub facts: P::Facts,
-}
-
-impl<P: InvocationPolicy> fmt::Debug for OperationCall<'_, P> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("OperationCall")
-            .field("closure", &self.closure)
-            .field("operation", &self.operation)
-            .field("deadline_ms", &self.deadline_ms)
+impl std::fmt::Debug for WamnOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WamnOperation")
+            .field("host", &self.host.id())
             .finish_non_exhaustive()
     }
 }
 
-/// Call one export once, under the call's deadline, and return what the
-/// component returned. The caller lowers the result for its own entry.
-///
-pub async fn invoke_operation<H: ApplicationHost>(
-    host: &H,
-    mut call: OperationCall<'_, H::Policy>,
-) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
-    let closure = call.closure;
-    let component = call.component;
-    let operation = call.operation;
-    let deadline = tokio::time::Instant::now()
-        + Duration::from_millis(call.deadline_ms).min(crate::engine::MAX_HOST_CALL_DURATION);
-    let application = tokio::time::timeout_at(deadline, application_of(host, closure))
+impl WamnOperation {
+    /// Delegate the operation WIT binding to its SQL owner, without a crate cycle.
+    pub fn new(host: Arc<dyn HostPlugin>) -> Self {
+        Self {
+            host,
+            bindings: RwLock::default(),
+        }
+    }
+
+    /// Invoke an export under the authority already admitted by SQL.
+    pub async fn invoke(
+        &self,
+        component: &str,
+        scopes: &InvocationScopes,
+        scope: Arc<str>,
+        operation: CanonicalName,
+        context: node_types::NodeContext,
+        input: String,
+    ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+        let binding = self
+            .bindings
+            .read()
+            .expect("operation bindings lock poisoned")
+            .get(component)
+            .map(Arc::clone)
+            .context("operation binding missing")?;
+        let serving = binding
+            .application
+            .components
+            .iter()
+            .find_map(|component| component.operations.get(&operation))
+            .context("operation is not configured")?;
+        let target = binding
+            .targets
+            .get()
+            .and_then(|targets| targets.get(&serving.component))
+            .context("operation dispatch target missing")?;
+        let deadline = Instant::now()
+            + Duration::from_millis(crate::native_routes::bounded_node_deadline_ms(
+                context.deadline_ms,
+            ));
+        let execution = InvocationExecution::new(deadline);
+        scopes.set_execution(&scope, execution)?;
+        let execution = scopes
+            .execution(&scope)
+            .context("operation scope missing")?;
+        let deadline = execution.deadline();
+        let (reply, response) = oneshot::channel();
+        let retired = Arc::new(AtomicBool::new(false));
+        tokio::time::timeout_at(deadline, async {
+            let result = target
+                .dispatch
+                .dispatch(OperationInvocation {
+                    scope,
+                    warm: target.warm,
+                    operation,
+                    context,
+                    input,
+                    execution,
+                    trace: InvocationTrace::capture(),
+                    reply,
+                    retired: Arc::clone(&retired),
+                })
+                .await;
+            if !retired.load(Ordering::SeqCst) {
+                result.context("dispatch application operation")?;
+            }
+            response
+                .await
+                .context("operation dispatch returned no result")
+        })
         .await
-        .context("native application deadline elapsed")??;
-    let id = component_id_of(&application, component)?;
-    call.facts = native_call::prepare_invocation(
-        &application,
-        application.dispatch_target(id)?,
-        operation,
-        &call.facts,
-        deadline,
-    )
-    .await?;
-    let facts = call.facts.clone();
-    let outcome = tokio::time::timeout_at(deadline, run_export(host, call))
-        .await
-        .context("native operation deadline elapsed")??;
-    // Persist UUIDs in the write log. Every delivery, including a replay,
-    // signs its own URLs under the originating operation's authority.
-    tokio::time::timeout_at(deadline, async {
-        let application = application_of(host, closure).await?;
-        let id = component_id_of(&application, component)?;
-        Box::pin(application.policy.finish_result(
-            id,
-            operation,
-            &facts,
-            NativeOutcome::Json(outcome),
-        ))
-        .await?
-        .into_json()
-    })
-    .await
-    .context("native result enclosing deadline elapsed")?
-}
-
-/// Run one export under the call's deadline.
-async fn run_export<H: ApplicationHost>(
-    host: &H,
-    call: OperationCall<'_, H::Policy>,
-) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
-    call_export(host, call).await?.into_json()
-}
-
-/// Run one export under the call's deadline with the call's JSON as input.
-async fn call_export<H: ApplicationHost>(
-    host: &H,
-    call: OperationCall<'_, H::Policy>,
-) -> anyhow::Result<NativeOutcome> {
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
-    tokio::time::timeout_at(deadline, async {
-        let application = application_of(host, call.closure).await?;
-        let id = component_id_of(&application, call.component)?;
-        let target = application.dispatch_target(id)?;
-        let json = serde_json::to_string(call.input).context("encode node input")?;
-        application
-            .policy
-            .invoke(
-                id,
-                target,
-                NativeInvocation {
-                    operation: call.operation.to_owned(),
-                    context: call.context,
-                    input: NativeInput::Encoded(json),
-                    deadline,
-                    facts: call.facts,
-                    application: Arc::clone(&application),
-                },
-            )
-            .await
-    })
-    .await
-    .context("native node enclosing deadline elapsed")?
-}
-
-/// The loaded application that a call's closure names.
-async fn application_of<H: ApplicationHost>(
-    host: &H,
-    closure: OperationClosure<'_, H::Policy>,
-) -> anyhow::Result<Arc<NativeApplication<H::Policy>>> {
-    match closure {
-        OperationClosure::Released(components) => host.released_application(components).await,
-        OperationClosure::Candidate(application) => Ok(Arc::clone(application)),
+        .context("operation deadline elapsed")?
     }
 }
 
-/// The native component id of `component` in `application`.
-fn component_id_of<'a, P: InvocationPolicy>(
-    application: &'a NativeApplication<P>,
-    component: &AdmittedComponent,
-) -> anyhow::Result<&'a str> {
-    application
-        .workload
-        .component_id(component)
-        .context("native-node-component-fact-missing")
+#[async_trait::async_trait]
+impl HostPlugin for WamnOperation {
+    fn id(&self) -> &'static str {
+        "wamn-operation"
+    }
+
+    fn world(&self) -> WitWorld {
+        WitWorld {
+            imports: HashSet::from([WitInterface::from("wamn:operation/operation@0.1.0")]),
+            exports: HashSet::new(),
+        }
+    }
+
+    async fn on_workload_item_bind<'a>(
+        &self,
+        item: &mut WorkloadItem<'a>,
+        interfaces: WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        if let Some(config) = item.local_resources().config.get(APPLICATION_CONFIG) {
+            let application = serde_json::from_str(config).context("decode wamn.application")?;
+            let WorkloadItem::Component(component) = &*item else {
+                anyhow::bail!("operation authority requires a route component");
+            };
+            self.bindings
+                .write()
+                .expect("operation bindings lock poisoned")
+                .insert(
+                    component.id().to_owned(),
+                    Arc::new(Binding {
+                        workload: component.workload_id().to_owned(),
+                        application,
+                        targets: OnceLock::new(),
+                    }),
+                );
+        }
+        item.add_plugin(self.host.id(), Arc::clone(&self.host) as _);
+        self.host.on_workload_item_bind(item, interfaces).await
+    }
+
+    async fn on_workload_resolved(
+        &self,
+        workload: &ResolvedWorkload,
+        component_id: &str,
+    ) -> anyhow::Result<()> {
+        let binding = self
+            .bindings
+            .read()
+            .expect("operation bindings lock poisoned")
+            .get(component_id)
+            .map(Arc::clone);
+        let Some(binding) = binding else {
+            return Ok(());
+        };
+        let components = workload.components();
+        let components = components.read().await;
+        let ids = binding
+            .application
+            .components
+            .iter()
+            .map(|component| {
+                let id = components
+                    .iter()
+                    .find(|(_, sibling)| sibling.name() == component.name)
+                    .map(|(id, _)| Arc::clone(id))
+                    .context("configured application component missing from workload")?;
+                Ok((component.name.clone(), id))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        drop(components);
+        let mut targets = BTreeMap::new();
+        for (name, id) in ids {
+            targets.insert(
+                name,
+                ComponentTarget {
+                    dispatch: workload.dispatch_target(&id, self.id()).await?,
+                    warm: workload
+                        .warm_instance_policy(&id)
+                        .await
+                        .keeps_instances_warm(),
+                },
+            );
+        }
+        binding
+            .targets
+            .set(targets)
+            .map_err(|_| anyhow::anyhow!("operation targets already resolved"))
+    }
+
+    async fn on_workload_unbind(
+        &self,
+        workload_id: &str,
+        interfaces: WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        self.bindings
+            .write()
+            .expect("operation bindings lock poisoned")
+            .retain(|_, binding| binding.workload != workload_id);
+        self.host.on_workload_unbind(workload_id, interfaces).await
+    }
 }
 
-/// Unique process-local application and invocation scope identifiers.
+struct OperationInvocation {
+    scope: Arc<str>,
+    warm: bool,
+    operation: CanonicalName,
+    context: node_types::NodeContext,
+    input: String,
+    execution: InvocationExecution,
+    trace: InvocationTrace,
+    reply: oneshot::Sender<Result<node_types::Emission, node_types::NodeError>>,
+    retired: Arc<AtomicBool>,
+}
+
+/// Restore the native identity before an instance can serve another invocation.
+struct ActiveScope<'a> {
+    accessor: &'a Accessor<SharedCtx>,
+    component: Arc<str>,
+}
+
+impl Drop for ActiveScope<'_> {
+    fn drop(&mut self) {
+        self.accessor.with(|mut access| {
+            access.get().active_ctx.component_id = Arc::clone(&self.component);
+        });
+    }
+}
+
+impl GuestCall for OperationInvocation {
+    fn describe(&self) -> &str {
+        self.operation.as_str()
+    }
+
+    fn deadline(&self) -> Duration {
+        self.execution
+            .deadline()
+            .saturating_duration_since(Instant::now())
+    }
+
+    fn call(
+        self: Box<Self>,
+        accessor: &Accessor<SharedCtx>,
+        instance: Instance,
+    ) -> GuestCallFuture<'_> {
+        let trace = self.trace.clone();
+        Box::pin(trace.run(async move {
+            let Self {
+                scope,
+                warm,
+                operation,
+                context,
+                input,
+                execution,
+                reply,
+                retired,
+                ..
+            } = *self;
+            let component = accessor.with(|mut access| {
+                std::mem::replace(&mut access.get().active_ctx.component_id, scope)
+            });
+            let _active = ActiveScope {
+                accessor,
+                component,
+            };
+            let run = accessor.with(|mut access| {
+                let handler = instance
+                    .get_export_index(&mut access, None, operation.as_str())
+                    .context("component has no operation export")?;
+                let export = instance
+                    .get_export_index(&mut access, Some(&handler), "run")
+                    .context("operation has no run entrypoint")?;
+                instance
+                    .get_func(&mut access, export)
+                    .context("operation run is not a function")
+            })?;
+            let ty = accessor
+                .with(|mut access| run.ty(&mut access).params().nth(1).map(|(_, ty)| ty))
+                .context("operation has no input")?;
+            let input = if ty == wash_runtime::wasmtime::component::Type::String {
+                Ok(Val::String(input))
+            } else {
+                serde_json::from_str(&input)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|value| json::input(&ty, &value))
+            };
+            let outcome = match input {
+                Ok(input) => {
+                    let arguments = [native_call::context_value(context), input];
+                    let mut results = [Val::Bool(false)];
+                    execution
+                        .run(run.call_concurrent(accessor, &arguments, &mut results))
+                        .await
+                        .context("operation invocation ended")??;
+                    json::emission(&results[0])?
+                }
+                Err(error) => Err(node_types::NodeError::InvalidInput(
+                    node_types::ErrorDetail {
+                        code: Some("invalid_input".into()),
+                        message: error.to_string(),
+                    },
+                )),
+            };
+            let refused = outcome.is_err().then_some("handler");
+            reply
+                .send(outcome)
+                .map_err(|_| anyhow::anyhow!("operation response abandoned"))?;
+            if warm && accessor.with(|mut access| !access.get().table.is_empty()) {
+                let resources = accessor.with(|mut access| std::mem::take(&mut access.get().table));
+                drop(resources);
+                retired.store(true, Ordering::SeqCst);
+                anyhow::bail!("operation completed with retained resources; retire instance");
+            }
+            Ok(refused)
+        }))
+    }
+}
+
 static NEXT_TARGET: AtomicU64 = AtomicU64::new(0);
 
+/// Allocate a process-local invocation scope under its component's identity.
 pub fn next_scope(component: &str) -> Box<str> {
     format!(
         "{component}#{}",
