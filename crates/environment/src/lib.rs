@@ -8,6 +8,7 @@ pub mod env_policies;
 pub mod environment;
 pub mod ident;
 pub mod migrations;
+pub mod org;
 pub mod org_connection;
 pub use wamn_platform_install::platform;
 pub mod platform_migrations;

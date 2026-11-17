@@ -429,7 +429,8 @@ impl IdentityError {
         }
     }
 
-    fn refused(
+    /// Create an error with the refusal reason that a route answers to its caller.
+    pub fn refused(
         type_: IdentityErrorType,
         refusal: IdentityRefusal,
         message: impl Into<Box<str>>,
