@@ -220,6 +220,8 @@ Issues:
 
 ## Epic 3: step 3.1 database model
 
+Merged to main.
+
 Rules:
 - Only the work listed here. Nothing from 3.2 or later.
 - Schema changes edit the files in `deploy/sql` directly. There is no migration chain.
@@ -283,6 +285,8 @@ Rulings on the scout questions (D, 2026-11-16): logins stay suffixed per project
 - 3.5: `wamn_catalog::manifest::installation` is a second, smaller model of the package document. Its readers move to the full model and it is deleted.
 - 3.3: the host resolves the caller's user row by `(iss, sub)`.
 - 3.6: a connection limit for each login, set in the CloudNativePG managed roles.
+- 3.6: the control service takes the issuer from `session_issuer` and stage takes it from `platform.identity_issuer`. They become the one identity issuer address setting (E6, K).
+- 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
 
 # Part 2: Review log
 

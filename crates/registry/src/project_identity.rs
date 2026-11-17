@@ -31,9 +31,9 @@ pub(crate) fn frame(output: &mut Vec<u8>, value: &[u8]) {
 
 /// Deterministic 160-bit project key for one project in one database.
 ///
-/// THE SAME VALUE `wamn_authority.project_key` COMPUTES IN SQL, and the same one
-/// the guest login's name carries. If those disagree by a byte, every governed
-/// read by that login refuses.
+/// The guest and dynamic SQL login names carry this value as their suffix. The
+/// SQL pool derives it again and refuses a credential whose login name does not
+/// carry it.
 ///
 /// The database is part of the preimage because role names are CLUSTER-wide:
 /// without it, one project in two project-environment databases would derive one
