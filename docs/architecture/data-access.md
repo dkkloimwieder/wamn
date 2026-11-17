@@ -1163,13 +1163,14 @@ The release stage also creates one service principal for each application with a
 The stage writes the service row and its dependency grants in the project database.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 It creates the `platform.number_sequence` row of each sequence that the packages declare, as [Numbering](#numbering) describes.
-It writes a user row for each user with a membership in that project environment, and removes a user row whose membership is gone.
-Authorization derives a user’s administration from the current org and project grants. The application database stores no copy of these inherited grants.
+It writes a user row for each eligible user with project environment membership or inherited administration.
+It removes the user row when the user loses access to the project environment.
+`project_authority` uses `identity.is_project_admin` to set or remove the user's `admin` assignment in `platform.user_role`.
 The identity owner creates that user in `identity.principals`.
 One email address names one principal for the whole platform.
 A user who works in two organizations holds one principal and two memberships.
 A user row carries the email of that user from `identity.principals`.
-The control host writes the user row and the `admin` row when its route grants them, and removes them when its route revokes them, with the administration login, bound to the caller and the route's sealed operation id.
+When an admin grant changes, control runs the same projection with the administration login bound to the caller and the route's sealed operation id.
 The application host writes roles, permissions and user roles through its [host routes](execution.md#host-run-routes) with the same login and the same binding.
 The bootstrap invitation writes system membership. The environment lifecycle projects it when the application database is initialized.
 A principal with no user row cannot write in the project.

@@ -116,7 +116,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | Route | Answer |
 | --- | --- |
 | `wamn-control:permission/mine@0.9.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
-| `wamn-control:user/list@0.9.0` (application) | `users`: each application user with `id`, `email`, `display_name` and `roles`. |
+| `wamn-control:user/list@0.9.0` (application) | Each entry in `users` has `id`, `email`, `display_name`, `roles` and `admin_covered`. `admin_covered` is true when the user holds `admin`. |
 | `wamn-control:role/list@0.9.0` | `roles`: every role of the project, `admin` included. |
 | `wamn-control:role/create@0.9.0` | Takes `role` and creates the empty authored role. Answers `created`. |
 | `wamn-control:role/delete@0.9.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
@@ -129,8 +129,10 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:workflow/start@0.9.0` | Authority `Granted`. Takes `workflow_id`, `input_json` and `idempotency_key`, and admits one run of the enabled version of that [environment workflow](#environment-workflows). Answers `run_id`. Refusals: `invalid_input`, `active_role_required`, `workflow_not_enabled`, `workflow_not_served` and `idempotency_conflict`. |
 | `wamn-control:connection/authorize@0.9.0` | ProjectAdmin authority. Takes `project`, `env`, and `name`. Returns `authorization_url` for an authorization code connection. |
 | `wamn-control:control/mine@0.9.0` | `org_admin`, and projects reached by the current org or project grants. `project_admin` marks authority over the whole project. |
-| `wamn-control:user/list@0.9.0` | `users`: each member of the org with `principal_id`, `email`, `display_name`, the org-local `status` and `org_admin`. An `org-admin` reads it, and so does a `project-admin` of any project of the org. |
+| `wamn-control:user/list@0.9.0` | Each member has `principal_id`, `email`, `display_name`, the org membership `status`, the global `principal_status` and `org_admin`. Org admins and project admins in the org can read it. |
+| `wamn-control:user/create@0.9.0` | Takes `email` and `display_name`. Creates or reuses a user and activates its org membership without sending mail. Answers `principal_id` and `enrolled`. |
 | `wamn-control:user/invite@0.9.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
+| `wamn-control:user/disable@0.9.0` | Takes `principal_id` and disables the principal. Answers `principal_id` and `status: disabled`. Refuses with `user_in_another_org` if another org has an active membership for the user. |
 | `wamn-control:user/activate@0.9.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
 | `wamn-control:user/deactivate@0.9.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
 | `wamn-control:project/list@0.9.0` | `projects`: projects of the org as `{name, state}`. |
@@ -172,11 +174,11 @@ An application route runs under the administration credential, in a host-owned R
 A host-run write stamps that sealed operation id in its history entries.
 A role or permission write first takes the project lock that `wamn` and release reconciliation take.
 The writes are the functions of [`wamn_environment::application`](../../crates/environment/src/application.rs), which the role verbs of `wamn` also call.
-`user_role.revoke` reads current inherited administration through the host’s identity reader. It derives the answer from the org and project grants.
+`user_role.grant` and `user_role.revoke` refuse direct changes to `admin`. Control projects that role from org and project grants.
 `permission.grant` writes one permission row. A row the serving release does not serve grants nothing.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `user_not_found` or `admin_covered`.
-The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `apps/target/wamn/wamn_control/client-ts`, which Git does not hold.
-The administration screens in the [platform UI](../../apps/platform_ui/README.md) call these routes through that client and write no database directly.
+TypeScript client generation is pending for the [application route contracts](../../crates/catalog/src/host_route/contracts).
+The administration screens in the [platform UI](../../apps/platform_ui/README.md) call these routes through the TypeScript client and write no database directly.
 The role screen reads operations from `permission.list`, and the user screen reads roles from `user.list` and permissions from `permission.list`.
 The control lists `project.list`, `user.list`, `environment.list`, `member.list`, and `control.mine` accept optional `limit` and `cursor` members.
 Either member starts paging. `limit` accepts integers from 1 through 100 and defaults to 100 in paging mode.
@@ -216,9 +218,11 @@ The four status routes need `org-admin`, and they write `registry.environments.s
 Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
-`user.invite` calls identity `POST /users` and `POST /invitations` with the configured identity operator certificate, through [`wamn-identity-client`](../../crates/identity-client/src/lib.rs).
-It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
-The host refuses an email or a display name that the identity rules refuse before it calls identity, and answers `user_refused` when identity refuses the user.
+Control calls identity through one HTTPS client with the certificate `CN=control-<org>`.
+`user.create` and `user.invite` call `POST /users` before writing the membership.
+`user.invite` also writes the requested grants. Control calls `POST /invitations` only when the user has no password.
+Control checks contact details before it calls identity. It answers `user_refused` when identity refuses the user.
+`user.disable` calls `POST /users/disable`. It makes no writes to project databases.
 The control set also serves `application.deploy`, `application.rollback`, `application.stop`, `release.retain`, `schema.diff`, `schema.apply`, `schema.reset`, and `operation.status`.
 Each route requires `ProjectAdmin` authority for `project` in the host's organization.
 The request names `project` and `env`.
@@ -692,7 +696,7 @@ The `shape` node turns the row event into the item array that `label-render` tak
 
 A PAT-authenticated service can start an invoker workflow with its own held role.
 The host derives that role from current grants, with the existing single-role or held-admin selection rule.
-A service never borrows a user's active role. User sessions with a service role or any unheld role still refuse.
+A service never borrows a user's active role. A session uses the active role selected from its current project grants.
 
 An event trigger names a source package, entity, operations and an optional condition over the old and new images.
 Provisioning declares one durable consumer per application source before hosts attach.
@@ -743,12 +747,12 @@ The host keeps both answers in its [auth memory](#auth-memory).
 Service credentials use their authored application grants and cannot mint a user session.
 The route authenticator requires neither the platform operator subject nor a system `admin` role.
 
-An org access token identifies the principal. It carries no roles or server-side login authority.
-The host and control currently refuse session requests until their RFC 9068 verification is installed.
-The legacy session permission path refuses admission until the host verifier is replaced.
+The host verifies every org access token and resolves its exact `(iss, sub)` to an active user in the project database.
+It caches successful resolutions under the project grant lifetime and reads permissions with the local UUID.
+The same project grant reader supplies roles for a session and a PAT.
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference.
 Missing, revoked, expired, or mismatched authority returns 401.
-An unavailable identity read refuses admission with 503. The read has a five-second timeout.
+An unavailable project identity or grant read refuses admission with 503.
 Logout, reset, account disablement, and membership removal prevent further renewal. Issued access tokens expire within 900 seconds.
 A revoked PAT or disabled service stops authenticating when the cached answer expires.
 Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
@@ -762,13 +766,17 @@ Control creates or reuses the service, grants its roles, and issues its PAT in o
 
 ### Auth memory
 
-A host keeps grants, admitted PATs, active environment status, and connection facts in its local Moka cache.
-It reads grants from `platform."user"`, `platform.user_role`, and `platform.permission`.
-It keys answers by project environment. A PAT answer also uses the hash of the whole token.
-The host caches positive PAT answers and checks the token expiry on every admission.
-Each environment input declares the project's `revocation_seconds`.
-Deploy writes this lifetime to `wamn.application` in each workload.
-Zero disables caching.
+Host authentication keeps positive project facts in its local Moka cache.
+A key includes its project environment, so one project's results cannot authorize another.
+Deploy writes the environment input `revocation_seconds` into the workload's `wamn.application` configuration.
+The value sets the project cache lifetime and ranges from 0 to 3600 seconds. Zero disables caching.
+
+The host verifies every session token. A positive subject lookup maps the issuer and subject to the active user UUID.
+A PAT cache key also includes the hash of the whole token. The host checks token expiry on every admission.
+On a grant cache miss, one read of `platform."user"`, `platform.user_role`, and `platform.permission` supplies the UUID's permissions.
+Invocation binds and workflow callers use the guest login. Route authentication uses the host's platform login.
+Missing users, inactive users, and empty grant sets are read again on the next request.
+Cached facts expire on the local project lifetime. Token validity remains bounded by the issuer's expiry and signing keys.
 
 The org audience is `urn:wamn:control:{org}`.
 One password login gives one access token for the org, shared by its environments and control routes.
@@ -788,21 +796,21 @@ Logout, disable, reset, expiry, or renewal replay prevents further renewal.
 Authentication deadlines govern new admission and do not cancel accepted work.
 
 The [signer](../../crates/identity/src/session_token.rs) owns the access-token claims and minting bounds.
-The previous session profile and its shared claim types are removed.
-Until the RFC 9068 verifier is installed, host and control session admission refuse every session.
+The [verifier](../../crates/authentication/src/access_token.rs) requires `at+jwt`, EdDSA, and the configured issuer and audience.
+It allows 30 seconds of clock tolerance for expiry and future issuance.
 The edge refuses every protected route until its identity design is defined.
 PAT and signature policies on the application host retain their existing behavior.
 
-Identity temporarily retains its cookie carrier, including the readable CSRF cookie, without a signed CSRF claim.
-Host cookie admission refuses requests while cookie and CSRF handling move to the web service.
-The browser keeps no tokens in its body or storage.
+Identity returns tokens as JSON to `wamn-web`, which sets the browser cookies and returns only the principal ID and expiry times.
+The web proxy checks CSRF on unsafe cookie-authenticated requests and forwards the session as a bearer token.
+Host and control admit sessions only through `Authorization: Bearer`.
+The browser stores access and renewal tokens in HttpOnly cookies.
 The shared browser runtime signs in directly to the deployment's org and renews on load and before expiry.
 
 ### Connection memory
 
 The host answers the connection facts of a call from its memory, so a repeated call reads Postgres and the credential store only on a miss.
-The [memory](../../crates/connection/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
-It follows the revision and watch rules of the [auth memory](#auth-memory).
+The [memory](../../crates/connection/src/connection_memory.rs) describes the connection facts and their cache keys.
 Connection facts keep their own 60-second expiry.
 The [shared replica](../../crates/authority/src/kv_memory.rs) holds these rules for both memories.
 The key `<project_env_key>.connection.<connection id>` holds the active generation, effective status, credential id, and service principal id.
@@ -960,7 +968,7 @@ An `env delete` deletes every key of the environment.
 Every org in `registry.orgs` has the org audience `urn:wamn:control:<org>`.
 The same token serves application and control requests. Login requires active org membership, without an administration grant.
 Control reads org and project administration separately from the system database.
-Control session admission currently refuses requests until the RFC 9068 verifier is installed.
+Control uses the verified subject UUID for the existing org and project eligibility reads.
 
 ### Consistent session access
 
@@ -968,7 +976,7 @@ Sessions and PATs use the same operation permission condition: the caller holds 
 Every user session receives the same current authority tests without operation-specific password prompts.
 Renewal stays automatic during active use and never extends the absolute login deadline.
 
-Password login liveness belongs to identity. The legacy active-session reads currently refuse admission.
+Password login liveness belongs to identity. Hosts check token expiry and project identity status during admission.
 
 Server authorization is authoritative. The UI may hide unavailable actions, but the router or host handler always enforces authority.
 
@@ -989,8 +997,6 @@ No guest component writes an authorization relation. No guest component receives
 
 `permission.revoke X` deletes that row.
 
-No row is derived from another, so no revoke keeps or refuses a derived row.
-
 The fixed application-administration operations are **not grantable** to authored roles.
 
 `permission.grant` refuses them.
@@ -1001,12 +1007,9 @@ The fixed application-administration operations are **not grantable** to authore
 
 `admin` is the only built-in application role.
 
-Tokens carry no signed roles. Session admission currently refuses requests until the host verifier is installed.
 A service principal has no user active role, even when it holds an application permission.
 Principal and grant writes record `AuthDrops`, and their callers publish the deletions after commit.
 A failed deletion is logged without retry. The auth cache TTL bounds stale access.
-
-A session currently receives 401 while the host verifier is replaced.
 
 Every other role:
 
@@ -1079,22 +1082,27 @@ The Rust web front normalizes the final address in the chain before proxying a p
 Direct requests without that header use the TLS peer address.
 Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
-Operators behind a shared proxy also share its source limit.
-
-`POST /invitations` requires the existing verified operator certificate and a `principal_id`.
+User management uses the client certificate that the operator CA verifies.
+The certificate subject must match `WAMN_IDENTITY_CONTROL_SUBJECT`, which is `CN=control-<org>`.
+User management shares the request limits. Its source is the TLS peer address.
+`POST /invitations` takes a `principal_id` and requires mail configuration.
 The service sends the one-time secret through Resend to that principal's stored email.
 A successful provider response means accepted for delivery, not confirmed inbox delivery.
 The service makes no automatic send retry and reports failed or uncertain sends as unavailable.
 
-`POST /users` requires the operator certificate and accepts `email` and `display_name`.
+`POST /users` accepts `email` and `display_name`.
 It creates the user of the email as `wamn:provisioning`, or reuses the user that has it, and answers 200 with `principal_id` and `enrolled`.
 The email folds to lower case and is also the subject. `enrolled` is true when the user has a password.
 An email that the identity rules refuse answers 400 with the reason, and a disabled user answers 409.
 
+`POST /users/disable` accepts `principal_id`. Identity checks the user's memberships in one database transaction.
+The route returns 404 if the user does not belong to the control org. It returns 409 if another org has an active membership.
+The route returns 204 after it disables the principal. A disabled principal cannot renew a login.
+
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
 `POST /password/session` accepts `email`, `password`, and `aud`, set to `urn:wamn:control:<org>`.
 It performs one password check and signs one org token. The browser has no environment chooser.
-It reads membership, environment status, the active user and roles before it signs the token.
+It checks the active user and org membership before signing the token.
 Its response contains `sub`, `access_token`, `token_type`, `expires_at`, `renewal_token`, and `login_expires_at`.
 The two expiry fields contain Unix seconds. `token_type` is `Bearer`.
 
@@ -1107,17 +1115,22 @@ It returns HTTP 204, including when the credential is already unusable.
 `POST /password/logout-all` accepts the same fields and requires a currently usable renewal credential.
 It revokes all password login families for that user and returns HTTP 204.
 Neither operation requires continued application access. Neither revokes PATs.
-Previously issued password tokens fail new admission after logout commits.
+Previously issued access tokens expire on their own deadline. Logout prevents renewal.
 
-`/password/session`, `/password/renew`, and `/password/logout` accept an optional `carrier`, `"bearer"` by default or `"cookie"`.
-With `"cookie"`, the reply body holds only `sub`, `expires_at`, and `login_expires_at`, and the tokens travel in three cookies.
-`__Host-wamn-session` holds the session token. It is HttpOnly, with `Path=/`.
-`__Host-wamn-csrf` holds a new random CSRF token. The page reads it, so it is not HttpOnly.
-`__Secure-wamn-renewal` holds the renewal token. It is HttpOnly, with `Path=/password`.
-All three are `Secure` and `SameSite=Strict` and carry no `Domain`.
-The session and CSRF cookies live as long as the token. The renewal cookie lives as long as the login.
-Renew and logout read the renewal token from its cookie and refuse a `renewal_token` in the body.
-Logout clears all three cookies with `Max-Age=0`. `/password/logout-all` accepts only the bearer carrier.
+At the web proxy, login and renewal reply with `sub`, `expires_at`, and `login_expires_at`.
+`__Host-wamn-session` and `__Host-wamn-renewal` hold the access and renewal tokens and use `HttpOnly`.
+`__Host-wamn-web-csrf` is readable by the page. It contains a random nonce and a signature.
+Web computes the signature with HMAC-SHA256 over the access token's `jti` and the nonce.
+All three cookies use `Path=/`, `Secure`, and `SameSite=Strict` and expire at the login deadline.
+API admission still enforces the access token's own expiry.
+Unsafe requests authenticated by cookie, including renewal and logout, must send the CSRF cookie value in `x-wamn-csrf` and pass the HMAC check.
+Login, enrollment, recovery, and reset require a same-origin HTTPS `Origin` header.
+
+Web takes the renewal token from its cookie for renewal and logout and sends it to identity in JSON.
+Logout clears all three cookies with `Max-Age=0`. Identity's `/password/logout-all` takes a renewal token in JSON.
+Before forwarding, web removes all three cookies and the CSRF header.
+If the session cookie supplied an access token, web puts it in `Authorization: Bearer`.
+An explicit authorization header alongside a session cookie is refused.
 
 `POST /password/recover` accepts `email` and shares the global, source, and account limits.
 The service sends a reset secret only for an active user with an established password.
@@ -1156,10 +1169,9 @@ Password buffers erase their owned bytes on drop. Diagnostics redact passwords a
 
 ## Session keys
 
-The host uses an explicit HTTPS issuer endpoint and nonempty trusted CA configuration.
+The host and control each use an explicit issuer, HTTPS JWKS address, exact org audience, EdDSA allowlist, and a nonempty CA bundle.
 It does not discover endpoints, follow redirects, use ambient proxies, or add ambient trust roots.
-A fetched key set replaces the preceding complete set.
-Unknown keys cannot obtain authority from another issuer.
+Each verifier stores the complete JWKS in its local Moka cache. An unknown key ID triggers a rate-limited refresh from the configured address.
 
 Key freshness is bounded to 300 seconds from request start, including the response's HTTP `Age`.
 The cache permits one fetch per issuer at a time, with starts at least one second apart.
@@ -1187,7 +1199,7 @@ Replicas serialize rotation with an issuer lock. Restarting a replica does not r
 An issuer without an active key requires explicit activation, including after removal of a compromised key.
 The previous public key stays available for the longest token lifetime plus clock tolerance after its signing cutoff.
 
-The [key cache](../../crates/authentication/src/session_keys.rs) and [key owner](../../crates/identity/src/session_keys.rs) define these bounds.
+The [key cache](../../crates/authentication/src/access_token.rs) and [key owner](../../crates/identity/src/session_keys.rs) define these bounds.
 
 ## Operator clients
 

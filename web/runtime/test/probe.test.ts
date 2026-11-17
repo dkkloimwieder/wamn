@@ -22,7 +22,7 @@ describe("probe", () => {
 
   it("omits cookies and never reads the CSRF cookie", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(null, { status: 204 }));
-    const cookies = vi.fn(() => "__Host-wamn-csrf=secret");
+    const cookies = vi.fn(() => "__Host-wamn-web-csrf=secret");
     const transport = createTransport({ baseUrl: "", cookie: true, cookies, fetch });
     expect(await transport.probe()).toBe(true);
     expect(fetch.mock.calls[0]?.[1]?.credentials).toBe("omit");

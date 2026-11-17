@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::json;
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_environment::environment::Platform;
-use wamn_identity_client::IdentityClientConfig;
+use wamn_identity_client::users::UserClient;
 
 /// Public component configuration. Database passwords stay in CNPG Secrets.
 #[derive(Debug, Deserialize)]
@@ -34,6 +34,9 @@ pub struct Configuration {
     pub database: wamn_postgres::ConnectionConfig,
     pub apply_database: wamn_postgres::ConnectionConfig,
     pub session_issuer: String,
+    pub session_jwks_url: String,
+    pub session_audience: String,
+    pub session_algorithms: Vec<String>,
     pub session_jwks_ca: PathBuf,
     pub administration_dir: PathBuf,
     pub worker: wamn_kubernetes::job::Worker,
@@ -86,7 +89,7 @@ pub struct Events {
     pub dup_window_secs: u64,
 }
 
-/// The identity operator connection. Private keys stay in mounted files.
+/// The identity connection. Private keys stay in mounted files.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
@@ -96,13 +99,23 @@ pub struct Identity {
     pub server_ca: Option<PathBuf>,
 }
 impl Identity {
-    fn connection(&self) -> IdentityClientConfig {
-        IdentityClientConfig {
-            endpoint: self.endpoint.clone(),
-            client_cert: self.client_cert.clone(),
-            client_key: self.client_key.clone(),
-            server_ca: self.server_ca.clone(),
-        }
+    fn users(&self) -> anyhow::Result<Option<UserClient>> {
+        let Some(endpoint) = self.endpoint.as_deref() else {
+            return Ok(None);
+        };
+        UserClient::new(
+            endpoint,
+            self.client_cert
+                .as_deref()
+                .context("identity client certificate is required")?,
+            self.client_key
+                .as_deref()
+                .context("identity client key is required")?,
+            self.server_ca
+                .as_deref()
+                .context("identity server CA is required")?,
+        )
+        .map(Some)
     }
 }
 
@@ -205,20 +218,12 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     let pool = wamn_postgres::pool(&database, 4).await?;
     let identity_databases = config.administration_dir.clone();
     let identity_system = config.apply_database.to_json()?;
-    let keys = wamn_authentication::session_keys::IssuerKeys::new(
-        wamn_authentication::session_keys::IssuerKeysConfig::new(
-            &config.session_issuer,
-            &format!(
-                "{}/.well-known/jwks.json",
-                config.session_issuer.trim_end_matches('/')
-            ),
-            &std::fs::read(&config.session_jwks_ca)?,
-        )?,
-    );
-    let verifier = wamn_identity_protocol::verifier::SessionVerifier::new(
-        keys,
-        config.org.as_str(),
-        &wamn_identity::control::org_audience(&config.org)?,
+    let verifier = wamn_authentication::access_token::AccessTokenVerifier::new(
+        &config.session_issuer,
+        &config.session_jwks_url,
+        &config.session_audience,
+        &config.session_algorithms,
+        &config.session_jwks_ca,
     )?;
     let oauth = config
         .oauth_encryption
@@ -236,7 +241,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             writer: Arc::new(tokio::sync::Mutex::new(
                 wamn_postgres::connect(&database).await?,
             )),
-            identity: Some(config.identity.connection()),
+            identity: config.identity.users()?,
             issuer: config.session_issuer,
             administration: Some(config.administration_dir.clone()),
             status: Arc::new(crate::environment_status::KubernetesSource),

@@ -227,6 +227,8 @@ pub enum IdentityRefusal {
     UserNotActive,
     /// The principal is not a member of the org, or not a user.
     UserNotFound,
+    /// The user has an active membership in another org.
+    UserInAnotherOrg,
     /// `org-admin` or `project-admin` covers the grant, so it stays.
     AdminCovered,
 }
@@ -317,12 +319,6 @@ impl From<wamn_identity_protocol::ParseIdentityError> for IdentityError {
 impl From<wamn_identity_protocol::secret::TokenError> for IdentityError {
     fn from(source: wamn_identity_protocol::secret::TokenError) -> Self {
         Self::new(IdentityErrorType::Entropy, source.to_string())
-    }
-}
-
-impl From<wamn_identity_protocol::SessionError> for IdentityError {
-    fn from(source: wamn_identity_protocol::SessionError) -> Self {
-        Self::new(IdentityErrorType::InvalidInput, source.to_string())
     }
 }
 

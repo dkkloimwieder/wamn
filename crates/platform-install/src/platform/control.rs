@@ -5,8 +5,8 @@ use std::path::Path;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 
-use wamn_kubernetes::kubectl;
 use wamn_kubernetes::Target;
+use wamn_kubernetes::kubectl;
 
 use super::artifact_plan::SelectedChart;
 use super::document::ClusterDocument;
@@ -200,16 +200,20 @@ pub(super) fn resource_entry(
         .transpose()?;
     let config = json!({"org":org,"http_addr":"0.0.0.0:80",
         "apply_database":connection("wamn_apply".parse::<wamn_identity_protocol::LoginName>()?,"wamn-apply".into()),
-        "session_issuer":super::identity::issuer(org.as_str()),"session_jwks_ca":"/etc/identity-ca/ca.crt",
+        "session_issuer":super::identity::issuer(org.as_str()),
+        "session_jwks_url":format!("{}/.well-known/jwks.json", super::identity::issuer(org.as_str())),
+        "session_audience":wamn_registry::name::org_audience(org),
+        "session_algorithms":["EdDSA"],
+        "session_jwks_ca":"/etc/identity-ca/ca.crt",
         "administration_dir":"/etc/wamn/control-administration","worker":{"image":chart.image("control")?,"configuration":configuration,"service_account":wamn_registry::name::operation(org)},
         "chart":chart.reference(),
         "registry_auth_file":"/credentials/registry/config.json",
         "nats":nats,"events":{"stream_replicas":1,"dup_window_secs":120},
-        "event_observer":null,"identity":{"endpoint":super::identity::issuer(org.as_str()),"client_cert":"/etc/identity-operator/tls.crt","client_key":"/etc/identity-operator/tls.key","server_ca":"/etc/identity-ca/ca.crt"}});
+        "event_observer":null,"identity":{"endpoint":super::identity::issuer(org.as_str()),"client_cert":"/etc/identity-control/tls.crt","client_key":"/etc/identity-control/tls.key","server_ca":"/etc/identity-ca/ca.crt"}});
     Ok(
         json!({"chart":chart.directory(),"version":chart.version,"name":name,"namespace":org,
         "values":{"controlService":true,"org":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},
-        "control":{"image":chart.image("control")?,"configuration":config,"natsSecret":wamn_registry::name::control_nats_certificate(org),"operatorSecret":wamn_registry::name::resource_suffix("operator",org.as_str()),"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::control_nats_user(org)},
+        "control":{"image":chart.image("control")?,"configuration":config,"natsSecret":wamn_registry::name::control_nats_certificate(org),"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::control_nats_user(org)},
         "platform":{"chart":chart.reference()}}}),
     )
 }

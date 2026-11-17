@@ -265,7 +265,6 @@ impl HostRouteDelivery {
                 id,
                 wamn_engine::flow_http_routing::RoutePolicy {
                     policy: &attachment.auth_policy,
-                    read,
                 },
                 &headers,
                 &bytes,

@@ -17,7 +17,7 @@ use wamn_engine::native_routes::{
 };
 use wamn_identity::control::{control_projects_page, is_org_admin, org_projects_page};
 use wamn_identity::paging::Order;
-use wamn_identity_client::IdentityClientConfig;
+use wamn_identity_client::users::UserClient;
 use wamn_identity_protocol::PrincipalId;
 
 use crate::control_route::{ControlRoutes, Refusal, control_page};
@@ -40,8 +40,8 @@ pub struct HostRouteHandlers {
     /// A second `control` login that holds one write transaction at a
     /// time, so a read never runs inside a write.
     pub writer: Arc<tokio::sync::Mutex<sqlx::PgConnection>>,
-    /// The operator client of the identity service, for `user.invite`.
-    pub identity: Option<IdentityClientConfig>,
+    /// The identity adapter for user management.
+    pub identity: Option<UserClient>,
     /// The configured identity issuer address used for project user rows.
     pub issuer: String,
     /// The mounted Secret `wamn-control-administration-<org>`: one file
@@ -397,11 +397,11 @@ impl HostRouteDelivery {
             }
         }
         let authentication = match &self.control_authenticator {
-            Some(authenticator) => authenticator.authenticate_control(id, read, &headers).await,
+            Some(authenticator) => authenticator.authenticate_control(id, &headers).await,
             None => Err(wamn_engine::flow_http_routing::authentication_unavailable()),
         };
         let caller = match authentication {
-            Ok(caller) => caller,
+            Ok(caller) => Some(caller),
             Err(error) => return answer(error.status, json!({"error":{"code":error.code}})),
         };
         let payload = if read {

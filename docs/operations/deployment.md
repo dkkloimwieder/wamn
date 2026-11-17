@@ -78,11 +78,8 @@ For a disposable local platform, use the separate cluster rebuild procedure unde
 
 ### Local access and owner invitation
 
-Kind uses identity's local mail mode. It writes invitations inside the identity pod and sends no external email.
-Deployment invites the document's owner as administrator of the initial organization.
-It sends no new invitation when that owner has a password or an unexpired pending invitation.
-Deployment prints the exact `kubectl exec` command that reads the local invitation file. It never prints the invitation code.
-Use that command to read the invitation privately.
+When identity uses local mail, it writes invitations inside the identity pod.
+An administrator sends invitations through the `user.invite` control route.
 The local outbox is temporary pod storage. Keep invitation codes and passwords out of logs.
 
 Deployment also prints the port-forward command and required HTTP `Host` value.
@@ -572,6 +569,11 @@ The uploader reads the package id and client name from `web.json`.
 It writes `clients/<package>/<web digest hex>/` and skips all writes when the index already exists.
 That page owns the command, required inputs, destination paths, output, and errors.
 The shell reads `/config.json` from the installed web service before sign-in.
+Browser sign-in uses the web host over HTTPS.
+The edge chart mounts the `key` entry of `wamn-web-csrf` in the web Deployment's namespace.
+The installation chart uses `hosts` by default.
+The platform installer writes 32 random bytes on first creation and preserves the Secret on a repeat install.
+The bootstrap caller must prepare that namespace before the installer writes the Secret.
 The bucket must allow reads without credentials.
 Edge deployment remains outside the local platform milestone.
 
@@ -641,24 +643,22 @@ The private `.env` is ignored by Git and needs owner-only read and write permiss
 No home-directory path is required.
 
 For local email configuration, copy `.env.example` to `.env` before adding the key and verified sender.
-Keep the existing issuer, database, TLS, and operator CA configuration.
+Keep the existing issuer, database, TLS, operator CA, and control certificate subject configuration.
 External delivery requires both Resend values. Kind deployment instead selects local mail as described in [local access](#local-access-and-owner-invitation).
 The CLI also accepts `--resend-api-key` and `--resend-from`. Prefer environment input for the secret.
 
 For Kubernetes, create a Secret with the `api-key` entry in the identity namespace.
 Set the identity chart's `resendSecret` to that Secret and `resendFrom` to the verified sender.
-Set `operatorCaSecret` to permit operator invitation requests.
+Set `operatorCaSecret` to the CA that signs the control client certificate.
+Set `controlSubject` to `CN=control-<org>`.
+Control mounts the `control-<org>` Secret. It must contain `tls.crt` and `tls.key`.
 Set `inviteUrl` to the web client base, for example `https://receiving.wamn.dev`.
 The invitation mail links to `<inviteUrl>/invite#<code>`.
 The reset mail links to `<inviteUrl>/reset#<secret>`.
 If `inviteUrl` is empty, each mail shows the code.
-Platform installation creates or reuses the initial owner through identity's `POST /users`.
-It writes the owner's active membership and administrator grant through the identity library.
-It then calls identity's `POST /invitations` with the operator certificate.
-It skips the request when the owner has a password or an unexpired invitation.
-Later invitations use the `user.invite` control route.
+Use `user.create` to add an org member without sending mail. Use `user.invite` to add the member and send an invitation when needed.
 
-Restart the Deployment after changing the credential, sender, or operator CA.
+Restart the Deployment after changing the credential, sender, operator CA, or control certificate subject.
 CloudNativePG manages the issuer login and its basic-auth Secret. `provision-identity-issuer` publishes its public connection configuration.
 Use the current system schema on a fresh database, following the repository's schema installation contract.
 
@@ -682,6 +682,8 @@ wamn grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" \
 
 The verbs refuse direct assignment or removal of `admin`.
 Grant or revoke system project-admin or org-admin to change application administration.
+Control records `admin` in each project environment that the grant covers.
+Revoking the last grant that covers the user removes that assignment.
 The target needs an existing application user or service row.
 The HTTP owner refuses unknown users. A grant also refuses a missing role.
 Service principal email addresses use `<subject>@<platform domain>`.
@@ -893,6 +895,10 @@ They do not supply a local connection credential store.
 Identity login uses the org audience `urn:wamn:control:<org>`.
 The identity chart no longer accepts session target ConfigMaps or project database reader credentials.
 The chart retains access to the identity database credential and its CA.
+
+The installation writes `WAMN_SESSION_ISSUER`, `WAMN_SESSION_JWKS_URL`, `WAMN_SESSION_AUDIENCE`, `WAMN_SESSION_ALGORITHMS`, and `WAMN_SESSION_JWKS_CA` into the org's `wamn-host-settings` ConfigMap.
+Environment hosts read these defaults and mount the org's `identity-ca` ConfigMap at `/etc/identity-ca`.
+Control reads the same verifier settings from its mounted configuration.
 
 The HTTP interface keeps its `credential-unavailable` result.
 

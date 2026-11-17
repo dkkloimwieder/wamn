@@ -6,6 +6,7 @@ pub mod cli;
 pub mod mail;
 mod password;
 mod session;
+mod users;
 
 use std::convert::Infallible;
 use std::fmt;
@@ -22,7 +23,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use rustls::pki_types::pem::PemObject as _;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
 use tokio_rustls::TlsAcceptor;
@@ -42,6 +43,7 @@ pub struct IdentityConfig {
     issuer: String,
     key_rotation: Duration,
     trusted_proxy_hops: usize,
+    control_org: Option<wamn_registry::OrgId>,
     connection: String,
     mail: Option<mail::MailConfig>,
 }
@@ -65,6 +67,7 @@ impl IdentityConfig {
             issuer: issuer.to_owned(),
             key_rotation: DEFAULT_KEY_ROTATION,
             trusted_proxy_hops: 0,
+            control_org: None,
             connection,
             mail: None,
         })
@@ -74,6 +77,22 @@ impl IdentityConfig {
     pub fn with_trusted_proxy_hops(mut self, hops: usize) -> Self {
         self.trusted_proxy_hops = hops;
         self
+    }
+
+    /// Enable user management for the designated control certificate subject.
+    ///
+    /// # Errors
+    /// Refuses a subject other than `CN=control-<org>` for a valid org.
+    pub fn with_control_subject(mut self, subject: &str) -> Result<Self, IdentityServiceError> {
+        self.control_org = subject
+            .strip_prefix("CN=control-")
+            .and_then(|org| org.parse().ok());
+        if self.control_org.is_none() {
+            return Err(IdentityServiceError::new(
+                "invalid control certificate subject",
+            ));
+        }
+        Ok(self)
     }
 
     /// Set the signing key schedule. The previous public key retains its token window.
@@ -110,10 +129,13 @@ struct Inner {
     issuer: String,
     key_rotation: Duration,
     trusted_proxy_hops: usize,
+    control_org: Option<wamn_registry::OrgId>,
     // Every held connection opens again with this connection string after Postgres
     // closes it, for example when the server restarts.
     connection: String,
     passwords: Option<password::State>,
+    // Password and control user requests share eight places per replica.
+    request_slots: Semaphore,
     envelope: wamn_envelope::encryption::Envelope,
     database: Mutex<Database>,
 }
@@ -195,9 +217,11 @@ impl IdentityService {
                 issuer: config.issuer,
                 key_rotation: config.key_rotation,
                 trusted_proxy_hops: config.trusted_proxy_hops,
+                control_org: config.control_org,
                 envelope,
                 connection: config.connection,
                 passwords,
+                request_slots: Semaphore::new(8),
                 database: Mutex::new(database),
             }),
         })
@@ -206,9 +230,30 @@ impl IdentityService {
     async fn respond(
         &self,
         request: Request<Incoming>,
-        operator: bool,
+        certificate: PeerCertificate,
         source: std::net::IpAddr,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
+        if request.method() == Method::POST
+            && request.uri().query().is_none()
+            && matches!(
+                request.uri().path(),
+                "/users" | "/invitations" | "/users/disable"
+            )
+        {
+            let Some(org) = self
+                .inner
+                .control_org
+                .as_ref()
+                .filter(|_| certificate == PeerCertificate::Control)
+            else {
+                return Ok(response(
+                    StatusCode::FORBIDDEN,
+                    "application/json",
+                    br#"{"error":"control certificate required"}"#.to_vec(),
+                ));
+            };
+            return Ok(users::respond(&self.inner, org, request, source).await);
+        }
         let source = if self.inner.trusted_proxy_hops == 0
             || !request.headers().contains_key("x-forwarded-for")
         {
@@ -238,9 +283,7 @@ impl IdentityService {
             && request.uri().query().is_none()
             && matches!(
                 request.uri().path(),
-                "/invitations"
-                    | "/users"
-                    | "/password/enroll"
+                "/password/enroll"
                     | "/password/session"
                     | "/password/renew"
                     | "/password/logout"
@@ -250,7 +293,7 @@ impl IdentityService {
             )
             && let Some(state) = &self.inner.passwords
         {
-            return Ok(password::respond(&self.inner, state, request, operator, source).await);
+            return Ok(password::respond(&self.inner, state, request, source).await);
         }
         let response = if request.method() != Method::GET || request.uri().query().is_some() {
             response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec())
@@ -296,6 +339,31 @@ impl IdentityService {
             }
         };
         Ok(response)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PeerCertificate {
+    None,
+    Operator,
+    Control,
+}
+
+impl PeerCertificate {
+    fn authenticated(
+        certificates: Option<&[CertificateDer<'_>]>,
+        org: Option<&wamn_registry::OrgId>,
+    ) -> Self {
+        let Some(leaf) = certificates.and_then(|chain| chain.first()) else {
+            return Self::None;
+        };
+        if let Some(org) = org
+            && users::matches_control_subject(leaf.as_ref(), org)
+        {
+            Self::Control
+        } else {
+            Self::Operator
+        }
     }
 }
 
@@ -410,13 +478,15 @@ pub async fn serve(
                 connections.spawn(async move {
                     let _slot = slot;
                     let Ok(Ok(tls)) = tokio::time::timeout(IO_TIMEOUT, acceptor.accept(tcp)).await else { return; };
-                    // Only the accepted TLS session supplies operator authority.
+                    // Only the accepted TLS session supplies client authority.
                     // Certificate headers and bearer credentials cannot set it.
-                    let operator = tls.get_ref().1.peer_certificates()
-                        .is_some_and(|certificates| !certificates.is_empty());
+                    let certificate = PeerCertificate::authenticated(
+                        tls.get_ref().1.peer_certificates(),
+                        service.inner.control_org.as_ref(),
+                    );
                     let handler = service_fn(move |request| {
                         let service = service.clone();
-                        async move { service.respond(request, operator, peer.ip()).await }
+                        async move { service.respond(request, certificate, peer.ip()).await }
                     });
                     let _ = http1::Builder::new().timer(TokioTimer::new())
                         .header_read_timeout(IO_TIMEOUT)

@@ -142,7 +142,8 @@
     "org_admin/grant.input.json",
     "org_admin/revoke.input.json",
     "user/activate.input.json",
-    "user/deactivate.input.json"
+    "user/deactivate.input.json",
+    "user/disable.input.json"
   ],
   "project.input": [
     "project/activate.input.json",
@@ -167,7 +168,8 @@
   ],
   "user.state.result": [
     "user/activate.result.json",
-    "user/deactivate.result.json"
+    "user/deactivate.result.json",
+    "user/disable.result.json"
   ],
   "operation.status": [
     "environment/operation_status.result.json",

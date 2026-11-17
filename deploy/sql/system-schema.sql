@@ -473,6 +473,21 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
+-- Order membership activation against the issuer's cross-org disable check.
+-- RLS can hide the principal from a control login before it adds the membership.
+CREATE FUNCTION identity.lock_org_membership_principal() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM 1 FROM identity.principals WHERE id = NEW.principal_id FOR NO KEY UPDATE;
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION identity.lock_org_membership_principal() FROM PUBLIC;
+CREATE TRIGGER lock_org_membership_principal
+    AFTER INSERT OR UPDATE OF status ON identity.org_memberships
+    FOR EACH ROW WHEN (NEW.status = 'active')
+    EXECUTE FUNCTION identity.lock_org_membership_principal();
+
 -- A user's administrative role in one org (docs/plan/platform-ui.md §4.4).
 -- A role needs the user's membership of the org, and deleting the
 -- membership deletes the role.

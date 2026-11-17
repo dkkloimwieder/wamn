@@ -56,7 +56,7 @@ pub struct AuthenticatedCaller {
 pub enum CredentialType {
     /// A freshly authenticated platform access token.
     Pat,
-    /// Signed identity and roles within the approved session lifetime.
+    /// Verified bearer identity with project database grants.
     Session,
     /// A service identity pinned by trusted queue admission.
     QueuedService,
@@ -154,7 +154,6 @@ impl AuthenticatedCaller {
 #[derive(Debug, Clone, Copy)]
 pub struct RoutePolicy<'a> {
     pub policy: &'a Value,
-    pub read: bool,
 }
 
 /// The host's route policies, supplied by workload config or an edge bundle.
@@ -199,7 +198,6 @@ pub struct AuthenticationRequest<'a> {
     /// The project and environment of the host that serves the route.
     pub target: &'a wamn_registry::ProjectEnvKey,
     pub attachment_id: &'a wamn_catalog::canonical_name::CanonicalName,
-    pub read: bool,
     /// The attachment's parsed policy. It is never `none`.
     pub policy: AttachmentAuthPolicy<'a>,
     pub headers: &'a [Header],
@@ -292,7 +290,6 @@ impl FlowHttpRouting {
             .authenticate(AuthenticationRequest {
                 target,
                 attachment_id,
-                read: route.read,
                 policy,
                 headers,
                 body,
@@ -321,70 +318,38 @@ impl FlowHttpRouting {
 
 #[derive(Clone, Copy)]
 pub enum RouteCredential<'a> {
-    /// A session token. `csrf` is `Some` when the token came by the session
-    /// cookie: the request then passes the CSRF test, and the flag says
-    /// whether the route requires the header, which a read route does not.
-    Session { token: &'a str, csrf: Option<bool> },
-    /// A PAT. The authenticator reads it with [`required_bearer_token`] once
-    /// it has a mechanism to test one.
-    Pat,
+    /// An RFC 9068 access token.
+    Session(&'a str),
+    /// A personal access token.
+    Pat(&'a str),
 }
 
 /// Hand-written so a debug print never shows the token.
 impl std::fmt::Debug for RouteCredential<'_> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Session { csrf, .. } => formatter
-                .debug_struct("Session")
-                .field("csrf", csrf)
-                .finish_non_exhaustive(),
-            Self::Pat => formatter.write_str("Pat"),
+            Self::Session(_) => formatter.write_str("Session"),
+            Self::Pat(_) => formatter.write_str("Pat"),
         }
     }
 }
 
-/// Select the one credential that a protected route request presents.
-///
-/// A request with both a session cookie and an `authorization` header refuses.
-/// A session cookie on a session route is a session. Otherwise a bearer token
-/// is a session, unless the route also admits a PAT and the token carries the
-/// PAT prefix. The wire shape selects one mechanism, and a failed
-/// authentication never falls back to another credential.
+/// Select one bearer credential from the route policy and the PAT prefix.
 pub fn route_credential<'a>(
     request: &AuthenticationRequest<'a>,
 ) -> Result<RouteCredential<'a>, AuthRejection> {
-    let AuthenticationRequest {
-        read,
-        policy,
-        headers,
-        ..
-    } = *request;
+    let policy = request.policy;
     if matches!(policy, AttachmentAuthPolicy::Signature { .. }) {
         return Err(signature_unauthorized());
     }
-    let cookie = session_cookie(headers)?;
-    let has_authorization = headers
-        .iter()
-        .any(|header| header.name.eq_ignore_ascii_case("authorization"));
-    if has_authorization && cookie.is_some() {
-        return Err(unauthorized());
+    let token = required_bearer_token(request.headers)?;
+    if policy.allows_pat() && (!policy.allows_session() || token.starts_with(PAT_TOKEN_PREFIX)) {
+        return Ok(RouteCredential::Pat(token));
     }
-    if let Some(token) = cookie.filter(|_| policy.allows_session()) {
-        return Ok(RouteCredential::Session {
-            token,
-            csrf: Some(!read),
-        });
+    if policy.allows_session() {
+        return Ok(RouteCredential::Session(token));
     }
-    let session = policy.allows_session()
-        && (!policy.allows_pat()
-            || bearer_token(headers).is_some_and(|token| !token.starts_with(PAT_TOKEN_PREFIX)));
-    if session {
-        return Ok(RouteCredential::Session {
-            token: required_bearer_token(headers)?,
-            csrf: None,
-        });
-    }
-    Ok(RouteCredential::Pat)
+    Err(unauthorized())
 }
 
 /// Extract one standard bearer presentation without exposing why it failed.
@@ -405,36 +370,6 @@ pub fn bearer_token(headers: &[Header]) -> Option<&str> {
 /// The one standard bearer token, or the opaque refusal.
 pub fn required_bearer_token(headers: &[Header]) -> Result<&str, AuthRejection> {
     bearer_token(headers).ok_or_else(unauthorized)
-}
-
-/// The session cookie the identity service sets for the cookie carrier.
-const SESSION_COOKIE: &str = "__Host-wamn-session";
-
-/// Find the one session cookie across every `cookie` header; a duplicate refuses.
-pub fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection> {
-    let mut found = None;
-    let pairs = headers
-        .iter()
-        .filter(|header| header.name.eq_ignore_ascii_case("cookie"))
-        .flat_map(|header| header.value.split(';'));
-    for pair in pairs {
-        let Some((name, value)) = pair.split_once('=') else {
-            continue;
-        };
-        if name.trim() == SESSION_COOKIE && found.replace(value.trim()).is_some() {
-            return Err(unauthorized());
-        }
-    }
-    Ok(found)
-}
-
-/// Refuse cookie sessions until web owns CSRF and the host verifier is replaced.
-pub fn require_csrf(
-    _requires_csrf: bool,
-    _claims_csrf: Option<&wamn_digest::Digest>,
-    _headers: &[Header],
-) -> Result<(), AuthRejection> {
-    Err(unauthorized())
 }
 
 /// The refusal for a missing, malformed or rejected credential.
@@ -630,39 +565,6 @@ mod tests {
     fn assert_unauthorized(rejection: &AuthRejection) {
         assert_eq!(rejection.status, UNAUTHORIZED_STATUS);
         assert_eq!(rejection.code, UNAUTHORIZED_CODE);
-    }
-
-    #[test]
-    fn the_session_cookie_is_found_among_others_once_or_refused() {
-        assert_eq!(
-            session_cookie(&[
-                header("accept", "text/plain"),
-                header("Cookie", "theme=dark; __Host-wamn-csrf=c"),
-                header("cookie", " __Host-wamn-session = token.sig ;lang"),
-            ])
-            .expect("one session cookie is found"),
-            Some("token.sig")
-        );
-        assert_eq!(session_cookie(&[]).expect("no cookie header"), None);
-        assert_eq!(
-            session_cookie(&[header("cookie", "__Host-wamn-csrf=c; other=1")])
-                .expect("no session cookie"),
-            None
-        );
-        for duplicated in [
-            vec![header(
-                "cookie",
-                "__Host-wamn-session=a; __Host-wamn-session=b",
-            )],
-            vec![
-                header("cookie", "__Host-wamn-session=a"),
-                header("Cookie", "__Host-wamn-session=a"),
-            ],
-        ] {
-            assert_unauthorized(
-                &session_cookie(&duplicated).expect_err("a duplicate session cookie refuses"),
-            );
-        }
     }
 
     #[test]

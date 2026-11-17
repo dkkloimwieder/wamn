@@ -798,7 +798,6 @@ impl FileRoutes {
                 id,
                 RoutePolicy {
                     policy: &attachment.auth_policy,
-                    read,
                 },
                 &headers,
                 &bytes,
@@ -933,7 +932,6 @@ impl FileRoutes {
                         .attachment(&id)
                         .expect("file attachment")
                         .auth_policy,
-                    read: action == "get",
                 },
                 &headers,
                 &[],

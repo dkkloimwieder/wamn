@@ -28,6 +28,7 @@ wamn-identity-protocol = { workspace = true }
 wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-authentication = { workspace = true }
 wamn-authority = { workspace = true }
+wamn-digest.workspace = true
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel", "wasmcloud-nats", "wasm_component_model_implements"] }
 anyhow = { workspace = true }

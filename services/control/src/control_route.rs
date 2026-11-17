@@ -39,6 +39,7 @@ use sqlx::{Connection as _, Row as _};
 mod connection_test;
 mod integration;
 mod operations;
+mod users;
 
 use std::path::Path;
 use std::time::Duration;
@@ -50,7 +51,7 @@ use tokio::sync::Mutex;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_provision::control_administration_key;
 use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
-use wamn_identity_client::{IdentityClientConfig, UserRefused, create_user, send_invitation};
+use wamn_identity_client::users::UserClient;
 use wamn_identity_protocol::PrincipalId;
 use wamn_environment::application::{
     ApplicationTarget, project_authority, require_platform_rows, write_environment_status,
@@ -62,13 +63,13 @@ use wamn_identity::control::{
     control_projects_page, is_org_admin, is_project_admin, org_projects_page,
 };
 use wamn_identity::org::{
-    EnvironmentStatus, MemberGrants, deactivate_org_membership, grant_member,
-    grant_org_admin, grant_project_admin, invite_member, org_users_page,
+    EnvironmentStatus, deactivate_org_membership, grant_member,
+    grant_org_admin, grant_project_admin, org_users_page,
     project_envs, project_envs_page, project_members_page, reactivate_org_membership,
     revoke_member, revoke_org_admin, revoke_project_admin,
 };
 use wamn_identity::paging::{ListPage, Order};
-use wamn_identity::{IdentityError, IdentityRefusal, require_user_contact};
+use wamn_identity::{IdentityError, IdentityRefusal};
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -111,6 +112,7 @@ impl From<IdentityError> for Refusal {
             Some(IdentityRefusal::EnvironmentNotFound) => ("environment_not_found", "env"),
             Some(IdentityRefusal::UserNotActive) => ("user_not_active", "principal_id"),
             Some(IdentityRefusal::UserNotFound) => ("user_not_found", "principal_id"),
+            Some(IdentityRefusal::UserInAnotherOrg) => ("user_in_another_org", "principal_id"),
             Some(IdentityRefusal::AdminCovered) => ("admin_covered", "principal_id"),
             None => return Self::Failed(error.into()),
         };
@@ -155,8 +157,8 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) control: &'a sqlx::PgPool,
     /// A second `control` login that holds one write transaction at a time.
     pub(crate) writer: &'a Mutex<Client>,
-    /// The operator client of the identity service, for `user.invite`.
-    pub(crate) identity: Option<&'a IdentityClientConfig>,
+    /// The identity adapter for user management.
+    pub(crate) identity: Option<&'a UserClient>,
     pub(crate) issuer: &'a str,
     /// The mounted Secret of the org's administration logins, one file per
     /// environment.
@@ -225,26 +227,6 @@ struct MemberRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EnvironmentRequest {
-    project: wamn_registry::ProjectId,
-    env: wamn_registry::EnvName,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InviteRequest {
-    email: String,
-    display_name: String,
-    #[serde(default)]
-    org_admin: bool,
-    #[serde(default)]
-    project_admins: Vec<wamn_registry::ProjectId>,
-    #[serde(default)]
-    memberships: Vec<MembershipRequest>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MembershipRequest {
     project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
 }
@@ -377,7 +359,9 @@ impl ControlRoutes<'_> {
                     .await?;
                 Ok(page.answer("projects", projects, |row| json!([row.name])))
             }
+            HostHandler::UserCreate => self.create_user(attachment, caller, payload).await,
             HostHandler::UserInvite => self.invite(attachment, caller, payload).await,
+            HostHandler::UserDisable => self.disable_user(payload).await,
             HostHandler::UserActivate => {
                 let principal = principal(payload)?;
                 let mut writer = self.writer.lock().await;
@@ -680,88 +664,6 @@ impl ControlRoutes<'_> {
                 "the control host does not serve the host handler {handler:?}"
             ))),
         }
-    }
-
-    /// Identity creates or reuses the user, one transaction writes the org
-    /// membership and the grants, and identity mails the invitation only when
-    /// the user has no password.
-    async fn invite(
-        &self,
-        attachment: &HostAttachment,
-        caller: &PrincipalId,
-        payload: &str,
-    ) -> Result<Value, Refusal> {
-        let request: InviteRequest = serde_json::from_str(payload)
-            .map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))?;
-        require_user_contact(&request.email, &request.display_name)?;
-        let identity = self.identity.ok_or_else(|| {
-            Refusal::Failed(anyhow::anyhow!(
-                "the control host has no identity operator client"
-            ))
-        })?;
-        let user = create_user(identity, &request.email, &request.display_name)
-            .await
-            .map_err(|error| match error.downcast::<UserRefused>() {
-                // The input passed the identity rules above, so identity
-                // refuses the user that holds the email, such as a disabled
-                // one.
-                Ok(_) => Refusal::Declared {
-                    code: "user_refused",
-                    detail: json!({ "field": "email" }),
-                },
-                Err(error) => Refusal::Failed(error),
-            })?;
-        let grants = MemberGrants {
-            org_admin: request.org_admin,
-            project_admins: request.project_admins,
-            memberships: request
-                .memberships
-                .into_iter()
-                .map(|membership| (membership.project, membership.env))
-                .collect(),
-        };
-        // The lock stays held through the application rows, so no other
-        // write of this host runs between the system rows and them.
-        let mut writer = self.writer.lock().await;
-        let mut transaction = self.begin(&mut writer, attachment, caller).await?;
-        invite_member(&mut transaction, &user.principal_id, self.org, &grants).await?;
-        transaction.commit().await?;
-        let mut environments: std::collections::BTreeSet<(
-            wamn_registry::ProjectId,
-            wamn_registry::EnvName,
-        )> = grants.memberships.into_iter().collect();
-        let admin_targets: Vec<Option<&wamn_registry::ProjectId>> = if grants.org_admin {
-            vec![None]
-        } else {
-            grants.project_admins.iter().map(Some).collect()
-        };
-        for project in admin_targets {
-            environments.extend(self.environments(caller, project).await?);
-        }
-        let environments: Vec<_> = environments.into_iter().collect();
-        self.write_applications(
-            &mut writer,
-            attachment,
-            caller,
-            &user.principal_id,
-            &environments,
-        )
-        .await?;
-        drop(writer);
-        if !user.enrolled {
-            let reply = send_invitation(identity, &user.principal_id).await?;
-            if reply.status != 201 {
-                return Err(Refusal::Failed(anyhow::anyhow!(
-                    "identity did not accept the invitation for delivery: {}",
-                    reply.status
-                )));
-            }
-        }
-        Ok(json!({
-            "principal_id": user.principal_id.to_string().as_str(),
-            "enrolled": user.enrolled,
-            "invited": !user.enrolled,
-        }))
     }
 
     /// Write the status of one environment, or of every environment of a

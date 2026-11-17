@@ -16,6 +16,7 @@ wamn-catalog.workspace = true
 wamn-digest.workspace = true
 wamn-kubernetes.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 bytes.workspace = true
 clap = { workspace = true, features = ["derive"] }
 http-body-util.workspace = true
@@ -23,6 +24,7 @@ hyper = { workspace = true, features = ["client", "server", "http1"] }
 hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
 hyper-rustls = { workspace = true, features = ["http1", "native-tokio"] }
 object_store = { workspace = true, features = ["gcp"] }
+ring.workspace = true
 rustls = { workspace = true, features = ["aws_lc_rs", "std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -31,8 +33,6 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
-rcgen.workspace = true
-tokio-rustls.workspace = true
 wamn-engine.workspace = true
 wash-runtime.workspace = true
 

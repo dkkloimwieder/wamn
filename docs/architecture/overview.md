@@ -166,27 +166,30 @@ Request settings cannot select a different org.
 
 A principal is global. Membership of an org is explicit.
 `identity.org_memberships` holds one row for each principal and org, with the status `active` or `inactive`.
-An invitation creates or reuses the principal and activates its membership.
+`user.create` and `user.invite` create or reuse the principal and activate its org membership.
 An active member can hold no project access, a membership of environments, application roles, `project-admin`, or `org-admin`.
 A valid account with no effective access is not an authentication error.
 
-Authorization derives administration from the current explicit grants.
 An org admin administers every environment, project and application in the org.
 A project admin administers the applications and connections of that project.
-Each grant writes only its own row in `identity.org_roles` or `identity.project_roles`.
-The platform copies no inherited roles or memberships.
+The system stores each explicit grant in `identity.org_roles` or `identity.project_roles`.
+`project_authority` records inherited administration as an `admin` assignment in each project environment database that the grant covers.
 
-Host permission reads derive application administration from these same grants. Org token issuance requires active org membership.
+Org token issuance requires active org membership.
 A revoke removes only the explicit grant that it names.
 Other explicit grants and ordinary memberships stay.
+The `admin` assignment stays while an org or project grant still covers the user.
 Inactive org membership grants no access.
-Application databases retain user identity and authored roles, but they do not store inherited user administration.
 Services retain their explicit application roles.
 
 Deactivation removes the user's application identity and explicit grants within that org.
 It then marks the org membership inactive.
 The global principal and access in other orgs stay.
 Reactivation restores the org membership and no removed grants.
+
+Disabling a user changes the global principal status and revokes password logins.
+Control refuses if another org has an active membership for the user.
+Project databases keep their user rows. Already issued access tokens have a 900-second lifetime. The disabled user cannot renew.
 
 ## Native and cloud boundaries
 

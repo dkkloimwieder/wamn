@@ -551,7 +551,7 @@ The verb prints one line for each pool, and then the names of the pools that it 
 
 ### Application operations
 
-Local kind deployment invites the initial owner through identity's local mail file. It sends no external email and deploys no applications.
+Control sends invitations through `user.invite`. If identity uses local mail, it writes the invitation to its local file.
 GCP invitation delivery remains part of unfinished cloud integration.
 [Deployment](deployment.md) describes separate application and invitation commands.
 The removed installer no longer creates a local `platform.sh` credential file.

@@ -28,9 +28,11 @@ mod commands;
 mod files;
 mod host_route;
 mod platform_http;
-mod projects;
 
-use wamn_authentication::route_authentication::EnvironmentStatusReader;
+use wamn_authentication::access_token::AccessTokenVerifier;
+use wamn_authentication::route_authentication::{
+    EnvironmentStatusReader, PlatformRouteAuthenticator,
+};
 use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
     build_engine_with_host_memory_and_compilation_cache,
@@ -223,11 +225,28 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_OAUTH_ENCRYPTION")]
     pub oauth_encryption: Option<String>,
 
-    /// Trusted HTTPS issuer for session routes, never discovered from a token.
-    #[arg(long, env = "WAMN_SESSION_ISSUER", requires = "session_jwks_ca")]
+    /// Exact issuer expected in the access token.
+    #[arg(long, env = "WAMN_SESSION_ISSUER", requires_all = ["session_jwks_url", "session_audience", "session_algorithms", "session_jwks_ca"])]
     pub session_issuer: Option<String>,
 
-    /// Public CA bundle for the configured identity service.
+    /// Explicit HTTPS address of the issuer's JWKS.
+    #[arg(long, env = "WAMN_SESSION_JWKS_URL", requires = "session_issuer")]
+    pub session_jwks_url: Option<String>,
+
+    /// Exact org audience expected in the access token.
+    #[arg(long, env = "WAMN_SESSION_AUDIENCE", requires = "session_issuer")]
+    pub session_audience: Option<String>,
+
+    /// Allowed access-token signature algorithms.
+    #[arg(
+        long,
+        env = "WAMN_SESSION_ALGORITHMS",
+        value_delimiter = ',',
+        requires = "session_issuer"
+    )]
+    pub session_algorithms: Vec<String>,
+
+    /// Exclusive CA bundle for the JWKS address.
     #[arg(long, env = "WAMN_SESSION_JWKS_CA", requires = "session_issuer")]
     pub session_jwks_ca: Option<PathBuf>,
 
@@ -537,7 +556,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .find(|plugin| plugin.id == wamn_sql::WAMN_POSTGRES_ID)
         .map(|plugin| std::mem::take(&mut plugin.config))
         .unwrap_or_default();
-    let projects = Arc::new(projects::Projects::default());
     let postgres = Arc::new(WamnPostgres::from_host_config(&postgres_config)?);
     let envelope = args
         .oauth_encryption
@@ -578,10 +596,25 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         &(Arc::clone(&files) as Arc<dyn wamn_sql::result_signing::ResultSigner>),
     );
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
-    let authentication = Arc::new(projects::Authentication(
-        Arc::clone(&projects),
-        Arc::clone(&authorization),
-    ));
+    let verifier = if let Some(issuer) = &args.session_issuer {
+        Some(AccessTokenVerifier::new(
+            issuer,
+            args.session_jwks_url
+                .as_deref()
+                .context("missing JWKS URL")?,
+            args.session_audience
+                .as_deref()
+                .context("missing session audience")?,
+            &args.session_algorithms,
+            args.session_jwks_ca.as_deref().context("missing JWKS CA")?,
+        )?)
+    } else {
+        None
+    };
+    let authentication = Arc::new(
+        PlatformRouteAuthenticator::new(Arc::clone(&authorization), verifier)
+            .with_connection_cache(Arc::clone(&authorization) as _),
+    );
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,
         oci_pull_timeout: Some(Duration::from_secs(30)),

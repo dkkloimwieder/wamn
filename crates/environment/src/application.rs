@@ -484,7 +484,8 @@ pub async fn project_authority(
     wamn_identity::org::lock_membership(system, principal, coordinate.org).await?;
     let row = sqlx::query("SELECT p.type, p.status, p.email, p.display_name, \
          EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
-         identity.has_project_access(p.id,$2,$4,$3) \
+         identity.has_project_access(p.id,$2,$4,$3), \
+         identity.is_project_admin(p.id,$2,$3) \
          FROM identity.principals p WHERE p.id=$1").bind(principal).bind(coordinate.org).bind(coordinate.project).bind(coordinate.env).fetch_optional(&mut **system).await.map_err(|error| database_error(&error))?;
     let Some(row) = row else {
         return remove_user(target, principal).await;
@@ -501,7 +502,29 @@ pub async fn project_authority(
         email: &email,
         display_name: &display_name,
     };
-    write_user(target, issuer, user).await
+    write_user(target, issuer, user).await?;
+    let admin: bool = row.get(6);
+    if !admin {
+        return sqlx::query(DROP_USER_ROLE_SQL)
+            .bind(principal)
+            .bind(ADMIN_ROLE)
+            .execute(&mut *target)
+            .await
+            .map(drop)
+            .map_err(|error| database_error(&error));
+    }
+    sqlx::query(ROLE_SQL)
+        .bind(ADMIN_ROLE)
+        .execute(&mut *target)
+        .await
+        .map_err(|error| database_error(&error))?;
+    sqlx::query(USER_ROLE_SQL)
+        .bind(principal)
+        .bind(ADMIN_ROLE)
+        .execute(&mut *target)
+        .await
+        .map_err(|error| database_error(&error))?;
+    Ok(())
 }
 
 /// The explicit environment of one authority projection.

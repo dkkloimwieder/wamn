@@ -25,8 +25,6 @@ use wamn_engine::engine::{
 };
 use wamn_engine::expected_router::expected_host_router;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
-use wamn_identity_protocol::file_keys::FileKeys;
-use wamn_identity_protocol::verifier::SessionVerifier;
 use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::host::http::Ingress;
 use wash_runtime::host::{Host, HostApi as _, HostBuilder};
@@ -193,11 +191,6 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         .context("load the release bundle")?,
     );
     let engine = Arc::new(edge_engine(&release, &config.store.db).context("build the engine")?);
-    let keys = FileKeys::load(&config.session.keys, &config.session.issuer)
-        .context("load the session key file")?;
-    let verifier =
-        SessionVerifier::new(keys, config.session.org.as_str(), &config.session.audience)
-            .context("bind the session target")?;
     let store = EdgeStore::open(&config.store.db)
         .await
         .context("open the run-state file")?;
@@ -214,13 +207,13 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
 
     let application = Arc::new(application);
     let scopes = Arc::new(wamn_engine::invocation_scope::InvocationScopes::default());
-    let routing = FlowHttpRouting::new(Arc::clone(&scopes))
-        .with_authenticator(Arc::new(EdgeAuthenticator::new(verifier)));
+    let routing =
+        FlowHttpRouting::new(Arc::clone(&scopes)).with_authenticator(Arc::new(EdgeAuthenticator));
     let operation = Arc::new(EdgeOperation::new(
         Arc::clone(&release),
         application,
         store,
-        config.session.org.clone(),
+        config.target.org.clone(),
         Arc::clone(&scopes),
     ));
 

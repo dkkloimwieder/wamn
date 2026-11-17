@@ -25,8 +25,7 @@ use wamn_kubernetes::http_transport::{self, Protocols, Schemes};
 
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
-#[cfg(test)]
-mod password_tests;
+mod browser_session;
 #[cfg(test)]
 mod rollout_tests;
 
@@ -40,6 +39,8 @@ pub struct WebConfig {
     /// HTTPS identity endpoint and its private CA.
     pub identity: String,
     pub identity_ca: std::path::PathBuf,
+    /// Mounted 32-byte HMAC key for the browser CSRF cookie.
+    pub csrf_key_file: std::path::PathBuf,
     /// Trusted proxy addresses counted from the direct peer toward the client.
     pub trusted_proxy_hops: usize,
 }
@@ -271,9 +272,12 @@ fn empty(status: StatusCode) -> Response<Full<Bytes>> {
 }
 
 type Connector = hyper_rustls::HttpsConnector<HttpConnector>;
-type Proxy = Client<Connector, hyper::body::Incoming>;
-
 type ProxyBody = UnsyncBoxBody<Bytes, hyper::Error>;
+
+struct Proxy {
+    client: Client<Connector, ProxyBody>,
+    csrf_key: ring::hmac::Key,
+}
 
 fn boxed(response: Response<Full<Bytes>>) -> Response<ProxyBody> {
     response.map(|body| body.map_err(|never| match never {}).boxed_unsync())
@@ -341,6 +345,7 @@ async fn respond(
         || path.starts_with("/wamn_control/")
         || path == "/oauth/callback"
     {
+        let password_route = browser_session::password_route(&request);
         let upstream = if password_request {
             identity
         } else {
@@ -373,7 +378,13 @@ async fn respond(
                     .trim()
                     .parse::<std::net::IpAddr>()?
             };
-        remove_hop_headers(request.headers_mut());
+        let mut request =
+            match browser_session::forward(request, &proxy.csrf_key, password_route, password_request)
+                .await
+            {
+                Ok(request) => request,
+                Err(status) => return Ok(boxed(empty(status))),
+            };
         request
             .headers_mut()
             .insert("x-forwarded-for", address.to_string().parse()?);
@@ -394,8 +405,11 @@ async fn respond(
         } else {
             request.headers_mut().insert(HOST, host.parse()?);
         }
-        let mut response = proxy.request(request).await?;
+        let mut response = proxy.client.request(request).await?;
         remove_hop_headers(response.headers_mut());
+        if password_request {
+            return browser_session::respond(password_route, response, &proxy.csrf_key).await;
+        }
         if api_request
             && !file_request
             && let Some(location) = response
@@ -433,7 +447,7 @@ fn response_headers(headers: &mut hyper::HeaderMap) {
     }
 }
 
-fn proxy(ca: &[u8]) -> anyhow::Result<Proxy> {
+fn proxy(ca: &[u8], csrf_key: &[u8; 32]) -> anyhow::Result<Proxy> {
     let mut connector = HttpConnector::new();
     connector.set_connect_timeout(Some(Duration::from_secs(10)));
     let mut roots = rustls::RootCertStore::empty();
@@ -449,7 +463,10 @@ fn proxy(ca: &[u8]) -> anyhow::Result<Proxy> {
     .with_no_client_auth();
     let connector =
         http_transport::tls_connector(tls, connector, Schemes::HttpAndHttps, Protocols::Http1);
-    Ok(http_transport::client(connector, |_| {}))
+    Ok(Proxy {
+        client: http_transport::client(connector, |_| {}),
+        csrf_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, csrf_key),
+    })
 }
 
 #[cfg(test)]
@@ -495,7 +512,9 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
         config.identity.starts_with("https://"),
         "identity must use HTTPS"
     );
-    let proxy = proxy(&std::fs::read(&config.identity_ca)?)?;
+    let csrf_key = std::fs::read(&config.csrf_key_file).context("read web CSRF key file")?;
+    let csrf_key = csrf_key.as_slice().try_into().context("web CSRF key must contain 32 bytes")?;
+    let proxy = Arc::new(proxy(&std::fs::read(&config.identity_ca)?, csrf_key)?);
     let listener = TcpListener::bind(config.listen).await?;
     let mut tasks = tokio::task::JoinSet::new();
     loop {
@@ -506,11 +525,11 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
                 let (stream, peer) = accepted?;
                 let identity = config.identity.clone();
                 let trusted_proxy_hops = config.trusted_proxy_hops;
-                let (web, releases, proxy) = (Arc::clone(&web), Arc::clone(&releases), proxy.clone());
+                let (web, releases, proxy) = (Arc::clone(&web), Arc::clone(&releases), Arc::clone(&proxy));
                 tasks.spawn(async move {
                     let service = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
                         let identity = identity.clone();
-                        let (web, releases, proxy) = (Arc::clone(&web), Arc::clone(&releases), proxy.clone());
+                        let (web, releases, proxy) = (Arc::clone(&web), Arc::clone(&releases), Arc::clone(&proxy));
                         async move {
                             let mut response = match respond(&web, &releases, &proxy, &identity, peer.ip(), trusted_proxy_hops, request).await {
                                 Ok(response) => response,
@@ -669,7 +688,10 @@ mod tests {
             }
         });
         let connector = native_connector().unwrap();
-        let proxy = http_transport::client(connector.clone(), |_| {});
+        let proxy = Proxy {
+            client: http_transport::client(connector.clone(), |_| {}),
+            csrf_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &[0; 32]),
+        };
         let releases = Releases {
             api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
                 http_transport::client(connector, |_| {}),

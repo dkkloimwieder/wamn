@@ -8,20 +8,13 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
-use hyper::{
-    HeaderMap, Request, Response, StatusCode,
-    body::Incoming,
-    header::{COOKIE, HeaderValue, SET_COOKIE},
-};
-use ring::rand::{SecureRandom as _, SystemRandom};
+use hyper::{Request, Response, StatusCode, body::Incoming};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection as Client;
-use tokio::sync::Semaphore;
 use wamn_identity::{
-    IdentityErrorType, create_or_reuse_user,
     password::{
         Password, PasswordError, PasswordErrorType, PasswordWork, RefusalCause,
-        authenticate_password, enroll_password, issue_invitation, issue_reset, password_work,
+        authenticate_password, enroll_password, issue_reset, password_work,
         reset_password,
     },
     password_login,
@@ -37,20 +30,16 @@ use crate::{
     response, session, unavailable,
 };
 
-// At most eight password requests and two hashing jobs per replica, with no queue.
+// The service admits at most two password hashing jobs per replica, with no queue.
 // Database windows cap the whole issuer at 120/minute, source at 20, account at 5.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REQUEST_BYTES: usize = 8192;
-const SESSION_COOKIE: &str = "__Host-wamn-session";
-const CSRF_COOKIE: &str = "__Host-wamn-csrf";
-const RENEWAL_COOKIE: &str = "__Secure-wamn-renewal";
 
 #[derive(Debug)]
 pub(super) struct State {
-    mail: Mailer,
+    pub(super) mail: Mailer,
     pool: sqlx::PgPool,
     work: PasswordWork,
-    requests: Semaphore,
 }
 impl State {
     pub(super) async fn new(
@@ -63,12 +52,10 @@ impl State {
                 IdentityServiceError::new("identity password pool configuration refused")
             })?,
             work: password_work(),
-            requests: Semaphore::new(8),
         })
     }
 }
 
-use wamn_identity_protocol::wire::{InvitationRequest, UserRequest, UserResponse};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EnrollmentRequest {
@@ -82,27 +69,13 @@ struct LoginRequest {
     email: String,
     password: String,
     aud: String,
-    #[serde(default)]
-    carrier: Carrier,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RenewalRequest {
-    #[serde(default)]
-    renewal_token: Option<String>,
+    renewal_token: String,
     aud: String,
-    #[serde(default)]
-    carrier: Carrier,
-}
-
-/// Where the session and renewal tokens travel: the JSON body or cookies.
-#[derive(Clone, Copy, Default, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Carrier {
-    #[default]
-    Bearer,
-    Cookie,
 }
 
 #[derive(Deserialize)]
@@ -128,28 +101,13 @@ struct RenewableResponse<'a> {
     login_expires_at: i64,
 }
 
-#[derive(Serialize)]
-struct CookieResponse<'a> {
-    sub: &'a PrincipalId,
-    expires_at: i64,
-    login_expires_at: i64,
-}
-
 pub(super) async fn respond(
     inner: &Inner,
     state: &State,
     request: Request<Incoming>,
-    operator: bool,
     source: IpAddr,
 ) -> Response<Full<Bytes>> {
-    if matches!(request.uri().path(), "/invitations" | "/users") && !operator {
-        return response(
-            StatusCode::FORBIDDEN,
-            "application/json",
-            br#"{"error":"operator certificate required"}"#.to_vec(),
-        );
-    }
-    let Ok(_permit) = state.requests.try_acquire() else {
+    let Ok(_permit) = inner.request_slots.try_acquire() else {
         return throttled();
     };
     let Some(started_at) = session::unix_seconds() else {
@@ -177,18 +135,7 @@ async fn handle(
     let Ok(mut database) = state.pool.acquire().await else {
         return unavailable();
     };
-    let source = match source {
-        IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(source, IpAddr::V4),
-        IpAddr::V4(_) => source,
-    };
-    let source_key = format!("source:{source}");
-    match admit(
-        &mut *database,
-        &[("global", 120), (&source_key, 20)],
-        &inner.issuer,
-    )
-    .await
-    {
+    match admit_source(&mut database, &inner.issuer, source).await {
         Ok(true) => (),
         Ok(false) => return throttled(),
         Err(_) => return unavailable(),
@@ -208,69 +155,6 @@ async fn handle(
     };
     let bytes = Zeroizing::new(body.to_bytes().to_vec());
     match parts.uri.path() {
-        "/users" => {
-            let Ok(request) = serde_json::from_slice::<UserRequest>(&bytes) else {
-                return invalid();
-            };
-            create_user(&mut *database, &request).await
-        }
-        "/invitations" => {
-            let Ok(request) = serde_json::from_slice::<InvitationRequest>(&bytes) else {
-                return invalid();
-            };
-            let principal = request.principal_id;
-            let Ok(mut read) = wamn_identity::transaction::read_connection(
-                &mut *database,
-                &PlatformComponent::Provisioning.principal_id(),
-            )
-            .await
-            else {
-                return unavailable();
-            };
-            let Ok(row) = sqlx::query("SELECT email FROM identity.principals WHERE id = $1 AND type = 'user' AND status = 'active'").bind(principal).fetch_optional(&mut *read).await else { return unavailable(); };
-            if read.commit().await.is_err() {
-                return unavailable();
-            }
-            let Some(row) = row else {
-                tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
-                return invalid();
-            };
-            let email: String = row.get(0);
-            let actor: PrincipalId = PlatformComponent::Provisioning.principal_id();
-            let invitation = match issue_invitation(&mut *database, &actor, &principal).await {
-                Ok(value) => value,
-                Err(error) => return refusal(&error, &email),
-            };
-            if state
-                .mail
-                .invite(
-                    &email,
-                    &principal,
-                    invitation.secret(),
-                    invitation.expires_at(),
-                )
-                .await
-                .is_err()
-            {
-                // A failed or uncertain send must never report delivery success.
-                // Consume only this invitation; earlier operator invitations stay valid.
-                let hash = wamn_digest::bytes_sha256(invitation.secret().as_bytes());
-                if let Ok(mut tx) = database.begin().await {
-                    let _ = sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')")
-                        .bind(actor)
-                        .execute(&mut *tx)
-                        .await
-                        .map(|result| result.rows_affected());
-                    if sqlx::query("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE token_hash = $1 AND consumed_at IS NULL").bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
-                }
-                return unavailable();
-            }
-            response(
-                StatusCode::CREATED,
-                "application/json",
-                br#"{"status":"accepted_for_delivery"}"#.to_vec(),
-            )
-        }
         "/password/enroll" => {
             let Ok(request) = serde_json::from_slice::<EnrollmentRequest>(&bytes) else {
                 return invalid();
@@ -300,7 +184,6 @@ async fn handle(
                 email,
                 password,
                 aud: audience,
-                carrier,
             }) = serde_json::from_slice(&bytes)
             else {
                 return invalid();
@@ -385,7 +268,7 @@ async fn handle(
                     Ok(claims) => claims,
                     Err(error) => return authority_failure(&error),
                 };
-            finish_session(tx, claims, renewal, started_at, carrier, &inner.envelope).await
+            finish_session(tx, claims, renewal, started_at, &inner.envelope).await
         }
         "/password/recover" | "/password/reset" => {
             let resetting = parts.uri.path() == "/password/reset";
@@ -487,14 +370,7 @@ async fn handle(
             let Ok(request) = serde_json::from_slice::<RenewalRequest>(&bytes) else {
                 return invalid();
             };
-            // A cookie carrier reads its renewal token only from the cookie, never logout-all.
-            let secret = match (request.carrier, request.renewal_token) {
-                (Carrier::Bearer, Some(token)) => Zeroizing::new(token),
-                (Carrier::Cookie, None) if parts.uri.path() != "/password/logout-all" => {
-                    renewal_cookie(&parts.headers).unwrap_or_default()
-                }
-                _ => return invalid(),
-            };
+            let secret = Zeroizing::new(request.renewal_token);
             let actor = match password_login::renewal_principal(
                 &mut *database,
                 &inner.issuer,
@@ -506,7 +382,7 @@ async fn handle(
                 Ok(Some(principal)) => principal,
                 Ok(None) => {
                     return if parts.uri.path() == "/password/logout" {
-                        logged_out(request.carrier)
+                        logged_out()
                     } else {
                         session::unauthorized()
                     };
@@ -533,7 +409,7 @@ async fn handle(
                     return unavailable();
                 }
                 return if parts.uri.path() == "/password/logout" {
-                    logged_out(request.carrier)
+                    logged_out()
                 } else {
                     session::unauthorized()
                 };
@@ -548,7 +424,7 @@ async fn handle(
                 if result.is_err() || tx.commit().await.is_err() {
                     return unavailable();
                 }
-                return logged_out(request.carrier);
+                return logged_out();
             }
             let renewal =
                 match password_login::rotate_login(&mut tx, &inner.issuer, &request.aud, &secret)
@@ -574,15 +450,7 @@ async fn handle(
                 Ok(claims) => claims,
                 Err(error) => return authority_failure(&error),
             };
-            finish_session(
-                tx,
-                claims,
-                renewal,
-                started_at,
-                request.carrier,
-                &inner.envelope,
-            )
-            .await
+            finish_session(tx, claims, renewal, started_at, &inner.envelope).await
         }
         _ => invalid(),
     }
@@ -600,21 +468,8 @@ async fn finish_session(
     claims: wamn_identity::session_token::AccessTokenClaims,
     renewal: password_login::Renewal,
     started_at: i64,
-    carrier: Carrier,
     envelope: &wamn_envelope::encryption::Envelope,
 ) -> Response<Full<Bytes>> {
-    // The cookie carrier remains until web owns cookies and CSRF.
-    let csrf = match carrier {
-        Carrier::Bearer => None,
-        Carrier::Cookie => {
-            let mut bytes = [0_u8; 32];
-            if SystemRandom::new().fill(&mut bytes).is_err() {
-                return unavailable();
-            }
-            let csrf = hex::encode(bytes);
-            Some(csrf)
-        }
-    };
     let Ok(token) = sign_session_token_in_transaction(
         &mut tx,
         claims,
@@ -629,13 +484,10 @@ async fn finish_session(
     if tx.commit().await.is_err() {
         return unavailable();
     }
-    let Some(now) = session::unix_seconds().filter(|now| *now < token.claims().exp) else {
+    if !session::unix_seconds().is_some_and(|now| now < token.claims().exp) {
         return unavailable();
-    };
-    match csrf {
-        None => renewable_response(&token, &renewal),
-        Some(csrf) => cookie_response(&token, &renewal, &csrf, now),
     }
+    renewable_response(&token, &renewal)
 }
 
 fn renewable_response(
@@ -655,90 +507,21 @@ fn renewable_response(
     }
 }
 
-/// Set the three cookies; the body carries no token.
-fn cookie_response(
-    token: &IssuedSessionToken,
-    renewal: &password_login::Renewal,
-    csrf: &str,
-    now: i64,
-) -> Response<Full<Bytes>> {
-    let Ok(bytes) = serde_json::to_vec(&CookieResponse {
-        sub: &token.claims().sub,
-        expires_at: token.claims().exp,
-        login_expires_at: renewal.login.expires_at,
-    }) else {
-        return unavailable();
+fn logged_out() -> Response<Full<Bytes>> {
+    response(StatusCode::NO_CONTENT, "application/json", Vec::new())
+}
+
+pub(super) async fn admit_source(
+    client: &mut Client,
+    issuer: &str,
+    source: IpAddr,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let source = match source {
+        IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(source, IpAddr::V4),
+        IpAddr::V4(_) => source,
     };
-    let session_age = token.claims().exp - now;
-    with_cookies(
-        response(StatusCode::OK, "application/json", bytes),
-        [
-            (SESSION_COOKIE, token.token(), session_age),
-            (CSRF_COOKIE, csrf, session_age),
-            (
-                RENEWAL_COOKIE,
-                renewal.secret(),
-                renewal.login.expires_at - now,
-            ),
-        ],
-    )
-}
-
-/// A logout by cookie clears all three cookies, whatever the renewal token was.
-fn logged_out(carrier: Carrier) -> Response<Full<Bytes>> {
-    let reply = response(StatusCode::NO_CONTENT, "application/json", Vec::new());
-    match carrier {
-        Carrier::Bearer => reply,
-        Carrier::Cookie => with_cookies(
-            reply,
-            [
-                (SESSION_COOKIE, "", 0),
-                (CSRF_COOKIE, "", 0),
-                (RENEWAL_COOKIE, "", 0),
-            ],
-        ),
-    }
-}
-
-fn with_cookies(
-    mut reply: Response<Full<Bytes>>,
-    cookies: [(&str, &str, i64); 3],
-) -> Response<Full<Bytes>> {
-    for (name, value, max_age) in cookies {
-        // Only the renewal cookie is restricted to the identity service; only the CSRF cookie is readable.
-        let path = if name == RENEWAL_COOKIE {
-            "/password"
-        } else {
-            "/"
-        };
-        let http_only = if name == CSRF_COOKIE {
-            ""
-        } else {
-            "; HttpOnly"
-        };
-        let Ok(value) = HeaderValue::try_from(format!(
-            "{name}={value}; Path={path}; Max-Age={max_age}{http_only}; Secure; SameSite=Strict"
-        )) else {
-            return unavailable();
-        };
-        reply.headers_mut().append(SET_COOKIE, value);
-    }
-    reply
-}
-
-/// The renewal token of exactly one renewal cookie across every Cookie header.
-fn renewal_cookie(headers: &HeaderMap) -> Option<Zeroizing<String>> {
-    let mut found = None;
-    for header in headers.get_all(COOKIE) {
-        for pair in header.to_str().ok()?.split(';') {
-            if let Some((RENEWAL_COOKIE, value)) = pair.trim().split_once('=')
-                && found.replace(Zeroizing::new(value.to_owned())).is_some()
-            {
-                return None;
-            }
-        }
-    }
-    found
+    let source_key = format!("source:{source}");
+    admit(client, &[("global", 120), (&source_key, 20)], issuer).await
 }
 
 async fn admit(
@@ -774,7 +557,7 @@ async fn admit(
 }
 /// Log the cause of a refusal with the account's email, then answer as
 /// `password_failure`. The wire text stays the same for every cause.
-fn refusal(error: &PasswordError, email: &str) -> Response<Full<Bytes>> {
+pub(super) fn refusal(error: &PasswordError, email: &str) -> Response<Full<Bytes>> {
     log_refusal(error, email);
     password_failure(error)
 }
@@ -826,48 +609,6 @@ fn password_failure(error: &PasswordError) -> Response<Full<Bytes>> {
         PasswordErrorType::Policy | PasswordErrorType::Refused => invalid(),
     }
 }
-/// Create or reuse the user of one email, as `wamn:provisioning`, and reply
-/// with the principal and whether it has a password credential.
-async fn create_user(client: &mut Client, request: &UserRequest) -> Response<Full<Bytes>> {
-    let actor = PlatformComponent::Provisioning.principal_id();
-    let Ok(mut tx) = client.begin().await else {
-        return unavailable();
-    };
-    if sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')")
-        .bind(actor)
-        .execute(&mut *tx)
-        .await
-        .map(|result| result.rows_affected())
-        .is_err()
-    {
-        return unavailable();
-    }
-    let account = match create_or_reuse_user(&mut tx, &request.email, &request.display_name).await {
-        Ok(account) => account,
-        Err(error) => {
-            let status = match error.error_type() {
-                IdentityErrorType::InvalidInput => StatusCode::BAD_REQUEST,
-                IdentityErrorType::Conflict => StatusCode::CONFLICT,
-                _ => return unavailable(),
-            };
-            let body = serde_json::json!({ "error": error.to_string() });
-            return response(status, "application/json", body.to_string().into_bytes());
-        }
-    };
-    if tx.commit().await.is_err() {
-        return unavailable();
-    }
-    let body = UserResponse {
-        principal_id: account.principal_id,
-        enrolled: account.enrolled,
-    };
-    response(
-        StatusCode::OK,
-        "application/json",
-        serde_json::to_vec(&body).expect("user response"),
-    )
-}
-
 fn invalid() -> Response<Full<Bytes>> {
     response(
         StatusCode::BAD_REQUEST,
@@ -875,7 +616,7 @@ fn invalid() -> Response<Full<Bytes>> {
         br#"{"error":"password request refused"}"#.to_vec(),
     )
 }
-fn throttled() -> Response<Full<Bytes>> {
+pub(super) fn throttled() -> Response<Full<Bytes>> {
     let mut reply = response(
         StatusCode::TOO_MANY_REQUESTS,
         "application/json",
@@ -1001,6 +742,8 @@ mod tests {
         let mut service = IdentityService::connect(
             IdentityConfig::new(issuer, url.as_str())
                 .unwrap()
+                .with_control_subject("CN=control-demo")
+                .unwrap()
                 .with_resend(
                     crate::mail::ResendConfig::new(
                         "unused".into(),
@@ -1058,7 +801,7 @@ mod tests {
                     let service = service.clone();
                     async move {
                         service
-                            .respond(request, true, "127.0.0.1".parse().unwrap())
+                            .respond(request, crate::PeerCertificate::Control, "127.0.0.1".parse().unwrap())
                             .await
                     }
                 });

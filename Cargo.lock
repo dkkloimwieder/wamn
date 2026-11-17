@@ -5409,24 +5409,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.22.1",
- "bytes",
- "hex",
  "hmac 0.13.0",
- "hyper",
- "rcgen",
- "ring",
- "rustls",
+ "jsonwebtoken 11.1.0",
+ "moka",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "sqlx",
  "tokio",
- "tokio-rustls",
  "tracing",
- "url",
  "uuid",
- "wamn-authentication",
  "wamn-authority",
  "wamn-catalog",
  "wamn-connection",
@@ -5434,7 +5427,6 @@ dependencies = [
  "wamn-engine",
  "wamn-identity",
  "wamn-identity-protocol",
- "wamn-oci",
  "wamn-registry",
 ]
 
@@ -5819,7 +5811,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.22.1",
  "bytes",
  "chrono",
  "http-body-util",
@@ -5827,7 +5818,6 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "rcgen",
- "ring",
  "rustix 1.1.5",
  "rustls",
  "rustls-native-certs",
@@ -6070,6 +6060,7 @@ dependencies = [
  "wamn-broker",
  "wamn-catalog",
  "wamn-connection",
+ "wamn-digest",
  "wamn-engine",
  "wamn-envelope",
  "wamn-environment",
@@ -6197,10 +6188,8 @@ dependencies = [
 name = "wamn-identity-protocol"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "base64 0.22.1",
  "hex",
- "jsonwebtoken 11.1.0",
  "ring",
  "serde",
  "serde_json",
@@ -6250,6 +6239,7 @@ dependencies = [
  "wamn-role",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
+ "x509-parser",
  "zeroize",
 ]
 
@@ -6709,6 +6699,7 @@ name = "wamn-web"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bytes",
  "clap",
  "http-body-util",
@@ -6716,12 +6707,11 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "object_store",
- "rcgen",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
  "tokio",
- "tokio-rustls",
  "tracing",
  "tracing-subscriber",
  "wamn-catalog",

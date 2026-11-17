@@ -198,6 +198,32 @@ pub(super) async fn host_project(
             && connection.credentials.namespace == document.org.as_str(),
         "project login Secrets and host must share the environment namespace"
     );
+    for (field, ca) in [
+        (
+            "volumes",
+            serde_json::json!({"name":"identity-ca","configMap":{"name":"identity-ca"}}),
+        ),
+        (
+            "volumeMounts",
+            serde_json::json!({"name":"identity-ca","mountPath":"/etc/identity-ca","readOnly":true}),
+        ),
+    ] {
+        let entries = &mut group[field];
+        if entries.is_null() {
+            *entries = serde_json::json!([]);
+        }
+        let entries = entries
+            .as_array_mut()
+            .with_context(|| format!("host {field} must be a list"))?;
+        if let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| entry["name"] == "identity-ca")
+        {
+            *entry = ca;
+        } else {
+            entries.push(ca);
+        }
+    }
     let defaults: serde_json::Value = serde_yaml::from_str(include_str!(
         "../../../../deploy/charts/environment/values.yaml"
     ))?;

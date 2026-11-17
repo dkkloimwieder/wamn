@@ -26,6 +26,12 @@
       "values": []
     },
     {
+      "path": "users[].principal_status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
       "path": "users[].org_admin",
       "type": "boolean",
       "nullable": false,

@@ -82,6 +82,10 @@ spec:
             - name: WAMN_IDENTITY_OPERATOR_CA
               value: /var/run/wamn-identity/operator/ca.crt
             {{- end }}
+            {{- if .Values.controlSubject }}
+            - name: WAMN_IDENTITY_CONTROL_SUBJECT
+              value: {{ .Values.controlSubject | quote }}
+            {{- end }}
             {{- if .Values.authNats.url }}
             - name: WAMN_NATS_URL
               value: {{ .Values.authNats.url | quote }}

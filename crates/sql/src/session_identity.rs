@@ -20,7 +20,7 @@ use super::pool::{
 };
 use super::{DEFAULT_PROJECT, PgError};
 use crate::invocation::Authority;
-use wamn_authentication::authorization::{HeldOperationGrants, held_grants, session_grants};
+use wamn_authentication::authorization::{HeldOperationGrants, held_grants};
 
 mod pools;
 pub(super) mod transactions;
@@ -712,19 +712,30 @@ impl WamnPostgres {
             });
     }
 
-    /// The grants of the signed roles of a verified session that the active
-    /// user still holds, from [`principal_grants`](Self::principal_grants).
-    pub async fn session_operation_permissions(
+    /// Find the local principal for a verified issuer and subject.
+    pub async fn resolve_subject(
         &self,
         project: &wamn_registry::ProjectId,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        roles: &[wamn_identity_protocol::RoleName],
-        principal: &wamn_identity_protocol::PrincipalId,
-    ) -> anyhow::Result<HeldOperationGrants> {
-        let grants = self
-            .principal_grants(project, project_env_key, principal)
+        issuer: &str,
+        subject: &str,
+    ) -> anyhow::Result<Option<wamn_identity_protocol::PrincipalId>> {
+        let (mut connection, _policy) = self
+            .checkout_platform(project, AuthorityClass::Platform)
             .await?;
-        session_grants(&grants, roles)
+        let result = sqlx::query_scalar(
+            "SELECT id FROM platform.\"user\" WHERE issuer = $1 AND sub = $2 AND status = 'active' AND type = 'user'",
+        )
+        .bind(issuer)
+        .bind(subject)
+        .fetch_optional(&mut *connection)
+        .await;
+        match result {
+            Ok(principal) => Ok(principal),
+            Err(error) => {
+                self.destroy(connection);
+                Err(principal_read_error("resolve the access token subject", error).into())
+            }
+        }
     }
 
     /// The current WAL position used by weak ETags.
@@ -765,7 +776,7 @@ impl WamnPostgres {
         let grants = self
             .principal_grants(project, project_env_key, principal_id)
             .await?;
-        Ok(held_grants(&grants, None))
+        Ok(held_grants(&grants))
     }
 
     /// Read PAT admission directly on the project platform login.
@@ -1015,20 +1026,17 @@ impl wamn_authentication::authorization::AuthorizationStore for WamnPostgres {
         self.environment_inactive(project, key).await
     }
 
-    async fn session_operation_permissions(
+    async fn resolve_subject(
         &self,
         project: &wamn_registry::ProjectId,
         key: &wamn_registry::ProjectEnvKey,
-        roles: &[wamn_identity_protocol::RoleName],
-        principal: &wamn_identity_protocol::PrincipalId,
-    ) -> anyhow::Result<HeldOperationGrants> {
+        issuer: &str,
+        subject: &str,
+    ) -> anyhow::Result<Option<wamn_identity_protocol::PrincipalId>> {
         if let Some(store) = self.authorization.get() {
-            return store
-                .session_operation_permissions(project, key, roles, principal)
-                .await;
+            return store.resolve_subject(project, key, issuer, subject).await;
         }
-        self.session_operation_permissions(project, key, roles, principal)
-            .await
+        self.resolve_subject(project, issuer, subject).await
     }
 
     async fn user_operation_permissions(
