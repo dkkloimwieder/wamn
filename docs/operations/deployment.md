@@ -682,6 +682,8 @@ wamn grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" \
 
 The verbs refuse direct assignment or removal of `admin`.
 Grant or revoke system project-admin or org-admin to change application administration.
+Control records `admin` in each project environment that the grant covers.
+Revoking the last grant that covers the user removes that assignment.
 The target needs an existing application user or service row.
 The HTTP owner refuses unknown users. A grant also refuses a missing role.
 The operator service of an environment, `wamn-operator-<org>--<env>--<project>`, has the email `<subject>@<platform domain>`.

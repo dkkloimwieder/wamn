@@ -185,11 +185,13 @@ impl ApplicationRoutes<'_> {
                 self.run(attachment, principal, false, async |client| {
                     let mut listed = Vec::new();
                     for user in application_users(client).await? {
+                        let admin_covered = user.roles.iter().any(|role| role == ADMIN_ROLE);
                         listed.push(json!({
                             "id": user.id,
                             "email": user.email,
                             "display_name": user.display_name,
                             "roles": user.roles,
+                            "admin_covered": admin_covered,
                         }));
                     }
                     Ok(json!({ "users": listed }))

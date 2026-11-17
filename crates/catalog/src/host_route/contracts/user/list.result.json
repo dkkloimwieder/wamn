@@ -24,6 +24,12 @@
       "type": "text",
       "nullable": false,
       "values": []
+    },
+    {
+      "path": "users[].admin_covered",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
     }
   ]
 }
