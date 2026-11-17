@@ -34,47 +34,6 @@ pub struct ConnectionFact {
     pub target_type: String,
 }
 
-/// One name a release binds: (component, package, name) to (connection,
-/// version).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseBinding {
-    pub component_digest: wamn_digest::Digest,
-    pub package_id: wamn_catalog::PackageName,
-    pub name: String,
-    pub connection_id: uuid::Uuid,
-    pub version: i32,
-}
-
-/// The connection map of one release.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseFact {
-    pub versions: BTreeMap<uuid::Uuid, i32>,
-    pub bindings: Vec<ReleaseBinding>,
-}
-
-impl ReleaseFact {
-    /// The released version of a connection, including one with no binding.
-    pub fn version(&self, connection_id: &uuid::Uuid) -> Option<i32> {
-        self.versions.get(connection_id).copied()
-    }
-
-    /// The binding of `name` for one component of one package.
-    pub fn binding(
-        &self,
-        component_digest: &wamn_digest::Digest,
-        package_id: &wamn_catalog::PackageName,
-        name: &str,
-    ) -> Option<&ReleaseBinding> {
-        self.bindings.iter().find(|binding| {
-            binding.component_digest == *component_digest
-                && &binding.package_id == package_id
-                && binding.name == name
-        })
-    }
-}
-
 /// The map from integration name to connection id of one environment.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -130,21 +89,5 @@ impl ConnectionMemory {
         _ticket: Ticket,
         _fact: ConnectionFact,
     ) {
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn a_release_version_does_not_require_a_binding() {
-        let id = uuid::Uuid::new_v4();
-        let fact = ReleaseFact {
-            versions: BTreeMap::from([(id, 7)]),
-            bindings: Vec::new(),
-        };
-        assert_eq!(fact.version(&id), Some(7));
-        assert_eq!(fact.version(&uuid::Uuid::new_v4()), None);
-        assert!(fact.bindings.is_empty());
     }
 }

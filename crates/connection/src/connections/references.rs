@@ -29,20 +29,10 @@ pub async fn refuse_environment_references(
     .fetch_all(&mut **tx)
     .await?;
     if group == "connection" {
-        for (field, sql) in [
-            (
-                "binding",
-                "SELECT EXISTS(SELECT FROM catalog.connection_binding WHERE connection_id=$1::text::uuid)",
-            ),
-            (
-                "release_connection",
-                "SELECT EXISTS(SELECT FROM catalog.release_connection WHERE connection_id=$1::text::uuid)",
-            ),
-            (
-                "file",
-                "SELECT EXISTS(SELECT FROM platform.file WHERE connection_id=$1::text::uuid)",
-            ),
-        ] {
+        for (field, sql) in [(
+            "file",
+            "SELECT EXISTS(SELECT FROM platform.file WHERE connection_id=$1::text::uuid)",
+        )] {
             if sqlx::query(sqlx::AssertSqlSafe((sql).to_string()))
                 .bind(id)
                 .fetch_one(&mut **tx)
@@ -79,6 +69,22 @@ pub async fn refuse_environment_references(
                 return Err(refuse("referenced", "record"));
             }
         }
+    }
+    Ok(())
+}
+
+/// A deployed workload retains authority for every connection in its config.
+pub fn refuse_application_references(
+    applications: &[wamn_catalog::application_config::ApplicationConfig],
+    id: &str,
+) -> Result<(), ConnectionError> {
+    if applications
+        .iter()
+        .flat_map(|app| &app.components)
+        .flat_map(|component| &component.connections)
+        .any(|binding| binding.connection_id == id)
+    {
+        return Err(refuse("referenced", "binding"));
     }
     Ok(())
 }

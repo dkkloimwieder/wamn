@@ -27,11 +27,32 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     else {
         return Ok(());
     };
-    let projects = values["projects"]
+    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
+    let plugins = group["plugins"]
         .as_array_mut()
-        .context("environment host has no project projection")?;
-    projects.retain(|project| project.as_str() != Some(triple.project.as_str()));
-    if projects.is_empty() {
+        .context("environment host has no plugins")?;
+    let postgres = plugins
+        .iter_mut()
+        .find(|plugin| plugin["id"] == "wamn-postgres")
+        .context("environment host has no wamn-postgres plugin")?;
+    let config = postgres["config"]
+        .as_object_mut()
+        .context("host has no project configuration")?;
+    let retired: serde_json::Value = serde_json::from_str(
+        config
+            .get(triple.project.as_str())
+            .and_then(serde_json::Value::as_str)
+            .context("host has no project configuration")?,
+    )?;
+    let retired: std::collections::BTreeSet<_> = retired["logins"]
+        .as_object()
+        .context("project has no logins")?
+        .values()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    config.remove(triple.project.as_str());
+    if config.is_empty() {
         values["runtime-operator"]["runtime"]["hostGroups"] = serde_json::json!([]);
         wamn_platform_install::environment::apply(
             &platform.target,
@@ -43,15 +64,7 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
         super::drain::wait_stopped(platform, &name).await?;
         return wamn_kubernetes::helm::uninstall(&platform.target, &name).await;
     }
-    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
-    for field in ["volumes", "volumeMounts"] {
-        if let Some(entries) = group[field].as_array_mut() {
-            entries.retain(|entry| {
-                entry["name"] != format!("project-{}", triple.project)
-                    && entry["name"] != format!("events-{}", triple.project)
-            });
-        }
-    }
+    postgres["secretFrom"] = postgres_secrets(&postgres["config"])?;
     let bound = values["runtime-operator"]["runtime"]["terminationGracePeriodSeconds"]
         .as_u64()
         .context("environment host has no shutdown bound")?;
@@ -77,7 +90,11 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
                                 pod["status"]["phase"].as_str(),
                                 Some("Succeeded" | "Failed")
                             ) && pod["spec"]["volumes"].as_array().into_iter().flatten().any(
-                                |volume| volume["name"] == format!("project-{}", triple.project),
+                                |volume| {
+                                    volume["secret"]["secretName"]
+                                        .as_str()
+                                        .is_some_and(|name| retired.contains(name))
+                                },
                             )
                         });
                 if !still_mounted {
@@ -114,6 +131,147 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     if let Some(secrets) = values["credentialAccess"]["secrets"].as_array_mut() {
         secrets.retain(|secret| !removed.iter().any(|name| secret.as_str() == Some(name)));
     }
+    wamn_platform_install::environment::apply(
+        &platform.target,
+        &platform.chart.join("platform/environment"),
+        &name,
+        values,
+    )
+    .await
+}
+
+fn postgres_secrets(config: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    let mut secrets = std::collections::BTreeSet::new();
+    for entry in config
+        .as_object()
+        .context("host project config is not a map")?
+        .values()
+    {
+        let entry: serde_json::Value =
+            serde_json::from_str(entry.as_str().context("project config is not JSON text")?)?;
+        for secret in entry["logins"]
+            .as_object()
+            .context("project has no logins")?
+            .values()
+        {
+            secrets.insert(
+                secret
+                    .as_str()
+                    .context("login Secret is not a name")?
+                    .to_owned(),
+            );
+        }
+    }
+    Ok(serde_json::to_value(secrets)?)
+}
+
+/// Publish each project's login locations in the upstream native plugin entry.
+pub(super) async fn host_project(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    connection: &wamn_postgres::ConnectionConfig,
+) -> anyhow::Result<()> {
+    let name = wamn_registry::name::environment_host_name(&document.org, &document.env);
+    let mut values = crate::platform::resources::release_values(
+        &platform.target,
+        &platform.target.namespace,
+        &name,
+    )
+    .await?
+    .unwrap_or_else(|| serde_json::json!({}));
+    let groups = &mut values["runtime-operator"]["runtime"]["hostGroups"];
+    if groups.is_null() {
+        *groups = serde_json::json!([]);
+    }
+    let groups = groups
+        .as_array_mut()
+        .context("host groups are not a list")?;
+    if groups.is_empty() {
+        let mut group =
+            serde_json::to_value(super::write::host_group(platform.host_group.as_deref())?)?;
+        group["name"] = serde_json::json!(name);
+        groups.push(group);
+    }
+    let group = &mut groups[0];
+    anyhow::ensure!(
+        group["namespace"]
+            .as_str()
+            .is_none_or(|namespace| namespace == document.org.as_str())
+            && connection.credentials.namespace == document.org.as_str(),
+        "project login Secrets and host must share the environment namespace"
+    );
+    let defaults: serde_json::Value = serde_yaml::from_str(include_str!(
+        "../../../../deploy/charts/environment/values.yaml"
+    ))?;
+    let base = wamn_sql::WamnPostgresConfig::from_env();
+    let setting = |name: &str, fallback: u64| -> anyhow::Result<u64> {
+        group["env"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(
+                defaults["runtime-operator"]["runtime"]["env"]
+                    .as_array()
+                    .into_iter()
+                    .flatten(),
+            )
+            .find(|entry| entry["name"] == name)
+            .map_or(Ok(fallback), |entry| {
+                entry["value"]
+                    .as_str()
+                    .context("pool setting is not text")?
+                    .parse()
+                    .context("pool setting is not a number")
+            })
+    };
+    let guest_pool_max_size = setting(
+        "WAMN_PG_GUEST_POOL_MAX",
+        u64::try_from(base.guest_pool_max_size)?,
+    )?;
+    let platform_pool_max_size = setting(
+        "WAMN_PG_PLATFORM_POOL_MAX",
+        u64::try_from(base.platform_pool_max_size)?,
+    )?;
+    let wait_timeout_ms = setting("WAMN_PG_WAIT_TIMEOUT_MS", base.wait_timeout_ms)?;
+    let statement_timeout_ms = setting(
+        "WAMN_PG_STATEMENT_TIMEOUT_MS",
+        u64::from(base.statement_timeout_ms),
+    )?;
+    if group["plugins"].is_null() {
+        group["plugins"] = serde_json::json!([]);
+    }
+    let plugins = group["plugins"]
+        .as_array_mut()
+        .context("host plugins are not a list")?;
+    if !plugins.iter().any(|plugin| plugin["id"] == "wamn-postgres") {
+        plugins.push(serde_json::json!({"id":"wamn-postgres","workloadConfig":"deny","config":{}}));
+    }
+    let postgres = plugins
+        .iter_mut()
+        .find(|plugin| plugin["id"] == "wamn-postgres")
+        .expect("inserted plugin");
+    let app = wamn_provision::workload_secret_name(
+        wamn_provision::WorkloadRoleFamily::App,
+        &document.org,
+        &document.project,
+        &document.env,
+    );
+    let query = wamn_provision::workload_secret_name(
+        wamn_provision::WorkloadRoleFamily::Query,
+        &document.org,
+        &document.project,
+        &document.env,
+    );
+    let platform_login = wamn_provision::workload_role::platform_managed_role(&connection.database)
+        .password_secret
+        .name;
+    let config = serde_json::json!({"host":connection.host,"port":connection.port,"database":connection.database,
+        "logins":{"guest-sql":app,"dynamic-sql":query,"platform":platform_login},
+        "guest_pool_max_size":guest_pool_max_size,"platform_pool_max_size":platform_pool_max_size,
+        "wait_timeout_ms":wait_timeout_ms,"statement_timeout_ms":statement_timeout_ms});
+    postgres["workloadConfig"] = "deny".into();
+    postgres["config"][document.project.as_str()] = config.to_string().into();
+    postgres["secretFrom"] = postgres_secrets(&postgres["config"])?;
     wamn_platform_install::environment::apply(
         &platform.target,
         &platform.chart.join("platform/environment"),

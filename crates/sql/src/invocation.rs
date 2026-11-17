@@ -15,13 +15,15 @@ pub fn validate_context(
     context: &ReleaseContext,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        identity.project_env_key.as_ref() == Some(&context.release.target().project_env_key)
+        identity.project_env_key.as_ref()
+            == Some(&wamn_registry::name::project_env_key(
+                &context.release.org,
+                &context.release.project,
+                &context.release.environment
+            ))
             && identity.project.as_ref() == Some(context.connections.project())
-            && identity.release.as_ref()
-                == Some(&wamn_authority::identity::ReleaseIdentity::from_context(
-                    &context.release
-                )),
-        "invocation release authority mismatch"
+            && identity.application.as_ref() == Some(&context.release.application),
+        "invocation application authority mismatch"
     );
     Ok(())
 }
@@ -32,15 +34,17 @@ pub fn bind_test_context(
     postgres: &WamnPostgres,
     scope: &str,
     connections: Arc<wamn_connection::connection_facts::ConnectionFacts>,
-    release: Arc<wamn_catalog::serving_context::ServingContext>,
+    release: Arc<wamn_catalog::application_config::ApplicationConfig>,
 ) {
     let context = Arc::new(ReleaseContext::new(release, connections).expect("fixture context"));
     postgres.scopes.update::<Authority, _>(scope, |record| {
-        record.identity.project_env_key = Some(context.release.target().project_env_key.clone());
-        record.identity.project = Some(context.connections.project().to_owned());
-        record.identity.release = Some(wamn_authority::identity::ReleaseIdentity::from_context(
-            &context.release,
+        record.identity.project_env_key = Some(wamn_registry::name::project_env_key(
+            &context.release.org,
+            &context.release.project,
+            &context.release.environment,
         ));
+        record.identity.project = Some(context.connections.project().to_owned());
+        record.identity.application = Some(context.release.application.clone());
     });
     postgres
         .scopes

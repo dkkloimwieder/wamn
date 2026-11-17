@@ -43,7 +43,7 @@ spec:
           package: operation
           version: "0.1.0"
           interfaces: [operation]
-        {{- with $.Values.postgresInterfaces }}
+        {{- with $.Values.hostInterfaces }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       components:

@@ -43,7 +43,7 @@ impl WamnPostgres {
             .connect_lazy_with(options))
     }
 
-    pub(super) async fn ensure_pool(
+    pub(crate) async fn ensure_pool(
         &self,
         class: AuthorityClass,
         project: &wamn_registry::ProjectId,

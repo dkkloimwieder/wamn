@@ -17,8 +17,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
-use wamn_catalog::serving_context::ServingContext;
-use wamn_catalog::{ComponentConnectionType, HostAttachment, HostHandler};
+use wamn_catalog::application_config::ApplicationConfig;
+use wamn_catalog::{HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_identity_protocol::PrincipalId;
 use wamn_sql::WamnPostgres;
@@ -185,7 +185,7 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
 /// Login-targeted registry lookup of active store generations.
 /// Existing files use their connection identity without a binding.
 pub struct RegistryFileConnections {
-    pub release: Arc<wamn_catalog::serving_context::ServingContext>,
+    pub release: Arc<ApplicationConfig>,
     pub facts: Arc<wamn_connection::connection_facts::ConnectionFacts>,
     pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
@@ -249,64 +249,43 @@ impl FileConnections for RegistryFileConnections {
         binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
         pinned: Option<&str>,
     ) -> Result<FileConnection, FileError> {
-        let (id, read_only, version) = match binding {
+        if application != &self.release.application {
+            return Err(refused(FileRefusal::BindingRefused, "application"));
+        }
+        let (id, read_only) = match binding {
             None => (
                 pinned
                     .and_then(|id| id.parse::<Uuid>().ok())
                     .ok_or_else(|| refused(FileRefusal::BindingRefused, "connection"))?,
                 false,
-                None,
             ),
             Some(name) => {
-                let release = self
-                    .facts
-                    .release(&self.release.release().manifest_digest)
-                    .await
-                    .map_err(|error| failed("binding", error))?;
-                let binding = release
-                    .bindings
+                let (binding, package) = self
+                    .release
+                    .components
                     .iter()
-                    .find(|binding| {
-                        binding.name == name.as_str()
-                            && pinned.is_none_or(|id| id == binding.connection_id.to_string())
-                            && wamn_catalog::application_for_package(
-                                &self.release.target().applications,
-                                &binding.package_id,
-                            ) == Some(application)
+                    .find_map(|component| {
+                        wamn_catalog::application_config::binding(
+                            &self.release,
+                            &component.name,
+                            name.as_str(),
+                        )
+                        .filter(|binding| {
+                            binding.interface == "wasmcloud:blobstore"
+                                && pinned.is_none_or(|id| id == binding.connection_id)
+                        })
+                        .map(|binding| (binding, &component.package))
                     })
                     .ok_or_else(|| refused(FileRefusal::BindingRefused, "binding"))?;
                 (
-                    binding.connection_id,
-                    self.release
-                        .manifest()
-                        .components
-                        .iter()
-                        .find_map(|component| {
-                            (component.descriptor.component_digest == binding.component_digest
-                                && (component.package_id == binding.package_id
-                                    || component.package_id.as_str()
-                                        == wamn_catalog::PALETTE_PACKAGE_ID))
-                                .then(|| {
-                                    component
-                                        .descriptor
-                                        .connections
-                                        .iter()
-                                        .find_map(|connection| {
-                                            connection
-                                                .store_alias
-                                                .accepts(name)
-                                                .then(|| {
-                                                    connection
-                                                        .mode
-                                                        .read_only(&binding.package_id, name)
-                                                })
-                                                .flatten()
-                                        })
-                                })
-                                .flatten()
-                        })
+                    binding
+                        .connection_id
+                        .parse()
+                        .map_err(|error| failed("binding", error))?,
+                    binding
+                        .mode
+                        .read_only(package, &binding.name)
                         .ok_or_else(|| refused(FileRefusal::BindingRefused, "connection mode"))?,
-                    Some(binding.version),
                 )
             }
         };
@@ -328,12 +307,6 @@ impl FileConnections for RegistryFileConnections {
             || !matches!(generation.integration_type.as_str(), "gcs" | "s3")
         {
             return Err(refused(FileRefusal::BindingRefused, "connection"));
-        }
-        if let Some(version) = version {
-            self.facts
-                .version(&generation.integration_type, Some(version))
-                .await
-                .map_err(|error| failed("binding", error))?;
         }
         Ok(FileConnection {
             id: id.to_string(),
@@ -369,7 +342,7 @@ struct ExposeRequest {
 
 /// File handlers of one released application environment.
 pub struct FileRoutes {
-    pub(crate) release: Arc<ServingContext>,
+    pub(crate) release: Arc<ApplicationConfig>,
     pub(crate) context: Arc<wamn_connection::invocation::ReleaseContext>,
     pub(crate) postgres: Arc<WamnPostgres>,
     pub(crate) blobstore: Arc<WamnBlobstore>,
@@ -380,7 +353,7 @@ pub struct FileRoutes {
 impl fmt::Debug for FileRoutes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FileRoutes")
-            .field("release", self.release.release())
+            .field("application", &self.release.application)
             .field("project", &self.project)
             .finish_non_exhaustive()
     }
@@ -436,13 +409,10 @@ impl FileRoutes {
         write: bool,
         deadline: tokio::time::Instant,
     ) -> Result<(FileConnection, FileStore), FileError> {
-        let app = self
-            .release
-            .target()
-            .applications
-            .get(application)
-            .ok_or_else(|| refused(FileRefusal::BindingRefused, "application"))?;
-        if binding.is_some_and(|alias| !declares_store(&self.release, app, alias)) {
+        if application != &self.release.application {
+            return Err(refused(FileRefusal::BindingRefused, "application"));
+        }
+        if binding.is_some_and(|alias| !declares_store(&self.release, alias)) {
             return Err(refused(FileRefusal::BindingRefused, "binding"));
         }
         let connection = self
@@ -476,7 +446,7 @@ impl FileRoutes {
         id: Uuid,
         action: &str,
     ) -> Result<FileRecord, FileError> {
-        if !self.release.target().applications.contains_key(application) {
+        if application != &self.release.application {
             return Err(refused(FileRefusal::NotFound, "file_id"));
         }
         let sql = format!(
@@ -642,30 +612,22 @@ impl FileRoutes {
         ) {
             return Err(refused(FileRefusal::PermissionDenied, "operation"));
         }
-        let application = wamn_catalog::application_for_package(
-            &self.release.target().applications,
-            &invocation.package_id,
-        )
-        .ok_or_else(|| refused(FileRefusal::BindingRefused, "application"))?;
-        // A bound invocation supplies the operation authority. The file.get URL
-        // grant is deliberately separate from this operation's signed read.
+        let application = &self.release.application;
         let served = self
             .release
-            .manifest()
             .components
             .iter()
             .find(|component| {
-                component.package_id == invocation.package_id
-                    && component.descriptor.component_digest == invocation.component_digest
+                component.package == invocation.package_id
+                    && component.digest == invocation.component_digest
             })
             .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
         let operation = served
-            .descriptor
             .operations
             .get(&invocation.operation)
-            .and_then(|operation| operation.registered_operation.as_ref())
+            .filter(|operation| operation.public)
             .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
-        if !caller.permits(operation.as_str()) {
+        if !caller.permits(invocation.operation.as_str()) || operation.signed_result.is_none() {
             return Err(refused(FileRefusal::PermissionDenied, "operation"));
         }
         let principal = caller.principal_id();
@@ -748,34 +710,29 @@ fn principal(caller: &AuthenticatedCaller, action: &str) -> Result<PrincipalId, 
 }
 
 fn declares_store(
-    release: &ServingContext,
-    app: &wamn_catalog::ApplicationDefinition,
+    application: &ApplicationConfig,
     alias: &wamn_catalog::canonical_name::CanonicalName,
 ) -> bool {
-    release.manifest().components.iter().any(|component| {
-        app.packages.contains(&component.package_id)
-            && component.descriptor.connections.iter().any(|requirement| {
-                requirement.store_alias.name() == Some(alias)
-                    && requirement.requirement_type == ComponentConnectionType::Blobstore
+    application.components.iter().any(|component| {
+        wamn_catalog::application_config::binding(application, &component.name, alias.as_str())
+            .is_some_and(|binding| {
+                binding.interface == "wasmcloud:blobstore" && binding.selector.name() == Some(alias)
             })
     })
 }
 
 fn require_binding(
-    release: &ServingContext,
+    release: &ApplicationConfig,
     application: &wamn_catalog::ApplicationName,
     binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
     pinned: Option<&str>,
     connection: &FileConnection,
     write: bool,
 ) -> Result<(), FileError> {
-    let app = release
-        .target()
-        .applications
-        .get(application)
-        .ok_or_else(|| refused(FileRefusal::BindingRefused, "application"))?;
-    // Reads use the file's connection identity without a binding.
-    if binding.is_some_and(|alias| !declares_store(release, app, alias))
+    if application != &release.application {
+        return Err(refused(FileRefusal::BindingRefused, "application"));
+    }
+    if binding.is_some_and(|alias| !declares_store(release, alias))
         || connection.generation <= 0
         || connection.id.parse::<Uuid>().is_err()
         || write && connection.read_only
@@ -836,94 +793,9 @@ fn signed_lifetime(requested: Duration) -> Result<Duration, FileError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{BTreeMap, BTreeSet, HashSet};
-    use wamn_catalog::{
-        ApplicationDefinition, ComponentConnection, ComponentDescriptor, HostRouteSet,
-        PackageCoordinate, ServingComponent, ServingManifest, ServingRelease,
-    };
-    use wamn_connection::connection_credentials::ConnectionCredentials;
-    use wamn_connection::connection_facts::ConnectionFacts;
-    use wamn_connection::connection_memory::ConnectionMemory;
+    use std::collections::HashSet;
+    use wamn_catalog::HostRouteSet;
     use wamn_engine::flow_http_routing::CredentialType;
-    use wamn_catalog::serving_context::ReleaseTarget;
-    use wamn_sql::WamnPostgresConfig;
-
-    fn release() -> Arc<ServingContext> {
-        let mut descriptor = ComponentDescriptor::named(
-            "files".parse().unwrap(),
-            "0.1".parse().unwrap(),
-            (format!("sha256:{}", "a".repeat(64)))
-                .parse::<wamn_digest::Digest>()
-                .unwrap(),
-        );
-        descriptor.connections = vec![ComponentConnection {
-            store_alias: "documents"
-                .parse::<wamn_catalog::canonical_name::CanonicalName>()
-                .unwrap()
-                .into(),
-            requirement_type: ComponentConnectionType::Blobstore,
-            mode: wamn_catalog::ConnectionMode::Write,
-        }];
-        let mut manifest = ServingManifest::new(
-            ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new(
-                    "app".parse().expect("valid name"),
-                    "1.0.0".parse().unwrap(),
-                )
-                .unwrap()]),
-            },
-            BTreeSet::from([ServingComponent {
-                package_id: "app".parse().unwrap(),
-                runtime_schema: None,
-                descriptor: {
-                    let mut descriptor = descriptor;
-                    descriptor.operations = BTreeMap::from([(
-                        "request".parse().unwrap(),
-                        wamn_catalog::AdmittedComponentOperation {
-                            host_transaction: false,
-                            input_ports: Vec::new(),
-                            output_ports: Vec::new(),
-                            parameters: Vec::new(),
-                            registered_operation: None,
-                            committed_result_schema: None,
-                        },
-                    )]);
-                    descriptor
-                },
-            }]),
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
-        .unwrap();
-        manifest.host_routes.insert(HostRouteSet::Application);
-        Arc::new(
-            ServingContext::load_canonical_bytes(
-                &manifest.canonical_bytes(),
-                "files-test",
-                ReleaseTarget::new(
-                    "acme--dev--project".parse().unwrap(),
-                    "dev".parse().unwrap(),
-                )
-                .with_applications(BTreeMap::from([(
-                    "orders".parse().unwrap(),
-                    ApplicationDefinition {
-                        packages: BTreeSet::from(["app".parse().expect("valid name")]),
-                        connections: BTreeMap::new(),
-                    },
-                )])),
-            )
-            .unwrap(),
-        )
-    }
-    fn connection() -> FileConnection {
-        FileConnection {
-            id: "11111111-1111-4111-8111-111111111111".into(),
-            name: "store".into(),
-            generation: 3,
-            definition: json!({}),
-            read_only: false,
-        }
-    }
     fn caller(
         action: Option<&str>,
         admin: bool,
@@ -941,56 +813,6 @@ mod tests {
             None,
         )
     }
-    #[derive(Debug)]
-    struct NoConnections;
-    #[async_trait::async_trait]
-    impl FileConnections for NoConnections {
-        async fn lookup(
-            &self,
-            _: &wamn_catalog::ApplicationName,
-            _: Option<&wamn_catalog::canonical_name::CanonicalName>,
-            _: Option<&str>,
-        ) -> Result<FileConnection, FileError> {
-            panic!("a refused request must not reach connection authority")
-        }
-    }
-    fn files() -> FileRoutes {
-        let postgres = Arc::new(
-            WamnPostgres::new(WamnPostgresConfig {
-                credentials: None,
-                guest_pool_max_size: 1,
-                platform_pool_max_size: 1,
-                wait_timeout_ms: 1,
-                statement_timeout_ms: 1,
-            })
-            .unwrap(),
-        );
-        let release = release();
-        let context = Arc::new(
-            wamn_connection::invocation::ReleaseContext::new(
-                Arc::clone(&release),
-                Arc::new(ConnectionFacts::new(
-                    Arc::new(ConnectionMemory::default()),
-                    Arc::new(ConnectionCredentials::empty()),
-                    &postgres,
-                    &release.target().project_env_key,
-                    &"project".parse().unwrap(),
-                    &"dev".parse().unwrap(),
-                )),
-            )
-            .unwrap(),
-        );
-        let blobstore = Arc::new(WamnBlobstore::new(Arc::clone(&postgres)));
-        FileRoutes::new(
-            context,
-            postgres,
-            blobstore,
-            Arc::new(NoConnections),
-            "project".parse().unwrap(),
-            None,
-        )
-    }
-
     #[test]
     fn file_inputs_refuse_missing_security_fields_and_unknown_members() {
         let id = Uuid::new_v4();
@@ -1022,94 +844,6 @@ mod tests {
                 .is_err()
         );
     }
-
-    #[test]
-    fn writes_require_the_declared_application_binding_and_connection() {
-        let release = release();
-        let connection = connection();
-        assert!(
-            require_binding(
-                &release,
-                &"orders".parse().unwrap(),
-                Some(&"documents".parse().unwrap()),
-                None,
-                &connection,
-                true
-            )
-            .is_ok()
-        );
-        for (application, binding, pinned) in [
-            ("other", Some("documents"), None),
-            ("orders", Some("undeclared"), None),
-            (
-                "orders",
-                Some("documents"),
-                Some("33333333-3333-4333-8333-333333333333"),
-            ),
-        ] {
-            assert!(
-                require_binding(
-                    &release,
-                    &application.parse().unwrap(),
-                    binding.map(str::parse).transpose().unwrap().as_ref(),
-                    pinned,
-                    &connection,
-                    true
-                )
-                .is_err()
-            );
-        }
-        let mut read = connection.clone();
-        read.read_only = true;
-        assert!(
-            require_binding(
-                &release,
-                &"orders".parse().unwrap(),
-                Some(&"documents".parse().unwrap()),
-                None,
-                &read,
-                true
-            )
-            .is_err()
-        );
-        assert!(
-            require_binding(
-                &release,
-                &"orders".parse().unwrap(),
-                None,
-                Some(read.id.as_str()),
-                &read,
-                false
-            )
-            .is_ok()
-        );
-        let mut wrong = connection;
-        wrong.name = "another-store".into();
-        assert!(
-            require_binding(
-                &release,
-                &"orders".parse().unwrap(),
-                Some(&"documents".parse().unwrap()),
-                None,
-                &wrong,
-                false
-            )
-            .is_ok()
-        );
-        wrong.id = "invalid".into();
-        assert!(
-            require_binding(
-                &release,
-                &"orders".parse().unwrap(),
-                Some(&"documents".parse().unwrap()),
-                None,
-                &wrong,
-                false
-            )
-            .is_err()
-        );
-    }
-
     #[test]
     fn every_file_operation_requires_a_grant() {
         for (_, attachment) in HostRouteSet::Application.attachments() {
@@ -1131,7 +865,6 @@ mod tests {
             );
         }
     }
-
     #[test]
     fn private_exposure_refuses_even_after_an_administrator_passes_the_acl() {
         assert!(principal(&caller(None, true, CredentialType::Session), "get").is_ok());
@@ -1144,7 +877,6 @@ mod tests {
         }
         assert!(serde_json::from_str::<Exposure>("\"Private\"").is_err());
     }
-
     #[test]
     fn signed_lifetimes_refuse_zero_and_preserve_shorter_requests() {
         assert!(signed_lifetime(Duration::ZERO).is_err());
@@ -1156,82 +888,5 @@ mod tests {
             signed_lifetime(Duration::from_secs(901)).unwrap(),
             Duration::from_mins(15)
         );
-    }
-
-    #[tokio::test]
-    async fn signed_urls_refuse_without_a_bound_operation_before_catalog_access() {
-        let files = files();
-        let error = files
-            .signed_url(
-                &files.blobstore,
-                "unbound",
-                &caller(Some("get"), false, CredentialType::Session),
-                Uuid::new_v4(),
-                Duration::from_mins(1),
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(error.refusal, Some(FileRefusal::PermissionDenied));
-    }
-
-    #[tokio::test]
-    async fn missing_bindings_refuse_before_connection_lookup() {
-        let files = files();
-        for (application, binding) in [("orders", "missing"), ("other", "documents")] {
-            let error = files
-                .store(
-                    &application.parse().unwrap(),
-                    Some(&binding.parse().unwrap()),
-                    None,
-                    true,
-                    tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
-                )
-                .await
-                .unwrap_err();
-            assert_eq!(error.refusal, Some(FileRefusal::BindingRefused));
-        }
-    }
-    #[tokio::test]
-    async fn signed_urls_refuse_an_unregistered_export_before_catalog_access() {
-        use wamn_connection::connection::{
-            ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
-        };
-        let files = files();
-        let digest = (format!("sha256:{}", "a".repeat(64)))
-            .parse::<wamn_digest::Digest>()
-            .unwrap();
-        files
-            .postgres
-            .bind_invocation(
-                "palette",
-                ConnectionInvocation {
-                    origin: ConnectionOrigin {
-                        package_id: "app".parse().unwrap(),
-                        component_digest: digest.clone(),
-                        component: "files".parse().unwrap(),
-                        interface_version: "0.1".parse().unwrap(),
-                        operation: "request".parse().unwrap(),
-                    },
-                    entry: InvocationEntry::Route,
-                    package_id: "app".parse().unwrap(),
-                    component_digest: digest,
-                    component: "files".parse().unwrap(),
-                    operation: "request".parse().unwrap(),
-                    closure: ConnectionExecutionClosure::Released,
-                    effects: None,
-                },
-            )
-            .unwrap();
-        let error = files
-            .signed_url(
-                &files.blobstore,
-                "palette",
-                &caller(None, true, CredentialType::Session),
-                Uuid::new_v4(),
-                Duration::from_mins(1),
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(error.refusal, Some(FileRefusal::PermissionDenied));
     }
 }

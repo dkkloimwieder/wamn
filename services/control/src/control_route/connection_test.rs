@@ -1,6 +1,5 @@
 //! Read-only candidate testing under the connection writer's authority.
 
-use sqlx::Row as _;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -99,36 +98,52 @@ impl ControlRoutes<'_> {
         let mut selected = request["version"]
             .as_i64()
             .and_then(|version| i32::try_from(version).ok());
-        if let Some(connection) = context["id"].as_str() {
-            let logins = self.logins(&[(project.clone(), env.clone())])?;
-            let mut client = wamn_postgres::connect(&logins[0]).await?;
-
-            let mut transaction =
-                wamn_identity::transaction::read_connection(&mut client, caller).await?;
-            let published = Value::Object(
-                versions
-                    .iter()
-                    .map(|(version, value)| (version.clone(), value["parameter_schema"].clone()))
-                    .collect(),
-            );
+        let published = Value::Object(
+            versions
+                .iter()
+                .map(|(version, value)| (version.clone(), value["parameter_schema"].clone()))
+                .collect(),
+        );
+        {
+            let mut writer = self.writer.lock().await;
             for schema in administration::required_connection_versions(
-                &mut transaction,
-                connection,
+                &mut writer,
+                self.org,
+                &project,
+                env,
+                request["name"].as_str().expect("validated name"),
                 &published,
             )
             .await?
             {
                 administration::validate_version_parameters(&request["parameters"], &schema)?;
             }
-            if selected.is_none() {
-                let status = self.status.read(self.org, &project, env).await?;
-                if let Some(digest) = status["digest"].as_str() {
-                    let digest: wamn_digest::Digest =
-                        digest.parse().map_err(anyhow::Error::from)?;
-                    selected = sqlx::query("SELECT version FROM catalog.release_connection WHERE manifest_digest=$1 AND connection_id=$2::text::uuid").bind(digest).bind(connection).fetch_optional(&mut *transaction).await?.map(|row|row.get(0));
-                }
+        }
+        if selected.is_none()
+            && let Some(connection) = context["id"].as_str()
+        {
+            let applications =
+                crate::environment_status::applications(self.org, &project, env).await?;
+            let binding = applications
+                .iter()
+                .flat_map(|app| &app.components)
+                .flat_map(|component| &component.connections)
+                .find(|binding| binding.connection_id == connection);
+            if let Some(binding) = binding {
+                selected = versions
+                    .values()
+                    .find(|version| {
+                        if let Some(reference) = &binding.integration {
+                            version["digest"]
+                                .as_str()
+                                .is_some_and(|digest| reference.ends_with(&format!("@{digest}")))
+                        } else {
+                            version["version"].as_i64() == Some(1)
+                        }
+                    })
+                    .and_then(|version| version["version"].as_i64())
+                    .and_then(|version| i32::try_from(version).ok());
             }
-            transaction.rollback().await?;
         }
         let selected = selected
             .or_else(|| {

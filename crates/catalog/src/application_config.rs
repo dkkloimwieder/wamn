@@ -27,6 +27,8 @@ pub struct ApplicationComponent {
     /// The sibling component name in the WorkloadDeployment.
     pub name: String,
     pub package: crate::PackageName,
+    pub digest: wamn_digest::Digest,
+    pub connections: Vec<ApplicationConnection>,
     /// Absent for a component that declares no SQL.
     pub schema: Option<String>,
     pub operations: BTreeMap<crate::canonical_name::CanonicalName, ApplicationOperation>,
@@ -45,6 +47,7 @@ pub struct ApplicationOperation {
     #[serde(rename = "type")]
     pub type_: Option<ApplicationOperationType>,
     pub idempotency_key: Option<String>,
+    pub signed_result: Option<crate::SignedFileReads>,
 }
 
 /// The SQL admission type of an application operation.
@@ -54,4 +57,36 @@ pub enum ApplicationOperationType {
     Read,
     Write,
     Delete,
+}
+
+/// One component declaration resolved by deploy, without runtime storage or secrets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ApplicationConnection {
+    pub name: crate::canonical_name::CanonicalName,
+    pub selector: crate::ComponentConnectionAlias,
+    pub connection_id: String,
+    pub mode: crate::ConnectionMode,
+    pub interface: String,
+    pub integration_type: wamn_registry::integration_code::IntegrationCode,
+    pub runtime_type: crate::RuntimeType,
+    pub exclusive: bool,
+    pub target_type: String,
+    /// Full repository@digest of a wasm integration.
+    pub integration: Option<String>,
+}
+
+/// Look up one declared name on the exact workload sibling component.
+pub fn binding<'a>(
+    application: &'a ApplicationConfig,
+    component: &str,
+    name: &str,
+) -> Option<&'a ApplicationConnection> {
+    application
+        .components
+        .iter()
+        .find(|entry| entry.name == component)?
+        .connections
+        .iter()
+        .find(|binding| binding.name.as_str() == name)
 }

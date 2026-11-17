@@ -1,4 +1,4 @@
-//! Resolve project integrations and write release-targeted environment bindings.
+//! Resolve project integrations for application workload configuration.
 
 use sqlx::Row as _;
 pub(super) mod plan;
@@ -45,10 +45,13 @@ impl From<sqlx::Error> for BindingError {
 pub struct Binding {
     pub application: wamn_catalog::ApplicationName,
     pub alias: String,
+    pub interface: String,
+    pub components: std::collections::BTreeSet<String>,
+    pub runtime_type: wamn_catalog::RuntimeType,
+    pub target_type: String,
     pub connection_id: String,
     pub integration_type: wamn_registry::integration_code::IntegrationCode,
     pub exclusive: bool,
-    pub version: i32,
     pub generation: i64,
     pub mode: ConnectionMode,
     pub digest: Option<wamn_digest::Digest>,
@@ -86,7 +89,7 @@ pub async fn analyse(
     }) {
         let connection=sqlx::query("SELECT c.id::text,c.integration_type,g.parameters,c.active_generation,c.target_id::text FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1 AND c.status='active'")
             .bind(name).fetch_optional(&mut *project).await?.ok_or_else(||refuse("connection_unavailable",name))?;
-        let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 AND e.target_id=destination.id LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
+        let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 AND e.target_id=destination.id LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
             .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection.get::<String,_>(4)).bind(&document.target).bind(connection.get::<i64,_>(3)).bind(&document.org).bind(&document.env).bind(version.version)
             .fetch_optional(&mut *system).await?.ok_or_else(||refuse("connection_unavailable",name))?;
         let runtime: String = row.get(2);
@@ -181,10 +184,26 @@ pub async fn analyse(
             bindings.push(Binding {
                 application: application.clone(),
                 alias: name.to_string(),
+                interface: declaration.interface,
+                components: packages
+                    .iter()
+                    .filter(|p| definition.packages.contains(&p.package.id))
+                    .flat_map(|p| {
+                        p.components
+                            .iter()
+                            .filter(|(_, c)| c.connections.contains(&name))
+                            .map(|(component, _)| format!("{}-{component}", p.package.id))
+                    })
+                    .collect(),
+                runtime_type: if runtime == "host" {
+                    wamn_catalog::RuntimeType::Host
+                } else {
+                    wamn_catalog::RuntimeType::Wasm
+                },
+                target_type: row.get(11),
                 connection_id: row.get(0),
                 integration_type,
                 exclusive: row.get(8),
-                version,
                 generation: row.get(7),
                 mode: declaration.mode,
                 digest: row.get(5),
@@ -195,31 +214,6 @@ pub async fn analyse(
         }
     }
     Ok(bindings)
-}
-
-/// Write the release's versions and names after its requirements exist.
-/// The caller binds the transaction's principal before writing.
-pub async fn write(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    digest: &wamn_digest::Digest,
-    bindings: &[Binding],
-) -> anyhow::Result<()> {
-    for binding in bindings {
-        let active = sqlx::query(
-            "SELECT 1 FROM platform.connection c WHERE c.id=$1::text::uuid AND c.status='active'",
-        )
-        .bind(&binding.connection_id)
-        .fetch_optional(&mut **tx)
-        .await?
-        .is_some();
-        anyhow::ensure!(
-            active,
-            "connection projection {} is absent or inactive; run env connections",
-            binding.connection_id
-        );
-        sqlx::query("INSERT INTO catalog.release_connection(manifest_digest,connection_id,version) VALUES ($1,$2::text::uuid,$3) ON CONFLICT (manifest_digest,connection_id) DO NOTHING").bind(digest).bind(&binding.connection_id).bind(binding.version).execute(&mut **tx).await.map(|result| result.rows_affected())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

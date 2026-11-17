@@ -12,9 +12,8 @@ use moka::sync::Cache;
 use crate::connection_credentials::{
     ConnectionCredentials, ConnectionGeneration, IntegrationVersion,
 };
-use crate::connection_memory::{ConnectionFact, ConnectionMemory, EnvConnections, ReleaseFact};
+use crate::connection_memory::{ConnectionFact, ConnectionMemory, EnvConnections};
 use crate::database::ProjectDatabase;
-use sqlx::Row as _;
 
 /// The number of entries of each bounded map.
 pub const MAP_ENTRIES: u64 = 1024;
@@ -51,7 +50,6 @@ pub struct ConnectionFacts {
     oauth_encryption: Option<Arc<crate::oauth_encryption::Envelope>>,
     memory: Arc<ConnectionMemory>,
     reader: Arc<ConnectionCredentials>,
-    postgres: std::sync::Weak<dyn ProjectDatabase>,
     project_env_key: wamn_registry::ProjectEnvKey,
     project: wamn_registry::ProjectId,
     environment: wamn_registry::EnvName,
@@ -93,7 +91,6 @@ impl ConnectionFacts {
                 project,
                 environment,
             )),
-            postgres: database,
             project_env_key: project_env_key.to_owned(),
             project: project.to_owned(),
             environment: environment.to_owned(),
@@ -190,38 +187,12 @@ impl ConnectionFacts {
         }
     }
 
-    /// The connection map of the release `manifest_digest`.
-    pub async fn release(
+    /// Read the deployment's connection map without a database read.
+    pub fn release<'a>(
         &self,
-        manifest_digest: &wamn_digest::Digest,
-    ) -> anyhow::Result<ReleaseFact> {
-        let database = self
-            .postgres
-            .upgrade()
-            .context("project database authority was unloaded")?;
-        let mut connection = database.read_connection(&self.project).await?;
-        let rows = sqlx::query("SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(manifest_digest,connection_id) WHERE b.manifest_digest=$1 ORDER BY 1,2,3").bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection map")?;
-        let versions = sqlx::query("SELECT connection_id,version FROM catalog.release_connection WHERE manifest_digest=$1").bind(manifest_digest).fetch_all(connection.connection()).await.context("read the release connection versions")?;
-        let fact = crate::connection_memory::ReleaseFact {
-            versions: versions
-                .into_iter()
-                .map(|row| (row.get(0), row.get(1)))
-                .collect(),
-            bindings: rows
-                .into_iter()
-                .map(|row| {
-                    Ok::<_, sqlx::Error>(crate::connection_memory::ReleaseBinding {
-                        component_digest: row.get(0),
-                        package_id: row.try_get(1)?,
-                        name: row.get(2),
-                        connection_id: row.get(3),
-                        version: row.get(4),
-                    })
-                })
-                .collect::<Result<_, _>>()?,
-        };
-        connection.commit().await?;
-        Ok(fact)
+        application: &'a wamn_catalog::application_config::ApplicationConfig,
+    ) -> &'a wamn_catalog::application_config::ApplicationConfig {
+        application
     }
 
     /// The map from integration name to connection id of the environment.
@@ -296,51 +267,27 @@ impl ConnectionFacts {
     }
 }
 
-/// Make sure that every component-grain requirement in the synchronous release
-/// closure has one exact usable environment binding.
-const RELEASE_COMPONENT_BINDINGS_READY_SQL: &str = "\
-SELECT NOT EXISTS ( \
-    SELECT FROM catalog.connection_requirement requirement \
-     WHERE requirement.component_digest=ANY($2::text[]) \
-       AND NOT EXISTS ( \
-        SELECT FROM catalog.connection_binding binding \
-        JOIN catalog.release_connection selected USING(manifest_digest,connection_id) \
-        JOIN platform.connection connection ON connection.id=selected.connection_id \
-        WHERE binding.manifest_digest=$1 \
-          AND binding.component_digest=requirement.component_digest AND binding.package_id=requirement.package_id \
-          AND binding.name=requirement.name AND connection.status='active' \
-       ) \
-)";
-
 impl ConnectionFacts {
-    /// Make sure of the exact component requirements selected by request readiness.
-    ///
-    /// An empty digest set is a background-only release and performs no store
-    /// call. Otherwise the test shares the driver's existing platform pool and
-    /// project identity; missing rows, unavailable storage and malformed results are
-    /// errors, while an ordinary unbound requirement is `Ok(false)`.
+    /// Check the deployment bindings against current project connection status.
     pub async fn release_component_bindings_ready(
         &self,
-        manifest_digest: &wamn_digest::Digest,
+        application: &wamn_catalog::application_config::ApplicationConfig,
         component_digests: &[wamn_digest::Digest],
     ) -> anyhow::Result<bool> {
-        if component_digests.is_empty() {
-            return Ok(true);
+        for component in application
+            .components
+            .iter()
+            .filter(|component| component_digests.contains(&component.digest))
+        {
+            for binding in &component.connections {
+                let id = binding.connection_id.parse()?;
+                if self.connection(&id).await?.is_none_or(|fact| {
+                    fact.status != crate::connection_memory::ConnectionStatus::Active
+                }) {
+                    return Ok(false);
+                }
+            }
         }
-        let database = self
-            .postgres
-            .upgrade()
-            .context("project database authority was unloaded")?;
-        let mut connection = database.read_connection(&self.project).await?;
-        let ready = sqlx::query(RELEASE_COMPONENT_BINDINGS_READY_SQL)
-            .bind(manifest_digest)
-            .bind(component_digests)
-            .fetch_one(connection.connection())
-            .await
-            .context("query release connection bindings")?
-            .try_get(0)
-            .context("decode release binding readiness")?;
-        connection.commit().await?;
-        Ok(ready)
+        Ok(true)
     }
 }

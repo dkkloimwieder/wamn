@@ -1,17 +1,15 @@
-//! Host-attested connection invocations and release authorization.
+//! Host-attested connection invocations and application authorization.
 
 use std::sync::Arc;
 use wamn_authority::effect_span::{EffectEvidence, EffectSource, EffectWiring};
-use wamn_catalog::ServingManifest;
+use wamn_catalog::application_config::{ApplicationConfig, ApplicationConnection};
 
 /// Host-attested identity of one component invocation.
 ///
 /// `component` is the name the catalog admitted the executing component under,
 /// and `operation` is the node operation the router driver called on it. Both
-/// come from the driver, never from the guest. They are here because
-/// `component_digest` is a manifest key and no reader looks a component up by
-/// it, and because the host service method an effect span records says which host
-/// function ran, not which node operation raised it (`wamn-b2m6.7`).
+/// come from the driver, never from the guest. The operation identifies the
+/// authorized export; an effect span records the host function separately.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionInvocation {
     /// The root component, unchanged by nested calls.
@@ -31,26 +29,35 @@ impl ConnectionInvocation {
     /// Resolve a host connection declared by the executing component.
     pub fn connection<'a>(
         &self,
-        manifest: &'a ServingManifest,
+        application: &'a ApplicationConfig,
         alias: &wamn_catalog::canonical_name::CanonicalName,
-    ) -> Option<&'a wamn_catalog::ComponentConnection> {
-        let component = manifest.components.iter().find(|component| {
-            component.package_id == self.package_id
-                && component.descriptor.component_digest == self.component_digest
-                && component.descriptor.component == self.component
+    ) -> Option<&'a ApplicationConnection> {
+        let component = application.components.iter().find(|component| {
+            component.package == self.package_id
+                && component.digest == self.component_digest
+                && component
+                    .name
+                    .strip_prefix(self.package_id.as_str())
+                    .and_then(|suffix| suffix.strip_prefix('-'))
+                    == Some(self.component.as_str())
         })?;
-        component.descriptor.operations.get(&self.operation)?;
-        let configuration = self
-            .entry
-            .wiring()
-            .map(|position| position.configuration.as_ref());
-        component.descriptor.connections.iter().find(|connection| {
-            connection.store_alias.name() == Some(alias)
-                || configuration
-                    .and_then(|configuration| connection.store_alias.resolve(configuration))
+        component.operations.get(&self.operation)?;
+        let binding = wamn_catalog::application_config::binding(
+            application,
+            &component.name,
+            alias.as_str(),
+        )?;
+        let selected = match &binding.selector {
+            wamn_catalog::ComponentConnectionAlias::Name(name) => name == alias,
+            selector => {
+                self.entry
+                    .wiring()
+                    .and_then(|position| selector.resolve(&position.configuration))
                     .as_ref()
                     == Some(alias)
-        })
+            }
+        };
+        selected.then_some(binding)
     }
 
     /// The span coordinates of this invocation. A route has no wiring

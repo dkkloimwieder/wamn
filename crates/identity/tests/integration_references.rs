@@ -13,8 +13,6 @@ async fn refusal(pool: &sqlx::PgPool, relation: &str, expected: &str) {
         CREATE TABLE platform.connection(id uuid PRIMARY KEY); \
         CREATE TABLE platform.record_source(external_system_id uuid REFERENCES platform.external_system(id)); \
         CREATE TABLE platform.file(connection_id uuid); \
-        CREATE TABLE catalog.connection_binding(connection_id uuid); \
-        CREATE TABLE catalog.release_connection(connection_id uuid); \
         INSERT INTO platform.external_system VALUES ('00000000-0000-0000-0000-000000000001')").execute(&mut client).await.map(drop).unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         (&format!("INSERT INTO {relation} VALUES ('00000000-0000-0000-0000-000000000001')"))
@@ -36,16 +34,6 @@ async fn refusal(pool: &sqlx::PgPool, relation: &str, expected: &str) {
             .unwrap_err();
     assert_eq!(error.code, "referenced");
     assert_eq!(error.field, expected);
-}
-
-#[sqlx::test(migrations = false)]
-async fn binding_refuses_connection_deletion(pool: sqlx::PgPool) {
-    refusal(&pool, "catalog.connection_binding", "binding").await;
-}
-
-#[sqlx::test(migrations = false)]
-async fn release_version_refuses_connection_deletion(pool: sqlx::PgPool) {
-    refusal(&pool, "catalog.release_connection", "release_connection").await;
 }
 
 #[sqlx::test(migrations = false)]

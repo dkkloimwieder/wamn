@@ -110,6 +110,7 @@ pub async fn configure(
             system_owner,
         )
         .await?;
+        resources::host_project(&platform, document, &connection).await?;
         let capture =
             wamn_platform_install::environment::capture_connection(system_owner, &triple).await?;
         resources::prepare_cdc_with_connection(&platform, document, &capture).await?;

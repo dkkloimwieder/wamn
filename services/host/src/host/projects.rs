@@ -8,25 +8,9 @@ use wamn_engine::flow_http_routing::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, RouteAuthenticator,
     authentication_unavailable,
 };
-use wamn_sql::AuthorityClass;
-use wamn_sql::{
-    CredentialProvider, ResolvedCredential, StaticCredentialProvider,
-};
-
-#[derive(Debug)]
-pub(super) struct StatePoisoned(pub(super) &'static str);
-
-impl std::fmt::Display for StatePoisoned {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} lock poisoned", self.0)
-    }
-}
-
-impl std::error::Error for StatePoisoned {}
 
 #[derive(Default)]
 struct Project {
-    credentials: StaticCredentialProvider,
     authentication: Option<(
         wamn_registry::ProjectEnvKey,
         Arc<PlatformRouteAuthenticator>,
@@ -48,26 +32,6 @@ impl Projects {
 
     fn get(&self, project: &wamn_registry::ProjectId) -> Option<Arc<RwLock<Project>>> {
         self.entries().get(project).map(Arc::clone)
-    }
-
-}
-
-pub(super) struct Credentials(pub(super) Arc<Projects>);
-impl CredentialProvider for Credentials {
-    fn resolve(
-        &self,
-        project: &wamn_registry::ProjectId,
-        class: AuthorityClass,
-        project_env_key: Option<&wamn_registry::ProjectEnvKey>,
-    ) -> anyhow::Result<Option<ResolvedCredential>> {
-        let Some(state) = self.0.get(project) else {
-            return Ok(None);
-        };
-        state
-            .read()
-            .map_err(|_| StatePoisoned("project credentials"))?
-            .credentials
-            .resolve(project, class, project_env_key)
     }
 }
 

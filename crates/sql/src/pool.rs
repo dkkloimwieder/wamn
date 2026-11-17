@@ -23,11 +23,11 @@ fn max_host_call_ms() -> u64 {
     u64::try_from(MAX_HOST_CALL_DURATION.as_millis()).unwrap_or(u64::MAX)
 }
 
-fn bounded_wait_timeout_ms(value: u64) -> u64 {
+pub(super) fn bounded_wait_timeout_ms(value: u64) -> u64 {
     value.clamp(1, max_host_call_ms())
 }
 
-fn bounded_statement_timeout_ms(value: u64) -> u32 {
+pub(super) fn bounded_statement_timeout_ms(value: u64) -> u32 {
     u32::try_from(value.clamp(1, max_host_call_ms())).unwrap_or(u32::MAX)
 }
 
@@ -254,8 +254,7 @@ pub trait CredentialProvider: Send + Sync {
     ) -> anyhow::Result<Option<ResolvedCredential>>;
 }
 
-/// v0 provider: an in-memory project→config map, built directly by the
-/// composition root or parsed from a JSON object of projects.
+/// An in-memory project→config map built by the composition root or at host bind.
 ///
 /// `wamn-0h0g.22.8.2`: THERE IS NO CATCH-ALL DEFAULT. A config supplied as the
 /// "default" is registered under [`DEFAULT_PROJECT`] like any other project, so
@@ -282,6 +281,13 @@ impl StaticCredentialProvider {
         Self { projects }
     }
 
+    pub(super) fn project_credentials(
+        &self,
+        project: &wamn_registry::ProjectId,
+    ) -> Option<&ClassCredentials> {
+        self.projects.get(project).map(|config| &config.credentials)
+    }
+
     /// Register a project's explicit credentials without changing other projects.
     pub fn insert(&mut self, project: wamn_registry::ProjectId, config: ProjectConfig) {
         self.projects.insert(project, config);
@@ -291,109 +297,6 @@ impl StaticCredentialProvider {
     pub(super) fn default_only(default: Option<ProjectConfig>) -> Self {
         Self::new(HashMap::new(), default)
     }
-
-    /// Parse `{ "<project>": { "url"?: .., "credentials"?: { "<class>": .. },
-    /// .. }, .. }`; unset per-project fields fall back to
-    /// `base`. Public so the route-authentication harnesses can build a
-    /// multi-project [`StaticCredentialProvider`] from one JSON literal instead
-    /// of assembling every [`ProjectConfig`] field by hand.
-    ///
-    /// `"url"` names one login for EVERY class — written out, not defaulted —
-    /// and `"credentials"` names one class's own login, overriding it. A class
-    /// neither of them names has no credential and is refused at resolution
-    /// (`wamn-0h0g.22.16`). An entry naming neither is refused here, because a
-    /// project with no credential at all is a configuration error, not a
-    /// project that resolves to nothing.
-    pub fn projects_from_json(
-        text: &str,
-        base: &WamnPostgresConfig,
-    ) -> anyhow::Result<HashMap<wamn_registry::ProjectId, ProjectConfig>> {
-        let v: serde_json::Value = serde_json::from_str(text).context("parse projects json")?;
-        let obj = v
-            .as_object()
-            .context("projects json must be a JSON object")?;
-        let mut out = HashMap::new();
-        for (name, entry) in obj {
-            let name: wamn_registry::ProjectId = name.parse().context("project identifier")?;
-            anyhow::ensure!(
-                entry.get("pool_max_size").is_none(),
-                "project {name:?} uses retired \"pool_max_size\"; configure \
-                 \"guest_pool_max_size\" and \"platform_pool_max_size\" separately"
-            );
-            let credentials = class_credentials_from_json(&name, entry)?;
-            let u64_or = |k: &str, d: u64| {
-                entry
-                    .get(k)
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(d)
-            };
-            out.insert(
-                name,
-                ProjectConfig {
-                    credentials,
-                    guest_pool_max_size: usize::try_from(u64_or(
-                        "guest_pool_max_size",
-                        base.guest_pool_max_size as u64,
-                    ))
-                    .unwrap_or(usize::MAX),
-                    platform_pool_max_size: usize::try_from(u64_or(
-                        "platform_pool_max_size",
-                        base.platform_pool_max_size as u64,
-                    ))
-                    .unwrap_or(usize::MAX),
-                    wait_timeout_ms: bounded_wait_timeout_ms(u64_or(
-                        "wait_timeout_ms",
-                        base.wait_timeout_ms,
-                    )),
-                    statement_timeout_ms: bounded_statement_timeout_ms(u64_or(
-                        "statement_timeout_ms",
-                        u64::from(base.statement_timeout_ms),
-                    )),
-                },
-            );
-        }
-        Ok(out)
-    }
-}
-
-/// Read one project entry's per-class credentials.
-///
-/// The class is MATCHED, never parsed: `wamn-0h0g.22.14` ruled `AuthorityClass`
-/// one-way and forbade a `FromStr`/`Deserialize` on it, so this walks the closed
-/// class set and compares each label against the configured keys. An
-/// unrecognised key is refused rather than ignored — silently dropping it would
-/// leave the operator believing a class was configured when it was not.
-fn class_credentials_from_json(
-    name: &wamn_registry::ProjectId,
-    entry: &serde_json::Value,
-) -> anyhow::Result<ClassCredentials> {
-    anyhow::ensure!(
-        entry.get("url").is_none(),
-        "each database authority requires its own configured login"
-    );
-    let mut credentials = ClassCredentials::default();
-    if let Some(per_class) = entry.get("credentials") {
-        let per_class = per_class
-            .as_object()
-            .with_context(|| format!("project {name:?} \"credentials\" must be a JSON object"))?;
-        for (label, url) in per_class {
-            let class = AuthorityClass::ALL
-                .into_iter()
-                .find(|class| class.as_str() == label)
-                .with_context(|| {
-                    format!("project {name:?} names unknown authority class {label:?}")
-                })?;
-            let url = url.as_str().with_context(|| {
-                format!("project {name:?} credential for {label:?} must be a string")
-            })?;
-            credentials = credentials.with_class(class, url);
-        }
-    }
-    anyhow::ensure!(
-        !credentials.is_empty(),
-        "project {name:?} names no configured database authority"
-    );
-    Ok(credentials)
 }
 
 impl CredentialProvider for StaticCredentialProvider {
@@ -451,7 +354,7 @@ impl CredentialProvider for StaticCredentialProvider {
 /// A pool belongs to one project and authenticated login.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct PoolKey {
-    project: wamn_registry::ProjectId,
+    pub(super) project: wamn_registry::ProjectId,
     login: wamn_identity_protocol::LoginName,
 }
 
@@ -507,92 +410,6 @@ mod tests {
             wait_timeout_ms: 1,
             statement_timeout_ms: 1,
         }
-    }
-
-    fn base() -> WamnPostgresConfig {
-        WamnPostgresConfig {
-            credentials: None,
-            guest_pool_max_size: 14,
-            platform_pool_max_size: 2,
-            wait_timeout_ms: 100,
-            statement_timeout_ms: 100,
-        }
-    }
-
-    /// *** THE CLASS SELECTS THE CREDENTIAL. ***
-    ///
-    /// Before `wamn-0h0g.22.16` `resolve` returned the same url whatever
-    /// authority asked, so every family authenticated as the shared `wamn_app`
-    /// login. Each class has its own configured login.
-    #[test]
-    fn each_authority_class_authenticates_with_its_own_configured_credential() {
-        let credentials = AuthorityClass::ALL
-            .into_iter()
-            .enumerate()
-            .map(|(index, class)| {
-                (
-                    class.as_str().to_owned(),
-                    serde_json::Value::String(format!("postgres://role_{index}:pw@db/billing")),
-                )
-            })
-            .collect::<serde_json::Map<_, _>>();
-        let projects = StaticCredentialProvider::projects_from_json(
-            &serde_json::json!({"billing":{"credentials":credentials}}).to_string(),
-            &base(),
-        )
-        .expect("per-class credentials parse");
-        let cfg = projects.get("billing").expect("project billing");
-
-        let mut seen = Vec::new();
-        for class in AuthorityClass::ALL {
-            let url = cfg
-                .select(class)
-                .unwrap_or_else(|| panic!("{class} has a configured credential"))
-                .database_url;
-            assert!(
-                !seen.contains(&url),
-                "{class} was handed a credential another authority already holds"
-            );
-            seen.push(url);
-        }
-    }
-
-    /// A class with no configured credential REFUSES. The forbidden behaviour is
-    /// the quiet one: handing back whichever login happened to be configured for
-    /// some other authority, which is how an unprovisioned family becomes
-    /// indistinguishable from a provisioned one.
-    #[test]
-    fn a_class_with_no_configured_credential_is_refused_not_defaulted() {
-        let projects = StaticCredentialProvider::projects_from_json(
-            r#"{"billing":{"credentials":{"guest-sql":"postgres://wamn_app_g:pw@db/billing"}}}"#,
-            &base(),
-        )
-        .expect("a single-class project parses");
-        let provider = StaticCredentialProvider::new(projects, None);
-
-        for class in AuthorityClass::ALL
-            .into_iter()
-            .filter(|class| *class != AuthorityClass::GuestSql)
-        {
-            assert!(
-                provider
-                    .resolve(&"billing".parse().unwrap(), class, None)
-                    .is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn a_credential_file_that_names_no_class_or_an_unknown_one_is_refused() {
-        assert!(
-            StaticCredentialProvider::projects_from_json(r#"{"billing":{}}"#, &base()).is_err(),
-            "a project naming no credential at all must refuse"
-        );
-        let result = StaticCredentialProvider::projects_from_json(
-            r#"{"billing":{"credentials":{"guest_sql":"postgres://user:pw@db/billing"}}}"#,
-            &base(),
-        );
-        assert!(result.is_err());
     }
 
     /// *** THE `wamn-0h0g.22.6.7` REFUSAL, ON THE SELECTED CREDENTIAL. ***
@@ -756,24 +573,5 @@ mod tests {
             status.success(),
             "the child, running with WAMN_PG_URL set, saw from_env pick it up"
         );
-    }
-
-    #[test]
-    fn project_config_names_each_lifecycle_budget_and_refuses_the_retired_key() {
-        let base = base();
-        let projects = StaticCredentialProvider::projects_from_json(
-            r#"{"p":{"credentials":{"guest-sql":"postgres://user@localhost/p"},"guest_pool_max_size":7,"platform_pool_max_size":3}}"#,
-            &base,
-        )
-        .expect("separately named lifecycle budgets parse");
-        let project = projects.get("p").expect("project p");
-        assert_eq!(project.guest_pool_max_size, 7);
-        assert_eq!(project.platform_pool_max_size, 3);
-
-        let retired = StaticCredentialProvider::projects_from_json(
-            r#"{"p":{"credentials":{"guest-sql":"postgres://user@localhost/p"},"pool_max_size":10}}"#,
-            &base,
-        );
-        assert!(retired.is_err());
     }
 }
