@@ -1,6 +1,17 @@
 {
   "cases": [
     {
+      "literal": "exclusive_connection_requires_local_target",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field",
+          "reason"
+        ]
+      },
+      "text": "Exclusive connections belong to local targets."
+    },
+    {
       "literal": "ipv6_authority_not_supported",
       "from": "transaction_invariant",
       "detail": {

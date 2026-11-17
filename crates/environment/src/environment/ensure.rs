@@ -228,10 +228,6 @@ pub(super) async fn host_project(
         "WAMN_PG_GUEST_POOL_MAX",
         u64::try_from(base.guest_pool_max_size)?,
     )?;
-    let platform_pool_max_size = setting(
-        "WAMN_PG_PLATFORM_POOL_MAX",
-        u64::try_from(base.platform_pool_max_size)?,
-    )?;
     let wait_timeout_ms = setting("WAMN_PG_WAIT_TIMEOUT_MS", base.wait_timeout_ms)?;
     let statement_timeout_ms = setting(
         "WAMN_PG_STATEMENT_TIMEOUT_MS",
@@ -267,7 +263,7 @@ pub(super) async fn host_project(
         .name;
     let config = serde_json::json!({"host":connection.host,"port":connection.port,"database":connection.database,
         "logins":{"guest-sql":app,"dynamic-sql":query,"platform":platform_login},
-        "guest_pool_max_size":guest_pool_max_size,"platform_pool_max_size":platform_pool_max_size,
+        "guest_pool_max_size":guest_pool_max_size,
         "wait_timeout_ms":wait_timeout_ms,"statement_timeout_ms":statement_timeout_ms});
     postgres["workloadConfig"] = "deny".into();
     postgres["config"][document.project.as_str()] = config.to_string().into();

@@ -1,7 +1,6 @@
 //! The bound guard of integration sibling components; wasmCloud owns their code.
 
 use crate::connection_facts::{ConnectionCache, ConnectionFacts};
-use crate::database::{CallLimit, CallLimitReached, ResourceLock};
 use anyhow::Context as _;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -27,11 +26,10 @@ mod bindings {
 }
 use bindings::wamn::integration::bound;
 
-/// One checked resource owns the lock until the guest or its store drops it.
+/// Parameters and credential selected for one integration call.
 pub struct Call {
     parameters: String,
     credential: Option<String>,
-    lock: Option<ResourceLock>,
 }
 
 impl std::fmt::Debug for Call {
@@ -41,16 +39,10 @@ impl std::fmt::Debug for Call {
 }
 
 #[derive(Debug)]
-struct Bound {
-    facts: Arc<ConnectionFacts>,
-    exclusive: bool,
-}
-#[derive(Debug)]
 struct State {
     workload: String,
     id: uuid::Uuid,
-    call_limit: Option<CallLimit>,
-    bound: OnceLock<Bound>,
+    bound: OnceLock<Arc<ConnectionFacts>>,
 }
 
 #[async_trait::async_trait]
@@ -69,7 +61,7 @@ fn world() -> WitWorld {
     }
 }
 
-/// Fixed-interface host plugin; each sibling supplies its connection and application.
+/// Fixed-interface host plugin; each sibling supplies its connection id.
 #[derive(Debug)]
 pub struct IntegrationBound {
     cache: Arc<dyn ConnectionCache>,
@@ -102,22 +94,12 @@ impl HostPlugin for IntegrationBound {
             .get(INTEGRATION_CONFIG)
             .context("integration sibling has no wamn.integration")?
             .parse()?;
-        let config = &item.local_resources().config;
-        let application: wamn_catalog::ApplicationName = config
-            .get("wamn.integration.application")
-            .context("integration sibling has no application")?
-            .parse()?;
-        let call_limit = config
-            .get("wamn.integration.call_limit")
-            .map(|limit| CallLimit::new(&id, application.as_str(), limit.parse()?))
-            .transpose()?;
         let WorkloadItem::Component(component) = &*item else {
             anyhow::bail!("integration must be a sibling component");
         };
         let state = Arc::new(State {
             workload: component.workload_id().to_owned(),
             id,
-            call_limit,
             bound: OnceLock::new(),
         });
         self.states
@@ -143,11 +125,10 @@ impl HostPlugin for IntegrationBound {
             .get(component_id)
             .map(Arc::clone)
             .context("integration state missing")?;
-        let (facts, exclusive) = Arc::clone(&self.cache).integration(&state.workload, &state.id)?;
-        let bound = Bound { facts, exclusive };
+        let facts = Arc::clone(&self.cache).integration(&state.workload, &state.id)?;
         state
             .bound
-            .set(bound)
+            .set(facts)
             .map_err(|_| anyhow::anyhow!("integration already resolved"))?;
         Ok(())
     }
@@ -167,7 +148,6 @@ impl bound::Host for ActiveCtx<'_> {
             .get()
             .ok_or_else(|| wash_runtime::wasmtime::Error::msg("integration unresolved"))?;
         let answer = bound
-            .facts
             .answer(&state.id)
             .await
             .map_err(|error| wash_runtime::wasmtime::Error::msg(error.to_string()))?
@@ -179,12 +159,10 @@ impl bound::Host for ActiveCtx<'_> {
             .ok_or_else(|| wash_runtime::wasmtime::Error::msg("integration authority absent"))
     }
     async fn begin(&mut self) -> wash_runtime::wasmtime::Result<Result<Resource<Call>, String>> {
-        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
         let state = self.try_get_plugin::<State>(ID)?;
         let result = async {
             let bound = state.bound.get().context("integration unresolved")?;
             let answer = bound
-                .facts
                 .answer(&state.id)
                 .await?
                 .context("connection unavailable")?;
@@ -192,22 +170,6 @@ impl bound::Host for ActiveCtx<'_> {
                 answer.fact.status == crate::connection_memory::ConnectionStatus::Active,
                 "connection disabled"
             );
-            let lock = if bound.exclusive || state.call_limit.is_some() {
-                Some(
-                    ResourceLock::acquire(
-                        &bound.facts.reader(),
-                        bound.facts.project(),
-                        bound.facts.environment(),
-                        &*bound.facts.locks()?,
-                        bound.exclusive.then_some(&answer.fact),
-                        deadline,
-                        state.call_limit,
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
             let mut parameters = answer.generation.parameters.clone();
             if let Some(parameters) = parameters.as_object_mut() {
                 parameters.remove("auth");
@@ -223,7 +185,6 @@ impl bound::Host for ActiveCtx<'_> {
             Ok::<_, anyhow::Error>(Call {
                 parameters: parameters.to_string(),
                 credential,
-                lock,
             })
         }
         .await;
@@ -231,12 +192,7 @@ impl bound::Host for ActiveCtx<'_> {
             Ok(call) => Ok(Ok(self.table.push(call)?)),
             Err(error) => {
                 tracing::warn!(connection = %state.id, error = %error, "integration begin refused");
-                Ok(Err(if error.is::<CallLimitReached>() {
-                    "call limit reached"
-                } else {
-                    "connection unavailable"
-                }
-                .into()))
+                Ok(Err("connection unavailable".into()))
             }
         }
     }
@@ -252,12 +208,7 @@ impl bound::HostCall for ActiveCtx<'_> {
         Ok(self.table.get(&call)?.credential.clone())
     }
     async fn drop(&mut self, call: Resource<Call>) -> wash_runtime::wasmtime::Result<()> {
-        let mut call = self.table.delete(call)?;
-        if let Some(lock) = call.lock.take() {
-            lock.release()
-                .await
-                .map_err(|error| wash_runtime::wasmtime::Error::msg(error.to_string()))?;
-        }
+        self.table.delete(call)?;
         Ok(())
     }
 }

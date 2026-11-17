@@ -24,11 +24,17 @@ impl fmt::Display for ConnectionError {
 }
 
 impl ConnectionError {
-    /// Explain an operator limitation that the caller can resolve with a hostname.
+    /// Explain a connection refusal that the caller can resolve.
     pub fn reason(&self) -> Option<&'static str> {
-        (self.code == "ipv6_authority_not_supported").then_some(
-            "the operator CRD's allowedHosts pattern has no bracketed IPv6 form; give a hostname that resolves to the device",
-        )
+        match self.code {
+            "ipv6_authority_not_supported" => Some(
+                "the operator CRD's allowedHosts pattern has no bracketed IPv6 form; give a hostname that resolves to the device",
+            ),
+            "exclusive_connection_requires_local_target" => {
+                Some("exclusive connections belong to local targets")
+            }
+            _ => None,
+        }
     }
 }
 impl std::error::Error for ConnectionError {

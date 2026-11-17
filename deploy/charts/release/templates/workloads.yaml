@@ -65,13 +65,9 @@ spec:
             allowedHosts: [{{ . | quote }}]
             {{- end }}
             allowedIpNameLookups: []
-            {{- if .connection }}
+            {{- with .connection }}
             config:
-              wamn.integration: {{ .connection | quote }}
-              wamn.integration.application: {{ .application | quote }}
-              {{- with .call_limit }}
-              wamn.integration.call_limit: {{ . | quote }}
-              {{- end }}
+              wamn.integration: {{ . | quote }}
             {{- end }}
         {{- end }}
 {{- else }}

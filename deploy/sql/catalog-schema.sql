@@ -200,25 +200,6 @@ REVOKE ALL ON platform.credential, platform.oauth_token, platform.oauth_authoriz
 GRANT SELECT, INSERT, UPDATE, DELETE ON platform.external_system, platform.connection,
     platform.connection_generation, platform.credential, platform.oauth_token, platform.oauth_authorization TO wamn_platform;
 
--- Each successful call holds exactly one slot until its transaction ends.
-CREATE FUNCTION platform.call_slot(key integer, slots integer) RETURNS integer
-LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
-DECLARE
-    start_slot integer := floor(random() * slots)::integer;
-    step integer;
-    slot integer;
-BEGIN
-    FOR step IN 0..slots - 1 LOOP
-        slot := ((start_slot::bigint + step) % slots)::integer;
-        IF pg_try_advisory_xact_lock(key, slot) THEN
-            RETURN slot;
-        END IF;
-    END LOOP;
-    RETURN NULL;
-END $$;
-REVOKE ALL ON FUNCTION platform.call_slot(integer, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION platform.call_slot(integer, integer) TO wamn_platform;
-
 CREATE TABLE catalog.connection_requirement (
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     package_id text NOT NULL,

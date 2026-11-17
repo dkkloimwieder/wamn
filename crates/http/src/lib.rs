@@ -153,35 +153,9 @@ impl ConnectionHttp {
             .map_err(|_| ConnectionError::CredentialUnavailable)?
             .filter(|answer| answer.fact.status == ConnectionStatus::Active)
             .ok_or(ConnectionError::Unbound)?;
-        let transport = self.transport.for_invocation(scope, execution.clone());
-        let lock = if binding.exclusive {
-            Some(
-                wamn_connection::database::ResourceLock::acquire(
-                    &facts.reader(),
-                    facts.project(),
-                    facts.environment(),
-                    &*facts
-                        .locks()
-                        .map_err(|_| ConnectionError::CredentialUnavailable)?,
-                    Some(&answer.fact),
-                    execution.deadline(),
-                    None,
-                )
-                .await
-                .map_err(|_| ConnectionError::Timeout)?,
-            )
-        } else {
-            None
-        };
-        let result = self
-            .send_active(facts, id, answer, &transport, scope, request)
-            .await;
-        if let Some(lock) = lock {
-            lock.release().await.map_err(|_| {
-                ConnectionError::Transport("connection lock rollback failed".into())
-            })?;
-        }
-        result
+        let transport = self.transport.for_invocation(scope, execution);
+        self.send_active(facts, id, answer, &transport, scope, request)
+            .await
     }
     async fn send_active(
         &self,
