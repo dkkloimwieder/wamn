@@ -102,72 +102,23 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
 pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 3] =
     ["workflows", "connection_requirement", "releases"];
 
-/// Every `runs` column the executor-platform family WRITES, and no other
-/// (`wamn-0h0g.22.37`).
-///
-/// The statements below update `runs` under
-/// [`crate::workload_role::WorkloadRoleFamily::ExecutorPlatform`]:
-///
-/// * `queue::sql::clear_pre_effect_state_sql` — `state_json`
-/// * `queue::sql::grant_production_lease_sql` — `status`
-/// * `queue::sql::terminalize_exhausted_production_sql` — `status`,
-///   `result_json`, `updated_at`
-/// * `transitions::terminalize_sql` — `status`, `terminal_reason`,
-///   `result_json`, `fail_type`, `updated_at`
-/// * `transitions::record_deadline_adjustments_sql` writes `deadline_adjustments_json`.
-///
-/// The SELECT side is deliberately NOT column-targeted: `transitions::FENCED_PREFIX`
-/// locks the run with `SELECT r.* FROM runs AS r`, which needs SELECT on EVERY
-/// column of `runs`. A column list there would withhold nothing and break the
-/// fence, so relation-grain SELECT is the measured surface rather than a
-/// concession. Confining the WRITE is what a column list can still buy, and it
-/// buys a lot: this family matches the permissive `TO wamn_platform` base policy arm,
-/// so a blanket `UPDATE` would let one lease rewrite any project's admission pins.
-pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 7] = [
+/// Columns written by workflow checkpoint and terminal transitions.
+pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 6] = [
     "status",
     "terminal_reason",
     "fail_type",
     "result_json",
-    "deadline_adjustments_json",
     "state_json",
     "updated_at",
 ];
 
-/// Every `run_queue` column the executor-platform family WRITES.
-///
-/// `queue::sql::advance_lease_attempts_sql` writes `attempts`;
-/// `queue::sql::grant_production_lease_sql` writes `lease_owner`,
-/// `lease_expires_at` and `lease_generation`;
-/// `queue::sql::renew_production_lease_sql` writes `lease_expires_at`.
-/// `queue::sql::release_production_lease_sql` writes `attempts`, `available_at`,
-/// `lease_owner` and `lease_expires_at` for credential retries. Nothing writes
-/// `max_attempts` or `enqueued_at`.
-///
-/// SELECT stays relation grain for the same reason it does on `runs`:
-/// `transitions::FENCED_PREFIX` locks the queue row with
-/// `SELECT q.* FROM run_queue AS q`. DELETE has no column grain in PostgreSQL at
-/// all, so the two dequeue statements take it whole.
-pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 5] = [
-    "lease_owner",
-    "lease_expires_at",
-    "lease_generation",
-    "attempts",
-    "available_at",
-];
+/// Columns written when a host renews or replaces a lease.
+pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] =
+    ["lease_owner", "lease_expires_at", "lease_generation", "attempts"];
 
-/// Every `runs` column the executor-platform family INSERTs for event, schedule
-/// and manual workflow runs.
-///
-/// The host admits an event or schedule run under the authority of the
-/// release that declares the workflow (`wamn_run_state::queue::insert_event_run_sql`).
-/// A schedule carries its application service principal. A manual workflow
-/// run carries its executing principal and role, its invoker and its frozen
-/// node digests (`wamn_run_state::queue::insert_manual_run_sql`). The list
-/// reaches no binding world, legacy flow, capture or
-/// caller-outcome column.
-pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 18] = [
+/// Run columns written during admission.
+pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 16] = [
     "package_id",
-    "manifest_digest",
     "environment",
     "wiring_id",
     "wiring_version",
@@ -177,7 +128,6 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 18] = [
     "execution_role",
     "invoked_by",
     "invoked_by_user_id",
-    "node_digests_json",
     "idempotency_key",
     "input_json",
     "status",
@@ -186,9 +136,14 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 18] = [
     "event_depth",
 ];
 
-/// The `run_queue` columns an event or schedule admission writes. The FIFO position, the
-/// crash budget and the lease take their defaults.
-pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 1] = ["run_id"];
+/// Queue columns inserted with the first lease.
+pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 4] = [
+    "run_id",
+    "lease_owner",
+    "lease_expires_at",
+    "lease_generation",
+];
+
 /// Create the shared project privilege roles, including the platform group.
 pub fn ensure_platform_group_role_sql() -> String {
     ensure_project_roles_sql().to_owned()

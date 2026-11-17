@@ -4,7 +4,7 @@
 -- state share one durability domain). The host polls due work and leases rows.
 -- A run lease lets another replica recover abandoned work.
 -- Run persistence lives in crates/run-state.
--- The host and workflow use this schema to lease and enqueue work.
+-- The host grants the first lease during admission. The service takes expired leases.
 --
 -- STANDALONE ARTIFACT, ADDITIVE to deploy/sql/run-state.sql: same convention as
 -- run-state.sql / catalog-schema.sql — deliberately NOT included by

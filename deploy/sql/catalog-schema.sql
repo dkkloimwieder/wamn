@@ -209,10 +209,8 @@ CREATE TABLE catalog.connection_requirement (
     PRIMARY KEY (component_digest, package_id, name)
 );
 
--- One version of one workflow of an environment (docs/plan/workflows.md R8).
--- The control connection writes it after `author_workflow` evaluates the graph conditions
--- against the serving release. A version row is immutable except `enabled`,
--- and at most one version of a workflow is enabled.
+-- One version of a workflow. Authoring derives immutable trigger columns
+-- from the graph. Enable records a new WAL boundary.
 CREATE TABLE catalog.workflows (
     environment    text        NOT NULL CHECK (environment <> ''),
     application    text        NOT NULL CHECK (application <> ''),
@@ -220,14 +218,15 @@ CREATE TABLE catalog.workflows (
     version        int         NOT NULL CHECK (version > 0),
     graph_json     jsonb       NOT NULL,
     wiring_hash    text        NOT NULL CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
-    trigger        text        NOT NULL CHECK (trigger IN ('manual', 'schedule', 'event')),
+    trigger        text        NOT NULL CHECK (trigger IN ('request', 'schedule', 'data_change')),
+    path           text        CHECK (path LIKE '/%'),
     -- The five-field cron, evaluated in UTC, of a schedule trigger.
     schedule       text,
     source_package text,
     entity         text,
     ops            text[],
     condition      text,
-    enable_sequence bigint,
+    enable_lsn     pg_lsn,
     execution_type text        NOT NULL CHECK (execution_type IN ('role', 'invoker')),
     execution_role text        CHECK (execution_role <> ''),
     enabled        boolean     NOT NULL DEFAULT false,
@@ -236,11 +235,16 @@ CREATE TABLE catalog.workflows (
     CONSTRAINT workflows_pkey
         PRIMARY KEY (environment, application, workflow_id, version),
     CONSTRAINT workflows_execution_identity_check
-        CHECK ((execution_type = 'role') = (execution_role IS NOT NULL)),
+        CHECK ((execution_type = 'role') = (execution_role IS NOT NULL)
+           AND (trigger = 'request' OR execution_role IS NOT NULL)),
+    CONSTRAINT workflows_request_path_check
+        CHECK ((trigger = 'request') = (path IS NOT NULL)),
+    CONSTRAINT workflows_enable_lsn_check
+        CHECK (NOT enabled OR enable_lsn IS NOT NULL),
     CONSTRAINT workflows_schedule_check
         CHECK ((trigger = 'schedule') = (schedule IS NOT NULL)),
-    CONSTRAINT workflows_event_check CHECK (
-        (trigger = 'event' AND source_package IS NOT NULL AND source_package <> ''
+    CONSTRAINT workflows_data_change_check CHECK (
+        (trigger = 'data_change' AND source_package IS NOT NULL AND source_package <> ''
          AND entity IS NOT NULL AND entity <> '' AND ops IS NOT NULL
          AND cardinality(ops) BETWEEN 1 AND 3
          AND ops <@ ARRAY['insert', 'update', 'delete']::text[]
@@ -248,15 +252,16 @@ CREATE TABLE catalog.workflows (
          AND cardinality(array_positions(ops, 'insert')) <= 1
          AND cardinality(array_positions(ops, 'update')) <= 1
          AND cardinality(array_positions(ops, 'delete')) <= 1
-         AND (condition IS NULL OR btrim(condition) <> '')
-         AND (enable_sequence IS NULL OR enable_sequence >= 0)
-         AND (NOT enabled OR enable_sequence IS NOT NULL))
-        OR (trigger <> 'event' AND source_package IS NULL AND entity IS NULL
-            AND ops IS NULL AND condition IS NULL AND enable_sequence IS NULL))
+         AND (condition IS NULL OR btrim(condition) <> ''))
+        OR (trigger <> 'data_change' AND source_package IS NULL AND entity IS NULL
+            AND ops IS NULL AND condition IS NULL))
 );
 CREATE UNIQUE INDEX workflows_one_enabled
     ON catalog.workflows (environment, application, workflow_id)
     WHERE enabled;
+CREATE UNIQUE INDEX workflows_enabled_request_path
+    ON catalog.workflows (environment, application, path)
+    WHERE enabled AND path IS NOT NULL;
 
 CREATE FUNCTION catalog.guard_workflow_update()
 RETURNS trigger
@@ -264,20 +269,20 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     IF ROW(NEW.environment, NEW.application, NEW.workflow_id,
-           NEW.version, NEW.graph_json, NEW.wiring_hash, NEW.trigger, NEW.schedule,
+           NEW.version, NEW.graph_json, NEW.wiring_hash, NEW.trigger, NEW.path, NEW.schedule,
            NEW.source_package, NEW.entity, NEW.ops, NEW.condition,
            NEW.execution_type, NEW.execution_role, NEW.created_by, NEW.created_at)
        IS DISTINCT FROM
        ROW(OLD.environment, OLD.application, OLD.workflow_id,
-           OLD.version, OLD.graph_json, OLD.wiring_hash, OLD.trigger, OLD.schedule,
+           OLD.version, OLD.graph_json, OLD.wiring_hash, OLD.trigger, OLD.path, OLD.schedule,
            OLD.source_package, OLD.entity, OLD.ops, OLD.condition,
            OLD.execution_type, OLD.execution_role, OLD.created_by, OLD.created_at) THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'workflow-version-immutable';
     END IF;
-    IF NEW.enable_sequence IS DISTINCT FROM OLD.enable_sequence AND NOT NEW.enabled THEN
+    IF NEW.enable_lsn IS DISTINCT FROM OLD.enable_lsn AND NOT NEW.enabled THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
-            MESSAGE = 'workflow-enable-sequence-requires-enable';
+            MESSAGE = 'workflow-enable-lsn-requires-enable';
     END IF;
     RETURN NEW;
 END

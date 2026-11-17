@@ -1,9 +1,9 @@
 //! Run persistence over a connection authorized by the caller.
 
 use crate::queue::{
-    advance_lease_attempts_sql, clear_pre_effect_state_sql, grant_production_lease_sql,
-    renew_production_lease_sql, select_exhausted_production_sql,
-    select_production_lease_sql, terminalize_exhausted_production_sql,
+    advance_lease_attempts_sql, grant_production_lease_sql, renew_production_lease_sql,
+    select_exhausted_production_sql, select_production_lease_sql,
+    terminalize_exhausted_production_sql,
 };
 use crate::run_store::{
     ProductionCompletion, ProductionCompletionResult, ProductionLeaseError,
@@ -23,8 +23,8 @@ pub enum ProductionLeaseResult {
     /// A fresh lease for router execution after the caller commits.
     Ready {
         run_id: String,
-        application: wamn_catalog::ApplicationName,
-        payload: serde_json::Value,
+        input_json: String,
+        checkpoint_json: Option<String>,
         lease_generation: i64,
         wiring_id: wamn_catalog::canonical_name::CanonicalName,
         wiring_version: i32,
@@ -32,18 +32,12 @@ pub enum ProductionLeaseResult {
     },
 }
 
-/// What an event, manual or schedule workflow run froze at admission
-/// (docs/architecture/execution.md#workflows): the graph hash, the principal it
-/// executes as, its one active role, and the component digest of every node.
+/// The workflow and execution identity fixed at admission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionWorkflow {
     pub wiring_hash: wamn_digest::Digest,
     pub execution_principal_id: wamn_identity_protocol::PrincipalId,
     pub execution_role: String,
-    pub node_digests: std::collections::BTreeMap<
-        wamn_catalog::canonical_name::CanonicalName,
-        wamn_digest::Digest,
-    >,
     pub causation: Option<wamn_event_wire::Causation>,
 }
 
@@ -65,10 +59,9 @@ pub enum LeaseTurn {
 #[derive(Debug)]
 struct SelectedLease {
     run_id: String,
-    application: wamn_catalog::ApplicationName,
-    had_prior_lease: bool,
     status: RunStatus,
-    payload: serde_json::Value,
+    input_json: String,
+    checkpoint_json: Option<String>,
     wiring_id: wamn_catalog::canonical_name::CanonicalName,
     wiring_version: i32,
     workflow: Box<ProductionWorkflow>,
@@ -172,20 +165,15 @@ fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionLeas
 pub async fn lease_next(
     connection: &mut sqlx::PgConnection,
     runner: &str,
-    applications: &[wamn_catalog::ApplicationName],
+    application: &wamn_catalog::ApplicationName,
     environment: &wamn_registry::EnvName,
     lease_ttl_ms: i64,
-    manifest_digest: Option<&wamn_digest::Digest>,
 ) -> Result<LeaseTurn, ProductionLeaseError> {
-    validate_target(applications)?;
     validate_duration(lease_ttl_ms)?;
     let select_sql = select_production_lease_sql();
-    // The select skips runs pinned to another release, so their head never
-    // blocks this host's own backlog (R20). The grant below tests again the pin.
-    let Some(row) = sqlx::query(sqlx::AssertSqlSafe(select_sql))
-        .bind(applications)
+    let Some(row) = sqlx::query(select_sql)
+        .bind(application)
         .bind(environment)
-        .bind(manifest_digest)
         .fetch_optional(&mut *connection)
         .await
         .map_err(|error| ProductionLeaseError::postgres("select production lease", &error))?
@@ -205,26 +193,16 @@ pub async fn lease_next(
         ));
     }
 
-    if selected.had_prior_lease {
-        sqlx::query(sqlx::AssertSqlSafe(clear_pre_effect_state_sql()))
-            .bind(&selected.run_id)
-            .fetch_one(&mut *connection)
-            .await
-            .map_err(|error| ProductionLeaseError::postgres("clear pre-effect state", &error))?;
-    }
-
     // Crash evidence advances in its own statement outside the grant's
     // subtransaction.
     let advance_sql = advance_lease_attempts_sql();
-    sqlx::query(sqlx::AssertSqlSafe(advance_sql))
+    sqlx::query(advance_sql)
         .bind(&selected.run_id)
         .fetch_one(&mut *connection)
         .await
         .map_err(|error| ProductionLeaseError::postgres("advance crash evidence", &error))?;
 
     let grant_sql = grant_production_lease_sql();
-    // The pod's own release digest, or NULL when it carries none. PostgreSQL
-    // compares it to the immutable admission pin.
     // The grant is the one abortable write left in this transaction, so it runs
     // in its own subtransaction: a database refusal rolls back to the savepoint
     // instead of the whole transaction, leaving the advance above committable.
@@ -235,11 +213,10 @@ pub async fn lease_next(
         .map_err(|error| {
             ProductionLeaseError::postgres("open production lease savepoint", &error)
         })?;
-    let granted = sqlx::query(sqlx::AssertSqlSafe(grant_sql))
+    let granted = sqlx::query(grant_sql)
         .bind(&selected.run_id)
         .bind(runner)
         .bind(lease_ttl_ms)
-        .bind(manifest_digest)
         .fetch_optional(&mut *connection)
         .await;
     let granted = match granted {
@@ -262,14 +239,14 @@ pub async fn lease_next(
         ProductionLeaseError::new(
             ProductionLeaseErrorType::Contract,
             "grant production lease",
-            "leasing release digest does not match the run admission pin",
+            "selected lease disappeared while locked",
         )
     })?;
     let lease_generation = row_value(&row, 0, "lease generation")?;
     Ok(LeaseTurn::Leased(ProductionLeaseResult::Ready {
         run_id: selected.run_id,
-        application: selected.application,
-        payload: selected.payload,
+        input_json: selected.input_json,
+        checkpoint_json: selected.checkpoint_json,
         lease_generation,
         wiring_id: selected.wiring_id,
         wiring_version: selected.wiring_version,
@@ -280,18 +257,17 @@ pub async fn lease_next(
 /// Fail and dequeue one expired run whose retry budget is spent.
 pub async fn reap_exhausted(
     connection: &mut sqlx::PgConnection,
-    applications: &[wamn_catalog::ApplicationName],
+    application: &wamn_catalog::ApplicationName,
     environment: &wamn_registry::EnvName,
     grace_ms: i64,
 ) -> Result<ProductionReapResult, ProductionLeaseError> {
-    validate_target(applications)?;
     if grace_ms < 0 {
         return Err(invalid_parameters("janitor grace must be nonnegative"));
     }
     let select_sql = select_exhausted_production_sql();
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(select_sql))
         .bind(grace_ms)
-        .bind(applications)
+        .bind(application)
         .bind(environment)
         .fetch_optional(&mut *connection)
         .await
@@ -389,60 +365,36 @@ fn generic_failure_outcome(
 }
 
 fn decode_selected_lease(row: &Row) -> Result<SelectedLease, ProductionLeaseError> {
-    let status: String = row_value(row, 2, "run status")?;
+    let status: String = row_value(row, 1, "run status")?;
     let status = RunStatus::from_sql(&status).ok_or_else(|| {
-        ProductionLeaseError::new(
-            ProductionLeaseErrorType::Contract,
-            "decode production lease",
-            "unknown run status",
-        )
+        ProductionLeaseError::contract("decode production lease", "unknown run status")
     })?;
     let (wiring_id, wiring_version) = decode_wiring_identity(
-        row_value(row, 4, "wiring id")?,
-        row_value(row, 5, "wiring version")?,
+        row_value(row, 3, "wiring id")?,
+        row_value(row, 4, "wiring version")?,
     )?;
-    let payload: String = row_value(row, 3, "input")?;
-    let encoded_nodes: String = row_value(row, 10, "node digests")?;
+    let run_id: String = row_value(row, 0, "run id")?;
     let mut workflow = ProductionWorkflow {
-        wiring_hash: row_value(row, 6, "wiring hash")?,
-        execution_principal_id: row_value(row, 8, "execution principal")?,
-        execution_role: row_value(row, 9, "execution role")?,
-        node_digests: serde_json::from_str(&encoded_nodes).map_err(|error| {
-            ProductionLeaseError::with_source(
-                ProductionLeaseErrorType::Contract,
-                "decode frozen node digests",
-                error,
-            )
-        })?,
+        wiring_hash: row_value(row, 5, "wiring hash")?,
+        execution_principal_id: row_value(row, 6, "execution principal")?,
+        execution_role: row_value(row, 7, "execution role")?,
         causation: None,
     };
-    let root: Option<String> = row_value(row, 11, "event root")?;
-    let depth: Option<i32> = row_value(row, 12, "event depth")?;
+    let root: Option<String> = row_value(row, 9, "event root")?;
+    let depth: Option<i32> = row_value(row, 10, "event depth")?;
     if let (Some(root), Some(depth)) = (root, depth) {
         workflow.causation = Some(wamn_event_wire::Causation {
-            run: row_value(row, 0, "run id")?,
+            run: run_id.clone(),
             root,
-            depth: u32::try_from(depth).map_err(|error| {
-                ProductionLeaseError::with_source(
-                    ProductionLeaseErrorType::Contract,
-                    "decode event depth",
-                    error,
-                )
-            })?,
+            depth: u32::try_from(depth)
+                .map_err(|error| ProductionLeaseError::invalid("decode event depth", error))?,
         });
     }
     Ok(SelectedLease {
-        run_id: row_value(row, 0, "run id")?,
-        application: row_value(row, 7, "application")?,
-        had_prior_lease: row_value(row, 1, "prior lease evidence")?,
+        run_id,
         status,
-        payload: serde_json::from_str(&payload).map_err(|error| {
-            ProductionLeaseError::with_source(
-                ProductionLeaseErrorType::Contract,
-                "decode run input",
-                error,
-            )
-        })?,
+        input_json: row_value(row, 2, "input")?,
+        checkpoint_json: row_value(row, 8, "response checkpoint")?,
         wiring_id,
         wiring_version,
         workflow: Box::new(workflow),
@@ -488,52 +440,45 @@ where
     })
 }
 
-/// Record deadline changes under the exact lease fence.
-pub async fn record_deadline_adjustments(
+/// Record the Response checkpoint under the live lease fence.
+pub async fn checkpoint(
     connection: &mut sqlx::PgConnection,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
-    adjustments: &serde_json::Value,
+    state: &serde_json::Value,
 ) -> Result<bool, ProductionLeaseError> {
     validate_generation(lease_generation)?;
-    let row = sqlx::query(sqlx::AssertSqlSafe(
-        crate::transitions::record_deadline_adjustments_sql(),
-    ))
-    .bind(run_id)
-    .bind(run_id)
-    .bind(runner)
-    .bind(lease_generation)
-    .bind(adjustments.to_string())
-    .fetch_one(connection)
-    .await
-    .map_err(|error| ProductionLeaseError::postgres("store deadline report", &error))?;
-    row_value(&row, 0, "deadline report fence")
-}
-
-/// Whether this release still has queued work.
-pub async fn pinned_backlog(
-    connection: &mut sqlx::PgConnection,
-    applications: &[wamn_catalog::ApplicationName],
-    environment: &wamn_registry::EnvName,
-    manifest_digest: &wamn_digest::Digest,
-) -> Result<bool, ProductionLeaseError> {
-    validate_target(applications)?;
-    let sql = format!(
-        "SELECT EXISTS (SELECT 1 FROM run_queue q JOIN runs r USING (run_id) \
-        WHERE r.package_id = ANY($1::text[]) AND r.environment = $2 AND r.manifest_digest = $3 \
-        AND r.status IN ('{}', '{}'))",
-        RunStatus::Dispatched.as_sql(),
-        RunStatus::Running.as_sql()
-    );
-    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(applications)
-        .bind(environment)
-        .bind(manifest_digest)
+    let row = sqlx::query(sqlx::AssertSqlSafe(crate::transitions::checkpoint_sql()))
+        .bind(run_id)
+        .bind(run_id)
+        .bind(runner)
+        .bind(lease_generation)
+        .bind(state.to_string())
         .fetch_one(connection)
         .await
-        .map_err(|error| ProductionLeaseError::postgres("read pinned backlog", &error))?;
-    row_value(&row, 0, "pinned backlog")
+        .map_err(|error| ProductionLeaseError::postgres("store Response checkpoint", &error))?;
+    row_value(&row, 0, "Response checkpoint fence")
+}
+
+/// Check that the host still owns the unexpired lease before dispatching a node.
+pub async fn lease_remaining_ms(
+    connection: &mut sqlx::PgConnection,
+    run: &str,
+    runner: &str,
+    generation: i64,
+) -> Result<Option<i64>, ProductionLeaseError> {
+    sqlx::query_scalar(
+        "SELECT floor(extract(epoch FROM (lease_expires_at - clock_timestamp())) * 1000)::bigint
+           FROM run_queue WHERE run_id = $1 AND lease_owner = $2 AND lease_generation = $3
+            AND lease_expires_at > clock_timestamp()",
+    )
+    .bind(run)
+    .bind(runner)
+    .bind(generation)
+    .fetch_optional(connection)
+    .await
+    .map_err(|error| ProductionLeaseError::postgres("check workflow node lease", &error))
 }
 
 /// Delete expired terminal history on an authorized retention connection.
@@ -586,16 +531,6 @@ fn validate_generation(generation: i64) -> Result<(), ProductionLeaseError> {
 fn validate_duration(duration_ms: i64) -> Result<(), ProductionLeaseError> {
     if duration_ms <= 0 {
         return Err(invalid_parameters("lease duration must be positive"));
-    }
-    Ok(())
-}
-fn validate_target(
-    applications: &[wamn_catalog::ApplicationName],
-) -> Result<(), ProductionLeaseError> {
-    if applications.is_empty() {
-        return Err(invalid_parameters(
-            "nonempty application names and environment are required",
-        ));
     }
     Ok(())
 }

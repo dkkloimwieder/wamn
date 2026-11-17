@@ -21,17 +21,16 @@ The server selects the database, serving release and authenticated author.
 `author` also requires `--execution-role` with `--execution-type role`, and refuses it with `invoker`.
 `enable` requires `--coordinate`, `--application`, `--workflow-id`, and `--version`.
 `disable` takes the same flags as `enable`.
-A workflow of type `role` runs as the environment's `workflow` user with its execution role, so grant that role to the `workflow` user.
+A workflow of type `role` runs as the environment's `workflow` user with its execution role. The host reads that role's grants directly.
 A workflow of type `invoker` runs as the caller with its active role.
 A caller with `admin` acts as `admin`, and a caller with exactly one role acts with that role.
 A caller with no role or more than one role is refused with `active_role_required`.
 
-`wamn workflow author --schedule '<cron>'` authors a schedule workflow: a five-field cron, evaluated in the project `timezone` setting of the environment database.
+`wamn workflow author --schedule '<cron>'` authors a schedule workflow: a five-field cron, evaluated in UTC.
 The default is UTC. Due moments and their keys always use UTC.
 An invalid cron is refused at author.
 `workflow.start` does not start a schedule workflow, and it refuses `workflow_not_enabled`.
-A schedule run executes as the `workflow` user: with its execution role for type `role`, and with `admin` for type `invoker`.
-So to enable an `invoker` schedule, the enabler must hold `admin`, and the `workflow` user must hold `admin`.
+A Schedule or Data change workflow requires an execution role. The host reads the grants of that role directly.
 
 Configure the host with the selected release and both executor-class and callable-HTTP database credentials.
 The executor credential reads the enabled workflow and admits the run.
@@ -120,9 +119,8 @@ Set the coordinate `<org>/<project>/<env>`, its composed environment key, and yo
      --operation <consumer package>:<interface>/<operation>
    ```
 
-2. Grant the role to the `workflow` user, whose email is `workflow@<platform domain>`, with `wamn grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --user-id <workflow UUID> --role netsuite-pull`.
    The enabler must also hold the role, or hold `admin`.
-3. Build the NetSuite package with `wamn build` first. Copy the example in `apps/netsuite/tests/workflows/netsuite_pull.json` to `netsuite-pull.json` in the environment configuration. Edit its parameters, then author it as a schedule workflow of the application `netsuite`:
+2. Build the NetSuite package with `wamn build` first. Copy the example in `apps/netsuite/tests/workflows/netsuite_pull.json` to `netsuite-pull.json` in the environment configuration. Edit its parameters, then author it as a schedule workflow of the application `netsuite`:
 
    ```bash
    wamn workflow author --coordinate <org>/<env>/<project> \
@@ -140,6 +138,6 @@ Set the coordinate `<org>/<project>/<env>`, its composed environment key, and yo
    ```
 
 The next minute admits the first pull.
-Its run key is `schedule:netsuite/netsuite_pull:<due>`, and the run executes as the `workflow` user with `netsuite-pull`.
+The workflow version and the UTC due minute identify the run. It executes as the `workflow` user with the `netsuite-pull` role.
 `wamn workflow list` shows the enabled version, and `wamn workflow disable` stops the pull.
 The pull keeps its checkpoint in `wamn_integration.setting`, so the first pull after cutover continues from the last pull of the release.

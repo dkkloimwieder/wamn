@@ -62,6 +62,15 @@ pub async fn configure(
         let owner = wamn_provision::migrations::MigrationDatabase::Project
             .configuration(&connection.to_json()?)?;
         let mut client = wamn_postgres::connect(&owner).await?;
+        if !unconfigured {
+            let unfinished =
+                super::drain::unfinished(&mut client, &triple.env, application).await?;
+            ensure!(
+                unfinished.is_empty(),
+                "{}",
+                super::drain::describe(&unfinished)
+            );
+        }
         sqlx::raw_sql(sqlx::AssertSqlSafe(provision_project_env::privilege_sql(
             &connection.database,
         )))

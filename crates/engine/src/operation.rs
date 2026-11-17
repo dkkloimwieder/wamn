@@ -79,23 +79,63 @@ impl WamnOperation {
         context: node_types::NodeContext,
         input: String,
     ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
-        let binding = self
-            .bindings
-            .read()
-            .expect("operation bindings lock poisoned")
-            .get(component)
-            .map(Arc::clone)
-            .context("operation binding missing")?;
+        let binding = self.binding(component)?;
         let serving = binding
             .application
             .components
             .iter()
             .find_map(|component| component.operations.get(&operation))
             .context("operation is not configured")?;
-        let target = binding
+        binding
+            .invoke(&serving.component, scopes, scope, operation, context, input)
+            .await
+    }
+
+    /// Invoke the operation on the exact configured sibling.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Dispatch needs both the route and sibling identities"
+    )]
+    pub async fn invoke_sibling(
+        &self,
+        route: &str,
+        sibling: &str,
+        scopes: &InvocationScopes,
+        scope: Arc<str>,
+        operation: CanonicalName,
+        context: node_types::NodeContext,
+        input: String,
+    ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+        let binding = self.binding(route)?;
+        binding
+            .invoke(sibling, scopes, scope, operation, context, input)
+            .await
+    }
+
+    fn binding(&self, route: &str) -> anyhow::Result<Arc<Binding>> {
+        self.bindings
+            .read()
+            .expect("operation bindings lock poisoned")
+            .get(route)
+            .map(Arc::clone)
+            .context("operation binding missing")
+    }
+}
+
+impl Binding {
+    async fn invoke(
+        &self,
+        sibling: &str,
+        scopes: &InvocationScopes,
+        scope: Arc<str>,
+        operation: CanonicalName,
+        context: node_types::NodeContext,
+        input: String,
+    ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+        let target = self
             .targets
             .get()
-            .and_then(|targets| targets.get(&serving.component))
+            .and_then(|targets| targets.get(sibling))
             .context("operation dispatch target missing")?;
         let deadline = Instant::now()
             + Duration::from_millis(crate::native_routes::bounded_node_deadline_ms(

@@ -36,6 +36,7 @@ authority AS ( \
              WHEN q.run_id IS NULL \
                OR q.lease_owner IS DISTINCT FROM i.lease_owner \
                OR q.lease_generation IS DISTINCT FROM i.lease_generation \
+               OR q.lease_expires_at IS NULL OR q.lease_expires_at <= clock_timestamp() \
                THEN 'fence-lost' \
              ELSE 'ready' \
            END AS result_code, \
@@ -80,15 +81,15 @@ impl TerminalizeResult {
     }
 }
 
-/// Store deadline changes under the same run and queue locks as terminalization.
+/// Store the Response checkpoint under the same fence as terminalization.
 /// Parameters are target run, authority run, owner, generation, and JSON text.
-/// A live test must exercise the fence and the write under executor credentials.
-pub fn record_deadline_adjustments_sql() -> String {
+pub fn checkpoint_sql() -> String {
     format!(
         "{prefix}, recorded AS ( \
-             UPDATE runs AS r SET deadline_adjustments_json = $5::text::jsonb \
+             UPDATE runs AS r SET state_json = $5::text::jsonb \
                FROM authority AS a WHERE a.result_code = 'ready' \
                 AND r.run_id = a.run_id \
+                AND (r.state_json IS NULL OR r.state_json = $5::text::jsonb) \
              RETURNING r.run_id \
          ) SELECT EXISTS (SELECT 1 FROM recorded)",
         prefix = *FENCED_PREFIX,
@@ -101,8 +102,7 @@ pub fn record_deadline_adjustments_sql() -> String {
 /// terminal status, terminal reason, result JSON text, failure type, terminal
 /// instant. The queue fence authorizes the transition.
 ///
-/// The caller supplies the instant (D2b). The statement never reads the server
-/// clock, so a test or a simulator controls `updated_at` directly.
+/// The caller supplies the terminal timestamp.
 pub fn terminalize_sql() -> String {
     format!(
         "{prefix}, \

@@ -28,6 +28,7 @@ mod commands;
 mod files;
 mod host_route;
 mod platform_http;
+mod workflow;
 
 use wamn_authentication::access_token::AccessTokenVerifier;
 use wamn_authentication::route_authentication::{
@@ -626,6 +627,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let status: Arc<dyn wamn_engine::flow_http_routing::EnvironmentStatus> =
         Arc::new(EnvironmentStatusReader::new(Arc::clone(&postgres)));
     let flow_http = Arc::new(flow_http.with_environment_status(status));
+    let operations = Arc::new(wamn_engine::operation::WamnOperation::new(
+        Arc::clone(&postgres) as Arc<dyn plugin::HostPlugin>,
+    ));
+    let workflow = Arc::new(workflow::Workflow::new(
+        Arc::clone(&postgres),
+        Arc::clone(&operations),
+    ));
     let mut plugins: Vec<Arc<dyn plugin::HostPlugin>> = vec![
         Arc::new(
             plugin::wasi_config::DynamicConfig::builder()
@@ -637,9 +645,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         integration,
         connection_http,
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
-        Arc::new(wamn_engine::operation::WamnOperation::new(
-            Arc::clone(&postgres) as Arc<dyn plugin::HostPlugin>,
-        )),
+        operations,
+        Arc::<workflow::Workflow>::clone(&workflow),
         Arc::<WamnPostgres>::clone(&postgres),
         // wamn-0h0g.15.96: READER 3 of the loaded release. Route projection stays wholly
         // in-memory; a PAT-protected route additionally carries the targeted
@@ -705,6 +712,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>,
                 Arc::clone(&files),
                 Arc::clone(&flow_http),
+                workflow,
             ));
         let connections = server.connection_limit();
         probe_state.register(Arc::new(connections.clone()));

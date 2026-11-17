@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono.workspace = true
+jmespath.workspace = true
+wamn-event-wire.workspace = true
+wamn-run-state.workspace = true
 wamn-envelope.workspace = true
 wamn-environment.workspace = true
 boon.workspace = true

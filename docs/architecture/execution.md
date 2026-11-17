@@ -428,12 +428,9 @@ Wasmtime leaves async stack zeroing disabled, so its async stack residency value
 Native epochs bound guest execution. Duration metering does not grant instruction fuel.
 All cleanup paths retain their resource bounds and return failures to their owner.
 
-The [engine operation module](../../crates/engine/src/operation.rs) runs one component export through native dispatch with `invoke_operation`.
-It owns the deadline, workload loading, and invocation state.
-It reaches the host through two traits: `ApplicationHost` gives the loaded application, and `InvocationPolicy` grants and revokes the authority of each call.
-The [host operation module](../../crates/execution-host/src/operation.rs) implements both traits and owns authority.
-The [driver](../../crates/workflow/src/router_driver.rs) in `wamn-workflow` walks a wiring graph and calls the operation module for each node.
-The [route path](../../crates/execution-host/src/application_route.rs) calls it once for a route target and never enters the driver.
+The [engine operation module](../../crates/engine/src/operation.rs) dispatches exports through resolved wasmCloud targets.
+The workflow host plugin selects the exact sibling and export using the application configuration on `flow-http`.
+It installs the run's SQL and connection authority before each invocation.
 A route reports a retryable or rate-limited error as the failure that a wiring reports after its last attempt.
 The caller decides whether to send a new request.
 
@@ -447,7 +444,6 @@ The converter recognizes this record shape and carries any JSON value through it
 Text fields keep the WIT `string` type.
 The converter derives deletion markers from absent change data. It omits that data from a deleted row.
 A refusal without details returns an empty object. Absent optional refusal details stay omitted.
-Private modules in `wamn-workflow` own deterministic graph decisions.
 Before execution, the host binds each invocation in one registry with a shared lifetime and trace context.
 `wamn-sql` owns identity, causation, the transaction and the WAL position.
 `wamn-connection` owns the release context and the attested connection invocation.
@@ -458,13 +454,11 @@ Guest context stays a plain attribute.
 The host's native logging callback enters the invocation span stored in the active scope before it emits each record.
 The scope retains signing authority through commit and replay.
 Cancellation or shutdown revokes both records. Normal completion releases them after result signing.
-The [queue](../../crates/workflow/src/queue.rs) in `wamn-workflow` drives delivery.
-`wamn-run-state` owns admission, leases, settlement and pruning as functions over an authorized connection.
-`WamnPostgres` authorizes the connection and commits or rolls back each transaction.
-The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
-HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
-Each host replica polls the durable queue and leases work through database leases. Replicas need no wake service or process-local handoff.
-Leases and exhausted-run reaping ignore effect-attempt records.
+The [workflow plugin](../../services/host/src/host/workflow.rs) serves the `wamn:workflow` interfaces for the workflow service.
+`wamn-run-state` owns admission, leases, checkpoints, settlement and pruning.
+The host uses the project platform login and binds `wamn_run` as the transaction's search path.
+Admission gives the first lease to the winning insert.
+A recovery call takes an expired lease and preserves the Response checkpoint.
 Workflow runs have no event ordering guarantee.
 
 The host opens each identity transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
@@ -513,73 +507,31 @@ The accessors in `wamn_authority` read only its caller row. A guest cannot repla
 
 ## Workflows
 
-A workflow is an authored graph that runs off the request path.
-The host admits new runs against the current application selection. Existing runs retain their admission digest. Run-state functions own their persistence.
-The release loader resolves admitted component facts and verifies their stored effect projections once.
-Workflow resolution and host execution share those immutable facts.
+A workflow is an authored graph that belongs to one application.
+Its entry is Request, Schedule or Data change.
+The workflow service manages the walk and calls `wamn:workflow/node.call` for each sibling export.
+The host creates an authority handle for each Request or run.
+The handle specifies who executes, their role, and the lease for a durable run.
 
-- `start` admits one enabled workflow under its execution principal. It writes the run and queue row together. A repeated key returns the first run.
-- `park` moves the `available_at` of a queued run to `infinity`, so no lease takes it. The run keeps the status `dispatched`, and a running or finished run refuses.
-- `release` returns a parked run to the queue.
-- `list` returns the runs of one environment, newest first, with their status and their queued and parked flags.
+Schedule admission evaluates the five-field cron in UTC for the supplied minute.
+The input is `{"due":"<due RFC 3339>"}`, with UTC spelled as `Z`.
+The workflow version and UTC minute identify a schedule run.
+The host admits only one run across replicas.
 
-The `wamn workflow park`, `release` and `runs` commands call authenticated control routes ([queued automation](../operations/queued-automation.md)).
-Control binds the authorized connection. Run-state functions perform the reads and writes.
+For Data change, the host verifies the subject and the `Nats-Msg-Id` against the CDC envelope.
+It checks the source package, entity, operation and optional JMESPath condition.
+A change qualifies when its commit log sequence number is at least the workflow's enable LSN.
+The workflow version and source event identity identify a data-change run.
+Admission records the actor from the changed record's history when the actor is available.
 
-An event workflow is an enabled row of `catalog.workflows` in an environment application.
-Its trigger names the source package, entity, operations, and an optional JMESPath condition over the old and new images.
-Env apply creates one durable consumer per application, source package and captured entity.
-Workflow reads trigger rows and admits all matching workflows for one message through one host transaction.
-Admission resolves each graph against that application's current release and freezes its node digests. Each consumer admits only its own application.
-The native broker transport acknowledges the message after that transaction commits.
+The queue lease stores the owner, generation and expiry.
+Only the current owner and generation can renew, record the Response checkpoint or finish the run.
+A recovered run loads its original workflow version and calls components from the live workload.
+It can resume from the checkpoint in `runs.state_json`.
 
-The workflow identity and source event identity form the run key.
-CDC identity contains the Postgres system identifier, the timeline containing the commit LSN,
-the commit LSN, and the row ordinal within that transaction.
-The reader assigns zero-based ordinals before filtering relations, including excluded rows.
-The broker message id uses that same coordinate. Derived events retain their logical identity.
-A replay retains the original run and release while its run row exists. Pruning ends this protection.
-The stream sequence only decides whether an event follows the trigger's `enable_sequence`.
-
-The reader loads publication and slot names from one JSON configuration file.
-Provisioning owns the publication, slot and stream declarations.
-The reader holds its replication login and broker certificate. It reads no control registration.
-Reset stops the reader before discarding its backlog and broker events. Publication takes no system lock.
-
-Each event run executes as the workflow user with its execution role, or `admin` for a callerless invoker.
-The run records the delivery id in `invoked_by`.
-Admission reads the changed record's history inside the same transaction and records its actor in `invoked_by_user_id`.
-It matches the transaction's low 32 bits, the typed primary key, and the operation, then takes the highest history position.
-An absent history row or actor leaves the invoking user null.
-A former event handler runs as a one-node workflow under a run row.
-`list`, `park`, and `release` operate on these event runs.
-
-A package declares no schedule.
-A schedule workflow is a row of `catalog.workflows` with trigger `schedule` and a five-field cron, parsed by `croner`.
-The cron uses the project `timezone` setting in the environment database.
-An absent setting uses UTC. A setting with an invalid type or zone refuses that tick.
-
-The environment document declares its applications: each name with the packages of the release that belong to it.
-`environment::apply` refuses a release package that belongs to no application or to two, and a declared package that the release does not carry.
-The release chart projects each application selection into a ConfigMap.
-The host reads these release projections for each project in its environment.
-The registry keeps each application's desired release and client selection in typed rows.
-Helm keeps deployment attempts and rollback history for each application.
-The host uses the declared application membership for each loaded release. A restored run retains its application and manifest digest.
-A workflow belongs to one declared application, by name: `workflow author` and `workflow.start` refuse a name that the environment does not declare.
-An application is a name, never a package. The workflow condition resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue leases the declared application names, and the executor resolves the run's nodes within that application's packages.
-
-The host runs one schedule task per selected application. Each task wakes at a minute boundary.
-Its first tick is strictly after startup.
-At each tick it reads the enabled schedule rows of that application with one `SELECT`, and calls `wamn_workflow::admission::admit_schedule_run` for each row whose cron names that minute.
-A host whose environment declares no application runs no schedule task.
-An enable or a disable between ticks takes effect at the next tick.
-The task polls the rows; it does not reload on an enable or disable message over NATS, which would cost one more subject and a stale window when the broker is lost.
-The run has input `{"due":"<due RFC 3339>"}` and key `schedule:<application>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
-Replicas use the same key, so concurrent admissions return one run.
-The run executes as the `workflow` user with its execution role, or with `admin` for type `invoker`.
-Schedule reads and admissions use the runtime executor pool. Each admission reads the current release selection. A missing or unusable selection pauses admission for that application.
-The due moment and its key remain UTC across daylight saving changes.
+The reader loads publication and slot names from its configuration.
+It holds its replication login and broker certificate.
+Reset stops the reader before discarding its backlog and broker events.
 
 Apply creates one service principal per application that composes `wamn_integration`, in each environment.
 Its subject is `wamn-app-<org>--<env>--<project>--<package id>`.
@@ -590,11 +542,6 @@ Publish authorizes the operations that the application declares as dependencies.
 Apply assigns a role with those permissions. Repeated applies write no principal or role rows.
 The executor's database role reads only `id`, `type`, `status`, and `email` from `platform."user"`.
 It can insert the principal into a run but cannot change that identity afterward.
-
-The queue reads its current permissions, and the router authorizes each registered consumer command through the existing operation test.
-A missing permission refuses that command.
-
-Missed or refused ticks produce a log entry without catch-up, and host shutdown cancels the task.
 
 The [JSONata node](../../guests/jsonata-expression/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.
@@ -617,94 +564,24 @@ The WMS workflow `movement_label` is the first example.
 A `packaging` update starts it when the event condition `old.location_id != new.location_id` holds, so only a move starts it.
 It stores one packaging label for each move, keyed by `{packaging_id}/{row_version}`, at the object path `wms/{key}`.
 
-- A wiring is data with edges. Versioned. Swapped by version with no rebuild. `wamn-workflow` walks the catalog graph directly: frontier, ports, error edges, retry, hop budget, terminal verdict. Unchanged.
-
-| Operation | Behavior |
-| --- | --- |
-| `list` | Returns the runs of one project and environment, newest first, with a limit. Each row gives the run id, the wiring, the trigger, the status, and whether the run is parked. |
-
-The owner ruled on 2026-09-26 that the host admits event runs (`wamn-upl3.6`). The executor role gains a column-exact INSERT on `runs` and `run_queue` for the event run grain, and the run-plane grain SQL `CHECK` constraint gains an event arm. `list` shows the run, and `park` and `release` act on it.
-
 ### Environment workflows
 
-An environment workflow is a wiring that an operator authors in one environment instead of in a package.
-Its trigger is `manual`.
-Each version is one row of `catalog.workflows` in the project database.
-The row holds the application, the workflow id, the version, the graph, the wiring hash, the execution type, the execution role and `enabled`.
+Each authored workflow version is one row in `catalog.workflows`.
+The graph, wiring hash, execution policy and trigger columns are immutable.
+One version can be enabled for each workflow.
+Enabled Request paths are unique per environment and application.
+Enable records a PostgreSQL log sequence number in `enable_lsn`.
 
-`wamn workflow author` evaluates the graph conditions against the release that the environment serves, and stores the version disabled.
-The same bytes under the same version converge. Other bytes under that version refuse.
-A stored version never changes except `enabled`, and at most one version of a workflow is enabled.
+An invoker Request runs as its caller with their active role.
+An administrator has the `admin` role active. Other callers must hold exactly one role to invoke as themselves.
+A Request that uses an execution role runs as the `workflow` user with that role.
+Schedule and Data change also run as the `workflow` user with their execution role.
+The host reads that role's grants directly. Enable grants no role to the `workflow` user.
+An administrator can run an enabled workflow as themselves or as the `workflow` user if the workflow declares a role.
 
-`enable` and `disable` take the lifecycle lock of the coordinate, as `environment::apply` does.
-While another verb holds the lock, they refuse with `apply in progress`.
-`enable` evaluates the graph conditions again, then disables the enabled version and enables this one in one transaction.
-`disable` sets only `enabled` to false. Queued and running runs finish under the version they pinned.
-
-The execution type decides who a run executes as.
-A `role` workflow executes as the `workflow` user with its execution role.
-The enabler must hold that role or `admin`, and the `workflow` user must hold that role.
-An `invoker` workflow executes as the caller with the active role of the caller.
-Every environment holds one `service` user named `workflow`, and the platform grants it no role.
-
-The route `workflow.start` admits a run.
-It reads the enabled version and evaluates the graph conditions against the release that the host serves.
-It refuses `workflow_not_served` when the graph fails its conditions or its hash differs from the stored hash.
-The active role of the caller is `admin` for a holder of `admin`, else the one role that the caller holds.
-Any other caller refuses `active_role_required`.
-The run records the release, the wiring hash, the component digest of each node, the principal and role it executes as, and the caller as its invoker.
-The idempotency key is bound to the caller and the workflow.
-A repeated start with the same key and input answers the first run, and another input refuses `idempotency_conflict`.
-The run and its queue row commit in one transaction.
-
-Before each node, the host reads the execution principal's current grants through its authentication memory.
-The principal must be active and hold the run's selected role.
-Only that role supplies permissions. The `admin` role grants administration.
-A role revoked during a run refuses the next node. Leasing the run performs no caller read.
-
-Every workflow is a graph run by the router and the run queue under a run row. A single-operation workflow is a one-node graph. The in-process walk with no row (`RegistrationDelivery::Walk`) is removed.
-
-A workflow is keyed `(project_env_key, environment, application, workflow_id, version)`; a package version is not part of its identity. A version row is immutable (graph, hash, trigger, `execution_type`, `execution_role`); `enabled` is its one mutable field, and at most one version of a workflow is enabled at a time — a partial unique index on `(project_env_key, environment, application, workflow_id) WHERE enabled`; enabling a version disables the previous one in the same transaction. A start selects the enabled version. Disabling stops new starts only; queued and running runs finish under the version they pinned. Its graph names operations as `package.operation`; admission resolves them against the release the run pins. A package upgrade that keeps those operations does not touch the workflow; one that drops or changes them is refused at `environment::apply` by workflow and node.
-
-Enable, disable and change of a workflow take the environment's lifecycle lock (`wamn_catalog::lifecycle_lock::LifecycleLock`, `pg_try_advisory_lock`, shared with `environment::apply`): while an apply holds it, enable is refused with "apply in progress" and the caller retries; the lock does not queue. So no workflow becomes enabled between the apply's test and its Helm write. Authority lifetime: the enabler's authority is validated at enable and change. An enabled workflow belongs to the environment, not to a session. Revoking the execution role's permission refuses the next protected call under the existing per-operation test. No author query on every start. Deploying logic that runs on every record change is an admin act; a project that wants a narrower publisher makes a role holding the enable operation.
-
-- One invocation function serves both. The route calls it once. The router calls it per node.
-
-3. A workflow calls application operations. It never touches a component, a table, or SQL directly. Same grant, intent, and never-replay rules as any client.
-
-4. One invocation path. `invoke_operation(component, operation, input) -> Outcome`. Routes, workflow nodes, and the edge all call it.
-
-5. Composition (`wac`) makes one component out of several at build time. A composed component is still one component behind one route. Composition and the router are unrelated.
-
-6. Expression nodes are platform node components compiled to wasm. The expression is configuration. JSONata runs in the guest for deliveries. Admission also evaluates bounded samples with the shared engine.
-
-7. The base platform and the edge do not link the router.
-
-Every layer exposes an interface and depends only on layers below it: base platform, then run-state store, then workflow crate. Nothing depends on a UI.
-
-- The WMS `inventory_move_and_label` graph runs as a registered workflow, off the request path.
-
-- A workflow calls operations through `invoke_operation`, with the same grant, intent, and never-replay rules as any client.
-
-- The base platform and the edge do not link the workflow crate. The dependency tests keep this rule.
-
-Park acts on the queue row only. The run status stays `dispatched`, so the retired run-level `parked` status does not come back. A park inside a walk needs a saved walk and is part of approvals, which are out of target.
-
-The node is a std guest at `guests/jsonata-expression`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its parameter `expression` holds the JSONata text. The required `input-schema` and `output-schema` declare its input and result contracts. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
-
-The `shape` node turns the row event into the item array that `label-render` takes, with `packaging_id` and `location_id`, and the label key `{packaging_id}/{row_version}`. Epic 25 moved the trigger from the movement insert to the packaging update. One move therefore stores one label, and a redelivered event overwrites it. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
-
-A PAT-authenticated service can start an invoker workflow with its own held role.
-The host derives that role from current grants, with the existing single-role or held-admin selection rule.
-A service never borrows a user's active role. A session uses the active role selected from its current project grants.
-
-An event trigger names a source package, entity, operations and an optional condition over the old and new images.
-Provisioning declares one durable consumer per application source before hosts attach.
-Workflow enablement prepares the same declaration before it records the stream tail as the enable boundary.
-Workflow matches messages above that boundary and admits every matching run in one transaction.
-The runtime plugin pulls messages and acknowledges them after the transaction commits.
-Concurrent hosts share each application consumer. A redelivery retains the original run and release.
-
+The run stores its workflow version, wiring hash, execution principal and role.
+Before each node call, the host reads the current grants of the selected role.
+Removing an operation grant refuses the next call that needs it.
 
 A package ships no workflows and no triggers; a custom operation's `registration` leaves `wamn.k`, and the operation stays. The two shipped today (WMS label, NetSuite pull) become environment data authored in their environments.
 

@@ -1,6 +1,7 @@
 //! Register application platform paths on the wasmCloud ingress router.
 
 use super::files::Files;
+use super::workflow::Workflow;
 use std::sync::Arc;
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wash_runtime::engine::workload::ResolvedWorkload;
@@ -12,6 +13,8 @@ pub(super) struct PlatformHttp {
     ingress: Arc<dyn HostHandler>,
     files: Arc<Files>,
     routing: Arc<FlowHttpRouting>,
+    #[expect(dead_code, reason = "The workflow routes use the shared plugin in 7.4")]
+    pub(super) workflow: Arc<Workflow>,
 }
 
 impl PlatformHttp {
@@ -19,11 +22,13 @@ impl PlatformHttp {
         ingress: Arc<dyn HostHandler>,
         files: Arc<Files>,
         routing: Arc<FlowHttpRouting>,
+        workflow: Arc<Workflow>,
     ) -> Self {
         Self {
             ingress,
             files,
             routing,
+            workflow,
         }
     }
 

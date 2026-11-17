@@ -41,9 +41,7 @@ BEGIN
 END
 $$;
 
--- Admission pins, including the release's `manifest_digest`, never change
--- (docs/architecture/overview.md#release-identity). A leasing pod shows it carries that
--- release by its digest.
+-- The workflow version and execution identity are fixed at admission.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -55,12 +53,10 @@ BEGIN
        OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version
        OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash
        OR NEW.trigger_source IS DISTINCT FROM OLD.trigger_source
-       OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest
        OR NEW.execution_principal_id IS DISTINCT FROM OLD.execution_principal_id
        OR NEW.execution_role IS DISTINCT FROM OLD.execution_role
        OR NEW.invoked_by IS DISTINCT FROM OLD.invoked_by
-       OR NEW.invoked_by_user_id IS DISTINCT FROM OLD.invoked_by_user_id
-       OR NEW.node_digests_json IS DISTINCT FROM OLD.node_digests_json THEN
+       OR NEW.invoked_by_user_id IS DISTINCT FROM OLD.invoked_by_user_id THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -98,9 +94,8 @@ REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;
 -- ---------------------------------------------------------------------------
 -- runs: one row per workflow execution. `input_json` is the admitted trigger
 -- payload; `result_json` is the last node's output on
--- completion; `state_json` carries transient run state such as bounded-retry
--- scheduling and execution context. `idempotency_key` dedupes at-least-once
--- redelivery of the same trigger (a partial-unique index). `fail_type` mirrors
+-- completion. `state_json` stores the checkpoint at the Response.
+-- The workflow identity and `idempotency_key` deduplicate redelivery. `fail_type` mirrors
 -- the engine `FailType` so history can
 -- flag an upstream bug (`invalid-input`) apart from a terminal error or an
 -- exhausted retry budget. Status values are exactly wamn_run_store::RunStatus
@@ -120,24 +115,15 @@ CREATE TABLE wamn_run.runs (
         CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
                           'infrastructure-failure')),
     trigger_source  text,
-    -- A manual or schedule workflow run (docs/plan/workflows.md R3, R2):
-    -- executed as this principal with this one role active, invoked by
-    -- `invoked_by` (what caused it) and `invoked_by_user_id` (the user of a
-    -- password session for a manual run), and executing the component digest admission
-    -- froze for each node. Every other grain leaves the five columns NULL.
+    -- The principal and active role used when dispatching nodes.
     execution_principal_id uuid,
     execution_role  text,
     invoked_by      text,
     invoked_by_user_id uuid,
-    node_digests_json jsonb,
     -- The admission transaction freezes the execution identity.
     wiring_id       text,
     wiring_version  int,
     wiring_hash     text,
-    -- Admission pins the exact release by its manifest digest, the SHA-256 of
-    -- its RFC 8785 canonical manifest. At lease, the worker shows its mounted
-    -- release has that digest.
-    manifest_digest text,
     input_json      jsonb,
     result_json     jsonb,
     deadline_adjustments_json jsonb,
@@ -174,34 +160,29 @@ CREATE TABLE wamn_run.runs (
     -- At insert both columns take the same `now()`, so equal is admitted.
     CONSTRAINT runs_updated_after_created
         CHECK (updated_at >= created_at),
-    CONSTRAINT runs_release_record_check CHECK (
-      manifest_digest IS NULL
-      OR manifest_digest ~ '^sha256:[0-9a-f]{64}$'
-    ),
     CONSTRAINT runs_wiring_identity_check CHECK (
       (wiring_id IS NULL AND wiring_version IS NULL)
       OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
           AND wiring_id <> '' AND wiring_version > 0)
     ),
-    -- Only the three supported workflow admissions enter the durable queue.
+    -- Only workflow executions enter the durable queue.
     CONSTRAINT runs_execution_grain_check CHECK (
-      trigger_source IS NOT NULL AND trigger_source IN ('manual', 'schedule', 'event')
+      trigger_source IS NOT NULL AND trigger_source IN ('request', 'schedule', 'event', 'manual')
       AND wiring_id IS NOT NULL AND wiring_id <> ''
       AND wiring_version IS NOT NULL AND wiring_version > 0
       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
-      AND manifest_digest IS NOT NULL
-      AND node_digests_json IS NOT NULL AND jsonb_typeof(node_digests_json) = 'object'
       AND execution_principal_id IS NOT NULL
       AND execution_role IS NOT NULL AND execution_role <> ''
       AND invoked_by IS NOT NULL AND invoked_by <> ''
-      AND ((trigger_source = 'manual' AND invoked_by = 'manual' AND invoked_by_user_id IS NOT NULL)
+      AND ((trigger_source IN ('request', 'manual') AND invoked_by = trigger_source AND invoked_by_user_id IS NOT NULL)
         OR (trigger_source = 'schedule' AND invoked_by = 'schedule' AND invoked_by_user_id IS NULL)
         OR trigger_source = 'event')
     ),
     PRIMARY KEY (run_id)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
-CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (idempotency_key)
+CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs
+    (environment, package_id, wiring_id, wiring_version, trigger_source, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 -- History listing and trusted CDC event-causation traversal.
 CREATE INDEX runs_event_root ON wamn_run.runs (event_root_run_id)
@@ -226,9 +207,8 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF package_id, environment,
                  wiring_id, wiring_version,
-                 wiring_hash, manifest_digest, trigger_source,
-                 execution_principal_id, execution_role, invoked_by, invoked_by_user_id,
-                 node_digests_json
+                 wiring_hash, trigger_source,
+                 execution_principal_id, execution_role, invoked_by, invoked_by_user_id
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 CREATE TRIGGER runs_terminal_delete_only

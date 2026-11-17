@@ -1,81 +1,49 @@
-//! Observe resident application releases and the runs that pin them.
+//! Protect unfinished runs during application lifecycle changes.
 
-use super::{Platform, analyse::Analysis, document::EnvironmentDocument};
-use anyhow::{Context as _, bail};
-use sqlx::{Connection as _, Row as _};
-use std::collections::BTreeMap;
+use super::Platform;
+use anyhow::Context as _;
 use std::time::{Duration, Instant};
-pub use wamn_kubernetes::environment_state::ReleaseResidency;
+use wamn_catalog::ApplicationName;
+use wamn_registry::EnvName;
 
-/// Describe runs whose release is not loaded by any environment host.
-pub fn describe(stranded: &[Stranded]) -> String {
+/// One application run that still needs a host.
+#[derive(Debug, sqlx::FromRow)]
+pub(super) struct UnfinishedRun {
+    package_id: String,
+    run_id: String,
+}
+
+pub(super) fn describe(unfinished: &[UnfinishedRun]) -> String {
     use std::fmt::Write as _;
-    let mut text = String::from("stranded runs:");
-    for run in stranded {
-        write!(text, " {} ({})", run.run_id, run.manifest_digest)
-            .expect("writing to a String succeeds");
+    let mut text = String::from("unfinished workflow runs:");
+    for run in unfinished {
+        write!(text, " {}/{}", run.package_id, run.run_id).expect("writing to a String succeeds");
     }
     text
 }
 
-/// Read actual host residency through the Kubernetes pod proxy.
-pub async fn observe(
-    platform: &Platform,
-    triple: &wamn_registry::Triple,
-) -> anyhow::Result<Vec<ReleaseResidency>> {
-    let reports = wamn_kubernetes::environment_state::residency(
-        &platform.target.namespace,
-        &triple.org,
-        &triple.env,
-        |path| async move {
-            let body = super::ensure::kubectl(
-                platform,
-                &platform.target.namespace,
-                &["get", "--raw", &path],
-                None,
-            )
-            .await?;
-            serde_json::from_str(&body).context("read environment residency")
-        },
+pub(super) async fn unfinished(
+    client: &mut sqlx::PgConnection,
+    env: &EnvName,
+    application: Option<&ApplicationName>,
+) -> anyhow::Result<Vec<UnfinishedRun>> {
+    let mut transaction = crate::provision_project_env::provisioning_transaction(client).await?;
+    let runs = sqlx::query_as(
+        "SELECT package_id, run_id FROM wamn_run.runs
+          WHERE environment = $1 AND ($2::text IS NULL OR package_id = $2)
+            AND status IN ('dispatched', 'running')
+          ORDER BY package_id, run_id",
     )
-    .await?;
-    wamn_kubernetes::environment_state::project_residency(reports, &triple.project)
-}
-
-/// Observe all releases together. A failed release never implies another release unloaded.
-pub async fn drain(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    _analysis: &Analysis,
-) -> anyhow::Result<Vec<ReleaseResidency>> {
-    let residency = observe(platform, &document.triple()).await?;
-    let live = loaded(&residency);
-    let project_url = super::ensure::project_url(platform, &document.triple()).await?;
-    let stranded = stranded(&project_url, &document.env, None, &live).await?;
-    if !stranded.is_empty() {
-        bail!(
-            "{}; restore their releases to resume them",
-            describe(&stranded)
-        );
-    }
-    Ok(residency)
-}
-
-/// Loaded application and digest membership for the database's unfinished-run boundary.
-pub fn loaded(
-    residency: &[ReleaseResidency],
-) -> BTreeMap<(wamn_catalog::ApplicationName, wamn_digest::Digest), usize> {
-    let mut live = BTreeMap::new();
-    for release in residency.iter().filter(|release| release.loaded) {
-        *live
-            .entry((release.application.clone(), release.manifest_digest))
-            .or_default() += 1;
-    }
-    live
+    .bind(env)
+    .bind(application)
+    .fetch_all(&mut *transaction)
+    .await
+    .context("read unfinished application runs")?;
+    transaction.commit().await?;
+    Ok(runs)
 }
 
 /// Wait only for a stopped host Deployment's pods to terminate.
-/// Release residency is independent of this Kubernetes shutdown bound.
 pub async fn wait_stopped(platform: &Platform, name: &str) -> anyhow::Result<()> {
     let started = Instant::now();
     let mut deadline = started + Duration::from_secs(15);
@@ -107,64 +75,4 @@ pub async fn wait_stopped(platform: &Platform, name: &str) -> anyhow::Result<()>
         );
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
-}
-
-/// The stranded-run query: runs pinned to a release with no loaded release.
-const STRANDED_SQL: &str = "\
-SELECT run_id, manifest_digest FROM wamn_run.runs \
- WHERE environment = $1 \
-   AND status NOT IN ('completed', 'failed', 'infrastructure-failure') \
-   AND manifest_digest IS NOT NULL \
-   AND ($3::text[] IS NULL OR package_id = ANY($3)) \
-   AND NOT EXISTS (SELECT FROM unnest($2::text[], $4::text[]) \
-       AS loaded(application, digest) WHERE loaded.application = runs.package_id \
-       AND loaded.digest = runs.manifest_digest) \
- ORDER BY manifest_digest, run_id";
-
-/// One run pinned to a release with no loaded release.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct Stranded {
-    pub run_id: String,
-    pub manifest_digest: wamn_digest::Digest,
-}
-
-/// The runs of the environment pinned to a release outside `live`.
-///
-/// # Errors
-///
-/// When the project database cannot be read.
-pub async fn stranded(
-    project_url: &str,
-    environment: &wamn_registry::EnvName,
-    applications: Option<&[wamn_catalog::ApplicationName]>,
-    live: &BTreeMap<(wamn_catalog::ApplicationName, wamn_digest::Digest), usize>,
-) -> anyhow::Result<Vec<Stranded>> {
-    let (loaded_applications, loaded_digests): (Vec<&str>, Vec<wamn_digest::Digest>) = live
-        .keys()
-        .map(|(application, digest)| (application.as_str(), *digest))
-        .unzip();
-    let mut client = super::analyse::connect_project(project_url).await?;
-    let mut transaction = client
-        .begin()
-        .await
-        .context("begin the stranded-run read")?;
-    let stranded = sqlx::query(STRANDED_SQL)
-        .bind(environment)
-        .bind(&loaded_applications)
-        .bind(applications)
-        .bind(&loaded_digests)
-        .fetch_all(&mut *transaction)
-        .await
-        .context("read the runs pinned to a release with no loaded release")?
-        .into_iter()
-        .map(|row| Stranded {
-            run_id: row.get(0),
-            manifest_digest: row.get(1),
-        })
-        .collect();
-    transaction
-        .commit()
-        .await
-        .context("end the stranded-run read")?;
-    Ok(stranded)
 }

@@ -1,30 +1,15 @@
 [package]
 name = "wamn-workflow"
-description = "The environment workflow router and durable run queue. Every node calls invoke_operation."
+description = "Environment workflow lifecycle."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-registry.workspace = true
-jmespath.workspace = true
-postgres-protocol.workspace = true
 wamn-postgres.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
-chrono = { workspace = true, features = ["clock"] }
-wamn-catalog = { workspace = true }
-wamn-event-wire = { workspace = true }
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
-wamn-run-state = { workspace = true }
-wamn-sql = { workspace = true }
-wamn-engine = { workspace = true }
-anyhow = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-
-[dev-dependencies]
-wamn-catalog = { workspace = true, features = ["test-util"] }
+sqlx = { workspace = true, features = ["postgres"] }
+wamn-catalog.workspace = true
 
 [lints]
 workspace = true

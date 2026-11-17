@@ -225,6 +225,7 @@ pub fn entity_filter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn cdc_identity_distinguishes_every_coordinate_and_refuses_old_rows() {
@@ -580,6 +581,116 @@ mod tests {
         for name in ["", "a.b", "a*", "a b", "a>\n"] {
             assert!(!valid_subject_token(name));
         }
+    }
+
+    fn admission_envelope() -> Envelope {
+        serde_json::from_value(json!({
+            "op": "insert",
+            "new": {"project_id": "t1--dev--project", "status": "ready"},
+            "package_id": "cat",
+            "entity": "receipts",
+            "table": "receipts",
+            "identity": {"system_id": 1, "timeline": 1, "commit_lsn": 42, "row_ordinal": 0},
+            "txid": 7,
+            "commit_ts": "2026-08-15T12:00:00Z"
+        }))
+        .unwrap()
+    }
+
+
+    #[test]
+    fn source_identity_requires_one_exact_header() {
+        let envelope = admission_envelope();
+        let expected = msg_id(
+            &"app".parse().unwrap(),
+            &"dev".parse().unwrap(),
+            &envelope.identity,
+        );
+        assert_eq!(
+            verified_source_event_id(
+                &"app".parse().unwrap(),
+                &"dev".parse().unwrap(),
+                &envelope,
+                &[&expected]
+            )
+            .unwrap()
+            .as_str(),
+            expected
+        );
+        assert!(
+            verified_source_event_id(
+                &"app".parse().unwrap(),
+                &"dev".parse().unwrap(),
+                &envelope,
+                &[]
+            )
+            .is_none()
+        );
+    }
+
+    fn admission_derived(depth: u32) -> DerivedEvent {
+        DerivedEvent::new(
+            "t1--dev--project".parse().unwrap(),
+            "app".parse().unwrap(),
+            "dev".parse().unwrap(),
+            "sales.eu".parse().unwrap(),
+            "receipts",
+            Op::Insert,
+            json!(["arbitrary", {"status": "ready"}]),
+            "author:receipt:7",
+            Causation {
+                run: "delivery-7".into(),
+                root: "delivery-1".into(),
+                depth,
+            },
+        )
+    }
+
+
+    #[test]
+    fn derived_source_identity_requires_exact_target_and_one_header() {
+        let event = admission_derived(0);
+        let expected = derived_msg_id(
+            &"t1--dev--project".parse().unwrap(),
+            &"app".parse().unwrap(),
+            &"dev".parse().unwrap(),
+            &event.application,
+            &event.entity,
+            event.op,
+            &event.dedup_id,
+        );
+        assert_eq!(
+            verified_derived_source_event_id(
+                &"t1--dev--project".parse().unwrap(),
+                &"app".parse().unwrap(),
+                &"dev".parse().unwrap(),
+                &event,
+                &[&expected]
+            )
+            .unwrap()
+            .as_str(),
+            expected
+        );
+        assert!(
+            verified_derived_source_event_id(
+                &"other--dev--project".parse().unwrap(),
+                &"app".parse().unwrap(),
+                &"dev".parse().unwrap(),
+                &event,
+                &[&expected]
+            )
+            .is_none()
+        );
+        assert!(
+            verified_derived_source_event_id(
+                &"t1--dev--project".parse().unwrap(),
+                &"app".parse().unwrap(),
+                &"dev".parse().unwrap(),
+                &event,
+                &[&expected, &expected]
+            )
+            .is_none()
+        );
     }
 }
 
