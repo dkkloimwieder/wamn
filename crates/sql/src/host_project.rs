@@ -16,7 +16,6 @@ pub(super) struct HostProject {
     database: String,
     logins: BTreeMap<String, String>,
     guest_pool_max_size: Option<usize>,
-    platform_pool_max_size: Option<usize>,
     wait_timeout_ms: Option<u64>,
     statement_timeout_ms: Option<u32>,
 }
@@ -114,9 +113,7 @@ impl WamnPostgres {
             guest_pool_max_size: config
                 .guest_pool_max_size
                 .unwrap_or(base.guest_pool_max_size),
-            platform_pool_max_size: config
-                .platform_pool_max_size
-                .unwrap_or(base.platform_pool_max_size),
+            platform_pool_max_size: base.platform_pool_max_size,
             wait_timeout_ms: super::pool::bounded_wait_timeout_ms(
                 config.wait_timeout_ms.unwrap_or(base.wait_timeout_ms),
             ),

@@ -172,6 +172,30 @@ pub async fn execute(
         let metadata: Option<Value> = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('auth_schema',a.parameter_schema,'credential_schema',a.credential_schema) FROM registry.integration_type t JOIN registry.integration_type_auth allowed ON allowed.integration_type=t.code JOIN registry.auth_type a ON a.code=allowed.auth_type WHERE t.code=$1 AND a.code=$2")
             .bind(context["integration_type"].as_str()).bind(context["auth_type"].as_str()).fetch_optional(&mut *system).await?;
         let metadata = metadata.ok_or_else(|| refuse("invalid_input", "auth_type"))?;
+        let target = if new {
+            let mut tx = system.begin().await?;
+            bind_actor(&mut tx, caller, operation).await?;
+            let (target, target_type): (Uuid, String) = sqlx::query_as(
+                "SELECT destination.id, destination.type FROM registry.environments e \
+                 JOIN registry.target destination ON destination.id=e.target_id \
+                 WHERE e.org=$1 AND e.env=$2",
+            )
+            .bind(org)
+            .bind(request["env"].as_str())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| refuse("invalid_input", "target_id"))?;
+            if metadata["exclusive"] == true && target_type == "cloud" {
+                return Err(refuse(
+                    "exclusive_connection_requires_local_target",
+                    "integration_type",
+                ));
+            }
+            tx.commit().await?;
+            Some(target)
+        } else {
+            None
+        };
         let authority = if operation == "connection.write" {
             match requested_authority.as_ref() {
                 Some(Value::String(value)) => Some(value.as_str()),
@@ -312,15 +336,7 @@ pub async fn execute(
         if new {
             let mut tx = system.begin().await?;
             bind_actor(&mut tx, caller, operation).await?;
-            let target: Option<Uuid> = sqlx::query_scalar(
-                "SELECT target_id FROM registry.environments WHERE org=$1 AND env=$2",
-            )
-            .bind(org)
-            .bind(request["env"].as_str())
-            .fetch_optional(&mut *tx)
-            .await?
-            .flatten();
-            let target = target.ok_or_else(|| refuse("invalid_input", "target_id"))?;
+            let target = target.expect("new connection has a target");
             let mut resource = metadata["resource_key_template"]
                 .as_str()
                 .map(str::to_owned);

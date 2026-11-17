@@ -134,8 +134,6 @@ pub fn roles(
                         "image": image,
                         "authority": authority,
                         "connection": binding.connection_id,
-                        "application": application,
-                        "call_limit": binding.call_limit,
                     })
                 });
             }

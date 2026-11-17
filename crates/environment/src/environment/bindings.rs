@@ -53,7 +53,6 @@ pub struct Binding {
     pub authority: Option<String>,
     pub integration_type: wamn_registry::integration_code::IntegrationCode,
     pub exclusive: bool,
-    pub call_limit: Option<i32>,
     pub generation: i64,
     pub mode: ConnectionMode,
     pub digest: Option<wamn_digest::Digest>,
@@ -124,6 +123,12 @@ pub async fn analyse(
         let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
             .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection_target).bind(&document.target).bind(connection.get::<i64,_>(3)).bind(&document.org).bind(&document.env).bind(version.version)
             .fetch_optional(&mut *system).await?.ok_or_else(||refuse("connection_unavailable",name))?;
+        if row.get::<bool, _>(8) && row.get::<&str, _>(11) == "cloud" {
+            return Err(refuse(
+                "exclusive_connection_requires_local_target",
+                format!("connection {name}: exclusive connections belong to local targets"),
+            ));
+        }
         let runtime: String = row.get(2);
         let schema: Option<serde_json::Value> = row.get(4);
         let schema = schema.ok_or_else(|| refuse("integration_version_unpublished", name))?;
@@ -213,19 +218,6 @@ pub async fn analyse(
             } else {
                 None
             };
-            let call_limit = sqlx::query_scalar::<_, Option<i32>>(
-                "SELECT call_limit FROM registry.environment_application_connections \
-                 WHERE org=$1 AND env=$2 AND project=$3 AND application=$4 AND alias=$5 AND connection_name=$6",
-            )
-            .bind(&document.org)
-            .bind(&document.env)
-            .bind(&document.project)
-            .bind(application)
-            .bind(name.as_str())
-            .bind(&integration.name)
-            .fetch_optional(&mut *system)
-            .await?
-            .flatten();
             bindings.push(Binding {
                 application: application.clone(),
                 alias: name.to_string(),
@@ -250,7 +242,6 @@ pub async fn analyse(
                 authority: authority.clone(),
                 integration_type,
                 exclusive: row.get(8),
-                call_limit,
                 generation: row.get(7),
                 mode: declaration.mode,
                 digest: row.get(5),

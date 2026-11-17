@@ -60,7 +60,6 @@ pub(super) struct Authorization {
     applications: RwLock<HashMap<String, Weak<ApplicationConfig>>>,
     lifetimes: RwLock<HashMap<ProjectEnvKey, (ProjectId, Duration)>>,
     answers: Cache<Key, Answer>,
-    locks: Arc<wamn_connection::database::ResourceLocks>,
 }
 
 impl Authorization {
@@ -68,7 +67,6 @@ impl Authorization {
         Self {
             postgres,
             envelope: None,
-            locks: Arc::default(),
             lifetimes: RwLock::default(),
             applications: RwLock::default(),
             answers: Cache::builder()
@@ -252,9 +250,6 @@ impl ConnectionCache for Authorization {
         Ok(())
     }
 
-    fn locks(&self) -> Arc<wamn_connection::database::ResourceLocks> {
-        Arc::clone(&self.locks)
-    }
     fn get(&self, project: &ProjectEnvKey, id: &uuid::Uuid) -> Option<Arc<ConnectionAnswer>> {
         let (name, _) = self
             .lifetimes
@@ -312,7 +307,7 @@ impl ConnectionCache for Authorization {
         self: Arc<Self>,
         workload: &str,
         id: &uuid::Uuid,
-    ) -> anyhow::Result<(Arc<ConnectionFacts>, bool)> {
+    ) -> anyhow::Result<Arc<ConnectionFacts>> {
         let id = id.to_string();
         let application = self
             .applications
@@ -321,7 +316,7 @@ impl ConnectionCache for Authorization {
             .get(workload)
             .and_then(Weak::upgrade)
             .context("integration workload is not configured")?;
-        let binding = application
+        application
             .components
             .iter()
             .flat_map(|component| &component.connections)
@@ -330,8 +325,7 @@ impl ConnectionCache for Authorization {
                     && binding.runtime_type == wamn_catalog::RuntimeType::Wasm
             })
             .context("integration connection undeclared")?;
-        let exclusive = binding.exclusive;
-        Ok((self.facts(application)?, exclusive))
+        self.facts(application)
     }
     fn project_facts(
         self: Arc<Self>,

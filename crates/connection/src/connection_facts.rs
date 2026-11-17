@@ -71,7 +71,6 @@ pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
         workload: &str,
         application: &Arc<wamn_catalog::application_config::ApplicationConfig>,
     ) -> anyhow::Result<()>;
-    fn locks(&self) -> Arc<crate::database::ResourceLocks>;
     fn get(
         &self,
         project: &wamn_registry::ProjectEnvKey,
@@ -93,7 +92,7 @@ pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
         self: Arc<Self>,
         workload: &str,
         id: &uuid::Uuid,
-    ) -> anyhow::Result<(Arc<ConnectionFacts>, bool)>;
+    ) -> anyhow::Result<Arc<ConnectionFacts>>;
     fn project_facts(
         self: Arc<Self>,
         project: &wamn_registry::ProjectEnvKey,
@@ -172,13 +171,6 @@ impl ConnectionFacts {
     }
     pub fn project_env_key(&self) -> &wamn_registry::ProjectEnvKey {
         &self.project_env_key
-    }
-    pub fn locks(&self) -> anyhow::Result<Arc<crate::database::ResourceLocks>> {
-        Ok(self
-            .cache
-            .as_ref()
-            .context("connection cache unavailable")?
-            .locks())
     }
     pub fn reader(&self) -> Arc<ConnectionCredentials> {
         Arc::clone(&self.reader)
