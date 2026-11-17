@@ -340,13 +340,9 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .as_ref()
                 .ok_or_else(authentication_unavailable)?;
             let token = required_bearer_token(headers)?;
-            let mut transaction = wamn_identity::transaction::read_pool(
-                identity_reader,
-                &wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
-            )
-            .await
-            .map_err(|_| authentication_unavailable())?;
-            let principal = wamn_identity::authenticate_route_pat(&mut transaction, token)
+            let principal = self
+                .postgres
+                .route_pat(project, &target.project_env_key, identity_reader, token)
                 .instrument(tracing::info_span!("wamn.auth.identity"))
                 .await
                 .map_err(|error| {
@@ -354,10 +350,6 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     authentication_unavailable()
                 })?
                 .ok_or_else(unauthorized)?;
-            transaction
-                .commit()
-                .await
-                .map_err(|_| authentication_unavailable())?;
             let credential_deadline = principal.pat_deadline();
             let principal = principal.principal();
             match principal.principal_type() {

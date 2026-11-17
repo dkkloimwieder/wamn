@@ -1,4 +1,6 @@
-use sqlx::Statement as _;
+use postgres_protocol::escape;
+use sqlx::{Row as _, Statement as _};
+use std::fmt::Write as _;
 
 use tracing::Instrument as _;
 
@@ -9,10 +11,12 @@ use super::super::PgError;
 use super::super::types::map_pg_error;
 use super::{WamnPostgres, validate_session_identity};
 
-pub(in super::super) fn prepare_causation(run: &Causation) -> (String, String) {
-    let statement = "SELECT pg_logical_emit_message(true, 'wamn.causation', $1::text)".to_owned();
+pub(in super::super) fn causation_sql(run: &Causation) -> String {
     let json = serde_json::to_string(run).expect("Causation serializes to JSON");
-    (statement, json)
+    format!(
+        "SELECT pg_logical_emit_message(true, 'wamn.causation', {}::text);",
+        escape::escape_literal(&json)
+    )
 }
 
 pub(in super::super) async fn finish_transaction(
@@ -38,28 +42,16 @@ pub(in super::super) async fn finish_transaction(
     }
 }
 
-/// The first statement after BEGIN records the caller for this transaction.
-/// Return the xid expression without reading a column: the login has INSERT only.
-pub(super) const IDENTITY_SQL: &str = "INSERT INTO platform.tx_identity \
-    (xid, principal_id, role, application, operation, runner) \
-    VALUES (pg_current_xact_id(), $1, $2, $3, $4, $5) RETURNING pg_current_xact_id()::text";
-
 /// Open a host write transaction before inserting its caller.
 const BEGIN_READ_COMMITTED: &str = "BEGIN ISOLATION LEVEL READ COMMITTED";
 
 /// Open the snapshot before inserting its caller and switching to READ ONLY.
 const BEGIN_READ_SNAPSHOT: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ";
 
-/// Prepared caller identity inserted immediately after BEGIN.
+/// Caller identity and setup sent in one simple-protocol batch.
 #[derive(Debug)]
 pub(in super::super) struct BoundIdentity {
-    begin: &'static str,
-    pub(in super::super) causation: Option<(String, String)>,
-    principal: wamn_identity_protocol::PrincipalId,
-    params: Vec<Option<String>>,
-    schema: Option<String>,
-    statement_timeout_ms: u32,
-    read: bool,
+    batch: String,
     class: AuthorityClass,
 }
 
@@ -69,28 +61,16 @@ impl BoundIdentity {
         conn: &mut sqlx::PgConnection,
     ) -> Result<String, PgError> {
         async {
-            sqlx::query(sqlx::AssertSqlSafe((self.begin).to_string()))
-                .execute(&mut *conn)
+            // Simple protocol permits BEGIN and setup in one round trip. Every
+            // value is escaped with PostgreSQL's literal rules before batching.
+            let rows = sqlx::raw_sql(sqlx::AssertSqlSafe(self.batch.as_str()))
+                .fetch_all(conn)
                 .await
-                .map_err(|e| map_pg_error(&e))?;
-            let mut query = sqlx::query_scalar::<_, String>(IDENTITY_SQL).bind(self.principal);
-            for value in &self.params {
-                query = query.bind(value);
-            }
-            let xid = query.fetch_one(&mut *conn).await.map_err(|e| map_pg_error(&e))?;
-            if self.read {
-                sqlx::query("SET TRANSACTION READ ONLY")
-                    .execute(&mut *conn).await.map_err(|e| map_pg_error(&e))?;
-            }
-            sqlx::query("SELECT set_config('statement_timeout', $1, true), set_config('search_path', COALESCE($2, current_setting('search_path')), true)")
-                .bind(self.statement_timeout_ms.to_string())
-                .bind(&self.schema)
-                .execute(&mut *conn).await.map_err(|e| map_pg_error(&e))?;
-            if let Some((statement, json)) = &self.causation {
-                sqlx::query(sqlx::AssertSqlSafe(statement.clone()))
-                    .bind(json).execute(&mut *conn).await.map_err(|e| map_pg_error(&e))?;
-            }
-            Ok(xid)
+                .map_err(|error| map_pg_error(&error))?;
+            rows.first()
+                .ok_or(sqlx::Error::RowNotFound)
+                .and_then(|row| row.try_get(0))
+                .map_err(|error| map_pg_error(&error))
         }
         .instrument(tracing::info_span!(
             "wamn.postgres.bind_identity",
@@ -158,16 +138,6 @@ impl WamnPostgres {
         let principal = user_id.ok_or_else(|| {
             PgError::QueryError(("55000".to_owned(), "actor-required".to_owned()))
         })?;
-        let params = vec![
-            Some(role.unwrap_or_default().to_owned()),
-            Some(
-                application
-                    .map_or("", wamn_catalog::ApplicationName::as_str)
-                    .to_owned(),
-            ),
-            operation.map(ToString::to_string),
-            runner.map(str::to_owned),
-        ];
         // The isolation level is stated, not inherited from a session default:
         // the write log's retry reads the identity that its insert waited on, and
         // only a fresh READ COMMITTED snapshot sees it
@@ -178,16 +148,34 @@ impl WamnPostgres {
         } else {
             BEGIN_READ_COMMITTED
         };
-        let causation = run.filter(|_| !read).map(prepare_causation);
-        Ok(BoundIdentity {
-            begin,
-            causation,
-            principal: *principal,
-            params,
-            schema: schema.map(str::to_owned),
-            statement_timeout_ms,
-            read,
-            class,
-        })
+        let operation = operation.map(|operation| escape::escape_literal(operation.as_str()));
+        let runner = runner.map(escape::escape_literal);
+        let schema = schema.map(escape::escape_literal);
+        let mut batch = format!(
+            "{begin}; INSERT INTO platform.tx_identity \
+             (xid, principal_id, role, application, operation, runner) \
+             VALUES (pg_current_xact_id(), '{principal}'::uuid, {role}, {application}, {operation}, {runner}) \
+             RETURNING pg_current_xact_id()::text;",
+            role = escape::escape_literal(role.unwrap_or_default()),
+            application = escape::escape_literal(
+                application.map_or("", wamn_catalog::ApplicationName::as_str)
+            ),
+            operation = operation.as_deref().unwrap_or("NULL"),
+            runner = runner.as_deref().unwrap_or("NULL"),
+        );
+        if read {
+            batch.push_str("SET TRANSACTION READ ONLY;");
+        }
+        write!(
+            batch,
+            "SELECT set_config('statement_timeout', '{statement_timeout_ms}', true), \
+             set_config('search_path', COALESCE({}, current_setting('search_path')), true);",
+            schema.as_deref().unwrap_or("NULL"),
+        )
+        .expect("writing transaction setup to String cannot fail");
+        if let Some(run) = run.filter(|_| !read) {
+            batch.push_str(&causation_sql(run));
+        }
+        Ok(BoundIdentity { batch, class })
     }
 }

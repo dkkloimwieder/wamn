@@ -22,6 +22,7 @@ use wash_runtime::plugin;
 use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::washlet::AttachedHostControl;
 
+mod authentication;
 mod commands;
 mod projects;
 
@@ -495,6 +496,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let projects = Arc::new(projects::Projects::default());
     let credentials = Arc::new(projects::Credentials(Arc::clone(&projects)));
     let postgres = Arc::new(WamnPostgres::with_provider(credentials));
+    postgres.set_authorization_store(Arc::new(authentication::Authorization::new(
+        Arc::downgrade(&postgres),
+    )));
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let authentication = Arc::new(projects::Authentication(Arc::clone(&projects)));
     let host_config = HostConfig {

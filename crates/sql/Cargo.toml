@@ -19,6 +19,7 @@ async-trait = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 futures-util = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
+postgres-protocol = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
@@ -40,7 +41,6 @@ wamn-scalar = { workspace = true }
 wash-runtime = { workspace = true }
 
 [dev-dependencies]
-postgres-protocol = { workspace = true }
 hmac.workspace = true
 jsonwebtoken.workspace = true
 http-route = { path = "../../guests/http-route" }
