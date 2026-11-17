@@ -12,9 +12,13 @@ impl From<ConnectionError> for Refusal {
         if matches!(error.code, "database_error" | "store_error") {
             Self::Failed(error.into())
         } else {
+            let mut detail = json!({"field":error.field});
+            if let Some(reason) = error.reason() {
+                detail["reason"] = json!(reason);
+            }
             Self::Declared {
                 code: error.code,
-                detail: json!({"field":error.field}),
+                detail,
             }
         }
     }

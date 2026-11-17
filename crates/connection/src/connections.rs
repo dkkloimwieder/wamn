@@ -15,7 +15,20 @@ pub struct ConnectionError {
 
 impl fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.code, self.field)
+        write!(f, "{}: {}", self.code, self.field)?;
+        if let Some(reason) = self.reason() {
+            write!(f, ": {reason}")?;
+        }
+        Ok(())
+    }
+}
+
+impl ConnectionError {
+    /// Explain an operator limitation that the caller can resolve with a hostname.
+    pub fn reason(&self) -> Option<&'static str> {
+        (self.code == "ipv6_authority_not_supported").then_some(
+            "the operator CRD's allowedHosts pattern has no bracketed IPv6 form; give a hostname that resolves to the device",
+        )
     }
 }
 impl std::error::Error for ConnectionError {

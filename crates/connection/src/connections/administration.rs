@@ -16,6 +16,22 @@ fn store_error(source: wamn_kubernetes::Error) -> ConnectionError {
     }
 }
 
+/// Require one hostname or IPv4 address and port that the operator can admit.
+pub fn validate_wasm_authority(value: &str) -> Result<(), ConnectionError> {
+    use wash_runtime::host::allowed_hosts::AllowedHost;
+
+    let Ok(AllowedHost::Authority(authority)) = value.parse::<AllowedHost>() else {
+        return Err(refuse("invalid_input", "authority"));
+    };
+    if authority.host().contains(':') {
+        return Err(refuse("ipv6_authority_not_supported", "authority"));
+    }
+    if authority.port_u16().is_none() || value.contains('@') || value.trim() != value {
+        return Err(refuse("invalid_input", "authority"));
+    }
+    Ok(())
+}
+
 /// Validate the non-secret request shape before any database call.
 pub fn validate_request(operation: &str, request: &Value) -> Result<(), ConnectionError> {
     let object = request
@@ -157,30 +173,21 @@ pub async fn execute(
             .bind(context["integration_type"].as_str()).bind(context["auth_type"].as_str()).fetch_optional(&mut *system).await?;
         let metadata = metadata.ok_or_else(|| refuse("invalid_input", "auth_type"))?;
         let authority = if operation == "connection.write" {
-            match (
-                metadata["runtime_type"].as_str(),
-                requested_authority.as_ref(),
-            ) {
-                (Some("wasm"), Some(Value::String(value))) => {
-                    use wash_runtime::host::allowed_hosts::AllowedHost;
-                    if !matches!(
-                        value.parse::<AllowedHost>(),
-                        Ok(AllowedHost::Authority(authority))
-                            if authority.port_u16().is_some()
-                                && !value.contains('@')
-                                && value.trim() == value
-                    ) {
-                        return Err(refuse("invalid_input", "authority"));
-                    }
-                    Some(value.as_str())
-                }
-                (Some("wasm"), _) => return Err(refuse("invalid_input", "authority")),
-                (_, None | Some(Value::Null)) => None,
+            match requested_authority.as_ref() {
+                Some(Value::String(value)) => Some(value.as_str()),
+                None | Some(Value::Null) => None,
                 _ => return Err(refuse("invalid_input", "authority")),
             }
         } else {
             context["authority"].as_str()
         };
+        if metadata["runtime_type"] == "wasm" {
+            validate_wasm_authority(
+                authority.ok_or_else(|| refuse("invalid_input", "authority"))?,
+            )?;
+        } else if authority.is_some() {
+            return Err(refuse("invalid_input", "authority"));
+        }
         if !new && context["authority"].as_str() != authority {
             return Err(refuse("immutable_field", "authority"));
         }

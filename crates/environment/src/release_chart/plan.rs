@@ -126,6 +126,8 @@ pub fn roles(
                     .authority
                     .as_deref()
                     .context("wasm connection has no fixed authority")?;
+                wamn_connection::connections::administration::validate_wasm_authority(authority)
+                    .with_context(|| format!("wasm connection {}", binding.alias))?;
                 integrations.entry(&binding.alias).or_insert_with(|| {
                     serde_json::json!({
                         "name": binding.alias,
