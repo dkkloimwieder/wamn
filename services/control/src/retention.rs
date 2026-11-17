@@ -8,16 +8,19 @@ async fn prune_identities(
 ) -> anyhow::Result<()> {
     // Bound credential lookup, connection establishment, role selection and delete.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let configuration = scope.configuration(input)?;
+        let configuration = if scope == wamn_provision::migrations::MigrationDatabase::Project {
+            wamn_provision::workload_role::platform_configuration(input)?
+        } else {
+            scope.configuration(input)?
+        };
         let mut connection = wamn_postgres::connect(&configuration).await?;
-        scope.require_login(&mut connection).await?;
+        if scope == wamn_provision::migrations::MigrationDatabase::System {
+            scope.require_login(&mut connection).await?;
+        }
         let mut transaction = connection.begin().await?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "SET LOCAL ROLE {}; SET LOCAL statement_timeout = '5s'",
-            scope.owner_role()
-        )))
-        .execute(&mut *transaction)
-        .await?;
+        sqlx::raw_sql("SET LOCAL statement_timeout = '5s'")
+            .execute(&mut *transaction)
+            .await?;
         sqlx::query(
             "DELETE FROM platform.tx_identity WHERE xid < pg_snapshot_xmin(pg_current_snapshot())",
         )

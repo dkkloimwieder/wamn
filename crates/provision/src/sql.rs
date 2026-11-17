@@ -14,12 +14,12 @@ mod database_grants;
 
 pub use database::{
     PLATFORM_EXTENSIONS, create_database_named_sql, drop_database_named_sql,
-    ensure_db_owner_role_sql, install_platform_extensions_sql, set_database_owner_sql,
+    install_platform_extensions_sql, set_database_owner_sql,
 };
 
-pub(crate) use credentials::ensure_acl_role_sql;
 pub use credentials::{
-    ensure_workload_acl_role_sql, grant_dynamic_sql_surface_sql, grant_workload_login_sql,
+    ensure_workload_acl_role_sql, grant_dynamic_sql_surface_sql, grant_platform_surface_sql,
+    grant_workload_login_sql,
 };
 
 #[doc(inline)]
@@ -36,29 +36,23 @@ pub use cdc::{
     upsert_cdc_exclusion_map_sql, upsert_entity_map_sql,
 };
 
-use crate::name::{APP_ROLE, DB_OWNER_ROLE};
-use crate::workload_role::{
-    PLATFORM_GROUP_ROLE, WorkloadRoleFamily,
-};
+use crate::workload_role::WorkloadRoleFamily;
 pub(crate) use postgres_protocol::escape::escape_identifier;
 use postgres_protocol::escape::escape_literal;
 
-/// Create the two SQL privilege roles before installing project schemas.
-///
-/// Guest sessions authenticate as targeted [`WorkloadRoleFamily::App`]
-/// generations and inherit this role's grants. The stable role therefore
-/// carries no verifier and cannot authenticate or inherit memberships itself.
-/// The shared bootstrap lock serializes cooperative appliers; the exception arm
-/// hardens the role created by a concurrent non-cooperative applier. Callers
-/// must commit this statement before applying
-/// [`drain_app_role_sessions_sql`]. That boundary prevents a new shared-role
-/// login from racing the drain while `NOLOGIN` is still uncommitted.
+/// Create shared project roles before selecting the database owner.
+pub fn ensure_project_roles_sql() -> &'static str {
+    include_str!("../../../deploy/sql/project-roles.sql")
+}
+
+/// Create shared system roles before selecting the database owner.
+pub fn ensure_system_roles_sql() -> &'static str {
+    include_str!("../../../deploy/sql/system-roles.sql")
+}
+
+/// Create the shared project privilege roles before installing project schemas.
 pub fn ensure_app_acl_role_sql() -> String {
-    format!(
-        "{} {}",
-        ensure_acl_role_sql(APP_ROLE),
-        ensure_acl_role_sql("wamn_query")
-    )
+    ensure_project_roles_sql().to_owned()
 }
 
 /// Catalog relations read by callable-HTTP connection authorization.
@@ -205,81 +199,9 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 18] = [
 /// The `run_queue` columns an event or schedule admission writes. The FIFO position, the
 /// crash budget and the lease take their defaults.
 pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 1] = ["run_id"];
-/// Idempotently create or harden [`PLATFORM_GROUP_ROLE`], the shared NOLOGIN
-/// group every non-guest project-base-grants arm targets (`wamn-0h0g.22.17`).
-///
-/// EXCEPTION-GUARDED, not bare `IF NOT EXISTS`. Roles are CLUSTER-global, so two
-/// appliers racing on a cluster where the role is absent both take the `THEN`
-/// branch and the loser gets `duplicate_object`. The advisory lock serializes
-/// appliers that take it; the handler covers the ones that do not.
-///
-/// No grants, no ownership, `NOBYPASSRLS`: the role's whole purpose is to be
-/// NAMED by a policy's `TO` clause. What a platform family may actually reach
-/// stays its own table grants.
+/// Create the shared project privilege roles, including the platform group.
 pub fn ensure_platform_group_role_sql() -> String {
-    ensure_acl_role_sql(PLATFORM_GROUP_ROLE)
-}
-
-/// Converge one family's stable ACL role onto (or off) [`PLATFORM_GROUP_ROLE`].
-///
-/// # `INHERIT TRUE` is spelled, and omitting it fails SILENTLY
-///
-/// [`ensure_workload_acl_role_sql`] mints every stable ACL role `NOINHERIT`. In
-/// PostgreSQL 16+ a role's `rolinherit` supplies the DEFAULT `INHERIT` option
-/// for memberships granted TO it, and RLS role matching walks `pg_auth_members`
-/// by that PER-EDGE option — so a bare `GRANT wamn_platform TO
-/// wamn_run_retention` lands `inherit_option = false` and the two-hop chain
-/// (generation login -> stable ACL role -> `wamn_platform`) dies. Nothing
-/// raises: the generation still holds its table grants, and the base policy
-/// simply matches no row. Measured on PostgreSQL 18.6 against the real files —
-/// bare grant reads 0 rows, `INHERIT TRUE` reads all of them.
-///
-/// `ADMIN FALSE, SET FALSE` mirror
-/// [`normalize_workload_generation_membership_sql`]: the edge confers policy
-/// membership and nothing else. `REVOKE` precedes the `GRANT` so a replay that
-/// finds a drifted edge replaces it instead of leaving it, and so a family that
-/// stops being platform-grain loses the arm on the next converge.
-/// # It does not ensure the ACL role
-///
-/// An ACL role's lifecycle belongs to its own builder. This function only
-/// touches the membership edge, behind an existence
-/// guard, so a caller that has not created the role yet gets a no-op rather than
-/// an error.
-pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
-    let acl_role = escape_identifier(family.acl_role());
-    let acl_role_lit = escape_literal(family.acl_role());
-    let group = escape_identifier(PLATFORM_GROUP_ROLE);
-    let group_lit = escape_literal(PLATFORM_GROUP_ROLE);
-    let edges = format!(
-        "SELECT FROM pg_auth_members m \
-           JOIN pg_roles g ON g.oid = m.roleid JOIN pg_roles r ON r.oid = m.member \
-          WHERE g.rolname = {group_lit} AND r.rolname = {acl_role_lit}"
-    );
-    // The edge changes only when it differs from the wanted one, so a converged
-    // cluster-wide role is not altered, which the provisioner could not do to a
-    // role that a superuser made (owner ruling of 2026-10-03 on wamn-zua8.3).
-    let (drift, grant) = if family.is_platform_grain() {
-        (
-            format!(
-                "NOT EXISTS ({edges} AND m.inherit_option AND NOT m.set_option \
-                                     AND NOT m.admin_option) \
-                 OR EXISTS ({edges} AND NOT (m.inherit_option AND NOT m.set_option \
-                                             AND NOT m.admin_option))"
-            ),
-            format!(" GRANT {group} TO {acl_role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;"),
-        )
-    } else {
-        (format!("EXISTS ({edges})"), String::new())
-    };
-    format!(
-        "{ensure_group} \
-         DO $platform_edge$ BEGIN \
-           IF EXISTS (SELECT FROM pg_roles WHERE rolname = {acl_role_lit}) AND ({drift}) THEN \
-             REVOKE {group} FROM {acl_role};{grant} \
-           END IF; \
-         END $platform_edge$;",
-        ensure_group = ensure_platform_group_role_sql(),
-    )
+    ensure_project_roles_sql().to_owned()
 }
 
 /// The application authorization relations the administration family reads and
@@ -369,7 +291,7 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// and environment grants of the org operations, and it reads the projects and
 /// environments those grants cover. The `project.create` route writes a
 /// project. It also stores encrypted OAuth tokens and pending authorizations.
-pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 15] = [
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 19] = [
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
     ("identity", "environment_roles", CONTROL_WRITE),
@@ -390,6 +312,10 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 15] = [
         "connection_principal",
         &["SELECT", "INSERT", "DELETE"],
     ),
+    ("registry", "integration_type", &["SELECT"]),
+    ("registry", "integration_type_version", &["SELECT"]),
+    ("registry", "integration_type_auth", &["SELECT"]),
+    ("registry", "auth_type", &["SELECT"]),
     ("registry", "target", &["SELECT"]),
     ("registry", "environments", &["SELECT"]),
     ("registry", "projects", &["SELECT", "INSERT"]),
@@ -416,6 +342,7 @@ pub const CONTROL_SCHEMAS: [&str; 2] = ["identity", "registry"];
 pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
     match family {
         WorkloadRoleFamily::Query => Some(grant_dynamic_sql_surface_sql()),
+        WorkloadRoleFamily::Platform => Some(grant_platform_surface_sql()),
         _ => None,
     }
 }

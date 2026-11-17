@@ -252,7 +252,7 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
 
     let plugin = Arc::new(WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(
-            ClassCredentials::default().with_class(AuthorityClass::ExecutorPlatform, runtime_url),
+            ClassCredentials::default().with_class(AuthorityClass::Platform, runtime_url),
         ),
         guest_pool_max_size: 8,
         platform_pool_max_size: 8,

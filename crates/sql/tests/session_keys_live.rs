@@ -275,7 +275,7 @@ async fn signer_backend_loss_before_commit_does_not_issue_token(pool: sqlx::PgPo
 }
 
 // Each test passes its own test database and holds the process lock, because
-// the system schema creates the cluster-wide wamn_system and wamn_db_owner roles.
+// the system schema creates the cluster-wide wamn_system role.
 async fn prepare_database(url: &str) -> (String, Client) {
     let mut admin = connect(url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(

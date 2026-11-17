@@ -21,29 +21,45 @@ pub fn embedded(target: MigrationDatabase) -> &'static Migrator {
 }
 
 impl MigrationDatabase {
-    /// The existing owner role whose privileges the managed login inherits.
-    pub const fn owner_role(self) -> &'static str {
+    /// Owner of the selected database.
+    pub fn owner_role(self, database: &str) -> String {
         match self {
-            Self::System => "wamn_system",
-            Self::Project => "wamn_db_owner",
+            Self::System => wamn_role::SYSTEM_ROLE.to_owned(),
+            Self::Project => crate::migration::login(database).to_string(),
         }
     }
 
     /// One bounded migration login for this database and platform scope.
     pub fn login(self, database: &str) -> wamn_identity_protocol::LoginName {
-        let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([
-            "platform-migration",
-            self.owner_role(),
-            database
-        ]));
-        wamn_registry::name::credential_login("wamn_platform_sql", &digest.hex()[..40])
+        match self {
+            Self::Project => crate::migration::login(database),
+            Self::System => {
+                let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([
+                    "platform-migration",
+                    wamn_role::SYSTEM_ROLE,
+                    database
+                ]));
+                wamn_registry::name::credential_login(
+                    wamn_role::SYSTEM_MIGRATION_ROLE,
+                    &digest.hex()[..40],
+                )
+            }
+        }
     }
 
     /// One native basic-auth Secret for the managed login.
     pub fn managed_role(self, database: &str) -> crate::connection::ManagedRole {
         let login = self.login(database);
         let secret = login.as_str().replace('_', "-");
-        crate::connection::managed_role(login, self.owner_role(), secret)
+        crate::connection::managed_role(
+            login,
+            if self == Self::System {
+                wamn_role::SYSTEM_ROLE
+            } else {
+                wamn_role::PLATFORM_ROLE
+            },
+            secret,
+        )
     }
 
     /// Project the managed credential without changing an explicit operator connection.
@@ -64,6 +80,9 @@ impl MigrationDatabase {
         self,
         connection: &mut sqlx::PgConnection,
     ) -> anyhow::Result<wamn_identity_protocol::LoginName> {
+        if self == Self::Project {
+            return crate::migration::require_login(connection).await;
+        }
         let (session, current, database, restricted, member): (
             wamn_identity_protocol::LoginName,
             wamn_identity_protocol::LoginName,
@@ -75,7 +94,7 @@ impl MigrationDatabase {
              NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls), \
              pg_has_role(session_user,$1,'USAGE') FROM pg_roles WHERE rolname=session_user",
         )
-        .bind(self.owner_role())
+        .bind(wamn_role::SYSTEM_ROLE)
         .fetch_one(connection)
         .await?;
         anyhow::ensure!(

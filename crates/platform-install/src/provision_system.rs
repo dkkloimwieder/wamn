@@ -118,11 +118,8 @@ pub async fn provision_apply(input: &str) -> anyhow::Result<()> {
         .context("database host is absent")?
         .trim_end_matches("-rw");
     let kubeconfig = std::env::var_os("KUBECONFIG").map_or_default(std::path::PathBuf::from);
-    let role = wamn_provision::connection::managed_role(
-        "wamn_apply".parse()?,
-        "wamn_db_owner",
-        "wamn-apply".into(),
-    );
+    let role =
+        wamn_provision::connection::managed_role(wamn_role::APPLY_ROLE.parse()?, "", "wamn-apply".into());
     crate::credentials::reconcile(
         input,
         &kubeconfig,
@@ -133,9 +130,6 @@ pub async fn provision_apply(input: &str) -> anyhow::Result<()> {
     )
     .await?;
     crate::credentials::wait_role(&mut connection, &role.name).await?;
-    sqlx::raw_sql(wamn_provision::apply::ensure_apply_role_sql())
-        .execute(&mut connection)
-        .await?;
     sqlx::raw_sql(wamn_provision::apply::APPLY_GRANTS_SQL)
         .execute(&mut connection)
         .await?;
@@ -246,14 +240,12 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
         }
 
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (sql::ensure_db_owner_role_sql()).to_string(),
+            sql::ensure_system_roles_sql(),
         ))
         .execute(&mut *admin)
-        .await
-        .map(drop)
-        .context("ensure the database-owner role that the record history grants name")?;
+        .await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            ("DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
+            ("DO $$ BEGIN EXECUTE format('ALTER DATABASE %I OWNER TO wamn_system', \
                                             current_database()); END $$;")
                 .to_string(),
         ))
@@ -273,10 +265,15 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
                 .map(drop)
                 .context("install the control store")?;
         }
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_provision::system_reader::grants_sql(),
+        ))
+        .execute(&mut *admin)
+        .await?;
         wamn_provision::migration::prepare_history(
             admin,
             wamn_registry::migrations::HISTORY_TABLE,
-            &"wamn_system".parse()?,
+            &wamn_role::SYSTEM_ROLE.parse()?,
         )
         .await?;
         sqlx::raw_sql("RESET ROLE")

@@ -105,8 +105,8 @@ impl ClassCredentials {
     pub fn every_class(url: impl Into<String>) -> Self {
         let url = url.into();
         let query = url::Url::parse(&url).ok().and_then(|mut input| {
-            let login = input.username().strip_prefix("wamn_app_")?;
-            let login = format!("wamn_query_{login}");
+            let login = input.username().strip_prefix(&format!("{}_", wamn_role::APP_ROLE))?;
+            let login = format!("{}_{login}", wamn_role::QUERY_ROLE);
             input.set_username(&login).ok()?;
             Some(String::from(input))
         });
@@ -650,11 +650,7 @@ mod tests {
         // The platform class is restricted to a project-environment: no project binding.
         assert!(
             provider
-                .resolve(
-                    &"billing".parse().unwrap(),
-                    AuthorityClass::ExecutorPlatform,
-                    None
-                )
+                .resolve(&"billing".parse().unwrap(), AuthorityClass::Platform, None)
                 .expect("platform resolution needs no project")
                 .is_some()
         );
@@ -681,11 +677,7 @@ mod tests {
 
         assert!(
             provider
-                .resolve(
-                    &"billing".parse().unwrap(),
-                    AuthorityClass::ExecutorPlatform,
-                    None
-                )
+                .resolve(&"billing".parse().unwrap(), AuthorityClass::Platform, None)
                 .expect("resolve billing")
                 .is_some(),
             "a listed project must still resolve"
@@ -694,7 +686,7 @@ mod tests {
             provider
                 .resolve(
                     &"not-provisioned".parse().unwrap(),
-                    AuthorityClass::ExecutorPlatform,
+                    AuthorityClass::Platform,
                     None
                 )
                 .expect("resolve unlisted")
@@ -711,7 +703,7 @@ mod tests {
             StaticCredentialProvider::default_only(Some(config("postgres://wamn_app_d:pw@db/d")));
         assert!(
             provider
-                .resolve(&DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
+                .resolve(&DEFAULT_PROJECT, AuthorityClass::Platform, None)
                 .expect("resolve default")
                 .is_some(),
             "the default project must resolve, or single-DB deployments break"
@@ -720,7 +712,7 @@ mod tests {
             provider
                 .resolve(
                     &"somethingelse".parse().unwrap(),
-                    AuthorityClass::ExecutorPlatform,
+                    AuthorityClass::Platform,
                     None
                 )
                 .expect("resolve other")

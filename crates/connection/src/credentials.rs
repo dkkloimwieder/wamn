@@ -79,9 +79,8 @@ pub async fn database_login(
 pub async fn apply_login(input: &str) -> anyhow::Result<String> {
     let mut connection = wamn_postgres::connect(input).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "{} DO $$ BEGIN IF to_regrole('wamn_apply') IS NULL THEN CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; ALTER ROLE wamn_apply PASSWORD 'database-interface-only'; {} {}",
-        wamn_provision::sql::ensure_db_owner_role_sql(),
-        wamn_provision::apply::ensure_apply_role_sql(),
+        "{} DO $$ BEGIN IF to_regrole('wamn_apply') IS NULL THEN CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; ALTER ROLE wamn_apply PASSWORD 'database-interface-only'; {}",
+        wamn_provision::sql::ensure_project_roles_sql(),
         wamn_provision::apply::APPLY_GRANTS_SQL,
     ))).execute(&mut connection).await?;
     let mut input = url::Url::parse(input)?;

@@ -8,10 +8,10 @@ use url::Url;
 
 use wamn_provision::sql;
 use wamn_provision::workload_role::{
-    PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType,
-    workload_login,
+    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_login,
 };
 use wamn_provision::{CONTROL_PORTABLE_STORE_SQL, SYSTEM_SCHEMA_SQL};
+use wamn_role::PLATFORM_ROLE as PLATFORM_GROUP_ROLE;
 
 const POSTGRES_INIT: &str = include_str!("../../../deploy/sql/postgres-init.sql");
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -51,7 +51,7 @@ fn psql(url: &str, script: &str) -> (bool, String, String) {
     let script = script.replace(
         "\\ir record-history.sql",
         include_str!("../../../deploy/sql/record-history.sql"),
-    );
+    ).replace("\\ir project-roles.sql", include_str!("../../../deploy/sql/project-roles.sql"));
     let mut child = Command::new("psql")
         .arg(url)
         .args([
@@ -331,7 +331,7 @@ fn build_control_plane(admin: &str) -> String {
              {db_owner}\n\
              CREATE DATABASE \"{CONTROL_DATABASE}\" OWNER wamn_system;\n\
              REVOKE CONNECT, TEMPORARY ON DATABASE \"{CONTROL_DATABASE}\" FROM PUBLIC;\n",
-            db_owner = sql::ensure_db_owner_role_sql(),
+            db_owner = sql::ensure_project_roles_sql(),
         ),
     );
     let mut control = Url::parse(admin).expect("the test server URL is a URL");

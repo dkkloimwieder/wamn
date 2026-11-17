@@ -215,9 +215,6 @@ fn relation_is_excluded(excluded_relations: &[(&str, &str)], schema: &str, table
             })
 }
 
-/// Application role shared with provisioning.
-pub const DATA_ACCESS_ROLE: &str = "wamn_app";
-
 const SCHEMAS_SQL: &str = "SELECT configured.schema_name, namespace.oid IS NOT NULL AS present FROM unnest($1::text[]) AS configured(schema_name) LEFT JOIN pg_catalog.pg_namespace namespace ON namespace.nspname = configured.schema_name";
 
 const RELATIONS_SQL: &str = "SELECT namespace.nspname::text AS schema_name, relation.relname::text AS relation_name FROM pg_catalog.pg_class AS relation JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace WHERE namespace.nspname = ANY($1::text[]) AND relation.relkind = 'r' ORDER BY 1, 2";

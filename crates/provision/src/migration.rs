@@ -1,52 +1,18 @@
 //! One restricted migration login per project database.
 
-use crate::{WorkloadRoleFamily, WorkloadRoleIdentity};
 use anyhow::ensure;
 
-pub const OWNER_ROLE: &str = "wamn_app_owner";
-pub const LOGIN_PREFIX: &str = "wamn_migration";
-
-/// Derive the single migration identity from the database and environment.
-pub fn login(
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    database: &str,
-) -> anyhow::Result<wamn_identity_protocol::LoginName> {
-    Ok(crate::workload_login(
-        WorkloadRoleFamily::Migration,
-        WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key,
-            database,
-        },
-    )?)
-}
-
-/// Public CNPG configuration for the migration role, with no borrowed owner password.
-/// Explicit operator connections must supply this role's own credential separately.
-pub fn configuration(
-    input: &str,
-    org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
-    environment: &wamn_registry::EnvName,
-) -> anyhow::Result<String> {
-    let input = wamn_postgres::configuration(input)?;
-    if !input.trim_start().starts_with('{') {
-        // Preserve the authenticated identity, password, and native TLS parameters.
-        return Ok(input.into_owned());
-    }
-    let mut config: wamn_postgres::ConnectionConfig = serde_json::from_str(&input)?;
-    let key = wamn_registry::project_env_key(org, project, environment);
-    config.username = login(&key, &config.database)?;
-    config.credentials = wamn_postgres::SecretRef {
-        namespace: org.to_string(),
-        name: crate::workload_secret_name(WorkloadRoleFamily::Migration, org, project, environment),
-    };
-    config.to_json()
+/// Derive the single owner login from its project database.
+pub fn login(database: &str) -> wamn_identity_protocol::LoginName {
+    wamn_registry::name::credential_login(
+        wamn_role::MIGRATION_ROLE,
+        &crate::workload_role::database_identity_hash(wamn_role::MIGRATION_ROLE, database),
+    )
 }
 
 /// Check the authenticated session before any package-controlled SQL runs.
 pub async fn require_login(
     connection: &mut sqlx::PgConnection,
-    project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<wamn_identity_protocol::LoginName> {
     let (session, current, database, restricted): (
         wamn_identity_protocol::LoginName,
@@ -60,17 +26,15 @@ pub async fn require_login(
     )
     .fetch_one(&mut *connection)
     .await?;
-    let expected = login(project_env_key, &database)?;
+    let expected = login(&database);
     ensure!(
         session == expected && current == session && restricted,
         "package SQL requires the direct restricted migration login"
     );
-    let protected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM pg_event_trigger WHERE evtname='wamn_migration_privileges' AND evtevent='ddl_command_start' AND evtenabled IN ('O','A') AND evttags @> ARRAY['GRANT','REVOKE','ALTER DEFAULT PRIVILEGES']::text[])")
-        .fetch_one(connection).await?;
-    ensure!(
-        protected,
-        "project migration privilege protection is absent"
-    );
+    let owns_database: bool = sqlx::query_scalar(
+        "SELECT datdba = (SELECT oid FROM pg_roles WHERE rolname = session_user) FROM pg_database WHERE datname = current_database()",
+    ).fetch_one(&mut *connection).await?;
+    ensure!(owns_database, "migration login must own its database");
     Ok(session)
 }
 
@@ -83,49 +47,36 @@ pub fn history_table(
     format!("wamn_history.migrations_{}", &digest.hex()[..40])
 }
 
-/// Grant runtime access to objects created by the package migration login.
-pub(crate) fn default_privileges_sql(login: &wamn_identity_protocol::LoginName) -> String {
-    let role = postgres_protocol::escape::escape_identifier(login.as_str());
-    format!(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE ALL ON TABLES FROM wamn_app; \
-         ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO wamn_app; \
-         ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE ALL ON TABLES FROM wamn_query; \
-         ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
-    )
-}
-
-/// Grant runtime use and migration access on one model schema.
+/// Grant runtime use and default access on one application model schema.
 pub async fn grant_model_schema_access(
     connection: &mut sqlx::PgConnection,
     login: &wamn_identity_protocol::LoginName,
     schema: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "GRANT USAGE ON SCHEMA {schema} TO wamn_app, wamn_query; \
-         GRANT USAGE, CREATE ON SCHEMA {schema} TO {login}; \
-         ALTER DEFAULT PRIVILEGES FOR ROLE {login} IN SCHEMA {schema} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO wamn_app; \
-         ALTER DEFAULT PRIVILEGES FOR ROLE {login} IN SCHEMA {schema} GRANT SELECT ON TABLES TO wamn_query",
+        "GRANT USAGE ON SCHEMA {schema} TO {app}, {query}, {platform}; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {login} IN SCHEMA {schema} \
+           GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {app}; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {login} IN SCHEMA {schema} \
+           GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {app}; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {login} IN SCHEMA {schema} \
+           GRANT SELECT ON TABLES TO {query}; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {login} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;",
         schema = postgres_protocol::escape::escape_identifier(schema),
         login = postgres_protocol::escape::escape_identifier(login.as_str()),
+        app = postgres_protocol::escape::escape_identifier(wamn_role::APP_ROLE),
+        query = postgres_protocol::escape::escape_identifier(wamn_role::QUERY_ROLE),
+        platform = postgres_protocol::escape::escape_identifier(wamn_role::PLATFORM_ROLE),
     )))
     .execute(connection)
     .await?;
     Ok(())
 }
 
-/// Trusted grants required by compiler-generated history and proper foreign keys.
+/// Register the actor for package migration sessions.
 pub fn grants_sql(login: &wamn_identity_protocol::LoginName) -> String {
-    let role = postgres_protocol::escape::escape_identifier(login.as_str());
     format!(
-        "GRANT USAGE, CREATE ON SCHEMA wamn_history TO {role}; \
-        GRANT USAGE ON SCHEMA platform, wamn_authority TO {role}; \
-        GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO {role}; \
-        INSERT INTO platform.login_principal(login,principal_id) VALUES ({login}, '{principal}') ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id; \
-        GRANT REFERENCES ON platform.file, platform.external_system, platform.\"user\" TO {role}; \
-        GRANT EXECUTE ON FUNCTION wamn_history.stamp_row(), \
-          wamn_history.create_history_table(text,text,boolean), \
-          wamn_history.row_image(record), wamn_history.timestamptz_image(timestamptz), \
-          wamn_history.log_row_change() TO {role};",
+        "INSERT INTO platform.login_principal(login,principal_id) VALUES ({login}, '{principal}') ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id;",
         login = postgres_protocol::escape::escape_literal(login.as_str()),
         principal = crate::PlatformComponent::ApplyPackage.principal_id(),
     )

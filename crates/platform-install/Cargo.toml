@@ -11,6 +11,7 @@ test-util = []
 ops = ["wamn-provision/ops"]
 
 [dependencies]
+wamn-role.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 hex.workspace = true

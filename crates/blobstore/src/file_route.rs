@@ -417,7 +417,7 @@ impl FileRoutes {
         let mut client = wamn_postgres::connect(url)
             .await
             .map_err(|error| failed("administration", error))?;
-        let allowed: bool = sqlx::query("SELECT NOT rolsuper AND pg_has_role(current_user, 'wamn_administration', 'MEMBER') FROM pg_roles WHERE rolname = current_user").fetch_one(&mut client).await?.try_get(0)?;
+        let allowed: bool = sqlx::query("SELECT NOT rolsuper AND pg_has_role(current_user, $1, 'MEMBER') FROM pg_roles WHERE rolname = current_user").bind(wamn_identity_protocol::AuthorityClass::Platform.acl_role()).fetch_one(&mut client).await?.try_get(0)?;
         if !allowed {
             return Err(refused(FileRefusal::PermissionDenied, "administration"));
         }

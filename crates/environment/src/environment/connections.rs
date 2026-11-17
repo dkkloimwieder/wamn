@@ -39,7 +39,7 @@ pub async fn write(
             let url=super::analyse::project_url(platform,document,&row).await?;
             let mut client=super::analyse::connect_project(&url).await?;
             let mut system=wamn_postgres::connect(&platform.system_database_url).await?;
-            sqlx::raw_sql("SET ROLE wamn_system").execute(&mut system).await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE {}", wamn_role::SYSTEM_ROLE))).execute(&mut system).await?;
             let mut tx=client.begin().await?;
             let caller=wamn_provision::PlatformComponent::Provisioning.principal_id();
             sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','','connection.write')").bind(caller).execute(&mut *tx).await?;

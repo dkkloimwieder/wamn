@@ -92,7 +92,13 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         project: &"fixture".parse().unwrap(),
         env: &"dev".parse().unwrap(),
     };
-    fill(system.as_str(), project.as_str(), target).await?;
+    fill(
+        system.as_str(),
+        project.as_str(),
+        "https://identity.example.invalid",
+        target,
+    )
+    .await?;
     let mut client = wamn_postgres::connect(project.as_str()).await?;
     for component in wamn_identity_protocol::PlatformComponent::ALL {
         let row = sqlx::query("SELECT type='platform' AND email=$2 AND created_by=$3 FROM platform.\"user\" WHERE id=$1").bind(component.principal_id()).bind(format!("{}@example.invalid",component.as_str())).bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id()).fetch_one(&mut client).await?;
@@ -111,7 +117,13 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         .bind(service.to_string())
         .fetch_one(&mut client)
         .await?;
-    fill(system.as_str(), project.as_str(), target).await?;
+    fill(
+        system.as_str(),
+        project.as_str(),
+        "https://identity.example.invalid",
+        target,
+    )
+    .await?;
     let preserved: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
         "SELECT created_at, updated_at FROM platform.\"user\" WHERE id=$1::text::uuid",
     )
@@ -134,7 +146,13 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     )
     .await?;
     authority.commit().await?;
-    fill(system.as_str(), project.as_str(), target).await?;
+    fill(
+        system.as_str(),
+        project.as_str(),
+        "https://identity.example.invalid",
+        target,
+    )
+    .await?;
     let removed: bool = sqlx::query_scalar(
         "SELECT NOT EXISTS(SELECT FROM platform.\"user\" WHERE id=$1::text::uuid)",
     )

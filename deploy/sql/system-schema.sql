@@ -27,9 +27,9 @@
 -- created_by, updated_at, and updated_by as NOT NULL columns, and a
 -- wamn_record_history_stamp trigger that calls wamn_history.stamp_row(). An applier
 -- installs deploy/sql/record-history.sql first. The SYSTEM_SCHEMA_SQL
--- composition in wamn-provision carries it. That file grants to
--- wamn_db_owner, so an applier that runs as wamn_system creates that role
--- first. Every write to these relations binds a transaction principal: the identity issuer
+-- composition in wamn-provision carries it. The system database owner,
+-- wamn_system, owns its record history helpers. Every write to these relations
+-- binds a transaction principal: the identity issuer
 -- and wamn bind wamn:provisioning, and test fixtures bind a principal.
 --
 -- THE GENERIC DEPLOYMENT MODEL (D18, wamn-8df.3;
@@ -1169,7 +1169,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, DELETE ON registry.connection_principal TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control";   DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$;
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, DELETE ON registry.connection_principal TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control";   DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$;
   END IF;
 END $control_surface$;
 
@@ -1180,9 +1180,9 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
 $$;
 REVOKE ALL ON FUNCTION registry.control_principal(uuid) FROM PUBLIC;
 DO $identity_membership_read$ BEGIN
-    IF to_regrole('wamn_identity_reader') IS NOT NULL THEN
-        GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_identity_reader;
-        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid) TO wamn_identity_reader;
+    IF to_regrole('wamn_system_reader') IS NOT NULL THEN
+        GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_system_reader;
+        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid) TO wamn_system_reader;
     END IF;
 END $identity_membership_read$;
 
@@ -1245,7 +1245,7 @@ REVOKE ALL ON FUNCTION identity.has_project_access(uuid,text,text,text) FROM PUB
 DO $authority_grants$
 DECLARE reader text;
 BEGIN
-    FOREACH reader IN ARRAY ARRAY['wamn_identity_reader','wamn_identity_issuer','wamn_control','wamn_system','wamn_apply'] LOOP
+    FOREACH reader IN ARRAY ARRAY['wamn_system_reader','wamn_identity_issuer','wamn_control','wamn_system','wamn_apply'] LOOP
         IF to_regrole(reader) IS NOT NULL THEN
             EXECUTE format('GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO %I',reader);
         END IF;

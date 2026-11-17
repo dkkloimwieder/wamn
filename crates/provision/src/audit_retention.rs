@@ -3,7 +3,7 @@
 //! A relation keeps its log entries for n whole days when its
 //! `wamn_record_history_log` trigger argument is `P<n>D`. `pg_trigger` is the one
 //! retention source. The retention verb reads it to find the history tables to
-//! prune. apply-package reads it to grant [`AUDIT_RETENTION_ROLE`] exactly the
+//! prune. apply-package reads it to grant `wamn_platform` exactly the
 //! privileges that the verb needs, and the provisioning verifier reads it to
 //! test those grants.
 //! The same job prunes all write-log claims after 30 days. The write log provides idempotency protection.

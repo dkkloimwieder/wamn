@@ -16,17 +16,6 @@
 
 use std::fmt;
 
-/// Stable database role for wamn_app.
-pub const APP_ROLE: &str = "wamn_app";
-/// Stable database role for wamn_query.
-pub const QUERY_ROLE: &str = "wamn_query";
-/// Stable database role for wamn_executor_platform.
-pub const EXECUTOR_PLATFORM_ROLE: &str = "wamn_executor_platform";
-/// Stable database role for wamn_http_admitter.
-pub const HTTP_ADMITTER_ROLE: &str = "wamn_http_admitter";
-/// Stable database role for wamn_administration.
-pub const ADMINISTRATION_ROLE: &str = "wamn_administration";
-
 /// Read the current operation user's membership in the bound ACL role.
 ///
 /// A missing role returns false. This query grants no authority.
@@ -42,33 +31,20 @@ pub enum AuthorityClass {
     GuestSql,
     /// Dynamic SQL reads use a separate SELECT-only login.
     DynamicSql,
-    /// Executor run-state and catalog work.
-    ExecutorPlatform,
-    /// Connection-HTTP authorization and effect-snapshot operations.
-    CallableHttp,
-    /// Host-run administration routes and their writes of the application
-    /// authorization relations (docs/architecture/data-access.md#actors).
-    Administration,
+    /// All host platform work, including retention.
+    Platform,
 }
 
 impl AuthorityClass {
     /// Every class, in declaration order, for table-driven tests.
-    pub const ALL: [Self; 5] = [
-        Self::GuestSql,
-        Self::DynamicSql,
-        Self::ExecutorPlatform,
-        Self::CallableHttp,
-        Self::Administration,
-    ];
+    pub const ALL: [Self; 3] = [Self::GuestSql, Self::DynamicSql, Self::Platform];
 
     /// The stable NOLOGIN ACL role this authority's generations inherit.
     pub const fn acl_role(self) -> &'static str {
         match self {
-            Self::GuestSql => APP_ROLE,
-            Self::DynamicSql => QUERY_ROLE,
-            Self::ExecutorPlatform => EXECUTOR_PLATFORM_ROLE,
-            Self::CallableHttp => HTTP_ADMITTER_ROLE,
-            Self::Administration => ADMINISTRATION_ROLE,
+            Self::GuestSql => wamn_role::APP_ROLE,
+            Self::DynamicSql => wamn_role::QUERY_ROLE,
+            Self::Platform => wamn_role::PLATFORM_ROLE,
         }
     }
 
@@ -80,9 +56,7 @@ impl AuthorityClass {
         match self {
             Self::GuestSql => "guest-sql",
             Self::DynamicSql => "dynamic-sql",
-            Self::ExecutorPlatform => "executor-platform",
-            Self::CallableHttp => "callable-http",
-            Self::Administration => "administration",
+            Self::Platform => "platform",
         }
     }
 }

@@ -32,7 +32,7 @@ async fn connect(url: &str) -> Client {
 /// Install the catalog and the application minimum on a clean database.
 async fn provision(admin: &mut Client) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (sql::ensure_db_owner_role_sql()).to_string(),
+        (sql::ensure_project_roles_sql()).to_string(),
     ))
     .execute(&mut *admin)
     .await
@@ -40,7 +40,7 @@ async fn provision(admin: &mut Client) {
     .expect("ensure the package-owner role");
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("DO $grant$ BEGIN \
-               EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); \
+               EXECUTE format('GRANT CREATE ON DATABASE %I TO CURRENT_USER', current_database()); \
              END $grant$;")
             .to_string(),
     ))
@@ -139,14 +139,9 @@ fn write_package(root: &Path) {
 /// stands in for one under a digest of its own bytes.
 async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     apply_package::apply_package_schema(ApplyPackageRequest {
-        migration_database_url: wamn_provision::test_database::package_migration_input(
-            &url,
-            &"record-retention-t".parse().unwrap(),
-            &"fixture".parse().unwrap(),
-            &"dev".parse().unwrap(),
-        )
-        .await
-        .unwrap(),
+        migration_database_url: wamn_provision::test_database::package_migration_input(&url)
+            .await
+            .unwrap(),
         component_source: None,
         package: wamn_environment::apply_package::PackageRoot {
             path: package.to_path_buf(),

@@ -12,17 +12,16 @@ use std::fmt;
 use wamn_identity_protocol::{ADMIN_ROLE, PrincipalId};
 use wamn_identity::{IdentityError, IdentityErrorType, database_error};
 
-/// Whether the project database has its platform rows, which `env apply`
-/// writes first.
+/// Whether the project database has its schema's platform seed rows.
 const PLATFORM_ROWS_SQL: &str =
     "SELECT EXISTS (SELECT FROM platform.\"user\" WHERE type = 'platform')";
 
 const USER_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
-    (id, type, email, display_name) VALUES ($1, 'user', $2, $3) \
+    (id, issuer, sub, type, email, display_name) VALUES ($1, $2, $3, 'user', $4, $5) \
     ON CONFLICT (id) DO NOTHING";
 
 const SERVICE_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
-    (id, type, email, display_name) VALUES ($1, 'service', $2, $3)";
+    (id, issuer, sub, type, email, display_name) VALUES ($1, $2, $3, 'service', $4, $5)";
 
 const ROLE_SQL: &str = "INSERT INTO platform.role (name) VALUES ($1) \
     ON CONFLICT (name) DO NOTHING";
@@ -87,10 +86,13 @@ pub async fn write_environment_status(
 /// Write the user row of `user`, and keep a row that exists.
 pub async fn write_user(
     client: &mut sqlx::PgConnection,
+    issuer: &str,
     user: ApplicationUser<'_>,
 ) -> Result<(), IdentityError> {
     sqlx::query(USER_ROW_SQL)
         .bind(user.principal_id)
+        .bind(issuer)
+        .bind(user.principal_id.to_string())
         .bind(user.email)
         .bind(user.display_name)
         .execute(&mut *client)
@@ -103,10 +105,13 @@ pub async fn write_user(
 /// Write the user row of the service principal `service`.
 pub async fn write_service(
     client: &mut sqlx::PgConnection,
+    issuer: &str,
     service: ApplicationUser<'_>,
 ) -> Result<(), IdentityError> {
     sqlx::query(SERVICE_ROW_SQL)
         .bind(service.principal_id)
+        .bind(issuer)
+        .bind(service.principal_id.to_string())
         .bind(service.email)
         .bind(service.display_name)
         .execute(&mut *client)
@@ -509,6 +514,7 @@ pub async fn project_authority(
     target: &mut sqlx::PgConnection,
     coordinate: ApplicationTarget<'_>,
     principal: &PrincipalId,
+    issuer: &str,
 ) -> Result<(), IdentityError> {
     wamn_identity::org::lock_membership(system, principal, coordinate.org).await?;
     let row = sqlx::query("SELECT p.type, p.status, p.email, p.display_name, p.subject, \
@@ -542,6 +548,7 @@ pub async fn project_authority(
             let email = format!("{}@{domain}", row.get::<String, _>(4));
             write_service(
                 target,
+                issuer,
                 ApplicationUser {
                     principal_id: principal,
                     email: &email,
@@ -579,7 +586,7 @@ pub async fn project_authority(
         email: &email,
         display_name: &display_name,
     };
-    write_user(target, user).await
+    write_user(target, issuer, user).await
 }
 
 /// The explicit environment of one authority projection.

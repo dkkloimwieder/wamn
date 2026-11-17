@@ -11,8 +11,9 @@ use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsage
 use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio::process::Command;
-use wamn_provision::identity_role::{IDENTITY_ISSUER_ROLE, identity_issuer_login};
+use wamn_provision::identity_role::identity_issuer_login;
 use wamn_provision::sql::revoke_public_connect_base_grants_sql;
+use wamn_role::IDENTITY_ISSUER_ROLE;
 use wamn_identity_service::cli::Cli;
 use wamn_identity_service::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks};
@@ -98,12 +99,12 @@ async fn identity_https_has_only_public_jwks_and_health() {
         "fixture requires absent identity authority roles"
     );
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (wamn_provision::sql::ensure_db_owner_role_sql()).to_string(),
+        (wamn_provision::sql::ensure_project_roles_sql()).to_string(),
     ))
     .execute(&mut admin)
     .await
     .map(drop)
-    .expect("record history grants name wamn_db_owner");
+    .expect("install shared project roles");
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; \
          DROP SCHEMA IF EXISTS registry CASCADE; \

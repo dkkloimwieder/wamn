@@ -13,12 +13,11 @@ pub async fn reset_database(
     let mut system = wamn_postgres::connect(system_url).await?;
     let disposable = wamn_registry::deployment::disposable(&mut system, triple).await?;
     ensure!(disposable, "environment is not recorded as disposable");
-    let project_env_key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
     let mut client = wamn_postgres::connect(database_url).await?;
     let database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut client)
         .await?;
-    let login = wamn_provision::migration::login(&project_env_key, &database)?;
+    let login = wamn_provision::migration::login(&database);
     let mut tx = client.begin().await?;
     sqlx::raw_sql(crate::apply_package::LOCK_SQL)
         .execute(&mut *tx)
@@ -31,29 +30,37 @@ pub async fn reset_database(
     .execute(&mut *tx)
     .await?;
     let mut migration = wamn_postgres::connect(migration_url).await?;
-    let migration_login =
-        wamn_provision::migration::require_login(&mut migration, &project_env_key).await?;
+    let migration_login = wamn_provision::migration::require_login(&mut migration).await?;
     ensure!(
         migration_login == login,
         "migration and owner connections name different databases"
     );
-    // Generated history functions need CREATE on wamn_history independently of model schemas.
     let schemas: Vec<String> = sqlx::query_scalar(
-        "SELECT nspname::text FROM pg_namespace
-         WHERE nspowner='wamn_db_owner'::regrole AND nspname <> 'wamn_history'
-           AND has_schema_privilege($1,oid,'CREATE')",
+        "SELECT nspname::text FROM pg_namespace WHERE nspowner = (SELECT datdba FROM pg_database WHERE datname = current_database()) AND nspname NOT LIKE 'pg_%' AND nspname NOT IN ('public','information_schema','platform','wamn_authority','wamn_history','catalog','wamn_run') AND NOT EXISTS (SELECT FROM pg_depend WHERE classid='pg_namespace'::regclass AND objid=pg_namespace.oid AND deptype='e')",
     )
-    .bind(&login)
     .fetch_all(&mut *tx)
     .await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "DROP OWNED BY {}",
-        postgres_protocol::escape::escape_identifier(login.as_str())
-    )))
-    .execute(&mut *tx)
+    let functions: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT p.oid::regprocedure::text FROM pg_trigger t \
+         JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace \
+         JOIN pg_proc p ON p.oid=t.tgfoid \
+         WHERE n.nspname=ANY($1) AND p.pronamespace='wamn_history'::regnamespace \
+           AND starts_with(p.proname::text,n.nspname::text||'__')",
+    )
+    .bind(&schemas)
+    .fetch_all(&mut *tx)
     .await?;
-    for schema in &schemas {
-        wamn_provision::migration::grant_model_schema_access(&mut tx, &login, schema)
+    for schema in schemas {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {} CASCADE",
+            postgres_protocol::escape::escape_identifier(&schema)
+        )))
+        .execute(&mut *tx)
+        .await?;
+    }
+    for function in functions {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP FUNCTION {function}")))
+            .execute(&mut *tx)
             .await?;
     }
     // SQLx histories are trusted platform objects, separate from application DDL ownership.

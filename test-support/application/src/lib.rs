@@ -141,7 +141,7 @@ impl Application {
     pub async fn observer(&self) -> anyhow::Result<sqlx::PgConnection> {
         let url = self.database_url().await?;
         let mut client = wamn_postgres::connect(&url).await?;
-        sqlx::raw_sql("SET ROLE wamn_db_owner; SET default_transaction_read_only = on")
+        sqlx::raw_sql("DO $$ BEGIN EXECUTE format('SET ROLE %I', (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database())); END $$; SET default_transaction_read_only = on")
             .execute(&mut client)
             .await
             .map(drop)?;

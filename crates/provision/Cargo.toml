@@ -13,6 +13,7 @@ ops = []
 test-util = []
 
 [dependencies]
+wamn-role.workspace = true
 wamn-catalog.workspace = true
 anyhow.workspace = true
 wamn-postgres.workspace = true
@@ -32,8 +33,8 @@ serde_json = { workspace = true }
 wamn-registry = { workspace = true }
 postgres-protocol = { workspace = true }
 # The `sha256:<hex>` spelling of bundle, file and schema digests.
-# The platform principal rows take their component list, names, and derived
-# ids from the platform model.
+# Platform transaction identities take their component names and derived ids
+# from the platform model.
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 # The audit retention role name is a record history platform fixture name.
 wamn-record-history = { workspace = true }

@@ -84,7 +84,7 @@ fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
     // part of their binding and its absence is not an error.
     assert!(
         host.provider
-            .resolve(&DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
+            .resolve(&DEFAULT_PROJECT, AuthorityClass::Platform, None)
             .expect("platform resolution needs no project_env_key")
             .is_some()
     );
@@ -133,18 +133,13 @@ fn a_serving_host_binds_its_credential_to_the_declared_project() {
     let composed = WamnPostgres::from_env_for_project(
         &"fixture".parse().unwrap(),
         Some(
-            ClassCredentials::default()
-                .with_class(AuthorityClass::ExecutorPlatform, executor_platform_url),
+            ClassCredentials::default().with_class(AuthorityClass::Platform, executor_platform_url),
         ),
     )
     .expect("compose the declared project credential");
     let resolved = composed
         .provider
-        .resolve(
-            &"fixture".parse().unwrap(),
-            AuthorityClass::ExecutorPlatform,
-            None,
-        )
+        .resolve(&"fixture".parse().unwrap(), AuthorityClass::Platform, None)
         .expect("resolve the declared project")
         .expect("the declared project has an executor-platform credential");
     assert_eq!(
@@ -154,7 +149,7 @@ fn a_serving_host_binds_its_credential_to_the_declared_project() {
     assert!(
         composed
             .provider
-            .resolve(&DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
+            .resolve(&DEFAULT_PROJECT, AuthorityClass::Platform, None)
             .expect("resolve the unrelated default project")
             .is_none(),
         "binding a named project must not mint a default-project alias"
@@ -445,7 +440,7 @@ pub(crate) async fn ensure_live_user_rows(admin_url: &str, principals: &[&str]) 
     let mut admin = connect_raw(admin_url).await;
     for sql in [
         ENSURE_GUEST_ACL_ROLE_SQL,
-        wamn_provision::sql::ensure_db_owner_role_sql(),
+        wamn_provision::sql::ensure_project_roles_sql(),
         wamn_catalog::CATALOG_SCHEMA_SQL,
         wamn_provision::APP_SCHEMA_SQL,
     ] {
@@ -870,7 +865,7 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
         .lock()
         .expect("recording provider lock poisoned")
         .clone();
-    assert_eq!(asked, vec![AuthorityClass::CallableHttp]);
+    assert_eq!(asked, vec![AuthorityClass::Platform]);
 }
 
 /// Project database rows used to verify refusal of another project's credential.

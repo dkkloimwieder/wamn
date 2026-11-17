@@ -54,7 +54,7 @@ impl PlatformConfiguration {
 /// Write the rows of `configuration`, and return how many rows were inserted
 /// or changed.
 ///
-/// The caller runs this on the `wamn_administration` login in a transaction
+/// The caller runs this on the `wamn_platform` login in a transaction
 /// that binds `app.user_id` and `app.operation` for recorded writes.
 pub async fn write_configuration(
     client: &mut sqlx::PgConnection,

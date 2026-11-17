@@ -10,7 +10,7 @@
 //!
 //! The verification database is created on the PostgreSQL server that the
 //! request names and dropped when the build ends. The server keeps the
-//! cluster-wide roles `wamn_app` and `wamn_db_owner` that the build creates
+//! cluster-wide role `wamn_app` that the build creates
 //! when they are absent.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -761,15 +761,16 @@ async fn create_history_tables(client: &sqlx::PgPool, manifest: &ManifestSources
         .filter(|model| model.owner == manifest.package.id && model.log_retention().is_some())
         .collect::<Vec<_>>();
     sqlx::raw_sql(
-        AssertSqlSafe(
-            ("DO $application_role$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN \
-                 CREATE ROLE wamn_app NOLOGIN; \
+        AssertSqlSafe(format!(
+            "DO $application_role$ BEGIN \
+               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {literal}) THEN \
+                 CREATE ROLE {role} NOLOGIN; \
                END IF; \
              EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; \
-             END $application_role$")
-                .to_owned(),
-        )
+             END $application_role$",
+            literal = postgres_protocol::escape::escape_literal(wamn_role::APP_ROLE),
+            role = postgres_protocol::escape::escape_identifier(wamn_role::APP_ROLE),
+        ))
         .into_sql_str(),
     )
     .execute(client)

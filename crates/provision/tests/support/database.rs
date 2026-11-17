@@ -24,7 +24,7 @@ pub async fn system_schema(database: &str) {
     {
         let batches: &[&str] = &[
             SYSTEM_ROLE_SQL,
-            sql::ensure_db_owner_role_sql(),
+            sql::ensure_project_roles_sql(),
             &format!(
                 "ALTER DATABASE {} OWNER TO wamn_system",
                 postgres_protocol::escape::escape_identifier(&name)
@@ -80,23 +80,17 @@ pub fn seed_org_project_env_sql(
 }
 
 /// Arrange a restricted package login for a local PostgreSQL fixture.
-pub async fn package_migration_input(
-    input: impl AsRef<str>,
-    org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
-    environment: &wamn_registry::EnvName,
-) -> anyhow::Result<String> {
+pub async fn package_migration_input(input: impl AsRef<str>) -> anyhow::Result<String> {
     let input = input.as_ref();
     let options = wamn_postgres::connect_options(input).await?;
     let database = options
         .get_database()
         .ok_or_else(|| anyhow::anyhow!("fixture database is absent"))?;
-    let key = wamn_registry::project_env_key(org, project, environment);
-    let login = crate::migration::login(&key, database)?;
+    let login = crate::migration::login(database);
     let mut admin = wamn_postgres::connect(input).await?;
     let role = postgres_protocol::escape::escape_identifier(login.as_str());
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {role} LOGIN PASSWORD 'migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT {role} TO wamn_db_owner WITH INHERIT TRUE, SET TRUE",
-        postgres_protocol::escape::escape_literal(login.as_str()))))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {role} LOGIN PASSWORD 'migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT wamn_platform TO {role} WITH INHERIT TRUE, SET FALSE; ALTER DATABASE {database} OWNER TO {role}",
+        postgres_protocol::escape::escape_literal(login.as_str()), database=postgres_protocol::escape::escape_identifier(database))))
         .execute(&mut admin).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(crate::sql::grant_workload_login_sql(
         crate::WorkloadRoleFamily::Migration,
@@ -105,16 +99,6 @@ pub async fn package_migration_input(
     )))
     .execute(&mut admin)
     .await?;
-    let install_privileges: bool = sqlx::query_scalar(
-        "SELECT to_regnamespace('platform') IS NOT NULL AND NOT EXISTS(SELECT FROM pg_event_trigger WHERE evtname='wamn_migration_privileges')",
-    )
-    .fetch_one(&mut admin)
-    .await?;
-    if install_privileges {
-        sqlx::raw_sql(crate::MIGRATION_PRIVILEGES_SQL)
-            .execute(&mut admin)
-            .await?;
-    }
     let mut url = url::Url::parse(input)?;
     url.set_username(login.as_str())
         .map_err(|()| anyhow::anyhow!("fixture login"))?;
@@ -132,12 +116,11 @@ pub fn login_sql(
 ) -> String {
     use postgres_protocol::escape::{escape_identifier, escape_literal};
     format!(
-        "{} CREATE ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; {}; {} {}",
+        "{} CREATE ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; {}; {}",
         crate::sql::ensure_workload_acl_role_sql(family),
         escape_identifier(role.as_str()),
         escape_literal(password),
         membership_sql(family, role, true),
-        sql::platform_group_membership_sql(family),
         crate::sql::grant_workload_login_sql(family, database, role)
     )
 }
@@ -201,15 +184,23 @@ pub async fn platform_migration_input(
             sqlx::raw_sql(SYSTEM_ROLE_SQL).execute(&mut admin).await?;
         }
         crate::migrations::MigrationDatabase::Project => {
-            sqlx::raw_sql(sql::ensure_db_owner_role_sql())
+            sqlx::raw_sql(sql::ensure_project_roles_sql())
                 .execute(&mut admin)
                 .await?;
         }
     }
     // CNPG grants this membership with SET permission, which ownership transfers require.
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {name} LOGIN PASSWORD 'platform-migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT {} TO {name} WITH INHERIT TRUE, SET TRUE; GRANT CONNECT ON DATABASE {} TO {name}",
-        postgres_protocol::escape::escape_literal(role.name.as_str()), scope.owner_role(), postgres_protocol::escape::escape_identifier(database))))
+        postgres_protocol::escape::escape_literal(role.name.as_str()), postgres_protocol::escape::escape_identifier(if scope == crate::migrations::MigrationDatabase::System { wamn_role::SYSTEM_ROLE } else { wamn_role::PLATFORM_ROLE }), postgres_protocol::escape::escape_identifier(database))))
         .execute(&mut admin).await?;
+    if scope == crate::migrations::MigrationDatabase::Project {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER DATABASE {} OWNER TO {name}",
+            postgres_protocol::escape::escape_identifier(database)
+        )))
+        .execute(&mut admin)
+        .await?;
+    }
     let identity_exists: bool =
         sqlx::query_scalar("SELECT to_regclass('platform.login_principal') IS NOT NULL")
             .fetch_one(&mut admin)

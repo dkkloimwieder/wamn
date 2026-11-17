@@ -1359,7 +1359,7 @@ mod tests {
         let db = pg.create_database("wamn_system").await.unwrap();
         let mut admin = connect_database(db.url()).await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (wamn_provision::sql::ensure_db_owner_role_sql()).to_string(),
+            (wamn_provision::sql::ensure_project_roles_sql()).to_string(),
         ))
         .execute(&mut admin.client)
         .await

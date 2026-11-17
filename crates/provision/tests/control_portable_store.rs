@@ -63,7 +63,7 @@ async fn control_portable_store_enforces_the_current_record_on_postgres(pool: sq
     );
 
     script.push('\n');
-    script.push_str(wamn_provision::sql::ensure_db_owner_role_sql());
+    script.push_str(wamn_provision::sql::ensure_project_roles_sql());
     script.push_str(
         "DO $database$ BEGIN \
            EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); \
