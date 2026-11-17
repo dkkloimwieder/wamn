@@ -10,7 +10,7 @@ use sqlx::{Connection as _, Row as _};
 use tokio::time::Instant;
 
 use crate::connection_credentials::ConnectionCredentials;
-use crate::oauth_encryption::{Encrypted, Envelope};
+use wamn_envelope::encryption::{Encrypted, Envelope};
 
 pub type CacheKey = (uuid::Uuid, i64);
 

@@ -390,6 +390,8 @@ pub enum IdentityErrorType {
     Database,
     /// The operating system could not supply secure random bytes.
     Entropy,
+    /// The configured envelope backend refused signing-key encryption or decryption.
+    Encryption,
 }
 
 /// Why a write refused the caller's input, for a caller that answers each
@@ -418,6 +420,7 @@ pub struct IdentityError {
     type_: IdentityErrorType,
     message: Box<str>,
     refusal: Option<IdentityRefusal>,
+    source: Option<wamn_envelope::encryption::Error>,
 }
 
 impl IdentityError {
@@ -426,6 +429,7 @@ impl IdentityError {
             type_,
             message: message.into(),
             refusal: None,
+            source: None,
         }
     }
 
@@ -458,7 +462,25 @@ impl fmt::Display for IdentityError {
     }
 }
 
-impl std::error::Error for IdentityError {}
+impl std::error::Error for IdentityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_ref()
+            .map(|source| source as &dyn std::error::Error)
+    }
+}
+
+impl From<wamn_envelope::encryption::Error> for IdentityError {
+    fn from(source: wamn_envelope::encryption::Error) -> Self {
+        Self {
+            source: Some(source),
+            ..Self::new(
+                IdentityErrorType::Encryption,
+                "session signing key envelope operation failed",
+            )
+        }
+    }
+}
 
 /// Translate protocol input errors at the identity boundary.
 impl From<wamn_identity_protocol::ParseIdentityError> for IdentityError {

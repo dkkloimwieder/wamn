@@ -56,6 +56,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/postgres` | `wamn-postgres`: PostgreSQL connection configuration and transport |
 | `crates/sql` | `wamn-sql`: host operation transactions and database authority |
 | `crates/http` | `wamn-http`: authorized outbound HTTP and OAuth |
+| `crates/envelope` | `wamn-envelope`: shared encryption envelopes and pod credentials |
 | `crates/connection` | `wamn-connection`: connection facts, credentials, resource leases, invocation context, and bound Wasm import dispatch |
 | `crates/blobstore` | `wamn-blobstore`: authorized object storage |
 | `crates/authentication` | `wamn-authentication`: route authentication and session verification |
@@ -171,10 +172,8 @@ A valid account with no effective access is not an authentication error.
 
 Authorization derives administration from the current explicit grants.
 An org admin administers every environment, project and application in the org.
-An environment admin administers every project and application in that environment.
-An environment grant gives no org authority.
 A project admin administers the applications and connections of that project.
-Each grant writes only its own row in `identity.org_roles`, `identity.environment_roles`, or `identity.project_roles`.
+Each grant writes only its own row in `identity.org_roles` or `identity.project_roles`.
 The platform copies no inherited roles or memberships.
 
 Session issuance and host permission reads derive application administration from these same grants.

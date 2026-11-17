@@ -9,6 +9,7 @@ license.workspace = true
 test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "wamn-sql/test-util"]
 
 [dependencies]
+wamn-envelope.workspace = true
 boon.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true

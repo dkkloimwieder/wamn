@@ -215,7 +215,6 @@ pub(super) async fn authorized_roles(
         principal.id(),
         &triple.org,
         &triple.project,
-        Some(&triple.env),
     )
     .await
     .map_err(|_| failed())?

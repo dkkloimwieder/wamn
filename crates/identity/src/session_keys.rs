@@ -13,6 +13,8 @@ use ring::{
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 
+use wamn_envelope::encryption::{Encrypted, Envelope};
+
 use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks, decode_public_key};
 
 use crate::{IdentityError, IdentityErrorType};
@@ -26,12 +28,15 @@ pub const KEY_RETENTION_SECONDS: i64 = 930;
 pub async fn publish_session_key(
     client: &mut Client,
     issuer: &str,
+    envelope: &Envelope,
 ) -> Result<PublicSessionKey, IdentityError> {
     validate_issuer(issuer)?;
     let document = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).map_err(|_| {
         IdentityError::new(IdentityErrorType::Entropy, "generate session signing key")
     })?;
     let pair = Ed25519KeyPair::from_pkcs8(document.as_ref()).map_err(|_| corrupt_key())?;
+    let encrypted = envelope.encrypt(document.as_ref()).await?;
+    let packed = serde_json::to_vec(&encrypted).map_err(|_| corrupt_key())?;
     let mut transaction = client.begin().await.map_err(key_database_error)?;
     bind_provisioning(&mut transaction).await?;
     sqlx::query(
@@ -43,12 +48,12 @@ pub async fn publish_session_key(
     .map(|result| result.rows_affected())
     .map_err(key_database_error)?;
     let row = sqlx::query(
-        "INSERT INTO identity.session_keys (issuer, public_key, private_pkcs8) \
+        "INSERT INTO identity.session_keys (issuer, public_key, private_key_envelope) \
          VALUES ($1, $2, $3) RETURNING kid::text",
     )
     .bind(issuer)
     .bind(pair.public_key().as_ref())
-    .bind(document.as_ref())
+    .bind(packed)
     .fetch_one(&mut *transaction)
     .await
     .map_err(key_database_error)?;
@@ -84,7 +89,7 @@ async fn activate_session_key_if_current(
         return Ok(());
     }
     let row = sqlx::query(
-        "SELECT signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL \
+        "SELECT signing_cutoff IS NULL AND private_key_envelope IS NOT NULL \
          FROM identity.session_keys WHERE issuer = $1 AND kid::text = $2",
     )
     .bind(issuer)
@@ -98,7 +103,7 @@ async fn activate_session_key_if_current(
         ));
     }
     if active.as_deref() != Some(kid) {
-        sqlx::query("UPDATE identity.session_keys SET signing_cutoff = clock_timestamp(), private_pkcs8 = NULL \
+        sqlx::query("UPDATE identity.session_keys SET signing_cutoff = clock_timestamp(), private_key_envelope = NULL \
              WHERE issuer = $1 AND kid::text = $2").bind(issuer).bind(&active).execute(&mut *transaction).await.map(|result| result.rows_affected()).map_err(key_database_error)?;
         sqlx::query("UPDATE identity.session_signing_state SET active_kid = $2::text::uuid WHERE issuer = $1").bind(issuer).bind(kid).execute(&mut *transaction).await.map(|result| result.rows_affected()).map_err(key_database_error)?;
     }
@@ -112,6 +117,7 @@ pub async fn rotate_session_keys(
     client: &mut Client,
     issuer: &str,
     interval: std::time::Duration,
+    envelope: &Envelope,
 ) -> Result<(), IdentityError> {
     validate_issuer(issuer)?;
     let seconds =
@@ -139,7 +145,7 @@ pub async fn rotate_session_keys(
             let pending = sqlx::query(sqlx::AssertSqlSafe(("SELECT kid::text FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL \
                  AND kid IS DISTINCT FROM (SELECT active_kid FROM identity.session_signing_state WHERE issuer=$1) \
                  ORDER BY published_at DESC LIMIT 1").to_string())).bind(issuer).fetch_optional(&mut *client).await.map_err(key_database_error)?;
-            let kid = if let Some(row) = pending { row.get(0) } else { publish_session_key(client, issuer).await?.kid };
+            let kid = if let Some(row) = pending { row.get(0) } else { publish_session_key(client, issuer, envelope).await?.kid };
             activate_session_key_if_current(client, issuer, &kid, Some(&expected)).await?;
         }
         retire_session_keys(client, issuer).await?;
@@ -245,6 +251,7 @@ pub async fn retire_session_keys(client: &mut Client, issuer: &str) -> Result<u6
 pub(crate) async fn sign_message(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     issuer: &str,
+    envelope: &Envelope,
     message: impl FnOnce(&str, &jsonwebtoken::EncodingKey) -> Result<String, IdentityError>,
 ) -> Result<String, IdentityError> {
     let row = sqlx::query(
@@ -259,7 +266,7 @@ pub(crate) async fn sign_message(
         .ok_or_else(|| invalid("issuer has no active session signing key"))?;
     let token = {
         let row = sqlx::query(
-            "SELECT private_pkcs8 FROM identity.session_keys \
+            "SELECT private_key_envelope FROM identity.session_keys \
              WHERE issuer = $1 AND kid::text = $2 AND signing_cutoff IS NULL",
         )
         .bind(issuer)
@@ -267,8 +274,11 @@ pub(crate) async fn sign_message(
         .fetch_one(&mut **transaction)
         .await
         .map_err(key_database_error)?;
-        let document: Option<&[u8]> = row.get(0);
-        let key = jsonwebtoken::EncodingKey::from_ed_der(document.ok_or_else(corrupt_key)?);
+        let packed: Option<&[u8]> = row.get(0);
+        let encrypted: Encrypted =
+            serde_json::from_slice(packed.ok_or_else(corrupt_key)?).map_err(|_| corrupt_key())?;
+        let document = envelope.decrypt(&encrypted).await?;
+        let key = jsonwebtoken::EncodingKey::from_ed_der(document.expose());
         message(&kid, &key)?
     };
     Ok(token)

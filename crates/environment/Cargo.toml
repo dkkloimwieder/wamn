@@ -50,6 +50,7 @@ wamn-codegen = { workspace = true }
 wamn-publish = { workspace = true }
 
 [dev-dependencies]
+wamn-envelope.workspace = true
 url = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 oci-client = { workspace = true }

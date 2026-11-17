@@ -243,8 +243,7 @@ pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_ORGS_SQL: &str = "SELECT o.id FR
     AND (EXISTS (SELECT 1 FROM identity.project_roles r \
     WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $2) \
     OR EXISTS (SELECT 1 FROM identity.org_roles r \
-    WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $3) \
-    OR EXISTS (SELECT 1 FROM identity.environment_roles r WHERE r.principal_id=p.id AND r.org=o.id)) \
+    WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $3)) \
     AND ($4::text IS NULL OR o.id = $4) AND ($5::text IS NULL OR o.id > $5) \
     ORDER BY o.id LIMIT $6";
 
@@ -260,14 +259,13 @@ pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_PROJECTS_SQL: &str = "SELECT r.i
     WHERE r.org=$2 AND p.type='user' AND p.status='active' \
     AND EXISTS (SELECT FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active') \
     AND (EXISTS (SELECT FROM identity.project_roles a WHERE a.principal_id=p.id AND a.org=$2 AND a.project=r.id AND a.role=$3) \
-      OR EXISTS (SELECT FROM identity.org_roles a WHERE a.principal_id=p.id AND a.org=$2) \
-      OR EXISTS (SELECT FROM identity.environment_roles a JOIN registry.environment_projects e USING (org,env) WHERE a.principal_id=p.id AND a.org=$2 AND e.project=r.id)) \
+      OR EXISTS (SELECT FROM identity.org_roles a WHERE a.principal_id=p.id AND a.org=$2)) \
     AND ($4::text IS NULL OR r.id>$4) ORDER BY r.id LIMIT $5";
 
 /// crates/identity/src/org.rs::PROJECT_MEMBERS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_MEMBERS_SQL: &str = "SELECT p.id,p.email,p.display_name, \
     EXISTS (SELECT FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$1 AND r.role=$4), \
-    identity.is_project_admin(p.id,$1,$8,$2) AND $3='project-admin', \
+    identity.is_project_admin(p.id,$1,$2) AND $3='project-admin', \
     ARRAY(SELECT e.env FROM registry.environment_projects e WHERE e.org=$1 AND e.project=$2 \
       AND ($8::text IS NULL OR e.env=$8) AND identity.has_project_access(p.id,$1,e.env,$2) ORDER BY e.env) \
     FROM identity.principals p WHERE p.type='user' \
@@ -306,7 +304,7 @@ pub const CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMM
 pub const CONTROL_DEV_SRC_DEV_TARGET_DATABASE_RECORDED_DISPOSABLE: &str = "SELECT disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org=$1 AND project=$2 AND env=$3";
 
 /// crates/provision/src/sql.rs::control_surface_grants_sql registry statement.
-pub const CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL: &str = " GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_control;";
+pub const CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL: &str = " GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid), identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_control;";
 
 /// Grant the functions required to initialize control row policies for a reader.
 /// The caller supplies a quoted role identifier.

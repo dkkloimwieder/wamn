@@ -125,12 +125,11 @@ impl ControlRoutes<'_> {
         // Repeat authority in the write transaction before contacting Kubernetes.
         let mut writer = self.writer.lock().await;
         let mut transaction = self
-            .begin_in_environment(
+            .begin_in(
                 &mut writer,
                 attachment,
                 caller,
                 Some(&request.project),
-                Some(&request.env),
             )
             .await?;
         let triple = wamn_registry::Triple::new(

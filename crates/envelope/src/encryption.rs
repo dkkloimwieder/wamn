@@ -1,4 +1,4 @@
-//! Envelope encryption for OAuth tokens and pending PKCE verifiers.
+//! Envelope encryption for signing keys, OAuth tokens, and pending PKCE verifiers.
 
 use std::{
     collections::VecDeque, fmt, os::unix::fs::PermissionsExt, path::Path, sync::Arc, time::Duration,
@@ -10,7 +10,7 @@ use ring::{
     aead,
     rand::{SecureRandom as _, SystemRandom},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Mutex;
 use wamn_oci::package_artifact::http_client::HttpClient;
@@ -19,7 +19,7 @@ use zeroize::Zeroizing;
 const CACHE_ENTRIES: usize = 1024;
 const NONCE_BYTES: usize = 12;
 
-/// Deployment configuration shared by application hosts and the control host.
+/// Deployment configuration shared by signing and OAuth consumers.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Configuration {
@@ -39,7 +39,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "OAuth encryption {} failed: {}",
+            "envelope encryption {} failed: {}",
             self.operation, self.source
         )
     }
@@ -49,8 +49,9 @@ fn failure(operation: &'static str, source: &'static str) -> Error {
     Error { operation, source }
 }
 
-/// The encrypted columns of either OAuth row. Debug omits the stored bytes.
-#[derive(Clone)]
+/// Encrypted material and its wrapped data key. Debug omits the stored bytes.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Encrypted {
     pub ciphertext: Vec<u8>,
     pub nonce: Vec<u8>,

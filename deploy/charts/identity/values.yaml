@@ -6,6 +6,15 @@ image:
 # Set the configured HTTPS issuer and existing Secret names before installation.
 # The Secrets must exist in the release namespace.
 issuer: ""
+
+# Trust only the forwarding web proxy. The service default is zero.
+trustedProxyHops: 1
+
+# Supply exactly the provider configuration and wrapping key used by OAuth hosts.
+# Local: {provider: local}, plus oauthSecret containing the 32-byte key in key.
+# GCP: {provider: gcp, project: <project>, region: <region>}, using pod identity.
+oauthEncryption: {}
+oauthSecret: ""
 databaseSecret: ""
 tlsSecret: ""
 

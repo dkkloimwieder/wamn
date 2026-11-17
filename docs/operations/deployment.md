@@ -34,6 +34,9 @@ The platform chart then installs certificates, NATS, the wasmCloud operator, and
 The org chart creates PostgreSQL in the org namespace.
 Bootstrap Jobs initialize SQL and credentials before the service components start.
 Identity, control, and the edge belong to the platform Helm release.
+Identity runs two replicas. Its chart requires the same envelope provider and wrapping key as the OAuth hosts.
+Supply `oauthEncryption` and, for a local provider, the existing `oauthSecret` in the identity values.
+The [identity chart](../../deploy/charts/identity/README.md) defines these inputs and the trusted proxy count.
 Without a recorded org control release, deployment initializes `wamn_system`, the organization, identity, and control.
 Once control exists, authenticated platform updates select an existing owner with `--only`.
 Reapply does not refresh credentials.

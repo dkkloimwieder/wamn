@@ -150,7 +150,7 @@ pub async fn revoke_member(
 ) -> Result<(), IdentityError> {
     lock_membership(client, principal_id, org).await?;
     refuse_under_org_admin(client, principal_id, org).await?;
-    let covered = control::is_project_admin(client, principal_id, org, project, Some(env)).await?;
+    let covered = control::is_project_admin(client, principal_id, org, project).await?;
     if covered {
         return Err(IdentityError::refused(
             IdentityErrorType::Conflict,
@@ -333,13 +333,6 @@ pub async fn deactivate_org_membership(
         .bind(principal)
         .bind(org)
         .bind(every)
-        .execute(&mut *client)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(|error| database_error(&error))?;
-    sqlx::query("DELETE FROM identity.environment_roles WHERE principal_id=$1 AND org=$2")
-        .bind(principal)
-        .bind(org)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -641,37 +634,5 @@ pub async fn lock_org_memberships(
 ) -> Result<(), IdentityError> {
     sqlx::query("SELECT principal_id FROM identity.org_memberships WHERE org=$1 ORDER BY principal_id FOR UPDATE").bind(org).fetch_all(&mut *client)
         .await.map_err(|error| database_error(&error))?;
-    Ok(())
-}
-
-/// Grant explicit administration of one environment to an active org member.
-pub async fn grant_environment_admin(
-    client: &mut sqlx::PgConnection,
-    principal: &PrincipalId,
-    org: &wamn_registry::OrgId,
-    env: &wamn_registry::EnvName,
-) -> Result<(), IdentityError> {
-    active_member(client, principal, org).await?;
-    sqlx::query("INSERT INTO identity.environment_roles (principal_id,org,env,role) VALUES ($1,$2,$3,'environment-admin') ON CONFLICT DO NOTHING").bind(principal).bind(org).bind(env).execute(&mut *client).await.map(|result| result.rows_affected()).map_err(|error| database_error(&error))?;
-    Ok(())
-}
-/// Revoke only the explicit environment grant.
-pub async fn revoke_environment_admin(
-    client: &mut sqlx::PgConnection,
-    principal: &PrincipalId,
-    org: &wamn_registry::OrgId,
-    env: &wamn_registry::EnvName,
-) -> Result<(), IdentityError> {
-    lock_membership(client, principal, org).await?;
-    sqlx::query(
-        "DELETE FROM identity.environment_roles WHERE principal_id=$1 AND org=$2 AND env=$3",
-    )
-    .bind(principal)
-    .bind(org)
-    .bind(env)
-    .execute(&mut *client)
-    .await
-    .map(|result| result.rows_affected())
-    .map_err(|error| database_error(&error))?;
     Ok(())
 }

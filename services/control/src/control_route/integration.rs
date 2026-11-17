@@ -59,26 +59,13 @@ impl ControlRoutes<'_> {
         })?;
         administration::validate_request(operation, &request)?;
         let mut authorized = self
-            .begin_in_environment(
+            .begin_in(
                 writer,
                 attachment,
                 caller,
                 Some(&target.project),
-                target.env.as_ref(),
             )
             .await?;
-        if operation == "connection.copy"
-            && !self
-                .admits_environment(
-                    &mut authorized,
-                    caller,
-                    Some(&target.project),
-                    target.source_env.as_ref(),
-                )
-                .await?
-        {
-            return Err(super::denied(attachment));
-        }
         if operation == "integration_type.list" {
             let result = sqlx::query_scalar("SELECT registry.configure_integration_type($1,$2,$3)")
                 .bind(self.org)

@@ -16,7 +16,7 @@ metadata:
     app.kubernetes.io/name: wamn-identity
     app.kubernetes.io/instance: {{ (default .Release.Name .Values.name) }}
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: wamn-identity
@@ -35,6 +35,8 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - serve
+            - --trusted-proxy-hops
+            - {{ .Values.trustedProxyHops | quote }}
             - --key-rotation-seconds
             - {{ .Values.keyRotationSeconds | quote }}
             {{- if .Values.localMail }}
@@ -46,6 +48,12 @@ spec:
             - {{ printf "/var/run/wamn-identity/targets/%d/target.json" $index | quote }}
             {{- end }}
           env:
+            - name: WAMN_OAUTH_ENCRYPTION
+              value: {{ required "Set oauthEncryption to the same envelope configuration as OAuth hosts." .Values.oauthEncryption | toJson | quote }}
+            {{- if eq .Values.oauthEncryption.provider "local" }}
+            - name: WAMN_OAUTH_KEY_FILE
+              value: /etc/wamn/oauth/key
+            {{- end }}
             - name: WAMN_IDENTITY_BIND
               value: "0.0.0.0:8443"
             - name: WAMN_IDENTITY_ISSUER
@@ -97,6 +105,11 @@ spec:
               path: /healthz
               port: https
           volumeMounts:
+            {{- if eq .Values.oauthEncryption.provider "local" }}
+            - name: oauth-key
+              mountPath: /etc/wamn/oauth
+              readOnly: true
+            {{- end }}
             {{- if .Values.localMail }}
             - name: local-mail
               mountPath: {{ dir .Values.localMail | quote }}
@@ -122,6 +135,16 @@ spec:
           resources:
 {{ toYaml .Values.resources | indent 12 }}
       volumes:
+        {{- if eq .Values.oauthEncryption.provider "local" }}
+        - name: oauth-key
+          secret:
+            secretName: {{ required "Set oauthSecret to the OAuth wrapping-key Secret." .Values.oauthSecret | quote }}
+            optional: false
+            defaultMode: 0400
+            items:
+              - key: key
+                path: key
+        {{- end }}
         {{- if .Values.localMail }}
         - name: local-mail
           emptyDir: {}
