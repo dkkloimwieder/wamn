@@ -95,6 +95,9 @@ enum Command {
         /// Rotate signing keys at this interval. The default is 30 days.
         #[arg(long, default_value_t = crate::DEFAULT_KEY_ROTATION.as_secs())]
         key_rotation_seconds: u64,
+        /// Number of trusted proxy hops. Zero uses the TLS peer address.
+        #[arg(long, default_value_t = 0)]
+        trusted_proxy_hops: usize,
     },
     /// Commit a new public generation without activating it.
     Publish,
@@ -129,6 +132,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         tls_key,
         operator_ca,
         key_rotation_seconds,
+        trusted_proxy_hops,
     } = cli.command
     {
         let config = if let Some(path) = mail.local_mail {
@@ -150,8 +154,9 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
                 }
             }
         };
-        let config =
-            config.with_key_rotation(std::time::Duration::from_secs(key_rotation_seconds))?;
+        let config = config
+            .with_trusted_proxy_hops(trusted_proxy_hops)
+            .with_key_rotation(std::time::Duration::from_secs(key_rotation_seconds))?;
         let certificate = tokio::fs::read(tls_cert)
             .await
             .map_err(|_| IdentityServiceError::new("read identity TLS certificate failed"))?;
@@ -204,7 +209,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
     let mut database = connect(&config).await?;
     let output = match cli.command {
         Command::Publish => serde_json::to_value(
-            publish_session_key(&mut database.client, &issuer)
+            publish_session_key(&mut database.client, &issuer, &crate::signing_envelope()?)
                 .await
                 .map_err(|_| IdentityServiceError::new("publish identity key failed"))?,
         )

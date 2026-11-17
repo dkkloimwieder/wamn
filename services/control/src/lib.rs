@@ -53,7 +53,7 @@ pub struct Configuration {
     pub event_observer: Option<Nats>,
     #[serde(default)]
     pub identity: Identity,
-    pub oauth_encryption: Option<wamn_connection::oauth_encryption::Configuration>,
+    pub oauth_encryption: Option<wamn_envelope::encryption::Configuration>,
 }
 
 /// The platform broker connection, using mounted TLS credentials.
@@ -225,9 +225,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         .oauth_encryption
         .as_ref()
         .map(|configuration| {
-            let envelope = Arc::new(wamn_connection::oauth_encryption::Envelope::open(
-                configuration,
-            )?);
+            let envelope = Arc::new(wamn_envelope::encryption::Envelope::open(configuration)?);
             wamn_http::oauth_authorization::Authorization::new(&config.public_origin, envelope)
                 .map(Arc::new)
         })

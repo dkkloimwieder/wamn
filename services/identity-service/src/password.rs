@@ -32,7 +32,7 @@ use wamn_provision::PlatformComponent;
 use zeroize::Zeroizing;
 
 use crate::{
-    IdentityServiceError, Inner, connect_database,
+    IdentityServiceError, Inner,
     mail::{MailConfig, Mailer},
     response, session, unavailable,
 };
@@ -48,15 +48,20 @@ const RENEWAL_COOKIE: &str = "__Secure-wamn-renewal";
 #[derive(Debug)]
 pub(super) struct State {
     mail: Mailer,
-    connection: String,
+    pool: sqlx::PgPool,
     work: PasswordWork,
     requests: Semaphore,
 }
 impl State {
-    pub(super) fn new(mail: MailConfig, connection: String) -> Result<Self, IdentityServiceError> {
+    pub(super) async fn new(
+        mail: MailConfig,
+        connection: &str,
+    ) -> Result<Self, IdentityServiceError> {
         Ok(Self {
             mail: Mailer::new(mail)?,
-            connection,
+            pool: wamn_postgres::pool(connection, 8).await.map_err(|_| {
+                IdentityServiceError::new("identity password pool configuration refused")
+            })?,
             work: password_work(),
             requests: Semaphore::new(8),
         })
@@ -168,8 +173,8 @@ async fn handle(
     source: IpAddr,
     started_at: i64,
 ) -> Response<Full<Bytes>> {
-    // Each admitted request owns its connection. Cancellation closes outstanding DB work.
-    let Ok(mut database) = connect_database(&state.connection).await else {
+    // SQLx flushes pending transaction rollbacks before returning a session to the pool.
+    let Ok(mut database) = state.pool.acquire().await else {
         return unavailable();
     };
     let source = match source {
@@ -178,7 +183,7 @@ async fn handle(
     };
     let source_key = format!("source:{source}");
     match admit(
-        &mut database.client,
+        &mut *database,
         &[("global", 120), (&source_key, 20)],
         &inner.issuer,
     )
@@ -207,7 +212,7 @@ async fn handle(
             let Ok(request) = serde_json::from_slice::<UserRequest>(&bytes) else {
                 return invalid();
             };
-            create_user(&mut database.client, &request).await
+            create_user(&mut *database, &request).await
         }
         "/invitations" => {
             let Ok(request) = serde_json::from_slice::<InvitationRequest>(&bytes) else {
@@ -215,7 +220,7 @@ async fn handle(
             };
             let principal = request.principal_id;
             let Ok(mut read) = wamn_identity::transaction::read_connection(
-                &mut database.client,
+                &mut *database,
                 &PlatformComponent::Provisioning.principal_id(),
             )
             .await
@@ -232,8 +237,7 @@ async fn handle(
             };
             let email: String = row.get(0);
             let actor: PrincipalId = PlatformComponent::Provisioning.principal_id();
-            let invitation = match issue_invitation(&mut database.client, &actor, &principal).await
-            {
+            let invitation = match issue_invitation(&mut *database, &actor, &principal).await {
                 Ok(value) => value,
                 Err(error) => return refusal(&error, &email),
             };
@@ -251,7 +255,7 @@ async fn handle(
                 // A failed or uncertain send must never report delivery success.
                 // Consume only this invitation; earlier operator invitations stay valid.
                 let hash = wamn_digest::bytes_sha256(invitation.secret().as_bytes());
-                if let Ok(mut tx) = database.client.begin().await {
+                if let Ok(mut tx) = database.begin().await {
                     let _ = sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')")
                         .bind(actor)
                         .execute(&mut *tx)
@@ -276,26 +280,19 @@ async fn handle(
             let password = match Password::new(request.password) {
                 Ok(value) => value,
                 Err(error) => {
-                    return enrollment_refusal(&mut database.client, &principal, &error).await;
+                    return enrollment_refusal(&mut *database, &principal, &error).await;
                 }
             };
             let bucket = format!("enroll:{principal}");
-            match admit(&mut database.client, &[(&bucket, 5)], &inner.issuer).await {
+            match admit(&mut *database, &[(&bucket, 5)], &inner.issuer).await {
                 Ok(true) => (),
                 Ok(false) => return throttled(),
                 Err(_) => return unavailable(),
             }
-            match enroll_password(
-                &mut database.client,
-                &state.work,
-                &principal,
-                &secret,
-                password,
-            )
-            .await
+            match enroll_password(&mut *database, &state.work, &principal, &secret, password).await
             {
                 Ok(()) => response(StatusCode::NO_CONTENT, "application/json", Vec::new()),
-                Err(error) => enrollment_refusal(&mut database.client, &principal, &error).await,
+                Err(error) => enrollment_refusal(&mut *database, &principal, &error).await,
             }
         }
         "/password/session" => {
@@ -319,13 +316,13 @@ async fn handle(
                 "login:{}",
                 wamn_digest::bytes_sha256(email.as_bytes()).hex()
             );
-            match admit(&mut database.client, &[(&bucket, 5)], &inner.issuer).await {
+            match admit(&mut *database, &[(&bucket, 5)], &inner.issuer).await {
                 Ok(true) => (),
                 Ok(false) => return throttled(),
                 Err(_) => return unavailable(),
             }
             let Ok(mut read) = wamn_identity::transaction::read_connection(
-                &mut database.client,
+                &mut *database,
                 &PlatformComponent::Provisioning.principal_id(),
             )
             .await
@@ -357,7 +354,7 @@ async fn handle(
             let Ok(id) = row.get::<String, _>(0).parse::<PrincipalId>() else {
                 return unavailable();
             };
-            let Ok(mut tx) = database.client.begin().await else {
+            let Ok(mut tx) = database.begin().await else {
                 return unavailable();
             };
             if sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')")
@@ -388,7 +385,7 @@ async fn handle(
                     Ok(claims) => claims,
                     Err(error) => return authority_failure(&error),
                 };
-            finish_session(tx, claims, renewal, started_at, carrier).await
+            finish_session(tx, claims, renewal, started_at, carrier, &inner.envelope).await
         }
         "/password/recover" | "/password/reset" => {
             let resetting = parts.uri.path() == "/password/reset";
@@ -414,7 +411,7 @@ async fn handle(
                 "recovery:{}",
                 wamn_digest::bytes_sha256(email.as_bytes()).hex()
             );
-            match admit(&mut database.client, &[(&bucket, 5)], &inner.issuer).await {
+            match admit(&mut *database, &[(&bucket, 5)], &inner.issuer).await {
                 Ok(true) => (),
                 Ok(false) => return throttled(),
                 Err(_) => return unavailable(),
@@ -424,7 +421,7 @@ async fn handle(
             let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
             let action = async {
                 let Ok(mut read) = wamn_identity::transaction::read_connection(
-                    &mut database.client,
+                    &mut *database,
                     &PlatformComponent::Provisioning.principal_id(),
                 )
                 .await
@@ -445,14 +442,9 @@ async fn handle(
                         Ok(value) => value,
                         Err(error) => return refusal(&error, &email),
                     };
-                    if let Err(error) = reset_password(
-                        &mut database.client,
-                        &state.work,
-                        &principal,
-                        &secret,
-                        password,
-                    )
-                    .await
+                    if let Err(error) =
+                        reset_password(&mut *database, &state.work, &principal, &secret, password)
+                            .await
                     {
                         return refusal(&error, &email);
                     }
@@ -460,14 +452,13 @@ async fn handle(
                     return response(StatusCode::OK, "application/json", serde_json::to_vec(&serde_json::json!({"status":"password_reset", "notification": if notified { "accepted_for_delivery" } else { "unavailable" }})).expect("fixed response"));
                 }
                 let actor: PrincipalId = PlatformComponent::Provisioning.principal_id();
-                let token =
-                    match issue_reset(&mut database.client, &actor, &principal, &email).await {
-                        Ok(token) => token,
-                        Err(error) => {
-                            log_refusal(&error, &email);
-                            return unavailable();
-                        }
-                    };
+                let token = match issue_reset(&mut *database, &actor, &principal, &email).await {
+                    Ok(token) => token,
+                    Err(error) => {
+                        log_refusal(&error, &email);
+                        return unavailable();
+                    }
+                };
                 if state
                     .mail
                     .reset(&email, token.secret(), token.expires_at())
@@ -475,7 +466,7 @@ async fn handle(
                     .is_err()
                 {
                     let hash = wamn_digest::bytes_sha256(token.secret().as_bytes());
-                    if let Ok(mut tx) = database.client.begin().await
+                    if let Ok(mut tx) = database.begin().await
                         && sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')").bind(actor).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok()
                         && sqlx::query("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL").bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
                 }
@@ -505,7 +496,7 @@ async fn handle(
                 _ => return invalid(),
             };
             let actor = match password_login::renewal_principal(
-                &mut database.client,
+                &mut *database,
                 &inner.issuer,
                 &request.aud,
                 &secret,
@@ -522,7 +513,7 @@ async fn handle(
                 }
                 Err(_) => return unavailable(),
             };
-            let Ok(mut tx) = database.client.begin().await else {
+            let Ok(mut tx) = database.begin().await else {
                 return unavailable();
             };
             let Ok(principal) = password_login::authenticate_renewal(
@@ -583,7 +574,15 @@ async fn handle(
                 Ok(claims) => claims,
                 Err(error) => return authority_failure(&error),
             };
-            finish_session(tx, claims, renewal, started_at, request.carrier).await
+            finish_session(
+                tx,
+                claims,
+                renewal,
+                started_at,
+                request.carrier,
+                &inner.envelope,
+            )
+            .await
         }
         _ => invalid(),
     }
@@ -602,6 +601,7 @@ async fn finish_session(
     renewal: password_login::Renewal,
     started_at: i64,
     carrier: Carrier,
+    envelope: &wamn_envelope::encryption::Envelope,
 ) -> Response<Full<Bytes>> {
     // The cookie carrier remains until web owns cookies and CSRF.
     let csrf = match carrier {
@@ -620,6 +620,7 @@ async fn finish_session(
         claims,
         started_at,
         Some(renewal.login.expires_at),
+        envelope,
     )
     .await
     else {
@@ -890,6 +891,7 @@ fn throttled() -> Response<Full<Bytes>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connect_database;
     use crate::{IdentityConfig, IdentityService};
     use hyper::service::service_fn;
     use hyper_util::rt::TokioIo;

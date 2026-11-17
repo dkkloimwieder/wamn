@@ -14,6 +14,7 @@ test = false
 test-util = []
 
 [dependencies]
+wamn-envelope.workspace = true
 wamn-role.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-postgres.workspace = true

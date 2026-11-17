@@ -42,6 +42,7 @@ pub const DEFAULT_KEY_ROTATION: Duration = Duration::from_hours(30 * 24);
 pub struct IdentityConfig {
     issuer: String,
     key_rotation: Duration,
+    trusted_proxy_hops: usize,
     connection: String,
     mail: Option<mail::MailConfig>,
 }
@@ -64,9 +65,16 @@ impl IdentityConfig {
         Ok(Self {
             issuer: issuer.to_owned(),
             key_rotation: DEFAULT_KEY_ROTATION,
+            trusted_proxy_hops: 0,
             connection,
             mail: None,
         })
+    }
+
+    /// Trust this many proxy addresses at the end of the forwarded chain. Zero uses the peer.
+    pub fn with_trusted_proxy_hops(mut self, hops: usize) -> Self {
+        self.trusted_proxy_hops = hops;
+        self
     }
 
     /// Set the signing key schedule. The previous public key retains its token window.
@@ -102,10 +110,12 @@ pub struct IdentityService {
 struct Inner {
     issuer: String,
     key_rotation: Duration,
+    trusted_proxy_hops: usize,
     // Every held connection opens again with this connection string after Postgres
     // closes it, for example when the server restarts.
     connection: String,
     passwords: Option<password::State>,
+    envelope: wamn_envelope::encryption::Envelope,
     database: Mutex<Database>,
     // PAT issuance needs a transaction, so it holds its own connection.
     issuance: Mutex<Database>,
@@ -143,6 +153,7 @@ impl Inner {
             &mut database.client,
             &self.issuer,
             self.key_rotation,
+            &self.envelope,
         )
         .await
         .map_err(|_| IdentityServiceError::new("rotate signing keys failed"))
@@ -175,10 +186,11 @@ impl fmt::Debug for IdentityConfig {
 impl IdentityService {
     /// Connect using already validated issuer-targeted authority.
     pub async fn connect(config: IdentityConfig) -> Result<Self, IdentityServiceError> {
+        let envelope = signing_envelope()?;
         let database = connect(&config).await?;
         let issuance = Mutex::new(connect(&config).await?);
-        let passwords = if let Some(mail) = config.mail.clone() {
-            Some(password::State::new(mail, config.connection.clone())?)
+        let passwords = if let Some(mail) = config.mail {
+            Some(password::State::new(mail, &config.connection).await?)
         } else {
             None
         };
@@ -186,6 +198,8 @@ impl IdentityService {
             inner: Arc::new(Inner {
                 issuer: config.issuer,
                 key_rotation: config.key_rotation,
+                trusted_proxy_hops: config.trusted_proxy_hops,
+                envelope,
                 connection: config.connection,
                 passwords,
                 database: Mutex::new(database),
@@ -200,11 +214,19 @@ impl IdentityService {
         operator: bool,
         source: std::net::IpAddr,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
-        let source = match request.headers().get("x-forwarded-for") {
-            Some(value) => match value
-                .to_str()
-                .ok()
-                .and_then(|value| value.rsplit(',').next())
+        let source = if self.inner.trusted_proxy_hops == 0
+            || !request.headers().contains_key("x-forwarded-for")
+        {
+            source
+        } else {
+            match request
+                .headers()
+                .get_all("x-forwarded-for")
+                .iter()
+                .rev()
+                .flat_map(|value| value.as_bytes().rsplit(|byte| *byte == b','))
+                .nth(self.inner.trusted_proxy_hops - 1)
+                .and_then(|value| std::str::from_utf8(value).ok())
                 .and_then(|value| value.trim().parse::<std::net::IpAddr>().ok())
             {
                 Some(address) => address,
@@ -215,8 +237,7 @@ impl IdentityService {
                         b"{\"error\":\"invalid client address\"}".to_vec(),
                     ));
                 }
-            },
-            None => source,
+            }
         };
         if request.method() == Method::POST
             && request.uri().query().is_none()
@@ -287,6 +308,15 @@ impl IdentityService {
         };
         Ok(response)
     }
+}
+
+fn signing_envelope() -> Result<wamn_envelope::encryption::Envelope, IdentityServiceError> {
+    let configuration = std::env::var("WAMN_OAUTH_ENCRYPTION")
+        .map_err(|_| IdentityServiceError::new("signing key envelope configuration is required"))?;
+    let configuration = serde_json::from_str(&configuration)
+        .map_err(|_| IdentityServiceError::new("signing key envelope configuration refused"))?;
+    wamn_envelope::encryption::Envelope::open(&configuration)
+        .map_err(|_| IdentityServiceError::new("open signing key envelope failed"))
 }
 
 fn unavailable() -> Response<Full<Bytes>> {

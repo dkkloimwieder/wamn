@@ -108,7 +108,7 @@ Add one application `netsuite` to the environment document of the wamn-dev NetSu
 ```
 
 `environment::apply` refuses a release package that no application lists, a package that two applications list, and a listed package that the release does not carry.
-Do these steps once, after that apply, as an environment admin.
+Do these steps once, after that apply, as a project admin.
 Set `WAMN_CONTROL_URL` to the application host and `WAMN_TOKEN` to your session token.
 Set the coordinate `<org>/<project>/<env>`, its composed environment key, and your application user ID as `$ADMIN_ID`.
 

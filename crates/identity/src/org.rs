@@ -150,7 +150,7 @@ pub async fn revoke_member(
 ) -> Result<(), IdentityError> {
     lock_membership(client, principal_id, org).await?;
     refuse_under_org_admin(client, principal_id, org).await?;
-    let covered = control::is_project_admin(client, principal_id, org, project, Some(env)).await?;
+    let covered = control::is_project_admin(client, principal_id, org, project).await?;
     if covered {
         return Err(IdentityError::refused(
             IdentityErrorType::Conflict,
@@ -211,32 +211,6 @@ async fn refuse_under_org_admin(
             format!(
                 "principal {principal_id} holds org-admin in org {org}. Revoke org-admin first"
             ),
-        ));
-    }
-    Ok(())
-}
-
-const CREATE_PROJECT_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_CREATE_PROJECT_SQL;
-
-/// Create an org-level project definition. An existing project is refused.
-pub async fn create_project(
-    client: &mut sqlx::PgConnection,
-    org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
-) -> Result<(), IdentityError> {
-    lock_org_memberships(client, org).await?;
-    let created = sqlx::query(CREATE_PROJECT_SQL)
-        .bind(org)
-        .bind(project)
-        .execute(&mut *client)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(|error| database_error(&error))?;
-    if created == 0 {
-        return Err(IdentityError::refused(
-            IdentityErrorType::Conflict,
-            IdentityRefusal::ProjectExists,
-            format!("project {project} exists in org {org}"),
         ));
     }
     Ok(())
@@ -363,13 +337,6 @@ pub async fn deactivate_org_membership(
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    sqlx::query("DELETE FROM identity.environment_roles WHERE principal_id=$1 AND org=$2")
-        .bind(principal)
-        .bind(org)
-        .execute(&mut *client)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(|error| database_error(&error))?;
     sqlx::query(DROP_ORG_ROLES_SQL)
         .bind(principal)
         .bind(org)
@@ -460,23 +427,6 @@ pub async fn org_users_page(
         .collect()
 }
 
-const ORG_ENVIRONMENTS_SQL: &str =
-    wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_ORG_ENVIRONMENTS_SQL;
-
-/// The environments of `org`, or of one project of it, as `(project, env)`.
-pub async fn org_environments(
-    client: &mut sqlx::PgConnection,
-    org: &wamn_registry::OrgId,
-    project: Option<&wamn_registry::ProjectId>,
-) -> Result<Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)>, IdentityError> {
-    sqlx::query_as(ORG_ENVIRONMENTS_SQL)
-        .bind(org)
-        .bind(project)
-        .fetch_all(&mut *client)
-        .await
-        .map_err(|error| database_error(&error))
-}
-
 /// The status of a project environment
 /// (docs/architecture/execution.md#host-run-routes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -505,79 +455,6 @@ pub struct EnvironmentSummary {
     pub name: wamn_registry::EnvName,
     /// The state from registry.environments.status.
     pub state: String,
-}
-
-/// The environments of one project of `org` that a status route changes:
-/// one environment when `env` names it, or every environment of the project.
-/// A project or an environment outside the org is refused before anything
-/// is written.
-pub async fn status_environments(
-    client: &mut sqlx::PgConnection,
-    org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
-    env: Option<&wamn_registry::EnvName>,
-) -> Result<Vec<wamn_registry::EnvName>, IdentityError> {
-    let Some(env) = env else {
-        let in_org: bool = sqlx::query(PROJECT_IN_ORG_SQL)
-            .bind(org)
-            .bind(project)
-            .fetch_one(&mut *client)
-            .await
-            .map_err(|error| database_error(&error))?
-            .get(0);
-        if !in_org {
-            return Err(IdentityError::refused(
-                IdentityErrorType::NotFound,
-                IdentityRefusal::ProjectNotFound,
-                format!("project {project} is not a project of org {org}"),
-            ));
-        }
-        return Ok(project_envs(client, org, project)
-            .await?
-            .into_iter()
-            .map(|entry| entry.name)
-            .collect());
-    };
-    let found: bool = sqlx::query(ENV_IN_PROJECT_SQL)
-        .bind(org)
-        .bind(project)
-        .bind(env)
-        .fetch_one(&mut *client)
-        .await
-        .map_err(|error| database_error(&error))?
-        .get(0);
-    if !found {
-        return Err(IdentityError::refused(
-            IdentityErrorType::NotFound,
-            IdentityRefusal::EnvironmentNotFound,
-            format!("environment {project}/{env} is not an environment of org {org}"),
-        ));
-    }
-    Ok(vec![env.clone()])
-}
-
-const ENVIRONMENT_STATUS_SQL: &str =
-    wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_ENVIRONMENT_STATUS_SQL;
-
-/// Write the status of the named environments of one project of `org`.
-/// The control routes read them with [`status_environments`] first.
-pub async fn set_environment_status(
-    client: &mut sqlx::PgConnection,
-    org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
-    environments: &[wamn_registry::EnvName],
-    status: EnvironmentStatus,
-) -> Result<(), IdentityError> {
-    sqlx::query(ENVIRONMENT_STATUS_SQL)
-        .bind(org)
-        .bind(project)
-        .bind(environments)
-        .bind(status.as_str())
-        .execute(&mut *client)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(|error| database_error(&error))?;
-    Ok(())
 }
 
 const USER_CONTACT_SQL: &str = "SELECT email, display_name FROM identity.principals \
@@ -757,37 +634,5 @@ pub async fn lock_org_memberships(
 ) -> Result<(), IdentityError> {
     sqlx::query("SELECT principal_id FROM identity.org_memberships WHERE org=$1 ORDER BY principal_id FOR UPDATE").bind(org).fetch_all(&mut *client)
         .await.map_err(|error| database_error(&error))?;
-    Ok(())
-}
-
-/// Grant explicit administration of one environment to an active org member.
-pub async fn grant_environment_admin(
-    client: &mut sqlx::PgConnection,
-    principal: &PrincipalId,
-    org: &wamn_registry::OrgId,
-    env: &wamn_registry::EnvName,
-) -> Result<(), IdentityError> {
-    active_member(client, principal, org).await?;
-    sqlx::query("INSERT INTO identity.environment_roles (principal_id,org,env,role) VALUES ($1,$2,$3,'environment-admin') ON CONFLICT DO NOTHING").bind(principal).bind(org).bind(env).execute(&mut *client).await.map(|result| result.rows_affected()).map_err(|error| database_error(&error))?;
-    Ok(())
-}
-/// Revoke only the explicit environment grant.
-pub async fn revoke_environment_admin(
-    client: &mut sqlx::PgConnection,
-    principal: &PrincipalId,
-    org: &wamn_registry::OrgId,
-    env: &wamn_registry::EnvName,
-) -> Result<(), IdentityError> {
-    lock_membership(client, principal, org).await?;
-    sqlx::query(
-        "DELETE FROM identity.environment_roles WHERE principal_id=$1 AND org=$2 AND env=$3",
-    )
-    .bind(principal)
-    .bind(org)
-    .bind(env)
-    .execute(&mut *client)
-    .await
-    .map(|result| result.rows_affected())
-    .map_err(|error| database_error(&error))?;
     Ok(())
 }

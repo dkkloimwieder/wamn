@@ -28,8 +28,7 @@ const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     AND p.type = 'user' AND p.status = 'active' \
     AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'))";
 
-const PROJECT_ADMIN_SQL: &str =
-    "SELECT identity.is_project_admin($1,$2,$5,$3) AND $4='project-admin'";
+const PROJECT_ADMIN_SQL: &str = "SELECT identity.is_project_admin($1,$2,$3) AND $4='project-admin'";
 
 /// The org audience, shared by its environments and control routes.
 pub fn org_audience(org: &wamn_registry::OrgId) -> Result<String, IdentityError> {
@@ -97,14 +96,12 @@ pub async fn is_project_admin(
     principal_id: &PrincipalId,
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
-    environment: Option<&wamn_registry::EnvName>,
 ) -> Result<bool, IdentityError> {
     sqlx::query(PROJECT_ADMIN_SQL)
         .bind(principal_id)
         .bind(org)
         .bind(project)
         .bind(PROJECT_ADMIN_ROLE)
-        .bind(environment)
         .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?

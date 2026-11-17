@@ -277,14 +277,12 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// The control database relations an org's control host reaches, with the
 /// privileges it holds on each (docs/architecture/execution.md#host-run-routes,
 /// wamn-a40n.3). It reads who is a user and whether the password login of a
-/// control session is live. It writes the org memberships and the org, project
-/// and environment grants of the org operations, and it reads the projects and
-/// environments those grants cover. The `project.create` route writes a
+/// control session is live. It writes the org memberships and the org and project
+/// grants of the org operations. It reads the projects and environments those grants cover. The `project.create` route writes a
 /// project. It also stores encrypted OAuth tokens and pending authorizations.
-pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 19] = [
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 18] = [
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
-    ("identity", "environment_roles", CONTROL_WRITE),
     ("identity", "password_logins", &["SELECT"]),
     ("identity", "principals", &["SELECT", "INSERT", "UPDATE"]),
     ("identity", "project_env_memberships", CONTROL_WRITE),

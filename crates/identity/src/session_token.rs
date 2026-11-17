@@ -88,6 +88,7 @@ pub async fn sign_session_token_in_transaction(
     mut claims: AccessTokenClaims,
     validation_started_at: i64,
     absolute_expiry: Option<i64>,
+    envelope: &wamn_envelope::encryption::Envelope,
 ) -> Result<IssuedSessionToken, IdentityError> {
     if claims.iss.trim().is_empty()
         || claims.aud.is_empty()
@@ -97,7 +98,7 @@ pub async fn sign_session_token_in_transaction(
         return Err(refused());
     }
     let issuer = claims.iss.clone();
-    let token = sign_message(transaction, &issuer, |kid, key| {
+    let token = sign_message(transaction, &issuer, envelope, |kid, key| {
         let now = unix_seconds()?;
         (claims.iat, claims.exp) = minting_times(validation_started_at, now)?;
         if let Some(deadline) = absolute_expiry {

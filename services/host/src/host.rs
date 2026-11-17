@@ -543,7 +543,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .oauth_encryption
         .as_deref()
         .map(|config| -> anyhow::Result<_> {
-            Ok(Arc::new(wamn_connection::oauth_encryption::Envelope::open(
+            Ok(Arc::new(wamn_envelope::encryption::Envelope::open(
                 &serde_json::from_str(config)?,
             )?))
         })

@@ -106,7 +106,7 @@ pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
 /// Project-owned connection reader, also used by incoming authentication and file routes.
 #[derive(Debug)]
 pub struct ConnectionFacts {
-    oauth_encryption: Option<Arc<crate::oauth_encryption::Envelope>>,
+    oauth_encryption: Option<Arc<wamn_envelope::encryption::Envelope>>,
     memory: Arc<ConnectionMemory>,
     reader: Arc<ConnectionCredentials>,
     project_env_key: wamn_registry::ProjectEnvKey,
@@ -152,12 +152,12 @@ impl ConnectionFacts {
     }
     pub fn with_oauth_encryption(
         mut self,
-        envelope: Option<Arc<crate::oauth_encryption::Envelope>>,
+        envelope: Option<Arc<wamn_envelope::encryption::Envelope>>,
     ) -> Self {
         self.oauth_encryption = envelope;
         self
     }
-    pub fn oauth_encryption(&self) -> Option<Arc<crate::oauth_encryption::Envelope>> {
+    pub fn oauth_encryption(&self) -> Option<Arc<wamn_envelope::encryption::Envelope>> {
         self.oauth_encryption.as_ref().map(Arc::clone)
     }
     pub fn oauth_tokens(&self) -> Arc<crate::oauth_token::Cache> {

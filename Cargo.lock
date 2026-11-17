@@ -5492,6 +5492,7 @@ dependencies = [
  "wamn-connection",
  "wamn-digest",
  "wamn-engine",
+ "wamn-envelope",
  "wamn-identity-protocol",
  "wamn-oci",
  "wamn-registry",
@@ -5688,18 +5689,10 @@ dependencies = [
  "anyhow",
  "async-nats",
  "async-trait",
- "base64 0.22.1",
- "bytes",
- "hex",
- "hyper",
  "moka",
- "object_store",
- "ring",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "sqlx",
- "tempfile",
  "tokio",
  "tracing",
  "url",
@@ -5709,10 +5702,10 @@ dependencies = [
  "wamn-connection",
  "wamn-digest",
  "wamn-engine",
+ "wamn-envelope",
  "wamn-identity",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-oci",
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
@@ -5720,7 +5713,6 @@ dependencies = [
  "wash-runtime",
  "wasmtime",
  "wat",
- "zeroize",
 ]
 
 [[package]]
@@ -5751,6 +5743,7 @@ dependencies = [
  "wamn-connection",
  "wamn-digest",
  "wamn-engine",
+ "wamn-envelope",
  "wamn-environment",
  "wamn-event-wire",
  "wamn-http",
@@ -5892,6 +5885,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-envelope"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "hex",
+ "hyper",
+ "object_store",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "tokio",
+ "wamn-oci",
+ "zeroize",
+]
+
+[[package]]
 name = "wamn-environment"
 version = "0.1.0"
 dependencies = [
@@ -5925,6 +5939,7 @@ dependencies = [
  "wamn-connection",
  "wamn-digest",
  "wamn-engine",
+ "wamn-envelope",
  "wamn-event-wire",
  "wamn-events",
  "wamn-fixture-package",
@@ -6058,6 +6073,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-connection",
  "wamn-engine",
+ "wamn-envelope",
  "wamn-environment",
  "wamn-http",
  "wamn-identity",
@@ -6114,6 +6130,7 @@ dependencies = [
  "wamn-connection",
  "wamn-digest",
  "wamn-engine",
+ "wamn-envelope",
  "wamn-http",
  "wamn-identity-protocol",
  "wamn-kubernetes",
@@ -6150,6 +6167,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-connection",
  "wamn-digest",
+ "wamn-envelope",
  "wamn-environment",
  "wamn-identity",
  "wamn-identity-protocol",
@@ -6226,6 +6244,7 @@ dependencies = [
  "url",
  "wamn-catalog",
  "wamn-digest",
+ "wamn-envelope",
  "wamn-identity",
  "wamn-identity-protocol",
  "wamn-oci",

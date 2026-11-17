@@ -128,7 +128,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:number-counter/set@0.9.0` | Authority `Granted`. Takes `application`, `sequence`, `counter`, `key` and the `int64` `value`, and sets that counter. Answers `next_number`. Refusals: `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live` and `idempotency_conflict`. |
 | `wamn-control:workflow/start@0.9.0` | Authority `Granted`. Takes `workflow_id`, `input_json` and `idempotency_key`, and admits one run of the enabled version of that [environment workflow](#environment-workflows). Answers `run_id`. Refusals: `invalid_input`, `active_role_required`, `workflow_not_enabled`, `workflow_not_served` and `idempotency_conflict`. |
 | `wamn-control:connection/authorize@0.9.0` | ProjectAdmin authority. Takes `project`, `env`, and `name`. Returns `authorization_url` for an authorization code connection. |
-| `wamn-control:control/mine@0.9.0` | `org_admin`, and projects reached by the current org, environment or project grants. `project_admin` marks authority over the whole project. |
+| `wamn-control:control/mine@0.9.0` | `org_admin`, and projects reached by the current org or project grants. `project_admin` marks authority over the whole project. |
 | `wamn-control:user/list@0.9.0` | `users`: each member of the org with `principal_id`, `email`, `display_name`, the org-local `status` and `org_admin`. An `org-admin` reads it, and so does a `project-admin` of any project of the org. |
 | `wamn-control:user/invite@0.9.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
 | `wamn-control:user/activate@0.9.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
@@ -143,7 +143,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of an installed release. Answers its exported operations with their package and component, and the operations each role holds. The `admin` role holds every operation of the release. Writes nothing. |
 | `wamn-control:member/list@0.9.0` | Takes `project` and an optional `environment`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
 | `wamn-control:member/grant@0.9.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
-| `wamn-control:member/revoke@0.9.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while org, environment or project administration covers the membership. |
+| `wamn-control:member/revoke@0.9.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while org or project administration covers the membership. |
 | `wamn-control:project-admin/grant@0.9.0` | Takes `project` and `principal_id` of an active member, and writes only the explicit `project-admin` grant. |
 | `wamn-control:project-admin/revoke@0.9.0` | Takes `project` and `principal_id`, and removes `project-admin` in the project. It refuses while the user holds `org-admin`. Memberships stay. |
 | `wamn-control:environment/activate@0.9.0` | Takes `project` and `env`, and makes the environment active. Answers `project`, `env` and `status`. |
@@ -172,7 +172,7 @@ An application route runs under the administration credential, in a host-owned R
 A host-run write stamps that sealed operation id in its history entries.
 A role or permission write first takes the project lock that `wamn` and release reconciliation take.
 The writes are the functions of [`wamn_environment::application`](../../crates/environment/src/application.rs), which the role verbs of `wamn` also call.
-`user_role.revoke` reads current inherited administration through the host’s identity reader. It derives the answer from the org, environment and project grants.
+`user_role.revoke` reads current inherited administration through the host’s identity reader. It derives the answer from the org and project grants.
 `permission.grant` writes one permission row. A row the serving release does not serve grants nothing.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `user_not_found` or `admin_covered`.
 The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `apps/target/wamn/wamn_control/client-ts`, which Git does not hold.
@@ -201,7 +201,8 @@ Every other org route needs a current `org-admin` row of the caller in the token
 A project route needs that row, or a current `project-admin` row of the caller in the project that the request names.
 A write runs in one transaction on a second `control` login, which holds one write at a time.
 The transaction inserts the caller and sealed operation id into `platform.tx_identity`, then checks the role again.
-The writes are the functions of [`wamn_identity::org`](../../crates/identity/src/org.rs), which platform installation also calls.
+Membership and administration writes use [`wamn_identity::org`](../../crates/identity/src/org.rs), which platform installation also calls.
+[`wamn_environment::org`](../../crates/environment/src/org.rs) owns project creation, environment enumeration, and environment status writes.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
 Native control reads that login from the installed public connection projection, one file per `<project>--<env>`, at each write. Its component configuration selects `administration_dir`; passwords stay in the owning role Secrets.
@@ -934,7 +935,7 @@ The host binds the principal that created the state before it reads or writes ot
 Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.
-The shared [encryption module](../../crates/connection/src/oauth_encryption.rs) supports regional Cloud KMS and a local key file.
+The shared [encryption module](../../crates/envelope/src/encryption.rs) supports regional Cloud KMS and a local key file.
 The host reads its provider from `WAMN_OAUTH_ENCRYPTION`.
 Use `gcp` for Cloud KMS or `local` for a key file.
 [Deployment instructions](../operations/gcp.md#49-platform-install-inputs) describe that configuration.
@@ -989,7 +990,7 @@ An `env delete` deletes every key of the environment.
 
 Every org in `registry.orgs` has the org audience `urn:wamn:control:<org>`.
 The same token serves application and control requests. Login requires active org membership, without an administration grant.
-Control administration remains a separate read of the system database.
+Control reads org and project administration separately from the system database.
 Control session admission currently refuses requests until the RFC 9068 verifier is installed.
 
 ### Consistent session access
@@ -1097,7 +1098,11 @@ Cancellation retains the permit until the blocking worker ends.
 Stored hashes with another cost profile refuse before expensive work starts.
 
 Enrollment requires 15 Unicode characters and accepts at most 1,024 UTF-8 bytes without trimming or normalization.
-The service limits password requests to eight per replica and HTTPS connections to 128 per replica.
+The identity chart runs two replicas. Each replica limits password requests to eight and HTTPS connections to 128.
+Password requests use `wamn_postgres::pool` with eight connections. SQLx flushes pending rollbacks before returning a connection to the pool.
+Rotation retains its dedicated database connection and issuer advisory lock.
+The service trusts zero proxy hops by default. The identity chart sets `trustedProxyHops` to one for the forwarding web proxy.
+The count selects an address backward through all `x-forwarded-for` headers, as in `wamn-web`. Zero uses the TLS peer address.
 Database counters enforce 60-second windows across replicas: 120 requests globally, 20 per source address, and five per account.
 Enrollment uses the principal ID for its account counter. Login uses a digest of the normalized email.
 The source is the client address forwarded by ingress in `X-Forwarded-For`.
@@ -1201,7 +1206,10 @@ Public keys remain available for 930 seconds after that boundary.
 An emergency key removal does not activate a replacement.
 Previously cached keys can still authenticate for their remaining 300-second freshness window.
 
-Private signing keys remain in the system database and identity service.
+Private signing keys are encrypted by `wamn-envelope` with the same provider and wrapping key as OAuth tokens.
+Identity requires `WAMN_OAUTH_ENCRYPTION` and, for the local provider, `WAMN_OAUTH_KEY_FILE`. There is no plaintext fallback.
+`identity.session_keys.private_key_envelope` stores the packed JSON envelope as bytes: ciphertext, nonce, wrapped key and key id.
+Retirement erases that whole column. Identity decrypts the active key under the existing shared issuer lock for each signature.
 The public endpoint exposes only public key material.
 The identity service runs signing key rotation on a persisted schedule.
 `keyRotationSeconds` in the identity chart sets the interval. Its configured value is 2,592,000 seconds, or 30 days.

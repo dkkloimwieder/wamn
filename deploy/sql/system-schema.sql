@@ -662,7 +662,7 @@ CREATE TABLE identity.session_keys (
     issuer         text NOT NULL CHECK (btrim(issuer) <> ''),
     kid            uuid NOT NULL DEFAULT gen_random_uuid(),
     public_key     bytea NOT NULL CHECK (octet_length(public_key) = 32),
-    private_pkcs8  bytea,
+    private_key_envelope  bytea,
     published_at   timestamptz NOT NULL DEFAULT clock_timestamp(),
     signing_cutoff timestamptz,
     created_at timestamptz NOT NULL,
@@ -671,7 +671,7 @@ CREATE TABLE identity.session_keys (
     updated_by uuid NOT NULL,
     PRIMARY KEY (issuer, kid),
     CONSTRAINT session_keys_retirement_check
-        CHECK ((signing_cutoff IS NULL) = (private_pkcs8 IS NOT NULL))
+        CHECK ((signing_cutoff IS NULL) = (private_key_envelope IS NOT NULL))
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.session_keys
@@ -756,22 +756,6 @@ CREATE TABLE registry.environments (
         DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.environments
-    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
-CREATE TABLE identity.environment_roles (
-    principal_id uuid NOT NULL,
-    org text NOT NULL,
-    env text NOT NULL,
-    role text NOT NULL CHECK (role = 'environment-admin'),
-    created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
-    updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
-    PRIMARY KEY (principal_id, org, env, role),
-    FOREIGN KEY (principal_id, org) REFERENCES identity.org_memberships(principal_id, org) ON DELETE CASCADE,
-    FOREIGN KEY (org, env) REFERENCES registry.environments(org, env) ON DELETE CASCADE
-);
-CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON identity.environment_roles
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE TABLE registry.environment_projects (
@@ -1189,7 +1173,7 @@ BEGIN
         'registry.environment_applications', 'registry.environment_application_connections',
         'registry.environment_integrations',
         'registry.connection_principal',
-        'identity.org_memberships', 'identity.org_roles', 'identity.environment_roles',
+        'identity.org_memberships', 'identity.org_roles',
         'identity.project_roles', 'identity.project_env_memberships',
         'identity.principals', 'identity.password_logins'
     ] LOOP
@@ -1205,30 +1189,28 @@ BEGIN
     END LOOP;
     IF to_regrole('wamn_control') IS NOT NULL THEN
         GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid) TO wamn_control;
-        GRANT SELECT ON registry.environments, identity.environment_roles TO wamn_control;
-        GRANT INSERT, UPDATE, DELETE ON identity.environment_roles TO wamn_control;
+        GRANT SELECT ON registry.environments TO wamn_control;
     END IF;
 END
 $control_security$;
 
 -- Inherited authority is read from its owning grant on every authorization.
-CREATE FUNCTION identity.is_project_admin(principal uuid, org_id text, environment text, project_id text)
+CREATE FUNCTION identity.is_project_admin(principal uuid, org_id text, project_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT EXISTS (SELECT FROM identity.principals p
         JOIN identity.org_memberships m ON m.principal_id=p.id AND m.org=org_id AND m.status='active'
         WHERE p.id=principal AND p.type='user' AND p.status='active'
         AND (NOT (COALESCE(pg_has_role(session_user,to_regrole('wamn_control'),'member'),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper)) OR org_id=registry.control_org())
         AND (EXISTS (SELECT FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=org_id AND r.role='org-admin')
-          OR EXISTS (SELECT FROM identity.environment_roles r WHERE r.principal_id=p.id AND r.org=org_id AND r.env=environment AND r.role='environment-admin')
           OR EXISTS (SELECT FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=org_id AND r.project=project_id AND r.role='project-admin')))
 $$;
-REVOKE ALL ON FUNCTION identity.is_project_admin(uuid,text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity.is_project_admin(uuid,text,text) FROM PUBLIC;
 
 CREATE FUNCTION identity.has_project_access(principal uuid, org_id text, environment text, project_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT (NOT (COALESCE(pg_has_role(session_user,to_regrole('wamn_control'),'member'),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper)) OR org_id=registry.control_org())
     AND EXISTS (SELECT FROM registry.environment_projects e WHERE e.org=org_id AND e.env=environment AND e.project=project_id)
-    AND (identity.is_project_admin(principal,org_id,environment,project_id)
+    AND (identity.is_project_admin(principal,org_id,project_id)
       OR EXISTS (SELECT FROM identity.project_env_memberships m
         JOIN identity.org_memberships om USING (principal_id,org)
         JOIN identity.principals p ON p.id=m.principal_id
@@ -1241,7 +1223,7 @@ DECLARE reader text;
 BEGIN
     FOREACH reader IN ARRAY ARRAY['wamn_system_reader','wamn_identity_issuer','wamn_control','wamn_system','wamn_apply'] LOOP
         IF to_regrole(reader) IS NOT NULL THEN
-            EXECUTE format('GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO %I',reader);
+            EXECUTE format('GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO %I',reader);
         END IF;
     END LOOP;
 END $authority_grants$;
