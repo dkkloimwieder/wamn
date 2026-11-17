@@ -4,7 +4,7 @@ fn mapping(wiring: &str, node: &str, input: &Value, parameters: Option<&Value>) 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(format!("../tests/workflows/{wiring}.json"));
     let wiring: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    let config = &wiring["nodes"][node]["params"];
+    let config = &wiring["nodes"][node]["call"]["params"];
     let parameters = parameters.unwrap_or(&config["parameters"]);
     serde_json::from_str(
         &jsonata_expression::evaluate_with_parameters(
@@ -165,7 +165,7 @@ fn consumer_error_prevents_checkpoint_mapping() {
     ] {
         assert!(
             jsonata_expression::evaluate(
-                wiring["nodes"]["finish"]["params"]["expression"]
+                wiring["nodes"]["finish"]["call"]["params"]["expression"]
                     .as_str()
                     .unwrap(),
                 &input
@@ -258,7 +258,7 @@ fn a_false_workflow_parameter_cannot_select_consumer_provenance() {
     ] {
         let wiring: Value =
             serde_json::from_slice(&std::fs::read(root.join(path)).unwrap()).unwrap();
-        let expression = wiring["nodes"]["rows"]["params"]["expression"]
+        let expression = wiring["nodes"]["rows"]["call"]["params"]["expression"]
             .as_str()
             .unwrap();
         for items in [json!([]), json!([{"id":"42","name":"Acme"}])] {

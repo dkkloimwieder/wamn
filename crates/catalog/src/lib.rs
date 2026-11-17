@@ -80,11 +80,9 @@ pub use signed_file_read::{
     MAX_SIGNED_FILE_SECONDS, SIGNED_FILE_READS, SignedFileField, SignedFileRead,
     SignedFileReadError, SignedFileReads, SignedFileResultClass, signed_file_reads,
 };
-#[cfg(any(test, feature = "test-util"))]
-pub use wiring::fixture_graph;
 pub use wiring::{
-    WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,
-    WiringOperationDependency, WiringResponse, WiringTerminal, partial_response_schema,
+    WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEntry, WiringEventOperation,
+    WiringNode, workflow_http_prefix, workflow_permission,
 };
 
 use std::fmt;
@@ -139,9 +137,6 @@ pub enum CatalogIdentityError {
         limit: usize,
     },
     UnresolvedWiringNode {
-        node_id: canonical_name::CanonicalName,
-    },
-    UnresolvedWiringEntry {
         node_id: canonical_name::CanonicalName,
     },
 }
@@ -204,12 +199,6 @@ impl fmt::Display for CatalogIdentityError {
                 write!(
                     formatter,
                     "wiring edge names node {node_id:?}, which the document does not declare"
-                )
-            }
-            Self::UnresolvedWiringEntry { node_id } => {
-                write!(
-                    formatter,
-                    "wiring entry names node {node_id:?}, which the document does not declare"
                 )
             }
         }

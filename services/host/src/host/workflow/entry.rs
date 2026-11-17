@@ -19,16 +19,14 @@ use wash_runtime::wasmtime::component::{Accessor, Instance};
 pub(crate) struct RequestCall<'a> {
     pub workload: &'a str,
     pub path: &'a str,
-    pub workflow_id: &'a str,
-    pub version: i32,
     pub caller: &'a AuthenticatedCaller,
     pub input: Value,
-    /// The route's loaded graph can write or continue after the Response.
-    pub durable: bool,
     pub deadline: Instant,
 }
 
 /// Admin-selected principal for an immediate durable run.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum RunAs {
     Admin,
     Workflow,
@@ -46,7 +44,10 @@ pub(crate) struct RunNow<'a> {
 
 impl Workflow {
     /// Admit a Request under its execution policy and dispatch its synchronous entry.
-    pub(crate) async fn call(&self, request: RequestCall<'_>) -> Result<entry::Response, Refusal> {
+    pub(crate) async fn call(
+        &self,
+        request: RequestCall<'_>,
+    ) -> Result<Option<entry::Response>, Refusal> {
         let workload = self.workload(request.workload)?;
         let app = &workload.application;
         let prepare = self
@@ -55,29 +56,42 @@ impl Workflow {
                 let row = sqlx::query(
                 "SELECT workflow_id, version, graph_json::text AS graph, wiring_hash, execution_role
                    FROM catalog.workflows WHERE environment = $1 AND application = $2
-                    AND enabled AND trigger = 'request' AND path = $3
-                    AND workflow_id = $4 AND version = $5 FOR SHARE"
+                    AND enabled AND trigger = 'request' AND path = $3 FOR SHARE"
             ).bind(&app.environment).bind(&app.application).bind(request.path)
-                .bind(request.workflow_id).bind(request.version)
                 .fetch_optional(&mut *connection).await
                 .map_err(|error| ProductionLeaseError::postgres("load Request workflow", &error))?;
                 let Some(row) = row else {
-                    return Ok(Err(Refusal::InvalidInput(
-                        "no enabled Request workflow at this path".into(),
-                    )));
+                    return Ok(Ok(None));
                 };
                 let definition = Definition::from_row(&row)?;
+                let permission =
+                    wamn_catalog::workflow_permission(&app.application, definition.id.as_str());
+                if !request.caller.permits(&permission) {
+                    return Ok(Err(Refusal::PermissionDenied));
+                }
                 let (principal, role) =
                     match request_identity(request.caller, definition.role.as_deref()) {
                         Ok(identity) => identity,
                         Err(error) => return Ok(Err(error)),
                     };
-                let permission = format!("wamn-workflow:{}/{}", app.application, definition.id);
-                if !request.caller.permits(&permission) {
-                    return Ok(Err(Refusal::PermissionDenied));
+                let json = serde_json::from_str(&definition.graph).map_err(|error| {
+                    ProductionLeaseError::invalid("decode Request workflow", error)
+                })?;
+                let graph = wamn_catalog::WiringDocument::parse(&json).map_err(|error| {
+                    ProductionLeaseError::invalid("parse Request workflow", error)
+                })?;
+                if graph.wiring_hash() != definition.hash {
+                    return Err(ProductionLeaseError::contract(
+                        "load Request workflow",
+                        "graph hash mismatch",
+                    ));
                 }
+                let checked = super::authoring::check(&graph, app, definition.role.as_deref())
+                    .map_err(|error| {
+                        ProductionLeaseError::invalid("check Request workflow", error)
+                    })?;
                 let key = uuid::Uuid::new_v4().to_string();
-                if request.durable {
+                if checked.can_write {
                     let role = String::from(role);
                     let Admission::Leased(mut admitted) = workload
                         .admit(
@@ -102,7 +116,7 @@ impl Workflow {
                         ));
                     };
                     admitted.authority.request_deadline = Some(request.deadline);
-                    return Ok(Ok(Prepared::Durable(admitted)));
+                    return Ok(Ok(Some(Prepared::Durable(admitted))));
                 }
                 let authority = Authority {
                     delivery: key,
@@ -116,15 +130,18 @@ impl Workflow {
                     responded: AtomicBool::new(false),
                     causation: None,
                 };
-                Ok(Ok(Prepared::Inline {
+                Ok(Ok(Some(Prepared::Inline {
                     authority,
                     definition,
-                }))
+                })))
             });
         let prepared = tokio::time::timeout_at(request.deadline, prepare)
             .await
             .map_err(|_| Refusal::DeadlineElapsed)?
             .map_err(|error| storage_error(&error))??;
+        let Some(prepared) = prepared else {
+            return Ok(None);
+        };
         let (handle, definition, input_json, run_id) = match prepared {
             Prepared::Inline {
                 authority,
@@ -141,6 +158,7 @@ impl Workflow {
             }
         };
         let (reply, response) = oneshot::channel();
+        let durable = run_id.is_some();
         let input = entry::Request {
             handle: handle.clone(),
             definition,
@@ -160,17 +178,17 @@ impl Workflow {
             Ok::<_, anyhow::Error>(response.await?)
         })
         .await;
-        if !request.durable {
+        if !durable {
             workload.remove_authority(&handle);
         }
         match result {
-            Ok(result) => result.map_err(|error| entry_error(&error))?,
+            Ok(result) => result.map_err(|error| entry_error(&error))?.map(Some),
             Err(_) => Err(Refusal::DeadlineElapsed),
         }
     }
 
     /// Admit a durable run chosen by an administrator and start the service walk.
-    pub(crate) async fn run_now(&self, request: RunNow<'_>) -> Result<String, Refusal> {
+    pub(crate) async fn run_now(&self, request: RunNow<'_>) -> Result<Option<String>, Refusal> {
         if !request.caller.admin() {
             return Err(Refusal::PermissionDenied);
         }
@@ -187,7 +205,7 @@ impl Workflow {
                 .fetch_optional(&mut *connection).await
                 .map_err(|error| ProductionLeaseError::postgres("load run-now workflow", &error))?;
                 let Some(row) = row else {
-                    return Ok(Err(Refusal::InvalidInput("workflow is not enabled".into())));
+                    return Ok(Ok(None));
                 };
                 let definition = Definition::from_row(&row)?;
                 let identity = match request.run_as {
@@ -205,27 +223,32 @@ impl Workflow {
                     Err(error) => return Ok(Err(error)),
                 };
                 let role = String::from(role);
-                Ok(Ok(workload
-                    .admit(
-                        connection,
-                        definition,
-                        Delivery {
-                            trigger: RunTrigger::RunNow,
-                            invoked_by: "manual",
-                            principal,
-                            role: &role,
-                            invoker: Some(request.caller.principal_id()),
-                            key: request.idempotency_key,
-                            input: request.input,
-                            parent: None,
-                        },
-                    )
-                    .await?))
+                Ok(Ok(Some(
+                    workload
+                        .admit(
+                            connection,
+                            definition,
+                            Delivery {
+                                trigger: RunTrigger::RunNow,
+                                invoked_by: "manual",
+                                principal,
+                                role: &role,
+                                invoker: Some(request.caller.principal_id()),
+                                key: request.idempotency_key,
+                                input: request.input,
+                                parent: None,
+                            },
+                        )
+                        .await?,
+                )))
             })
             .await
             .map_err(|error| storage_error(&error))??;
+        let Some(admitted) = admitted else {
+            return Ok(None);
+        };
         match admitted {
-            Admission::Existing(id) => Ok(id),
+            Admission::Existing(id) => Ok(Some(id)),
             Admission::Conflict => Err(Refusal::IdempotencyConflict),
             Admission::Leased(admitted) => {
                 let run = admitted.issue(&workload);
@@ -235,7 +258,7 @@ impl Workflow {
                         tracing::warn!(%error, "dispatch run-now workflow");
                     }
                 });
-                Ok(id)
+                Ok(Some(id))
             }
         }
     }

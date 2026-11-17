@@ -461,12 +461,10 @@ It never runs for a single fix.
 Both runners use the shared process boundary in `cargo xtask require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 120 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
 The silence limit and the absolute deadline apply independently. Output cannot extend a deadline.
 The epoch interruption case lives in `wamn-engine --test deadline`.
-Pure calendar scheduling decisions live in `wamn-workflow --test schedule_decisions`.
+The host workflow plugin covers calendar matching in `host::workflow::schedule`.
 Admission authority stays in `wamn-provision --test admission_live`.
 `wamn-provision --test run_state_live` covers atomic admission, lease recovery, fencing and retention.
 Live schedule cases call the service with its real clock and can take several minutes.
-Schedule storage stays in `wamn-environment --test workflow_schedule_live`.
-Broker acknowledgement lives in `wamn-environment --test workflow_event_nats`.
 The connection and caller case lives in `wamn-dev --test platform_apply_kind` and requires an installed development cluster.
 
 ## Ignored tests
@@ -1186,31 +1184,8 @@ Run the combined host's lifecycle tests:
 cargo test --locked --offline -p wamn-host --bin wamn-host host::tests::
 ```
 
-Queue shutdown recovery and event admission tests use PostgreSQL 18:
-
-```bash
-cargo test -p wamn-workflow --lib queue::admission_live::
-```
-
 For production authorization, component execution, and database behavior, run the [local application business tests](#local-application-business-tests).
 The focused `platform_apply_kind` cases own product-command observations of deployed startup, readiness, authenticated requests, and cleanup.
-
-### Workflow schedules
-
-The schedule task's unit tests run with paused time: the first tick after a restart, a row enabled or disabled between ticks, and ticks missed during a slow admission.
-
-```bash
-cargo test --locked --offline -p wamn-workflow --test schedule_decisions
-```
-
-The live test authors schedule workflows on a disposable PostgreSQL 18 database, admits due moments, and drains the runs through the real queue.
-One case runs the host's schedule task in real time: a row enabled after the task starts fires at its next tick, and a disabled row fires at no later tick.
-Another holds a lock on the rows across one minute: the late tick admits its own due moment, the missed tick is skipped, and the next tick fires.
-Each of these two cases takes up to about three minutes.
-
-```bash
-cargo test -p wamn-environment --test workflow_schedule_live -- --nocapture
-```
 
 ### Connection candidates
 

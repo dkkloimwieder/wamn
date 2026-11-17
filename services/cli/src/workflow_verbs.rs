@@ -1,246 +1,131 @@
-//! Workflow clients of the authenticated control and application routes.
+//! Workflow administration through the application host.
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use std::path::PathBuf;
+use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
+use wamn_catalog::canonical_name::CanonicalName;
 
-use crate::operation_verbs::parse_coordinate;
+/// The application host and the administrator's bearer token.
+#[derive(Debug, Args)]
+pub struct Host {
+    #[arg(long)]
+    host_url: String,
+    #[arg(long, env = "WAMN_TOKEN", hide_env_values = true)]
+    token: String,
+}
 
-/// One workflow verb.
+/// One application workflow verb.
 #[derive(Debug, Subcommand)]
 pub enum WorkflowCommand {
-    /// Author one disabled workflow version from a wiring document, and print its hash.
-    Author(AuthorArgs),
-    /// Enable one workflow version, and disable the version enabled before it.
-    Enable(EnableArgs),
-    /// Disable one workflow version. Queued and running runs finish.
-    Disable(VersionArgs),
-    /// Print the workflow versions of the environment, one JSON object per line.
-    List(WorkflowTarget),
-    /// Start the enabled version of a workflow through the host, and print its run id.
-    Start(StartArgs),
+    /// Author a disabled workflow version.
+    Author(Author),
+    /// Enable a workflow version.
+    Enable(Version),
+    /// Disable a workflow version.
+    Disable(Version),
+    /// List the application's workflow versions.
+    List(Host),
+    /// Admit a run of an enabled workflow and print its run ID.
+    Run(Run),
 }
 
-/// The environment selected by a workflow request.
 #[derive(Debug, Args)]
-pub struct WorkflowDatabase {
-    #[arg(long)]
-    pub environment: wamn_registry::EnvName,
-}
-
-/// The environment of a workflow command without a serving-release coordinate.
-#[derive(Debug, Args)]
-pub struct WorkflowTarget {
+pub struct Author {
     #[command(flatten)]
-    pub target: WorkflowDatabase,
-    /// Project whose environment owns the workflow or run.
+    host: Host,
     #[arg(long)]
-    pub project: wamn_registry::ProjectId,
-}
-
-/// The identity a run executes as.
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum ExecutionType {
-    /// The `workflow` user with `--execution-role` active.
-    Role,
-    /// The caller with its active role.
-    Invoker,
+    document: PathBuf,
+    /// Execution role. Required for Schedule and Data change.
+    #[arg(long)]
+    execution_role: Option<String>,
 }
 
 #[derive(Debug, Args)]
-pub struct AuthorArgs {
-    /// The coordinate, `org/env/project`, whose serving release evaluates the graph conditions.
+pub struct Version {
+    #[command(flatten)]
+    host: Host,
     #[arg(long)]
-    pub coordinate: String,
-    /// The application of the workflow, as the environment declares it.
+    workflow_id: CanonicalName,
     #[arg(long)]
-    pub application: wamn_catalog::ApplicationName,
-    /// Compiled publication wiring from a package build. Operations must carry their sealed versions.
-    #[arg(long = "document")]
-    pub compiled_document: PathBuf,
+    version: i32,
+}
+
+#[derive(Debug, Args)]
+pub struct Run {
+    #[command(flatten)]
+    host: Host,
+    #[arg(long)]
+    workflow_id: CanonicalName,
     #[arg(long, value_enum)]
-    pub execution_type: ExecutionType,
-    /// The active role of a run. Required with `--execution-type role`.
+    run_as: RunAs,
     #[arg(long)]
-    pub execution_role: Option<String>,
-    /// A five-field UTC cron: the schedule task starts the workflow at each
-    /// due moment. Without this or `--source-package`, the trigger is manual.
-    #[arg(long, conflicts_with = "source_package")]
-    pub schedule: Option<String>,
-    /// The application package whose captured model starts this workflow.
-    #[arg(long, requires_all = ["entity", "ops"])]
-    pub source_package: Option<wamn_catalog::PackageName>,
-    #[arg(long, requires = "source_package")]
-    pub entity: Option<String>,
-    /// Comma-separated event operations: insert, update, delete.
-    #[arg(long, value_delimiter = ',', value_parser = ["insert", "update", "delete"], requires = "source_package")]
-    pub ops: Vec<String>,
-    /// A registration condition over the old and new row images.
-    #[arg(long, requires = "source_package")]
-    pub condition: Option<String>,
+    idempotency_key: CanonicalName,
+    #[arg(long)]
+    input: PathBuf,
 }
 
-/// One workflow version under the lifecycle lock of its coordinate.
-#[derive(Debug, Args)]
-pub struct VersionArgs {
-    /// The coordinate, `org/env/project`, whose lifecycle lock the verb takes.
-    #[arg(long)]
-    pub coordinate: String,
-    #[arg(long)]
-    pub application: wamn_catalog::ApplicationName,
-    #[arg(long)]
-    pub workflow_id: String,
-    #[arg(long)]
-    pub version: u32,
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum RunAs {
+    Admin,
+    Workflow,
 }
 
-#[derive(Debug, Args)]
-pub struct EnableArgs {
-    #[command(flatten)]
-    pub version: VersionArgs,
-}
-
-#[derive(Debug, Args)]
-pub struct StartArgs {
-    /// The base URL of the application host, such as `https://acme.example`.
-    #[arg(long)]
-    pub host_url: String,
-    /// A bearer token of the caller: a session token or a PAT.
-    #[arg(long, env = "WAMN_TOKEN", hide_env_values = true)]
-    pub token: String,
-    /// The application of the workflow, as the environment declares it.
-    #[arg(long)]
-    pub application: wamn_catalog::ApplicationName,
-    #[arg(long)]
-    pub workflow_id: String,
-    /// A repeated start with the same key and input answers the first run.
-    #[arg(long)]
-    pub idempotency_key: String,
-    /// JSON input file passed to the workflow.
-    #[arg(long)]
-    pub input: PathBuf,
-}
-
-/// Send workflow administration to the org control service.
 pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
-    use serde_json::json;
-    let (operation, value) = match command {
-        WorkflowCommand::Start(args) => {
-            println!("{}", start(&args).await?);
-            return Ok(());
-        }
+    use crate::component_verbs::invoke;
+    let (host, operation, input) = match command {
         WorkflowCommand::Author(args) => {
-            let triple = parse_coordinate(&args.coordinate)?;
-            let execution_type = match args.execution_type {
-                ExecutionType::Role => "role",
-                ExecutionType::Invoker => "invoker",
-            };
-            let document: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(&args.compiled_document)?)?;
+            let document = read_json(&args.document)?;
             (
+                args.host,
                 "workflow.author",
-                json!({"project":triple.project,"env":triple.env,"application":args.application,
-                "document":document,"execution_type":execution_type,"execution_role":args.execution_role,
-                "schedule":args.schedule,"source_package":args.source_package,"entity":args.entity,"ops":args.ops,"condition":args.condition}),
+                json!({"document": document, "execution_role": args.execution_role}),
             )
         }
-        WorkflowCommand::Enable(args) => ("workflow.enable", version(&args.version)?),
-        WorkflowCommand::Disable(args) => ("workflow.disable", version(&args)?),
-        WorkflowCommand::List(args) => (
-            "workflow.list",
-            json!({"project":args.project,"env":args.target.environment}),
-        ),
+        WorkflowCommand::Enable(args) => version("workflow.enable", args),
+        WorkflowCommand::Disable(args) => version("workflow.disable", args),
+        WorkflowCommand::List(host) => (host, "workflow.list", json!({})),
+        WorkflowCommand::Run(args) => {
+            let input = read_json(&args.input)?;
+            let run_as = match args.run_as {
+                RunAs::Admin => "admin",
+                RunAs::Workflow => "workflow",
+            };
+            (
+                args.host,
+                "workflow.run",
+                json!({
+                    "workflow_id": args.workflow_id,
+                    "run_as": run_as,
+                    "idempotency_key": args.idempotency_key,
+                    "input_json": input,
+                }),
+            )
+        }
     };
-    let result = crate::operation_verbs::ControlHost::from_env()?
-        .call(operation, &value)
-        .await?;
-    println!("{result}");
+    let answer = invoke(&host.host_url, &host.token, operation, &input).await?;
+    if operation == "workflow.run" {
+        println!(
+            "{}",
+            answer["run_id"]
+                .as_str()
+                .context("workflow.run answers a run ID")?
+        );
+    } else {
+        println!("{answer}");
+    }
     Ok(())
 }
 
-fn version(args: &VersionArgs) -> anyhow::Result<serde_json::Value> {
-    let triple = parse_coordinate(&args.coordinate)?;
-    Ok(
-        serde_json::json!({"project":triple.project,"env":triple.env,"application":args.application,"workflow_id":args.workflow_id,"version":args.version}),
+fn version(operation: &'static str, args: Version) -> (Host, &'static str, Value) {
+    (
+        args.host,
+        operation,
+        json!({"workflow_id": args.workflow_id, "version": args.version}),
     )
 }
 
-/// Call `workflow.start` on the host with the caller's token, and return the
-/// run id it answers.
-async fn start(args: &StartArgs) -> anyhow::Result<String> {
-    let input: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&args.input).context("read the input file")?)
-            .context("parse the input file")?;
-    crate::component_verbs::invoke(
-        &args.host_url,
-        &args.token,
-        "workflow.start",
-        &serde_json::json!({
-            "application":args.application,"workflow_id":args.workflow_id,
-            "input_json":input,"idempotency_key":args.idempotency_key,
-        }),
-    )
-    .await?["run_id"]
-        .as_str()
-        .map(str::to_owned)
-        .context("workflow.start answers a run id")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn author_accepts_an_event_and_refuses_incomplete_or_mixed_triggers() {
-        use clap::Parser as _;
-        #[derive(clap::Parser)]
-        struct Command {
-            #[command(flatten)]
-            args: AuthorArgs,
-        }
-        let base = [
-            "workflow",
-            "--coordinate",
-            "acme/dev/orders",
-            "--application",
-            "orders",
-            "--document",
-            "workflow.json",
-            "--execution-type",
-            "invoker",
-        ];
-        let event = [
-            "--source-package",
-            "orders",
-            "--entity",
-            "order",
-            "--ops",
-            "insert,update",
-            "--condition",
-            "new.status != old.status",
-        ];
-        Command::try_parse_from(base.into_iter().chain(event)).unwrap();
-        assert!(
-            Command::try_parse_from(
-                base.into_iter()
-                    .chain(event)
-                    .chain(["--schedule", "* * * * *"])
-            )
-            .is_err()
-        );
-        assert!(
-            Command::try_parse_from(base.into_iter().chain(["--source-package", "orders"]))
-                .is_err()
-        );
-        assert!(
-            Command::try_parse_from(base.into_iter().chain([
-                "--source-package",
-                "orders",
-                "--entity",
-                "order",
-                "--ops",
-                "truncate"
-            ]))
-            .is_err()
-        );
-    }
+fn read_json(path: &Path) -> anyhow::Result<Value> {
+    serde_json::from_slice(&std::fs::read(path)?)
+        .with_context(|| format!("read JSON from {}", path.display()))
 }

@@ -257,9 +257,9 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
     ] {
         let mut refused = network.to_vec();
         if package == "wamn-edge" {
-            refused.extend(["wamn-workflow", "wamn-identity"]);
+            refused.push("wamn-identity");
         } else {
-            refused.extend(["hyper-util", "hyper-rustls", "reqwest", "wamn-workflow"]);
+            refused.extend(["hyper-util", "hyper-rustls", "reqwest"]);
         }
         let mut pruned = extra.to_vec();
         pruned.extend(["--prune", "wash-runtime"]);
@@ -278,19 +278,6 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
                 .iter()
                 .any(|name| all.contains(*name) && !allowed.contains(name)),
             "{package} links forbidden dependencies through wash-runtime"
-        );
-    }
-    for package in [
-        "wamn-sql",
-        "wamn-http",
-        "wamn-blobstore",
-        "wamn-authentication",
-        "wamn-events",
-    ] {
-        let all = linked(root, package, &[]).await?;
-        ensure!(
-            !["wamn-workflow"].iter().any(|name| all.contains(*name)),
-            "{package} links the workflow layer"
         );
     }
     Ok(())

@@ -1,0 +1,48 @@
+{
+  "cases": [
+    {
+      "literal": "invalid_input",
+      "from": [
+        "malformed_input"
+      ],
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "apply_in_progress",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": []
+      }
+    },
+    {
+      "literal": "workflow_path_taken",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "literal": "workflow_version_exists",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": []
+      }
+    },
+    {
+      "literal": "permission_denied",
+      "from": "permission_denied",
+      "detail": {
+        "required": [
+          "operation"
+        ]
+      }
+    }
+  ],
+  "closed": true
+}

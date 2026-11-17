@@ -1,13 +1,35 @@
 {
-  "format-version": "0.1",
+  "format-version": "0.2",
   "wiring-id": "audit_observe",
   "version": 1,
-  "entry": "operation",
   "nodes": {
+    "entry": {
+      "entry": {
+        "request": {
+          "path": "/audit_observe"
+        }
+      }
+    },
     "operation": {
-      "component": "observer_fixture",
-      "interface-version": "0.1.0",
-      "operation": "observer-fixture:audit/observe"
+      "call": {
+        "sibling": "observer_fixture-observer_fixture",
+        "export": "observer-fixture:audit/observe@3.0.0"
+      }
+    },
+    "response": {
+      "response": {
+        "status": 200
+      }
     }
-  }
+  },
+  "edges": [
+    {
+      "from": "entry",
+      "to": "operation"
+    },
+    {
+      "from": "operation",
+      "to": "response"
+    }
+  ]
 }

@@ -13,8 +13,7 @@ pub(super) struct PlatformHttp {
     ingress: Arc<dyn HostHandler>,
     files: Arc<Files>,
     routing: Arc<FlowHttpRouting>,
-    #[expect(dead_code, reason = "The workflow routes use the shared plugin in 7.4")]
-    pub(super) workflow: Arc<Workflow>,
+    workflow: Arc<Workflow>,
 }
 
 impl PlatformHttp {
@@ -32,8 +31,14 @@ impl PlatformHttp {
         }
     }
 
-    async fn bind(&self, id: &str, host: &str, prefix: &str) -> anyhow::Result<()> {
-        let routes = ["/wamn_control", prefix].map(|prefix| IngressRoute {
+    async fn bind(
+        &self,
+        id: &str,
+        host: &str,
+        files_prefix: &str,
+        flow_prefix: String,
+    ) -> anyhow::Result<()> {
+        let routes = ["/wamn_control", files_prefix, &flow_prefix].map(|prefix| IngressRoute {
             host: host.to_owned(),
             path_prefix: NormalizedPathPrefix::new(prefix),
             scope: RouteScope::Ingress,
@@ -45,18 +50,34 @@ impl PlatformHttp {
         let files = Arc::clone(&self.files);
         let routing = Arc::clone(&self.routing);
         let workload = id.to_owned();
+        let workflow = Arc::clone(&self.workflow);
+        let flow_prefix: Arc<str> = Arc::from(flow_prefix);
         tokio::spawn(async move {
             while let Some(mut job) = jobs.recv().await {
                 let files = Arc::clone(&files);
                 let routing = Arc::clone(&routing);
                 let workload = workload.clone();
+                let workflow = Arc::clone(&workflow);
+                let flow_prefix = Arc::clone(&flow_prefix);
                 tokio::spawn(async move {
                     let request = async {
+                        let path = job.req.uri().path();
+                        if path
+                            .strip_prefix(flow_prefix.as_ref())
+                            .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
+                        {
+                            return Ok(workflow
+                                .http(&routing, &workload, &flow_prefix, job.req)
+                                .await);
+                        }
                         let routes = files.routes(&workload).await?;
                         Ok(match routes.files.http(&routing, job.req).await {
                             std::ops::ControlFlow::Break(response) => response,
                             std::ops::ControlFlow::Continue(request) => {
-                                routes.application.http(&routing, request).await
+                                routes
+                                    .application
+                                    .http(&routing, &workflow, &workload, request)
+                                    .await
                             }
                         })
                     };
@@ -120,9 +141,11 @@ impl HostHandler for PlatformHttp {
                 .transpose()?;
             drop(components);
             if let Some(application) = application {
-                let prefix = format!("/api/{}/files", application.application);
+                let files_prefix = format!("/api/{}/files", application.application);
+                let flow_prefix = wamn_catalog::workflow_http_prefix(&application.application);
                 self.files.register(workload.id(), application);
-                self.bind(workload.id(), host, &prefix).await?;
+                self.bind(workload.id(), host, &files_prefix, flow_prefix)
+                    .await?;
             }
         }
         Ok(())

@@ -29,7 +29,6 @@ wamn-provision.workspace = true
 wamn-engine.workspace = true
 wamn-environment = { workspace = true, features = ["ops"] }
 wamn-platform-install.workspace = true
-wamn-workflow.workspace = true
 wamn-publish.workspace = true
 async-trait.workspace = true
 wamn-oci.workspace = true

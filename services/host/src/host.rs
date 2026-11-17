@@ -302,6 +302,12 @@ struct UserBinding {
     config: HashMap<String, String>,
 }
 
+const HOST_PLUGIN_SECRET_DIRECTORY: &str = "/etc/wasmcloud/host-plugin-secrets";
+
+fn default_nats_server(args: &HostArgs) -> &str {
+    args.wasmcloud_nats_url.as_deref().unwrap_or(&args.data_nats_url)
+}
+
 /// The operator's binding declarations from the chart's host configuration
 /// file. A `wasmcloud:nats` binding that names no `servers` dials the data
 /// connection with its certificate, as `wash host` does: the address and its
@@ -318,7 +324,7 @@ fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::Plug
             anyhow::ensure!(
                 entry.id == wamn_sql::WAMN_POSTGRES_ID
                     && source.dir
-                        == PathBuf::from("/etc/wasmcloud/host-plugin-secrets").join(secret),
+                        == PathBuf::from(HOST_PLUGIN_SECRET_DIRECTORY).join(secret),
                 "unsupported plugin Secret projection"
             );
         }
@@ -338,12 +344,7 @@ fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::Plug
             set = set.with_binding(name, binding.config.into());
         }
         if entry.id == plugin::wasmcloud_nats::PLUGIN_NATS_ID {
-            let mut bundle = vec![(
-                "servers",
-                args.wasmcloud_nats_url
-                    .clone()
-                    .unwrap_or_else(|| args.data_nats_url.clone()),
-            )];
+            let mut bundle = vec![("servers", default_nats_server(args).to_owned())];
             if args.wasmcloud_nats_url.is_none() {
                 for (key, path) in [
                     ("tls-ca", &args.data_nats_tls_ca),
@@ -633,6 +634,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let workflow = Arc::new(workflow::Workflow::new(
         Arc::clone(&postgres),
         Arc::clone(&operations),
+        default_nats_server(&args).to_owned(),
+        args.wasmcloud_nats_url.is_none() && args.data_nats_tls_first,
     ));
     let mut plugins: Vec<Arc<dyn plugin::HostPlugin>> = vec![
         Arc::new(

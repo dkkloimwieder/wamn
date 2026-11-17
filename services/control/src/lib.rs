@@ -7,7 +7,6 @@ mod execution;
 mod host_route;
 pub mod platform;
 pub mod retention;
-mod workflow;
 
 use std::{
     net::SocketAddr,

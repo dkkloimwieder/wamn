@@ -51,7 +51,6 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/build` | `wamn-build`: package builds and overlay and base composition |
 | `crates/engine` | `wamn-engine`: native loading, dispatch, and the invocation scope registry |
 | `crates/run-state` | `wamn-run-state`: persisted run admission, leases, and settlement |
-| `crates/workflow` | `wamn-workflow`: the existing workflow disable operation |
 | `crates/authority` | `wamn-authority`: shared invocation identity and effect evidence |
 | `crates/postgres` | `wamn-postgres`: PostgreSQL connection configuration and transport |
 | `crates/sql` | `wamn-sql`: host operation transactions and database authority |
@@ -74,7 +73,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `guests/label-render` | Palette node that renders label text |
 | `guests/modbus` | Bound Modbus register operations |
 | `guests/transform` | Palette node that transforms its input |
-| `services/host` | `wamn-host`: shared environment host for HTTP and queued operations |
+| `services/host` | `wamn-host`: shared environment host for HTTP, workflow lifecycle and workflow dispatch |
 | `services/control` | `wamn-control`: authenticated org control service |
 | `services/identity-service` | `wamn-identity-service` (binary `wamn-identity`): session issuer, passwords, user management, and public verification keys |
 | `services/web` | `wamn-web`: browser files, runtime configuration, and password proxy |

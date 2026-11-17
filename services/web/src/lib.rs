@@ -334,10 +334,14 @@ async fn respond(
         return Ok(boxed(empty(StatusCode::NOT_FOUND)));
     };
     let path = request.uri().path();
-    let file_request = path
+    let native_api_request = path
         .strip_prefix("/api/")
         .and_then(|path| path.split_once('/'))
-        .is_some_and(|(_, path)| path == "files" || path.starts_with("files/"));
+        .is_some_and(|(_, path)| {
+            matches!(path, "files" | "flow")
+                || path.starts_with("files/")
+                || path.starts_with("flow/")
+        });
     let api_request = path.starts_with("/api/");
     let password_request = path.starts_with("/password/");
     if api_request
@@ -356,7 +360,7 @@ async fn respond(
             .path_and_query()
             .context("request path")?
             .as_str();
-        let path = if api_request && !file_request {
+        let path = if api_request && !native_api_request {
             path.strip_prefix("/api").expect("API prefix")
         } else {
             path
@@ -411,7 +415,7 @@ async fn respond(
             return browser_session::respond(password_route, response, &proxy.csrf_key).await;
         }
         if api_request
-            && !file_request
+            && !native_api_request
             && let Some(location) = response
                 .headers()
                 .get(hyper::header::LOCATION)

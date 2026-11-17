@@ -1,0 +1,22 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.document",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.execution_role",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

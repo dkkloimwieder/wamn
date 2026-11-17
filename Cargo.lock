@@ -5747,7 +5747,6 @@ dependencies = [
  "wamn-publish",
  "wamn-registry",
  "wamn-role",
- "wamn-workflow",
  "wasmtime-wasi-http",
 ]
 
@@ -5946,7 +5945,6 @@ dependencies = [
  "wamn-sql",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
- "wamn-workflow",
  "wash-runtime",
  "wat",
  "wit-component 0.254.2",
@@ -6501,7 +6499,6 @@ dependencies = [
  "wamn-test-application",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
- "wamn-workflow",
  "wash-runtime",
  "wasmtime-wasi",
  "wat",
@@ -6756,16 +6753,6 @@ dependencies = [
  "wamn-registry",
  "wamn-test-application",
  "wamn-test-infrastructure",
-]
-
-[[package]]
-name = "wamn-workflow"
-version = "0.1.0"
-dependencies = [
- "sqlx",
- "wamn-catalog",
- "wamn-postgres",
- "wamn-registry",
 ]
 
 [[package]]

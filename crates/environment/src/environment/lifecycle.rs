@@ -61,89 +61,99 @@ pub async fn configure(
         .await?;
         let owner = wamn_provision::migrations::MigrationDatabase::Project
             .configuration(&connection.to_json()?)?;
-        let mut client = wamn_postgres::connect(&owner).await?;
-        if !unconfigured {
-            let unfinished =
-                super::drain::unfinished(&mut client, &triple.env, application).await?;
-            ensure!(
-                unfinished.is_empty(),
-                "{}",
-                super::drain::describe(&unfinished)
-            );
-        }
-        sqlx::raw_sql(sqlx::AssertSqlSafe(provision_project_env::privilege_sql(
-            &connection.database,
-        )))
-        .execute(&mut client)
-        .await?;
-        if unconfigured {
-            crate::platform_migrations::restore_project(
-                &owner,
-                &crate::platform_migrations::embedded_sources(
-                    wamn_provision::migrations::MigrationDatabase::Project,
-                ),
-            )
-            .await?;
-        }
-        let name = wamn_provision::environment_names::environment_resource_name(
-            &triple.org,
-            &triple.project,
-            &triple.env,
-        )?;
-        wamn_platform_install::environment::apply(
-            &platform.target,
-            &platform.chart.join("platform/environment"),
-            &name,
-            serde_json::json!({"bootstrap":null}),
-        )
-        .await?;
-        crate::environment::fill(
-            system_owner,
-            &owner,
-            &platform.identity_issuer,
-            crate::application::ApplicationTarget {
-                org: &triple.org,
-                project: &triple.project,
-                env: &triple.env,
+        LifecycleLock::hold(
+            wamn_postgres::connect(&owner).await?,
+            &triple,
+            async |project_lock| {
+                let mut client = project_lock.client().await;
+                if !unconfigured {
+                    let unfinished =
+                        super::drain::unfinished(&mut client, &triple.env, application).await?;
+                    ensure!(
+                        unfinished.is_empty(),
+                        "{}",
+                        super::drain::describe(&unfinished)
+                    );
+                }
+                sqlx::raw_sql(sqlx::AssertSqlSafe(provision_project_env::privilege_sql(
+                    &connection.database,
+                )))
+                .execute(&mut *client)
+                .await?;
+                drop(client);
+                if unconfigured {
+                    crate::platform_migrations::restore_project(
+                        &owner,
+                        &crate::platform_migrations::embedded_sources(
+                            wamn_provision::migrations::MigrationDatabase::Project,
+                        ),
+                    )
+                    .await?;
+                }
+                let name = wamn_provision::environment_names::environment_resource_name(
+                    &triple.org,
+                    &triple.project,
+                    &triple.env,
+                )?;
+                wamn_platform_install::environment::apply(
+                    &platform.target,
+                    &platform.chart.join("platform/environment"),
+                    &name,
+                    serde_json::json!({"bootstrap":null}),
+                )
+                .await?;
+                crate::environment::fill(
+                    system_owner,
+                    &owner,
+                    &platform.identity_issuer,
+                    crate::application::ApplicationTarget {
+                        org: &triple.org,
+                        project: &triple.project,
+                        env: &triple.env,
+                    },
+                )
+                .await?;
+                crate::provision_project_env::workload::provision(
+                    &platform,
+                    document,
+                    &outcome.cluster,
+                    &owner,
+                    system_owner,
+                )
+                .await?;
+                resources::host_project(&platform, document, &connection).await?;
+                let capture =
+                    wamn_platform_install::environment::capture_connection(system_owner, &triple)
+                        .await?;
+                resources::prepare_cdc_with_connection(&platform, document, &capture).await?;
+                let certificates = wamn_broker::authorization::update_authorization(
+                    &platform.target,
+                    &document.org,
+                    Some(&triple),
+                )
+                .await?;
+                let name = wamn_provision::environment_names::environment_resource_name(
+                    &triple.org,
+                    &triple.project,
+                    &triple.env,
+                )?;
+                wamn_platform_install::environment::apply(
+                    &platform.target,
+                    &platform.chart.join("platform/environment"),
+                    &name,
+                    wamn_platform_install::environment::broker_certificates(certificates),
+                )
+                .await?;
+                resources::ensure_streams(&platform, document, &[]).await?;
+                let mut connection = lock.client().await;
+                let mut tx =
+                    provision_project_env::provisioning_transaction(&mut connection).await?;
+                document.save(&mut tx).await?;
+                tx.commit().await?;
+                Ok(())
             },
         )
-        .await?;
-        crate::provision_project_env::workload::provision(
-            &platform,
-            document,
-            &outcome.cluster,
-            &owner,
-            system_owner,
-        )
-        .await?;
-        resources::host_project(&platform, document, &connection).await?;
-        let capture =
-            wamn_platform_install::environment::capture_connection(system_owner, &triple).await?;
-        resources::prepare_cdc_with_connection(&platform, document, &capture).await?;
-        let certificates = wamn_broker::authorization::update_authorization(
-            &platform.target,
-            &document.org,
-            Some(&triple),
-        )
-        .await?;
-        let name = wamn_provision::environment_names::environment_resource_name(
-            &triple.org,
-            &triple.project,
-            &triple.env,
-        )?;
-        wamn_platform_install::environment::apply(
-            &platform.target,
-            &platform.chart.join("platform/environment"),
-            &name,
-            wamn_platform_install::environment::broker_certificates(certificates),
-        )
-        .await?;
-        resources::ensure_streams(&platform, document, &[]).await?;
-        let mut connection = lock.client().await;
-        let mut tx = provision_project_env::provisioning_transaction(&mut connection).await?;
-        document.save(&mut tx).await?;
-        tx.commit().await?;
-        Ok(())
+        .await
     })
     .await?;
     Ok(())

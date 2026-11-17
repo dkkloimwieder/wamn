@@ -1,14 +1,20 @@
 {
   "fields": [
     {
-      "path": "project",
+      "path": "request_id",
       "type": "text",
       "nullable": false,
       "values": []
     },
     {
-      "path": "env",
+      "path": "value.workflow_id",
       "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.version",
+      "type": "int32",
       "nullable": false,
       "values": []
     }

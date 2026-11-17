@@ -1,142 +1,56 @@
-# Queued automation
+# Workflow operations
 
-`wamn workflow start` starts one run of an environment workflow through the host route `workflow.start`.
-The route is an operation of the application's ACL: `admin` holds it, and another role holds it through a stored permission row of `wamn-control:workflow/start`.
-The other `workflow` commands call org control routes. The service checks current project administration authority.
-The host's queue worker uses its existing database roles to lease and execute the run.
+Workflow commands connect to the application host and require its `admin` role.
+Set `WAMN_TOKEN` to the administrator's session token. Pass the application URL in `--host-url`.
 
-Author and enable the workflow first with `wamn workflow author` and `wamn workflow enable`.
-Author, enable and disable use `--coordinate <org>/<env>/<project>` and control credentials. List, park, release and runs use `--project` and `--environment`.
-`author`, `enable`, and `disable` take the organization and project from `--coordinate`.
-`list`, `park`, `release`, and `runs` require `--project`.
-Workflow administration uses `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
-The server selects the database and authenticated author.
-`author` requires these flags:
+## Author and enable a workflow
 
-- `--coordinate <org>/<env>/<project>`
-- `--application`
-- `--document <compiled-publication-wiring>`
-- `--execution-type role|invoker`
-
-`author` also requires `--execution-role` with `--execution-type role`, and refuses it with `invoker`.
-`enable` requires `--coordinate`, `--application`, `--workflow-id`, and `--version`.
-`disable` takes the same flags as `enable`.
-A workflow of type `role` runs as the environment's `workflow` user with its execution role. The host reads that role's grants directly.
-A workflow of type `invoker` runs as the caller with its active role.
-A caller with `admin` acts as `admin`, and a caller with exactly one role acts with that role.
-A caller with no role or more than one role is refused with `active_role_required`.
-
-`wamn workflow author --schedule '<cron>'` authors a schedule workflow: a five-field cron, evaluated in UTC.
-The default is UTC. Due moments and their keys always use UTC.
-An invalid cron is refused at author.
-`workflow.start` does not start a schedule workflow, and it refuses `workflow_not_enabled`.
-A Schedule or Data change workflow requires an execution role. The host reads the grants of that role directly.
-
-Configure the host with the selected release and both executor-class and callable-HTTP database credentials.
-The executor credential reads the enabled workflow and admits the run.
-The callable-HTTP credential reads the principal's current roles and permissions.
-
-Set `WAMN_TOKEN` to a session token or a PAT of the caller.
-Then submit an input file:
+Write a format 0.2 graph with one entry node. The entry chooses Request, Schedule or Data change.
+A Request declares a path such as `/orders/create`. Calls use POST with a JSON body at `/api/orders/flow/orders/create`.
+Give each end of a Request path a Response node.
+A Schedule declares a five-field UTC cron. A Data change entry names the source package, entity and row operations.
+Specify `--execution-role` for a Schedule or Data change workflow. A Request with no execution role runs as its caller.
 
 ```bash
-wamn workflow start \
-  --host-url "https://$APPLICATION_HOST" --application orders --workflow-id nightly \
-  --idempotency-key batch-42 --input /tmp/orders-input.json
+wamn workflow author --host-url "$APPLICATION_URL" --document orders-flow.json
+wamn workflow enable --host-url "$APPLICATION_URL" --workflow-id orders --version 1
+wamn workflow list --host-url "$APPLICATION_URL"
 ```
 
-The command prints the stored run id.
-`--application` names an application that the environment document declares under `applications`.
-The host refuses another name with `application_not_declared`.
-The host admits the enabled workflow version.
-Each node resolves by sibling name and export in the live workload's `wamn.application`.
-A workflow with no enabled version refuses `workflow_not_enabled`.
-The run records the graph hash, the principal and role it executes as, and the caller as its invoker.
-An identical retry by the same caller returns that id and creates no second queue row.
-The same key with another input refuses `idempotency_conflict`.
-The run and queue row commit in one transaction.
+The host resolves each call by sibling name and export key in the live workload’s `wamn.application`.
+For a Request, grant `wamn-workflow:<application>/<workflow_id>` to each role that can call it.
+The host returns the Response status and body. It waits up to 30 seconds.
+Use `workflow disable` with the same flags as `workflow enable` to stop new admissions.
+For Data change, enable creates the workflow's pull consumer. Disable removes it after the database commits.
+If a replacement needs a different consumer filter or start sequence, disable the current version before enabling the replacement.
 
-A workflow run has no waiting HTTP caller.
-Use an emit terminal, or let the graph finish without a terminal.
-Before each node, the host reads the principal's current grants for the run's role, and applies the normal operation tests.
-A role revoked during a run refuses the next node.
-Operations that require a fresh PAT refuse a queued run.
-The executing principal owns application writes, while the `wamn:executor` credential class owns queue maintenance.
+## Run now
 
-## Park, release, and list runs
-
-Each command needs `--project` and `--environment`. `park` and `release` also need `--run-id`.
-`runs` takes an optional `--limit`, which defaults to 50.
+Use `--run-as admin` to run as the caller. If the workflow declares an execution role, use `--run-as workflow` to select that role.
 
 ```bash
-wamn workflow park --project orders --environment dev --run-id "$RUN_ID"
-wamn workflow release --project orders --environment dev --run-id "$RUN_ID"
-wamn workflow runs --project orders --environment dev --limit 20
+wamn workflow run --host-url "$APPLICATION_URL" --workflow-id orders \
+  --run-as admin --idempotency-key batch-42 --input orders-input.json
 ```
 
-A park holds a queued run that no worker holds, so no worker leases it.
-The run keeps the status `dispatched`, and a park of a parked run changes nothing.
-A running or finished run refuses the park.
-A release returns a parked run to the queue, and a run that is not parked refuses it.
-`runs` prints one JSON object per run, newest first, with its status and its `queued` and `parked` flags.
+The command returns the run ID after admission. Read the result in `wamn_run.runs`.
+The run records the graph hash, executing principal and role, and invoker.
+The same invocation, key and input return the first run ID. Reusing the key with another input refuses.
+For a Request graph, the result records the Response.
+The host reads the executing role's grants before each node.
 
-## Authored workflows
+## Cutover the NetSuite pull
 
-`wamn workflow list --project orders --environment dev` lists authored workflow versions.
-`workflow runs` lists their runs. A package declares no schedule.
-Author a scheduled workflow with `wamn workflow author --coordinate <org>/<env>/<project> --schedule '<cron>'`, then enable it.
+Deploy the `netsuite` application with `wamn_integration` and the consumer package.
+Create the `netsuite-pull` role on the application host. Grant it the consumer's record operation.
+Copy [the pull example](../../apps/netsuite/tests/workflows/netsuite_pull.json) to `netsuite-pull.json`.
+Set its call parameters for the environment.
 
-Every application host runs one schedule task.
-At each minute it reads, in one query, the enabled schedule workflows of the applications its environment declares, and admits a run for each one whose cron names that minute.
-`wamn workflow author` refuses an application that the environment does not declare.
-The task uses `WAMN_EXECUTOR_PLATFORM_PG_URL`.
-An enable or a disable takes effect at the next minute.
-See [workflows](../architecture/execution.md#workflows) for timing and retry behavior.
-
-## Cutover: the NetSuite pull
-
-A release no longer carries the NetSuite pull's minute schedule.
-An environment that ran the pull from its release, such as wamn-dev, stops pulling when it applies such a release.
-That apply also declares the environment's applications, which `environment::apply` now requires.
-Add one application `netsuite` to the environment document of the wamn-dev NetSuite environment, and list every package of its release in it:
-
-```python
-    applications = {
-        netsuite = {packages = ["netsuite", "wamn_integration", "<consumer package>"]}
-    }
+```bash
+wamn workflow author --host-url "$APPLICATION_URL" --document netsuite-pull.json \
+  --execution-role netsuite-pull
+wamn workflow enable --host-url "$APPLICATION_URL" --workflow-id netsuite_pull --version 1
 ```
 
-`environment::apply` refuses a release package that no application lists, a package that two applications list, and a listed package that the release does not carry.
-Do these steps once, after that apply, as a project admin.
-Set `WAMN_CONTROL_URL` to the application host and `WAMN_TOKEN` to your session token.
-Set the coordinate `<org>/<project>/<env>`, its composed environment key, and your application user ID as `$ADMIN_ID`.
-
-1. Create the role the pull executes with. It holds exactly the consumer command that the pull's `record` node calls:
-
-   ```bash
-   wamn create-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --role netsuite-pull
-   wamn grant-permission --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --role netsuite-pull \
-     --operation <consumer package>:<interface>/<operation>
-   ```
-
-   The enabler must also hold the role, or hold `admin`.
-2. Build the NetSuite package with `wamn build` first. Copy the example in `apps/netsuite/tests/workflows/netsuite_pull.json` to `netsuite-pull.json` in the environment configuration. Edit its parameters, then author it as a schedule workflow of the application `netsuite`:
-
-   ```bash
-   wamn workflow author --coordinate <org>/<env>/<project> \
-     --application netsuite \
-     --document netsuite-pull.json \
-     --execution-type role --execution-role netsuite-pull --schedule '* * * * *'
-   ```
-
-4. Enable it:
-
-   ```bash
-   wamn workflow enable --coordinate <org>/<env>/<project> \
-     --application netsuite --workflow-id netsuite_pull --version 1
-   ```
-
-The next minute admits the first pull.
-The workflow version and the UTC due minute identify the run. It executes as the `workflow` user with the `netsuite-pull` role.
-`wamn workflow list` shows the enabled version, and `wamn workflow disable` stops the pull.
-The pull keeps its checkpoint in `wamn_integration.setting`, so the first pull after cutover continues from the last pull of the release.
+The example runs each UTC minute as the `workflow` user.
+Its checkpoint is in `wamn_integration.setting`.
