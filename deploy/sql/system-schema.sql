@@ -126,7 +126,7 @@ INSERT INTO registry.integration_type_version
     ('s3', 1, NULL,
      '{"type":"object","properties":{"provider":{"type":"string","enum":["s3"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1},"endpoint":{"type":"string","minLength":1,"immutable":true}},"required":["container","prefix","endpoint"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], '{}', transaction_timestamp()),
     ('modbus', 1, 'sha256:37c3fc98df0a7b1cdf230dfa16956d34e832b6f1198a04293932170674e0d682',
-     '{"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}', 'wamn:modbus/client@1.0.0', ARRAY['wamn:modbus/read@1.0.0','wamn:modbus/write@1.0.0','wamn:integration/health@0.1.0'], ARRAY['wamn:modbus/write@1.0.0'], transaction_timestamp());
+     '{"type":"object","properties":{},"additionalProperties":false}', 'wamn:modbus/client@1.0.0', ARRAY['wamn:modbus/read@1.0.0','wamn:modbus/write@1.0.0','wamn:integration/health@0.1.0'], ARRAY['wamn:modbus/write@1.0.0'], transaction_timestamp());
 
 INSERT INTO registry.auth_type (code, credential_schema, parameter_schema, http_only) VALUES
     ('http_basic', '{"type":"object","properties":{"username":{"type":"string"},"password":{"type":"string"}},"required":["username","password"]}',

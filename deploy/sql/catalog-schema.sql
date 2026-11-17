@@ -69,6 +69,7 @@ CREATE TABLE platform.connection (
     external_system_id uuid REFERENCES platform.external_system (id),
     target_id uuid NOT NULL,
     resource_key text,
+    authority text CHECK (authority IS NULL OR authority <> ''),
     active_generation bigint NOT NULL,
     service_principal_id uuid NOT NULL UNIQUE,
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled'))
@@ -171,8 +172,8 @@ CREATE TRIGGER connection_generation_forward BEFORE UPDATE OF active_generation 
 CREATE FUNCTION platform.keep_connection_identity() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
-    IF ROW(NEW.name, NEW.integration_type, NEW.auth_type) IS DISTINCT FROM
-       ROW(OLD.name, OLD.integration_type, OLD.auth_type) THEN
+    IF ROW(NEW.name, NEW.integration_type, NEW.auth_type, NEW.authority) IS DISTINCT FROM
+       ROW(OLD.name, OLD.integration_type, OLD.auth_type, OLD.authority) THEN
         RAISE EXCEPTION 'connection_identity_is_immutable' USING ERRCODE = '55000';
     END IF;
     RETURN NEW;

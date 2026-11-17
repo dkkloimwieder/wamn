@@ -1,6 +1,16 @@
 {
   "cases": [
     {
+      "literal": "ipv6_authority_not_supported",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field",
+          "reason"
+        ]
+      }
+    },
+    {
       "literal": "invalid_input",
       "from": "transaction_invariant",
       "detail": {

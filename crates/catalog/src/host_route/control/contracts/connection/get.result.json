@@ -50,6 +50,12 @@
       "values": []
     },
     {
+      "path": "authority",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
       "path": "parameters",
       "type": "json",
       "nullable": false,

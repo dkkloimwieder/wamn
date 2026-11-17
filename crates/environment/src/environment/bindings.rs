@@ -50,6 +50,7 @@ pub struct Binding {
     pub runtime_type: wamn_catalog::RuntimeType,
     pub target_type: String,
     pub connection_id: String,
+    pub authority: Option<String>,
     pub integration_type: wamn_registry::integration_code::IntegrationCode,
     pub exclusive: bool,
     pub generation: i64,
@@ -87,7 +88,7 @@ pub async fn analyse(
                 .any(|integration| &integration.name == *name)
         })
     }) {
-        let connection=sqlx::query("SELECT c.id::text,c.integration_type,g.parameters,c.active_generation,c.target_id::text FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1 AND c.status='active'")
+        let connection=sqlx::query("SELECT c.id::text,c.integration_type,g.parameters,c.active_generation,c.target_id::text,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1 AND c.status='active'")
             .bind(name).fetch_optional(&mut *project).await?.ok_or_else(||refuse("connection_unavailable",name))?;
         let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 AND e.target_id=destination.id LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
             .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection.get::<String,_>(4)).bind(&document.target).bind(connection.get::<i64,_>(3)).bind(&document.org).bind(&document.env).bind(version.version)
@@ -110,7 +111,7 @@ pub async fn analyse(
         if !wamn_connection::connections::administration::validates(&parameters, &schema) {
             return Err(refuse("connection_parameters_invalid", name));
         }
-        selected.insert(name, row);
+        selected.insert(name, (row, connection.get::<Option<String>, _>(5)));
     }
     let mut bindings = Vec::new();
     for (application, definition) in applications {
@@ -147,7 +148,7 @@ pub async fn analyse(
                 .connections
                 .get(name.as_str())
                 .ok_or_else(|| refuse("connection_unbound", &at))?;
-            let row = selected
+            let (row, authority) = selected
                 .get(&integration.name)
                 .ok_or_else(|| refuse("integration_version_missing", &at))?;
             let version = document.integrations[&integration.name].version;
@@ -202,6 +203,7 @@ pub async fn analyse(
                 },
                 target_type: row.get(11),
                 connection_id: row.get(0),
+                authority: authority.clone(),
                 integration_type,
                 exclusive: row.get(8),
                 generation: row.get(7),
