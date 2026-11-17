@@ -781,9 +781,6 @@ CREATE TABLE registry.environment_projects (
     secret_name      text NOT NULL,
     secret_namespace text,
     instance_suffix  text NOT NULL,
-    -- A NULL revocation bound means configuration is not yet applied.
-    revocation_seconds integer
-        CHECK (revocation_seconds BETWEEN 0 AND 3600),
     schema_mode text CHECK (schema_mode IN ('reset', 'migrate')),
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
@@ -793,8 +790,7 @@ CREATE TABLE registry.environment_projects (
     FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
     FOREIGN KEY (org, env) REFERENCES registry.environments(org, env) ON DELETE CASCADE,
     CONSTRAINT project_envs_instance_suffix_check
-        CHECK (instance_suffix ~ '^[a-z0-9]{8}$'),
-    CHECK (revocation_seconds IS NOT NULL OR schema_mode IS NULL)
+        CHECK (instance_suffix ~ '^[a-z0-9]{8}$')
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON registry.environment_projects
@@ -811,8 +807,6 @@ CREATE TABLE registry.environment_applications (
     hostname text NOT NULL CHECK (
         char_length(hostname) BETWEEN 1 AND 253
         AND hostname ~ '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'),
-    revocation_seconds integer NOT NULL
-        CHECK (revocation_seconds BETWEEN 0 AND 3600),
     client_package text CHECK (client_package <> ''),
     client_web text CHECK (client_web ~ '^sha256:[0-9a-f]{64}$'),
     PRIMARY KEY (org, env, project, application),

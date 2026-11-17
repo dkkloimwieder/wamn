@@ -1,11 +1,12 @@
 pub(super) mod plan;
 pub use plan::{
-    Role, RoleName, TELEMETRY_VARIABLES, ValuesInput, release_name, roles, values, workload_name,
+    Role, RoleName, TELEMETRY_VARIABLES, ValuesInput, component_name, release_name, roles, values,
+    workload_name,
 };
 
 use anyhow::ensure;
 use serde_yaml::{Mapping, Value};
-use wamn_catalog::{AttachmentType, ServingManifest};
+use wamn_catalog::ServingManifest;
 
 #[cfg(test)]
 mod tests {

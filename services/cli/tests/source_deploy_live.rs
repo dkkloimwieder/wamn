@@ -90,8 +90,8 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure(
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org": "acme", "project": "source", "env": "dev", "target": "cloud", "policy": "dev","revocation_seconds":60,
         "applications": {
-            "a": {"revocation_seconds":5,"hostname": "a.invalid"},
-            "b": {"revocation_seconds":5,"hostname": "b.invalid"}
+            "a": {"hostname": "a.invalid"},
+            "b": {"hostname": "b.invalid"}
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;

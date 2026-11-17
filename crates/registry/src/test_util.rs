@@ -59,26 +59,6 @@ pub fn disable_project_connection_sql() -> &'static str {
     "SET LOCAL ROLE wamn_system; UPDATE registry.connection SET status='disabled' WHERE org='acme' AND project='project-b'; SET LOCAL ROLE wamn_control"
 }
 
-/// Invalid writes refused by the applied configuration schema.
-pub fn invalid_configuration_sql() -> &'static [&'static str] {
-    &[
-        "UPDATE registry.environment_projects SET revocation_seconds=-1 WHERE org='acme'",
-        "UPDATE registry.environment_projects SET revocation_seconds=3601 WHERE org='acme'",
-        "UPDATE registry.environment_projects SET schema_mode='unknown' WHERE org='acme'",
-        "UPDATE registry.environment_applications SET revocation_seconds=NULL WHERE org='acme'",
-        "UPDATE registry.environment_applications SET revocation_seconds=-1 WHERE org='acme'",
-        "UPDATE registry.environment_applications SET revocation_seconds=3601 WHERE org='acme'",
-        "UPDATE registry.environment_application_connections SET connection_name='shared-erp@1' WHERE org='acme'",
-        "UPDATE registry.environment_applications SET client_web=NULL WHERE org='acme'",
-        "UPDATE registry.environment_applications SET project='missing' WHERE org='acme'",
-        "UPDATE registry.environment_application_connections SET application='missing' WHERE org='acme'",
-        "UPDATE registry.environment_integrations SET project='missing' WHERE org='acme'",
-        "INSERT INTO registry.environment_applications SELECT * FROM registry.environment_applications WHERE org='acme'",
-        "INSERT INTO registry.environment_application_connections SELECT * FROM registry.environment_application_connections WHERE org='acme'",
-        "INSERT INTO registry.environment_integrations SELECT * FROM registry.environment_integrations WHERE org='acme'",
-    ]
-}
-
 /// Database fixture statement for provision.
 pub fn seed_disposable_policy_sql() -> &'static str {
     "INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18');"

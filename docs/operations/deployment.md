@@ -205,13 +205,13 @@ The CLI has no direct database fallback. Source publication still uses a disposa
 See [Native control](../architecture/control.md) for the service and worker configuration.
 
 `wamn-registry` reads and writes applied configuration in typed project rows and their child tables.
-A NULL project revocation bound marks an unconfigured deployment.
-Application rows hold hostnames, revocation bounds, client pins and desired release digests.
+A NULL project schema mode marks an unconfigured deployment. Configuration resolves an omitted mode from the environment’s disposable setting.
+Application rows hold hostnames, client pins and desired release digests.
 Other rows hold connection aliases and integration versions. The shared environment owns its target and policy.
 Postgres constrains these values. Package membership comes from the selected release manifest.
 Environment documents contain no release digest or package membership. Old document shapes are refused.
-Set `revocation_seconds` to an integer from 0 to 3600 for the project and each application.
-Each value bounds credential revocation delay when an invalidation is lost.
+Set the project `revocation_seconds` to an integer from 0 to 3600. Deploy writes this grant cache lifetime into each application workload.
+The value bounds the lifetime of positive grant answers.
 Zero disables auth caching. Restart hosts after changing a bound.
 `wamn env apply environment.k` submits the configuration to authenticated control.
 The installer reconciles the database and role declarations. The environment library saves the configuration after provisioning succeeds.

@@ -393,7 +393,7 @@ mod tests {
         )?;
         let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
             "org":"acme","project":"source","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,
-            "applications":{"selected":{"revocation_seconds":5,"hostname":"selected.example"}}
+            "applications":{"selected":{"hostname":"selected.example"}}
         }))?)?;
         let (application, roots) = sources(&document, scratch.path())?;
         assert!(document.applications.contains_key(&application));

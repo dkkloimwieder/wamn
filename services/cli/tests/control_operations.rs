@@ -70,7 +70,7 @@ fn command(root: &Path, url: &str, arguments: &[&str]) -> anyhow::Result<Command
         &file,
         serde_json::to_vec(&json!({
             "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
-            "applications":{"a":{ "revocation_seconds":5,"hostname":"a.invalid"}}
+            "applications":{"a":{ "hostname":"a.invalid"}}
         }))?,
     )?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));

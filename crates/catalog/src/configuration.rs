@@ -17,7 +17,6 @@ pub struct EnvironmentConfiguration {
     pub env: wamn_registry::EnvName,
     pub target: String,
     pub policy: wamn_registry::EnvName,
-    pub revocation_seconds: u32,
     #[serde(default)]
     pub schema: Schema,
     pub applications: BTreeMap<crate::ApplicationName, ApplicationConfiguration>,
@@ -33,7 +32,6 @@ pub struct ApplicationConfiguration {
     #[serde(skip)]
     pub release: Option<wamn_digest::Digest>,
     pub hostname: String,
-    pub revocation_seconds: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -138,17 +136,17 @@ pub async fn read(
 ) -> Result<Option<EnvironmentConfiguration>, sqlx::Error> {
     // One statement gives every child the same snapshot, including concurrent client writes.
     let rows = sqlx::query(
-        "SELECT t.name AS target, e.policy_name, p.revocation_seconds AS project_seconds, p.schema_mode, c.* \
+        "SELECT t.name AS target, e.policy_name, p.schema_mode, c.* \
          FROM registry.environment_projects p JOIN registry.environments e USING (org,env) \
          JOIN registry.target t ON t.id=e.target_id LEFT JOIN LATERAL ( \
-           SELECT 1 AS record_type, application AS name, hostname AS value, revocation_seconds AS seconds, \
+           SELECT 1 AS record_type, application AS name, hostname AS value, \
              client_package, client_web, release_digest, NULL::text AS alias, NULL::integer AS version \
            FROM registry.environment_applications WHERE org=p.org AND env=p.env AND project=p.project \
-           UNION ALL SELECT 2, application, connection_name, NULL, NULL, NULL, NULL, alias, connection_version \
+           UNION ALL SELECT 2, application, connection_name, NULL, NULL, NULL, alias, connection_version \
            FROM registry.environment_application_connections WHERE org=p.org AND env=p.env AND project=p.project \
-           UNION ALL SELECT 3, name, NULL, NULL, NULL, NULL, NULL, NULL, version \
+           UNION ALL SELECT 3, name, NULL, NULL, NULL, NULL, NULL, version \
            FROM registry.environment_integrations WHERE org=p.org AND env=p.env AND project=p.project \
-         ) c ON true WHERE p.org=$1 AND p.env=$2 AND p.project=$3 AND p.revocation_seconds IS NOT NULL \
+         ) c ON true WHERE p.org=$1 AND p.env=$2 AND p.project=$3 AND p.schema_mode IS NOT NULL \
          ORDER BY c.record_type",
     )
     .bind(&triple.org).bind(&triple.env).bind(&triple.project)
@@ -168,7 +166,6 @@ pub async fn read(
         project: triple.project.clone(),
         target: row.try_get("target")?,
         policy: row.try_get("policy_name")?,
-        revocation_seconds: seconds(row, "project_seconds")?,
         schema: Schema { mode },
         applications: BTreeMap::new(),
         integrations: BTreeMap::new(),
@@ -189,7 +186,6 @@ pub async fn read(
                     row.try_get("name")?,
                     ApplicationConfiguration {
                         hostname: row.try_get("value")?,
-                        revocation_seconds: seconds(&row, "seconds")?,
                         client,
                         release: row.try_get("release_digest")?,
                         connections: BTreeMap::new(),
@@ -223,17 +219,6 @@ pub async fn read(
         }
     }
     Ok(Some(configuration))
-}
-
-fn seconds(row: &sqlx::postgres::PgRow, column: &str) -> Result<u32, sqlx::Error> {
-    u32::try_from(row.try_get::<i32, _>(column)?).map_err(|error| sqlx::Error::ColumnDecode {
-        index: column.to_owned(),
-        source: Box::new(error),
-    })
-}
-
-fn database_seconds(seconds: u32) -> Result<i32, sqlx::Error> {
-    i32::try_from(seconds).map_err(|error| sqlx::Error::InvalidArgument(error.to_string()))
 }
 
 /// Refuse a policy that would move an established environment to another cluster.
@@ -287,13 +272,14 @@ pub async fn write(
         SchemaMode::Migrate => "migrate",
     });
     let updated = sqlx::query(
-        "UPDATE registry.environment_projects SET revocation_seconds=$4, schema_mode=$5 \
+        "UPDATE registry.environment_projects p SET schema_mode=COALESCE($4, \
+         (SELECT CASE WHEN e.disposable THEN 'reset' ELSE 'migrate' END \
+          FROM registry.environments e WHERE e.org=p.org AND e.env=p.env)) \
          WHERE org=$1 AND env=$2 AND project=$3",
     )
     .bind(&c.org)
     .bind(&c.env)
     .bind(&c.project)
-    .bind(database_seconds(c.revocation_seconds)?)
     .bind(mode)
     .execute(&mut *transaction)
     .await?;
@@ -316,13 +302,12 @@ pub async fn write(
     for (name, application) in &c.applications {
         sqlx::query(
             "INSERT INTO registry.environment_applications \
-             (org,env,project,application,hostname,revocation_seconds,client_package,client_web) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) \
+             (org,env,project,application,hostname,client_package,client_web) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7) \
              ON CONFLICT (org,env,project,application) DO UPDATE SET hostname=EXCLUDED.hostname, \
-             revocation_seconds=EXCLUDED.revocation_seconds, client_package=EXCLUDED.client_package, client_web=EXCLUDED.client_web",
+             client_package=EXCLUDED.client_package, client_web=EXCLUDED.client_web",
         )
         .bind(&c.org).bind(&c.env).bind(&c.project).bind(name).bind(&application.hostname)
-        .bind(database_seconds(application.revocation_seconds)?)
         .bind(application.client.as_ref().map(|client| &client.package))
         .bind(application.client.as_ref().map(|client| &client.web))
         .execute(&mut *transaction).await?;
