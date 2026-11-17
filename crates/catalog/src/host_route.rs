@@ -203,9 +203,11 @@ pub enum HostHandler {
     /// Set one counter of a number sequence of the application
     /// (docs/architecture/data-access.md#setting-a-counter).
     NumberCounterSet,
-    /// Start one run of the enabled version of an environment workflow
-    /// (docs/architecture/execution.md#environment-workflows).
-    WorkflowStart,
+    WorkflowAuthor,
+    WorkflowEnable,
+    WorkflowDisable,
+    WorkflowList,
+    WorkflowRun,
     /// Stream a file through a declared write binding.
     FilePut,
     /// Read a file owned by the application.
@@ -335,20 +337,6 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
         handler: HostHandler::FileExpose,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "workflow.disable",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::ControlExecution,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "workflow.list",
-        type_: OperationType::Get,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::ControlExecution,
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -660,10 +648,38 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Application,
-        operation: "workflow.start",
+        operation: "workflow.author",
         type_: OperationType::Command,
-        authority: HostRouteAuthority::Granted,
-        handler: HostHandler::WorkflowStart,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::WorkflowAuthor,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "workflow.enable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::WorkflowEnable,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "workflow.disable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::WorkflowDisable,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "workflow.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::WorkflowList,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "workflow.run",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::WorkflowRun,
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -1007,21 +1023,6 @@ mod tests {
         assert!(is_granted_host_route_operation(
             "wamn-control:number-counter/set@0.9.0"
         ));
-        let start = HostRouteSet::Application
-            .attachment(&"wamn-control-workflow-start-http".parse().unwrap())
-            .expect("workflow.start is an application host route");
-        assert_eq!(start.route.handler, HostHandler::WorkflowStart);
-        assert_eq!(start.reference, "wamn-control:workflow/start");
-        assert_eq!(
-            start.registered_operation(),
-            Some(&"wamn-control:workflow/start@0.9.0".parse().unwrap())
-        );
-        assert!(is_granted_host_route_operation(
-            "wamn-control:workflow/start"
-        ));
-        assert!(is_granted_host_route_operation(
-            "wamn-control:workflow/start@0.9.0"
-        ));
         assert!(!is_granted_host_route_operation("wamn-control:role/create"));
         assert!(!is_granted_host_route_operation(
             "wamn-receiving:receipt/get"
@@ -1068,33 +1069,5 @@ mod tests {
                     .any(|name| field["path"].as_str().unwrap().ends_with(name))
             }));
         }
-    }
-
-    /// `workflow.start` names no user, role or release: the caller is the
-    /// authenticated one and the release is the served one
-    /// (docs/architecture/execution.md#environment-workflows). It names the
-    /// declared application.
-    #[test]
-    fn workflow_start_input_names_no_user() {
-        let input: Value = serde_json::from_str(include_str!(
-            "host_route/contracts/workflow/start.input.json"
-        ))
-        .expect("the start input contract is JSON");
-        let paths: Vec<&str> = input["fields"]
-            .as_array()
-            .expect("the contract lists its fields")
-            .iter()
-            .map(|field| field["path"].as_str().expect("a field has a path"))
-            .collect();
-        assert_eq!(
-            paths,
-            [
-                "request_id",
-                "value.application",
-                "value.workflow_id",
-                "value.input_json",
-                "value.idempotency_key"
-            ]
-        );
     }
 }

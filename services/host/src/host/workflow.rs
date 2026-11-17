@@ -1,20 +1,16 @@
 //! Host authority and dispatch for the workflow service in an application workload.
 
 mod admission;
-#[expect(
-    dead_code,
-    reason = "Entry dispatch is the interface for the native workflow routes in 7.4"
-)]
+mod authoring;
+mod broker;
 mod entry;
 mod events;
+pub(super) mod lifecycle;
 mod node;
 mod oldref;
+mod request;
 mod schedule;
 
-#[expect(
-    unused_imports,
-    reason = "Native entry API is consumed by the workflow routes in 7.4"
-)]
 pub(super) use entry::{RequestCall, RunAs, RunNow};
 
 use std::collections::{HashMap, HashSet};
@@ -48,7 +44,7 @@ mod bindings {
 }
 
 use bindings::wamn::workflow::{node as wit_node, run as wit_run};
-use wit_run::Refusal;
+pub(super) use wit_run::Refusal;
 
 const ID: &str = "wamn-workflow";
 const LEASE_MS: i64 = 30_000;
@@ -59,6 +55,7 @@ pub(super) struct Workflow {
     postgres: Arc<WamnPostgres>,
     operations: Arc<WamnOperation>,
     workloads: RwLock<HashMap<Box<str>, Arc<Workload>>>,
+    broker: Arc<broker::Broker>,
 }
 
 struct Workload {
@@ -66,10 +63,6 @@ struct Workload {
     route: Box<str>,
     application: Arc<ApplicationConfig>,
     project_key: wamn_registry::ProjectEnvKey,
-    #[expect(
-        dead_code,
-        reason = "Claimed during resolution for the native entry routes"
-    )]
     entry: DispatchTarget,
     runner: String,
     authorities: Mutex<HashMap<String, AuthorityEntry>>,
@@ -100,11 +93,17 @@ impl std::fmt::Debug for Workflow {
 }
 
 impl Workflow {
-    pub(super) fn new(postgres: Arc<WamnPostgres>, operations: Arc<WamnOperation>) -> Self {
+    pub(super) fn new(
+        postgres: Arc<WamnPostgres>,
+        operations: Arc<WamnOperation>,
+        nats_server: String,
+        tls_first: bool,
+    ) -> Self {
         Self {
             postgres,
             operations,
             workloads: RwLock::default(),
+            broker: Arc::new(broker::Broker::new(nats_server, tls_first)),
         }
     }
 

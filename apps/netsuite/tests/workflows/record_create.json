@@ -1,74 +1,93 @@
 {
-  "format-version": "0.1",
+  "format-version": "0.2",
   "wiring-id": "record_create",
   "version": 1,
-  "entry": "map",
   "nodes": {
+    "entry": {
+      "entry": {
+        "request": {
+          "path": "/record_create"
+        }
+      }
+    },
     "map": {
-      "component": "jsonata",
-      "interface-version": "0.1.0",
-      "operation": "wamn:node/handler@0.1.0",
-      "params": {
-        "expression": "($pointer := $parameters.external_id_input_pointer; $upsert := $exists($pointer); $key := $upsert ? $reduce($split($substring($pointer, 1), \"/\"), function($v, $k) {($k := $replace($replace($k, \"~1\", \"/\"), \"~0\", \"~\"); $type($v) = \"array\" ? $v[$number($k)] : $lookup($v, $k))}, $) : \"\"; $assert($not($upsert) or ($substring($pointer, 0, 1) = \"/\" and $type($key) = \"string\" and $length($key) > 0), \"external id pointer must select a nonempty string\"); [{\"port\": $upsert ? \"items\" : \"main\", \"path\": \"/services/rest/record/v1/\" & $encodeUrlComponent($parameters.record_type) & ($upsert ? \"/eid:\" & $encodeUrlComponent($key) : \"\"), \"body\": body}])",
-        "parameters": {
-          "record_type": "customer"
-        },
-        "port-input-pointer": "/0/port",
-        "input-schema": {
-          "type": "object",
-          "properties": {
-            "body": {}
+      "call": {
+        "sibling": "wamn_palette-jsonata",
+        "export": "wamn:node/handler@0.1.0",
+        "params": {
+          "expression": "($pointer := $parameters.external_id_input_pointer; $upsert := $exists($pointer); $key := $upsert ? $reduce($split($substring($pointer, 1), \"/\"), function($v, $k) {($k := $replace($replace($k, \"~1\", \"/\"), \"~0\", \"~\"); $type($v) = \"array\" ? $v[$number($k)] : $lookup($v, $k))}, $) : \"\"; $assert($not($upsert) or ($substring($pointer, 0, 1) = \"/\" and $type($key) = \"string\" and $length($key) > 0), \"external id pointer must select a nonempty string\"); [{\"port\": $upsert ? \"items\" : \"main\", \"path\": \"/services/rest/record/v1/\" & $encodeUrlComponent($parameters.record_type) & ($upsert ? \"/eid:\" & $encodeUrlComponent($key) : \"\"), \"body\": body}])",
+          "parameters": {
+            "record_type": "customer"
           },
-          "required": [
-            "body"
-          ],
-          "additionalProperties": true
-        },
-        "output-schema": {}
+          "port-input-pointer": "/0/port",
+          "input-schema": {
+            "type": "object",
+            "properties": {
+              "body": {}
+            },
+            "required": [
+              "body"
+            ],
+            "additionalProperties": true
+          },
+          "output-schema": {}
+        }
       }
     },
     "post": {
-      "component": "http-request",
-      "interface-version": "0.1.0",
-      "operation": "wamn:node/async-handler@0.1.0",
-      "params": {
-        "requirement": "upstream",
-        "method": "POST",
-        "path-and-query": "/services/rest/record/v1/customer",
-        "path-input-pointer": "/0/path",
-        "body-input-pointer": "/0/body",
-        "headers": {
-          "Content-Type": "application/json"
+      "call": {
+        "sibling": "wamn_palette-http-request",
+        "export": "wamn:node/async-handler@0.1.0",
+        "params": {
+          "requirement": "upstream",
+          "method": "POST",
+          "path-and-query": "/services/rest/record/v1/customer",
+          "path-input-pointer": "/0/path",
+          "body-input-pointer": "/0/body",
+          "headers": {
+            "Content-Type": "application/json"
+          }
         }
       }
     },
     "put": {
-      "component": "http-request",
-      "interface-version": "0.1.0",
-      "operation": "wamn:node/async-handler@0.1.0",
-      "params": {
-        "requirement": "upstream",
-        "method": "PUT",
-        "path-and-query": "/services/rest/record/v1/customer",
-        "path-input-pointer": "/path",
-        "body-input-pointer": "/body",
-        "headers": {
-          "Content-Type": "application/json"
+      "call": {
+        "sibling": "wamn_palette-http-request",
+        "export": "wamn:node/async-handler@0.1.0",
+        "params": {
+          "requirement": "upstream",
+          "method": "PUT",
+          "path-and-query": "/services/rest/record/v1/customer",
+          "path-input-pointer": "/path",
+          "body-input-pointer": "/body",
+          "headers": {
+            "Content-Type": "application/json"
+          }
         }
       }
     },
     "unwrap": {
-      "component": "jsonata",
-      "interface-version": "0.1.0",
-      "operation": "wamn:node/handler@0.1.0",
-      "params": {
-        "expression": "$[0]",
-        "input-schema": {},
-        "output-schema": {}
+      "call": {
+        "sibling": "wamn_palette-jsonata",
+        "export": "wamn:node/handler@0.1.0",
+        "params": {
+          "expression": "$[0]",
+          "input-schema": {},
+          "output-schema": {}
+        }
+      }
+    },
+    "response": {
+      "response": {
+        "status": 200
       }
     }
   },
   "edges": [
+    {
+      "from": "entry",
+      "to": "map"
+    },
     {
       "from": "map",
       "to": "post",
@@ -83,6 +102,14 @@
     {
       "from": "unwrap",
       "to": "put"
+    },
+    {
+      "from": "post",
+      "to": "response"
+    },
+    {
+      "from": "put",
+      "to": "response"
     }
   ]
 }

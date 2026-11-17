@@ -15,6 +15,7 @@ use wamn_engine::native_routes::{
 use wamn_sql::WamnPostgres;
 
 use super::application_route::{ApplicationRoutes, Refusal};
+use super::workflow::{self, Workflow};
 
 pub(super) struct HostRouteDelivery {
     postgres: Arc<WamnPostgres>,
@@ -35,6 +36,8 @@ impl HostRouteDelivery {
 
     async fn handle(
         &self,
+        workflow: &Workflow,
+        workload: &str,
         attachment: &HostAttachment,
         caller: AuthenticatedCaller,
         request_id: Option<&str>,
@@ -49,17 +52,35 @@ impl HostRouteDelivery {
                     caller.principal_id(),
                 )
                 .await?;
+                let enabled = self
+                    .postgres
+                    .executor_read(&self.config.project, async |connection| {
+                        Ok(workflow::lifecycle::permissions(connection, &self.config).await?)
+                    })
+                    .await?;
                 let permissions = if held.admin {
-                    served_references(&self.config)
+                    let mut served = served_references(&self.config);
+                    served.extend(enabled);
+                    served
                 } else {
-                    held.references
+                    let mut references = held.references;
+                    let enabled: BTreeSet<_> = enabled.into_iter().collect();
+                    references.retain(|reference| {
+                        !reference.starts_with("wamn-workflow:") || enabled.contains(reference)
+                    });
+                    references
                 };
                 Ok(json!({ "admin": held.admin, "permissions": permissions }))
             }
-            HostHandler::WorkflowStart => Err(Refusal::Declared {
-                code: "workflow_not_served",
-                detail: json!({ "field": "workflow_id" }),
-            }),
+            HostHandler::WorkflowAuthor
+            | HostHandler::WorkflowEnable
+            | HostHandler::WorkflowDisable
+            | HostHandler::WorkflowList
+            | HostHandler::WorkflowRun => {
+                workflow
+                    .administer(workload, attachment, &caller, payload)
+                    .await
+            }
             _ => {
                 ApplicationRoutes {
                     postgres: &self.postgres,
@@ -124,8 +145,10 @@ fn report(outcome: Result<DeliveryOutcome, DeliveryError>) -> DeliveryReport {
 }
 
 impl HostRouteDelivery {
-    pub async fn deliver(
+    async fn deliver(
         &self,
+        workflow: &Workflow,
+        workload: &str,
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
     ) -> DeliveryReport {
@@ -164,6 +187,8 @@ impl HostRouteDelivery {
         };
         match self
             .handle(
+                workflow,
+                workload,
                 attachment,
                 caller,
                 request_id.as_deref(),
@@ -196,6 +221,8 @@ impl HostRouteDelivery {
     pub async fn http(
         &self,
         routing: &wamn_engine::flow_http_routing::FlowHttpRouting,
+        workflow: &Workflow,
+        workload: &str,
         request: hyper::Request<wasmtime_wasi_http::WasiBody>,
     ) -> hyper::Response<wasmtime_wasi_http::WasiBody> {
         use http_body_util::BodyExt as _;
@@ -300,6 +327,8 @@ impl HostRouteDelivery {
         }
         let report = self
             .deliver(
+                workflow,
+                workload,
                 DeliveryRequest {
                     source: Source::Attachment(id.to_owned()),
                     caller: None,

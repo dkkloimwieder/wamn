@@ -236,7 +236,8 @@ CREATE TABLE platform.permission (
         REFERENCES platform.role (name) ON DELETE CASCADE,
     CONSTRAINT permission_admin_check CHECK (role_name <> 'admin'),
     CONSTRAINT permission_reference_check
-        CHECK (permission ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*:[a-z][a-z0-9]*(-[a-z0-9]+)*/[a-z][a-z0-9]*(-[a-z0-9]+)*$')
+        CHECK (permission ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*:[a-z][a-z0-9]*(-[a-z0-9]+)*/[a-z][a-z0-9]*(-[a-z0-9]+)*$'
+            OR permission ~ '^wamn-workflow:[A-Za-z0-9_.~-]+/[A-Za-z0-9_.~-]+$')
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON platform.permission

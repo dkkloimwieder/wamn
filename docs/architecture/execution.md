@@ -126,7 +126,10 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:user-role/grant@0.9.0` | Takes `user_id` of an application user and `role`, and gives the role. Answers `granted`. |
 | `wamn-control:user-role/revoke@0.9.0` | Takes `user_id` and `role`, and takes the role. Direct `admin` grants and revokes refuse. Administration comes from the system project or org role. Answers `revoked`. |
 | `wamn-control:number-counter/set@0.9.0` | Authority `Granted`. Takes `application`, `sequence`, `counter`, `key` and the `int64` `value`, and sets that counter. Answers `next_number`. Refusals: `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live` and `idempotency_conflict`. |
-| `wamn-control:workflow/start@0.9.0` | Authority `Granted`. Takes `workflow_id`, `input_json` and `idempotency_key`, and admits one run of the enabled version of that [environment workflow](#environment-workflows). Answers `run_id`. Refusals: `invalid_input`, `active_role_required`, `workflow_not_enabled`, `workflow_not_served` and `idempotency_conflict`. |
+| `workflow.author` | Application admin. Takes a format 0.2 `document` and optional `execution_role`. Stores a disabled immutable version. |
+| `workflow.enable`, `workflow.disable` | Application admin. Take `workflow_id` and `version`. Change which version accepts new runs. |
+| `workflow.list` | Application admin. Lists workflow versions for the application. |
+| `workflow.run` | Application admin. Takes `workflow_id`, `run_as`, `input_json` and `idempotency_key`. Admits a durable run and returns `run_id`. |
 | `wamn-control:connection/authorize@0.9.0` | ProjectAdmin authority. Takes `project`, `env`, and `name`. Returns `authorization_url` for an authorization code connection. |
 | `wamn-control:control/mine@0.9.0` | `org_admin`, and projects reached by the current org or project grants. `project_admin` marks authority over the whole project. |
 | `wamn-control:user/list@0.9.0` | Each member has `principal_id`, `email`, `display_name`, the org membership `status`, the global `principal_status` and `org_admin`. Org admins and project admins in the org can read it. |
@@ -513,6 +516,13 @@ The workflow service manages the walk and calls `wamn:workflow/node.call` for ea
 The host creates an authority handle for each Request or run.
 The handle specifies who executes, their role, and the lease for a durable run.
 
+Format 0.2 gives each node one purpose: entry, call or response.
+A call names its workload sibling and the exact export key.
+A Request path is relative to `/api/<application>/flow`. The host accepts POST with JSON and authenticates the bearer token.
+It checks `wamn-workflow:<application>/<workflow_id>`, also listed by `permission.list` and `permission.mine`.
+Each path that ends reaches a Response node. A Response returns its HTTP status and the JSON value it receives within 30 seconds.
+If a reachable call can write, the host admits a leased run before dispatch. Other Request calls run inline.
+
 Schedule admission evaluates the five-field cron in UTC for the supplied minute.
 The input is `{"due":"<due RFC 3339>"}`, with UTC spelled as `Z`.
 The workflow version and UTC minute identify a schedule run.
@@ -546,19 +556,7 @@ It can insert the principal into a run but cannot change that identity afterward
 The [JSONata node](../../guests/jsonata-expression/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.
 The result leaves on port `main`, or on the selected port `items`.
-Each JSONata node declares `input-schema` and `output-schema` in its parameters.
-Admission uses these declarations for the node's input ports and selected output ports.
-It requires equal schemas on each edge.
-It evaluates at most three samples from the declared input schema with the same engine as the guest.
-An evaluation error is allowed, because at run time it goes to the node's error port. A returned value outside the promised schema refuses admission and names the node and sample.
-These samples cannot prove every possible output.
-The router compiles schemas once per walk.
-It validates each JSONata result against the declared output schema before routing or completion.
-An invalid result follows the JSONata node's error path as a terminal failure.
-Targets reuse this validation because publication requires equal schemas.
-Other arriving values follow the target's error path as `InvalidInput` if validation fails.
-Retries reuse the validated input.
-The node is a std guest: it imports `wasi:random` at the version that Rust std links, and the build preserves that import.
+The workflow authoring check verifies that the named sibling exports the call. The node evaluates its configured expression at run time.
 
 The WMS workflow `movement_label` is the first example.
 A `packaging` update starts it when the event condition `old.location_id != new.location_id` holds, so only a move starts it.
@@ -570,7 +568,11 @@ Each authored workflow version is one row in `catalog.workflows`.
 The graph, wiring hash, execution policy and trigger columns are immutable.
 One version can be enabled for each workflow.
 Enabled Request paths are unique per environment and application.
-Enable records a PostgreSQL log sequence number in `enable_lsn`.
+For Data change, enable reads the source stream's last sequence before reading the PostgreSQL log sequence number.
+It stores the log sequence number in `enable_lsn` and creates one durable pull consumer filtered to the entry's entity.
+The consumer starts at the next stream sequence. The host attempts to remove a newly created consumer if the database commit fails.
+Disable commits before it removes the consumer. The host retains the project database lock through consumer cleanup.
+Author, enable and disable take the environment advisory lock in the project database. Apply and delete take this lock after the system database lock.
 
 An invoker Request runs as its caller with their active role.
 An administrator has the `admin` role active. Other callers must hold exactly one role to invoke as themselves.
@@ -593,13 +595,11 @@ A wiring edge carries the declared route envelope.
 Items contain either `value` or `error`.
 A write item retains its `request_id`. A read item carries none, and its outcomes match its items by position.
 Each node consumes that envelope and emits its declared output port.
-Connected ports require identical JSON Schemas.
-A target with multiple input ports requires an explicit `to_port`.
+Edges can name a source output port and a destination input port. The default source port is `main`.
 A hop limit bounds graph traversal.
 The router does not invent item fan-out or split one emission into independent branches.
 
 A completed database mutation and a later failed effect remain distinct outcomes.
-A response can establish partial completion only when its declared contract carries the committed result and failed outcome.
 A transport failure or an unknown response does not establish that nothing ran.
 Automatic whole-command replay cannot follow from an inner operation's idempotency.
 

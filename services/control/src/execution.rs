@@ -157,10 +157,7 @@ impl crate::host_route::ControlExecution for Execution {
                 .await?;
                 Ok(json!({"code":request.code,"version":request.version,"digest":request.digest}))
             }
-            _ => self
-                .workflow(operation, caller, payload)
-                .await
-                .map(|result| json!({"result":result})),
+            _ => anyhow::bail!("unknown control execution operation {operation}"),
         }
     }
 }

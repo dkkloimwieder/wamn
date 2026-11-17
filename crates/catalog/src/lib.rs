@@ -23,10 +23,6 @@ pub mod schema;
 mod serving_manifest;
 mod signed_file_read;
 mod wiring;
-mod wiring_compatibility;
-mod wiring_jsonata;
-
-mod workflow_condition;
 
 /// Test databases with the project catalog minimum.
 #[cfg(feature = "test-util")]
@@ -84,19 +80,9 @@ pub use signed_file_read::{
     MAX_SIGNED_FILE_SECONDS, SIGNED_FILE_READS, SignedFileField, SignedFileRead,
     SignedFileReadError, SignedFileReads, SignedFileResultClass, signed_file_reads,
 };
-#[cfg(any(test, feature = "test-util"))]
-pub use wiring::fixture_graph;
 pub use wiring::{
-    WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,
-    WiringOperationDependency, WiringResponse, WiringTerminal, partial_response_schema,
-};
-pub use wiring_compatibility::{
-    WiringCompatibilityError, WiringCompatibilityErrorType, resolve_input_port,
-    validate_resolved_wiring_compatibility, validate_wiring_compatibility,
-};
-pub use wiring_jsonata::specialize_wiring_operation;
-pub use workflow_condition::{
-    WorkflowConditionError, condition_workflow_document, resolve_workflow_components,
+    WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEntry, WiringEventOperation,
+    WiringNode, workflow_http_prefix, workflow_permission,
 };
 
 use std::fmt;
@@ -151,9 +137,6 @@ pub enum CatalogIdentityError {
         limit: usize,
     },
     UnresolvedWiringNode {
-        node_id: canonical_name::CanonicalName,
-    },
-    UnresolvedWiringEntry {
         node_id: canonical_name::CanonicalName,
     },
 }
@@ -216,12 +199,6 @@ impl fmt::Display for CatalogIdentityError {
                 write!(
                     formatter,
                     "wiring edge names node {node_id:?}, which the document does not declare"
-                )
-            }
-            Self::UnresolvedWiringEntry { node_id } => {
-                write!(
-                    formatter,
-                    "wiring entry names node {node_id:?}, which the document does not declare"
                 )
             }
         }

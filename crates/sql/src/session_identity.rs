@@ -871,36 +871,48 @@ impl WamnPostgres {
         operation: &wamn_catalog::canonical_name::CanonicalName,
         work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
     ) -> anyhow::Result<Result<T, E>> {
-        let (mut connection, policy) = self
+        let mut connection = self.begin_administration(project, principal_id, operation).await?;
+        let result = work(connection.connection()).await;
+        let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
+        transactions::finish_transaction(connection.connection(), end)
+            .await
+            .context("end the host route transaction")?;
+        connection.repool();
+        Ok(result)
+    }
+
+    /// Open an administration transaction on an owned platform session.
+    /// The caller can retain the session across commit to hold a session lock.
+    pub async fn begin_administration(
+        &self,
+        project: &wamn_registry::ProjectId,
+        principal_id: &wamn_identity_protocol::PrincipalId,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
+    ) -> anyhow::Result<wamn_connection::database::ConnectionGuard> {
+        let (connection, policy) = self
             .checkout_platform(project, AuthorityClass::Platform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Err(error) = self
-            .begin_with_identity(
-                &mut connection,
-                AuthorityClass::Platform,
-                false,
-                None,
-                None,
-                None,
-                Some(principal_id),
-                Some(operation),
-                None,
-                None,
-                policy.statement_timeout_ms,
-            )
-            .await
-        {
-            self.destroy(connection);
-            return Err(anyhow::anyhow!(error.to_string()));
-        }
-        let result = work(&mut connection).await;
-        let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
-        if let Err(error) = transactions::finish_transaction(&mut connection, end).await {
-            self.destroy(connection);
-            return Err(error).context("end the host route transaction");
-        }
-        Ok(result)
+        let mut connection = super::resources::StatementConnectionGuard::new(
+            connection,
+            Arc::clone(&self.destroyed),
+        );
+        self.begin_with_identity(
+            connection.connection(),
+            AuthorityClass::Platform,
+            false,
+            None,
+            None,
+            None,
+            Some(principal_id),
+            Some(operation),
+            None,
+            None,
+            policy.statement_timeout_ms,
+        )
+        .await
+        .context("begin the host route transaction")?;
+        Ok(connection)
     }
 
     /// The caller of one node of a workflow run that executes as `principal_id`

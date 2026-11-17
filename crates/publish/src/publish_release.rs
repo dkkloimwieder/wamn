@@ -365,7 +365,8 @@ async fn publish_candidate(
     args: &PublishReleaseRequest,
     registry: &PackageRegistry,
 ) -> anyhow::Result<PublishedRelease> {
-    let (_, application) = select_application(&args.applications, args.application.as_ref())?;
+    let (application_name, application) =
+        select_application(&args.applications, args.application.as_ref())?;
     let (coordinates, opened) =
         package_sources::open_application(registry, application, &args.packages).await?;
     let release_components = descriptor_components(&args.project_env_key(), &coordinates, &opened)?;
@@ -377,6 +378,22 @@ async fn publish_candidate(
     let authored_attachments = read_package_attachments(&attachment_paths)?;
     let (package_manifests, route_contracts) = read_package_manifests(&roots)?;
     let attachments = resolve_route_methods(&authored_attachments, &route_contracts)?;
+    let prefix = wamn_catalog::workflow_http_prefix(application_name);
+    for (id, attachment) in &attachments {
+        if attachment.definition["route"]["path"]
+            .as_str()
+            .is_some_and(|path| {
+                path.strip_prefix(&prefix)
+                    .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
+            })
+        {
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::Document,
+                format!("attachment {id} uses the application's workflow path {prefix}"),
+            )
+            .into());
+        }
+    }
     let packages = coordinates.into_iter().collect::<BTreeSet<_>>();
     let request = PublishReleaseManifest {
         org: &args.org,

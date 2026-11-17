@@ -10,7 +10,7 @@ The package pins both base components by version and digest.
 ## Operations
 
 Workflow examples live in `tests/workflows`.
-Copy and edit these examples in the environment configuration, then author them with `workflow author`.
+Copy the format 0.2 examples and edit their parameters. Author them on the application host with `workflow author`.
 The package build does not publish workflows.
 
 | Operation | Input | Node parameters | Request |
@@ -203,7 +203,7 @@ TMPDIR=/var/tmp RUSTC_WRAPPER='' CARGO_TARGET_DIR="$PWD/target" \
 ```
 
 Run the publication test after the package build.
-It makes sure of the pull checkpoint through the application role and the refusal of invalid ports and dependencies:
+It checks that the overlay uses the integration schema.
 
 ```sh
 TMPDIR=/var/tmp RUSTC_WRAPPER='' cargo test --locked --offline \
@@ -218,8 +218,7 @@ It calls `record.get` and `suiteql.query` once each, then waits for their result
 It never prints the private key and is never a test target.
 It uses only `rest_webservices` because these calls use SuiteTalk.
 
-Publish all seven wirings with the package.
-Enable the manual workflows `record_get` and `suiteql_query` in the target application.
+Author and enable the Request workflows `record_get` and `suiteql_query` on the target application host.
 Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` as above.
 Set `WAMN_PG_ADMIN_URL` to the deployed project admin database URL.
 The command needs `wamn` on `PATH` and connects to Postgres directly.
@@ -229,13 +228,13 @@ The command creates a private temporary directory and removes it when it returns
 Put a query with a final `ORDER BY id` clause in `/private/netsuite/query.sql`.
 
 ```sh
-cargo xtask netsuite-live /private/netsuite/credentials.json wms dev netsuite \
+cargo xtask netsuite-live /private/netsuite/credentials.json wms dev \
   'https://<application-host>' 42 /private/netsuite/query.sql
 ```
 
-`wamn workflow start` starts a workflow through the host and prints its run id.
-It takes `--host-url`, `--token` (or `WAMN_TOKEN`), `--workflow-id`, `--idempotency-key` and `--input`.
-A repeated start with the same key and input answers the first run.
+`wamn workflow run` admits a workflow through the host and prints its run ID.
+Pass `--host-url`, `--workflow-id`, `--run-as admin`, `--idempotency-key` and `--input`.
+Set `WAMN_TOKEN` or pass `--token`. A repeated call with the same workflow, key and input returns the first run ID.
 Read the result of a run from `wamn_run.runs` in the project database.
 
 ## Kind fixture

@@ -5,7 +5,7 @@ It shares one release with the separate `rest_consumer_fixture` application.
 Both dependencies use exact versions and component digests.
 Build the base and consumer before this package.
 
-The item pull is an environment workflow: a project admin authors `rest_item` with a minute schedule and enables it. Each due moment supplies `due`.
+The item pull is an environment workflow: a project admin authors and enables `rest_item` on the application host. Its entry declares a minute schedule. Each due moment supplies `due`.
 The first node reads `last_synced_at` through the base's `setting.read` operation.
 The `http-page` node collects the fixture pages and carries `/due` into its output.
 JSONata maps the items into one consumer command envelope, including when the item array is empty.
@@ -31,4 +31,4 @@ The log primary key prevents duplicate rows for the same delivery and item.
 Change data capture (CDC) includes only the consumer schema because its event registration reads that schema.
 
 Run `cargo test -p wamn-environment --test rest_connector_publication` after building all three packages.
-The test admits every component and resolves both workflows in one release.
+The test admits the components for the release.

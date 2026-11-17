@@ -26,10 +26,6 @@ pub(super) struct Definition {
     pub version: i32,
     pub graph: String,
     pub hash: wamn_digest::Digest,
-    #[expect(
-        dead_code,
-        reason = "Used by native entry dispatch when the routes are wired"
-    )]
     pub role: Option<String>,
 }
 
@@ -88,7 +84,7 @@ impl Admitted {
 
 pub(super) enum Admission {
     Leased(Box<Admitted>),
-    Existing(#[expect(dead_code, reason = "Run now returns the winning run ID")] String),
+    Existing(String),
     Conflict,
 }
 

@@ -56,7 +56,6 @@ oci-client = { workspace = true }
 base64 = { workspace = true }
 futures-util = { workspace = true }
 wamn-registry = { workspace = true, features = ["test-util"] }
-wamn-workflow.workspace = true
 wash-runtime = { workspace = true, features = ["washlet", "wasi-logging"] }
 wamn-platform-install = { workspace = true, features = ["test-util"] }
 wamn-build.workspace = true

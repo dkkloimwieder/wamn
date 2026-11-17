@@ -7,32 +7,29 @@
       "values": []
     },
     {
-      "path": "value.project",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "value.env",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "value.application",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
       "path": "value.workflow_id",
       "type": "text",
       "nullable": false,
       "values": []
     },
     {
-      "path": "value.version",
-      "type": "int32",
+      "path": "value.run_as",
+      "type": "text",
+      "nullable": false,
+      "values": [
+        "admin",
+        "workflow"
+      ]
+    },
+    {
+      "path": "value.input_json",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.idempotency_key",
+      "type": "text",
       "nullable": false,
       "values": []
     }

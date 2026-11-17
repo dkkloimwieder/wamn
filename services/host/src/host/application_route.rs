@@ -229,7 +229,9 @@ impl ApplicationRoutes<'_> {
                     } else {
                         permission_rows(client, &request.role).await?
                     };
-                    Ok(self.permission_list(&request.role, &rows))
+                    let workflows =
+                        super::workflow::lifecycle::permissions(client, self.config).await?;
+                    Ok(self.permission_list(&request.role, &rows, &workflows))
                 })
                 .await
             }
@@ -383,7 +385,7 @@ impl ApplicationRoutes<'_> {
 
     /// Each operation the release serves and each stored permission of the
     /// role: whether the role holds it and whether a role can take it (§4.6).
-    fn permission_list(&self, role: &str, rows: &[String]) -> Value {
+    fn permission_list(&self, role: &str, rows: &[String], workflows: &[String]) -> Value {
         let served: BTreeSet<&str> = self
             .config
             .components
@@ -391,6 +393,7 @@ impl ApplicationRoutes<'_> {
             .flat_map(|component| &component.operations)
             .filter(|(_, operation)| operation.public)
             .map(|(operation, _)| sealed_operation_reference(operation.as_str()))
+            .chain(workflows.iter().map(String::as_str))
             .collect();
         let host: BTreeMap<String, HostRouteAuthority> = wamn_catalog::HostRouteSet::Application
             .attachments()

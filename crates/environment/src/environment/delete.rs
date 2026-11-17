@@ -122,160 +122,180 @@ async fn delete_locked(
     )
     .await?
     .is_empty();
-    if cr_present && !data {
+    let project_lock = if cr_present {
         let url = project_url(platform, triple).await?;
-        let mut project = wamn_postgres::connect(&url).await?;
-        let unfinished = super::drain::unfinished(&mut project, env, None).await?;
-        anyhow::ensure!(
-            unfinished.is_empty(),
-            "{}; wait for the runs to finish or delete with --data",
-            super::drain::describe(&unfinished)
-        );
-    }
-    for name in applications.values() {
-        helm::uninstall(&platform.target, name).await?;
-        lines.push(format!("uninstalled {name}"));
-    }
-    super::ensure::suspend_project(platform, triple).await?;
-
-    // Runtime state can change during the drain, outside lifecycle exclusion.
-    if cr_present {
-        let url = project_url(platform, triple).await?;
-        let unfinished = async {
-            let mut project = wamn_postgres::connect(&url).await?;
-            super::drain::unfinished(&mut project, env, None).await
-        }
-        .await;
-        match unfinished {
-            Ok(unfinished) if !unfinished.is_empty() && !data => bail!(
-                "{}; shared resources were retained",
-                super::drain::describe(&unfinished)
-            ),
-            Ok(unfinished) if !unfinished.is_empty() => {
-                lines.push(format!("--data: {}", super::drain::describe(&unfinished)));
+        match super::analyse::connect_project(&url).await {
+            Ok(client) => Some(LifecycleLock::acquire(client, triple).await?),
+            Err(error)
+                if data
+                    && error
+                        .downcast_ref::<sqlx::Error>()
+                        .and_then(sqlx::Error::as_database_error)
+                        .and_then(sqlx::error::DatabaseError::code)
+                        .as_deref()
+                        == Some("3D000") =>
+            {
+                None
             }
-            Ok(_) => {}
-            // The CR may still exist while its database is already gone.
-            Err(error) if data => lines.push(format!("--data: runs not read: {error:#}")),
             Err(error) => return Err(error),
         }
-    }
-
-    resources::delete_reader(platform, triple).await?;
-    lines.push(format!(
-        "deleted the CDC reader of {triple} (or it was gone)"
-    ));
-
+    } else {
+        None
+    };
     let namespace = platform.target.namespace.as_str();
-    // The environment's key of the org's control administration Secret.
-    let control = control_administration_secret_name(org);
-    let control_present = !kubectl(
-        platform,
-        namespace,
-        &[
-            "get",
-            "configmap",
-            &control,
-            "--ignore-not-found",
-            "-o",
-            "name",
-        ],
-        None,
-    )
-    .await?
-    .is_empty();
-    if control_present {
-        let patch = serde_json::to_vec(
-            &serde_json::json!({"data":{wamn_provision::control_administration_key(&triple.project,&triple.env):null}}),
-        )?;
-        kubectl(
+    let deleting = async {
+        if let Some(lock) = &project_lock
+            && !data
+        {
+            let unfinished = super::drain::unfinished(&mut *lock.client().await, env, None).await?;
+            anyhow::ensure!(
+                unfinished.is_empty(),
+                "{}; wait for the runs to finish or delete with --data",
+                super::drain::describe(&unfinished)
+            );
+        }
+        for name in applications.values() {
+            helm::uninstall(&platform.target, name).await?;
+            lines.push(format!("uninstalled {name}"));
+        }
+        super::ensure::suspend_project(platform, triple).await?;
+
+        // Runtime state can change during the drain, outside lifecycle exclusion.
+        if let Some(lock) = &project_lock {
+            let unfinished = super::drain::unfinished(&mut *lock.client().await, env, None).await;
+            match unfinished {
+                Ok(unfinished) if !unfinished.is_empty() && !data => bail!(
+                    "{}; shared resources were retained",
+                    super::drain::describe(&unfinished)
+                ),
+                Ok(unfinished) if !unfinished.is_empty() => {
+                    lines.push(format!("--data: {}", super::drain::describe(&unfinished)));
+                }
+                Ok(_) => {}
+                // The CR may still exist while its database is already gone.
+                Err(error) if data => lines.push(format!("--data: runs not read: {error:#}")),
+                Err(error) => return Err(error),
+            }
+        }
+
+        resources::delete_reader(platform, triple).await?;
+        lines.push(format!(
+            "deleted the CDC reader of {triple} (or it was gone)"
+        ));
+
+        // The environment's key of the org's control administration Secret.
+        let control = control_administration_secret_name(org);
+        let control_present = !kubectl(
             platform,
             namespace,
             &[
-                "patch",
+                "get",
                 "configmap",
                 &control,
-                "--type",
-                "merge",
-                "--patch-file",
-                "/dev/stdin",
+                "--ignore-not-found",
+                "-o",
+                "name",
             ],
-            Some(&patch),
+            None,
         )
-        .await
-        .with_context(|| format!("remove the environment's key of Secret {control}"))?;
-        let policy_name = row.try_get(1)?;
-        let policy = super::analyse::read_policy(&mut system, org, &policy_name).await?;
-        crate::platform::control::wait_administration(
-            &platform.target,
-            triple,
-            false,
-            std::time::Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?),
-        )
-        .await?;
-        lines.push(format!("removed the environment's key of Secret {control}"));
-    }
-
-    // Provisioning creates streams even before the reader is registered.
-    let broker = platform.events.as_ref().context(
-        "environment provisioning creates event streams; set WAMN_NATS_URL and its \
-         WAMN_NATS_TLS_* certificate to delete them",
-    )?;
-    let broker = jetstream::new(
-        broker
-            .nats
-            .connect()
+        .await?
+        .is_empty();
+        if control_present {
+            let patch = serde_json::to_vec(
+                &serde_json::json!({"data":{wamn_provision::control_administration_key(&triple.project,&triple.env):null}}),
+            )?;
+            kubectl(
+                platform,
+                namespace,
+                &[
+                    "patch",
+                    "configmap",
+                    &control,
+                    "--type",
+                    "merge",
+                    "--patch-file",
+                    "/dev/stdin",
+                ],
+                Some(&patch),
+            )
             .await
-            .context("connect the event provisioning credential")?,
-    );
-    let source = wamn_event_wire::stream_name(org, project, env);
-    for stream in [source] {
-        if wamn_broker::streams::delete(&broker, &stream).await? {
-            lines.push(format!("deleted stream {stream}"));
+            .with_context(|| format!("remove the environment's key of Secret {control}"))?;
+            let policy_name = row.try_get(1)?;
+            let policy = super::analyse::read_policy(&mut system, org, &policy_name).await?;
+            crate::platform::control::wait_administration(
+                &platform.target,
+                triple,
+                false,
+                std::time::Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?),
+            )
+            .await?;
+            lines.push(format!("removed the environment's key of Secret {control}"));
         }
-    }
-    resources::delete_event_certificate(platform, &project_env_key).await?;
-    lines.push(format!(
-        "deleted the event certificate and Secret of {triple} (or they were gone)"
-    ));
-    resources::delete_publication(platform, &database).await?;
-    lines.push(format!("deleted publication {database} (or it was gone)"));
 
-    // Slot administration belongs to the capture login on the recorded cluster.
-    if cr_present {
-        let project_connection =
-            wamn_platform_install::environment::connection(admin_url, triple).await?;
-        let mut observer = connect(&wamn_postgres::database_configuration(
-            &project_connection.to_json()?,
-            "postgres",
-        )?)
-        .await?;
-        let slot = cdc_object_name(org, project, env, &instance);
-        if let Some(row) = sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name=$1")
-            .bind(&slot)
-            .fetch_optional(&mut observer)
-            .await?
-        {
-            if row.get::<bool, _>(0) {
-                bail!("replication slot is active");
+        // Provisioning creates streams even before the reader is registered.
+        let broker = platform.events.as_ref().context(
+            "environment provisioning creates event streams; set WAMN_NATS_URL and its \
+         WAMN_NATS_TLS_* certificate to delete them",
+        )?;
+        let broker = jetstream::new(
+            broker
+                .nats
+                .connect()
+                .await
+                .context("connect the event provisioning credential")?,
+        );
+        let source = wamn_event_wire::stream_name(org, project, env);
+        for stream in [source] {
+            if wamn_broker::streams::delete(&broker, &stream).await? {
+                lines.push(format!("deleted stream {stream}"));
             }
-            let capture =
-                wamn_platform_install::environment::capture_connection(admin_url, triple).await?;
-            let mut capture = connect(&capture).await?;
-            sqlx::raw_sql(sqlx::AssertSqlSafe(drop_replication_slot_sql(&slot)))
-                .execute(&mut capture)
-                .await?;
         }
-    }
+        resources::delete_event_certificate(platform, &project_env_key).await?;
+        lines.push(format!(
+            "deleted the event certificate and Secret of {triple} (or they were gone)"
+        ));
+        resources::delete_publication(platform, &database).await?;
+        lines.push(format!("deleted publication {database} (or it was gone)"));
 
-    if cr_present {
-        if !data {
-            let url = project_url(platform, triple).await?;
-            let mut project = super::analyse::connect_project(&url).await?;
+        // Slot administration belongs to the capture login on the recorded cluster.
+        if cr_present {
+            let project_connection =
+                wamn_platform_install::environment::connection(admin_url, triple).await?;
+            let mut observer = connect(&wamn_postgres::database_configuration(
+                &project_connection.to_json()?,
+                "postgres",
+            )?)
+            .await?;
+            let slot = cdc_object_name(org, project, env, &instance);
+            if let Some(row) =
+                sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name=$1")
+                    .bind(&slot)
+                    .fetch_optional(&mut observer)
+                    .await?
+            {
+                if row.get::<bool, _>(0) {
+                    bail!("replication slot is active");
+                }
+                let capture =
+                    wamn_platform_install::environment::capture_connection(admin_url, triple)
+                        .await?;
+                let mut capture = connect(&capture).await?;
+                sqlx::raw_sql(sqlx::AssertSqlSafe(drop_replication_slot_sql(&slot)))
+                    .execute(&mut capture)
+                    .await?;
+            }
+        }
+
+        if let Some(lock) = &project_lock
+            && !data
+        {
+            let mut project = lock.client().await;
             let mut transaction = project.begin().await?;
-            sqlx::raw_sql(sqlx::AssertSqlSafe(wamn_provision::bind_platform_principal_sql(
-                wamn_provision::PlatformComponent::Provisioning,
-            )))
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                wamn_provision::bind_platform_principal_sql(
+                    wamn_provision::PlatformComponent::Provisioning,
+                ),
+            ))
             .execute(&mut *transaction)
             .await?;
             sqlx::query(
@@ -289,6 +309,17 @@ async fn delete_locked(
             .context("disable the retained database's connection principals")?;
             transaction.commit().await?;
         }
+        Ok(())
+    };
+    if let Some(lock) = &project_lock {
+        lock.protect(deleting).await?;
+    } else {
+        deleting.await?;
+    }
+    if let Some(lock) = project_lock {
+        lock.release().await;
+    }
+    if cr_present {
         wamn_platform_install::environment::remove_database(
             &platform.target,
             &platform.chart,

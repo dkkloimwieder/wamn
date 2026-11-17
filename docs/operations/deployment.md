@@ -579,7 +579,7 @@ Edge deployment remains outside the local platform milestone.
 Release hosts expose workload HTTP on port 80, probes on port 8081, and native file transfers on port 8082.
 The `<release>-files` Service selects the shared environment host and maps port 80 to the named `files` port.
 The edge sends `/api/<application>/files` and its child paths there before the general `/api/` route.
-File requests keep the full path. Other API requests lose the `/api` prefix.
+File and workflow requests keep the full path. Other API requests lose the `/api` prefix.
 
 The Rust edge reads the live release and serves its bucket files.
 For an application, it selects `clients/<package>/<web digest hex>/` from the host's pinned package and web digest.
