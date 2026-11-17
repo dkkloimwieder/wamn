@@ -808,26 +808,23 @@ async fn complete_operation(open: &OpenOperation, result: String) -> Result<(), 
     }
 }
 
+type NodeOutcome = Result<
+    wamn_engine::operation::node_types::Emission,
+    wamn_engine::operation::node_types::NodeError,
+>;
+
 /// Workflow nodes borrow the same concrete claim and transaction owner as HTTP.
 impl WamnPostgres {
-    pub async fn invoke_node<F, Fut>(
+    async fn invoke_logged_node<Fut>(
         self: &Arc<Self>,
         authority: &Arc<AuthorizedInvocation>,
         operation: &CanonicalName,
-        route: &wamn_catalog::ServingRoute,
-        transacted: bool,
+        policy: &wamn_catalog::application_config::ApplicationOperation,
         input: &serde_json::Value,
-        mut invoke: F,
-    ) -> anyhow::Result<
-        Result<
-            wamn_engine::operation::node_types::Emission,
-            wamn_engine::operation::node_types::NodeError,
-        >,
-    >
+        mut invoke: impl FnMut(&str, String) -> Fut + Send,
+    ) -> anyhow::Result<NodeOutcome>
     where
-        F: FnMut(String) -> Fut + Send,
-        Fut: Future<Output = anyhow::Result<wamn_engine::operation::native_call::NativeOutcome>>
-            + Send,
+        Fut: Future<Output = anyhow::Result<NodeOutcome>> + Send,
     {
         use serde_json::{Value, json};
         use wamn_engine::operation::node_types;
@@ -841,8 +838,8 @@ impl WamnPostgres {
                 let id = element["request_id"]
                     .as_str()
                     .context("request element has no request_id")?;
-                let key = route
-                    .idempotency
+                let key = policy
+                    .idempotency_key
                     .as_deref()
                     .map_or(Some(id), |field| {
                         field
@@ -856,7 +853,7 @@ impl WamnPostgres {
                 body.as_object_mut()
                     .context("request element is not an object")?
                     .remove("request_id");
-                if let Some(field) = &route.idempotency {
+                if let Some(field) = &policy.idempotency_key {
                     let segments = field.split('.').collect::<Vec<_>>();
                     if let Some((last, parents)) = segments.split_last()
                         && let Some(Value::Object(parent)) = parents
@@ -897,8 +894,9 @@ impl WamnPostgres {
             };
             let claim = claim_operation(
                 &open,
-                transacted,
-                route.type_ == wamn_catalog::OperationType::Delete,
+                policy.host_transaction,
+                policy.type_
+                    == Some(wamn_catalog::application_config::ApplicationOperationType::Delete),
                 hash.to_string().into_bytes(),
             )
             .await
@@ -910,9 +908,8 @@ impl WamnPostgres {
                 Claim::OutcomeUnknown => refusal("outcome-unknown"),
                 Claim::Conflict => refusal("idempotency_conflict"),
                 Claim::New => {
-                    let outcome = invoke(serde_json::to_string(&json!([element]))?)
-                        .await?
-                        .into_json()?;
+                    let outcome =
+                        invoke(authority.id(), serde_json::to_string(&json!([element]))?).await?;
                     match outcome {
                         Err(node_types::NodeError::Cancelled) => {
                             if let Some(transaction) = open.transaction() {
@@ -986,5 +983,177 @@ impl WamnPostgres {
             payload: serde_json::to_string(&answers)?,
             port,
         }))
+    }
+}
+
+/// The exact component and execution authority of one workflow node.
+#[derive(Debug)]
+pub struct WorkflowNode<'a> {
+    pub route: &'a str,
+    pub sibling: &'a str,
+    pub operation: &'a CanonicalName,
+    pub caller: AuthenticatedCaller,
+    pub position: wamn_connection::connection::WiringPosition,
+    pub causation: Option<wamn_event_wire::Causation>,
+}
+
+impl WamnPostgres {
+    /// Share the application document already read from the route sibling.
+    pub fn workflow_application(
+        &self,
+        route: &str,
+    ) -> Option<Arc<wamn_catalog::application_config::ApplicationConfig>> {
+        self.operation_workloads
+            .read()
+            .expect("operation workloads lock poisoned")
+            .get(route)
+            .map(|workload| Arc::clone(&workload.application))
+    }
+
+    /// Dispatch the exact sibling under the workflow's authority and operation policy.
+    pub async fn dispatch_workflow_node<Fut>(
+        self: &Arc<Self>,
+        node: WorkflowNode<'_>,
+        input: String,
+        deadline: tokio::time::Instant,
+        mut invoke: impl FnMut(&str, String) -> Fut + Send,
+    ) -> anyhow::Result<NodeOutcome>
+    where
+        Fut: Future<Output = anyhow::Result<NodeOutcome>> + Send,
+    {
+        use wamn_catalog::application_config::ApplicationOperationType;
+        use wamn_connection::connection::{
+            ConnectionExecutionClosure, ConnectionInvocation, InvocationEntry,
+        };
+        use wamn_engine::operation::node_types::{ErrorDetail, NodeError};
+        let facts = self
+            .operation_workloads
+            .read()
+            .expect("operation workloads lock poisoned")
+            .get(node.route)
+            .map(Arc::clone)
+            .context("workflow route sibling has no SQL authority")?;
+        let component = facts
+            .application
+            .components
+            .iter()
+            .find(|component| component.name == node.sibling)
+            .context("workflow sibling is unknown")?;
+        let operation = component
+            .operations
+            .get(node.operation)
+            .filter(|operation| operation.component == node.sibling)
+            .context("workflow export is unknown on this sibling")?;
+        let grant = operation
+            .public
+            .then(|| node.operation.as_str().parse())
+            .transpose()?;
+        let identity = SessionIdentity {
+            schema: component.schema.clone(),
+            user_id: Some(*node.caller.principal_id()),
+            role: node.caller.active_role().map(String::from),
+            operation: Some(node.operation.clone()),
+            ..facts.identity.clone()
+        };
+        let authority = AuthorizedInvocation::enter(
+            self,
+            InvocationRequest {
+                scope: wamn_engine::operation::next_scope(node.route).into_string(),
+                identity,
+                caller: Some(node.caller),
+                context: facts.context.as_ref().map(Arc::clone),
+                registered_operation: grant.as_ref(),
+                causation: node.causation,
+                invocation: Some(ConnectionInvocation {
+                    entry: InvocationEntry::Wiring(node.position),
+                    package_id: component.package.clone(),
+                    component_digest: component.digest,
+                    component: component.name.parse()?,
+                    operation: node.operation.clone(),
+                    closure: ConnectionExecutionClosure::Released,
+                    effects: None,
+                }),
+                read: operation.type_ == Some(ApplicationOperationType::Read),
+            },
+        )?;
+        let mut outcome = match operation.type_ {
+            Some(ApplicationOperationType::Write | ApplicationOperationType::Delete) => {
+                let input = match serde_json::from_str(&input) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        return Ok(Err(NodeError::InvalidInput(ErrorDetail {
+                            code: Some("invalid_input".into()),
+                            message: error.to_string(),
+                        })));
+                    }
+                };
+                self.invoke_logged_node(&authority, node.operation, operation, &input, invoke)
+                    .await?
+            }
+            _ => {
+                let transaction = if operation.host_transaction
+                    || operation.type_ == Some(ApplicationOperationType::Read)
+                {
+                    let transaction = self.begin_operation_transaction(authority.id()).await?;
+                    self.bind_operation_transaction(authority.id(), &transaction)?;
+                    Some(transaction)
+                } else {
+                    None
+                };
+                let outcome = invoke(authority.id(), input).await?;
+                if let Ok(emission) = &outcome {
+                    serde_json::from_str::<serde::de::IgnoredAny>(&emission.payload)
+                        .context("workflow node emitted invalid JSON")?;
+                }
+                if let Some(transaction) = transaction {
+                    if outcome.is_ok() {
+                        if let Err(error) = transaction.commit().await {
+                            let message = error.to_string();
+                            return Ok(Err(match error {
+                                PgCommitFailure::RolledBack(_) => {
+                                    NodeError::Retryable(ErrorDetail {
+                                        code: Some("rolled-back".into()),
+                                        message,
+                                    })
+                                }
+                                PgCommitFailure::Uncertain(_) => NodeError::Terminal(ErrorDetail {
+                                    code: Some("outcome-unknown".into()),
+                                    message,
+                                }),
+                            }));
+                        }
+                    } else {
+                        transaction.rollback().await?;
+                    }
+                    self.revoke_operation_transaction(authority.id());
+                }
+                outcome
+            }
+        };
+        if let Ok(emission) = &mut outcome
+            && let Some(reads) = &operation.signed_result
+            && !reads.fields.is_empty()
+        {
+            let signer = self
+                .result_signer
+                .get()
+                .and_then(std::sync::Weak::upgrade)
+                .context("workflow result signing is unavailable")?;
+            let signed = signer
+                .sign(crate::result_signing::ResultSigning {
+                    workload: &facts.workload,
+                    operation: node.operation,
+                    caller: authority.caller.as_ref(),
+                    reads,
+                    payload: std::mem::take(&mut emission.payload),
+                    deadline,
+                })
+                .await;
+            match signed {
+                Ok(payload) => emission.payload = payload,
+                Err(error) => return Ok(Err(error)),
+            }
+        }
+        Ok(outcome)
     }
 }

@@ -239,7 +239,7 @@ Run `wamn env apply environments/dev/environment.k` before applying application 
 Each application owns its Helm history, workloads, Services, and route ConfigMaps.
 The environment chart owns one host for each org and environment. All projects share it.
 Application workloads and file Services select that host. Database credentials and event bindings remain separate for each project.
-Status reports loaded application releases and the unfinished runs that pin them.
+Status reports application release state.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
 Helm is the only owner of release history. Deploy names the application and release digest.
@@ -254,7 +254,8 @@ The policy's `drain_bound_seconds` supplies the pod termination grace period. Ob
 Rollout retains older bindings, release facts and generated permissions.
 A separate retention operation removes facts that no live host, current selection or unfinished run needs.
 If host observation fails, retention refuses cleanup.
-Environment status reports unfinished runs with no live host.
+Environment apply refuses unfinished runs in the selected application.
+Environment delete checks all applications in the project environment unless you pass `--data`.
 If the lifecycle lock session fails, the operation stops and returns an error.
 
 ### Select SQL independently
@@ -540,10 +541,8 @@ It also records the member byte digests.
 Each host joins the entry path with its own `WAMN_COMPONENT_ARTIFACT_BASE`, as it does for the members.
 The manifest names no registry, so a release copied with its components and entry starts in the new registry.
 The release chart starts that entry with `poolSize: 0`.
-The host loads application releases from verified catalog bytes when workloads or unfinished runs need them.
-It also restores the releases pinned by unfinished runs after restart.
-A release preparation failure appears in the host log with its digest and pinned run ids.
-It does not stop queues belonging to other releases.
+Workflow recovery uses the live workload for each application.
+An unfinished run retains its workflow version and any saved Response checkpoint.
 The host takes no process release digest or release registry argument.
 It pushes the manifest to the release repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the digest.
 The credential of `--registry-auth-file` must pull the packages and push to the release repository.

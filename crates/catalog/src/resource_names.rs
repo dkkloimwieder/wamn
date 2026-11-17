@@ -42,3 +42,12 @@ pub fn application_event_consumer(
     );
     format!("application_{}", hex::encode(sha256(identity.as_bytes())))
 }
+
+/// Name the durable pull consumer of an application's data-change workflow.
+pub fn workflow_event_consumer(
+    application: &crate::ApplicationName,
+    workflow_id: &crate::canonical_name::CanonicalName,
+) -> String {
+    let identity = format!("{}:{application}{workflow_id}", application.as_str().len());
+    format!("workflow_{}", hex::encode(sha256(identity.as_bytes())))
+}

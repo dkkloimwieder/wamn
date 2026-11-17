@@ -907,7 +907,8 @@ impl WamnPostgres {
     /// with `role` active, from the grants the principal holds now, read
     /// through the host's auth memory as a request reads them
     /// (docs/architecture/execution.md#environment-workflows). None when the
-    /// principal is inactive or no longer holds `role`.
+    /// principal is inactive or no longer holds the role. The workflow service
+    /// reads the run role directly from the project platform login.
     pub async fn workflow_node_caller(
         &self,
         project: &wamn_registry::ProjectId,
@@ -915,6 +916,32 @@ impl WamnPostgres {
         principal_id: &wamn_identity_protocol::PrincipalId,
         role: &str,
     ) -> anyhow::Result<Option<wamn_engine::flow_http_routing::AuthenticatedCaller>> {
+        if *principal_id == wamn_identity_protocol::workflow_user_id() {
+            use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
+            let permissions = self.executor_read(project, async |connection| {
+                Ok(sqlx::query_scalar::<_, Vec<String>>(
+                    "SELECT ARRAY(SELECT permission FROM platform.permission WHERE role_name = r.name)
+                       FROM platform.role AS r
+                      WHERE r.name = $1 AND EXISTS (
+                          SELECT 1 FROM platform.\"user\" WHERE id = $2 AND status = 'active'
+                      )"
+                )
+                .bind(role)
+                .bind(principal_id)
+                .fetch_optional(connection)
+                .await?)
+            }).await?;
+            return Ok(permissions.map(|permissions| {
+                AuthenticatedCaller::new(
+                    "workflow".parse().expect("fixed workflow caller"),
+                    *principal_id,
+                    CredentialType::QueuedService,
+                    role == wamn_identity_protocol::ADMIN_ROLE,
+                    permissions.into_iter().collect(),
+                    Some(role.into()),
+                )
+            }));
+        }
         let grants = self
             .read_principal_grants(
                 project,

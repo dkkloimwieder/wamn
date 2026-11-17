@@ -30,6 +30,7 @@ mod session_identity;
 mod types;
 pub mod write_log;
 
+pub use operation::WorkflowNode;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
 pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,

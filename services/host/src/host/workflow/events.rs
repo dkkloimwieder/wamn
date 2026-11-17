@@ -1,8 +1,9 @@
 //! Build event condition inputs and read the row project.
 
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 use wamn_catalog::WiringEventOperation as Op;
-use wamn_event_wire::{DerivedEvent, Envelope};
+use wamn_event_wire::Envelope;
 
 /// Project deployment identity carried by one CDC image.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,23 +30,9 @@ pub fn event_context(envelope: &Envelope) -> Value {
     // The members stand in sorted order, so the context serializes the same
     // with or without serde_json/preserve_order (wamn-g1jd).
     json!({
-        "new": envelope.new.clone().map_or(Value::Null, Value::Object),
-        "old": envelope.old.clone().map_or(Value::Null, Value::Object),
+        "new": envelope.new,
+        "old": envelope.old,
         "op": envelope.op.as_str(),
-    })
-}
-
-/// Build the existing registration-condition context for a derived event.
-///
-/// Derived events deliberately have no CDC old/new images. Their arbitrary
-/// payload occupies `new` while `old` remains null, preserving the declared
-/// `{op, old, new}` condition language without pretending the payload came
-/// from WAL.
-pub fn derived_event_context(event: &DerivedEvent) -> Value {
-    json!({
-        "new": event.payload,
-        "old": Value::Null,
-        "op": event.op.as_str(),
     })
 }
 
@@ -81,4 +68,67 @@ pub fn row_project(envelope: &Envelope) -> RowProject {
             .map_or(RowProject::Unscopable, RowProject::Project),
         Some(_) => RowProject::Unscopable,
     }
+}
+
+#[derive(Serialize)]
+struct EventInput<'a> {
+    event: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    new: Option<&'a Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    old: Option<&'a Map<String, Value>>,
+}
+
+/// Project one wire envelope into the component-facing event document.
+pub fn event_input(envelope: &Envelope) -> Value {
+    serde_json::to_value(EventInput {
+        event: envelope.op.as_str(),
+        new: envelope.new.as_ref(),
+        old: envelope.old.as_ref(),
+    })
+    .expect("event input serializes")
+}
+
+/// Check the CDC project, lineage depth and optional JMESPath condition.
+pub(super) fn matches(
+    envelope: &Envelope,
+    condition: Option<&str>,
+    project: &wamn_registry::ProjectEnvKey,
+) -> Result<bool, wamn_run_state::run_store::ProductionLeaseError> {
+    use wamn_run_state::run_store::ProductionLeaseError;
+    if envelope
+        .causation
+        .as_ref()
+        .is_some_and(|parent| parent.depth >= 16)
+    {
+        return Err(ProductionLeaseError::contract(
+            "match data-change workflow",
+            "event lineage is too deep",
+        ));
+    }
+    match row_project(envelope) {
+        RowProject::Project(other) if other != *project => return Ok(false),
+        RowProject::Unscopable => {
+            return Err(ProductionLeaseError::contract(
+                "match data-change workflow",
+                "invalid event project",
+            ));
+        }
+        _ => {}
+    }
+    let Some(condition) = condition else {
+        return Ok(true);
+    };
+    let condition = jmespath::compile(condition)
+        .map_err(|error| ProductionLeaseError::invalid("compile data-change condition", error))?;
+    if envelope.old.is_none() && super::oldref::references_old(condition.as_ast()) {
+        return Err(ProductionLeaseError::contract(
+            "match data-change workflow",
+            "old image is missing",
+        ));
+    }
+    condition
+        .search(event_context(envelope))
+        .map(|value| value.is_truthy())
+        .map_err(|error| ProductionLeaseError::invalid("evaluate data-change condition", error))
 }

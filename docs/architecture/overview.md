@@ -51,7 +51,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/build` | `wamn-build`: package builds and overlay and base composition |
 | `crates/engine` | `wamn-engine`: native loading, dispatch, and the invocation scope registry |
 | `crates/run-state` | `wamn-run-state`: persisted run admission, leases, and settlement |
-| `crates/workflow` | `wamn-workflow`: workflow lifecycle, graph traversal, and durable queue delivery |
+| `crates/workflow` | `wamn-workflow`: the existing workflow disable operation |
 | `crates/authority` | `wamn-authority`: shared invocation identity and effect evidence |
 | `crates/postgres` | `wamn-postgres`: PostgreSQL connection configuration and transport |
 | `crates/sql` | `wamn-sql`: host operation transactions and database authority |
@@ -118,8 +118,8 @@ Only overlays compose with their pinned bases.
 The registry owns desired environment configuration. Helm owns deployment attempts and rollback history.
 The org chart owns PostgreSQL clusters. The environment chart owns one shared host for each org and environment.
 Each project keeps its own database authority, connection facts, and loaded release selections.
-Unfinished runs pin the releases that they need.
-Retention removes unpinned release facts and expired development artifacts under the environment lock.
+A workflow run keeps its workflow version and uses the live application workload.
+Environment apply and delete check for unfinished application runs.
 
 The control service authenticates each request and selects the operation worker, chart, credentials, and target.
 Workers apply package migrations through SQLx while logged in as the restricted migration role.

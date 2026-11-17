@@ -3,141 +3,41 @@
 //! Identifiers are static, runtime values are bound, and table names remain
 //! unqualified so the host-injected transaction `search_path` selects the run
 //! plane. The production lease is deliberately split into small statements
-//! composed by one host-owned transaction: lock, clear abandoned state, then lease.
+//! composed by one host-owned transaction: lock and replace the expired lease.
 
 use crate::{FailType, RunStatus};
 
-/// Lock one eligible run in exact global FIFO order without granting a lease.
-///
-/// The shared retry budget excludes exhausted expired leases for the janitor.
-/// Credential releases at the limit end the run before another lease. Operator
-/// wakes remain eligible even when the budget is spent.
-/// `AS MATERIALIZED` keeps `LIMIT 1` exact under cached prepared-statement plans.
-///
-/// The projection is exactly what the host composer decodes: the run id, prior
-/// lease evidence, the status it validates, the authoritative input it hands
-/// the router, the immutable wiring pair admission froze, and the selected
-/// row's application name. A manual workflow run adds what its queue request
-/// needs: its trigger source, its executing principal and active role, and the
-/// component digest of every node
-/// (docs/architecture/execution.md#environment-workflows). The release is
-/// admission-pinned by its manifest digest, which the grant compares with the
-/// leasing pod's digest. `$1` is the exact package-id set in the mounted
-/// release and `$2` is the environment target. One set-valued predicate
-/// preserves the project's single global FIFO; an executor never leases a
-/// package outside its release merely because the project shares a project
-/// database.
-///
-/// `$3` is the leasing host's release manifest digest, or NULL for a host that
-/// carries none. A run executes only on hosts of the release it was admitted
-/// under, so the select takes only runs whose pin equals `$3`: a production
-/// host, which always carries a digest, selects exactly its own release's
-/// runs, and a run pinned to another release never becomes its head. While two
-/// releases coexist, FIFO is per release and a draining host leases only its
-/// own backlog (docs/architecture/execution.md#process-lifecycle). [`grant_production_lease_sql`] tests again the pin.
-pub fn select_production_lease_sql() -> String {
-    "WITH candidate AS MATERIALIZED ( \
-             SELECT q.run_id, \
-                    q.lease_expires_at IS NOT NULL AS had_prior_lease \
-               FROM run_queue AS q \
-               JOIN runs AS selected_run \
-                 ON selected_run.run_id = q.run_id \
-              WHERE selected_run.package_id = ANY($1::text[]) \
-                AND selected_run.environment = $2 \
-                AND selected_run.manifest_digest = $3::text \
-                AND q.available_at <= now() \
-                AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
-                AND ( \
-                    q.attempts < q.max_attempts \
-                    OR q.lease_expires_at IS NULL \
-                ) \
-              ORDER BY q.available_at, q.run_id \
-              FOR UPDATE OF selected_run, q SKIP LOCKED \
-              LIMIT 1 \
-         ) \
-         SELECT candidate.run_id, candidate.had_prior_lease, r.status, \
-                r.input_json::text AS input_json, \
-                r.wiring_id, r.wiring_version, \
-                r.wiring_hash, r.package_id, \
-                r.execution_principal_id, r.execution_role, \
-                r.node_digests_json::text, r.event_root_run_id, r.event_depth \
-           FROM candidate \
-           JOIN runs AS r \
-             ON r.run_id = candidate.run_id"
-        .to_owned()
-}
-
-/// Replace the abandoned attempt's run-level state. `$1` is the selected run id.
-///
-/// `state_json` is the only run column changed; immutable tables and the
-/// already-materialized resolution map are preserved. The release digest is
-/// admission identity and is never cleared.
-///
-pub fn clear_pre_effect_state_sql() -> String {
-    "UPDATE runs \
-        SET state_json = NULL \
-      WHERE run_id = $1 \
-      RETURNING run_id"
-        .to_string()
+/// Lock the oldest expired lease for this application.
+pub fn select_production_lease_sql() -> &'static str {
+    "SELECT q.run_id, r.status, r.input_json::text, r.wiring_id, r.wiring_version, \
+            r.wiring_hash, r.execution_principal_id, r.execution_role, \
+            r.state_json::text, r.event_root_run_id, r.event_depth \
+       FROM run_queue AS q JOIN runs AS r USING (run_id) \
+      WHERE r.package_id = $1 AND r.environment = $2 \
+        AND q.lease_expires_at <= clock_timestamp() AND q.attempts < q.max_attempts \
+      ORDER BY q.available_at, q.run_id \
+      LIMIT 1 FOR UPDATE OF r, q SKIP LOCKED"
 }
 
 /// Count an expired lease against the shared retry budget.
 ///
 /// `$1` is the selected run id. This is deliberately its OWN statement, taken
 /// BEFORE the lease grant and OUTSIDE the grant's subtransaction: the grant can
-/// abort (a database guard on the run row refuses the write), and an increment
+/// abort (a database guard on the queue row refuses the write), and an increment
 /// that shared the aborted statement rolled back with it — so the run could
 /// never reach `max_attempts`, the janitor could never reap it, and it stayed
 /// the FIFO head forever (wamn-0h0g.15.69).
 ///
-/// A prior non-NULL lease increments the shared count. First leases and
-/// released rows do not. Credential releases spend this same count when they
-/// release the lease, so the next lease does not count that failure twice.
-pub fn advance_lease_attempts_sql() -> String {
-    "UPDATE run_queue AS q \
-        SET attempts = q.attempts \
-            + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
-      WHERE q.run_id = $1 \
-      RETURNING q.attempts"
-        .to_string()
+pub fn advance_lease_attempts_sql() -> &'static str {
+    "UPDATE run_queue SET attempts = attempts + 1 WHERE run_id = $1 RETURNING attempts"
 }
 
-/// Grant a lease and verify the leasing release.
-///
-/// Params: run id, host-injected lease owner, TTL milliseconds, the pod's
-/// manifest digest. The crash-evidence attempt count is NOT advanced here —
-/// [`advance_lease_attempts_sql`] owns it, outside this statement's abort target.
-///
-/// The release digest was pinned at admission. The lease verifies the pod
-/// carries that same release on the write that marks the run running. A host without a release identity cannot lease a run.
-/// The status predicate widened from `dispatched` to the two runnable states the
-/// composer already validates, because a re-lease of a `running` row must reach
-/// the record too; `dispatched` still becomes `running` and `running` stays put.
-pub fn grant_production_lease_sql() -> String {
-    format!(
-        "WITH leased AS ( \
-             UPDATE run_queue AS q \
-                SET lease_owner = $2, \
-                    lease_expires_at = statement_timestamp() \
-                        + ($3::bigint * interval '1 millisecond'), \
-                    lease_generation = q.lease_generation + 1 \
-              WHERE q.run_id = $1 \
-              RETURNING q.run_id, q.lease_generation \
-         ), \
-         marked AS ( \
-             UPDATE runs AS r \
-                SET status = '{running}' \
-               FROM leased \
-              WHERE r.run_id = leased.run_id \
-                AND r.status IN ('{dispatched}', '{running}') \
-                AND r.manifest_digest = $4 \
-              RETURNING r.run_id \
-         ) \
-         SELECT leased.lease_generation \
-           FROM leased JOIN marked ON marked.run_id = leased.run_id",
-        running = RunStatus::Running.as_sql(),
-        dispatched = RunStatus::Dispatched.as_sql(),
-    )
+/// Replace the expired lease selected under the run and queue locks.
+pub fn grant_production_lease_sql() -> &'static str {
+    "UPDATE run_queue AS q SET lease_owner = $2, \
+           lease_expires_at = clock_timestamp() + ($3::bigint * interval '1 millisecond'), \
+           lease_generation = q.lease_generation + 1 \
+      WHERE q.run_id = $1 RETURNING lease_generation"
 }
 
 /// Extend one live production lease under its exact owner/generation fence.
@@ -147,20 +47,19 @@ pub fn grant_production_lease_sql() -> String {
 /// must stop the in-flight router walk without another run-store access.
 pub fn renew_production_lease_sql() -> String {
     "UPDATE run_queue AS q \
-        SET lease_expires_at = statement_timestamp() \
+        SET lease_expires_at = clock_timestamp() \
             + ($4::bigint * interval '1 millisecond') \
       WHERE q.run_id = $1 \
         AND q.lease_owner = $2 \
         AND q.lease_generation = $3 \
-        AND q.lease_expires_at > statement_timestamp() \
+        AND q.lease_expires_at > clock_timestamp() \
       RETURNING q.lease_expires_at"
         .to_string()
 }
 
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
 ///
-/// `$1` is the grace period in milliseconds; `$2` is the exact package-id set
-/// in the mounted release and `$3` is the environment target.
+/// Bind the grace period in milliseconds, the application, and the environment.
 pub fn select_exhausted_production_sql() -> String {
     format!(
         "SELECT q.run_id, selected_run.status, \
@@ -169,7 +68,7 @@ pub fn select_exhausted_production_sql() -> String {
            FROM run_queue AS q \
            JOIN runs AS selected_run \
              ON selected_run.run_id = q.run_id \
-          WHERE selected_run.package_id = ANY($2::text[]) \
+          WHERE selected_run.package_id = $2 \
             AND selected_run.environment = $3 \
                 AND q.lease_expires_at IS NOT NULL \
                 AND q.lease_expires_at \

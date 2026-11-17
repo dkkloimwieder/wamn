@@ -1,0 +1,144 @@
+package wamn:workflow@0.1.0;
+
+/// Host-owned admission and lease operations scoped to the importing service.
+interface run {
+  /// An opaque, invocation-specific capability created by the host.
+  type authority = string;
+
+  record workflow {
+    id: string,
+    version: u32,
+    graph-json: string,
+  }
+
+  record leased-run {
+    id: string,
+    authority: authority,
+    definition: workflow,
+    input-json: string,
+    checkpoint-json: option<string>,
+  }
+
+  record data-change-consumer {
+    workflow-id: string,
+    %stream: string,
+    consumer: string,
+  }
+
+  record data-change {
+    workflow-id: string,
+    subject: string,
+    body: list<u8>,
+    message-ids: list<string>,
+    stream-sequence: u64,
+  }
+
+  enum failure-type {
+    terminal,
+    retry-exhausted,
+    invalid-input,
+    runaway-budget,
+    unresolvable-name,
+    hash-invalid-bytes,
+    foreign-revision,
+    incompatible-contract,
+  }
+
+  record failure {
+    failure-type: failure-type,
+    result-json: string,
+  }
+
+  variant completion {
+    completed(string),
+    failed(failure),
+  }
+
+  variant refusal {
+    invalid-input(string),
+    active-role-required,
+    permission-denied,
+    idempotency-conflict,
+    invalid-authority,
+    fence-lost,
+    deadline-elapsed,
+    unavailable,
+  }
+
+  admit-schedules: async func(unix-seconds: s64) -> result<list<leased-run>, refusal>;
+  data-change-consumers: async func() -> result<list<data-change-consumer>, refusal>;
+  /// A non-winner has no lease. The service may acknowledge the message.
+  admit-data-change: async func(message: data-change) -> result<option<leased-run>, refusal>;
+  take-expired: async func() -> result<option<leased-run>, refusal>;
+  renew: async func(handle: authority) -> result<_, refusal>;
+  /// Persist the continuation at the Response before returning it.
+  checkpoint: async func(handle: authority, state-json: string) -> result<_, refusal>;
+  finish: async func(handle: authority, outcome: completion) -> result<_, refusal>;
+}
+
+interface node {
+  use run.{authority};
+
+  record invocation {
+    handle: authority,
+    sibling: string,
+    %export: string,
+    node-id: string,
+    input-port: option<string>,
+    occurrence: u32,
+    config-json: string,
+    input-json: string,
+    remaining-ms: u64,
+  }
+
+  record emission {
+    payload-json: string,
+    port: option<string>,
+  }
+
+  record detail {
+    code: option<string>,
+    message: string,
+  }
+
+  record throttle {
+    error: detail,
+    retry-after-ms: option<u64>,
+  }
+
+  variant node-error {
+    retryable(detail),
+    rate-limited(throttle),
+    terminal(detail),
+    invalid-input(detail),
+    cancelled,
+  }
+
+  call: async func(request: invocation) -> result<emission, node-error>;
+}
+
+interface entry {
+  use run.{authority, workflow, leased-run, refusal};
+
+  record request {
+    handle: authority,
+    run-id: option<string>,
+    definition: workflow,
+    input-json: string,
+    remaining-ms: u64,
+  }
+
+  record response {
+    status: u16,
+    body-json: string,
+  }
+
+  call: async func(input: request) -> result<response, refusal>;
+  run: async func(input: leased-run) -> result<_, refusal>;
+}
+
+world service {
+  import run;
+  import node;
+  export entry;
+}

@@ -2,7 +2,7 @@
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! Each step accepts absent resources so an interrupted delete can resume.
-//! Under the lifecycle lock, test ownership and existing stranded runs before
+//! Under the lifecycle lock, test ownership and existing unfinished runs before
 //! uninstalling application releases. Drain their hosts and test runs again.
 //! Delete and drain the CDC reader before removing credentials or replication.
 //! Remove the environment host, Secrets, control administration key, streams,
@@ -45,13 +45,13 @@ use wamn_postgres::connect;
 use wamn_kubernetes::helm;
 
 /// Delete the environment. With `data`, the database and its roles are
-/// dropped too, and a stranded run does not stop the delete. The caller
+/// dropped too, and an unfinished run does not stop the delete. The caller
 /// confirms `data`. Returns what the verb did, one line per step.
 ///
 /// # Errors
 ///
 /// When the lock is held, pods are still live after the drain bound, a run is
-/// stranded and `data` is false, the replication slot is active, the event
+/// unfinished and `data` is false, the replication slot is active, the event
 /// broker is needed and not configured, or a step fails.
 pub async fn delete(
     platform: &Platform,
@@ -124,13 +124,12 @@ async fn delete_locked(
     .is_empty();
     if cr_present && !data {
         let url = project_url(platform, triple).await?;
-        let live = super::drain::loaded(&super::drain::observe(platform, triple).await?);
-        let stranded = super::drain::stranded(&url, env, None, &live).await?;
+        let mut project = wamn_postgres::connect(&url).await?;
+        let unfinished = super::drain::unfinished(&mut project, env, None).await?;
         anyhow::ensure!(
-            stranded.is_empty(),
-            "{}; apply a document that names their release to recover them, or delete \
-             with --data; nothing was deleted",
-            super::drain::describe(&stranded)
+            unfinished.is_empty(),
+            "{}; wait for the runs to finish or delete with --data",
+            super::drain::describe(&unfinished)
         );
     }
     for name in applications.values() {
@@ -138,19 +137,22 @@ async fn delete_locked(
         lines.push(format!("uninstalled {name}"));
     }
     super::ensure::suspend_project(platform, triple).await?;
-    let live = std::collections::BTreeMap::new();
 
     // Runtime state can change during the drain, outside lifecycle exclusion.
     if cr_present {
         let url = project_url(platform, triple).await?;
-        match super::drain::stranded(&url, env, None, &live).await {
-            Ok(stranded) if !stranded.is_empty() && !data => bail!(
-                "{}; apply a document that names their release to recover them, or delete \
-                 with --data; shared resources were retained",
-                super::drain::describe(&stranded)
+        let unfinished = async {
+            let mut project = wamn_postgres::connect(&url).await?;
+            super::drain::unfinished(&mut project, env, None).await
+        }
+        .await;
+        match unfinished {
+            Ok(unfinished) if !unfinished.is_empty() && !data => bail!(
+                "{}; shared resources were retained",
+                super::drain::describe(&unfinished)
             ),
-            Ok(stranded) if !stranded.is_empty() => {
-                lines.push(format!("--data: {}", super::drain::describe(&stranded)));
+            Ok(unfinished) if !unfinished.is_empty() => {
+                lines.push(format!("--data: {}", super::drain::describe(&unfinished)));
             }
             Ok(_) => {}
             // The CR may still exist while its database is already gone.
