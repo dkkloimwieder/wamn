@@ -1,14 +1,14 @@
 /**
  * The platform login, carried by cookie.
  *
- * `/password/session` signs in to the deployment's org. With the carrier "cookie" the
- * identity service sets the session, CSRF and renewal cookies, and the body
- * holds the user id and the two expiry times. The page holds no token and writes nothing
- * to browser storage. The keeper renews the session on load and again before
- * it expires, so a reload does not ask for the password.
+ * The web proxy sets the session, CSRF and renewal cookies at sign-in.
+ * The body holds the user id and two expiry times. The page keeps no token
+ * in browser storage. The keeper renews on load and again before expiry.
  */
 
 import * as z from "zod/mini";
+
+import { CSRF_HEADER, readCsrf } from "./csrf.js";
 
 /** The user id and expiry times of the session token and login, in Unix seconds. */
 export interface SessionTimes {
@@ -17,15 +17,15 @@ export interface SessionTimes {
   readonly loginExpiresAt: number;
 }
 
-/** What a caller supplies to reach the identity service. */
+/** What a caller supplies to reach the web proxy. */
 export interface SessionOptions {
-  /** Where the identity service is served. The same origin is the default. */
+  /** Where the web proxy is served. The same origin is the default. */
   readonly baseUrl?: string;
   /** The fetch to call. The global one is the default. */
   readonly fetch?: typeof globalThis.fetch;
 }
 
-/** The cookie mode body of a session and of a renewal. */
+/** The web response body for sign-in and renewal. */
 const TIMES = z.looseObject({
   sub: z.string(),
   expires_at: z.number(),
@@ -34,10 +34,15 @@ const TIMES = z.looseObject({
 
 async function post(path: string, body: unknown, options: SessionOptions): Promise<Response> {
   const call = options.fetch ?? globalThis.fetch;
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (path === "/password/renew" || path === "/password/logout") {
+    const csrf = readCsrf();
+    if (csrf !== null) headers[CSRF_HEADER] = csrf;
+  }
   return call(`${options.baseUrl ?? ""}${path}`, {
     method: "POST",
     credentials: "include",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
 }
@@ -101,14 +106,14 @@ async function refusalOf(path: string, response: Response): Promise<Error> {
   return new Error(typeof answer?.error === "string" ? answer.error : `${path} answered ${response.status}`);
 }
 
-/** Sign in to one org. The identity service sets the cookies. */
+/** Sign in to one org. The web proxy sets the cookies. */
 export async function signIn(
   email: string,
   password: string,
   aud: string,
   options: SessionOptions = {},
 ): Promise<SessionTimes> {
-  const response = await post("/password/session", { email, password, aud, carrier: "cookie" }, options);
+  const response = await post("/password/session", { email, password, aud }, options);
   if (!response.ok) {
     throw refusedBy("/password/session", response);
   }
@@ -125,7 +130,7 @@ class Unreachable extends Error {}
 export async function renew(aud: string, options: SessionOptions = {}): Promise<SessionTimes | null> {
   let response: Response;
   try {
-    response = await post("/password/renew", { aud, carrier: "cookie" }, options);
+    response = await post("/password/renew", { aud }, options);
   } catch (error) {
     throw new Unreachable(`/password/renew did not answer: ${String(error)}`);
   }
@@ -141,9 +146,9 @@ export async function renew(aud: string, options: SessionOptions = {}): Promise<
   return times(response);
 }
 
-/** End the login. The identity service revokes it and clears the cookies. */
+/** End the login. Identity revokes it and the web proxy clears the cookies. */
 export async function signOut(aud: string, options: SessionOptions = {}): Promise<void> {
-  const response = await post("/password/logout", { aud, carrier: "cookie" }, options);
+  const response = await post("/password/logout", { aud }, options);
   if (!response.ok) {
     throw refusedBy("/password/logout", response);
   }

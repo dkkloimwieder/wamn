@@ -298,11 +298,11 @@ describe("the read store", () => {
   });
 
   it("empties itself when the session cookie changes", async () => {
-    let cookie = "__Host-wamn-csrf=one";
+    let cookie = "__Host-wamn-web-csrf=one";
     const { transport, replies, seen } = harness({ cookies: () => cookie });
     replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
     await transport.invoke(list("open"));
-    cookie = "__Host-wamn-csrf=two";
+    cookie = "__Host-wamn-web-csrf=two";
     replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
     await transport.invoke(list("open"));
     {

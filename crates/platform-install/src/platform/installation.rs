@@ -2,9 +2,13 @@
 
 use super::{artifact_plan::SelectedChart, document::ClusterDocument, resources};
 use anyhow::Context as _;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::{Value, json};
 use std::path::Path;
-use wamn_kubernetes::Target;
+use wamn_kubernetes::{Target, kubectl, secret::Secret};
+
+const WEB_CSRF_SECRET: &str = "wamn-web-csrf";
 
 pub async fn infrastructure(
     target: &Target,
@@ -106,10 +110,51 @@ pub async fn apply(
     values: &mut Value,
     directory: &Path,
 ) -> anyhow::Result<()> {
+    let namespace = match values["edge"]["namespace"].as_str() {
+        Some("") => "platform",
+        Some(namespace) => namespace,
+        None => "hosts",
+    };
+    ensure_web_csrf_secret(target, namespace).await?;
     let mut entry = platform_entry(chart, std::mem::take(values))?;
     let result = resources::apply_release(target, &entry, directory).await;
     *values = entry["values"].take();
     result
+}
+
+async fn ensure_web_csrf_secret(target: &Target, namespace: &str) -> anyhow::Result<()> {
+    if kubectl::get::<Secret>(
+        &target.kubeconfig,
+        &target.context,
+        namespace,
+        "secret",
+        WEB_CSRF_SECRET,
+    )
+    .await?
+    .is_some()
+    {
+        return Ok(());
+    }
+    let mut key = [0_u8; 32];
+    SystemRandom::new()
+        .fill(&mut key)
+        .map_err(|_| anyhow::anyhow!("generate web CSRF key"))?;
+    let mut secret = Secret::new(namespace, WEB_CSRF_SECRET);
+    secret.data.insert("key".into(), STANDARD.encode(key));
+    let body = serde_json::to_vec(&secret).context("encode web CSRF Secret")?;
+    match kubectl::kubectl(
+        &target.kubeconfig,
+        &target.context,
+        namespace,
+        &["create", "-f", "-"],
+        Some(&body),
+    )
+    .await
+    {
+        Ok(_) => Ok(()),
+        Err(error) if error.is::<kubectl::Conflict>() => Ok(()),
+        Err(error) => Err(error).context("create web CSRF Secret"),
+    }
 }
 
 pub fn host_settings(document: &ClusterDocument) -> Value {

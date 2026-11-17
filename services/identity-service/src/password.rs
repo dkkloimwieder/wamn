@@ -8,12 +8,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
-use hyper::{
-    HeaderMap, Request, Response, StatusCode,
-    body::Incoming,
-    header::{COOKIE, HeaderValue, SET_COOKIE},
-};
-use ring::rand::{SecureRandom as _, SystemRandom};
+use hyper::{Request, Response, StatusCode, body::Incoming};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection as Client;
 use tokio::sync::Semaphore;
@@ -41,9 +36,6 @@ use crate::{
 // Database windows cap the whole issuer at 120/minute, source at 20, account at 5.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REQUEST_BYTES: usize = 8192;
-const SESSION_COOKIE: &str = "__Host-wamn-session";
-const CSRF_COOKIE: &str = "__Host-wamn-csrf";
-const RENEWAL_COOKIE: &str = "__Secure-wamn-renewal";
 
 #[derive(Debug)]
 pub(super) struct State {
@@ -82,27 +74,13 @@ struct LoginRequest {
     email: String,
     password: String,
     aud: String,
-    #[serde(default)]
-    carrier: Carrier,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RenewalRequest {
-    #[serde(default)]
-    renewal_token: Option<String>,
+    renewal_token: String,
     aud: String,
-    #[serde(default)]
-    carrier: Carrier,
-}
-
-/// Where the session and renewal tokens travel: the JSON body or cookies.
-#[derive(Clone, Copy, Default, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Carrier {
-    #[default]
-    Bearer,
-    Cookie,
 }
 
 #[derive(Deserialize)]
@@ -125,13 +103,6 @@ struct RenewableResponse<'a> {
     token_type: &'static str,
     expires_at: i64,
     renewal_token: &'a str,
-    login_expires_at: i64,
-}
-
-#[derive(Serialize)]
-struct CookieResponse<'a> {
-    sub: &'a PrincipalId,
-    expires_at: i64,
     login_expires_at: i64,
 }
 
@@ -300,7 +271,6 @@ async fn handle(
                 email,
                 password,
                 aud: audience,
-                carrier,
             }) = serde_json::from_slice(&bytes)
             else {
                 return invalid();
@@ -385,7 +355,7 @@ async fn handle(
                     Ok(claims) => claims,
                     Err(error) => return authority_failure(&error),
                 };
-            finish_session(tx, claims, renewal, started_at, carrier, &inner.envelope).await
+            finish_session(tx, claims, renewal, started_at, &inner.envelope).await
         }
         "/password/recover" | "/password/reset" => {
             let resetting = parts.uri.path() == "/password/reset";
@@ -487,14 +457,7 @@ async fn handle(
             let Ok(request) = serde_json::from_slice::<RenewalRequest>(&bytes) else {
                 return invalid();
             };
-            // A cookie carrier reads its renewal token only from the cookie, never logout-all.
-            let secret = match (request.carrier, request.renewal_token) {
-                (Carrier::Bearer, Some(token)) => Zeroizing::new(token),
-                (Carrier::Cookie, None) if parts.uri.path() != "/password/logout-all" => {
-                    renewal_cookie(&parts.headers).unwrap_or_default()
-                }
-                _ => return invalid(),
-            };
+            let secret = Zeroizing::new(request.renewal_token);
             let actor = match password_login::renewal_principal(
                 &mut *database,
                 &inner.issuer,
@@ -506,7 +469,7 @@ async fn handle(
                 Ok(Some(principal)) => principal,
                 Ok(None) => {
                     return if parts.uri.path() == "/password/logout" {
-                        logged_out(request.carrier)
+                        logged_out()
                     } else {
                         session::unauthorized()
                     };
@@ -533,7 +496,7 @@ async fn handle(
                     return unavailable();
                 }
                 return if parts.uri.path() == "/password/logout" {
-                    logged_out(request.carrier)
+                    logged_out()
                 } else {
                     session::unauthorized()
                 };
@@ -548,7 +511,7 @@ async fn handle(
                 if result.is_err() || tx.commit().await.is_err() {
                     return unavailable();
                 }
-                return logged_out(request.carrier);
+                return logged_out();
             }
             let renewal =
                 match password_login::rotate_login(&mut tx, &inner.issuer, &request.aud, &secret)
@@ -574,15 +537,7 @@ async fn handle(
                 Ok(claims) => claims,
                 Err(error) => return authority_failure(&error),
             };
-            finish_session(
-                tx,
-                claims,
-                renewal,
-                started_at,
-                request.carrier,
-                &inner.envelope,
-            )
-            .await
+            finish_session(tx, claims, renewal, started_at, &inner.envelope).await
         }
         _ => invalid(),
     }
@@ -600,21 +555,8 @@ async fn finish_session(
     claims: wamn_identity::session_token::AccessTokenClaims,
     renewal: password_login::Renewal,
     started_at: i64,
-    carrier: Carrier,
     envelope: &wamn_envelope::encryption::Envelope,
 ) -> Response<Full<Bytes>> {
-    // The cookie carrier remains until web owns cookies and CSRF.
-    let csrf = match carrier {
-        Carrier::Bearer => None,
-        Carrier::Cookie => {
-            let mut bytes = [0_u8; 32];
-            if SystemRandom::new().fill(&mut bytes).is_err() {
-                return unavailable();
-            }
-            let csrf = hex::encode(bytes);
-            Some(csrf)
-        }
-    };
     let Ok(token) = sign_session_token_in_transaction(
         &mut tx,
         claims,
@@ -629,13 +571,10 @@ async fn finish_session(
     if tx.commit().await.is_err() {
         return unavailable();
     }
-    let Some(now) = session::unix_seconds().filter(|now| *now < token.claims().exp) else {
+    if !session::unix_seconds().is_some_and(|now| now < token.claims().exp) {
         return unavailable();
-    };
-    match csrf {
-        None => renewable_response(&token, &renewal),
-        Some(csrf) => cookie_response(&token, &renewal, &csrf, now),
     }
+    renewable_response(&token, &renewal)
 }
 
 fn renewable_response(
@@ -655,90 +594,8 @@ fn renewable_response(
     }
 }
 
-/// Set the three cookies; the body carries no token.
-fn cookie_response(
-    token: &IssuedSessionToken,
-    renewal: &password_login::Renewal,
-    csrf: &str,
-    now: i64,
-) -> Response<Full<Bytes>> {
-    let Ok(bytes) = serde_json::to_vec(&CookieResponse {
-        sub: &token.claims().sub,
-        expires_at: token.claims().exp,
-        login_expires_at: renewal.login.expires_at,
-    }) else {
-        return unavailable();
-    };
-    let session_age = token.claims().exp - now;
-    with_cookies(
-        response(StatusCode::OK, "application/json", bytes),
-        [
-            (SESSION_COOKIE, token.token(), session_age),
-            (CSRF_COOKIE, csrf, session_age),
-            (
-                RENEWAL_COOKIE,
-                renewal.secret(),
-                renewal.login.expires_at - now,
-            ),
-        ],
-    )
-}
-
-/// A logout by cookie clears all three cookies, whatever the renewal token was.
-fn logged_out(carrier: Carrier) -> Response<Full<Bytes>> {
-    let reply = response(StatusCode::NO_CONTENT, "application/json", Vec::new());
-    match carrier {
-        Carrier::Bearer => reply,
-        Carrier::Cookie => with_cookies(
-            reply,
-            [
-                (SESSION_COOKIE, "", 0),
-                (CSRF_COOKIE, "", 0),
-                (RENEWAL_COOKIE, "", 0),
-            ],
-        ),
-    }
-}
-
-fn with_cookies(
-    mut reply: Response<Full<Bytes>>,
-    cookies: [(&str, &str, i64); 3],
-) -> Response<Full<Bytes>> {
-    for (name, value, max_age) in cookies {
-        // Only the renewal cookie is restricted to the identity service; only the CSRF cookie is readable.
-        let path = if name == RENEWAL_COOKIE {
-            "/password"
-        } else {
-            "/"
-        };
-        let http_only = if name == CSRF_COOKIE {
-            ""
-        } else {
-            "; HttpOnly"
-        };
-        let Ok(value) = HeaderValue::try_from(format!(
-            "{name}={value}; Path={path}; Max-Age={max_age}{http_only}; Secure; SameSite=Strict"
-        )) else {
-            return unavailable();
-        };
-        reply.headers_mut().append(SET_COOKIE, value);
-    }
-    reply
-}
-
-/// The renewal token of exactly one renewal cookie across every Cookie header.
-fn renewal_cookie(headers: &HeaderMap) -> Option<Zeroizing<String>> {
-    let mut found = None;
-    for header in headers.get_all(COOKIE) {
-        for pair in header.to_str().ok()?.split(';') {
-            if let Some((RENEWAL_COOKIE, value)) = pair.trim().split_once('=')
-                && found.replace(Zeroizing::new(value.to_owned())).is_some()
-            {
-                return None;
-            }
-        }
-    }
-    found
+fn logged_out() -> Response<Full<Bytes>> {
+    response(StatusCode::NO_CONTENT, "application/json", Vec::new())
 }
 
 async fn admit(

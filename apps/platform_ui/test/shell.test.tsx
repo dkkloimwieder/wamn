@@ -72,7 +72,7 @@ describe("the app shell", () => {
     }
   });
 
-  it("uses the cookie carrier and keeps no token in browser storage", async () => {
+  it("uses cookies and keeps no token in browser storage", async () => {
     const storage = vi.spyOn(Storage.prototype, "setItem");
     try {
       const { state, fetch } = identity(true);
@@ -81,7 +81,6 @@ describe("the app shell", () => {
       {
         const observed = state.bodies[0];
         expect(observed).toHaveProperty(["aud"], AUD);
-        expect(observed).toHaveProperty(["carrier"], "cookie");
       }
       expect(state.requests[0]?.credentials).toBe("include");
       expect(new Headers(state.requests[1]?.headers).has("authorization")).toBe(false);

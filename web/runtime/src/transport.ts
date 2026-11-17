@@ -9,6 +9,7 @@
 import { en } from "zod/locales";
 import * as z from "zod/mini";
 
+import { CSRF_HEADER, readCsrf } from "./csrf.js";
 import { encodeReadQuery } from "./readQuery.js";
 import { createReadStore, writeTouches, type ReadReply } from "./readCache.js";
 import type {
@@ -56,30 +57,13 @@ export interface BearerOptions extends CommonOptions {
   readonly cookie?: undefined;
 }
 
-/** A page that the identity service signed in by cookie. */
+/** A page that the web proxy signed in by cookie. */
 export interface CookieOptions extends CommonOptions {
   /** The browser carries the session in its cookie. */
   readonly cookie: true;
   readonly credential?: undefined;
   /** The cookie string to read the CSRF token from. `document.cookie` is the default. */
   readonly cookies?: () => string;
-}
-
-/** The readable cookie that holds the CSRF token of the cookie session. */
-const CSRF_COOKIE = "__Host-wamn-csrf";
-
-/** The header that carries the CSRF token back to the router. */
-const CSRF_HEADER = "x-wamn-csrf";
-
-/** The value of one cookie in a `document.cookie` string, or null. */
-function cookieValue(cookies: string, name: string): string | null {
-  for (const pair of cookies.split(";")) {
-    const at = pair.indexOf("=");
-    if (at !== -1 && pair.slice(0, at).trim() === name) {
-      return pair.slice(at + 1).trim();
-    }
-  }
-  return null;
 }
 
 // zod/mini carries no messages of its own. The generated forms show a refused
@@ -476,10 +460,10 @@ export function createTransport(options: TransportOptions): Transport & Required
   const credentials = (headers: { [name: string]: string }, init: RequestInit, read: boolean) => {
     if (options.cookie === true) {
       // The CSRF cookie is read on every request, because a renewal replaces
-      // it. Without it the header stays off, and the router decides. A read
+      // it. Without it the web proxy refuses a signed-in write. A read
       // needs no CSRF header, and a request with one is never cached.
       // A new session or a renewal sets a new cookie, and empties the store.
-      const csrf = cookieValue((options.cookies ?? (() => document.cookie))(), CSRF_COOKIE);
+      const csrf = readCsrf(options.cookies?.());
       reads.belongTo(csrf);
       if (csrf !== null && !read) {
         headers[CSRF_HEADER] = csrf;

@@ -91,7 +91,10 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let edge = listener.local_addr().unwrap();
         tasks.spawn(async move {
-            let proxy = http_transport::client(native_connector().unwrap(), |_| {});
+            let proxy = Proxy {
+                client: http_transport::client(native_connector().unwrap(), |_| {}),
+                csrf_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &[0; 32]),
+            };
             let (stream, _) = listener.accept().await.unwrap();
             let service = service_fn(|request| async {
                 Ok::<_, Infallible>(respond(&web, &releases, &proxy, "https://identity.example", "127.0.0.1".parse().unwrap(), 0, request).await.unwrap())

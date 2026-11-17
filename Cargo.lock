@@ -6713,6 +6713,7 @@ name = "wamn-web"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bytes",
  "clap",
  "http-body-util",
@@ -6720,12 +6721,11 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "object_store",
- "rcgen",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
  "tokio",
- "tokio-rustls",
  "tracing",
  "tracing-subscriber",
  "wamn-catalog",

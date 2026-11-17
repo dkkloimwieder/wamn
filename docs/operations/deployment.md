@@ -572,6 +572,11 @@ The uploader reads the package id and client name from `web.json`.
 It writes `clients/<package>/<web digest hex>/` and skips all writes when the index already exists.
 That page owns the command, required inputs, destination paths, output, and errors.
 The shell reads `/config.json` from the installed web service before sign-in.
+Browser sign-in uses the web host over HTTPS.
+The edge chart mounts the `key` entry of `wamn-web-csrf` in the web Deployment's namespace.
+The installation chart uses `hosts` by default.
+The platform installer writes 32 random bytes on first creation and preserves the Secret on a repeat install.
+The bootstrap caller must prepare that namespace before the installer writes the Secret.
 The bucket must allow reads without credentials.
 Edge deployment remains outside the local platform milestone.
 
