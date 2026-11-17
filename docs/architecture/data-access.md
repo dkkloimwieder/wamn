@@ -215,7 +215,7 @@ WIT packages, component worlds, contracts, the files under `generated/`, the cli
 
 The compiler derives sealed identities from the package and base declarations.
 Publication, admission and clients read those compiled facts.
-Workflows belong to the environment and name sealed operations from its serving release.
+Workflow nodes name a sibling and export in the application's workload.
 A web page keys `onOpen` and `onFill` by the operation reference.
 A test reads sealed identities through `wamn_test_infrastructure::operations`.
 

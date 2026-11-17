@@ -1,4 +1,4 @@
-//! The NetSuite overlay uses the integration schema in the assembled release.
+//! The runtime schema assigned to the NetSuite component during release assembly.
 #[path = "../../rest_connector/tests/support.rs"]
 mod support;
 
@@ -49,7 +49,7 @@ fn fixture() -> Fixture {
 
 #[test]
 #[ignore = "requires: input:netsuite"]
-fn netsuite_uses_the_integration_runtime_schema() {
+fn publication_selects_the_integration_runtime_schema() {
     let palette = support::palette();
     let Fixture {
         args,

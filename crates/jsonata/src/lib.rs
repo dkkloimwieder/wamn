@@ -1,4 +1,4 @@
-//! JSONata evaluation shared by publication and the palette guest.
+//! JSONata evaluation for the palette guest.
 
 use jsonata_core::evaluator::{Context, Evaluator, EvaluatorOptions};
 use jsonata_core::parser;
@@ -49,33 +49,6 @@ pub fn evaluate_with_parameters(
     input: &serde_json::Value,
     parameters: &serde_json::Value,
 ) -> Result<String, EvaluationError> {
-    evaluate_with_options(expression, input, parameters, EvaluatorOptions::default())
-}
-
-/// Evaluate one publication probe with bounded engine work.
-pub fn evaluate_sample(
-    expression: &str,
-    input: &serde_json::Value,
-    parameters: &serde_json::Value,
-) -> Result<String, EvaluationError> {
-    evaluate_with_options(
-        expression,
-        input,
-        parameters,
-        EvaluatorOptions {
-            timeout_ms: Some(100),
-            max_stack_depth: None,
-            max_sequence_length: Some(10_000),
-        },
-    )
-}
-
-fn evaluate_with_options(
-    expression: &str,
-    input: &serde_json::Value,
-    parameters: &serde_json::Value,
-    options: EvaluatorOptions,
-) -> Result<String, EvaluationError> {
     let ast = parser::parse(expression).map_err(|error| EvaluationError {
         type_: EvaluationErrorType::Expression,
         message: error.to_string(),
@@ -85,7 +58,7 @@ fn evaluate_with_options(
     if !parameters.is_null() {
         context.bind("parameters".to_owned(), JValue::from(parameters.clone()));
     }
-    let result = Evaluator::with_options(context, options)
+    let result = Evaluator::with_options(context, EvaluatorOptions::default())
         .evaluate(&ast, &data)
         .map_err(|error| EvaluationError {
             type_: EvaluationErrorType::Evaluation,

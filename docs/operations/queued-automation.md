@@ -17,7 +17,7 @@ wamn workflow enable --host-url "$APPLICATION_URL" --workflow-id orders --versio
 wamn workflow list --host-url "$APPLICATION_URL"
 ```
 
-The host checks each call against the sibling name and export key in the live workload.
+The host resolves each call by sibling name and export key in the live workload’s `wamn.application`.
 For a Request, grant `wamn-workflow:<application>/<workflow_id>` to each role that can call it.
 The host returns the Response status and body. It waits up to 30 seconds.
 Use `workflow disable` with the same flags as `workflow enable` to stop new admissions.
@@ -34,7 +34,8 @@ wamn workflow run --host-url "$APPLICATION_URL" --workflow-id orders \
 ```
 
 The command returns the run ID after admission. Read the result in `wamn_run.runs`.
-Repeating the same workflow, key and input returns the first run ID. Reusing the key with another input refuses.
+The run records the graph hash, executing principal and role, and invoker.
+The same invocation, key and input return the first run ID. Reusing the key with another input refuses.
 For a Request graph, the result records the Response.
 The host reads the executing role's grants before each node.
 

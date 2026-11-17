@@ -6,14 +6,10 @@ use std::time::Duration;
 use async_nats::HeaderMap;
 use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::Context;
-use async_nats::jetstream::consumer::pull::Config as PullConfig;
-mod admission;
 use anyhow::Context as _;
 use tracing::Instrument as _;
 use wamn_authority::EffectOutcome;
-use wamn_broker::events::{
-    consumer_config_matches, source_stream_config, stream_config_matches,
-};
+use wamn_broker::events::{source_stream_config, stream_config_matches};
 use wamn_event_wire::{Causation, DerivedEvent, Op, derived_msg_id, stream_name, subject};
 use wamn_registry::Triple;
 
@@ -143,7 +139,6 @@ pub struct WamnJetstream {
     event_coordinates: Option<Triple>,
     /// Validated once when the host constructs the plugin.
     ctx: Option<Context>,
-    stream: Option<async_nats::jetstream::stream::Stream>,
 }
 
 /// Host identity for event publication and tracing.
@@ -301,7 +296,6 @@ impl WamnJetstream {
             dup_window_secs: cfg.dup_window_secs,
             event_coordinates: cfg.event_target,
             ctx: None,
-            stream: None,
         };
         anyhow::ensure!(
             has_target || cfg.nats.is_none(),
@@ -325,9 +319,6 @@ impl WamnJetstream {
                         "event stream {} differs from its declaration",
                         config.name
                     )));
-                }
-                if plugin.stream.is_none() {
-                    plugin.stream = Some(stream);
                 }
             }
             plugin.ctx = Some(context);
@@ -477,8 +468,6 @@ impl HostPlugin for WamnJetstream {
     }
 }
 
-const CONSUMER_CONFIG_DRIFT: &str = "event-consumer-config-drift";
-
 #[cfg(test)]
 mod tests {
 
@@ -622,15 +611,4 @@ mod tests {
         .await
         .unwrap();
     }
-}
-
-/// One message from one entity consumer. Target and release come from the host.
-#[derive(Debug)]
-pub struct EventBatchAdmission<'a> {
-    pub application: &'a wamn_catalog::ApplicationName,
-    pub source_package: &'a wamn_catalog::PackageName,
-    pub entity: &'a str,
-    pub envelope: &'a str,
-    pub sequence: u64,
-    pub source_event_id: &'a str,
 }

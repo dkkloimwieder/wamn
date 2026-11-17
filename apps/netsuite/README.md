@@ -202,8 +202,7 @@ TMPDIR=/var/tmp RUSTC_WRAPPER='' CARGO_TARGET_DIR="$PWD/target" \
   -p netsuite --target x86_64-unknown-linux-gnu --lib
 ```
 
-Run the publication test after the package build.
-It checks that the overlay uses the integration schema.
+Run the publication test after the package build to check the runtime schema assigned to NetSuite.
 
 ```sh
 TMPDIR=/var/tmp RUSTC_WRAPPER='' cargo test --locked --offline \

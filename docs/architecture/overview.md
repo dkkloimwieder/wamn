@@ -66,7 +66,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/record-history` | `wamn-record-history`: reconstruction of a row from its history |
 | `guests/http-route` | HTTP matching and JSON invocation of typed application operations |
 | `guests/blob-put` | Palette node that writes one object |
-| `crates/jsonata` | `wamn-jsonata`: expression evaluation shared by publication and the JSONata guest |
+| `crates/jsonata` | `wamn-jsonata`: expression evaluation for the JSONata guest |
 | `guests/jsonata-expression` | Palette node that evaluates a JSONata expression |
 | `guests/http-page` | Palette node that reads HTTP pages |
 | `guests/http-request` | Palette node that makes an HTTP request |
@@ -108,7 +108,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 The compiler checks authored documents and writes final component and route declarations once.
 Publication verifies component bytes and writes immutable package and release artifacts.
 The catalog reads served facts. It does not repeat authoring rules.
-A release fixes package versions, component digests, base pins, SQL, connections, routes, and workflow identities.
+A release fixes package versions, component digests, base pins, SQL, connections, and routes.
 The separate HTTP route component calls application components through the host.
 Only overlays compose with their pinned bases.
 

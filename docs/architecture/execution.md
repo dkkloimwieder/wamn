@@ -512,22 +512,37 @@ The accessors in `wamn_authority` read only its caller row. A guest cannot repla
 
 A workflow is an authored graph that belongs to one application.
 Its entry is Request, Schedule or Data change.
-The workflow service manages the walk and calls `wamn:workflow/node.call` for each sibling export.
+The workflow service reads format 0.2 graphs and calls each sibling and export named in the graph through `wamn:workflow/node.call`.
+The host checks that pair against `wamn.application` on the `flow-http` sibling and dispatches to that component.
+The same lookup applies to palette nodes.
+Each entry passes the stored input unchanged, including when an admin runs the workflow.
+Retryable and rate-limited node errors get three attempts by default.
 The host creates an authority handle for each Request or run.
 The handle specifies who executes, their role, and the lease for a durable run.
 
 Format 0.2 gives each node one purpose: entry, call or response.
-A call names its workload sibling and the exact export key.
 A Request path is relative to `/api/<application>/flow`. The host accepts POST with JSON and authenticates the bearer token.
 It checks `wamn-workflow:<application>/<workflow_id>`, also listed by `permission.list` and `permission.mine`.
-Each path that ends reaches a Response node. A Response returns its HTTP status and the JSON value it receives within 30 seconds.
+Each path that ends reaches a Response node.
 If a reachable call can write, the host admits a leased run before dispatch. Other Request calls run inline.
+
+The first Response supplies the HTTP status and JSON body.
+For a durable Request with pending nodes, the service saves their state in a checkpoint before returning the Response.
+The service continues the walk after returning the Response.
+If the Request reaches 30 seconds without a Response, the call returns a timeout.
+The result of a durable Request run records the Response status and body.
 
 Schedule admission evaluates the five-field cron in UTC for the supplied minute.
 The input is `{"due":"<due RFC 3339>"}`, with UTC spelled as `Z`.
 The workflow version and UTC minute identify a schedule run.
 The host admits only one run across replicas.
 
+The service admits schedules each UTC minute and takes expired leases every 30 seconds.
+It starts each leased run immediately and renews the lease while the run is active.
+
+The service pulls from the durable consumer of each enabled Data change workflow.
+It acknowledges each message after admission and then runs any workflow for which it received a lease.
+It sends JetStream progress acknowledgements during long deliveries.
 For Data change, the host verifies the subject and the `Nats-Msg-Id` against the CDC envelope.
 It checks the source package, entity, operation and optional JMESPath condition.
 A change qualifies when its commit log sequence number is at least the workflow's enable LSN.
@@ -556,7 +571,8 @@ It can insert the principal into a run but cannot change that identity afterward
 The [JSONata node](../../guests/jsonata-expression/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.
 The result leaves on port `main`, or on the selected port `items`.
-The workflow authoring check verifies that the named sibling exports the call. The node evaluates its configured expression at run time.
+The graph can include `input-schema` and `output-schema` in the node's parameters.
+The node imports the `wasi:random` version that Rust std links, and the build preserves that import.
 
 The WMS workflow `movement_label` is the first example.
 A `packaging` update starts it when the event condition `old.location_id != new.location_id` holds, so only a move starts it.
