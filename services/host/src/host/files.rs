@@ -16,9 +16,14 @@ use wamn_engine::operation::node_types::{ErrorDetail, NodeError};
 use wamn_sql::WamnPostgres;
 use wamn_sql::result_signing::{ResultSigner, ResultSigning};
 
+pub(super) struct Routes {
+    pub(super) files: FileRoutes,
+    pub(super) application: super::host_route::HostRouteDelivery,
+}
+
 struct ApplicationFiles {
     application: Arc<ApplicationConfig>,
-    routes: tokio::sync::OnceCell<Arc<FileRoutes>>,
+    routes: tokio::sync::OnceCell<Arc<Routes>>,
 }
 
 pub(super) struct Files {
@@ -68,7 +73,7 @@ impl Files {
             .remove(workload);
     }
 
-    pub(super) async fn routes(&self, workload: &str) -> anyhow::Result<Arc<FileRoutes>> {
+    pub(super) async fn routes(&self, workload: &str) -> anyhow::Result<Arc<Routes>> {
         let state = self
             .applications
             .read()
@@ -95,13 +100,20 @@ impl Files {
                     project: application.project.clone(),
                     environment: application.environment.clone(),
                 });
-                Ok(Arc::new(FileRoutes::new(
-                    context,
-                    postgres,
-                    Arc::clone(&self.blobstore),
-                    connections,
-                    application.project.clone(),
-                )))
+                let application_routes = super::host_route::HostRouteDelivery::new(
+                    Arc::clone(&postgres),
+                    Arc::clone(application),
+                );
+                Ok(Arc::new(Routes {
+                    files: FileRoutes::new(
+                        context,
+                        postgres,
+                        Arc::clone(&self.blobstore),
+                        connections,
+                        application.project.clone(),
+                    ),
+                    application: application_routes,
+                }))
             })
             .await
             .map(Arc::clone)
@@ -132,6 +144,7 @@ impl ResultSigner for Files {
                         .parse()?;
                     *target = Value::String(
                         routes
+                            .files
                             .signed_url(caller.principal_id(), id, lifetime, request.deadline)
                             .await?,
                     );

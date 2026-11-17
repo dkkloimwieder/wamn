@@ -24,6 +24,8 @@ use wamn_number_pattern::Policy;
 use wamn_authority::identity::SessionIdentity;
 use crate::WamnPostgres;
 use crate::write_log::Claim;
+use crate::invocation::{AuthorizedInvocation, InvocationRequest};
+use wamn_engine::flow_http_routing::AuthenticatedCaller;
 const SEQUENCE_SQL: &str =
     "SELECT id::text, pattern FROM platform.number_sequence WHERE application = $1 AND name = $2";
 
@@ -134,7 +136,7 @@ fn failed(
 const SET_SQL: &str = "SELECT platform.set_counter($1::text::uuid, $2, $3, $4)";
 
 /// Set one counter of a sequence of `set.application` for the caller
-/// `user_id`, in one operation transaction of the guest authority of
+/// `caller`, in one operation transaction of the guest authority of
 /// `project_env_key` in `project`, logged in the write log under `operation` and
 /// `request_id`. Returns the value the counter renders next. A retry of a
 /// committed set answers its stored value.
@@ -148,7 +150,7 @@ pub async fn set_number_counter(
     postgres: &WamnPostgres,
     project: &wamn_registry::ProjectId,
     project_env_key: &wamn_registry::ProjectEnvKey,
-    user_id: &wamn_identity_protocol::PrincipalId,
+    caller: AuthenticatedCaller,
     operation: &wamn_catalog::registered_operation::RegisteredOperation,
     request_id: &str,
     set: &CounterSet,
@@ -173,28 +175,33 @@ pub async fn set_number_counter(
     let identity = SessionIdentity {
         project_env_key: Some(project_env_key.to_owned()),
         project: Some(project.to_owned()),
-        user_id: Some(user_id.to_owned()),
+        user_id: Some(*caller.principal_id()),
         operation: Some(operation.clone().into()),
         application: Some(set.application.clone()),
         ..SessionIdentity::default()
     };
-    let result = async {
-        postgres
-            .bind_session_identity(&scope, &identity)
-            .await
-            .map_err(|error| {
-                failed(
-                    set,
-                    request_id,
-                    "bind the set's session identity",
-                    Some(error),
-                )
-            })?;
-        set_in_transaction(postgres, &scope, operation, request_id, set).await
-    }
-    .await;
-    postgres.revoke_session_identity(&scope);
-    result
+    let invocation = AuthorizedInvocation::enter(
+        postgres,
+        InvocationRequest {
+            scope,
+            identity,
+            context: None,
+            caller: Some(caller),
+            registered_operation: Some(operation),
+            causation: None,
+            invocation: None,
+            read: false,
+        },
+    )
+    .map_err(|error| {
+        failed(
+            set,
+            request_id,
+            "bind the set's authenticated caller",
+            Some(error),
+        )
+    })?;
+    set_in_transaction(postgres, invocation.id(), operation, request_id, set).await
 }
 
 async fn set_in_transaction(

@@ -22,9 +22,11 @@ use wash_runtime::plugin;
 use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::washlet::AttachedHostControl;
 
+mod application_route;
 mod authentication;
 mod commands;
 mod files;
+mod host_route;
 mod platform_http;
 mod projects;
 

@@ -1,4 +1,4 @@
-//! Register application file paths on the wasmCloud ingress router.
+//! Register application platform paths on the wasmCloud ingress router.
 
 use super::files::Files;
 use std::sync::Arc;
@@ -47,18 +47,13 @@ impl PlatformHttp {
                 let workload = workload.clone();
                 tokio::spawn(async move {
                     let request = async {
-                        let files = files.routes(&workload).await?;
-                        Ok(files.http(&routing, job.req).await.unwrap_or_else(|| {
-                            use http_body_util::BodyExt as _;
-                            hyper::Response::builder()
-                                .status(404)
-                                .body(
-                                    http_body_util::Empty::<bytes::Bytes>::new()
-                                        .map_err(|never| match never {})
-                                        .boxed_unsync(),
-                                )
-                                .expect("fixed native response")
-                        }))
+                        let routes = files.routes(&workload).await?;
+                        Ok(match routes.files.http(&routing, job.req).await {
+                            std::ops::ControlFlow::Break(response) => response,
+                            std::ops::ControlFlow::Continue(request) => {
+                                routes.application.http(&routing, request).await
+                            }
+                        })
                     };
                     tokio::select! {
                         () = job.resp_tx.closed() => {},

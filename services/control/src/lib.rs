@@ -1,6 +1,5 @@
 //! Authenticated org administration without a guest runtime.
 
-mod application_route;
 pub mod connection_health;
 mod control_route;
 pub mod environment_status;
@@ -22,7 +21,6 @@ use http_body_util::BodyExt as _;
 use serde::Deserialize;
 use serde_json::json;
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
-use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_environment::environment::Platform;
 use wamn_identity_client::PatIssuerConfig;
 
@@ -236,7 +234,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         .transpose()?;
     let transport = Arc::new(wamn_http::transport::HttpTransport::new()?);
     let handlers = Arc::new(
-        HostRouteDelivery::new(HostRouteHandlers::Control {
+        HostRouteDelivery::new(HostRouteHandlers {
             control: pool.clone(),
             writer: Arc::new(tokio::sync::Mutex::new(
                 wamn_postgres::connect(&database).await?,
@@ -270,7 +268,6 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         .with_oauth(oauth.as_ref().map(Arc::clone)),
     );
     let callback_databases = Arc::new(config.administration_dir);
-    let routing = Arc::new(FlowHttpRouting::new(Arc::default()));
     let listener = tokio::net::TcpListener::bind(config.http_addr).await?;
     let mut maintenance = tokio::task::JoinSet::new();
     maintenance.spawn(async move {
@@ -295,20 +292,18 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
                 let handlers = Arc::clone(&handlers);
-                let routing = Arc::clone(&routing);
                 let oauth = oauth.as_ref().map(Arc::clone);
                 let callback_databases = Arc::clone(&callback_databases);
                 connections.spawn(async move {
                     let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
                         let handlers = Arc::clone(&handlers);
-                        let routing = Arc::clone(&routing);
                         let oauth = oauth.as_ref().map(Arc::clone);
                         let callback_databases = Arc::clone(&callback_databases);
                         async move {
                             let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
                             let response = if request.uri().path() == "/oauth/callback" && let Some(oauth) = oauth {
                                 wamn_http::oauth_callback::response(&oauth, &callback_databases, request).await
-                            } else { handlers.http(&routing, request).await };
+                            } else { handlers.http(request).await };
                             Ok::<_, std::convert::Infallible>(response)
                         }
                     });

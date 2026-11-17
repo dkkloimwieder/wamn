@@ -116,7 +116,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | Route | Answer |
 | --- | --- |
 | `wamn-control:permission/mine@0.9.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
-| `wamn-control:user/list@0.9.0` (application) | `users`: each application user with `id`, `email`, `display_name`, `roles` and `admin_covered`, which is true when `project-admin` or `org-admin` covers the user's `admin`. |
+| `wamn-control:user/list@0.9.0` (application) | `users`: each application user with `id`, `email`, `display_name` and `roles`. |
 | `wamn-control:role/list@0.9.0` | `roles`: every role of the project, `admin` included. |
 | `wamn-control:role/create@0.9.0` | Takes `role` and creates the empty authored role. Answers `created`. |
 | `wamn-control:role/delete@0.9.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |

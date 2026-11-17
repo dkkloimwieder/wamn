@@ -81,7 +81,6 @@ function mount(
           email: `alex${i}@example.invalid`,
           display_name: i ? `User ${i}` : "Alex",
           roles: [...held],
-          admin_covered: true,
         })),
       });
     return session.fetch(url, init);

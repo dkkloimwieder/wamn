@@ -55,9 +55,8 @@ export function ApplicationUsers(props: ScreenProps) {
             { id: "name", header: "User name", size: 220 },
             { id: "email", header: "Email", accessorKey: "email", size: 280 },
             { id: "id", header: "User ID", accessorKey: "id", size: 160 },
-            { id: "adminCovered", header: "Admin covered", accessorKey: "adminCovered", size: 140 },
           ]}
-          formats={{ id: "short-hash", adminCovered: "boolean-symbol" }}
+          formats={{ id: "short-hash" }}
           cells={{
             name: (cell) => (
               <RecordLink screen={props} path={`${applicationUsersPath}/${encodeURIComponent(cell.row.id)}`}>
@@ -101,7 +100,7 @@ export function ApplicationUsers(props: ScreenProps) {
                   </RecordLink>
                 ),
                 actions: (cell) => (
-                  <Show when={!(cell.row === "admin" && current().adminCovered)}>
+                  <Show when={cell.row !== "admin"}>
                     <ConfirmAction
                       label={`Revoke role ${cell.row}`}
                       description={`Revoke ${cell.row} from ${current().displayName ?? current().email}?`}

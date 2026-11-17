@@ -32,8 +32,6 @@ wamn-workflow.workspace = true
 wamn-publish.workspace = true
 async-trait.workspace = true
 wamn-oci.workspace = true
-wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }
-wamn-events.workspace = true
 wamn-blobstore.workspace = true
 bytes.workspace = true
 boon.workspace = true

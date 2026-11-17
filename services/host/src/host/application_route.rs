@@ -1,8 +1,8 @@
 //! The application administration routes of every application audience
 //! (docs/architecture/execution.md#host-run-routes).
 //!
-//! Every route but `permission.mine` needs `admin`, which the router tests
-//! before the handler runs. A route runs in one host-owned transaction under
+//! Administration requires `admin`, which the router tests before the handler
+//! runs. Counter writes require their operation grant. A route runs in one host-owned transaction under
 //! the environment's `wamn_platform` login, which binds `app.user_id`
 //! to the caller and `app.operation` to the route's sealed operation id. A
 //! role or permission write first takes the project lock that `wamn` and
@@ -11,46 +11,59 @@
 //! second writer exists. A grant stores one row, and a caller holds exactly
 //! its rows, so a grant works while two releases serve during a rollout.
 //!
-//! `workflow.start` is the one granted route here
-//! (docs/architecture/execution.md#environment-workflows): it admits a run of
-//! the enabled version of an environment workflow of an application the
-//! environment declares, against the release the host serves, as the identity
-//! the workflow names.
-
-use wamn_catalog::serving_context::ServingContext;
-use wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
-use wamn_identity_protocol::PrincipalId;
-use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
 use std::collections::{BTreeMap, BTreeSet};
-use wamn_events::admission::{ManualRunAdmission, ManualRunAdmitted};
+use wamn_identity_protocol::ADMIN_ROLE;
+use wamn_identity_protocol::PrincipalId;
+use wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
 
-use wamn_sql::number_counter::{CounterSet, CounterSetRefusal};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection as Client;
-use wamn_catalog::{
-    HostAttachment, HostHandler, HostRouteAuthority, condition_workflow_document,
-    resolve_workflow_components, sealed_operation_reference,
-};
-use wamn_engine::application::WorkloadRoutes;
+use wamn_catalog::application_config::ApplicationConfig;
+use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority, sealed_operation_reference};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::native_routes::DeliveryError;
 use wamn_environment::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
-use wamn_identity::control::is_project_admin;
 use wamn_sql::WamnPostgres;
+use wamn_sql::number_counter::{CounterSet, CounterSetRefusal};
 
-use crate::control_route::{Refusal, parse};
+/// Why an application route did not answer.
+#[derive(Debug)]
+pub(crate) enum Refusal {
+    /// A delivery refusal, such as a caller without `admin`.
+    Delivery(DeliveryError),
+    /// A refusal that the route's contract declares: its code and its
+    /// detail, answered as the error of the request element.
+    Declared { code: &'static str, detail: Value },
+    /// A failure of the host or of a service it calls.
+    Failed(anyhow::Error),
+}
+
+impl From<anyhow::Error> for Refusal {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl From<sqlx::Error> for Refusal {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
+fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, Refusal> {
+    serde_json::from_str(payload).map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))
+}
 
 /// What the application routes of one host use.
 pub(crate) struct ApplicationRoutes<'a> {
     pub(crate) postgres: &'a WamnPostgres,
     pub(crate) project: &'a wamn_registry::ProjectId,
-    pub(crate) config: &'a WorkloadRoutes,
-    /// The identity reader of `wamn_system` and the org, for the covering
-    /// fact of `user.list` and the covering test of an `admin` revoke.
-    pub(crate) identity: Option<(&'a sqlx::PgPool, &'a wamn_registry::OrgId)>,
+    pub(crate) config: &'a ApplicationConfig,
+    pub(crate) project_env_key: &'a wamn_registry::ProjectEnvKey,
 }
 
 #[derive(Deserialize)]
@@ -68,19 +81,6 @@ struct RoleRequest {
 struct PermissionRequest {
     role: String,
     operation: wamn_catalog::canonical_name::CanonicalName,
-}
-
-/// The input of `workflow.start`. It names no user, role or release: the caller
-/// is the authenticated one, and the release is the one the host serves
-/// (docs/architecture/execution.md#environment-workflows). It names the
-/// application by the name the environment declares.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkflowStartRequest {
-    application: wamn_catalog::ApplicationName,
-    workflow_id: wamn_catalog::canonical_name::CanonicalName,
-    input_json: Value,
-    idempotency_key: String,
 }
 
 #[derive(Deserialize)]
@@ -151,154 +151,24 @@ fn counter_set_refusal(refusal: &CounterSetRefusal) -> Refusal {
     }
 }
 
-/// A refusal that the contract of `workflow.start` declares, about `field`.
-fn start_refusal(code: &'static str, field: &str) -> Refusal {
-    Refusal::Declared {
-        code,
-        detail: json!({ "field": field }),
-    }
-}
-
-/// The workflow reader retains its manifest until step 3.4.
-pub(crate) struct WorkflowRoutes<'a> {
-    pub(crate) postgres: &'a WamnPostgres,
-    pub(crate) project: &'a wamn_registry::ProjectId,
-    pub(crate) release: &'a ServingContext,
-}
-
-impl WorkflowRoutes<'_> {
-    /// Admit one run of the enabled version of a workflow of an application the
-    /// environment declares
-    /// (docs/architecture/execution.md#environment-workflows). The stored graph
-    /// is subject to the conditions of the release the host serves, and the run freezes the
-    /// component digest of every node. A `role` workflow executes as the
-    /// `workflow` user with its role, an `invoker` workflow as the caller with
-    /// its active role. The caller is recorded as the invoker.
-    pub(crate) async fn start_workflow(
-        &self,
-        caller: &AuthenticatedCaller,
-        payload: &str,
-    ) -> Result<Value, Refusal> {
-        let request: WorkflowStartRequest = parse(payload)?;
-        if request.idempotency_key.is_empty() {
-            return Err(start_refusal("invalid_input", "idempotency_key"));
-        }
-        let manifest = self.release.manifest();
-        let target = self.release.target();
-        let project_env_key = &target.project_env_key;
-        let Some(declared) = target.applications.get(&request.application) else {
-            return Err(start_refusal("application_not_declared", "application"));
-        };
-        let application = &request.application;
-        let packages = &declared.packages;
-        let workflow = self
-            .postgres
-            .executor_read(self.project, async |connection| {
-                wamn_events::admission::enabled_workflow(
-                    connection,
-                    &target.environment,
-                    application,
-                    &request.workflow_id,
-                )
-                .await
-            })
-            .await?
-            .ok_or_else(|| start_refusal("workflow_not_enabled", "workflow_id"))?;
-        let not_served = |_| start_refusal("workflow_not_served", "workflow_id");
-        let hash =
-            condition_workflow_document(project_env_key, packages, manifest, &workflow.graph)
-                .map_err(not_served)?;
-        if hash != workflow.wiring_hash {
-            return Err(start_refusal("workflow_not_served", "workflow_id"));
-        }
-        let node_digests: serde_json::Map<String, Value> =
-            resolve_workflow_components(project_env_key, packages, manifest, &workflow.graph)
-                .map_err(not_served)?
-                .into_iter()
-                .map(|(node, component)| {
-                    (
-                        node.to_string(),
-                        Value::String(component.component_digest.to_string()),
-                    )
-                })
-                .collect();
-        let user = caller.principal_id();
-        let (principal, role) = match (
-            workflow.execution_type.as_str(),
-            workflow.execution_role.as_deref(),
-        ) {
-            ("role", Some(role)) => (workflow_user_id(), role.to_owned()),
-            ("invoker", None) => {
-                let role = caller
-                    .active_role()
-                    .ok_or_else(|| start_refusal("active_role_required", "workflow_id"))?;
-                (user.to_owned(), role.to_owned())
-            }
-            (execution_type, _) => {
-                return Err(Refusal::Failed(anyhow::anyhow!(
-                    "workflow {:?} stores the execution type {execution_type:?}",
-                    request.workflow_id
-                )));
-            }
-        };
-        // One key space per caller and workflow, apart from the keys of
-        // the other run grains.
-        let idempotency_key = format!(
-            "manual:{user}:{}:{}",
-            request.workflow_id, request.idempotency_key
-        );
-        let node_digests = Value::Object(node_digests);
-        let admitted = self
-            .postgres
-            .executor_write(self.project, async |connection| {
-                wamn_events::admission::admit_manual_run(
-                    connection,
-                    &ManualRunAdmission {
-                        application: application,
-                        manifest_digest: &self.release.release().manifest_digest,
-                        environment: &target.environment,
-                        workflow_id: &request.workflow_id,
-                        workflow_version: workflow.version,
-                        wiring_hash: &workflow.wiring_hash,
-                        execution_principal_id: &principal,
-                        execution_role: &role,
-                        invoked_by_user_id: user,
-                        node_digests: &node_digests,
-                        idempotency_key: &idempotency_key,
-                        input: &request.input_json,
-                    },
-                )
-                .await
-            })
-            .await
-            .map_err(|error| Refusal::Failed(anyhow::anyhow!(error.to_string())))?;
-        match admitted {
-            ManualRunAdmitted::Queued { run_id } => Ok(json!({ "run_id": run_id })),
-            ManualRunAdmitted::Conflict => {
-                Err(start_refusal("idempotency_conflict", "idempotency_key"))
-            }
-        }
-    }
-}
-
 impl ApplicationRoutes<'_> {
     /// Serve one application route. `request_id` is the request id of a
     /// write, which `number_counter.set` logs in the write log.
     pub(crate) async fn handle(
         &self,
         attachment: &HostAttachment,
-        principal: &PrincipalId,
+        caller: AuthenticatedCaller,
         request_id: Option<&str>,
         payload: &str,
     ) -> Result<Value, Refusal> {
         if attachment.route.handler == HostHandler::NumberCounterSet {
             let request: CounterSetRequest = parse(payload)?;
             return self
-                .set_counter(attachment, principal, request_id, request)
+                .set_counter(attachment, caller, request_id, request)
                 .await;
         }
-        let project_env_key = &self.config.project_env_key;
-        self.serve(attachment, principal, payload, project_env_key)
+        let project_env_key = self.project_env_key;
+        self.serve(attachment, caller.principal_id(), payload, project_env_key)
             .await
     }
 
@@ -312,25 +182,14 @@ impl ApplicationRoutes<'_> {
         match attachment.route.handler {
             HostHandler::ApplicationUserList => {
                 let Empty {} = parse(payload)?;
-                let (identity, org) = self.identity_reader()?;
                 self.run(attachment, principal, false, async |client| {
                     let mut listed = Vec::new();
                     for user in application_users(client).await? {
-                        let id: PrincipalId = user.id;
-                        let covered = is_project_admin(
-                            &mut *identity.acquire().await?,
-                            &id,
-                            org,
-                            self.project,
-                            Some(&self.config.application.environment),
-                        )
-                        .await?;
                         listed.push(json!({
                             "id": user.id,
                             "email": user.email,
                             "display_name": user.display_name,
                             "roles": user.roles,
-                            "admin_covered": covered,
                         }));
                     }
                     Ok(json!({ "users": listed }))
@@ -462,11 +321,11 @@ impl ApplicationRoutes<'_> {
     async fn set_counter(
         &self,
         attachment: &HostAttachment,
-        principal: &PrincipalId,
+        caller: AuthenticatedCaller,
         request_id: Option<&str>,
         request: CounterSetRequest,
     ) -> Result<Value, Refusal> {
-        require_counter_application(&self.config.application.application, &request.application)
+        require_counter_application(&self.config.application, &request.application)
             .map_err(|refusal| counter_set_refusal(&refusal))?;
         let set = CounterSet {
             application: request.application,
@@ -478,8 +337,8 @@ impl ApplicationRoutes<'_> {
         let value = wamn_sql::number_counter::set_number_counter(
             self.postgres,
             self.project,
-            &self.config.project_env_key,
-            principal,
+            self.project_env_key,
+            caller,
             &attachment.operation,
             request_id.unwrap_or_default(),
             &set,
@@ -492,16 +351,6 @@ impl ApplicationRoutes<'_> {
         Ok(json!({ "value": value }))
     }
 
-    /// The identity reader of the host. `project-admin`, which `org-admin`
-    /// writes in every project of the org, covers a user's `admin`.
-    fn identity_reader(&self) -> Result<(&sqlx::PgPool, &wamn_registry::OrgId), Refusal> {
-        self.identity.ok_or_else(|| {
-            Refusal::Failed(anyhow::anyhow!(
-                "the covering condition of admin needs the identity reader of the host"
-            ))
-        })
-    }
-
     /// Run `work` in one administration transaction of the route. A role or
     /// permission write first takes the project lock.
     async fn run(
@@ -511,7 +360,7 @@ impl ApplicationRoutes<'_> {
         lock: bool,
         work: impl AsyncFnOnce(&mut Client) -> Result<Value, Refusal>,
     ) -> Result<Value, Refusal> {
-        let project_env_key = &self.config.project_env_key;
+        let project_env_key = self.project_env_key;
         self.postgres
             .administration_transaction(
                 self.project,
@@ -535,7 +384,6 @@ impl ApplicationRoutes<'_> {
     fn permission_list(&self, role: &str, rows: &[String]) -> Value {
         let served: BTreeSet<&str> = self
             .config
-            .application
             .components
             .iter()
             .flat_map(|component| &component.operations)
@@ -580,50 +428,5 @@ fn require_counter_application(
         Err(CounterSetRefusal::InvalidInput {
             field: "application",
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `workflow.start` takes no user id: the caller is the authenticated one
-    /// (docs/architecture/execution.md#environment-workflows).
-    #[test]
-    fn a_start_refuses_a_user_id() {
-        let start = json!({
-            "application": "orders",
-            "workflow_id": "nightly",
-            "input_json": {"day": 1},
-            "idempotency_key": "first",
-        });
-        let parsed: WorkflowStartRequest =
-            parse(&start.to_string()).unwrap_or_else(|_| panic!("the contract input parses"));
-        assert_eq!(parsed.application, "orders".parse().unwrap());
-        assert_eq!(parsed.workflow_id, "nightly");
-        for (member, value) in [
-            ("user_id", json!("11111111-1111-4111-8111-111111111111")),
-            ("role", json!("clerk")),
-            (
-                "manifest_digest",
-                json!(
-                    (format!("sha256:{}", "1".repeat(64)))
-                        .parse::<wamn_digest::Digest>()
-                        .unwrap()
-                ),
-            ),
-        ] {
-            let mut named = start.clone();
-            named[member] = value;
-            assert!(
-                matches!(
-                    parse::<WorkflowStartRequest>(&named.to_string()),
-                    Err(Refusal::Delivery(
-                        wamn_engine::native_routes::DeliveryError::InvalidPayload
-                    ))
-                ),
-                "a start naming {member} refuses"
-            );
-        }
     }
 }

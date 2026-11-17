@@ -815,26 +815,6 @@ impl WamnPostgres {
         Ok(grants)
     }
 
-    /// The application roles and stored permissions a caller holds, read by a
-    /// host route (docs/architecture/execution.md#host-run-routes) in an
-    /// [administration transaction](Self::administration_transaction).
-    pub async fn held_operation_grants(
-        &self,
-        project: &wamn_registry::ProjectId,
-        _project_env_key: &wamn_registry::ProjectEnvKey,
-        principal_id: &wamn_identity_protocol::PrincipalId,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
-    ) -> anyhow::Result<HeldOperationGrants> {
-        let held = self
-            .administration_transaction(project, principal_id, operation, async |client| {
-                wamn_authentication::authorization::user_operation_permissions(client, principal_id)
-                    .await
-                    .context("read held operation grants")
-            })
-            .await??;
-        Ok(held)
-    }
-
     /// Whether the environment of `project_env_key` is inactive,
     /// from its row of `platform.environment`, read as `wamn_app`
     /// (docs/architecture/execution.md#routing-and-availability). No row means
