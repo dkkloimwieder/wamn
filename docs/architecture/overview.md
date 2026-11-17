@@ -170,17 +170,15 @@ An invitation creates or reuses the principal and activates its membership.
 An active member can hold no project access, a membership of environments, application roles, `project-admin`, or `org-admin`.
 A valid account with no effective access is not an authentication error.
 
-Authorization derives administration from the current explicit grants.
 An org admin administers every environment, project and application in the org.
 A project admin administers the applications and connections of that project.
-Each grant writes only its own row in `identity.org_roles` or `identity.project_roles`.
-The platform copies no inherited roles or memberships.
+The system stores each explicit grant in `identity.org_roles` or `identity.project_roles`.
+`project_authority` records inherited administration as an `admin` assignment in each project environment database that the grant covers.
 
-Session issuance and host permission reads derive application administration from these same grants.
 A revoke removes only the explicit grant that it names.
 Other explicit grants and ordinary memberships stay.
+The `admin` assignment stays while an org or project grant still covers the user.
 Inactive org membership grants no access.
-Application databases retain user identity and authored roles, but they do not store inherited user administration.
 Services retain their explicit application roles.
 
 Deactivation removes the user's application identity and explicit grants within that org.

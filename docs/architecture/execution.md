@@ -116,7 +116,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | Route | Answer |
 | --- | --- |
 | `wamn-control:permission/mine@0.9.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
-| `wamn-control:user/list@0.9.0` (application) | `users`: each application user with `id`, `email`, `display_name` and `roles`. |
+| `wamn-control:user/list@0.9.0` (application) | Each entry in `users` has `id`, `email`, `display_name`, `roles` and `admin_covered`. `admin_covered` is true when the user holds `admin`. |
 | `wamn-control:role/list@0.9.0` | `roles`: every role of the project, `admin` included. |
 | `wamn-control:role/create@0.9.0` | Takes `role` and creates the empty authored role. Answers `created`. |
 | `wamn-control:role/delete@0.9.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
@@ -172,11 +172,11 @@ An application route runs under the administration credential, in a host-owned R
 A host-run write stamps that sealed operation id in its history entries.
 A role or permission write first takes the project lock that `wamn` and release reconciliation take.
 The writes are the functions of [`wamn_environment::application`](../../crates/environment/src/application.rs), which the role verbs of `wamn` also call.
-`user_role.revoke` reads current inherited administration through the host’s identity reader. It derives the answer from the org and project grants.
+`user_role.grant` and `user_role.revoke` refuse direct changes to `admin`. Control projects that role from org and project grants.
 `permission.grant` writes one permission row. A row the serving release does not serve grants nothing.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `user_not_found` or `admin_covered`.
-The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `apps/target/wamn/wamn_control/client-ts`, which Git does not hold.
-The administration screens in the [platform UI](../../apps/platform_ui/README.md) call these routes through that client and write no database directly.
+TypeScript client generation is pending for the [application route contracts](../../crates/catalog/src/host_route/contracts).
+The administration screens in the [platform UI](../../apps/platform_ui/README.md) call these routes through the TypeScript client and write no database directly.
 The role screen reads operations from `permission.list`, and the user screen reads roles from `user.list` and permissions from `permission.list`.
 The control lists `project.list`, `user.list`, `environment.list`, `member.list`, and `control.mine` accept optional `limit` and `cursor` members.
 Either member starts paging. `limit` accepts integers from 1 through 100 and defaults to 100 in paging mode.
@@ -1030,8 +1030,6 @@ No guest component writes an authorization relation. No guest component receives
 `permission.grant X` requires an existing authored role and an operation `X` that the current serving release serves. It inserts one row. The operation is idempotent.
 
 `permission.revoke X` deletes that row.
-
-No row is derived from another, so no revoke keeps or refuses a derived row.
 
 The fixed application-administration operations are **not grantable** to authored roles.
 
