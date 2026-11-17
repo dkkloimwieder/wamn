@@ -28,7 +28,7 @@ impl<S> std::fmt::Debug for PatResponse<S> {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct InvitationRequest {
+pub struct PrincipalRequest {
     pub principal_id: PrincipalId,
 }
 

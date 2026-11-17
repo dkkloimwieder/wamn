@@ -89,9 +89,12 @@ enum Command {
         tls_cert: PathBuf,
         #[arg(long, env = "WAMN_IDENTITY_TLS_KEY")]
         tls_key: PathBuf,
-        /// Dedicated client-certificate CA for provisioning operators that mint PATs.
+        /// Dedicated CA for control user management and operator PAT issuance.
         #[arg(long, env = "WAMN_IDENTITY_OPERATOR_CA")]
         operator_ca: Option<PathBuf>,
+        /// Exact subject of the control client certificate, CN=control-<org>.
+        #[arg(long, env = "WAMN_IDENTITY_CONTROL_SUBJECT")]
+        control_subject: Option<String>,
         /// Rotate signing keys at this interval. The default is 30 days.
         #[arg(long, default_value_t = crate::DEFAULT_KEY_ROTATION.as_secs())]
         key_rotation_seconds: u64,
@@ -131,6 +134,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         tls_cert,
         tls_key,
         operator_ca,
+        control_subject,
         key_rotation_seconds,
         trusted_proxy_hops,
     } = cli.command
@@ -157,6 +161,11 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         let config = config
             .with_trusted_proxy_hops(trusted_proxy_hops)
             .with_key_rotation(std::time::Duration::from_secs(key_rotation_seconds))?;
+        let config = if let Some(subject) = control_subject {
+            config.with_control_subject(&subject)?
+        } else {
+            config
+        };
         let certificate = tokio::fs::read(tls_cert)
             .await
             .map_err(|_| IdentityServiceError::new("read identity TLS certificate failed"))?;

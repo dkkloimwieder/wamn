@@ -6243,6 +6243,7 @@ dependencies = [
  "wamn-role",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
+ "x509-parser",
  "zeroize",
 ]
 

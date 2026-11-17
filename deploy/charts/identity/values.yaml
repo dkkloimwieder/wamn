@@ -30,9 +30,12 @@ inviteUrl: ""
 # Write local mail to this file instead of sending email. Empty disables local mail.
 localMail: ""
 
-# Dedicated operator CA Secret with ca.crt. Empty refuses POST /pats and POST /invitations.
+# Dedicated client CA Secret with ca.crt. Empty disables client certificate authentication.
 # Restart the service after a CA change to close existing TLS connections.
 operatorCaSecret: ""
+
+# Exact control certificate subject, CN=control-<org>. Empty disables user management.
+controlSubject: ""
 
 # The NATS that logouts, resets and replay revocations go to, so
 # every host drops the login from its auth memory

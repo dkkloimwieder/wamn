@@ -72,7 +72,7 @@ pub(super) fn platform_chart_input(
     document: &ClusterDocument,
     image: &str,
 ) -> anyhow::Result<Value> {
-    let entry = chart_input(&ChartInput {
+    let mut entry = chart_input(&ChartInput {
         chart,
         name: "identity",
         namespace: document.org.as_str(),
@@ -89,6 +89,7 @@ pub(super) fn platform_chart_input(
             nats: Some((NATS_URL.into(), "wamn-identity-nats".into())),
         },
     })?;
+    entry["values"]["controlSubject"] = json!(format!("CN=control-{}", document.org));
     Ok(entry)
 }
 
