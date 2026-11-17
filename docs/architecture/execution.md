@@ -509,7 +509,9 @@ The accessors in `wamn_authority` read only its caller row. A guest cannot repla
 
 A workflow is an authored graph that belongs to one application.
 Its entry is Request, Schedule or Data change.
-The workflow service manages the walk and calls `wamn:workflow/node.call` for each sibling export.
+The workflow service manages the walk and calls `wamn:workflow/node.call` with a sibling name and export.
+The host checks that pair against `wamn.application` on the `flow-http` sibling and dispatches to that component.
+The same lookup applies to palette nodes.
 The host creates an authority handle for each Request or run.
 The handle specifies who executes, their role, and the lease for a durable run.
 
@@ -547,17 +549,6 @@ The [JSONata node](../../guests/jsonata-expression/src/lib.rs) is a palette node
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.
 The result leaves on port `main`, or on the selected port `items`.
 Each JSONata node declares `input-schema` and `output-schema` in its parameters.
-Admission uses these declarations for the node's input ports and selected output ports.
-It requires equal schemas on each edge.
-It evaluates at most three samples from the declared input schema with the same engine as the guest.
-An evaluation error is allowed, because at run time it goes to the node's error port. A returned value outside the promised schema refuses admission and names the node and sample.
-These samples cannot prove every possible output.
-The router compiles schemas once per walk.
-It validates each JSONata result against the declared output schema before routing or completion.
-An invalid result follows the JSONata node's error path as a terminal failure.
-Targets reuse this validation because publication requires equal schemas.
-Other arriving values follow the target's error path as `InvalidInput` if validation fails.
-Retries reuse the validated input.
 The node is a std guest: it imports `wasi:random` at the version that Rust std links, and the build preserves that import.
 
 The WMS workflow `movement_label` is the first example.
@@ -593,8 +584,6 @@ A wiring edge carries the declared route envelope.
 Items contain either `value` or `error`.
 A write item retains its `request_id`. A read item carries none, and its outcomes match its items by position.
 Each node consumes that envelope and emits its declared output port.
-Connected ports require identical JSON Schemas.
-A target with multiple input ports requires an explicit `to_port`.
 A hop limit bounds graph traversal.
 The router does not invent item fan-out or split one emission into independent branches.
 

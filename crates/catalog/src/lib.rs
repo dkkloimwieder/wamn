@@ -23,10 +23,6 @@ pub mod schema;
 mod serving_manifest;
 mod signed_file_read;
 mod wiring;
-mod wiring_compatibility;
-mod wiring_jsonata;
-
-mod workflow_condition;
 
 /// Test databases with the project catalog minimum.
 #[cfg(feature = "test-util")]
@@ -89,14 +85,6 @@ pub use wiring::fixture_graph;
 pub use wiring::{
     WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,
     WiringOperationDependency, WiringResponse, WiringTerminal, partial_response_schema,
-};
-pub use wiring_compatibility::{
-    WiringCompatibilityError, WiringCompatibilityErrorType, resolve_input_port,
-    validate_resolved_wiring_compatibility, validate_wiring_compatibility,
-};
-pub use wiring_jsonata::specialize_wiring_operation;
-pub use workflow_condition::{
-    WorkflowConditionError, condition_workflow_document, resolve_workflow_components,
 };
 
 use std::fmt;

@@ -9,7 +9,6 @@ Live database races still require the observations in [database tests](database-
 
 The [graph tests](../../crates/workflow/src/graph/walk_tests.rs) drive the private workflow walk with supplied outcomes and a controlled clock.
 They cover graph order, ports, retries and the fixed invocation limit.
-The [catalog compatibility tests](../../crates/catalog/src/wiring_compatibility.rs) cover parameter and port admission.
 These tests establish graph decisions, not guest execution or process recovery.
 
 ## Event traffic

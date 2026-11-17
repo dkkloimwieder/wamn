@@ -1,4 +1,4 @@
-//! Manifest context retained by workflow, deployment, connection and file readers.
+//! Manifest context used by the edge runtime and test fixtures.
 
 use crate::{AdmittedComponent, ServingManifest};
 use std::sync::Arc;
@@ -51,7 +51,7 @@ pub struct ServingContext {
     release: CarriedRelease,
 }
 
-/// The content identity retained by workflow admission and deployment readers.
+/// The content identity of the serving manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CarriedRelease {
     pub manifest_digest: wamn_digest::Digest,

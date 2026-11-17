@@ -143,9 +143,6 @@ Without that pointer, the existing `port` parameter supplies the output port.
 The required `input-schema` declares the schema for both input ports.
 The required `output-schema` declares the result schema for the selected output port.
 A dynamic port selector uses the same promised schema for both outputs.
-Admission evaluates samples from the declared input schema.
-The router validates the result once against the declared output schema, before routing or completion.
-Targets reuse this validation because their schemas must equal the declared output schema.
 Both input ports use the same handler and declared input schema.
 Edges into either input port name that port explicitly.
 
@@ -332,11 +329,9 @@ The host carries the declared stream replica count and duplicate window into act
 No runtime default substitutes for a missing declaration.
 The [native declaration owner](../../crates/broker/src/events.rs) supplies the configurations used by provisioning and activation.
 
-The native event transport awaits bounded fetches and acknowledges each message after workflow admission commits.
-Application consumers retry deliveries without a limit, with a 30 second acknowledgement wait.
-Each consumer permits 64 pending acknowledgements, 64 messages per pull, four MiB per pull, and 64 waiting pulls.
-Successful settlement acknowledges delivery. Permanent rejection terminates it.
-A disconnect before acknowledgement permits redelivery and requires application idempotency.
+The workflow service pulls Data change messages and acknowledges them after the host admits the run.
+A disconnect before acknowledgement permits redelivery.
+The host deduplicates admission by workflow version and source event identity.
 
 The broker retains exhaustion and termination advisories for seven days, with 1,000 records per advisory subject.
 Payload bytes remain in the separately retained source stream.

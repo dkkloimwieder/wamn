@@ -25,7 +25,6 @@ wit-parser.workspace = true
 hex.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 wamn-registry.workspace = true
-wamn-jsonata.workspace = true
 anyhow.workspace = true
 wamn-scalar.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
