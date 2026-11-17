@@ -341,12 +341,11 @@ CREATE TRIGGER wamn_record_history_stamp
 -- ---------------------------------------------------------------------------
 -- First-party platform identity (wamn-ctc8.6). This is platform-plane
 -- authentication state, distinct from per-project `platform` identities.
--- Users and services are passwordless subjects. PATs are the MVP presenter;
--- an external OIDC adapter may resolve a user subject through this same core.
+-- Service principals and their PATs live in project databases.
 -- Role slugs are opaque: permission meaning belongs to the management
 -- authorization boundary.
 --
--- `type` is user, service, or platform. A platform row names a platform
+-- `type` is user or platform. A platform row names a platform
 -- component that writes in this database, and only wamn:provisioning does. The
 -- row carries its `wamn:<component>` name in `subject` and in `display_name`,
 -- and the id that `wamn-identity-protocol` derives from that name.
@@ -361,14 +360,12 @@ CREATE TRIGGER wamn_record_history_stamp
 -- in (wamn-0h0g.9.18). Only a user carries one: `principals_email_check`
 -- refuses an email on another type and refuses a user without one. `subject`
 -- is email-shaped by its own CHECK, but it is an authentication token, so
--- nothing reads it as an address. A service and a platform row take
--- `<subject>@<platform-domain>` in the project, built from
--- `registry.meta.platform_domain`, so neither needs a column here.
+-- nothing reads it as an address.
 --
 -- `UNIQUE (email)` says the rule plainly: an address names one user. It needs
 -- no `type`, because `principals_email_check` already forces NULL on every
 -- other type, and PostgreSQL treats repeated NULLs as distinct. So the
--- constraint touches no service or platform row.
+-- constraint touches no platform row.
 --
 -- The refusal belongs here, where the address is entered.
 -- `platform."user"` is `UNIQUE (project_id, email)`, so without this the two
@@ -391,7 +388,7 @@ CREATE TABLE identity.principals (
     UNIQUE (type, subject),
     UNIQUE (email),
     CONSTRAINT principals_type_check
-        CHECK (type IN ('user', 'service', 'platform')),
+        CHECK (type IN ('user', 'platform')),
     CONSTRAINT principals_subject_check
         CHECK (type = 'platform'
                OR (subject ~ '^[a-z0-9][a-z0-9._@+-]*$'
@@ -497,52 +494,6 @@ CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.org_roles
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
--- ---------------------------------------------------------------------------
--- Personal access tokens (wamn-ctc8.7) — the opaque bearer presenter both
--- services use headlessly. No token material is stored.
--- `token_prefix` is the non-secret lookup half (hex of the token's random
--- lookup bytes, UNIQUE so verification is a single index probe);
--- `token_hash` is the canonical SHA-256 digest of the WHOLE token string, which is
--- high-entropy random material, so a plain digest is the correct rest form.
--- Expiry is mandatory (no immortal tokens) and revocation is a one-way stamp.
--- The principal FK is deliberately RESTRICT, not CASCADE: a token row is audit
--- evidence that must outlive careless principal deletes. The FK carries the
--- principal type, and `pats_principal_type_check` permits only service principals.
--- ---------------------------------------------------------------------------
-CREATE TABLE identity.pats (
-    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    principal_id   uuid NOT NULL,
-    principal_type text NOT NULL,
-    token_prefix   text NOT NULL UNIQUE,
-    token_hash     text NOT NULL,
-    label          text NOT NULL,
-    created_at     timestamptz NOT NULL,
-    created_by     uuid NOT NULL,
-    updated_at     timestamptz NOT NULL,
-    updated_by     uuid NOT NULL,
-    expires_at     timestamptz NOT NULL,
-    revoked_at     timestamptz,
-    FOREIGN KEY (principal_id, principal_type)
-        REFERENCES identity.principals (id, type) ON DELETE RESTRICT,
-    CONSTRAINT pats_principal_type_check
-        CHECK (principal_type = 'service'),
-    CONSTRAINT pats_token_prefix_check
-        CHECK (token_prefix ~ '^[0-9a-f]{16}$'),
-    CONSTRAINT pats_token_hash_check
-        CHECK (token_hash ~ '^sha256:[0-9a-f]{64}$'),
-    CONSTRAINT pats_label_check
-        CHECK (btrim(label) <> '' AND char_length(label) <= 200),
-    CONSTRAINT pats_expiry_check
-        CHECK (expires_at > created_at)
-);
-
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.pats
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
-CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
 
 -- Password enrollment (wamn-a045.1). Only user principals can enroll.
 -- These tables hold credential material and stamps, never row-image history.
@@ -1025,15 +976,6 @@ REVOKE ALL ON FUNCTION registry.keep_environment_target() FROM PUBLIC;
 CREATE TRIGGER environment_target_immutable BEFORE UPDATE OF target_id ON registry.environments
     FOR EACH ROW EXECUTE FUNCTION registry.keep_environment_target();
 
-CREATE TABLE registry.connection_principal (
-    principal_id uuid PRIMARY KEY REFERENCES identity.principals (id) DEFERRABLE INITIALLY DEFERRED,
-    org text NOT NULL,
-    project text NOT NULL,
-    env text NOT NULL,
-    FOREIGN KEY (org, env, project)
-        REFERENCES registry.environment_projects (org, env, project) ON DELETE CASCADE
-);
-
 -- Administration reads and writes use the same restricted function families.
 CREATE FUNCTION registry.configure_integration_type(org_id text, operation text, payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
@@ -1147,14 +1089,13 @@ CREATE TRIGGER wamn_record_history_stamp
 
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, DELETE ON registry.connection_principal TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control";   DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$;
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT ON registry.meta TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control";   DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$;
   END IF;
 END $control_surface$;
 
 CREATE FUNCTION registry.control_principal(principal uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
     SELECT EXISTS (SELECT FROM identity.org_memberships m WHERE m.principal_id=principal AND m.org=registry.control_org())
-        OR EXISTS (SELECT FROM registry.connection_principal c WHERE c.principal_id=principal AND c.org=registry.control_org())
 $$;
 REVOKE ALL ON FUNCTION registry.control_principal(uuid) FROM PUBLIC;
 DO $identity_membership_read$ BEGIN
@@ -1172,7 +1113,6 @@ BEGIN
         'registry.environments', 'registry.environment_projects',
         'registry.environment_applications', 'registry.environment_application_connections',
         'registry.environment_integrations',
-        'registry.connection_principal',
         'identity.org_memberships', 'identity.org_roles',
         'identity.project_roles', 'identity.project_env_memberships',
         'identity.principals', 'identity.password_logins'

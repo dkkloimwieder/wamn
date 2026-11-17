@@ -17,10 +17,6 @@ GRANT UPDATE (secret_name, secret_namespace, schema_mode)
     ON registry.environment_projects TO wamn_apply;
 GRANT SELECT, INSERT, UPDATE, DELETE ON registry.environment_applications,
     registry.environment_application_connections, registry.environment_integrations TO wamn_apply;
-GRANT SELECT (id, principal_id, token_prefix, token_hash, revoked_at, expires_at)
-    ON identity.pats TO wamn_apply;
-GRANT INSERT (type, subject, display_name) ON identity.principals TO wamn_apply;
-GRANT INSERT (principal_id, org, project, role) ON identity.project_roles TO wamn_apply;
 GRANT INSERT (principal_id, org, project, env) ON identity.project_env_memberships TO wamn_apply;
 GRANT INSERT (login_identity, project_env_key, org_id, project_id, environment)
     ON wamn_authority.author_login_projects TO wamn_apply;
@@ -42,6 +38,3 @@ DO $$ BEGIN
         GRANT SELECT ON registry._sqlx_migrations TO wamn_apply;
     END IF;
 END $$;
-
-GRANT SELECT, INSERT, DELETE ON registry.connection_principal TO wamn_apply;
-GRANT UPDATE (status, disabled_at) ON identity.principals TO wamn_apply;

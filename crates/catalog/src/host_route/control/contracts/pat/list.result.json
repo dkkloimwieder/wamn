@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "pats",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

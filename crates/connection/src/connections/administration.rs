@@ -127,6 +127,12 @@ pub async fn execute(
     payload: &str,
     source: Option<&mut sqlx::PgConnection>,
     applications: &[wamn_catalog::application_config::ApplicationConfig],
+    write_service: impl AsyncFnOnce(
+        &mut sqlx::PgConnection,
+        &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        &str,
+        &str,
+    ) -> anyhow::Result<PrincipalId>,
 ) -> Result<Value, ConnectionError> {
     let mut request: Value =
         serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))?;
@@ -295,6 +301,22 @@ pub async fn execute(
             return Err(refuse("immutable_field", "connection"));
         }
         let auth = context["auth_type"].as_str().expect("stored auth type");
+        let principal = if new {
+            Some(write_service(
+                system,
+                project,
+                &format!("connection-{id}"),
+                request["name"].as_str().expect("validated connection name"),
+            )
+            .await
+            .map_err(|source| ConnectionError {
+                code: "database_error",
+                field: "principal_id",
+                source: Some(source.into_boxed_dyn_error()),
+            })?)
+        } else {
+            None
+        };
         let stored = if let Some(credential) = credential {
             if auth == "none" {
                 return Err(refuse("invalid_input", "credential"));
@@ -333,9 +355,7 @@ pub async fn execute(
         if (auth == "none") != credential_id.is_none() {
             return Err(refuse("invalid_input", "credential"));
         }
-        if new {
-            let mut tx = system.begin().await?;
-            bind_actor(&mut tx, caller, operation).await?;
+        if let Some(principal) = principal {
             let target = target.expect("new connection has a target");
             let mut resource = metadata["resource_key_template"]
                 .as_str()
@@ -368,12 +388,6 @@ pub async fn execute(
                     *resource = resource.replace(&format!("{{{field}}}"), &value);
                 }
             }
-            let principal = Uuid::new_v4();
-            sqlx::query("INSERT INTO registry.connection_principal(principal_id,org,project,env) VALUES($1,$2,$3,$4)")
-                .bind(principal).bind(org).bind(request["project"].as_str()).bind(request["env"].as_str()).execute(&mut *tx).await?;
-            sqlx::query("INSERT INTO identity.principals(id,type,subject,display_name) VALUES($1,'service',$2,$3)")
-                .bind(principal).bind(format!("connection-{id}")).bind(request["name"].as_str()).execute(&mut *tx).await?;
-            tx.commit().await?;
             sqlx::query("INSERT INTO platform.connection(id,name,integration_type,auth_type,external_system_id,target_id,resource_key,active_generation,service_principal_id,authority) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,$9)")
                 .bind(id).bind(request["name"].as_str()).bind(context["integration_type"].as_str()).bind(auth).bind(external).bind(target).bind(resource).bind(principal).bind(authority).execute(&mut **project).await.map_err(connection_write_error)?;
         }
@@ -435,29 +449,6 @@ async fn bind_actor(
 ) -> Result<(), ConnectionError> {
     sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)").bind(caller).bind(operation).execute(&mut **tx).await?;
     Ok(())
-}
-
-/// Disable and unlink the principal after the project delete has committed.
-pub async fn finish_delete(
-    system: &mut sqlx::PgConnection,
-    caller: PrincipalId,
-    org: &wamn_registry::OrgId,
-    result: &Value,
-) -> Result<(), ConnectionError> {
-    if let Some(principal) = result["principal_id"].as_str() {
-        let principal: Uuid = principal.parse().expect("stored UUID");
-        let mut tx = system.begin().await?;
-        bind_actor(&mut tx, caller, "connection.delete").await?;
-        sqlx::query("UPDATE identity.principals SET status='disabled',disabled_at=transaction_timestamp() WHERE id=$1 AND EXISTS(SELECT FROM registry.connection_principal WHERE principal_id=$1 AND org=$2)")
-            .bind(principal).bind(org).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM registry.connection_principal WHERE principal_id=$1 AND org=$2")
-            .bind(principal)
-            .bind(org)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-    }
-    super::references::destroy_credentials(&result["credentials"]).await
 }
 
 /// Read system type metadata and project rows without a system connection function.

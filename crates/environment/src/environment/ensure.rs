@@ -2,8 +2,6 @@
 //! Application activation reads these resources without creating or reconciling them.
 
 use sqlx::Row as _;
-pub(super) mod plan;
-pub(super) use plan::management_author_pat_name;
 
 
 use anyhow::Context as _;

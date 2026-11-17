@@ -76,7 +76,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `guests/transform` | Palette node that transforms its input |
 | `services/host` | `wamn-host`: shared environment host for HTTP and queued operations |
 | `services/control` | `wamn-control`: authenticated org control service |
-| `services/identity-service` | `wamn-identity-service` (binary `wamn-identity`): session issuer, passwords, PATs, and public verification keys |
+| `services/identity-service` | `wamn-identity-service` (binary `wamn-identity`): session issuer, passwords, user management, and public verification keys |
 | `services/web` | `wamn-web`: browser files, runtime configuration, and password proxy |
 | `services/edge` | `wamn-edge`: local application host and device loop |
 | `services/cdc-reader` | `wamn-cdc-reader`: PostgreSQL change capture and broker acknowledgement |

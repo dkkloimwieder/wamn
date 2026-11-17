@@ -7,6 +7,18 @@
       "values": []
     },
     {
+      "path": "value.project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.env",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
       "path": "value.token_prefix",
       "type": "text",
       "nullable": false,

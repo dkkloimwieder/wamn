@@ -5631,7 +5631,6 @@ dependencies = [
  "wamn-environment",
  "wamn-fixture-package",
  "wamn-identity",
- "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-oci",
@@ -5945,7 +5944,6 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-http",
  "wamn-identity",
- "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-oci",
@@ -6076,7 +6074,6 @@ dependencies = [
  "wamn-envelope",
  "wamn-environment",
  "wamn-http",
- "wamn-identity",
  "wamn-identity-protocol",
  "wamn-oci",
  "wamn-postgres",
@@ -6184,7 +6181,6 @@ name = "wamn-identity-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "hyper",
  "rcgen",
  "rustls",

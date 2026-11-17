@@ -226,7 +226,7 @@ pub const ADMINISTRATION_RELATIONS: [&str; 14] = [
 // `deploy/sql/system-schema.sql` declares no policy and forces no row-level
 // security, so confinement in this database is PURELY GRANT-SHAPED: there is no
 // project predicate to satisfy and none is invented here. The owner credential is
-// therefore not merely wide, it is unconfined — it can INSERT an `identity.pats`
+// therefore not merely wide, it is unconfined — it can INSERT an identity credential
 // row binding any token digest to any principal, or an `identity.project_roles`
 // row self-granting a project role anywhere.
 //
@@ -245,23 +245,15 @@ pub const ADMINISTRATION_RELATIONS: [&str; 14] = [
 /// across all three and granted inside exactly one.
 pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "registry"];
 
-/// The relations the management and user route identity reads touch.
-///
-/// `SELECT_PAT_BY_PREFIX_SQL` joins `pats` to `principals`; `SELECT_PROJECT_ROLES_SQL`
-/// reads `project_roles`; user routes require `project_env_memberships`
-/// (all in `crates/identity/src/lib.rs`).
-/// PostgreSQL tests privileges on every relation a statement references, so all
-/// relations are required, including password login revocation state.
-pub const IDENTITY_READER_RELATIONS: [&str; 5] = [
-    "pats",
+/// System identity relations read by the environment reader.
+pub const IDENTITY_READER_RELATIONS: [&str; 4] = [
     "principals",
     "project_env_memberships",
     "project_roles",
     "password_logins",
 ];
 
-/// The columns the identity reader reads beside [`IDENTITY_READER_RELATIONS`]:
-/// session admission tests the active org membership (`wamn-ms1sn.2`).
+/// Session admission tests the active org membership (`wamn-ms1sn.2`).
 pub const IDENTITY_READER_COLUMNS: [(&str, &[&str]); 1] =
     [("org_memberships", &["principal_id", "org", "status"])];
 
@@ -295,11 +287,7 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 18] = [
         &["SELECT"],
     ),
     ("registry", "environment_integrations", &["SELECT"]),
-    (
-        "registry",
-        "connection_principal",
-        &["SELECT", "INSERT", "DELETE"],
-    ),
+    ("registry", "meta", &["SELECT"]),
     ("registry", "integration_type", &["SELECT"]),
     ("registry", "integration_type_version", &["SELECT"]),
     ("registry", "integration_type_auth", &["SELECT"]),

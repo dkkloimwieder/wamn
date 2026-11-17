@@ -1,64 +1,26 @@
 //! The operator client of the identity service: operator-authenticated
-//! HTTPS for PAT issuance, user creation and invitations. `wamn` and the
-//! control host use it.
+//! HTTPS for user creation and invitations from control.
 
 use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use chrono::DateTime;
 use serde::Deserialize;
 use url::Url;
 use wamn_identity_protocol::PrincipalId;
-use wamn_identity_protocol::secret::PatToken;
-use wamn_identity_protocol::wire::PatResponse;
 use wamn_identity_protocol::wire::{
-    InvitationRequest, IssuePatRequest, UserRequest, UserResponse as UserBody,
+    InvitationRequest, UserRequest, UserResponse as UserBody,
 };
-use wamn_oci::package_artifact::http_client::{HttpClient, HttpError, Redirects};
+use wamn_oci::package_artifact::http_client::{HttpClient, Redirects};
 
-/// Each provisioning request attempt stops after five seconds.
+/// Each identity request stops after five seconds.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-/// A connect failure reached no issuer, so issuance tries again after each of
-/// these waits: five attempts in all.
-const CONNECT_BACKOFF: [Duration; 4] = [
-    Duration::from_millis(500),
-    Duration::from_secs(1),
-    Duration::from_secs(2),
-    Duration::from_secs(4),
-];
-/// A PAT response contains five small fields. Larger bodies are refused.
+/// Identity responses contain small user and invitation results.
 const MAX_RESPONSE_BYTES: usize = 4096;
-/// A lost response does not mean that the service refused to create the PAT.
-const UNCERTAIN_ISSUANCE: &str =
-    "A PAT can exist without a returned token. The request was not retried.";
-
-/// Whether a send failed because rustls refused a certificate: a
-/// misconfiguration that a retry cannot fix.
-fn refused_certificate(error: &HttpError) -> bool {
-    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
-    while let Some(current) = cause {
-        if matches!(
-            current.downcast_ref::<rustls::Error>(),
-            Some(rustls::Error::InvalidCertificate(_))
-        ) {
-            return true;
-        }
-        // `io::Error::source` skips the error it wraps, so step into it.
-        cause = match current.downcast_ref::<std::io::Error>() {
-            Some(io) => io
-                .get_ref()
-                .map(|inner| inner as &(dyn std::error::Error + 'static)),
-            None => current.source(),
-        };
-    }
-    false
-}
-
-/// TLS credentials and the identity service endpoint for operator PAT issuance.
+/// TLS credentials and the identity service endpoint for operator user management.
 #[derive(Clone, Default)]
-pub struct PatIssuerConfig {
+pub struct IdentityClientConfig {
     /// HTTPS base URL of the identity service. Its path is preserved.
     pub endpoint: Option<String>,
 
@@ -72,10 +34,10 @@ pub struct PatIssuerConfig {
     pub server_ca: Option<PathBuf>,
 }
 
-impl fmt::Debug for PatIssuerConfig {
+impl fmt::Debug for IdentityClientConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PatIssuerConfig")
+            .debug_struct("IdentityClientConfig")
             .field("endpoint", &self.endpoint.as_ref().map(|_| "<redacted>"))
             .field(
                 "client_cert",
@@ -91,48 +53,43 @@ impl fmt::Debug for PatIssuerConfig {
 }
 
 /// The operator HTTPS client of one identity route.
-pub struct PatClient {
+struct IdentityClient {
     http: HttpClient,
     endpoint: Url,
 }
 
-impl fmt::Debug for PatClient {
+impl fmt::Debug for IdentityClient {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("PatClient").finish_non_exhaustive()
+        formatter.debug_struct("IdentityClient").finish_non_exhaustive()
     }
 }
 
-impl PatClient {
-    /// The client of the PAT route.
-    pub fn new(args: &PatIssuerConfig) -> anyhow::Result<Self> {
-        Self::for_route(args, "pats")
-    }
-
+impl IdentityClient {
     /// The operator client for one route of the identity service.
-    fn for_route(args: &PatIssuerConfig, route: &str) -> anyhow::Result<Self> {
+    fn for_route(args: &IdentityClientConfig, route: &str) -> anyhow::Result<Self> {
         let endpoint = service_endpoint(
             args.endpoint
                 .as_deref()
-                .context("PAT issuance requires --pat-issuer")?,
+                .context("identity client endpoint is missing")?,
             route,
         )?;
         let cert_path = args
             .client_cert
             .as_deref()
-            .context("PAT issuance requires --pat-client-cert")?;
+            .context("identity client certificate is missing")?;
         let key_path = args
             .client_key
             .as_deref()
-            .context("PAT issuance requires --pat-client-key")?;
+            .context("identity client private key is missing")?;
 
         // Credential errors can contain paths or certificate material.
         // Keep their diagnostics fixed. The transport never records request URLs.
         let mut identity_pem = std::fs::read(cert_path)
-            .map_err(|_| anyhow::anyhow!("PAT client certificate read failed"))?;
+            .map_err(|_| anyhow::anyhow!("identity client certificate read failed"))?;
         identity_pem.push(b'\n');
         identity_pem.extend(
             std::fs::read(key_path)
-                .map_err(|_| anyhow::anyhow!("PAT client private key read failed"))?,
+                .map_err(|_| anyhow::anyhow!("identity client private key read failed"))?,
         );
         let mut builder = HttpClient::builder()
             .https_only(true)
@@ -140,93 +97,24 @@ impl PatClient {
             .timeout(REQUEST_TIMEOUT);
         if let Some(path) = args.server_ca.as_deref() {
             let pem = std::fs::read(path)
-                .map_err(|_| anyhow::anyhow!("PAT server trust roots read failed"))?;
+                .map_err(|_| anyhow::anyhow!("identity server trust roots read failed"))?;
             builder = builder
                 .roots(&pem)
-                .map_err(|_| anyhow::anyhow!("PAT server trust roots are invalid"))?;
+                .map_err(|_| anyhow::anyhow!("identity server trust roots are invalid"))?;
         }
         let http = builder
             .identity_pem(&identity_pem)
-            .map_err(|_| anyhow::anyhow!("PAT client certificate or private key is invalid"))?
+            .map_err(|_| anyhow::anyhow!("identity client certificate or private key is invalid"))?
             .build()
-            .context("PAT HTTPS client creation failed")?;
+            .context("identity HTTPS client creation failed")?;
         Ok(Self { http, endpoint })
     }
 
-    /// Issue one PAT. Only a send that failed to connect is retried, because
-    /// it reached no issuer.
-    pub async fn issue(
-        &self,
-        principal_id: &PrincipalId,
-        label: &str,
-        lifetime: Duration,
-    ) -> anyhow::Result<PatResponse> {
-        let body = serde_json::to_vec(&IssuePatRequest {
-            principal_id: *principal_id,
-            label,
-            lifetime_seconds: lifetime.as_secs(),
-        })
-        .map_err(|_| anyhow::anyhow!("PAT request encoding failed"))?;
-        let mut waits = CONNECT_BACKOFF.iter();
-        let mut response = loop {
-            let sent = self
-                .http
-                .post(self.endpoint.clone())
-                .header(hyper::header::CONTENT_TYPE, "application/json")
-                .body(body.clone())
-                .send()
-                .await;
-            match sent {
-                Ok(response) => break response,
-                Err(error) if refused_certificate(&error) => {
-                    return Err(anyhow::Error::new(error)
-                        .context("PAT issuer certificate was refused. No PAT was issued."));
-                }
-                Err(error) if error.is_connect() => match waits.next() {
-                    Some(wait) => tokio::time::sleep(*wait).await,
-                    None => {
-                        return Err(anyhow::Error::new(error).context(format!(
-                            "PAT issuer was not reachable in {} attempts. No PAT was issued.",
-                            CONNECT_BACKOFF.len() + 1
-                        )));
-                    }
-                },
-                Err(error) => {
-                    return Err(anyhow::Error::new(error).context(format!(
-                        "PAT issuance transport failed. {UNCERTAIN_ISSUANCE}"
-                    )));
-                }
-            }
-        };
-        anyhow::ensure!(
-            response.status() == hyper::StatusCode::CREATED,
-            "PAT issuer returned an unsuccessful response. {UNCERTAIN_ISSUANCE}"
-        );
-        anyhow::ensure!(
-            response
-                .content_length()
-                .is_none_or(|length| length <= MAX_RESPONSE_BYTES as u64),
-            "PAT issuer response exceeds the size limit. {UNCERTAIN_ISSUANCE}"
-        );
-        let mut body = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .with_context(|| format!("PAT issuer response read failed. {UNCERTAIN_ISSUANCE}"))?
-        {
-            anyhow::ensure!(
-                chunk.len() <= MAX_RESPONSE_BYTES - body.len(),
-                "PAT issuer response exceeds the size limit. {UNCERTAIN_ISSUANCE}"
-            );
-            body.extend_from_slice(&chunk);
-        }
-        decode_response(&body, principal_id, lifetime).context(UNCERTAIN_ISSUANCE)
-    }
 }
 
 fn service_endpoint(value: &str, route: &str) -> anyhow::Result<Url> {
     let mut endpoint = Url::parse(value).map_err(|_| {
-        anyhow::anyhow!("PAT issuer must be an HTTPS URL without credentials, query, or fragment")
+        anyhow::anyhow!("identity endpoint must be an HTTPS URL without credentials, query, or fragment")
     })?;
     anyhow::ensure!(
         endpoint.scheme() == "https"
@@ -235,39 +123,11 @@ fn service_endpoint(value: &str, route: &str) -> anyhow::Result<Url> {
             && endpoint.password().is_none()
             && endpoint.query().is_none()
             && endpoint.fragment().is_none(),
-        "PAT issuer must be an HTTPS URL without credentials, query, or fragment"
+        "identity endpoint must be an HTTPS URL without credentials, query, or fragment"
     );
     let path = format!("{}/{route}", endpoint.path().trim_end_matches('/'));
     endpoint.set_path(&path);
     Ok(endpoint)
-}
-
-fn decode_response(
-    body: &[u8],
-    principal_id: &PrincipalId,
-    lifetime: Duration,
-) -> anyhow::Result<PatResponse> {
-    anyhow::ensure!(
-        body.len() <= MAX_RESPONSE_BYTES,
-        "PAT issuer response exceeds the size limit"
-    );
-    let response: PatResponse = serde_json::from_slice(body)
-        .map_err(|_| anyhow::anyhow!("PAT issuer response is invalid"))?;
-    let created_at = DateTime::parse_from_rfc3339(&response.created_at)
-        .map_err(|_| anyhow::anyhow!("PAT issuer response metadata is invalid"))?;
-    let expires_at = DateTime::parse_from_rfc3339(&response.expires_at)
-        .map_err(|_| anyhow::anyhow!("PAT issuer response metadata is invalid"))?;
-    let token_matches = response
-        .token
-        .parse::<PatToken>()
-        .is_ok_and(|token| token.lookup() == &response.token_prefix);
-    anyhow::ensure!(
-        response.principal_id == *principal_id
-            && token_matches
-            && expires_at.signed_duration_since(created_at).to_std().ok() == Some(lifetime),
-        "PAT issuer response metadata is invalid"
-    );
-    Ok(response)
 }
 
 /// Identity's reply to one operator invitation. Identity mails the
@@ -291,10 +151,10 @@ fn invitation_body(principal_id: &PrincipalId) -> anyhow::Result<Vec<u8>> {
 /// Ask identity to mail an invitation to one user principal, as the operator
 /// of `config`. The request is not retried.
 pub async fn send_invitation(
-    config: &PatIssuerConfig,
+    config: &IdentityClientConfig,
     principal_id: &PrincipalId,
 ) -> anyhow::Result<InvitationReply> {
-    let client = PatClient::for_route(config, "invitations")?;
+    let client = IdentityClient::for_route(config, "invitations")?;
     let response = client
         .http
         .post(client.endpoint.clone())
@@ -359,11 +219,11 @@ fn user_body(email: &str, display_name: &str) -> anyhow::Result<Vec<u8>> {
 /// identity's reason. The request is not retried, and a repeated request
 /// reuses the user.
 pub async fn create_user(
-    config: &PatIssuerConfig,
+    config: &IdentityClientConfig,
     email: &str,
     display_name: &str,
 ) -> anyhow::Result<UserReply> {
-    let client = PatClient::for_route(config, "users")?;
+    let client = IdentityClient::for_route(config, "users")?;
     let response = client
         .http
         .post(client.endpoint.clone())
@@ -403,7 +263,7 @@ mod tests {
     use std::io::Write as _;
     use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -411,33 +271,20 @@ mod tests {
     use tokio_rustls::TlsAcceptor;
 
     const PRINCIPAL: &str = "6d3f2d1c-0000-4000-8000-00000000abcd";
-    const PREFIX: &str = "0123456789abcdef";
-    const LIFETIME: Duration = Duration::from_hours(720);
-
-    fn response() -> serde_json::Value {
-        serde_json::json!({
-            "token": format!("wamn_pat_{PREFIX}_{}", "a".repeat(64)),
-            "token_prefix": PREFIX,
-            "principal_id": PRINCIPAL,
-            "created_at": "2026-09-10T12:34:56.123456Z",
-            "expires_at": "2026-10-10T12:34:56.123456Z",
-        })
-    }
-
     #[test]
     fn issuer_path_is_preserved() {
         for (base, expected) in [
-            ("https://identity.example", "https://identity.example/pats"),
+            ("https://identity.example", "https://identity.example/users"),
             (
                 "https://identity.example/authority",
-                "https://identity.example/authority/pats",
+                "https://identity.example/authority/users",
             ),
             (
                 "https://identity.example/authority/",
-                "https://identity.example/authority/pats",
+                "https://identity.example/authority/users",
             ),
         ] {
-            assert_eq!(service_endpoint(base, "pats").unwrap().as_str(), expected);
+            assert_eq!(service_endpoint(base, "users").unwrap().as_str(), expected);
         }
     }
 
@@ -469,82 +316,29 @@ mod tests {
             "https://identity.example#private-marker",
             "private-marker",
         ] {
-            let error = service_endpoint(input, "pats").unwrap_err();
+            let error = service_endpoint(input, "users").unwrap_err();
             assert!(!format!("{error:#} {error:?}").contains("private-marker"));
         }
     }
 
     #[test]
     fn issuer_credentials_are_required_and_debug_is_redacted() {
-        assert!(PatClient::new(&PatIssuerConfig::default()).is_err());
-        let mut args = PatIssuerConfig {
+        assert!(IdentityClient::for_route(&IdentityClientConfig::default(), "users").is_err());
+        let mut args = IdentityClientConfig {
             endpoint: Some("https://identity.example/private-marker".to_owned()),
             ..Default::default()
         };
-        assert!(PatClient::new(&args).is_err());
+        assert!(IdentityClient::for_route(&args, "users").is_err());
         args.client_cert = Some(PathBuf::from("/private-marker/operator.pem"));
-        assert!(PatClient::new(&args).is_err());
+        assert!(IdentityClient::for_route(&args, "users").is_err());
         args.client_key = Some(PathBuf::from("/private-marker/operator.key"));
         args.server_ca = Some(PathBuf::from("/private-marker/roots.pem"));
-        let error = PatClient::new(&args).unwrap_err();
+        let error = IdentityClient::for_route(&args, "users").unwrap_err();
         assert!(!format!("{args:?} {error:#} {error:?}").contains("private-marker"));
     }
 
-    #[test]
-    fn exact_response_accepts_and_redacts_the_token() {
-        let input = response();
-        let result = decode_response(
-            &serde_json::to_vec(&input).unwrap(),
-            &PRINCIPAL.parse().unwrap(),
-            LIFETIME,
-        )
-        .unwrap();
-        assert_eq!(result.token, input["token"].as_str().unwrap());
-        assert_eq!(result.token_prefix, PREFIX.parse().unwrap());
-        assert!(!format!("{result:?}").contains(result.token.as_str()));
-    }
-
-    #[test]
-    fn malformed_or_mismatched_response_refuses_without_secret_details() {
-        for (field, value) in [
-            ("principal_id", "6d3f2d1c-0000-4000-8000-00000000abce"),
-            ("token_prefix", "fedcba9876543210"),
-            ("token", "private-marker"),
-            ("created_at", "private-marker"),
-            ("expires_at", "2026-10-10T12:34:57.123456Z"),
-            ("unknown", "private-marker"),
-        ] {
-            let mut input = response();
-            input[field] = value.into();
-            let error = decode_response(
-                &serde_json::to_vec(&input).unwrap(),
-                &PRINCIPAL.parse().unwrap(),
-                LIFETIME,
-            )
-            .unwrap_err();
-            assert!(!format!("{error:#} {error:?}").contains("private-marker"));
-        }
-        let duplicate = format!(
-            "{{\"token\":\"private-marker\",{}",
-            &response().to_string()[1..]
-        );
-        assert!(
-            decode_response(duplicate.as_bytes(), &PRINCIPAL.parse().unwrap(), LIFETIME).is_err()
-        );
-        assert!(
-            decode_response(
-                &vec![b'a'; MAX_RESPONSE_BYTES + 1],
-                &PRINCIPAL.parse().unwrap(),
-                LIFETIME
-            )
-            .is_err()
-        );
-    }
-
     struct HttpsFixture {
-        args: PatIssuerConfig,
-        requests: Arc<AtomicUsize>,
-        connections: Arc<AtomicUsize>,
+        args: IdentityClientConfig,
         received: tokio::sync::mpsc::UnboundedReceiver<String>,
         task: tokio::task::JoinHandle<()>,
         directory: PathBuf,
@@ -561,18 +355,9 @@ mod tests {
         server_name: &str,
         response: impl FnOnce(&str) -> String,
     ) -> HttpsFixture {
-        https_fixture_after(server_name, None, response).await
-    }
-
-    /// With `start_after`, the issuer listens only after that wait.
-    async fn https_fixture_after(
-        server_name: &str,
-        start_after: Option<Duration>,
-        response: impl FnOnce(&str) -> String,
-    ) -> HttpsFixture {
         static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
         let directory = std::env::temp_dir().join(format!(
-            "wamn-pat-client-{}-{}",
+            "wamn-identity-client-{}-{}",
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
         ));
@@ -631,35 +416,17 @@ mod tests {
         let acceptor = TlsAcceptor::from(Arc::new(tls));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let listener = if start_after.is_some() {
-            drop(listener);
-            None
-        } else {
-            Some(listener)
-        };
         let endpoint = format!("https://{address}/identity");
-        let args = PatIssuerConfig {
+        let args = IdentityClientConfig {
             endpoint: Some(endpoint.clone()),
             client_cert: Some(write_pem("operator.pem", &client.pem())),
             client_key: Some(write_pem("operator.key", &client_key.serialize_pem())),
             server_ca: Some(write_pem("ca.pem", &ca.pem())),
         };
         let response = response(&endpoint);
-        let requests = Arc::new(AtomicUsize::new(0));
-        let request_count = Arc::clone(&requests);
-        let connections = Arc::new(AtomicUsize::new(0));
-        let connection_count = Arc::clone(&connections);
         let (sender, received) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(async move {
-            let listener = match (listener, start_after) {
-                (Some(listener), _) => listener,
-                (None, wait) => {
-                    tokio::time::sleep(wait.unwrap_or_default()).await;
-                    TcpListener::bind(address).await.unwrap()
-                }
-            };
             while let Ok((stream, _)) = listener.accept().await {
-                connection_count.fetch_add(1, Ordering::SeqCst);
                 let Ok(mut stream) = acceptor.accept(stream).await else {
                     continue;
                 };
@@ -689,7 +456,6 @@ mod tests {
                     assert!(read > 0 && request.len() + read <= 4096);
                     request.extend_from_slice(&buffer[..read]);
                 }
-                request_count.fetch_add(1, Ordering::SeqCst);
                 sender.send(String::from_utf8(request).unwrap()).unwrap();
                 if !response.is_empty() {
                     let _ = stream.write_all(response.as_bytes()).await;
@@ -699,37 +465,10 @@ mod tests {
         });
         HttpsFixture {
             args,
-            requests,
-            connections,
             received,
             task,
             directory,
         }
-    }
-
-    #[tokio::test]
-    async fn https_issuance_uses_operator_certificate_and_exact_request() {
-        let mut fixture = https_fixture("127.0.0.1", |_| {
-            let body = response().to_string();
-            format!("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
-        }).await;
-        let client = PatClient::new(&fixture.args).unwrap();
-        let result = client
-            .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
-            .await
-            .unwrap();
-        assert_eq!(result.token_prefix, PREFIX.parse().unwrap());
-        let request = fixture.received.recv().await.unwrap();
-        assert!(request.starts_with("POST /identity/pats HTTP/1.1\r\n"));
-        let (_, body) = request.split_once("\r\n\r\n").unwrap();
-        {
-            let observed = &(serde_json::from_str::<serde_json::Value>(body).unwrap());
-            assert_eq!(observed["principal_id"], serde_json::json!(PRINCIPAL));
-            assert_eq!(observed["label"], serde_json::json!("operator"));
-            assert_eq!(observed["lifetime_seconds"], serde_json::json!(2_592_000));
-        };
-        assert_eq!(fixture.requests.load(Ordering::SeqCst), 1);
-        assert!(!format!("{client:?}").contains("/identity"));
     }
 
     #[tokio::test]
@@ -765,110 +504,6 @@ mod tests {
                 let reply = result.unwrap();
                 assert_eq!(reply.principal_id, PRINCIPAL.parse().unwrap());
                 assert!(reply.enrolled);
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn closed_port_preserves_connect_failure_without_url_or_token() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
-        let token = response()["token"].as_str().unwrap().to_owned();
-        // Bypass endpoint validation to exercise URL stripping with a secret query.
-        let client = PatClient {
-            http: HttpClient::builder()
-                .timeout(REQUEST_TIMEOUT)
-                .build()
-                .unwrap(),
-            endpoint: Url::parse(&format!("https://{address}/pats?token={token}")).unwrap(),
-        };
-        let error = client
-            .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
-            .await
-            .unwrap_err();
-        let source = error.downcast_ref::<HttpError>().unwrap();
-        assert!(source.is_connect());
-        assert!(error.chain().any(|cause| {
-            cause
-                .downcast_ref::<std::io::Error>()
-                .is_some_and(|cause| cause.kind() == std::io::ErrorKind::ConnectionRefused)
-        }));
-        for diagnostic in [format!("{error:#}"), format!("{error:?}")] {
-            assert!(!diagnostic.contains(client.endpoint.as_str()));
-            assert!(!diagnostic.contains(&client.endpoint.origin().ascii_serialization()));
-            assert!(!diagnostic.contains(&token));
-        }
-    }
-
-    #[tokio::test]
-    async fn https_issuance_refuses_wrong_server_certificate() {
-        let fixture = https_fixture("wrong.example", |_| String::new()).await;
-        let error = PatClient::new(&fixture.args)
-            .unwrap()
-            .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
-            .await
-            .unwrap_err();
-        assert!(refused_certificate(
-            error.downcast_ref::<HttpError>().unwrap()
-        ));
-        assert_eq!(fixture.requests.load(Ordering::SeqCst), 0);
-        assert_eq!(fixture.connections.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn a_connect_failure_is_retried_until_the_issuer_listens() {
-        let mut fixture = https_fixture_after("127.0.0.1", Some(Duration::from_millis(700)), |_| {
-            let body = response().to_string();
-            format!("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
-        })
-        .await;
-        let result = PatClient::new(&fixture.args)
-            .unwrap()
-            .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
-            .await
-            .unwrap();
-        assert_eq!(result.token_prefix, PREFIX.parse().unwrap());
-        fixture.received.recv().await.unwrap();
-        assert_eq!(fixture.requests.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn https_issuance_does_not_redirect_retry_or_accept_large_bodies() {
-        for response_type in [
-            "redirect",
-            "unavailable",
-            "disconnect",
-            "truncated",
-            "length",
-            "chunked",
-        ] {
-            let fixture = https_fixture("127.0.0.1", |endpoint| match response_type {
-                "redirect" => format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: {endpoint}/private-marker\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
-                "unavailable" => "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
-                "disconnect" => String::new(),
-                "truncated" => "HTTP/1.1 201 Created\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"token\":\"private-marker".to_owned(),
-                "length" => "HTTP/1.1 201 Created\r\nContent-Length: 4097\r\nConnection: close\r\n\r\n".to_owned(),
-                "chunked" => format!("HTTP/1.1 201 Created\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1000\r\n{}\r\n1\r\na\r\n0\r\n\r\n", "a".repeat(4096)),
-                _ => unreachable!(),
-            }).await;
-            let error = PatClient::new(&fixture.args)
-                .unwrap()
-                .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
-                .await
-                .unwrap_err();
-            assert_eq!(
-                fixture.requests.load(Ordering::SeqCst),
-                1,
-                "{response_type}"
-            );
-            assert!(!format!("{error:#} {error:?}").contains("private-marker"));
-            if response_type == "truncated" {
-                let source = error.downcast_ref::<HttpError>().unwrap();
-                assert!(source.is_body());
-            }
-            if response_type == "disconnect" {
-                assert!(!error.downcast_ref::<HttpError>().unwrap().is_connect());
             }
         }
     }

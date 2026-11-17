@@ -223,7 +223,7 @@ Later configuration updates use restricted connections and never read a superuse
 Use `--disposable` only when first recording an environment that can be reset.
 Use `wamn env delete ORG/ENV/PROJECT` to remove an environment. Add `--data` and confirm the coordinate in a terminal to delete its database.
 These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
-Use `wamn revoke-pat --prefix PREFIX` to revoke a PAT within the authenticated org authority.
+Use `wamn revoke-pat --project PROJECT --env ENV --prefix PREFIX` from an org admin session.
 Other lifecycle operations take the coordinate and read the registry.
 Helm history records the applied release. Each release manifest defines its packages.
 The configuration export contains no code selection.
@@ -684,8 +684,8 @@ The verbs refuse direct assignment or removal of `admin`.
 Grant or revoke system project-admin or org-admin to change application administration.
 The target needs an existing application user or service row.
 The HTTP owner refuses unknown users. A grant also refuses a missing role.
-The operator service of an environment, `wamn-operator-<org>--<env>--<project>`, has the email `<subject>@<platform domain>`.
-`environment::apply` writes its PAT Secret when it can reach identity. GCP deployment integration for a missing operator PAT remains unfinished.
+Service principal email addresses use `<subject>@<platform domain>`.
+Create an API service and its PAT through control with `wamn create-api-service`.
 
 ### Authored roles
 

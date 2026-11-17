@@ -30,7 +30,7 @@ inviteUrl: ""
 # Write local mail to this file instead of sending email. Empty disables local mail.
 localMail: ""
 
-# Dedicated operator CA Secret with ca.crt. Empty refuses POST /pats and POST /invitations.
+# Dedicated operator CA Secret with ca.crt. Empty refuses POST /users and POST /invitations.
 # Restart the service after a CA change to close existing TLS connections.
 operatorCaSecret: ""
 

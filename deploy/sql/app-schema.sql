@@ -33,7 +33,7 @@
 -- wamn_history.stamp_row(). An applier installs deploy/sql/record-history.sql
 -- first. CATALOG_SCHEMA_SQL carries it, so an applier that applies the catalog
 -- schema first already has it.
--- Every table also keeps an unlimited log. Its wamn_record_history_log trigger
+-- The tables listed in HISTORY TABLES keep an unlimited log. Its wamn_record_history_log trigger
 -- writes each row change to <table>_history.
 -- The HISTORY TABLES section at the end creates them.
 --
@@ -129,7 +129,8 @@ CREATE TABLE platform."user" (
 );
 INSERT INTO platform."user"
     (id, issuer, sub, type, email, display_name, created_at, created_by, updated_at, updated_by)
-SELECT id::uuid, 'wamn:platform', id, type, email, display_name,
+SELECT id::uuid, CASE WHEN type = 'service' THEN 'wamn' ELSE 'wamn:platform' END,
+       CASE WHEN type = 'service' THEN display_name ELSE id END, type, email, display_name,
        transaction_timestamp(), '770df186-ac15-579e-b46b-c297cae2011b'::uuid,
        transaction_timestamp(), '770df186-ac15-579e-b46b-c297cae2011b'::uuid
 FROM (VALUES
@@ -145,6 +146,27 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 GRANT SELECT ON platform."user" TO wamn_app;
+
+-- Only the platform login reads or writes PATs. Retain stamps without row images.
+CREATE TABLE platform.pat (
+    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id    uuid NOT NULL REFERENCES platform."user" (id) ON DELETE RESTRICT,
+    prefix     text NOT NULL UNIQUE CHECK (prefix ~ '^[0-9a-f]{16}$'),
+    hash       text NOT NULL CHECK (hash ~ '^sha256:[0-9a-f]{64}$'),
+    label      text NOT NULL CHECK (btrim(label) <> '' AND octet_length(label) <= 200),
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
+    CHECK (expires_at > created_at)
+);
+CREATE INDEX pat_user_idx ON platform.pat (user_id);
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON platform.pat
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
 -- Roles — named roles. `admin` is the one built-in role:

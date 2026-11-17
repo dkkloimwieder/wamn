@@ -124,6 +124,7 @@ impl Writes<'_, '_> {
             &request.to_string(),
             None,
             &[],
+            crate::application::service::write_connection_service,
         )
         .await
     }

@@ -364,31 +364,16 @@ The [execution page](execution.md#caller-authentication) owns the token profile 
 
 ## PAT issuance
 
-`POST /pats` requires a client certificate under the dedicated operator CA.
-An accepted operator certificate can mint for an existing active service principal.
-A PAT, session JWT, or caller identity header cannot grant issuance authority.
-Absent operator trust roots refuse issuance.
+Control issues personal access tokens, or PATs, for active service principals in one project environment.
+Use `pat.issue` with `project`, `env`, `principal_id`, `label`, and `lifetime_seconds`.
+A trimmed label contains 1 through 200 bytes. The lifetime is one second through 365 days.
 
-The request contains exactly `principal_id`, `label`, and integer `lifetime_seconds`.
-Unknown or repeated fields and bodies above 1,024 bytes refuse.
-A trimmed label contains 1 through 200 bytes.
-The lifetime is one second through 365 days.
-Issuance creates no principal, membership, or role.
+The response contains `token`, `token_prefix`, `principal_id`, `created_at`, and `expires_at`.
+Times use UTC RFC 3339. Control sets `Cache-Control: no-store`.
+The response carries the raw token once. The project database stores its hash.
 
-The 201 response contains `token`, `token_prefix`, `principal_id`, `created_at`, and `expires_at`.
-Times use UTC RFC 3339 and the response uses `Cache-Control: no-store`.
-The raw token appears only in that response and never in logs.
-
-Provisioning uses this service even for the first PAT.
-It requests 30 days and authenticates the returned token as the expected principal.
-It writes the credential atomically to a mode-0600 file.
-There is no database issuance fallback or credential output on stdout.
-
-The [PAT client](../../crates/identity-client/src/lib.rs) requires HTTPS and complete explicit TLS inputs before resource writes.
-Its base URL cannot contain user information, a query, or a fragment.
-The request permits five seconds and a 4,096-byte response, with no redirect or retry.
-If the connection is lost after issuance, the token can exist without a recoverable raw value.
-The service retains only its hash.
+Use `pat.list` with `project`, `env`, and `principal_id` to read token metadata.
+Use `pat.revoke` with `project`, `env`, and `token_prefix` to revoke one token.
 
 ## Registry credentials
 

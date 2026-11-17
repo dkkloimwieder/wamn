@@ -53,12 +53,12 @@ pub fn grant_dynamic_sql_surface_sql() -> String {
            EXECUTE format('GRANT USAGE ON SCHEMA %I TO {role}', target.nspname); \
            FOR relation IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
              WHERE n.nspname=target.nspname AND c.relkind IN ('r','p','v','m','f') \
-             AND NOT (n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization')) LOOP \
+             AND NOT (n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization','pat')) LOOP \
              EXECUTE format('GRANT SELECT ON %I.%I TO {role}', target.nspname, relation.relname); \
            END LOOP; \
          END LOOP; \
          FOR target IN SELECT c.oid::regclass AS relation FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
-           WHERE n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization') LOOP \
+           WHERE n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization','pat') LOOP \
            EXECUTE format('REVOKE ALL ON %s FROM {role}', target.relation); \
          END LOOP; END $read$; \
          REVOKE ALL ON platform.tx_identity, platform.login_principal FROM {role}; \
@@ -78,6 +78,7 @@ pub fn grant_platform_surface_sql() -> String {
          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA platform, catalog, wamn_run TO {role}; \
          GRANT SELECT, INSERT, UPDATE ON wamn_history.pruning_watermarks TO {role}; \
          REVOKE ALL ON platform.login_principal FROM {role}; \
+         REVOKE DELETE ON platform.pat FROM {role}; \
          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA wamn_authority TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record), \
            wamn_history.timestamptz_image(timestamptz) TO {role};",

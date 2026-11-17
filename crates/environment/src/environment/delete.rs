@@ -5,20 +5,20 @@
 //! Under the lifecycle lock, test ownership and existing stranded runs before
 //! uninstalling application releases. Drain their hosts and test runs again.
 //! Delete and drain the CDC reader before removing credentials or replication.
-//! Remove the environment host, PATs, Secrets, control administration key, streams,
+//! Remove the environment host, Secrets, control administration key, streams,
 //! event certificate, Publication CR, replication slot, and Database CR.
 //! Remove control logins and, with `--data`, the instance roles.
 //! Remove the credential store Secret and its account before the final transaction.
 //! That transaction removes connection references after external resources are gone.
 //! Delete the applied configuration with the environment row
-//! last and commit. A retained database keeps its rows.
+//! last and commit. Disable connection principals in a retained database.
 //!
 //! The CR keeps `databaseReclaimPolicy: retain`, so the database and its data
 //! stay on the cluster, with the roles that own them, for manual recovery.
 //! With `--data` the verb first patches the policy to `delete`, CloudNativePG
 //! drops the database before the CR is gone, and then the roles go.
 
-use sqlx::Row as _;
+use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 mod resources;
 mod roles;
@@ -39,7 +39,7 @@ use wamn_registry::Triple;
 
 use super::Platform;
 use super::analyse::application_releases;
-use super::ensure::{kubectl, management_author_pat_name, project_url};
+use super::ensure::{kubectl, project_url};
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_postgres::connect;
 use wamn_kubernetes::helm;
@@ -164,34 +164,7 @@ async fn delete_locked(
         "deleted the CDC reader of {triple} (or it was gone)"
     ));
 
-    // The provisioning PATs, then the credential Secrets the verb owns.
     let namespace = platform.target.namespace.as_str();
-    let pat_secrets = [
-        management_author_pat_name(triple),
-        wamn_registry::name::operator_secret(org, project, env),
-    ];
-    for secret in &pat_secrets {
-        let prefix = kubectl(
-            platform,
-            namespace,
-            &[
-                "get",
-                "secret",
-                secret,
-                "--ignore-not-found",
-                "-o",
-                "jsonpath={.metadata.annotations.wamn\\.io/pat-prefix}",
-            ],
-            None,
-        )
-        .await?;
-        if !prefix.is_empty() {
-            crate::provision_project_env::revoke_provisioning_pat(admin_url, &prefix.parse()?)
-                .await
-                .with_context(|| format!("revoke the PAT of {secret}"))?;
-            lines.push(format!("revoked the PAT of {secret}"));
-        }
-    }
     // The environment's key of the org's control administration Secret.
     let control = control_administration_secret_name(org);
     let control_present = !kubectl(
@@ -294,6 +267,26 @@ async fn delete_locked(
     }
 
     if cr_present {
+        if !data {
+            let url = project_url(platform, triple).await?;
+            let mut project = super::analyse::connect_project(&url).await?;
+            let mut transaction = project.begin().await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(wamn_provision::bind_platform_principal_sql(
+                wamn_provision::PlatformComponent::Provisioning,
+            )))
+            .execute(&mut *transaction)
+            .await?;
+            sqlx::query(
+                r#"UPDATE platform."user" u SET status='disabled'
+                   FROM platform.connection c
+                   WHERE u.id=c.service_principal_id AND u.issuer='wamn'
+                     AND u.type='service' AND u.status<>'disabled'"#,
+            )
+            .execute(&mut *transaction)
+            .await
+            .context("disable the retained database's connection principals")?;
+            transaction.commit().await?;
+        }
         wamn_platform_install::environment::remove_database(
             &platform.target,
             &platform.chart,
@@ -346,7 +339,6 @@ async fn delete_locked(
     secrets.push(wamn_provision::project_env_cdc_secret_name(
         org, project, env,
     ));
-    secrets.extend(pat_secrets);
     let mut arguments = vec!["delete", "secret", "--ignore-not-found"];
     arguments.extend(secrets.iter().map(String::as_str));
     let deleted = kubectl(platform, org.as_str(), &arguments, None).await?;

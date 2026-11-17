@@ -206,11 +206,6 @@ pub fn close_capture_gap_sql() -> &'static str {
      RETURNING resync_at"
 }
 
-/// Disable an environment's connection principals and remove their control links.
-/// Params: org, project, environment. Returns the number of removed links.
-pub fn delete_environment_connections_sql() -> &'static str {
-    "WITH removed AS (DELETE FROM registry.connection_principal WHERE org=$1 AND project=$2 AND env=$3 RETURNING principal_id), disabled AS (UPDATE identity.principals SET status='disabled',disabled_at=transaction_timestamp() WHERE id IN (SELECT principal_id FROM removed) AND status<>'disabled') SELECT count(*) FROM removed"
-}
 /// Environment exclusion key shared by lifecycle operations and CDC publication.
 /// Acquire this key before an application key or a database mutation lock.
 pub const ENVIRONMENT_LOCK_SQL: &str =
@@ -231,8 +226,8 @@ pub const ENVIRONMENT_DISPOSABLE: &str =
 /// crates/execution-host/src/credential_cleanup.rs::collect registry statement.
 pub const EXECUTION_HOST_SRC_CREDENTIAL_CLEANUP_COLLECT: &str = "SELECT k.store,k.ref,k.version FROM platform.credential k JOIN platform.connection c ON c.id=k.connection_id JOIN platform.connection_generation active ON (active.connection_id,active.generation)=(c.id,c.active_generation) JOIN LATERAL (SELECT max(generation) AS generation FROM platform.connection_generation WHERE connection_id=c.id AND credential_id=k.id) last_use ON true JOIN LATERAL (SELECT created_at FROM platform.connection_generation WHERE connection_id=c.id AND generation>last_use.generation ORDER BY generation LIMIT 1) successor ON true WHERE active.credential_id IS DISTINCT FROM k.id AND successor.created_at<now()-interval '5 minutes'";
 
-/// crates/identity/src/application.rs::project_authority registry statement.
-pub const IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY: &str =
+/// The platform domain used in service principal email addresses.
+pub const PLATFORM_DOMAIN_SQL: &str =
     "SELECT platform_domain FROM registry.meta";
 
 /// crates/identity/src/control.rs::ORG_PROJECTS_SQL registry statement.

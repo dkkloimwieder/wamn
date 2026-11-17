@@ -60,37 +60,6 @@ fn secret_writes_replace_links_without_following_or_sharing_them() {
     }
 }
 
-/// A run with only PAT outputs mints for a recorded environment and writes
-/// nothing to the registry, so it refuses the two registry values (wamn-rjtf).
-#[tokio::test(flavor = "current_thread")]
-async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
-    for (secret_namespace, disposable) in [(Some("hosts".to_owned()), None), (None, Some(true))] {
-        let _error = provision_project_env(&ProvisionProjectEnvRequest {
-            org: "acme".parse().unwrap(),
-            project: "billing".parse().unwrap(),
-            env: "dev".parse().unwrap(),
-            policy: None,
-            target: "cloud".to_owned(),
-            disposable,
-            system_database_url: Some("postgres://unused.invalid/wamn_system".into()),
-            cluster: None,
-            connection_limit: None,
-            cluster_namespace: "platform".into(),
-            namespace: "hosts".into(),
-            secret_namespace,
-            emit_database: None,
-            emit_role_sql: None,
-            emit_privilege_sql: None,
-            emit_secret: None,
-            pat_issuer: PatIssuerConfig::default(),
-            emit_management_author_pat_secret: None,
-            emit_operator_pat_secret: Some("/tmp/wamn-rjtf-unused.json".into()),
-        })
-        .await
-        .expect_err("a PAT-only run must refuse a registry value");
-    }
-}
-
 /// `env apply` passes no marker, so a row `wamn dev up` marked disposable
 /// stays disposable in the environment (wamn-p9xix).
 #[sqlx::test(migrations = false)]

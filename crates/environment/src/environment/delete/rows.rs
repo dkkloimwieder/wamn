@@ -1,7 +1,6 @@
 //! The final delete transaction retains retry inputs until credential cleanup ends.
 
 use anyhow::Context as _;
-use sqlx::Row as _;
 use wamn_registry::Triple;
 
 /// Remove the environment's registry rows last.
@@ -15,20 +14,9 @@ pub async fn delete_registry_rows(
     triple: &Triple,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
-    let mut lines = Vec::new();
     let mut transaction = crate::provision_project_env::provisioning_transaction(system)
         .await
         .context("begin the row delete")?;
-    let principals: i64 = sqlx::query(sqlx::AssertSqlSafe(
-        (wamn_registry::sql::delete_environment_connections_sql()).to_string(),
-    ))
-    .bind(org)
-    .bind(project)
-    .bind(env)
-    .fetch_one(&mut *transaction)
-    .await
-    .context("disable the environment's connection principals")?
-    .get(0);
     sqlx::query(
         "DELETE FROM wamn_authority.author_login_projects \
               WHERE org_id=$1 AND project_id=$2 AND environment=$3",
@@ -54,8 +42,5 @@ pub async fn delete_registry_rows(
         .commit()
         .await
         .context("commit the row delete")?;
-    lines.push(format!(
-        "disabled {principals} connection principals and the environment row of {triple}"
-    ));
-    Ok(lines)
+    Ok(vec![format!("deleted the environment row of {triple}")])
 }

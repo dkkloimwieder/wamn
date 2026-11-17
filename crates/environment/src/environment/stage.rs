@@ -40,13 +40,7 @@ pub async fn materialize_application_principals(
         return Ok(());
     }
     let mut system = connect(&platform.system_database_url).await?;
-    let domain: Option<String> =
-        sqlx::query(wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY)
-            .fetch_one(&mut system)
-            .await?
-            .get(0);
-    let domain =
-        domain.context("platform-domain-unset: application principals need the platform domain")?;
+    let domain = crate::application::service::platform_domain(&mut system).await?;
     let mut project = super::analyse::connect_project(project_url).await?;
     let mut transaction = project.begin().await?;
     sqlx::query(wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
@@ -60,64 +54,31 @@ pub async fn materialize_application_principals(
     .await
     .map(drop)?;
     for package in applications {
-        let subject =
-            wamn_identity::application_subject(project_env_key, &package.package.id)?;
-        let principal = crate::provision_project_env::resolve_or_create_service(
-            &mut system,
-            &subject,
-            &subject,
-        )
-        .await?;
-        ensure!(
-            principal.status() == wamn_identity::PrincipalStatus::Active,
-            "application service principal {subject:?} is disabled"
+        let subject = wamn_catalog::resource_names::application_subject(
+            project_env_key,
+            &package.package.id,
         );
-        let present: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1)",
-        )
-        .bind(principal.id())
-        .fetch_one(&mut *transaction)
-        .await?;
-        if !present {
-            crate::application::write_service(
-                &mut transaction,
-                &platform.identity_issuer,
-                crate::application::ApplicationUser {
-                    principal_id: principal.id(),
-                    email: &format!("{subject}@{domain}"),
-                    display_name: &subject,
-                },
-            )
+        crate::application::service::write_service(&mut transaction, &domain, &subject, &subject)
             .await?;
-        }
         let role = format!(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
         );
         crate::application::create_role(&mut transaction, &role).await?;
     }
-    write_runtime_grants(
-        &mut system,
-        &mut transaction,
-        project_env_key,
-        manifest,
-        packages,
-    )
-    .await?;
+    write_runtime_grants(&mut transaction, project_env_key, manifest, packages).await?;
     transaction.commit().await?;
     Ok(())
 }
 
 /// Add the selected application's permissions while retaining grants needed by running code.
 /// Principals and generated roles must already exist. Shared or authored roles refuse.
-pub async fn write_runtime_grants(
-    system: &mut sqlx::PgConnection,
+async fn write_runtime_grants(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &wamn_registry::ProjectEnvKey,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
 ) -> anyhow::Result<()> {
-    let mut system = crate::provision_project_env::provisioning_transaction(system).await?;
     let dependency_manifests = packages
         .iter()
         .map(|package| (&package.package.id, package))
@@ -125,26 +86,13 @@ pub async fn write_runtime_grants(
     for package in packages.iter().filter(|package| {
         wamn_publish::publish_release::composes_integration(package, &manifest.components)
     }) {
-        let subject =
-            wamn_identity::application_subject(project_env_key, &package.package.id)?;
-        let principal = wamn_identity::resolve_subject(
-            &mut system,
-            wamn_identity::PrincipalType::Service,
-            &subject,
-        )
-        .await?
-        .with_context(|| {
-            format!("application principal {subject} is missing; run env initialize")
-        })?;
-        ensure!(
-            principal.status() == wamn_identity::PrincipalStatus::Active,
-            "application principal {subject} is disabled"
+        let subject = wamn_catalog::resource_names::application_subject(
+            project_env_key,
+            &package.package.id,
         );
-        let active: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1 AND type='service' AND status='active')").bind(principal.id()).fetch_one(&mut **transaction).await?.get(0);
-        ensure!(
-            active,
-            "application principal {subject} is absent or inactive in the project; run env initialize"
-        );
+        let principal = crate::application::service::active_service(transaction, &subject)
+            .await?
+            .with_context(|| format!("application principal {subject} is absent or inactive; run env initialize"))?;
         let role = format!(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
@@ -154,7 +102,7 @@ pub async fn write_runtime_grants(
              AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2)",
         )
         .bind(&role)
-        .bind(principal.id())
+        .bind(&principal)
         .bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id())
         .fetch_one(&mut **transaction)
         .await?
@@ -184,14 +132,13 @@ pub async fn write_runtime_grants(
             project_env_key,
             crate::application::GrantAuthority::Provisioning,
             crate::application::GrantChange::UserRole {
-                user_id: principal.id(),
+                user_id: &principal,
                 role: &role,
                 grant: true,
             },
         )
         .await?;
     }
-    system.commit().await?;
     Ok(())
 }
 

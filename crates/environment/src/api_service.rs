@@ -1,42 +1,30 @@
 //! Create an API service identity, grant authored roles, and issue its PAT.
 
-use anyhow::{Context as _, ensure};
-use sqlx::{Connection as _, Row as _};
+use anyhow::ensure;
 use std::time::Duration;
-use wamn_identity_client::{PatClient, PatIssuerConfig};
-use wamn_identity_protocol::RoleName;
-use wamn_identity::PrincipalStatus;
-use crate::application::{
-    ApplicationUser, GrantAuthority, GrantChange, mutate_grant, write_service,
-};
+use wamn_identity_protocol::{RoleName, wire::PatResponse};
+use wamn_registry::{ProjectEnvKey, platform_domain::PlatformDomain};
 
-/// Explicit authorities and authored grants for one API service.
-/// Database credentials never appear in diagnostics.
-pub struct Request {
-    pub org: wamn_registry::OrgId,
-    pub project: wamn_registry::ProjectId,
-    pub env: wamn_registry::EnvName,
-    pub name: String,
-    pub display_name: String,
-    pub roles: Vec<RoleName>,
+use crate::application::{GrantAuthority, GrantChange, mutate_grant, service};
+
+/// Authored grants and credential lifetime for an API service.
+#[derive(Debug)]
+pub struct Request<'a> {
+    pub org: &'a wamn_registry::OrgId,
+    pub project: &'a wamn_registry::ProjectId,
+    pub name: &'a str,
+    pub display_name: &'a str,
+    pub roles: &'a [RoleName],
     pub lifetime: Duration,
-    pub system_database_url: String,
-    pub application_database_url: String,
-    pub identity: PatIssuerConfig,
-}
-impl std::fmt::Debug for Request {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Request").finish_non_exhaustive()
-    }
 }
 
-/// Create the service and issue its PAT through the existing identity authority.
-/// Retrying a partial creation reuses its identity and grants.
+/// Write the service row, grants, and PAT in one project transaction.
 pub async fn create(
-    request: &Request,
-    identity_issuer: &str,
-) -> anyhow::Result<wamn_identity_protocol::wire::PatResponse> {
-    wamn_provision::validate_project_env(&request.org, &request.project, &request.env)?;
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    key: &ProjectEnvKey,
+    domain: &PlatformDomain,
+    request: &Request<'_>,
+) -> anyhow::Result<PatResponse> {
     ensure!(
         request.name.parse::<wamn_registry::ProjectId>().is_ok(),
         "invalid API service name"
@@ -45,102 +33,25 @@ pub async fn create(
         !request.roles.is_empty(),
         "an API service requires an authored role"
     );
-    ensure!(
-        request.lifetime > Duration::ZERO
-            && request.lifetime <= wamn_identity::MAX_PAT_TTL,
-        "invalid PAT lifetime"
-    );
-    let issuer = PatClient::new(&request.identity)?;
-    let mut system = wamn_postgres::connect(&request.system_database_url)
-        .await
-        .map_err(|_| anyhow::anyhow!("connect to the system database for API service creation"))?;
-    sqlx::raw_sql("SET ROLE wamn_system")
-        .execute(&mut system)
-        .await
-        .context("select the API service creation authority")?;
-    let deployment = sqlx::query(sqlx::AssertSqlSafe(
-        wamn_registry::sql::select_project_env_sql(),
-    ))
-    .bind(&request.org)
-    .bind(&request.project)
-    .bind(&request.env)
-    .fetch_optional(&mut system)
-    .await?
-    .context("the project deployment does not exist")?;
-    let suffix: wamn_registry::instance_suffix::InstanceSuffix =
-        deployment.try_get("instance_suffix")?;
-    let expected_database = wamn_registry::name::project_env_database_name(
-        &request.org,
-        &request.project,
-        &request.env,
-        &suffix,
-    );
-    let (_, database) = wamn_postgres::identity(&request.application_database_url)
-        .map_err(|_| anyhow::anyhow!("invalid application database configuration"))?;
-    ensure!(
-        database == expected_database,
-        "API service database differs from the project deployment"
-    );
-    let mut application = wamn_postgres::connect(&request.application_database_url)
-        .await
-        .map_err(|_| anyhow::anyhow!("connect to the API service application database"))?;
-    let subject = format!("api.{}.{}.{}", request.org, request.project, request.name);
-    let principal = crate::provision_project_env::resolve_or_create_service(
-        &mut system,
-        &subject,
-        &request.display_name,
-    )
-    .await?;
-    ensure!(
-        principal.status() == PrincipalStatus::Active,
-        "API service is disabled"
-    );
-    let key = wamn_registry::project_env_key(&request.org, &request.project, &request.env);
-    let mut tx = application.begin().await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::bind_platform_principal_sql(
-            wamn_provision::PlatformComponent::Provisioning,
-        ),
-    ))
-    .execute(&mut *tx)
-    .await?;
-    // Existing service rows and grants stay. This makes a retry after an issuer failure safe.
-    let principal_id = principal.id();
-    let present: bool = sqlx::query(
-        "SELECT EXISTS (SELECT 1 FROM platform.\"user\" WHERE id=$1 AND type='service')",
-    )
-    .bind(principal_id)
-    .fetch_one(&mut *tx)
-    .await?
-    .get(0);
-    if !present {
-        write_service(
-            &mut tx,
-            identity_issuer,
-            ApplicationUser {
-                principal_id: principal.id(),
-                email: &subject,
-                display_name: principal.display_name(),
-            },
-        )
+    sqlx::query(wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
+        .bind(key)
+        .execute(&mut **transaction)
         .await?;
-    }
-    for role in &request.roles {
+    let subject = format!("api.{}.{}.{}", request.org, request.project, request.name);
+    let principal =
+        service::write_service(transaction, domain, &subject, request.display_name).await?;
+    for role in request.roles {
         mutate_grant(
-            &mut tx,
-            &key,
+            transaction,
+            key,
             GrantAuthority::Provisioning,
             GrantChange::UserRole {
-                user_id: principal_id,
+                user_id: &principal,
                 role: role.as_str(),
                 grant: true,
             },
         )
         .await?;
     }
-    tx.commit().await?;
-    let token = issuer
-        .issue(principal.id(), &request.name, request.lifetime)
-        .await?;
-    Ok(token)
+    Ok(service::issue(transaction, &principal, request.name, request.lifetime).await?)
 }

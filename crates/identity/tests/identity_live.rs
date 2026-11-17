@@ -1,14 +1,13 @@
 //! Real-PostgreSQL test for the platform identity core.
 
 use sqlx::Row as _;
-use std::time::Duration;
 
 use wamn_provision::PlatformComponent;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity::{
     IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
-    create_service, create_user, disable_principal, grant_project_env_membership,
-    has_project_env_membership, issue_pat, project_roles, resolve_principal, resolve_subject,
+    create_user, disable_principal, grant_project_env_membership,
+    has_project_env_membership, project_roles, resolve_principal,
     revoke_project_env_membership,
 };
 
@@ -88,21 +87,6 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
 
     one_address_admits_one_user(&mut client).await;
 
-    let service = create_service(&mut client, "agent-ci", "CI Agent")
-        .await
-        .expect("create service principal");
-    assert_eq!(service.principal_type(), PrincipalType::Service);
-    let duplicate_service = create_service(&mut client, "agent-ci", "Second CI Agent")
-        .await
-        .expect_err("one subject admits one service");
-    assert_eq!(duplicate_service.error_type(), IdentityErrorType::Conflict);
-    assert!(
-        resolve_subject(&mut client, PrincipalType::Service, "agent-ci")
-            .await
-            .expect("resolve service")
-            .is_some()
-    );
-
     assign_project_role(
         &mut client,
         user.id(),
@@ -154,7 +138,7 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
         "the principal and both roles stamp wamn:provisioning"
     );
 
-    project_environment_membership_round_trip(&mut client, &user, &service).await;
+    project_environment_membership_round_trip(&mut client, &user).await;
     project_delete_removes_its_roles_and_memberships(&mut client, &user).await;
 
     let disabled = disable_principal(&mut client, user.id())
@@ -272,7 +256,6 @@ async fn project_delete_removes_its_roles_and_memberships(
 async fn project_environment_membership_round_trip(
     client: &mut sqlx::PgConnection,
     user: &Principal,
-    service: &Principal,
 ) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
@@ -296,11 +279,6 @@ async fn project_environment_membership_round_trip(
     .await
     .map(drop)
     .expect("seed distinct registered project-environments");
-    assert!(
-        issue_pat(client, user.id(), "route member", Duration::from_secs(3600))
-            .await
-            .is_err()
-    );
     let other_user = create_user(
         client,
         "other@example.com",
@@ -412,36 +390,6 @@ async fn project_environment_membership_round_trip(
             .expect("read another principal or environment")
         );
     }
-    assert_eq!(
-        grant_project_env_membership(
-            client,
-            service.id(),
-            &"demo".parse().unwrap(),
-            &"widgets".parse().unwrap(),
-            &"dev".parse().unwrap()
-        )
-        .await
-        .expect_err("service cannot hold a user membership")
-        .error_type(),
-        IdentityErrorType::NotFound
-    );
-    let service_insert = sqlx::query(
-        "INSERT INTO identity.project_env_memberships \
-             (principal_id, principal_type, org, project, env) \
-             VALUES ($1::text::uuid, 'service', 'demo', 'widgets', 'dev')",
-    )
-    .bind(&service.id().to_string().as_str())
-    .execute(&mut *client)
-    .await
-    .map(|result| result.rows_affected())
-    .expect_err("direct SQL cannot bypass the user-only constraint");
-    assert_eq!(
-        service_insert
-            .as_database_error()
-            .and_then(|e| e.code())
-            .as_deref(),
-        Some("23514")
-    );
     assert_eq!(
         grant_project_env_membership(
             client,
@@ -625,13 +573,6 @@ async fn unbound_identity_writes_refuse(client: &mut sqlx::PgConnection) {
             "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) \
              VALUES ('{PRINCIPAL}', 'demo', 'widgets', 'dev')"
         ),
-        format!(
-            "INSERT INTO identity.pats \
-               (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
-             VALUES ('{PRINCIPAL}', 'service', '{}', '{}', 'unbound', now() + interval '1 hour')",
-            "0".repeat(16),
-            wamn_digest::Digest::from([0; 32]),
-        ),
         "UPDATE identity.principals SET display_name = 'Unbound'".to_owned(),
     ] {
         let error = sqlx::query(sqlx::AssertSqlSafe((statement.as_str()).to_string()))
@@ -654,9 +595,7 @@ async fn unbound_identity_writes_refuse(client: &mut sqlx::PgConnection) {
 /// wamn:provisioning row for type platform, and the other types refuse a
 /// `wamn:` name.
 ///
-/// The last two rows pin `principals_email_check` instead (`wamn-0h0g.9.18`):
-/// a user needs an email, and no other type carries one. Every other row here
-/// gets a valid email, so it still fails on the platform test alone.
+/// The last row checks that a user needs an email.
 async fn platform_principal_constraint_refuses_other_rows(client: &mut sqlx::PgConnection) {
     const OTHER: &str = "00000000-0000-4000-8000-0000000000f2";
     const ADDRESS: Option<&str> = Some("refused@example.invalid");
@@ -699,13 +638,6 @@ async fn platform_principal_constraint_refuses_other_rows(client: &mut sqlx::PgC
             "wamn:user",
         ),
         (
-            "service",
-            OTHER.parse::<PrincipalId>().unwrap(),
-            "station",
-            None,
-            "wamn:station",
-        ),
-        (
             "user",
             OTHER.parse::<PrincipalId>().unwrap(),
             provisioning.principal_name().as_str(),
@@ -718,13 +650,6 @@ async fn platform_principal_constraint_refuses_other_rows(client: &mut sqlx::PgC
             "mailless",
             None,
             "Mailless",
-        ),
-        (
-            "service",
-            OTHER.parse::<PrincipalId>().unwrap(),
-            "mailed",
-            ADDRESS,
-            "Mailed",
         ),
     ] {
         let error = sqlx::query(

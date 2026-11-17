@@ -89,7 +89,7 @@ enum Command {
         tls_cert: PathBuf,
         #[arg(long, env = "WAMN_IDENTITY_TLS_KEY")]
         tls_key: PathBuf,
-        /// Dedicated client-certificate CA for provisioning operators that mint PATs.
+        /// Dedicated client-certificate CA for operator user management.
         #[arg(long, env = "WAMN_IDENTITY_OPERATOR_CA")]
         operator_ca: Option<PathBuf>,
         /// Rotate signing keys at this interval. The default is 30 days.

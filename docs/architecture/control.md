@@ -57,7 +57,13 @@ Library tests retain the assertions about retained rows, login refusals, and gra
 
 `api_service.create` returns its PAT through the authenticated response.
 `wamn create-api-service` saves that response to the selected private file and prints only its principal id.
-The token never enters a Job log or a Secret handoff.
+The response carries the raw token once. The database stores only its hash.
+`service_principal.create` and `service_principal.disable` manage local service rows.
+`pat.issue` and `pat.list` use the given service principal ID.
+`pat.revoke` uses the token prefix and requires an org admin.
+Each route takes `project` and `env` and uses the matching login in the control administration map.
+The system database supplies the platform domain for service email addresses.
+Service creation refuses with `platform-domain-unset` if the domain is missing.
 Workflow administration also uses server-selected connections and the authenticated principal.
 Capture-gap recovery selects the recorded capture role and the configured event observer. It accepts no database URL from the CLI.
 Integration publication pushes local build output first. The service verifies the published artifact before it records its version.
@@ -76,4 +82,3 @@ The installer runs a separate initial SQL bootstrap only when the baseline is ab
 Its private worker repeats the baseline refusal before DDL. It cannot update an existing baseline.
 The environment chart removes the initial bootstrap account's access after successful initialization.
 Normal lifecycle and platform updates use configured restricted connections.
-`pat.revoke` checks the authenticated org's authority before it calls the PAT owner.

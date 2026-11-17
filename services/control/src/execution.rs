@@ -1,11 +1,13 @@
 //! Native operation adapters. Route admission always precedes these calls.
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_environment::environment::Platform;
 use wamn_identity_protocol::PrincipalId;
+
+mod service;
 
 #[derive(Debug)]
 pub(crate) struct Execution {
@@ -14,7 +16,7 @@ pub(crate) struct Execution {
     pub platform_database: wamn_postgres::ConnectionConfig,
     pub event_observer: Option<wamn_broker::nats::PlatformNats>,
     pub administration: PathBuf,
-    pub identity: wamn_identity_client::PatIssuerConfig,
+    pub control_database: String,
     pub platform: Arc<Platform>,
     pub system_database: String,
     pub registry_credentials: wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource,
@@ -46,26 +48,9 @@ impl crate::host_route::ControlExecution for Execution {
             "environment.configure" | "environment.delete" | "environment.operation_status" => {
                 self.environment(operation, caller, payload).await
             }
-            "pat.revoke" => {
-                #[derive(Deserialize)]
-                #[serde(deny_unknown_fields)]
-                struct Request {
-                    token_prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
-                }
-                let request: Request = serde_json::from_str(payload)?;
-                let mut connection = wamn_postgres::connect(&self.system_database).await?;
-                let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.pats t JOIN identity.principals p ON p.id=t.principal_id WHERE t.token_prefix=$1 AND (p.id=$2 OR EXISTS(SELECT FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$3) OR (p.type='service' AND starts_with(p.subject,'api.'||$3||'.'))))")
-                    .bind(request.token_prefix).bind(caller).bind(&self.org).fetch_one(&mut connection).await?;
-                anyhow::ensure!(
-                    allowed,
-                    "PAT does not belong to the authenticated org authority"
-                );
-                wamn_environment::provision_project_env::revoke_provisioning_pat(
-                    &self.system_database,
-                    &request.token_prefix,
-                )
-                .await?;
-                Ok(json!({"revoked":true}))
+            "api_service.create" | "service_principal.create" | "service_principal.disable"
+            | "pat.issue" | "pat.list" | "pat.revoke" => {
+                self.service(operation, caller, payload).await
             }
             "platform.update" | "platform.operation_status" => {
                 self.platform(operation, caller, payload).await
@@ -137,37 +122,6 @@ impl crate::host_route::ControlExecution for Execution {
                 Ok(
                     json!({"slot":gap.slot,"reason":gap.reason,"start_lsn":gap.start_lsn,"start_at":gap.start_at.to_rfc3339(),"end_lsn":gap.end_lsn,"created_at":gap.created_at.to_rfc3339()}),
                 )
-            }
-            "api_service.create" => {
-                #[derive(Deserialize)]
-                #[serde(deny_unknown_fields)]
-                struct Request {
-                    project: wamn_registry::ProjectId,
-                    env: wamn_registry::EnvName,
-                    name: String,
-                    display_name: String,
-                    roles: Vec<wamn_identity_protocol::RoleName>,
-                    lifetime_seconds: u64,
-                }
-                let request: Request = serde_json::from_str(payload)?;
-                let token = wamn_environment::api_service::create(
-                    &wamn_environment::api_service::Request {
-                        application_database_url: self
-                            .application_database(&request.project, &request.env)?,
-                        org: self.org.clone(),
-                        project: request.project,
-                        env: request.env,
-                        name: request.name,
-                        display_name: request.display_name,
-                        roles: request.roles,
-                        lifetime: Duration::from_secs(request.lifetime_seconds),
-                        system_database_url: self.system_database.clone(),
-                        identity: self.identity.clone(),
-                    },
-                    &self.platform.identity_issuer,
-                )
-                .await?;
-                Ok(serde_json::to_value(token)?)
             }
             "integration.publish" => {
                 #[derive(Deserialize)]

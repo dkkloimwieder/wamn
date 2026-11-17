@@ -2,12 +2,11 @@
 //!
 //! MVP outcome: management auth.
 //!
-//! This crate owns user and service principals, org memberships and roles, project-role assignments,
-//! project-environment memberships, passwords, invitations, personal access tokens, and session keys.
+//! This crate owns user principals, org memberships and roles, project-role assignments,
+//! project-environment memberships, passwords, invitations, and session keys.
 //! The identity protocol crate owns the session-token profile. This crate contains no HTTP, OIDC,
 //! or per-project `platform` authority: every function here is
-//! transport-neutral and takes an already-open client. An OIDC adapter may
-//! resolve an externally authenticated subject through [`resolve_subject`].
+//! transport-neutral and takes an already-open client.
 //!
 //! Principals, project roles, memberships, and tokens carry record-history
 //! stamps. A caller that writes them binds its principal in `platform.tx_identity` in the same
@@ -16,9 +15,7 @@
 use sqlx::Row as _;
 use sqlx::postgres::PgRow as Row;
 use std::fmt;
-use std::time::Duration;
 
-use wamn_identity_protocol::secret::PatToken;
 use wamn_identity_protocol::{PrincipalId, RoleName};
 
 #[cfg(feature = "test-util")]
@@ -44,14 +41,8 @@ const INSERT_USER_IF_ABSENT_SQL: &str = "INSERT INTO identity.principals \
 const SELECT_USER_BY_EMAIL_SQL: &str = "SELECT p.id, p.status, EXISTS (\
     SELECT 1 FROM identity.password_credentials c WHERE c.principal_id = p.id) \
     FROM identity.principals p WHERE p.type = 'user' AND p.email = $1";
-const INSERT_SERVICE_SQL: &str = "INSERT INTO identity.principals \
-    (type, subject, display_name) VALUES ('service', $1, $2) \
-    RETURNING id, type, subject, display_name, status";
 const SELECT_PRINCIPAL_BY_ID_SQL: &str = "SELECT id, type, subject, \
     display_name, status FROM identity.principals WHERE id = $1";
-const SELECT_PRINCIPAL_BY_SUBJECT_SQL: &str = "SELECT id, type, subject, \
-    display_name, status FROM identity.principals \
-    WHERE type = $1 AND subject = $2";
 const DISABLE_PRINCIPAL_SQL: &str = "UPDATE identity.principals \
     SET status = 'disabled', disabled_at = COALESCE(disabled_at, now()) \
     WHERE id = $1 \
@@ -67,75 +58,17 @@ const GRANT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "INSERT INTO identity.project_env
 const SELECT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "SELECT identity.has_project_access($1,$2,$4,$3)";
 const REVOKE_PROJECT_ENV_MEMBERSHIP_SQL: &str = "DELETE FROM identity.project_env_memberships \
     WHERE principal_id = $1 AND org = $2 AND project = $3 AND env = $4";
-// Every stored token instant crosses this API as second-resolution RFC 3339 UTC
-// text rendered by PostgreSQL, so the crate needs no calendar dependency and a
-// later transport can put the value straight on the wire.
-const INSERT_PAT_SQL: &str = "INSERT INTO identity.pats \
-    (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
-    SELECT p.id, p.type, $2, $3, $4, now() + ($5::bigint * interval '1 second') \
-    FROM identity.principals p \
-    WHERE p.id = $1 AND p.status = 'active' AND p.type = 'service' \
-    RETURNING id::text, token_prefix, label, \
-        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-        to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-        to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
-const SELECT_PAT_BY_PREFIX_SQL: &str = "SELECT p.id, p.type, p.subject, \
-    p.display_name, p.status, identity.pats.token_hash, \
-    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id, identity.pats.expires_at AS pat_expires_at \
-    FROM identity.pats JOIN identity.principals p \
-        ON p.id = identity.pats.principal_id \
-    WHERE identity.pats.token_prefix = $1";
-const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id, p.type, p.subject, \
-    p.display_name, p.status, identity.pats.token_hash, \
-    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id, identity.pats.expires_at AS pat_expires_at \
-    FROM identity.pats JOIN identity.principals p \
-        ON p.id = identity.pats.principal_id \
-    WHERE identity.pats.token_prefix = $1 AND p.type = 'service'";
-const SELECT_PATS_SQL: &str = "SELECT id::text, token_prefix, label, \
-        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-        to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-        to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
-    FROM identity.pats WHERE principal_id = $1 \
-    ORDER BY created_at DESC, id";
-const REVOKE_PAT_SQL: &str = "UPDATE identity.pats \
-    SET revoked_at = COALESCE(revoked_at, now()) WHERE token_prefix = $1 \
-    RETURNING id::text, token_prefix, label, \
-        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-        to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-        to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-        principal_id";
-
 /// Maximum accepted principal-subject length.
 pub const MAX_SUBJECT_LEN: usize = 254;
 
 /// Maximum accepted display-name length.
 pub const MAX_DISPLAY_NAME_LEN: usize = 200;
 
-/// Maximum accepted personal-access-token label length.
-pub const MAX_PAT_LABEL_LEN: usize = 200;
-
-/// Longest accepted personal-access-token lifetime. Expiry is mandatory, so
-/// every issued token dies within a year even if nobody revokes it.
-pub const MAX_PAT_TTL: Duration = Duration::from_hours(365 * 24);
-
-/// The service subject of one scheduled application in one environment project.
-pub fn application_subject(
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    package: &wamn_catalog::PackageName,
-) -> Result<String, IdentityError> {
-    canonical_subject(&wamn_catalog::resource_names::application_subject(
-        project_env_key,
-        package,
-    ))
-}
-
 /// The type of first-party platform principal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrincipalType {
-    /// A user resolved from an external identity or represented by a PAT.
+    /// A user of the first-party identity service.
     User,
-    /// A non-human client that authenticates through a machine presenter.
-    Service,
     /// A platform component that writes in the system database. It cannot
     /// authenticate.
     Platform,
@@ -146,7 +79,6 @@ impl PrincipalType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::User => "user",
-            Self::Service => "service",
             Self::Platform => "platform",
         }
     }
@@ -154,7 +86,6 @@ impl PrincipalType {
     fn parse(value: &str) -> Result<Self, IdentityError> {
         match value {
             "user" => Ok(Self::User),
-            "service" => Ok(Self::Service),
             "platform" => Ok(Self::Platform),
             other => Err(IdentityError::new(
                 IdentityErrorType::CorruptData,
@@ -223,7 +154,7 @@ impl Principal {
         &self.id
     }
 
-    /// Return whether this is a user, service, or platform principal.
+    /// Return whether this is a user or platform principal.
     pub const fn principal_type(&self) -> PrincipalType {
         self.type_
     }
@@ -231,11 +162,6 @@ impl Principal {
     /// Return the normalized first-party subject.
     pub fn subject(&self) -> &str {
         &self.subject
-    }
-
-    /// Return the mutable presentation label.
-    pub fn display_name(&self) -> &str {
-        &self.display_name
     }
 
     /// Return whether this principal is active or disabled.
@@ -257,121 +183,12 @@ impl Principal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedPrincipal {
     principal: Principal,
-    pat_id: Option<String>,
-    pat_deadline: Option<std::time::SystemTime>,
 }
 
 impl AuthenticatedPrincipal {
-    /// The source PAT identity, present only after PAT authentication.
-    pub fn pat_id(&self) -> Option<&str> {
-        self.pat_id.as_deref()
-    }
-
-    /// The credential deadline from the authoritative PAT row.
-    pub fn pat_deadline(&self) -> Option<std::time::SystemTime> {
-        self.pat_deadline
-    }
-
     /// Return the verified principal record.
     pub fn principal(&self) -> &Principal {
         &self.principal
-    }
-}
-
-/// Opaque personal-access-token identity minted by the system database.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PatId(Box<str>);
-
-impl PatId {
-    /// Return the canonical UUID text stored by PostgreSQL.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for PatId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-/// Everything one stored personal access token keeps. No field is secret:
-/// storage holds a digest of the token and this non-secret lookup metadata, so
-/// a record is safe to list, log, and audit.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PatRecord {
-    id: PatId,
-    prefix: wamn_identity_protocol::pat_prefix::PatPrefix,
-    label: Box<str>,
-    created_at: Box<str>,
-    expires_at: Box<str>,
-    revoked_at: Option<Box<str>>,
-}
-
-impl PatRecord {
-    /// Return the opaque token ID that audit records reference.
-    pub fn id(&self) -> &PatId {
-        &self.id
-    }
-
-    /// Return the non-secret lookup half, which also addresses revocation.
-    pub fn prefix(&self) -> &wamn_identity_protocol::pat_prefix::PatPrefix {
-        &self.prefix
-    }
-
-    /// Return the operator-supplied label.
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// Return the issuance instant as RFC 3339 UTC text.
-    pub fn created_at(&self) -> &str {
-        &self.created_at
-    }
-
-    /// Return the mandatory expiry instant as RFC 3339 UTC text.
-    pub fn expires_at(&self) -> &str {
-        &self.expires_at
-    }
-
-    /// Return the revocation instant as RFC 3339 UTC text, if revoked.
-    pub fn revoked_at(&self) -> Option<&str> {
-        self.revoked_at.as_deref()
-    }
-}
-
-/// A freshly minted token: the bearer string plus the record that was stored.
-///
-/// The bearer string exists only in this value. Storage keeps a digest, so it
-/// cannot be recovered afterwards, and this type deliberately implements no
-/// `Display`, no equality (which would compare the secret in variable time),
-/// and redacts the token from its `Debug` output.
-#[derive(Clone)]
-pub struct IssuedPat {
-    token: zeroize::Zeroizing<String>,
-    record: PatRecord,
-}
-
-impl IssuedPat {
-    /// Return the bearer token. Hand it to the requester once and drop it;
-    /// never log, audit, or persist this string.
-    pub fn token(&self) -> &str {
-        &self.token
-    }
-
-    /// Return the non-secret record persisted for this token.
-    pub fn record(&self) -> &PatRecord {
-        &self.record
-    }
-}
-
-impl fmt::Debug for IssuedPat {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("IssuedPat")
-            .field("token", &"<redacted>")
-            .field("record", &self.record)
-            .finish()
     }
 }
 
@@ -592,25 +409,6 @@ pub async fn create_or_reuse_user(
     })
 }
 
-/// Create a service principal. Machine authentication is supplied by a later
-/// presenter.
-pub async fn create_service(
-    client: &mut sqlx::PgConnection,
-    subject: &str,
-    display_name: &str,
-) -> Result<Principal, IdentityError> {
-    let subject = canonical_subject(subject)?;
-    let display_name = require_display_name(display_name)?;
-    let row = sqlx::query(INSERT_SERVICE_SQL)
-        .bind(&subject)
-        .bind(&display_name)
-        .fetch_one(&mut *client)
-        .await
-        .map_err(|error| database_error(&error))?;
-    let principal = decode_principal(&row)?;
-    Ok(principal)
-}
-
 /// Resolve a principal by its opaque ID without authenticating the caller.
 pub async fn resolve_principal(
     client: &mut sqlx::PgConnection,
@@ -618,25 +416,6 @@ pub async fn resolve_principal(
 ) -> Result<Option<Principal>, IdentityError> {
     sqlx::query(SELECT_PRINCIPAL_BY_ID_SQL)
         .bind(id)
-        .fetch_optional(&mut *client)
-        .await
-        .map_err(|error| database_error(&error))?
-        .as_ref()
-        .map(decode_principal)
-        .transpose()
-}
-
-/// Resolve a principal by type and normalized subject without authenticating
-/// the caller.
-pub async fn resolve_subject(
-    client: &mut sqlx::PgConnection,
-    type_: PrincipalType,
-    subject: &str,
-) -> Result<Option<Principal>, IdentityError> {
-    let subject = canonical_subject(subject)?;
-    sqlx::query(SELECT_PRINCIPAL_BY_SUBJECT_SQL)
-        .bind(type_.as_str())
-        .bind(&subject)
         .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -661,139 +440,6 @@ pub async fn disable_principal(
     decode_principal(&row)
 }
 
-/// Issue a personal access token for an active service principal.
-///
-/// This is the trusted-context issuance path: the caller must already have
-/// authorized the request. It reads only the principal ID the caller resolved.
-/// A missing, disabled or non-service principal is `NotFound`.
-pub async fn issue_pat(
-    client: &mut sqlx::PgConnection,
-    principal_id: &PrincipalId,
-    label: &str,
-    ttl: Duration,
-) -> Result<IssuedPat, IdentityError> {
-    let label = require_pat_label(label)?;
-    let ttl_seconds = require_pat_ttl(ttl)?;
-    let token = PatToken::mint()?;
-    let prefix = token.lookup();
-    let token_hash = token.digest();
-    let row = sqlx::query(INSERT_PAT_SQL)
-        .bind(principal_id)
-        .bind(prefix)
-        .bind(token_hash)
-        .bind(&label)
-        .bind(ttl_seconds)
-        .fetch_optional(&mut *client)
-        .await
-        .map_err(|error| database_error(&error))?
-        .ok_or_else(|| {
-            IdentityError::new(
-                IdentityErrorType::NotFound,
-                "principal does not exist or is disabled",
-            )
-        })?;
-    Ok(IssuedPat {
-        token: token.into_secret(),
-        record: decode_pat(&row)?,
-    })
-}
-
-/// Authenticate the bearer of a personal access token.
-///
-/// Malformed tokens, unknown lookup prefixes, forged secrets, expired tokens,
-/// revoked tokens, and disabled principals all return `Ok(None)`. Only
-/// infrastructure failure is an `Err`, so a transport may map every refusal to
-/// one generic response without leaking which predicate failed.
-pub async fn authenticate_pat(
-    client: &mut sqlx::PgConnection,
-    token: &str,
-) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
-    let Ok(parsed) = token.parse::<PatToken>() else {
-        return Ok(None);
-    };
-    let prefix = parsed.lookup();
-    let row = sqlx::query(SELECT_PAT_BY_PREFIX_SQL)
-        .bind(prefix)
-        .fetch_optional(&mut *client)
-        .await
-        .map_err(|error| database_error(&error))?;
-    decide_pat(row, &parsed)
-}
-
-/// Apply the token predicates to the looked-up row.
-///
-/// Shared by operator and route authentication.
-fn decide_pat(
-    row: Option<Row>,
-    token: &PatToken,
-) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
-    let Some(row) = row else {
-        return Ok(None);
-    };
-
-    let principal = decode_principal(&row)?;
-    // The pats foreign key refuses a platform principal, so a stored token
-    // for one is corrupt data. It never authenticates.
-    if principal.type_ == PrincipalType::Platform {
-        return Err(IdentityError::new(
-            IdentityErrorType::CorruptData,
-            "stored token names a platform principal",
-        ));
-    }
-    let stored_hash: wamn_digest::Digest =
-        row.try_get(5).map_err(|error| database_error(&error))?;
-    let usable: bool = row.try_get(6).map_err(|error| database_error(&error))?;
-    if !token.matches(&stored_hash) || !usable || principal.status != PrincipalStatus::Active {
-        return Ok(None);
-    }
-    Ok(Some(AuthenticatedPrincipal {
-        pat_deadline: Some(
-            row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>, _>(
-                "pat_expires_at",
-            )
-            .map_err(|error| database_error(&error))?
-            .into(),
-        ),
-        principal,
-        pat_id: Some(
-            row.try_get("pat_id")
-                .map_err(|error| database_error(&error))?,
-        ),
-    }))
-}
-
-/// Revoke a personal access token by its non-secret lookup prefix.
-///
-/// Repeated calls keep the first revocation instant, so a replayed revoke is
-/// harmless. An unknown prefix is `NotFound`.
-pub async fn revoke_pat(
-    client: &mut sqlx::PgConnection,
-    prefix: &wamn_identity_protocol::pat_prefix::PatPrefix,
-) -> Result<PatRecord, IdentityError> {
-    let row = sqlx::query(REVOKE_PAT_SQL)
-        .bind(prefix)
-        .fetch_optional(&mut *client)
-        .await
-        .map_err(|error| database_error(&error))?
-        .ok_or_else(|| IdentityError::new(IdentityErrorType::NotFound, "token does not exist"))?;
-    let _principal: PrincipalId = row.try_get(6).map_err(|error| database_error(&error))?;
-    decode_pat(&row)
-}
-
-/// Read a principal's tokens, newest first. Only non-secret metadata is stored,
-/// so no token material can be returned here.
-pub async fn list_pats(
-    client: &mut sqlx::PgConnection,
-    principal_id: &PrincipalId,
-) -> Result<Vec<PatRecord>, IdentityError> {
-    let rows = sqlx::query(SELECT_PATS_SQL)
-        .bind(principal_id)
-        .fetch_all(&mut *client)
-        .await
-        .map_err(|error| database_error(&error))?;
-    rows.iter().map(decode_pat).collect()
-}
-
 /// Assign one opaque role slug to a principal in a registered project.
 pub async fn assign_project_role(
     client: &mut sqlx::PgConnection,
@@ -802,18 +448,7 @@ pub async fn assign_project_role(
     project: &wamn_registry::ProjectId,
     role: &str,
 ) -> Result<(), IdentityError> {
-    let service: bool = sqlx::query(
-        "SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1 AND type='service')",
-    )
-    .bind(principal_id)
-    .fetch_one(&mut *client)
-    .await
-    .map_err(|error| database_error(&error))?
-    .get(0);
-    if !service {
-        org::active_member(client, principal_id, org).await?;
-    }
-
+    org::active_member(client, principal_id, org).await?;
     let role = role.parse::<RoleName>()?.to_string();
     sqlx::query(ASSIGN_PROJECT_ROLE_SQL)
         .bind(principal_id)
@@ -921,23 +556,6 @@ pub async fn revoke_project_env_membership(
     Ok(removed != 0)
 }
 
-/// Authenticate an active service PAT. The caller reads its application permissions.
-pub async fn authenticate_route_pat(
-    client: &mut sqlx::PgConnection,
-    token: &str,
-) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
-    let Ok(parsed) = token.parse::<PatToken>() else {
-        return Ok(None);
-    };
-    let prefix = parsed.lookup();
-    let row = sqlx::query(SELECT_ROUTE_PAT_SQL)
-        .bind(prefix)
-        .fetch_optional(&mut *client)
-        .await
-        .map_err(|error| database_error(&error))?;
-    decide_pat(row, &parsed)
-}
-
 fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
     let id: PrincipalId = row.try_get(0).map_err(|error| database_error(&error))?;
     let type_: String = row.try_get(1).map_err(|error| database_error(&error))?;
@@ -951,46 +569,6 @@ fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
         display_name: display_name.into(),
         status: PrincipalStatus::parse(&status)?,
     })
-}
-
-fn decode_pat(row: &Row) -> Result<PatRecord, IdentityError> {
-    let id: String = row.try_get(0).map_err(|error| database_error(&error))?;
-    let prefix: wamn_identity_protocol::pat_prefix::PatPrefix =
-        row.try_get(1).map_err(|error| database_error(&error))?;
-    let label: String = row.try_get(2).map_err(|error| database_error(&error))?;
-    let created_at: String = row.try_get(3).map_err(|error| database_error(&error))?;
-    let expires_at: String = row.try_get(4).map_err(|error| database_error(&error))?;
-    let revoked_at: Option<String> = row.try_get(5).map_err(|error| database_error(&error))?;
-    Ok(PatRecord {
-        id: PatId(id.into()),
-        prefix,
-        label: label.into(),
-        created_at: created_at.into(),
-        expires_at: expires_at.into(),
-        revoked_at: revoked_at.map(Into::into),
-    })
-}
-
-fn require_pat_label(value: &str) -> Result<String, IdentityError> {
-    let value = value.trim();
-    if value.is_empty() || value.len() > MAX_PAT_LABEL_LEN {
-        return Err(IdentityError::new(
-            IdentityErrorType::InvalidInput,
-            "token label must contain 1 to 200 bytes",
-        ));
-    }
-    Ok(value.to_owned())
-}
-
-fn require_pat_ttl(ttl: Duration) -> Result<i64, IdentityError> {
-    if ttl.as_secs() == 0 || ttl > MAX_PAT_TTL {
-        return Err(IdentityError::new(
-            IdentityErrorType::InvalidInput,
-            "token lifetime must be 1 second to 365 days",
-        ));
-    }
-    // Bounded by MAX_PAT_TTL above, so the cast cannot wrap.
-    Ok(ttl.as_secs().cast_signed())
 }
 
 fn canonical_subject(value: &str) -> Result<String, IdentityError> {
@@ -1104,38 +682,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn application_subject_is_targeted_to_project_env_key_and_package() {
-        assert_ne!(
-            application_subject(
-                &"acme--prod--erp".parse().unwrap(),
-                &"integration".parse().unwrap()
-            )
-            .unwrap(),
-            application_subject(
-                &"acme--dev--erp".parse().unwrap(),
-                &"integration".parse().unwrap()
-            )
-            .unwrap()
-        );
-        assert_ne!(
-            application_subject(
-                &"acme--prod--erp".parse().unwrap(),
-                &"integration".parse().unwrap()
-            )
-            .unwrap(),
-            application_subject(
-                &"acme--prod--erp".parse().unwrap(),
-                &"consumer".parse().unwrap()
-            )
-            .unwrap()
-        );
-    }
-
-    #[test]
     fn principal_type_literals_round_trip() {
         for type_ in [
             PrincipalType::User,
-            PrincipalType::Service,
             PrincipalType::Platform,
         ] {
             assert_eq!(PrincipalType::parse(type_.as_str()).unwrap(), type_);
@@ -1199,15 +748,5 @@ mod tests {
                 "accepted email {invalid:?}"
             );
         }
-    }
-
-    #[test]
-    fn token_labels_and_lifetimes_fail_closed() {
-        assert_eq!(require_pat_label("  laptop  ").unwrap(), "laptop");
-        assert!(require_pat_label("   ").is_err());
-        assert!(require_pat_label(&"x".repeat(MAX_PAT_LABEL_LEN + 1)).is_err());
-        assert_eq!(require_pat_ttl(Duration::from_secs(3600)).unwrap(), 3600);
-        assert!(require_pat_ttl(Duration::ZERO).is_err());
-        assert!(require_pat_ttl(MAX_PAT_TTL + Duration::from_secs(1)).is_err());
     }
 }

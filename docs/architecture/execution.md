@@ -736,7 +736,8 @@ The route declares PAT authentication, session authentication, or both.
 Receiving and Acme publish both modes on their existing authenticated application routes.
 Both modes use the same operation permissions. Private event handlers remain private.
 A personal access token, or PAT, is an opaque bearer credential.
-PAT authentication reads the current service principal and its credential.
+The host uses its project platform login to check the token and the active service row.
+A connection PAT also needs an active connection whose service principal matches the token.
 Authorization reads the principal’s operation permissions in the target project database.
 The host keeps both answers in its [auth memory](#auth-memory).
 Service credentials use their authored application grants and cannot mint a user session.
@@ -749,57 +750,25 @@ A caller that holds `admin` holds every operation of the serving release. Any ot
 Missing, revoked, expired, or mismatched authority returns 401.
 An unavailable identity read refuses admission with 503. The read has a five-second timeout.
 Logout, reset, account disablement, and membership removal prevent further renewal. Issued access tokens expire within 900 seconds.
-PAT revocation retains the existing [auth memory](#auth-memory) behavior.
-A host that cannot receive drops caches nothing, so it reads every request.
-The configured revocation bound applies when a drop is lost.
+A revoked PAT or disabled service stops authenticating when the cached answer expires.
 Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
 
 Create an API identity with `wamn create-api-service`.
 Supply the project, environment, name, display name, one or more `--role` values, and `--lifetime-seconds`.
 The verb uses `WAMN_CONTROL_URL` and `WAMN_TOKEN`. The session selects the org.
-The native service selects the owning database connections and PAT issuer credentials.
+Control reads the project login from its administration map.
 `--emit-secret` names a private JSON output file. The verb prints only the principal id.
-It creates or reuses the service, grants authored roles in the selected environment, then requests its PAT from identity.
-A partial creation can be retried. An API service cannot receive the reserved `admin` role through this verb.
+Control creates or reuses the service, grants its roles, and issues its PAT in one project transaction. An API service cannot receive the reserved `admin` role through this verb.
 
 ### Auth memory
 
-The host answers the auth facts of a repeated caller from its memory, so they cost no Postgres round-trip.
-The [memory](../../crates/authority/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the one NATS.
-The key `<project_env_key>.<principal>` holds the grants of a principal and whether the project has its user row.
-The key `<project_env_key>.environment` holds the environment status.
-One read of `platform."user"`, `platform.user_role` and `platform.permission` answers permission and user-row requests.
-Invocation binds and workflow callers use the guest login. Route authentication uses the callable-HTTP login.
-Both use the same grants reader and memory value.
-A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
-The environment host watches each project through that project's event client and keeps its connection facts separate. A fact read for one project never supplies another project's authority.
-The control host serves every project, so it watches every key.
-Each environment input declares the project's `revocation_seconds`. Deploy writes this grant cache lifetime into `wamn.application` in each workload; the registry does not store it.
-The required input is an integer from 0 to 3600 seconds. Zero disables caching.
-The value is not written to `platform.setting`.
-
-Moka keeps admitted PATs and active sessions in the host that read them, with the configured expiry.
-The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.
-A delete of the key `=identity.<principal>` drops the PATs and sessions of the principal on every host.
-A `ProjectEnvKey` contains three lowercase registry names separated by `--`.
-The identity prefix `=identity` cannot be a project deployment key.
-A host does not keep a token answer when any identity key changed during its read.
-A watch reset also invalidates reads already in progress.
-Every cached token answer ends at its credential deadline, even when the configured bound is longer.
-While the watch is broken, the host keeps no fact and opens the bucket again.
-If the stream ends or the NATS client loses its connection, the watch breaks.
-The host makes sure of the connection, because the client reconnects without ending the stream.
-A host without the bucket keeps no fact either, and reads every request from Postgres.
-
-Every function that writes one of these facts takes an [`AuthDrops`](../../crates/broker/src/auth_changes.rs) and records the change in it.
-Its caller deletes the keys of the list after the commit. `wamn-broker::Publisher` publishes both authorization and connection changes through one client.
-A change of a user row or a user role deletes the key of the principal.
-A change of a role, a permission or the environment status deletes every key of the project.
-A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal delete the identity key of the principal.
-The writers are the application host, the control host, the identity service and `wamn`.
-The identity service and `wamn` read the connection from `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT` and `WAMN_NATS_TLS_KEY`, with a client certificate of the wasmCloud CA.
-`WAMN_NATS_TLS_SERVER_NAME` names the server certificate when a port-forward reaches the server.
-A lost delete waits for at most the configured bound.
+A host keeps grants, admitted PATs, active environment status, and connection facts in its local Moka cache.
+It reads grants from `platform."user"`, `platform.user_role`, and `platform.permission`.
+It keys answers by project environment. A PAT answer also uses the hash of the whole token.
+The host caches positive PAT answers and checks the token expiry on every admission.
+Each environment input declares the project's `revocation_seconds`.
+Deploy writes this lifetime to `wamn.application` in each workload.
+Zero disables caching.
 
 The org audience is `urn:wamn:control:{org}`.
 One password login gives one access token for the org, shared by its environments and control routes.

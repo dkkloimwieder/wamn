@@ -8,7 +8,7 @@ pub fn apply_authority_sql() -> &'static str {
             ASSERT NOT pg_has_role('wamn_apply', 'wamn_system', 'MEMBER');
             FOREACH relation IN ARRAY ARRAY[
                 'registry.connection', 'registry.integration', 'registry.connection_generation',
-                'identity.credential', 'identity.oauth_token', 'identity.oauth_authorization', 'identity.pats'
+                'identity.credential', 'identity.oauth_token', 'identity.oauth_authorization'
             ] LOOP
                 FOREACH privilege IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'] LOOP
                     ASSERT NOT has_table_privilege('wamn_apply', relation, privilege), relation || ':' || privilege;
@@ -67,11 +67,6 @@ pub fn seed_disposable_policy_sql() -> &'static str {
 /// Database fixture statement for provision.
 pub fn disposable_environment_sql() -> &'static str {
     "SELECT disposable FROM registry.environments WHERE org='demo' AND env='dev'"
-}
-
-/// Database fixture statement for pat.
-pub fn seed_pat_project_sql() -> &'static str {
-    "INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('org', 'pooled', 'test'); INSERT INTO registry.projects (org, id) VALUES ('org', 'project')"
 }
 
 /// Seed the application activation target.

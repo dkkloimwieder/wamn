@@ -9,10 +9,9 @@ use wamn_connection::connection_facts::{
 
 use anyhow::Context as _;
 use moka::sync::Cache;
-use wamn_authentication::authorization::{self, AuthorizationStore, HeldOperationGrants};
+use wamn_authentication::authorization::{self, AuthorizationStore, HeldOperationGrants, ProjectPat};
 use wamn_authority::auth_cache::PrincipalGrants;
 use wamn_catalog::application_config::ApplicationConfig;
-use wamn_identity::AuthenticatedPrincipal;
 use wamn_identity_protocol::secret::PatToken;
 use wamn_identity_protocol::{PrincipalId, RoleName};
 use wamn_registry::{ProjectEnvKey, ProjectId};
@@ -37,7 +36,7 @@ struct Key {
 enum Answer {
     ActiveEnvironment,
     Grants(PrincipalGrants),
-    Pat(AuthenticatedPrincipal),
+    Pat(Arc<ProjectPat>),
     Connection(Arc<ConnectionAnswer>),
 }
 
@@ -213,22 +212,17 @@ impl AuthorizationStore for Authorization {
         &self,
         project: &ProjectId,
         project_key: &ProjectEnvKey,
-        reader: &sqlx::PgPool,
-        token: &str,
-    ) -> anyhow::Result<Option<AuthenticatedPrincipal>> {
-        let Ok(parsed) = token.parse::<PatToken>() else {
-            return Ok(None);
-        };
-        let key = self.key(project, project_key, Fact::Pat(*parsed.digest().as_bytes()))?;
+        token: &PatToken,
+    ) -> anyhow::Result<Option<Arc<ProjectPat>>> {
+        let key = self.key(project, project_key, Fact::Pat(*token.digest().as_bytes()))?;
         if let Some(Answer::Pat(principal)) = self.answers.get(&key) {
-            return Ok(principal
-                .pat_deadline()
-                .filter(|deadline| SystemTime::now() < *deadline)
-                .map(|_| principal));
+            return Ok((SystemTime::now() < principal.deadline).then_some(principal));
         }
-        let principal = authorization::route_pat(reader, token).await?;
-        if let Some(principal) = &principal {
-            self.answers.insert(key, Answer::Pat(principal.clone()));
+        let principal = self.postgres()?.read_project_pat(project, token).await?;
+        if let Some(principal) = &principal
+            && SystemTime::now() < principal.deadline
+        {
+            self.answers.insert(key, Answer::Pat(Arc::clone(principal)));
         }
         Ok(principal)
     }

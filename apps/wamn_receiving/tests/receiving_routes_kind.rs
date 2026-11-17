@@ -149,8 +149,8 @@ async fn development_state(
     system: &mut sqlx::PgConnection,
     project: &mut sqlx::PgConnection,
 ) -> anyhow::Result<(i64, Option<String>, Option<String>)> {
-    let pats: i64 = sqlx::query("SELECT count(*) FROM identity.pats")
-        .fetch_one(&mut *system)
+    let pats: i64 = sqlx::query("SELECT count(*) FROM platform.pat")
+        .fetch_one(&mut *project)
         .await?
         .get(0);
     let acl = "SELECT (SELECT array_agg(entry::text ORDER BY entry::text) FROM pg_database, unnest(datacl) AS entry WHERE datname=current_database())::text";

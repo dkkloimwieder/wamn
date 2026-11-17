@@ -50,7 +50,7 @@ use tokio::sync::Mutex;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_provision::control_administration_key;
 use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
-use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
+use wamn_identity_client::{IdentityClientConfig, UserRefused, create_user, send_invitation};
 use wamn_identity_protocol::PrincipalId;
 use wamn_environment::application::{
     ApplicationTarget, project_authority, require_platform_rows, write_environment_status,
@@ -122,6 +122,21 @@ impl From<IdentityError> for Refusal {
 }
 
 fn operation_refusal(error: anyhow::Error) -> Refusal {
+    use wamn_environment::application::service::{ServiceError, ServiceErrorType};
+
+    if let Some(service) = error.downcast_ref::<ServiceError>() {
+        return match service.type_ {
+            ServiceErrorType::InvalidInput(field) => Refusal::Declared {
+                code: "invalid_input",
+                detail: json!({"field":field}),
+            },
+            ServiceErrorType::NotFound(field) => Refusal::Declared {
+                code: "not_found",
+                detail: json!({"field":field}),
+            },
+            _ => Refusal::Failed(error),
+        };
+    }
     match error.downcast_ref::<wamn_kubernetes::job::ObservationError>() {
         Some(refusal) => Refusal::Declared {
             code: match refusal.type_ {
@@ -141,7 +156,7 @@ pub(crate) struct ControlRoutes<'a> {
     /// A second `control` login that holds one write transaction at a time.
     pub(crate) writer: &'a Mutex<Client>,
     /// The operator client of the identity service, for `user.invite`.
-    pub(crate) identity: Option<&'a PatIssuerConfig>,
+    pub(crate) identity: Option<&'a IdentityClientConfig>,
     pub(crate) issuer: &'a str,
     /// The mounted Secret of the org's administration logins, one file per
     /// environment.

@@ -125,6 +125,7 @@ impl ControlRoutes<'_> {
             payload,
             source,
             &applications,
+            wamn_environment::application::service::write_connection_service,
         )
         .await?;
         if operation == "connection.authorize" {
@@ -138,9 +139,19 @@ impl ControlRoutes<'_> {
             project.commit().await?;
             return Ok(json!({"authorization_url":url}));
         }
+        if matches!(operation, "connection.delete" | "integration.delete") {
+            let principal = result["principal_id"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("connection delete returned no principal id"))?
+                .parse::<PrincipalId>()
+                .map_err(anyhow::Error::from)?;
+            wamn_environment::application::service::disable(&mut project, &principal)
+                .await
+                .map_err(anyhow::Error::from)?;
+        }
         project.commit().await?;
-        if operation.ends_with(".delete") {
-            administration::finish_delete(writer, *caller, self.org, &result).await?;
+        if let Some(credentials) = result.get("credentials") {
+            wamn_connection::connections::references::destroy_credentials(credentials).await?;
         }
         if let Some(row) = result.as_object_mut() {
             let _ = row.remove("credentials");

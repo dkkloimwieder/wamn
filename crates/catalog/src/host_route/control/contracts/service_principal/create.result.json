@@ -1,0 +1,10 @@
+{
+  "fields": [
+    {
+      "path": "principal_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

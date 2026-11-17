@@ -10,31 +10,6 @@ use anyhow::Context as _;
 
 use super::{AtomicU64, File, OpenOptions, Ordering, OsString, Path, PathBuf, Permissions, Value};
 
-pub fn ensure_distinct_secret_paths<const N: usize>(
-    paths: [(&str, Option<&Path>); N],
-) -> anyhow::Result<()> {
-    let mut seen = Vec::with_capacity(N);
-    for (flag, path) in paths {
-        let Some(path) = path else {
-            continue;
-        };
-        let absolute = std::path::absolute(path)
-            .with_context(|| format!("resolve credential output path for {flag}"))?;
-        let parent = absolute
-            .parent()
-            .context("credential output path has no parent directory")?;
-        let file_name = absolute
-            .file_name()
-            .context("credential output path has no file name")?;
-        let comparable = std::fs::canonicalize(parent)
-            .with_context(|| format!("resolve credential output parent for {flag}"))?
-            .join(file_name);
-        plan::ensure_distinct_secret_path(&seen, flag, &comparable)?;
-        seen.push((flag, comparable));
-    }
-    Ok(())
-}
-
 pub(super) static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn create_secret_temp(path: &Path) -> anyhow::Result<(PathBuf, File)> {
@@ -102,25 +77,4 @@ pub(crate) fn write_output(path: Option<&Path>, text: &str) -> anyhow::Result<()
         std::fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
     }
     Ok(())
-}
-
-pub fn read_json(path: &Path) -> anyhow::Result<Value> {
-    serde_json::from_slice(
-        &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
-    )
-    .with_context(|| format!("parse {}", path.display()))
-}
-
-pub fn secret_value(path: &Path, key: &str) -> anyhow::Result<String> {
-    read_json(path)?["stringData"][key]
-        .as_str()
-        .map(str::to_owned)
-        .with_context(|| format!("{} carries stringData.{key}", path.display()))
-}
-
-pub fn secret_annotation(path: &Path, key: &str) -> anyhow::Result<String> {
-    read_json(path)?["metadata"]["annotations"][key]
-        .as_str()
-        .map(str::to_owned)
-        .with_context(|| format!("{} carries annotation {key}", path.display()))
 }
