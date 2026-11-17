@@ -351,9 +351,9 @@ Issues:
   - `connections`: for each declared connection name, the connection id, read or write mode, the interface, and the integration type digest when the type is wasm or native
   - the file facts that the file routes and the blobstore plugin need and that today come from the release document
 - The deploy takes the bindings from `environment/bindings.rs::analyse` and writes them into `wamn.application`. `bindings::write` stops writing the catalog. `catalog.release_connection` and `catalog.connection_binding` go, with their grants, writers and readers. `catalog.connection_requirement` stays.
-- The chart's host interfaces are the route guest's set plus each platform interface package the components import (`wamn:postgres`, `wamn:connection`, `wasmcloud:blobstore`, `wamn:integration`). A package that no component imports is not rendered.
+- The chart's host interfaces are the route guest's set plus each platform package the components import (`wamn:postgres`, `wamn:connection`, `wasmcloud:blobstore`), and one named entry for each declared integration interface. A package that no component imports is not rendered.
 - The deploy refuses two versions of one host interface package, because the operator allows only one unnamed entry for each namespace and package.
-- The deploy refuses an operation name that two components declare.
+- The deploy refuses an operation name that two components declare, among operations that have a type. Palette exports are exempt.
 
 5.2 Connections on the call path. After 5.1; runs in parallel with 5.3.
 - Host plugins for `wamn:connection/http` and `wamn:integration`, registered in `services/host`. They link only for components that import them. The host builds connection state for a workload only when `wamn.application` declares connections.
@@ -367,7 +367,7 @@ Issues:
   - Hold the lock for the call, then run `ROLLBACK`.
   - The key is the first 8 bytes of SHA-256 over `target_id` and `resource_key`, as `bigint`.
   - If the `ROLLBACK` fails, discard the call's result and fail the call.
-- HTTP client cache key: invocation scope, target (host, address, TLS name), connection id, generation. If no client is kept from one call to the next, change nothing.
+- HTTP client cache key: no change. No client is kept from one send to the next.
 - The invoke path carries the connection invocation again (the `Scope` record in `sql/invocation.rs`).
 - `session_operation_permissions` caches a grant set only under the same condition as `principal_grants`.
 
@@ -381,6 +381,21 @@ Issues:
 - The host serves `HostRouteSet::Application` (permission.mine, roles, grants, users, counters) on the path from 5.3, built from `wamn.application`.
 - The Application half of `services/control/src/host_route.rs` and `application_route.rs` moves into `services/host`. The control service keeps the Control half.
 - `workflow.start` refuses with the existing unavailable refusal until 3.4, and the `workflow` field leaves the handler.
+
+Rulings on the scout questions (D, 2026-11-17):
+- Plugin code that Epic 1 deleted is restored from 0943187e1^, without snapshots, candidate bindings, hashes, semaphores or the KV replica.
+- 5.1:
+  - adds the host's reader for the projects file
+  - adds runtime type, exclusivity, target type, signed-result facts and the full integration reference to `wamn.application`
+  - moves every binding-table reader to `wamn.application`
+  - defines the one binding lookup that 5.2 and 5.3 use
+- `release_values` takes the bindings as input, and its caller is 3.5.
+- The check on the connection principal's status goes; only `platform.connection.status` counts.
+- `sign-result` returns a result with no signed fields unchanged.
+- The shared cache is a trait in `wamn-connection`, implemented by the host.
+- `wamn-sql` owns a signing trait, and the host supplies its implementation.
+- The host registers `/wamn_control` and the file stream prefix as `<workload>/platform-http` through a `HostHandler` wrapper. The `files` field leaves `route.json`.
+- `workflow.start` answers `workflow_not_served`.
 
 ## Open items
 
@@ -404,6 +419,8 @@ Issues:
 - Integration code as sibling components in the application workload, linked by named import, in place of the host's integration loader. The runtime routes an import labelled with a component name to that component. Research, not ruled.
 - 3.4: `workflow.start` refuses in the host until the workflow service serves it.
 - 3.5: `registry.environment_application_connections` and `registry.environment_integrations` change with the environment file (one version for each connection name).
+- 3.3: the project rows mark inherited admin, and `user.list` reads that mark there in place of `is_project_admin` against the system database.
+- 3.4: lookup of an operation by name is valid only for typed operations. The workflow service dispatches palette nodes by component.
 
 # Part 2: Review log
 
@@ -1708,3 +1725,5 @@ Recommend a.
 **Ruled (D, 2026-11-16): Epic 4 scout questions.** `wamn.application` gains the serving component per operation, the coordinate names and delete as an operation type. `wamn-sql` keeps `wamn:operation` (`wamn-sql` depends on `wamn-engine`). No connections on the invoke path until Epic 5. 4.4 narrows to `LoadedRelease` and the request path, and `ServingManifest` stays for 3.4, 3.5 and Epic 5. The edge receives only the `LoadedRelease` parts and `pull_verified`.
 
 **Ruled (D, 2026-11-16): Epic 4 review.** Epic 4 is accepted. Three fixes move to Epic 5: the deploy refuses an operation name that two components declare; the session cache keeps a grant set only under the `principal_grants` condition; the deploy refuses two versions of one host interface package. The application host routes and the file routes have had no server since Epic 1 deleted `services/host/src/host/releases.rs` (b84b5739). Serving them moves to Epic 5.
+
+**Ruled (D, 2026-11-17): Epic 5 scout questions.** All recommendations are accepted. The connection principal's status check goes (D-a): disabling a connection stops its calls. Facts: the host has had no reader for the projects file and no plugins for connections, blobstore or integrations since Epic 1 (0943187e1). Every read route answers 503 since 4.2, because the route guest calls `sign-result` for each read.
