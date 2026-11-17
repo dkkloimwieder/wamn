@@ -5,8 +5,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// The effective status of a connection: active only when the integration
-/// and the connection are both active.
+/// The status of the project database's platform.connection row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionStatus {

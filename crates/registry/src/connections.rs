@@ -22,7 +22,6 @@ pub struct ConnectionFact {
 pub struct ConnectionGeneration {
     pub name: String,
     pub integration_type: crate::integration_code::IntegrationCode,
-    pub runtime_type: String,
     pub auth_type: String,
     pub external_system: Option<String>,
     pub parameters: Value,
@@ -71,7 +70,6 @@ pub async fn generation(
     Ok(Some(ConnectionGeneration {
         name: row.try_get("name")?,
         integration_type,
-        runtime_type: String::new(),
         auth_type: row.try_get("auth_type")?,
         external_system: row.try_get("external_system")?,
         parameters: row.try_get("parameters")?,

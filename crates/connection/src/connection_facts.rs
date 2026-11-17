@@ -50,6 +50,20 @@ pub struct ConnectionAnswer {
     pub secret: Option<Arc<Secret>>,
 }
 
+/// A generation row with its runtime type from this workload's declaration.
+#[derive(Debug)]
+pub struct Generation {
+    pub runtime_type: &'static str,
+    data: Arc<ConnectionGeneration>,
+}
+
+impl std::ops::Deref for Generation {
+    type Target = ConnectionGeneration;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
 /// Access to the host's single project-lifetime cache.
 pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
     fn bind_application(
@@ -189,25 +203,11 @@ impl ConnectionFacts {
         else {
             return Ok(None);
         };
-        let mut generation = self
+        let generation = self
             .reader
             .connection_generation(&self.project, &self.environment, id, fact.active_generation)
             .await?
             .context("connection generation unavailable")?;
-        let connection_id = id.to_string();
-        if let Some(binding) = self.application.as_ref().and_then(|app| {
-            app.components
-                .iter()
-                .flat_map(|c| &c.connections)
-                .find(|b| b.connection_id == connection_id)
-        }) {
-            generation.runtime_type = match binding.runtime_type {
-                wamn_catalog::RuntimeType::Host => "host",
-                wamn_catalog::RuntimeType::Wasm => "wasm",
-                wamn_catalog::RuntimeType::Native => "native",
-            }
-            .into();
-        }
         let secret = if fact.status == crate::connection_memory::ConnectionStatus::Active {
             match fact.credential_id {
                 Some(credential) => Some(Arc::new(Secret(
@@ -253,22 +253,34 @@ impl ConnectionFacts {
                 .await?,
         })
     }
-    pub async fn generation(
-        &self,
-        id: &uuid::Uuid,
-        generation: i64,
-    ) -> anyhow::Result<Arc<ConnectionGeneration>> {
-        if let Some(answer) = self.answer(id).await?
-            && answer.fact.active_generation == generation
-        {
-            return Ok(Arc::clone(&answer.generation));
-        }
-        Ok(Arc::new(
-            self.reader
-                .connection_generation(&self.project, &self.environment, id, generation)
-                .await?
-                .context("connection generation unavailable")?,
-        ))
+    pub async fn generation(&self, id: &uuid::Uuid, generation: i64) -> anyhow::Result<Generation> {
+        let data = match self.answer(id).await? {
+            Some(answer) if answer.fact.active_generation == generation => {
+                Arc::clone(&answer.generation)
+            }
+            _ => Arc::new(
+                self.reader
+                    .connection_generation(&self.project, &self.environment, id, generation)
+                    .await?
+                    .context("connection generation unavailable")?,
+            ),
+        };
+        let connection_id = id.to_string();
+        let runtime_type = self
+            .application
+            .as_ref()
+            .and_then(|app| {
+                app.components
+                    .iter()
+                    .flat_map(|component| &component.connections)
+                    .find(|binding| binding.connection_id == connection_id)
+            })
+            .map_or("", |binding| match binding.runtime_type {
+                wamn_catalog::RuntimeType::Host => "host",
+                wamn_catalog::RuntimeType::Wasm => "wasm",
+                wamn_catalog::RuntimeType::Native => "native",
+            });
+        Ok(Generation { runtime_type, data })
     }
     pub async fn secret(&self, id: &uuid::Uuid) -> anyhow::Result<Arc<Secret>> {
         if let Some(secret) = self
