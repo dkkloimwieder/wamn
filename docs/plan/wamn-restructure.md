@@ -366,7 +366,7 @@ Issues:
 - Connection answers use the same `moka` cache as grants (`services/host/src/host/authentication.rs`).
 - These go: `ConnectionFacts::release`, `ConnectionFacts::version`, `ConnectionFacts::release_component_bindings_ready`, and what is left in `ConnectionMemory` from the deleted replica. The host makes no system database read for connections.
 - The host's integration loader goes. wamn does not pull or compile integration code.
-- `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status and reads the generation and credential from the cache. It does not touch Postgres.
+- `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status and reads the generation and credential from the cache. It sends no guard SQL and holds no connection during the external call. A cache miss fills the 5.2 cache with short reads.
 - Control `connection_test` refuses wasm types until the open item on health probes resolves.
 - The host socket floor stays (`allow_private: false`, `deny_special: true`). Integration siblings in the cloud reach public addresses only.
 - No exclusive lock in the host. Exclusive connections are refused in cloud environments (5.5).
@@ -1785,6 +1785,6 @@ Recommend a.
 **Ruled (D, 2026-11-17): no Postgres guards in the cloud.** This replaces today's call-limit ruling and, for the cloud, the 2026-11-15 per-call advisory lock ruling.
 - Exclusive devices belong to local targets, so the deploy and connection create refuse exclusive connections in cloud environments.
 - The call limit is removed: external systems enforce their own limits.
-- `begin` touches no Postgres, and the platform pool keeps its default.
+- `begin` sends no guard SQL. A cache miss still fills the 5.2 cache, and the platform pool keeps its default.
 - Fact: a guard held for each call kept one Postgres connection for the whole external call, so the pool would have had to grow with hosts × limits. Lease rows would have added two writes for each guarded call.
 - Rejected: pool sizing by the deploy, a separate lock pool, a bigger fixed pool, and lease rows.
