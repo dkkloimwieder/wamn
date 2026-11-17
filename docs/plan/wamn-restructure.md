@@ -73,10 +73,11 @@ Org → environment → project → application. One boundary per level.
   There is no Manual entry. "Run now" is an admin action for any workflow.
 - A Request workflow is addressed by a path under `/api/<application>/flow/`. Calling it is a permission granted to roles, like an operation. It runs as the caller (invoker) by default, or as its `execution_role`. The Response sets a status and a JSON body. With no Response within 30 seconds, the call is refused with a timeout. A Request call writes a run row only when the graph continues after its Response or writes data.
 - The graph owns the trigger. The author step derives the index columns that the host queries.
+- Workflows are authored, enabled and disabled through host routes of the application. Enabling a Data change workflow creates one NATS pull consumer filtered to its entity, and disabling deletes it. The service pulls from these consumers. Events committed before the enable are skipped by their LSN.
 - A workflow service component runs in every application workload. It walks graphs and calls nodes through the host.
   - A Data change or Schedule run executes at once, in the invocation that admitted it.
   - A Request run executes inline.
-  - The queue is used only to take back a run whose host died. A recovery sweep runs every 30 seconds.
+  - The queue is used only to take back a run whose host died. A recovery check runs every 30 seconds.
 - Runs use a small host interface. The run SQL and its login stay in the host. Each node call carries the run's identity and role.
 - A run executes on the live release. `runs.manifest_digest` and `runs.node_digests_json` go.
 - Not built now (future work): state after each node, backoff, the approval waiting state.
@@ -544,13 +545,14 @@ Issues:
   - the trigger becomes `request`, `schedule` or `data_change`
   - add `path` for Request workflows, unique among the enabled workflows of one environment and application
   - the trigger columns are written only by the author step (7.5)
+  - add the enable LSN; `enable_sequence` goes
 
 7.2 Workflow service guest.
 - `guests/workflow-service`, for `wasm32-wasip3`. It runs as the WorkloadDeployment `service`.
 - A loop:
   - each minute, admit the due schedules and run them at once
   - every 30 seconds, take runs whose lease expired and run them
-- It exports `wasmcloud:nats` `jetstream-handler`: admit the data-change runs, run them, then ack.
+- It pulls from the consumer of each enabled Data change workflow of its application: admit the run, ack, then run it.
 - It exports `wamn:workflow` `entry`.
 - The graph walk is ported from the router deleted in 07c1f3ee3 (`07c1f3ee3^`), with the same node retries (3 by default).
 - Response node: status and a JSON body. Nodes after a Response continue as a durable run.
@@ -558,9 +560,9 @@ Issues:
 
 7.3 Chart and deploy.
 - `workloads.yaml` adds the workflow service as the `service` of every application WorkloadDeployment. The image is a platform image, built and pinned like the route guest.
-- Add the host interfaces the service needs, and one `wasmcloud:nats` JetStream consumer binding for each captured entity of the application, in the workload's config.
+- Add the host interfaces the service needs, including `wasmcloud:nats` for pull consumers. The host group gets a project `wasmcloud-nats` entry on the environment NATS certificate. The environment NATS user may also create and delete consumers on its source stream.
 
-7.4 Request routes and "run now" in the host.
+7.4 Workflow routes in the host.
 - The host registers the native prefix `/api/<application>/flow/` on the path from 5.3. For each call it:
   - authenticates the bearer token
   - resolves the enabled Request workflow by path
@@ -568,17 +570,17 @@ Issues:
   - dispatches to the service's `entry.call`
 - Publish refuses authored routes under that prefix.
 - An application host route `workflow.run` (admin only) admits a durable run, dispatches it to `entry.run`, and returns the run id.
+- `workflow.author`, `workflow.enable`, `workflow.disable` and `workflow.list` are application host routes (admin only). Enable takes the lifecycle lock, checks the graph against the host's `wamn.application`, stores the enable LSN and creates the workflow's consumer. Disable deletes it.
 - `workflow.start` goes: its route, its contract, its CLI verb and the `workflow_not_served` refusal.
 
-7.5 Author and enable in control.
+7.5 Authoring check and CLI.
 - `workflow.author` checks the graph:
   - exactly one entry node
   - a Request workflow has a Response on every path that ends
   - a Response appears only in a Request workflow
   - a Request path is unique
   Then it derives the index columns.
-- `workflow.enable` takes the lifecycle lock.
-- The authoring check reads the live WorkloadDeployment's `wamn.application` through the Kubernetes API.
+- Control's workflow routes go.
 - The CLI verbs follow the routes.
 
 7.6 Workflow leaves the release document.
@@ -616,7 +618,7 @@ Issues:
 - 3.6: nothing in the install fills the `wamn-control-administration-<org>` map that control reads its project logins from.
 - 3.6: the first signing key, the installer source for the identity envelope settings, and the `CN=control-<org>` certificate.
 - 3.7: the TypeScript clients cannot be generated again until codegen is reworked (the `admin_covered` contract changed in Epic 6).
-- Topic entry node: after 3.4. It depends on whether `wasmcloud:nats` can subscribe at run time or only from config.
+- Topic entry node: after 3.4. It uses one pull consumer for each Topic workflow, like Data change, plus a publish grant for application subjects.
 
 # Part 2: Review log
 
@@ -2009,5 +2011,7 @@ Facts:
   - refused after 30 seconds with no Response
   - a run row only when the graph continues after the Response or writes
 - The graph owns the trigger, and the author step derives index columns.
-- Runs execute where admitted, with a 30-second recovery sweep. This replaces OI-1a (polling each second).
+- Runs execute where admitted, with a 30-second recovery check. This replaces OI-1a (polling each second).
 - The service runs in every application workload. Nodes are called through the host. `node_digests_json` goes with `manifest_digest`. The authoring check reads the live WorkloadDeployment. Data-change consumers are bound in the workload config. The event crate merge is part of this epic.
+
+**Ruled (D, 2026-11-17): Epic 7 scout answers.** wasmCloud refuses NATS handlers on a service, so the service pulls. One durable pull consumer for each enabled Data change workflow, filtered to its entity, created at enable and deleted at disable by the host. Workflow author, enable, disable and list are application host routes; control's workflow routes go. The enable LSN replaces `enable_sequence`. Graph format 0.2 with typed entry nodes and a response node. Exact dispatch by sibling and export. One checkpoint at the Response. A Request call admits a run row at its start when any reachable node can write. Request permission `wamn-workflow:<application>/<workflow_id>`. No role grant to the `workflow` user; the host reads the `execution_role` grants directly. emit is refused until Topic.
