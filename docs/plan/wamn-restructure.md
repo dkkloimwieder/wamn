@@ -366,15 +366,10 @@ Issues:
 - Connection answers use the same `moka` cache as grants (`services/host/src/host/authentication.rs`).
 - These go: `ConnectionFacts::release`, `ConnectionFacts::version`, `ConnectionFacts::release_component_bindings_ready`, and what is left in `ConnectionMemory` from the deleted replica. The host makes no system database read for connections.
 - The host's integration loader goes. wamn does not pull or compile integration code.
-- `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status, reads the generation and credential from the cache, and takes the exclusive lock. Dropping the resource releases the lock. The lock wait is bounded by `MAX_HOST_CALL_DURATION`. 5.5 moves the lock to a pooled connection and adds the call limit.
+- `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status and reads the generation and credential from the cache. It does not touch Postgres.
 - Control `connection_test` refuses wasm types until the open item on health probes resolves.
 - The host socket floor stays (`allow_private: false`, `deny_special: true`). Integration siblings in the cloud reach public addresses only.
-- Exclusive resource, for each call:
-  - Take a local mutex keyed by `(target_id, resource_key)`.
-  - On a connection from the platform pool, run `BEGIN`, then `SET LOCAL lock_timeout` to the invocation's remaining time, then `SELECT pg_advisory_xact_lock(key)`.
-  - Hold the lock for the call, then run `ROLLBACK`.
-  - The key is the first 8 bytes of SHA-256 over `target_id` and `resource_key`, as `bigint`.
-  - If the `ROLLBACK` fails, discard the call's result and fail the call.
+- No exclusive lock in the host. Exclusive connections are refused in cloud environments (5.5).
 - HTTP client cache key: no change. No client is kept from one send to the next.
 - The invoke path carries the connection invocation again (the `Scope` record in `sql/invocation.rs`).
 - `session_operation_permissions` caches a grant set only under the same condition as `principal_grants`.
@@ -391,9 +386,9 @@ Issues:
 - `workflow.start` refuses with the existing unavailable refusal until 3.4, and the `workflow` field leaves the handler.
 - `user.list` lists users and roles from the project database, without the `admin_covered` field until 3.3. The host has no system database login.
 
-5.5 Call limit and a pooled exclusive lock. Runs in parallel with 5.4.
-- `begin` uses one pooled connection and one round trip: `BEGIN; SET LOCAL lock_timeout; SELECT platform.call_slot(...)` when the binding has a call limit, then `pg_advisory_xact_lock` when the connection is exclusive. The lock wait is bounded by `MAX_HOST_CALL_DURATION`. A cancelled caller drops the guard, which destroys the connection and releases both. A call with neither guard touches no Postgres.
-- Call limit: `registry.environment_application_connections.call_limit` caps the calls one application has in flight on one connection, across every host. The deploy writes it into the sibling's config. `begin` takes one of N advisory slots, keyed by the connection and the application, and retries with backoff until the deadline.
+5.5 Exclusive connections are refused in the cloud.
+- The deploy refuses a binding to an exclusive connection, and connection create refuses an exclusive connection, when the environment's target type is `cloud`. This covers every connection type.
+- The call limit, `platform.call_slot` and the host's exclusive lock are removed. The platform pool keeps its default size.
 
 Rulings on the scout questions (D, 2026-11-17):
 - Plugin code that Epic 1 deleted is restored from 0943187e1^, without snapshots, candidate bindings, hashes, semaphores or the KV replica.
@@ -438,6 +433,8 @@ Rulings on the scout questions (D, 2026-11-17):
 - Version authority for integrations: for each connection in each environment (current), or pinned by the platform release. 3.5.
 - Host component plugins (`host-component-plugins`) suit platform-wide wasm capabilities with fixed bindings. They are not used for connection-bound integrations.
 - 3.4: lookup of an operation by name is valid only for typed operations. The workflow service dispatches palette nodes by component.
+- Edge device design: how exclusive connections are enforced at the edge (inference: one edge runtime for each site, so a local mutex may be enough).
+- A call limit for each application, if a real case appears: either a per-host semaphore named as per-host, or a Postgres design decided with real numbers.
 
 # Part 2: Review log
 
@@ -1784,3 +1781,10 @@ Recommend a.
 - The exclusive lock moves to a pooled connection and one round trip (5.5). Fact: the 5.2 draft opened a new Postgres connection for each exclusive call.
 
 **Decided (2026-11-17): 5.4 `user.list`.** `user.list` works in the host without `admin_covered` until 3.3, and the host gets no system database login. Fact: admin role grants and revokes are always refused, so `user.list` was the only reader of the system identity reader.
+
+**Ruled (D, 2026-11-17): no Postgres guards in the cloud.** This replaces today's call-limit ruling and, for the cloud, the 2026-11-15 per-call advisory lock ruling.
+- Exclusive devices belong to local targets, so the deploy and connection create refuse exclusive connections in cloud environments.
+- The call limit is removed: external systems enforce their own limits.
+- `begin` touches no Postgres, and the platform pool keeps its default.
+- Fact: a guard held for each call kept one Postgres connection for the whole external call, so the pool would have had to grow with hosts × limits. Lease rows would have added two writes for each guarded call.
+- Rejected: pool sizing by the deploy, a separate lock pool, a bigger fixed pool, and lease rows.
