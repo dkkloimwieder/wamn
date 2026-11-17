@@ -73,7 +73,7 @@ Org → environment → project → application. One boundary per level.
   There is no Manual entry. "Run now" is an admin action for any workflow.
 - A Request workflow is addressed by a path under `/api/<application>/flow/`. Calling it is a permission granted to roles, like an operation. It runs as the caller (invoker) by default, or as its `execution_role`. The Response sets a status and a JSON body. With no Response within 30 seconds, the call is refused with a timeout. A Request call writes a run row only when the graph continues after its Response or writes data.
 - The graph owns the trigger. The author step derives the index columns that the host queries.
-- Workflows are authored, enabled and disabled through host routes of the application. Enabling a Data change workflow creates one NATS pull consumer filtered to its entity, and disabling deletes it. The host fetches from these consumers with the project's NATS credential, admits each run, acks, and hands the leased runs to the service. Events committed before the enable are skipped by their LSN.
+- Workflows are authored, enabled and disabled through host routes of the application. Enabling a Data change workflow creates one NATS pull consumer filtered to its entity, and disabling deletes it. The service pulls from these consumers through stock `wasmcloud:nats`: it admits each run through the host, acks, then runs it. Events committed before the enable are skipped by their LSN.
 - A workflow service component runs in every application workload. It walks graphs and calls nodes through the host.
   - A Data change or Schedule run executes at once, in the invocation that admitted it.
   - A Request run executes inline.
@@ -81,6 +81,13 @@ Org → environment → project → application. One boundary per level.
 - Runs use a small host interface. The run SQL and its login stay in the host. Each node call carries the run's identity and role.
 - A run executes on the live release. `runs.manifest_digest` and `runs.node_digests_json` go.
 - Not built now (future work): state after each node, backoff, the approval waiting state.
+
+## Data change in applications
+
+- Application developers are the main users of Data change. A component declares in `wamn.k` the entities and ops it handles and the role it runs as, and exports the stock `wasmcloud:nats/jetstream-handler`.
+- Deploy renders one durable JetStream subscription for each declared (entity, op) into the workload config, and the stock plugin creates the consumers. Only declared entities get consumers.
+- Delivery is at least once, with no run row. The message id lets a handler skip repeats.
+- One NATS account per environment. The environment host group has one stock `wasmcloud-nats` entry, and each workload narrows its grants to its project's stream and subjects.
 
 ## Identity and login
 
@@ -552,15 +559,16 @@ Issues:
 - A loop:
   - each minute, admit the due schedules and run them at once
   - every 30 seconds, take runs whose lease expired and run them
-- It asks the host for Data change runs (`take-data-changes`) and runs each leased run at once. The host fetches, admits and acks.
+- It pulls from the consumer of each enabled Data change workflow through stock `wasmcloud:nats/jetstream`: admit the run through the host, ack, then run it.
 - It exports `wamn:workflow` `entry`.
 - The graph walk is ported from the router deleted in 07c1f3ee3 (`07c1f3ee3^`), with the same node retries (3 by default).
 - Response node: status and a JSON body. Nodes after a Response continue as a durable run.
 - A Request call with no Response within 30 seconds is refused with a timeout.
 
-7.3 Chart and deploy.
+7.3 Chart, deploy and the environment NATS account.
 - `workloads.yaml` adds the workflow service as the `service` of every application WorkloadDeployment. The image is a platform image, built and pinned like the route guest.
-- Add the host interfaces the service needs. The host group gets a `wamn-workflow` entry that mounts each project's `wamn-nats-<key>` certificate through `secretFrom`. The Certificate moves from namespace `hosts` to the environment's namespace. The environment NATS user may also create and delete consumers on its source stream.
+- F7's NATS part: one NATS account and user per environment, the project source streams in that account, the environment Certificate in the org namespace; the per-project NATS users and Certificates go.
+- The host group gets one stock `wasmcloud-nats` entry on the environment credential. Each application workload narrows `stream-allow` and `subject-allow` to its project.
 
 7.4 Workflow routes in the host.
 - The host registers the native prefix `/api/<application>/flow/` on the path from 5.3. For each call it:
@@ -586,6 +594,11 @@ Issues:
 7.6 Workflow leaves the release document.
 - Node resolution comes from `wamn.application`. Palette nodes are dispatched by component.
 - Delete the workflow readers of `ServingManifest` and `ServingContext` (`workflow/admission.rs`, `workflow/resolution.rs`, `events/transport/admission.rs` and their callers). Afterwards only deploy identity (3.5) and the edge read them.
+
+7.8 Data change handlers in application components. Runs after 7.3.
+- `wamn.k` declares entity, ops and role for a component, which exports stock `wasmcloud:nats/jetstream-handler`.
+- Release planning renders one durable `jetstream-subscriptions` entry for each (entity, op) into the workload config; the stock plugin creates the consumers.
+- At least once, no run row. Handler calls to wamn host functions run as the `workflow` user with the declared role.
 
 7.7 Event crate merge. Runs last.
 - `wamn-events` and `wamn-event-wire` merge into `wamn-event`, and the event transport code that nothing calls is deleted.
@@ -618,7 +631,7 @@ Issues:
 - 3.6: nothing in the install fills the `wamn-control-administration-<org>` map that control reads its project logins from.
 - 3.6: the first signing key, the installer source for the identity envelope settings, and the `CN=control-<org>` certificate.
 - 3.7: the TypeScript clients cannot be generated again until codegen is reworked (the `admin_covered` contract changed in Epic 6).
-- Topic entry node: after 3.4. The host fetches one pull consumer for each Topic workflow, like Data change. Publishing from application components also goes through a host function on the project's NATS credential: the stock `wasmcloud:nats` plugin cannot choose a per-project credential on a host group that several projects share.
+- Topic entry node: after 3.4. Topics use stock `wasmcloud:nats`: application components publish within their workload's grants, and a Topic workflow pulls from its own consumer like Data change.
 - 3.5: a deploy checks the enabled workflows against the new `wamn.application`, under the environment key on the project database, and refuses when an enabled workflow names a sibling or export the release removes.
 - The environment source stream has unlimited retention (`broker/events.rs::source_stream_config`: `Limits`, no age, byte or message limit). Set a retention limit.
 
@@ -2021,3 +2034,5 @@ Facts:
 **Ruled (D, 2026-11-17): Epic 7 lock and deliver policy.** The host takes the environment key on the project database, and environment apply and delete take it there too. A new workflow consumer starts one after the source stream's last sequence, read before the enable LSN. Open items added: the 3.5 deploy check of enabled workflows, and the source stream retention limit.
 
 **Ruled (D, 2026-11-17): Epic 7 Data change delivery.** This replaces the guest pull in the scout answers. The stock `wasmcloud:nats` plugin cannot give a shared host group's guest a per-project credential: a base `inbox-prefix` is refused, named bindings come only from WIT labels, and the project user may subscribe only to its own inbox. So the host fetches with the project's client, admits, acks, and returns leased runs through `take-data-changes`. The guest drops `wasmcloud:nats`. The `wamn-nats-<key>` Certificate moves to the environment's namespace. Topic publish and subscribe later go through host functions too.
+
+**Ruled (D, 2026-11-17): stock `wasmcloud:nats` for Data change.** This replaces the host fetch ruling. The blocker came from per-project NATS users, which F7 already removed. Epic 7 builds F7's NATS account per environment, with one stock `wasmcloud-nats` host-group entry, and workloads narrow their grants to their project. Application developers are the main users of Data change: components declare entity, ops and role in `wamn.k` and export the stock `jetstream-handler`, and deploy renders durable subscriptions. This narrows the 2026-10-23 ruling: packages ship no workflows, but may declare Data change handlers. The workflow service pulls through stock imports.
