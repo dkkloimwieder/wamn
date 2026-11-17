@@ -1,16 +1,11 @@
-//! Integration administration under project authority and environment locks.
+//! Connection administration against one selected project database.
 
-use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _};
-use std::time::Duration;
-
-use anyhow::Context as _;
+use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 use serde_json::{Value, json};
+use sqlx::{Connection as _, Row as _};
 use wamn_catalog::HostAttachment;
+use wamn_connection::connections::{ConnectionError, administration};
 use wamn_identity_protocol::PrincipalId;
-
-use super::{ControlRoutes, ProjectTarget, Refusal, incomplete, parse};
-use wamn_connection::connections::{ConnectionError, administration, references};
 
 impl From<ConnectionError> for Refusal {
     fn from(error: ConnectionError) -> Self {
@@ -47,220 +42,119 @@ impl ControlRoutes<'_> {
 
     async fn integration_administration_in(
         &self,
-        writer: &mut Client,
+        writer: &mut sqlx::PgConnection,
         attachment: &HostAttachment,
         caller: &PrincipalId,
         payload: &str,
     ) -> Result<Value, Refusal> {
         let target: ProjectTarget = parse(payload)?;
-        let project = target.project;
         let operation = attachment.route.operation;
         let request: Value = serde_json::from_str(payload).map_err(|_| Refusal::Declared {
             code: "invalid_input",
             detail: json!({"field":"value"}),
         })?;
-        let mut transaction = self
+        administration::validate_request(operation, &request)?;
+        let mut authorized = self
             .begin_in_environment(
                 writer,
                 attachment,
                 caller,
-                Some(&project),
+                Some(&target.project),
                 target.env.as_ref(),
             )
             .await?;
         if operation == "connection.copy"
             && !self
                 .admits_environment(
-                    &mut transaction,
+                    &mut authorized,
                     caller,
-                    Some(&project),
+                    Some(&target.project),
                     target.source_env.as_ref(),
                 )
                 .await?
         {
             return Err(super::denied(attachment));
         }
+        if operation == "integration_type.list" {
+            let result = sqlx::query_scalar("SELECT registry.configure_integration_type($1,$2,$3)")
+                .bind(self.org)
+                .bind(operation)
+                .bind(&request)
+                .fetch_one(&mut *authorized)
+                .await?;
+            authorized.commit().await?;
+            return Ok(result);
+        }
+        let env = target.env.as_ref().ok_or_else(|| Refusal::Declared {
+            code: "invalid_input",
+            detail: json!({"field":"env"}),
+        })?;
+        if !attachment.route.type_.is_read() {
+            let held: bool = sqlx::query(wamn_registry::sql::ENVIRONMENT_LOCK_SQL)
+                .bind(self.org)
+                .bind(env)
+                .fetch_one(&mut *authorized)
+                .await?
+                .get(0);
+            if !held {
+                return Err(Refusal::Declared {
+                    code: "deployment_in_progress",
+                    detail: json!({"field":"env"}),
+                });
+            }
+        }
+        authorized.commit().await?;
+        let urls = self.logins(&[(target.project.clone(), env.clone())])?;
+        let mut client = wamn_postgres::connect(&urls[0]).await?;
+        let mut project = client.begin().await?;
+        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)").bind(caller).bind(&attachment.operation).execute(&mut *project).await?;
+        let mut source_client;
+        let mut source_tx;
+        let source = if operation == "connection.copy" {
+            let source_env = target.source_env.as_ref().expect("validated source env");
+            let urls = self.logins(&[(target.project.clone(), source_env.clone())])?;
+            source_client = wamn_postgres::connect(&urls[0]).await?;
+            source_tx =
+                wamn_identity::transaction::read_connection(&mut source_client, caller).await?;
+            Some(&mut *source_tx)
+        } else {
+            None
+        };
+        let mut result = administration::execute(
+            &mut project,
+            writer,
+            *caller,
+            self.org,
+            operation,
+            payload,
+            source,
+        )
+        .await?;
         if operation == "connection.authorize" {
             let oauth = self.oauth.ok_or_else(|| {
                 Refusal::Failed(anyhow::anyhow!("OAuth authorization unavailable"))
             })?;
-            let context =
-                administration::execute(&mut transaction, self.org, operation, payload).await?;
             let url = oauth
-                .authorize(&mut transaction, &context, *caller)
+                .authorize(&mut project, &result, *caller)
                 .await
-                .map_err(|error| Refusal::Failed(error.into()))?;
-            transaction.commit().await?;
+                .map_err(|e| Refusal::Failed(e.into()))?;
+            project.commit().await?;
             return Ok(json!({"authorization_url":url}));
         }
-        if attachment.route.type_.is_read() {
-            let mut result =
-                administration::execute(&mut transaction, self.org, operation, payload).await?;
-            if operation == "connection.get" && result["auth_type"] == "oauth2_authorization_code" {
-                result["redirect_uri"] = self
-                    .oauth
-                    .ok_or_else(|| {
-                        Refusal::Failed(anyhow::anyhow!("OAuth authorization unavailable"))
-                    })?
-                    .redirect_uri()
-                    .into();
-            }
-            transaction.commit().await?;
-            return Ok(result);
+        project.commit().await?;
+        if operation.ends_with(".delete") {
+            administration::finish_delete(writer, *caller, self.org, &result).await?;
         }
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('connections:' || $1,0))")
-            .bind(self.org)
-            .fetch_one(&mut *transaction)
-            .await?;
-        let deleting = operation.ends_with(".delete");
-        let group = operation.split_once('.').expect("route group").0;
-        if deleting {
-            administration::configure(
-                &mut transaction,
-                self.org,
-                "integration.lock_project",
-                &json!({"project":project}),
-            )
-            .await?;
+        if let Some(row) = result.as_object_mut() {
+            let _ = row.remove("credentials");
         }
-        let projection_env = if group == "connection" && !deleting {
-            request["env"].as_str()
-        } else {
-            None
-        };
-        let environments: Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)> = sqlx::query_as(wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN).bind(self.org).bind(&project).bind(projection_env).fetch_all(&mut *transaction)
-            .await?;
-        if group == "connection" {
-            for (_, env) in &environments {
-                let held: bool = sqlx::query(wamn_registry::sql::ENVIRONMENT_TRANSACTION_LOCK_SQL)
-                    .bind(self.org)
-                    .bind(env)
-                    .fetch_one(&mut *transaction)
-                    .await?
-                    .get(0);
-                if !held {
-                    return Err(Refusal::Declared {
-                        code: "deployment_in_progress",
-                        detail: json!({"field":"env"}),
-                    });
-                }
-            }
-        }
-        let identity = if deleting {
-            let id = deletion_identity(&mut transaction, self.org, group, &request).await?;
-            for (_, env) in &environments {
-                let held: bool = sqlx::query(wamn_registry::sql::ENVIRONMENT_LOCK_SQL)
-                    .bind(self.org)
-                    .bind(env)
-                    .fetch_one(&mut *transaction)
-                    .await?
-                    .get(0);
-                if !held {
-                    return Err(Refusal::Declared {
-                        code: "deployment_in_progress",
-                        detail: json!({"field":"env"}),
-                    });
-                }
-            }
-            Some(id)
-        } else {
-            None
-        };
-        // Keep every deletion preflight transaction open until the authority commits.
-        let logins = self.logins(&environments)?;
-        let mut clients = Vec::new();
-        for url in logins {
-            let client = tokio::time::timeout(Duration::from_secs(5), wamn_postgres::connect(&url))
-                .await
-                .context("environment connection timed out")??;
-            clients.push(client);
-        }
-        let mut targets = Vec::new();
-        for client in &mut clients {
-            let mut target = client.begin().await?;
-            sqlx::query(
-                "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)",
-            )
-            .bind(caller)
-            .bind(&attachment.operation)
-            .execute(&mut *target)
-            .await
-            .map(|result| result.rows_affected())?;
-            if let Some(id) = &identity {
-                references::refuse_environment_references(&mut target, group, id).await?;
-            }
-            targets.push(target);
-        }
-        let mut result = if group == "connection"
-            && let Some(target) = targets.first_mut()
-        {
-            administration::execute_in_environment(
-                &mut transaction,
-                target,
-                self.org,
-                operation,
-                payload,
-            )
-            .await?
-        } else {
-            administration::execute(&mut transaction, self.org, operation, payload).await?
-        };
-        if let Some(principal) = result["principal_id"].as_str() {
-            let _ = principal.parse::<PrincipalId>()?;
-        }
-        let credentials = result
-            .as_object_mut()
-            .and_then(|result| result.remove("credentials"));
-        transaction.commit().await?;
-        let mut completed = Vec::new();
-        for (mut target, (project, env)) in targets.into_iter().zip(&environments) {
-            let projected = async {
-                if let Some(id) = &identity {
-                    references::remove_projection(&mut target, group, id).await?;
-                }
-                target.commit().await?;
-                Ok::<_, ConnectionError>(())
-            }
-            .await;
-            if let Err(error) = projected {
-                tracing::warn!(%error,%project,%env,"integration projection failed");
-                return Err(incomplete(project, env, &completed));
-            }
-            completed.push(format!("{project}/{env}"));
-        }
-        if let Some(credentials) = credentials {
-            references::destroy_credentials(&credentials).await?;
+        if operation == "connection.get" && result["auth_type"] == "oauth2_authorization_code" {
+            result["redirect_uri"] = self
+                .oauth
+                .ok_or_else(|| Refusal::Failed(anyhow::anyhow!("OAuth authorization unavailable")))?
+                .redirect_uri()
+                .into();
         }
         Ok(result)
     }
-}
-
-async fn deletion_identity(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &wamn_registry::OrgId,
-    group: &str,
-    request: &Value,
-) -> Result<String, Refusal> {
-    let result = match group {
-        "connection" => administration::configure(tx, org, "connection.get", request).await?,
-        "integration" => administration::configure(tx, org, "integration.get", request).await?,
-        "external_system" => {
-            let rows = administration::configure(tx, org, "external_system.list", request).await?;
-            rows["external_systems"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|row| row["name"] == request["name"])
-                .cloned()
-                .unwrap_or(Value::Null)
-        }
-        _ => unreachable!("administration route group"),
-    };
-    result["id"]
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| Refusal::Declared {
-            code: "not_found",
-            detail: json!({"field":"name"}),
-        })
 }

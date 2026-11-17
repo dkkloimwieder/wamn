@@ -5,8 +5,7 @@
   ],
   "catalog-list.input": [
     "external_system/list.input.json",
-    "integration/list.input.json",
-    "integration_type/list.input.json"
+    "integration/list.input.json"
   ],
   "connection-integration.errors": [
     "connection/authorize.errors.json",
@@ -25,7 +24,6 @@
     "integration/enable.errors.json",
     "integration/get.errors.json",
     "integration/list.errors.json",
-    "integration/write.errors.json",
     "integration_type/list.errors.json"
   ],
   "connection.authorize-get.input": [
@@ -71,8 +69,7 @@
     "external_system/write.result.json",
     "integration/delete.result.json",
     "integration/disable.result.json",
-    "integration/enable.result.json",
-    "integration/write.result.json"
+    "integration/enable.result.json"
   ],
   "list.errors": [
     "control/mine.errors.json",

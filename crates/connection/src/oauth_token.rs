@@ -161,7 +161,10 @@ where
     F: FnOnce(Option<Token>) -> Fut,
     Fut: Future<Output = anyhow::Result<Fetched>>,
 {
-    let mut database = request.reader.oauth_database().await?;
+    let mut database = request
+        .reader
+        .oauth_database(request.project, request.environment)
+        .await?;
     let mut tx = database.begin().await?;
     sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')")
         .bind(request.principal)
@@ -198,14 +201,8 @@ async fn lock(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     request: &Request<'_>,
 ) -> anyhow::Result<()> {
-    let generation: Option<i64> =
-        sqlx::query_scalar(wamn_registry::sql::PLATFORM_RUNTIME_SRC_OAUTH_TOKEN_LOCK)
-            .bind(request.reader.org()?)
-            .bind(request.project)
-            .bind(request.environment)
-            .bind(request.connection)
-            .fetch_one(&mut **tx)
-            .await?;
+    let generation: Option<i64> = sqlx::query_scalar("SELECT active_generation FROM platform.connection WHERE id=$1 AND status='active' FOR NO KEY UPDATE")
+        .bind(request.connection).fetch_optional(&mut **tx).await?;
     anyhow::ensure!(
         generation == Some(request.generation),
         "OAuth connection generation changed"
@@ -229,7 +226,7 @@ async fn read_row(
              extract(epoch FROM expires_at)::double precision-extract(epoch FROM clock_timestamp())::double precision AS seconds_left,\
              refresh_status='ok' AS healthy,\
              refresh_status='failing' AND updated_at > clock_timestamp()-interval '30 seconds' AS cooling \
-             FROM identity.oauth_token WHERE connection_id=$1",
+             FROM platform.oauth_token WHERE connection_id=$1",
         ).bind(connection).fetch_optional(&mut **tx)
         .await?
     else {
@@ -306,7 +303,7 @@ pub async fn write_row(
     remaining: f64,
 ) -> anyhow::Result<()> {
     sqlx::query(
-        "INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,refresh_status,updated_at) \
+        "INSERT INTO platform.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,refresh_status,updated_at) \
          VALUES($1,$2,$3,$4,$5,clock_timestamp()+$6::double precision*interval '1 second','ok',clock_timestamp()) \
          ON CONFLICT(connection_id) DO UPDATE SET ciphertext=EXCLUDED.ciphertext,nonce=EXCLUDED.nonce,\
          wrapped_key=EXCLUDED.wrapped_key,key_id=EXCLUDED.key_id,expires_at=EXCLUDED.expires_at,\
@@ -323,12 +320,12 @@ async fn record_failure(
 ) -> anyhow::Result<()> {
     if let Some(marker) = marker {
         sqlx::query(
-            "INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,refresh_status,updated_at) \
+            "INSERT INTO platform.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,refresh_status,updated_at) \
              VALUES($1,$2,$3,$4,$5,'-infinity','failing',clock_timestamp())").bind(connection).bind(&marker.ciphertext).bind(&marker.nonce)
             .bind(&marker.wrapped_key).bind(&marker.key_id).execute(&mut **tx).await?;
     } else {
         sqlx::query(
-            "UPDATE identity.oauth_token SET refresh_status='failing',updated_at=clock_timestamp() WHERE connection_id=$1",
+            "UPDATE platform.oauth_token SET refresh_status='failing',updated_at=clock_timestamp() WHERE connection_id=$1",
         ).bind(connection).fetch_optional(&mut **tx)
         .await?;
     }

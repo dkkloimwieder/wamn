@@ -19,7 +19,7 @@ pub async fn delete_registry_rows(
     let mut transaction = crate::provision_project_env::provisioning_transaction(system)
         .await
         .context("begin the row delete")?;
-    let credentials: i64 = sqlx::query(sqlx::AssertSqlSafe(
+    let principals: i64 = sqlx::query(sqlx::AssertSqlSafe(
         (wamn_registry::sql::delete_environment_connections_sql()).to_string(),
     ))
     .bind(org)
@@ -27,7 +27,7 @@ pub async fn delete_registry_rows(
     .bind(env)
     .fetch_one(&mut *transaction)
     .await
-    .context("delete the environment's connections")?
+    .context("disable the environment's connection principals")?
     .get(0);
     sqlx::query(
         "DELETE FROM wamn_authority.author_login_projects \
@@ -55,7 +55,7 @@ pub async fn delete_registry_rows(
         .await
         .context("commit the row delete")?;
     lines.push(format!(
-        "deleted {credentials} connection credentials and the environment row of {triple}"
+        "disabled {principals} connection principals and the environment row of {triple}"
     ));
     Ok(lines)
 }

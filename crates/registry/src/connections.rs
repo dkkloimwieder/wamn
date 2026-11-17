@@ -1,9 +1,8 @@
-//! Typed connection facts and credential references from the system database.
-
-use std::collections::BTreeMap;
+//! Connection rows from project databases and type metadata from the system database.
 
 use serde_json::Value;
 use sqlx::{PgConnection, Row as _};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 /// Mutable authority and lease coordinates of one environment connection.
@@ -44,96 +43,97 @@ pub struct CredentialReference {
     pub version: String,
 }
 
-/// Read one connection's current authority through the authenticated reader login.
+/// Read current project authority and its system-owned type, target and principal.
 ///
 /// # Errors
 /// Returns database errors.
 pub async fn fact(
-    connection: &mut PgConnection,
+    project_database: &mut PgConnection,
+    system: &mut PgConnection,
     org: &crate::OrgId,
     project: &crate::ProjectId,
     env: &crate::EnvName,
     id: &Uuid,
 ) -> Result<Option<ConnectionFact>, sqlx::Error> {
-    sqlx::query("SELECT active_generation, active, credential_id, exclusive, target_id, resource_key, target_type, service_principal_id FROM registry.read_connection_fact($1,$2,$3,$4)")
-        .bind(org).bind(project).bind(env).bind(id).fetch_optional(connection).await?
-        .map(|row| Ok(ConnectionFact {
-            active_generation: row.try_get(0)?, active: row.try_get(1)?, credential_id: row.try_get(2)?,
-            exclusive: row.try_get(3)?, target_id: row.try_get(4)?, resource_key: row.try_get(5)?,
-            target_type: row.try_get(6)?, service_principal_id: row.try_get(7)?,
-        })).transpose()
+    let Some(row)=sqlx::query("SELECT c.active_generation,c.status='active' AS active,g.credential_id,c.target_id,c.resource_key,c.service_principal_id,c.integration_type FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.id=$1").bind(id).fetch_optional(project_database).await? else{return Ok(None)};
+    let metadata=sqlx::query("SELECT t.exclusive,target.type,p.status='active' AS active FROM registry.integration_type t CROSS JOIN registry.target target JOIN identity.principals p ON p.id=$3 JOIN registry.connection_principal link ON link.principal_id=p.id AND link.org=$4 AND link.project=$5 AND link.env=$6 WHERE t.code=$1 AND target.id=$2")
+        .bind(row.try_get::<String,_>("integration_type")?).bind(row.try_get::<Uuid,_>("target_id")?).bind(row.try_get::<Uuid,_>("service_principal_id")?).bind(org).bind(project).bind(env).fetch_optional(system).await?;
+    let Some(metadata) = metadata else {
+        return Ok(None);
+    };
+    Ok(Some(ConnectionFact {
+        active_generation: row.try_get("active_generation")?,
+        active: row.try_get::<bool, _>("active")? && metadata.try_get::<bool, _>("active")?,
+        credential_id: row.try_get("credential_id")?,
+        exclusive: metadata.try_get("exclusive")?,
+        target_id: row.try_get("target_id")?,
+        resource_key: row.try_get("resource_key")?,
+        target_type: metadata.try_get("type")?,
+        service_principal_id: row.try_get("service_principal_id")?,
+    }))
 }
 
-/// Read an immutable connection generation through the authenticated reader login.
+/// Read immutable generation data locally and its runtime type from the system pool.
 ///
 /// # Errors
 /// Returns database errors.
 pub async fn generation(
-    connection: &mut PgConnection,
-    org: &crate::OrgId,
-    project: &crate::ProjectId,
-    env: &crate::EnvName,
+    project: &mut PgConnection,
+    system: &mut PgConnection,
     id: &Uuid,
     generation: i64,
 ) -> Result<Option<ConnectionGeneration>, sqlx::Error> {
-    sqlx::query("SELECT name, integration_type, runtime_type, auth_type, external_system, parameters FROM registry.read_connection_generation($1,$2,$3,$4,$5)")
-        .bind(org).bind(project).bind(env).bind(id).bind(generation).fetch_optional(connection).await?
-        .map(|row| Ok(ConnectionGeneration {
-            name: row.try_get(0)?, integration_type: row.try_get(1)?, runtime_type: row.try_get(2)?,
-            auth_type: row.try_get(3)?, external_system: row.try_get(4)?, parameters: row.try_get(5)?,
-        })).transpose()
+    let Some(row)=sqlx::query("SELECT c.name,c.integration_type,c.auth_type,c.external_system_id::text AS external_system,g.parameters FROM platform.connection c JOIN platform.connection_generation g ON g.connection_id=c.id WHERE c.id=$1 AND g.generation=$2").bind(id).bind(generation).fetch_optional(project).await? else{return Ok(None)};
+    let integration_type =
+        row.try_get::<crate::integration_code::IntegrationCode, _>("integration_type")?;
+    let runtime_type =
+        sqlx::query_scalar("SELECT runtime_type FROM registry.integration_type WHERE code=$1")
+            .bind(&integration_type)
+            .fetch_one(system)
+            .await?;
+    Ok(Some(ConnectionGeneration {
+        name: row.try_get("name")?,
+        integration_type,
+        runtime_type,
+        auth_type: row.try_get("auth_type")?,
+        external_system: row.try_get("external_system")?,
+        parameters: row.try_get("parameters")?,
+    }))
 }
 
-/// Read an admitted credential's immutable secret reference.
+/// Read an immutable secret reference in the selected project database.
 ///
 /// # Errors
 /// Returns database errors.
 pub async fn credential(
-    connection: &mut PgConnection,
-    org: &crate::OrgId,
-    project: &crate::ProjectId,
-    env: &crate::EnvName,
+    project: &mut PgConnection,
     id: &Uuid,
 ) -> Result<Option<CredentialReference>, sqlx::Error> {
-    let row =
-        sqlx::query("SELECT store, ref, version FROM registry.read_connection_secret($1,$2,$3,$4)")
-            .bind(org)
-            .bind(project)
-            .bind(env)
-            .bind(id)
-            .fetch_optional(connection)
-            .await?;
-    match row {
-        Some(row) if row.try_get::<Option<String>, _>(0)?.is_some() => {
-            Ok(Some(CredentialReference {
-                reference: row.try_get(1)?,
-                version: row.try_get(2)?,
-            }))
-        }
-        _ => Ok(None),
-    }
+    Ok(sqlx::query_as::<_, (String, String)>(
+        "SELECT ref,version FROM platform.credential WHERE id=$1",
+    )
+    .bind(id)
+    .fetch_optional(project)
+    .await?
+    .map(|(reference, version)| CredentialReference { reference, version }))
 }
 
-/// Read the environment's active integration names and connection identities.
+/// Read local connection names and identities.
 ///
 /// # Errors
 /// Returns database errors.
 pub async fn environment(
-    connection: &mut PgConnection,
-    org: &crate::OrgId,
-    project: &crate::ProjectId,
-    env: &crate::EnvName,
+    project: &mut PgConnection,
 ) -> Result<BTreeMap<String, Uuid>, sqlx::Error> {
-    Ok(sqlx::query_as::<_, (String, Uuid)>(
-        "SELECT name, id FROM registry.read_env_connections($1,$2,$3)",
+    Ok(
+        sqlx::query_as::<_, (String, Uuid)>(
+            "SELECT name,id FROM platform.connection ORDER BY name",
+        )
+        .fetch_all(project)
+        .await?
+        .into_iter()
+        .collect(),
     )
-    .bind(org)
-    .bind(project)
-    .bind(env)
-    .fetch_all(connection)
-    .await?
-    .into_iter()
-    .collect())
 }
 
 /// Read a published integration version, or its newest version when omitted.
@@ -146,29 +146,11 @@ pub async fn integration_version(
     version: Option<i32>,
 ) -> Result<Option<IntegrationVersion>, sqlx::Error> {
     Ok(sqlx::query_as::<_, (i32, Option<wamn_digest::Digest>)>(
-        "SELECT version, digest FROM registry.read_integration_version($1,$2)",
+        "SELECT version,digest FROM registry.integration_type_version WHERE integration_type=$1 AND ($2::integer IS NULL OR version=$2) ORDER BY version DESC LIMIT 1",
     )
     .bind(integration_type)
     .bind(version)
     .fetch_optional(connection)
     .await?
     .map(|(version, digest)| IntegrationVersion { version, digest }))
-}
-
-/// Read the project and environment projection as the registry's JSON document.
-///
-/// # Errors
-/// Returns database errors.
-pub async fn projection(
-    connection: &mut PgConnection,
-    org: &crate::OrgId,
-    project: &crate::ProjectId,
-    env: &crate::EnvName,
-) -> Result<Value, sqlx::Error> {
-    sqlx::query_scalar("SELECT registry.connection_projection($1,$2,$3)")
-        .bind(org)
-        .bind(project)
-        .bind(env)
-        .fetch_one(connection)
-        .await
 }

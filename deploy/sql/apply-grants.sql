@@ -6,8 +6,7 @@ GRANT USAGE ON SCHEMA registry, identity, catalog, platform, wamn_authority TO w
 GRANT INSERT ON platform.tx_identity TO wamn_apply;
 GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(),
     wamn_authority.current_role(), wamn_authority.current_application() TO wamn_apply;
-GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid),
-    registry.control_connection(uuid) TO wamn_apply;
+GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid) TO wamn_apply;
 GRANT SELECT ON registry.orgs, registry.env_policies, registry.environment_projects,
     registry.target, registry.meta, identity.org_roles, identity.project_roles,
     identity.project_env_memberships, identity.principals,
@@ -28,9 +27,7 @@ GRANT INSERT (login_identity, project_env_key, org_id, project_id, environment)
 GRANT UPDATE (org_id, project_id, environment)
     ON wamn_authority.author_login_projects TO wamn_apply;
 GRANT SELECT, INSERT, UPDATE ON registry.event_readers TO wamn_apply;
-GRANT EXECUTE ON FUNCTION
-    registry.resolve_environment_connection(text,text,text,text,text,integer),
-    registry.connection_projection(text,text,text) TO wamn_apply;
+
 -- The grant projection locks the org membership row (wamn-ms1sn.2).
 GRANT SELECT (principal_id, org, status), UPDATE (status)
     ON identity.org_memberships TO wamn_apply;
@@ -45,3 +42,6 @@ DO $$ BEGIN
         GRANT SELECT ON registry._sqlx_migrations TO wamn_apply;
     END IF;
 END $$;
+
+GRANT SELECT, INSERT, DELETE ON registry.connection_principal TO wamn_apply;
+GRANT UPDATE (status, disabled_at) ON identity.principals TO wamn_apply;

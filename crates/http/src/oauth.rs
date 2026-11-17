@@ -237,6 +237,7 @@ impl Request {
 pub(crate) fn authorize(
     parameters: &serde_json::Value,
     redirect: &str,
+    scope: &str,
 ) -> Result<(String, String, String), ConnectionError> {
     let auth: Parameters = serde_json::from_value(parameters.clone()).map_err(|_| unavailable())?;
     let url =
@@ -253,7 +254,12 @@ pub(crate) fn authorize(
         .set_redirect_uri(RedirectUrl::new(redirect.to_owned()).map_err(|_| unavailable())?);
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     let (url, state) = client
-        .authorize_url(|| CsrfToken::new_random_len(32))
+        .authorize_url(|| {
+            CsrfToken::new(format!(
+                "{scope}/{}",
+                CsrfToken::new_random_len(32).secret()
+            ))
+        })
         .add_scopes(auth.scopes.into_iter().map(Scope::new))
         .set_pkce_challenge(challenge)
         .url();

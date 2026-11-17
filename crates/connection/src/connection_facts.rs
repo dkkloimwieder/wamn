@@ -84,10 +84,15 @@ impl ConnectionFacts {
         environment: &wamn_registry::EnvName,
     ) -> Self {
         let database = Arc::downgrade(postgres);
+        let database: std::sync::Weak<dyn ProjectDatabase> = database;
         Self {
             oauth_encryption: None,
             memory,
-            reader,
+            reader: Arc::new(Arc::unwrap_or_clone(reader).with_project_database(
+                std::sync::Weak::clone(&database),
+                project,
+                environment,
+            )),
             postgres: database,
             project_env_key: project_env_key.to_owned(),
             project: project.to_owned(),
@@ -301,10 +306,9 @@ SELECT NOT EXISTS ( \
         SELECT FROM catalog.connection_binding binding \
         JOIN catalog.release_connection selected USING(manifest_digest,connection_id) \
         JOIN platform.connection connection ON connection.id=selected.connection_id \
-        JOIN platform.integration integration ON integration.id=connection.integration_id \
         WHERE binding.manifest_digest=$1 \
           AND binding.component_digest=requirement.component_digest AND binding.package_id=requirement.package_id \
-          AND binding.name=requirement.name AND connection.status='active' AND integration.status='active' \
+          AND binding.name=requirement.name AND connection.status='active' \
        ) \
 )";
 

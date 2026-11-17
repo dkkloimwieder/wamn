@@ -53,31 +53,151 @@ CREATE TRIGGER packages_delete_immutable
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 
--- Connection projections precede the catalog references to them.
+-- Project-owned connections precede the catalog references to them.
 CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION CURRENT_USER;
 
 CREATE TABLE platform.external_system (
-    id uuid PRIMARY KEY,
-    name text NOT NULL UNIQUE
-);
-
-CREATE TABLE platform.integration (
-    id uuid PRIMARY KEY,
-    integration_type text NOT NULL,
-    external_system_id uuid REFERENCES platform.external_system (id),
-    name text NOT NULL UNIQUE,
-    status text NOT NULL
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name text NOT NULL UNIQUE CHECK (name ~ '^[a-z][a-z0-9_-]{0,62}$')
 );
 
 CREATE TABLE platform.connection (
-    id uuid PRIMARY KEY,
-    integration_id uuid NOT NULL UNIQUE REFERENCES platform.integration (id),
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name text NOT NULL UNIQUE CHECK (name ~ '^[a-z][a-z0-9_-]{0,62}$'),
     integration_type text NOT NULL,
-    status text NOT NULL
+    auth_type text NOT NULL,
+    external_system_id uuid REFERENCES platform.external_system (id),
+    target_id uuid NOT NULL,
+    resource_key text,
+    active_generation bigint NOT NULL,
+    service_principal_id uuid NOT NULL UNIQUE,
+    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled'))
+);
+CREATE UNIQUE INDEX connection_resource_per_target
+    ON platform.connection (target_id, resource_key)
+    WHERE resource_key IS NOT NULL;
+
+CREATE TABLE platform.credential (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE CASCADE,
+    store         text NOT NULL CHECK (store = 'k8s'),
+    ref           text NOT NULL,
+    version       text NOT NULL,
+    hint          text,
+    created_at    timestamptz NOT NULL,
+    created_by    uuid NOT NULL,
+    UNIQUE (id, connection_id)
+);
+CREATE TABLE platform.oauth_token (                    -- host-only; every OAuth type, shared across pods
+    connection_id  uuid PRIMARY KEY REFERENCES platform.connection (id) ON DELETE CASCADE,
+    ciphertext     bytea NOT NULL,                       -- AES-256-GCM: access token; refresh token for authorization code
+    nonce          bytea NOT NULL,
+    wrapped_key    bytea NOT NULL,                       -- the row's AES-256 data key, wrapped by the envelope key
+    key_id         text NOT NULL,                        -- the envelope key: a Cloud KMS key version (local: key file id)
+    expires_at     timestamptz NOT NULL,
+    refresh_status text NOT NULL DEFAULT 'ok' CHECK (refresh_status IN ('ok', 'failing')),
+    updated_at     timestamptz NOT NULL                  -- fetch and refresh lock the connection row, not this one
+);
+-- authorization code: no row = not authorized; calls refused until connection.authorize completes
+-- client credentials (secret or JWT): no row = no token yet; the first call fetches one
+-- every fetch and refresh: FOR NO KEY UPDATE on the platform.connection row (it always exists), re-read this row,
+-- call the provider only if the token is missing or due; connection.write and set_credential lock the same row
+--   client credentials: delete this row when the credential or parameters.auth changes
+--   authorization code: delete this row when parameters.auth changes (authorize again);
+--                       set expires_at = '-infinity' when only the secret changes (the refresh token stays)
+
+CREATE TABLE platform.oauth_authorization (            -- one pending connection.authorize; single use
+    state         text PRIMARY KEY,                      -- project/environment/32 random bytes, base64url
+    connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE CASCADE,
+    generation    bigint NOT NULL,                       -- a newer active generation refuses the callback
+    code_verifier bytea NOT NULL,                        -- PKCE, encrypted like the token (wrapped_key, nonce, key_id below)
+    wrapped_key   bytea NOT NULL,
+    nonce         bytea NOT NULL,
+    key_id        text NOT NULL,
+    created_by    uuid NOT NULL,
+    expires_at    timestamptz NOT NULL                   -- 10 minutes after creation
 );
 
+CREATE TABLE platform.connection_generation (
+    connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE CASCADE,
+    generation    bigint NOT NULL CHECK (generation > 0),
+    parameters    jsonb NOT NULL DEFAULT '{}',
+    credential_id uuid,
+    created_at    timestamptz NOT NULL,
+    created_by    uuid NOT NULL,
+    PRIMARY KEY (connection_id, generation),
+    FOREIGN KEY (credential_id, connection_id)
+        REFERENCES platform.credential (id, connection_id)
+);
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT ON platform.credential
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by');
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT ON platform.connection_generation
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by');
+ALTER TABLE platform.connection ADD FOREIGN KEY (id, active_generation)
+    REFERENCES platform.connection_generation (connection_id, generation) DEFERRABLE INITIALLY DEFERRED;
+
+CREATE FUNCTION platform.reject_connection_generation_change() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND NOT EXISTS (
+        SELECT FROM platform.connection WHERE id = OLD.connection_id
+    ) THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'connection_generation_is_immutable' USING ERRCODE = '55000';
+END $$;
+REVOKE ALL ON FUNCTION platform.reject_connection_generation_change() FROM PUBLIC;
+CREATE TRIGGER connection_generation_immutable BEFORE UPDATE OR DELETE ON platform.connection_generation
+    FOR EACH ROW EXECUTE FUNCTION platform.reject_connection_generation_change();
+CREATE TRIGGER credential_immutable BEFORE UPDATE OR DELETE ON platform.credential
+    FOR EACH ROW EXECUTE FUNCTION platform.reject_connection_generation_change();
+
+CREATE FUNCTION platform.keep_active_generation() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF NEW.active_generation < OLD.active_generation THEN
+        RAISE EXCEPTION 'active_generation_cannot_decrease' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION platform.keep_active_generation() FROM PUBLIC;
+CREATE TRIGGER connection_generation_forward BEFORE UPDATE OF active_generation ON platform.connection
+    FOR EACH ROW EXECUTE FUNCTION platform.keep_active_generation();
+
+CREATE FUNCTION platform.keep_connection_identity() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF ROW(NEW.name, NEW.integration_type, NEW.auth_type) IS DISTINCT FROM
+       ROW(OLD.name, OLD.integration_type, OLD.auth_type) THEN
+        RAISE EXCEPTION 'connection_identity_is_immutable' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION platform.keep_connection_identity() FROM PUBLIC;
+CREATE TRIGGER connection_identity_immutable BEFORE UPDATE ON platform.connection
+    FOR EACH ROW EXECUTE FUNCTION platform.keep_connection_identity();
+
+CREATE FUNCTION platform.keep_external_system_name() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF NEW.name IS DISTINCT FROM OLD.name THEN
+        RAISE EXCEPTION 'name_is_immutable' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION platform.keep_external_system_name() FROM PUBLIC;
+CREATE TRIGGER external_system_name_immutable BEFORE UPDATE OF name ON platform.external_system
+    FOR EACH ROW EXECUTE FUNCTION platform.keep_external_system_name();
+
 GRANT USAGE ON SCHEMA platform TO wamn_app;
-GRANT SELECT ON platform.external_system, platform.integration, platform.connection TO wamn_app;
+GRANT SELECT ON platform.external_system, platform.connection, platform.connection_generation TO wamn_app;
+REVOKE ALL ON platform.credential, platform.oauth_token, platform.oauth_authorization FROM wamn_app, wamn_query;
+GRANT SELECT, INSERT, UPDATE, DELETE ON platform.external_system, platform.connection,
+    platform.connection_generation, platform.credential, platform.oauth_token, platform.oauth_authorization TO wamn_platform;
 
 CREATE TABLE catalog.connection_requirement (
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),

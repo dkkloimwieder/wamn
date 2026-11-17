@@ -87,9 +87,9 @@ pub fn history_table(
 pub(crate) fn default_privileges_sql(login: &wamn_identity_protocol::LoginName) -> String {
     let role = postgres_protocol::escape::escape_identifier(login.as_str());
     format!(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO wamn_app; \
+        "ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE ALL ON TABLES FROM wamn_app; \
          ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO wamn_app; \
-         ALTER DEFAULT PRIVILEGES FOR ROLE {role} GRANT SELECT ON TABLES TO wamn_query; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE ALL ON TABLES FROM wamn_query; \
          ALTER DEFAULT PRIVILEGES FOR ROLE {role} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
     )
 }
@@ -102,7 +102,9 @@ pub async fn grant_model_schema_access(
 ) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "GRANT USAGE ON SCHEMA {schema} TO wamn_app, wamn_query; \
-         GRANT USAGE, CREATE ON SCHEMA {schema} TO {login}",
+         GRANT USAGE, CREATE ON SCHEMA {schema} TO {login}; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {login} IN SCHEMA {schema} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO wamn_app; \
+         ALTER DEFAULT PRIVILEGES FOR ROLE {login} IN SCHEMA {schema} GRANT SELECT ON TABLES TO wamn_query",
         schema = postgres_protocol::escape::escape_identifier(schema),
         login = postgres_protocol::escape::escape_identifier(login.as_str()),
     )))

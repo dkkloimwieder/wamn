@@ -468,7 +468,7 @@ CREATE TABLE platform.setting (
         CHECK (target_type IN ('org', 'project', 'application', 'role', 'user'))
 );
 
-GRANT SELECT ON platform.external_system, platform.integration, platform.connection TO wamn_app;
+GRANT SELECT ON platform.external_system, platform.connection TO wamn_app;
 
 -- The stamp trigger of each table, and the SELECT of wamn_app.
 DO $platform_configuration$

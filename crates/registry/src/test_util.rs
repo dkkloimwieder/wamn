@@ -80,26 +80,6 @@ pub fn invalid_configuration_sql() -> &'static [&'static str] {
     ]
 }
 
-/// Database fixture statement for credentials.
-pub fn connection_principal_sql() -> &'static str {
-    "SELECT service_principal_id FROM registry.connection WHERE id=$1"
-}
-
-/// Database fixture statement for credentials.
-pub fn disable_project_integrations_sql() -> &'static str {
-    "SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a'; RESET ROLE"
-}
-
-/// Database fixture statement for credentials.
-pub fn disable_files_integration_sql() -> &'static str {
-    "SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a' AND name='files'; RESET ROLE"
-}
-
-/// Database fixture statement for credentials.
-pub fn hmac_http_only_sql() -> &'static str {
-    "SELECT http_only FROM registry.auth_type WHERE code='hmac'"
-}
-
 /// Database fixture statement for provision.
 pub fn seed_disposable_policy_sql() -> &'static str {
     "INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18');"
@@ -115,11 +95,6 @@ pub fn seed_pat_project_sql() -> &'static str {
     "INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('org', 'pooled', 'test'); INSERT INTO registry.projects (org, id) VALUES ('org', 'project')"
 }
 
-/// Seed the credential fixture's authentication and deployment target.
-pub fn seed_credential_target_sql() -> &'static str {
-    "INSERT INTO registry.integration_type_auth VALUES ('http','custom'); INSERT INTO registry.target(name,type,status) VALUES ('fixture','local','active'); UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='fixture'); RESET ROLE"
-}
-
 /// Seed the application activation target.
 pub fn activation_target_sql() -> &'static str {
     "INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud');"
@@ -131,19 +106,8 @@ pub fn deployment_rows_sql() -> &'static str {
 }
 
 /// Registry statement used by connection or deletion boundary tests.
-pub fn deletion_target_sql() -> &'static str {
-    "INSERT INTO registry.target(name,type,status) VALUES ('delete-fixture','local','active'); \
-         UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='delete-fixture')"
-}
-
-/// Registry statement used by connection or deletion boundary tests.
 pub fn deleted_deployment_sql() -> &'static str {
     "SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'"
-}
-
-/// Registry statement used by connection or deletion boundary tests.
-pub fn deleted_connections_sql() -> &'static str {
-    "SELECT 1 FROM registry.connection WHERE org='acme' AND project='app' AND env='dev'"
 }
 
 /// Registry statement used by connection or deletion boundary tests.
@@ -154,14 +118,4 @@ pub fn deployment_exists_sql() -> &'static str {
 /// Registry statement used by connection or deletion boundary tests.
 pub fn connection_fact_fixture_id_sql() -> &'static str {
     "SELECT id FROM registry.connection WHERE project='project-a'"
-}
-
-/// Registry statement used by connection or deletion boundary tests.
-pub fn revoke_connection_fact_sql() -> &'static str {
-    "REVOKE EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) FROM wamn_conn_reader"
-}
-
-/// Registry statement used by connection or deletion boundary tests.
-pub fn grant_connection_fact_sql() -> &'static str {
-    "GRANT EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) TO wamn_conn_reader"
 }

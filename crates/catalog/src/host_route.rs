@@ -446,13 +446,6 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Control,
-        operation: "integration.write",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::IntegrationAdministration,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
         operation: "integration.list",
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,

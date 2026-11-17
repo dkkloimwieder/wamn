@@ -60,6 +60,7 @@ pub struct Binding {
 /// Read project authority without creating or changing a connection.
 pub async fn analyse(
     system: &mut sqlx::PgConnection,
+    project: &mut sqlx::PgConnection,
     document: &EnvironmentDocument,
     packages: &[PackageManifest],
 ) -> Result<Vec<Binding>, BindingError> {
@@ -83,17 +84,11 @@ pub async fn analyse(
                 .any(|integration| &integration.name == *name)
         })
     }) {
-        let row =
-            sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_BINDINGS_ANALYSE)
-                .bind(&document.org)
-                .bind(&document.project)
-                .bind(&document.env)
-                .bind(&document.target)
-                .bind(name)
-                .bind(version.version)
-                .fetch_optional(&mut *system)
-                .await?
-                .ok_or_else(|| refuse("connection_unavailable", name))?;
+        let connection=sqlx::query("SELECT c.id::text,c.integration_type,g.parameters,c.active_generation,c.target_id::text FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1 AND c.status='active'")
+            .bind(name).fetch_optional(&mut *project).await?.ok_or_else(||refuse("connection_unavailable",name))?;
+        let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 AND e.target_id=destination.id LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
+            .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection.get::<String,_>(4)).bind(&document.target).bind(connection.get::<i64,_>(3)).bind(&document.org).bind(&document.env).bind(version.version)
+            .fetch_optional(&mut *system).await?.ok_or_else(||refuse("connection_unavailable",name))?;
         let runtime: String = row.get(2);
         let schema: Option<serde_json::Value> = row.get(4);
         let schema = schema.ok_or_else(|| refuse("integration_version_unpublished", name))?;
@@ -210,8 +205,13 @@ pub async fn write(
     bindings: &[Binding],
 ) -> anyhow::Result<()> {
     for binding in bindings {
-        let active = sqlx::query("SELECT 1 FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id \
-             WHERE c.id=$1::text::uuid AND c.status='active' AND i.status='active'").bind(&binding.connection_id).fetch_optional(&mut **tx).await?.is_some();
+        let active = sqlx::query(
+            "SELECT 1 FROM platform.connection c WHERE c.id=$1::text::uuid AND c.status='active'",
+        )
+        .bind(&binding.connection_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_some();
         anyhow::ensure!(
             active,
             "connection projection {} is absent or inactive; run env connections",
