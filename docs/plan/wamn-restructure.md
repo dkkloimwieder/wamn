@@ -65,11 +65,21 @@ Org → environment → project → application. One boundary per level.
 
 ## Workflows
 
-- A workflow service component in each application workload holds the schedule loop and the queue loop and walks the graph, calling nodes on sibling components.
-- It polls "take next" every 1 s. Events arrive through the stock `wasmcloud:nats` JetStream handler.
-- Runs use a small host interface: admit, take next, renew, finish. The run SQL and its login stay in the host; "take next" ties the `workflow` user and the run's role to node calls.
-- A run executes on the live release; the release digest leaves the lease.
-- Not built now (future work): `respond`, state after each node, backoff, the approval waiting state.
+- A workflow's first node is its entry node:
+  - Request: a synchronous call, which needs a Response node
+  - Schedule: a five-field cron, in UTC
+  - Data change: CDC on one entity, with ops and an optional condition
+  - Topic: a message on a subject, later work
+  There is no Manual entry. "Run now" is an admin action for any workflow.
+- A Request workflow is addressed by a path under `/api/<application>/flow/`. Calling it is a permission granted to roles, like an operation. It runs as the caller (invoker) by default, or as its `execution_role`. The Response sets a status and a JSON body. With no Response within 30 seconds, the call is refused with a timeout. A Request call writes a run row only when the graph continues after its Response or writes data.
+- The graph owns the trigger. The author step derives the index columns that the host queries.
+- A workflow service component runs in every application workload. It walks graphs and calls nodes through the host.
+  - A Data change or Schedule run executes at once, in the invocation that admitted it.
+  - A Request run executes inline.
+  - The queue is used only to take back a run whose host died. A recovery sweep runs every 30 seconds.
+- Runs use a small host interface. The run SQL and its login stay in the host. Each node call carries the run's identity and role.
+- A run executes on the live release. `runs.manifest_digest` and `runs.node_digests_json` go.
+- Not built now (future work): state after each node, backoff, the approval waiting state.
 
 ## Identity and login
 
@@ -501,6 +511,83 @@ Issues:
 6.8 Leftovers in `crates/identity` (N6).
 - `set_environment_status`, `status_environments`, `org_environments` and `create_project` move from `wamn_identity::org` to `wamn-environment`.
 
+## Epic 7: step 3.4, the workflow service
+
+Rules:
+- Only the work listed here. The Topic entry node is later work.
+- Done means all of these pass:
+  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
+  - `guests/workflow-service` builds for `wasm32-wasip3`.
+  - The schema-apply check.
+  - `helm template` of the release chart with values for the largest application in `apps/` that builds. The Helm release record must stay under 1 MiB. Report the size.
+  - A local Postgres container is allowed for these checks only.
+- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
+- No kind or cluster runs, nothing on GCP.
+- Generated code is regenerated, never edited by hand.
+
+Issues:
+
+7.1 Run interface in the host. Runs first.
+- A new WIT package, `wamn:workflow@0.1.0`, served by a host plugin in `services/host`:
+  - `run`: admit due schedule runs for a given time, admit runs for one data-change message, take a run whose lease expired, renew, and finish
+  - `node`: call one sibling's export with JSON input for a run or a Request call. The host dispatches through the engine's dispatch targets and resolves components from `wamn.application`.
+- The service exports `entry`:
+  - `call`: a Request, synchronous
+  - `run`: a durable run that the host admitted, for "run now"
+- Identity for node calls:
+  - Request: the caller, or the workflow's `execution_role`
+  - Schedule and Data change: the `workflow` user with its `execution_role`
+  - Run now: the admin's choice, under the same `execution_type` rule
+- The run SQL stays in `wamn-run-state` on the host's platform login.
+- `runs.manifest_digest` and `runs.node_digests_json` go, and leases carry no digest.
+- `catalog.workflows`:
+  - the trigger becomes `request`, `schedule` or `data_change`
+  - add `path` for Request workflows, unique among the enabled workflows of one environment and application
+  - the trigger columns are written only by the author step (7.5)
+
+7.2 Workflow service guest.
+- `guests/workflow-service`, for `wasm32-wasip3`. It runs as the WorkloadDeployment `service`.
+- A loop:
+  - each minute, admit the due schedules and run them at once
+  - every 30 seconds, take runs whose lease expired and run them
+- It exports `wasmcloud:nats` `jetstream-handler`: admit the data-change runs, run them, then ack.
+- It exports `wamn:workflow` `entry`.
+- The graph walk is ported from the router deleted in 07c1f3ee3 (`07c1f3ee3^`), with the same node retries (3 by default).
+- Response node: status and a JSON body. Nodes after a Response continue as a durable run.
+- A Request call with no Response within 30 seconds is refused with a timeout.
+
+7.3 Chart and deploy.
+- `workloads.yaml` adds the workflow service as the `service` of every application WorkloadDeployment. The image is a platform image, built and pinned like the route guest.
+- Add the host interfaces the service needs, and one `wasmcloud:nats` JetStream consumer binding for each captured entity of the application, in the workload's config.
+
+7.4 Request routes and "run now" in the host.
+- The host registers the native prefix `/api/<application>/flow/` on the path from 5.3. For each call it:
+  - authenticates the bearer token
+  - resolves the enabled Request workflow by path
+  - checks the caller holds the workflow's permission
+  - dispatches to the service's `entry.call`
+- Publish refuses authored routes under that prefix.
+- An application host route `workflow.run` (admin only) admits a durable run, dispatches it to `entry.run`, and returns the run id.
+- `workflow.start` goes: its route, its contract, its CLI verb and the `workflow_not_served` refusal.
+
+7.5 Author and enable in control.
+- `workflow.author` checks the graph:
+  - exactly one entry node
+  - a Request workflow has a Response on every path that ends
+  - a Response appears only in a Request workflow
+  - a Request path is unique
+  Then it derives the index columns.
+- `workflow.enable` takes the lifecycle lock.
+- The authoring check reads the live WorkloadDeployment's `wamn.application` through the Kubernetes API.
+- The CLI verbs follow the routes.
+
+7.6 Workflow leaves the release document.
+- Node resolution comes from `wamn.application`. Palette nodes are dispatched by component.
+- Delete the workflow readers of `ServingManifest` and `ServingContext` (`workflow/admission.rs`, `workflow/resolution.rs`, `events/transport/admission.rs` and their callers). Afterwards only deploy identity (3.5) and the edge read them.
+
+7.7 Event crate merge. Runs last.
+- `wamn-events` and `wamn-event-wire` merge into `wamn-event`, and the event transport code that nothing calls is deleted.
+
 ## Open items
 
 - Checks in phase 3: Helm values size for the largest application (3.2); each KCL `check:` rule also in Rust or SQL (3.5); `/_wamn/residency` goes unless 3.5 needs it; 3.5 creates the operation service account and application principals.
@@ -512,27 +599,24 @@ Issues:
 - 3.8: `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs` run the binary `wamn-ctl`, which Epic 1 deleted.
 - 3.8: `docs/operations/running-tests.md` describes test targets that no longer exist.
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
-- 3.4: merge `wamn-events` and `wamn-event-wire`. In Epic 2 the merge made a cycle, because `wamn-broker`, `wamn-run-state` and `wamn-sql` depend on `wamn-event-wire`.
 - 3.5: `wamn_catalog::manifest::installation` is a second, smaller model of the package document. Its readers move to the full model and it is deleted.
 - 3.6: a connection limit for each login, set in the CloudNativePG managed roles.
 - 3.4, 3.5 and Epic 5 each delete their own `ServingManifest` readers. `ServingManifest` goes with the last of them.
-- 3.4: the workflow authoring check reads `catalog.packages` and the live workload, not the release document.
 - 3.6: the control service takes the issuer from `session_issuer` and stage takes it from `platform.identity_issuer`. They become the one identity issuer address setting (E6, K).
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
-- 3.4: `workflow.start` refuses in the host until the workflow service serves it.
 - 3.5: `registry.environment_application_connections` and `registry.environment_integrations` change with the environment file (one version for each connection name).
 - Native integration types (for example the NetSuite ODBC driver) are native Rust host plugins compiled into the wamn host, as wasmCloud advises for drivers with no WASI binding. Decide this when the first one is built.
 - Version authority for integrations: for each connection in each environment (current), or pinned by the platform release. 3.5.
 - Host component plugins (`host-component-plugins`) suit platform-wide wasm capabilities with fixed bindings. They are not used for connection-bound integrations.
-- 3.4: lookup of an operation by name is valid only for typed operations. The workflow service dispatches palette nodes by component.
 - Edge device design: how exclusive connections are enforced at the edge (inference: one edge runtime for each site, so a local mutex may be enough).
 - A call limit for each application, if a real case appears: either a per-host semaphore named as per-host, or a Postgres design decided with real numbers.
 - 3.7: nothing writes the host route TypeScript clients since `cargo xtask host-route-clients` was removed.
 - 3.6: nothing in the install fills the `wamn-control-administration-<org>` map that control reads its project logins from.
 - 3.6: the first signing key, the installer source for the identity envelope settings, and the `CN=control-<org>` certificate.
 - 3.7: the TypeScript clients cannot be generated again until codegen is reworked (the `admin_covered` contract changed in Epic 6).
+- Topic entry node: after 3.4. It depends on whether `wasmcloud:nats` can subscribe at run time or only from config.
 
 # Part 2: Review log
 
@@ -1914,3 +1998,16 @@ Facts:
 - needs no mount change: `ensure.rs::host_project` already mounts `identity-ca` at `/etc/identity-ca` on the environment host group. The review had checked only the chart defaults.
 - takes the JWKS lifetime from the response's `max-age`, capped at 300 seconds, not from a wamn identity constant
 - renames the org audience to `urn:wamn:org:<org>`.
+
+**Ruled (D, 2026-11-17): workflow entry nodes and Epic 7 scope.**
+- A workflow starts at an entry node: Request with Response, Schedule, Data change, or Topic (later). There is no Manual entry; "run now" is an admin action. This brings the synchronous Request/Response forward from W-b; state after each node, backoff and approval waiting stay future work.
+- Request workflows:
+  - a path under `/api/<application>/flow/`
+  - a permission granted to roles
+  - invoker by default
+  - a status and JSON body
+  - refused after 30 seconds with no Response
+  - a run row only when the graph continues after the Response or writes
+- The graph owns the trigger, and the author step derives index columns.
+- Runs execute where admitted, with a 30-second recovery sweep. This replaces OI-1a (polling each second).
+- The service runs in every application workload. Nodes are called through the host. `node_digests_json` goes with `manifest_digest`. The authoring check reads the live WorkloadDeployment. Data-change consumers are bound in the workload config. The event crate merge is part of this epic.
