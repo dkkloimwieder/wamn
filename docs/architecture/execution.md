@@ -175,7 +175,7 @@ The writes are the functions of [`wamn_environment::application`](../../crates/e
 `user_role.revoke` reads current inherited administration through the host’s identity reader. It derives the answer from the org, environment and project grants.
 `permission.grant` writes one permission row. A row the serving release does not serve grants nothing.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `user_not_found` or `admin_covered`.
-The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `apps/target/wamn/wamn_control/client-ts`, which Git does not hold ([building](../operations/building.md#host-route-clients)).
+The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `apps/target/wamn/wamn_control/client-ts`, which Git does not hold.
 The administration screens in the [platform UI](../../apps/platform_ui/README.md) call these routes through that client and write no database directly.
 The role screen reads operations from `permission.list`, and the user screen reads roles from `user.list` and permissions from `permission.list`.
 The control lists `project.list`, `user.list`, `environment.list`, `member.list`, and `control.mine` accept optional `limit` and `cursor` members.

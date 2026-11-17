@@ -6767,7 +6767,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "wamn-broker",
  "wamn-catalog",
  "wamn-digest",
  "wamn-engine",

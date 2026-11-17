@@ -435,6 +435,7 @@ Rulings on the scout questions (D, 2026-11-17):
 - 3.4: lookup of an operation by name is valid only for typed operations. The workflow service dispatches palette nodes by component.
 - Edge device design: how exclusive connections are enforced at the edge (inference: one edge runtime for each site, so a local mutex may be enough).
 - A call limit for each application, if a real case appears: either a per-host semaphore named as per-host, or a Postgres design decided with real numbers.
+- 3.7: nothing writes the host route TypeScript clients since `cargo xtask host-route-clients` was removed.
 
 # Part 2: Review log
 
@@ -1788,3 +1789,5 @@ Recommend a.
 - `begin` sends no guard SQL. A cache miss still fills the 5.2 cache, and the platform pool keeps its default.
 - Fact: a guard held for each call kept one Postgres connection for the whole external call, so the pool would have had to grow with hosts × limits. Lease rows would have added two writes for each guarded call.
 - Rejected: pool sizing by the deploy, a separate lock pool, a bigger fixed pool, and lease rows.
+
+**Ruled (D, 2026-11-17): Epic 5 review.** Epic 5 is accepted. The cleanup removes the unused `wamn-broker` dependency, the uncalled `ReleaseIdentity::from_context` and its stale comment, and the stale `cargo xtask host-route-clients` references. The test-only `test_release` fixture that builds a `ServingContext` stays until 3.8.

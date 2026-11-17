@@ -19,7 +19,7 @@ Run `cargo xtask --help` from the repository root. The `justfile` calls these co
 | `wamn-bench` | `cargo xtask bench` |
 | `bench/tier.sh` | `cargo xtask bench-tier` |
 | `bench/pg-minimum/gcp.sh` | `cargo xtask bench-pg-minimum` |
-| Package builds | `cargo xtask build-package`, `cargo xtask host-route-clients`, `cargo xtask install-kcl`, `cargo xtask guest-rustflags` |
+| Package builds | `cargo xtask build-package`, `cargo xtask install-kcl`, `cargo xtask guest-rustflags` |
 | Benchmark result scripts | `cargo xtask bench-result`, `bench-pg-result`, `bench-app-result`, `bench-database-delta`, `bench-profile-summary`, `bench-name-guests` |
 | Installers for Helm, OpenTofu, wash, and cargo-deny | `mise install` |
 

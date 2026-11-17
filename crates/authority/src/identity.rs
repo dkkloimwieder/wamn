@@ -20,13 +20,6 @@ pub struct ReleaseIdentity {
 }
 
 impl ReleaseIdentity {
-    /// The identity of the release a pod loaded.
-    pub fn from_context(context: &wamn_catalog::serving_context::ServingContext) -> Self {
-        Self {
-            manifest_digest: context.release().manifest_digest,
-        }
-    }
-
     /// An identity with no loaded release, for tests whose rows name it.
     #[cfg(feature = "test-util")]
     pub fn for_test(manifest_digest: wamn_digest::Digest) -> Self {

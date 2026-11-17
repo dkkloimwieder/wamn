@@ -487,10 +487,7 @@ impl WamnPostgres {
 
     /// Register the release this pod carries for a component id. The production
     /// identity verifies its digest against the admission pin of every run it
-    /// leases. The bench harness and live tests call this directly; the host
-    /// path feeds it from the loaded
-    /// [`ServingContext`](wamn_catalog::serving_context::ServingContext), whose
-    /// digest is derived from verified manifest content. Absent leaves the identity
+    /// leases. The bench harness and live tests call this directly. Absent leaves the identity
     /// verifying nothing.
     ///
     /// The digest arrives as [`wamn_digest::Digest`], so its shape is already validated.

@@ -12,7 +12,6 @@ jmespath.workspace = true
 postgres-protocol.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
-wamn-broker = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 wamn-catalog = { workspace = true }
 wamn-event-wire = { workspace = true }

@@ -1060,19 +1060,6 @@ The command reads `tsc` from `PATH`. If `tsc` is absent, the command refuses and
 It needs TypeScript 5.5 or later.
 The emitted modules import the hand-written runtime by its package name, and the command maps that name to `web/runtime` in this checkout.
 
-The clients of the host routes are build output, and Git does not hold them.
-The generator writes the client of the application host routes, `@wamn/control-client`, to `apps/target/wamn/wamn_control/client-ts`.
-It writes the client of the control routes, `@wamn/control-org-client`, to `apps/target/wamn/wamn_control/control/client-ts`.
-It makes them from the contracts in `crates/catalog/src/host_route/contracts` and `host_route/control/contracts`.
-It copies them into `src/generated/wamn_control` and `src/generated/wamn_control_org` of each package that names them in `package.json` `"wamn": { "clients": [...] }`.
-Every web script that reads the clients writes them first through `cargo xtask host-route-clients`, so you do not need to write them yourself.
-To write them without a web script, run:
-
-```bash
-cargo run --locked --offline -p wamn-codegen --example materialize_host_route_client
-```
-
-`pnpm run lint` in `apps/platform_ui` compiles them, because that package maps `@wamn/control-client` and `@wamn/control-org-client` to them.
 The repository policy lint refuses a tracked file in a `client-ts` directory outside `apps/`.
 
 ### Web packages

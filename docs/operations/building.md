@@ -358,24 +358,6 @@ A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 a
 `wamn-publish` builds and pushes both package and release artifacts.
 The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. The three tars keep their logical paths. Layer 0 goes to `generated/wamn.json`. Each descriptor goes to `descriptors/<name>.json`. Unpacked dev artifacts keep their original publication timestamp in `artifact-created-at`. Repacking reads that value and reproduces the published digest. Release coordinates need no timestamp. An unpacked artifact packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
 
-## Host route clients
-
-The TypeScript clients of the host routes, `@wamn/control-client` and `@wamn/control-org-client`, are build output, and Git does not hold them.
-The generator makes them from the contracts in `crates/catalog/src/host_route`.
-It writes them to `apps/target/wamn/wamn_control/client-ts` and `apps/target/wamn/wamn_control/control/client-ts`, below the output root of `wamn build`.
-It then copies them into each workspace package that names them in `package.json` `"wamn": { "clients": [...] }`, as `wamn build` does for an application client.
-The name `wamn_control` selects the application route client, and `wamn_control_org` selects the control route client.
-A consuming package imports the copy from `src/generated/<name>`, which Git ignores.
-
-The web scripts write the clients before they read them.
-`pnpm -r build`, `pnpm run lint`, `pnpm test` and `pnpm run dev` run this command first:
-
-```bash
-cargo xtask host-route-clients
-```
-
-The command writes only a changed file, and it removes a file that the contracts no longer generate.
-
 ## The edge box binary
 
 The edge box is an aarch64 Linux computer, for example a Raspberry Pi 3B.
