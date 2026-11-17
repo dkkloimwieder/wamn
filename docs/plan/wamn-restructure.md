@@ -298,6 +298,9 @@ Issues:
     - for each operation: public or private, whether the host begins the transaction, read or write, and the idempotency key field
     - the application's database schema
     - the project's grant cache lifetime
+    - for each operation, the component that serves it
+    - the org, project, environment and application names
+    - delete as its own operation type
 - The grant cache lifetime moves into the workload config, and these go:
   - `registry.environment_projects.revocation_seconds`
   - `registry.environment_applications.revocation_seconds`
@@ -312,6 +315,7 @@ Issues:
 - JSON conversion stays (`engine/operation/json.rs`).
 - Delete the host's own component handling: `engine/operation/native_workload.rs`, its pull of application components, the warm list, and the repeated `NativePolicy::admit` (one check per invocation).
 - Code the edge still uses moves into `services/edge` (4.4 rule).
+- `wamn-sql` keeps the `wamn:operation` interface; `wamn-engine` holds the dispatch targets and `invoke` calls through them. No connection state on the invoke path until Epic 5.
 
 4.3 SQL and auth.
 - The fixed statements of a transaction go as one batch at begin and one at commit (`wamn-sql`: operation transaction, write log).
@@ -320,11 +324,11 @@ Issues:
 - Environment status comes from that cache.
 - `services/host/src/host/projects.rs` reads the projects file once, not on each request.
 
-4.4 The release document goes.
-- Delete `ServingManifest` (`wamn_catalog::serving_manifest`), `LoadedRelease` (`wamn_engine::release_manifest`) and their readers in the 13 crates that use them. The route data each reader needs comes from the workload config written in 4.1.
+4.4 The release document leaves the request path.
+- Delete `LoadedRelease` (`wamn_engine::release_manifest`). Remove the release document from host routing, authentication, authority, SQL and the control routes; they read the workload config written in 4.1.
 - The control service builds its routes from `HostRouteSet::Control` directly. `LoadedRelease::control_root()` goes.
-- Workflow authoring checks a graph against `catalog.packages` and the live workload, not the release document.
-- The edge: the parts of `LoadedRelease`, `ServingManifest` and the wamn component pull (`pull_verified`) that `services/edge` still uses move into `services/edge`, unchanged, until the edge design. Nothing outside the edge uses them.
+- `ServingManifest` stays in `wamn-catalog` for its remaining readers: workflow (3.4), deploy identity (3.5) and connection and file readers (Epic 5).
+- The parts of `LoadedRelease` and the wamn component pull (`pull_verified`) that `services/edge` uses move into `services/edge`, unchanged, until the edge design. `crates/dev/src/dev/edge_bundle.rs` stays.
 
 ## Open items
 
@@ -341,6 +345,8 @@ Issues:
 - 3.5: `wamn_catalog::manifest::installation` is a second, smaller model of the package document. Its readers move to the full model and it is deleted.
 - 3.3: the host resolves the caller's user row by `(iss, sub)`.
 - 3.6: a connection limit for each login, set in the CloudNativePG managed roles.
+- 3.4, 3.5 and Epic 5 each delete their own `ServingManifest` readers. `ServingManifest` goes with the last of them.
+- 3.4: the workflow authoring check reads `catalog.packages` and the live workload, not the release document.
 - 3.6: the control service takes the issuer from `session_issuer` and stage takes it from `platform.identity_issuer`. They become the one identity issuer address setting (E6, K).
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
 
@@ -1643,3 +1649,5 @@ Recommend a.
 **Ruled (D, 2026-11-16): Epic 3 scout questions.** 21 questions answered (see the Epic 3 section of Part 1). Facts behind the changed answers: project databases share the org cluster, so logins span all of them (11); `control_principal` is the row policy of `identity.principals` (Q1, Q3); `configuration.rs` connection writes have no caller with rows (10); `workflow_user_id()` is a fixed constant (17).
 
 **Ruled (D, 2026-11-16): Epic 4 scope.** Step 3.2 splits into Epic 4 (workload, invoke, SQL and auth, release document) and Epic 5 (connections, file routes, integrations, features built only when declared). Deploy facts reach the host in config key `wamn.application`, and the guest keeps `wamn.http.routes`. The grant cache lifetime travels in the workload config, and its registry columns and `platform.setting` rows go. The edge keeps what it uses of the release document and the wamn component pull, moved into `services/edge`. The control service uses `HostRouteSet::Control` directly. The epic checks the rendered Helm values size. No new tests until 3.8.
+
+**Ruled (D, 2026-11-16): Epic 4 scout questions.** `wamn.application` gains the serving component per operation, the coordinate names and delete as an operation type. `wamn-sql` keeps `wamn:operation` (`wamn-sql` depends on `wamn-engine`). No connections on the invoke path until Epic 5. 4.4 narrows to `LoadedRelease` and the request path, and `ServingManifest` stays for 3.4, 3.5 and Epic 5. The edge receives only the `LoadedRelease` parts and `pull_verified`.
