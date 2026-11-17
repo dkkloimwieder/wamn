@@ -137,7 +137,7 @@ Org → environment → project → application. One boundary per level.
 
 Phase 1 deletion, phase 2 restructure (no behaviour change), phase 3 code editing. All deletion up front; the project may be non-functional across epics; every step compiles. One epic is fully scoped at a time, the next after review; work inside an epic runs in parallel.
 
-Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (Epic 4: the host serves one application; Epic 5: connections, files, integrations); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 install and isolation; 3.7 codegen; 3.8 tests.
+Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (Epic 4: the host serves one application; Epic 5: connections, files, integrations, application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 install and isolation; 3.7 codegen; 3.8 tests.
 
 ## Epic 1: phase 1 deletion
 
@@ -330,6 +330,58 @@ Issues:
 - `ServingManifest` stays in `wamn-catalog` for its remaining readers: workflow (3.4), deploy identity (3.5) and connection and file readers (Epic 5).
 - The parts of `LoadedRelease` and the wamn component pull (`pull_verified`) that `services/edge` uses move into `services/edge`, unchanged, until the edge design. `crates/dev/src/dev/edge_bundle.rs` stays.
 
+## Epic 5: step 3.2, part 2, connections, files and application host routes
+
+Rules:
+- Only the work listed here. The workflow service is 3.4. The environment file and the registry binding tables are 3.5.
+- Done means all of these pass:
+  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
+  - The schema-apply check from Epic 3.
+  - `helm template` of the release chart with values for the largest application in `apps/` that builds. The Helm release record must stay under 1 MiB. Report the size.
+  - A local Postgres container is allowed for these checks only.
+- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
+- No kind or cluster runs, nothing on GCP.
+- Generated code is regenerated, never edited by hand.
+- Each issue deletes the `ServingContext` and `ServingManifest` readers it replaces. The readers for workflow (3.4), deploy identity (3.5) and the edge stay.
+
+Issues:
+
+5.1 Deploy facts for connections and files. Runs first, alone.
+- `wamn.application` gains, for each component:
+  - `connections`: for each declared connection name, the connection id, read or write mode, the interface, and the integration type digest when the type is wasm or native
+  - the file facts that the file routes and the blobstore plugin need and that today come from the release document
+- The deploy takes the bindings from `environment/bindings.rs::analyse` and writes them into `wamn.application`. `bindings::write` stops writing the catalog. `catalog.release_connection` and `catalog.connection_binding` go, with their grants, writers and readers. `catalog.connection_requirement` stays.
+- The chart's host interfaces are the route guest's set plus each platform interface package the components import (`wamn:postgres`, `wamn:connection`, `wasmcloud:blobstore`, `wamn:integration`). A package that no component imports is not rendered.
+- The deploy refuses two versions of one host interface package, because the operator allows only one unnamed entry for each namespace and package.
+- The deploy refuses an operation name that two components declare.
+
+5.2 Connections on the call path. After 5.1; runs in parallel with 5.3.
+- Host plugins for `wamn:connection/http` and `wamn:integration`, registered in `services/host`. They link only for components that import them. The host builds connection state for a workload only when `wamn.application` declares connections.
+- Per call: the binding from `wamn.application` for the component and the declared name; the connection row, its generation and its secret from the host's local `moka` cache, with the project lifetime and positive answers only; then send. A 401 or 403 removes the cached row from the local cache and reads it once again.
+- Connection answers use the same `moka` cache as grants (`services/host/src/host/authentication.rs`).
+- These go: `ConnectionFacts::release`, `ConnectionFacts::version`, `ConnectionFacts::release_component_bindings_ready`, and what is left in `ConnectionMemory` from the deleted replica. The host makes no system database read for connections.
+- The host pulls a wasm integration's code by the digest in `wamn.application`. The host's integration loader stays.
+- Exclusive resource, for each call:
+  - Take a local mutex keyed by `(target_id, resource_key)`.
+  - On a connection from the platform pool, run `BEGIN`, then `SET LOCAL lock_timeout` to the invocation's remaining time, then `SELECT pg_advisory_xact_lock(key)`.
+  - Hold the lock for the call, then run `ROLLBACK`.
+  - The key is the first 8 bytes of SHA-256 over `target_id` and `resource_key`, as `bigint`.
+  - If the `ROLLBACK` fails, discard the call's result and fail the call.
+- HTTP client cache key: invocation scope, target (host, address, TLS name), connection id, generation. If no client is kept from one call to the next, change nothing.
+- The invoke path carries the connection invocation again (the `Scope` record in `sql/invocation.rs`).
+- `session_operation_permissions` caches a grant set only under the same condition as `principal_grants`.
+
+5.3 File routes. After 5.1; runs in parallel with 5.2.
+- The blobstore host plugin is registered in `services/host` and links only for components that import `wasmcloud:blobstore`.
+- When an application workload resolves, the host registers a native path on the wasmCloud router for that workload. On unbind, it removes the path. The prior art is `crates/execution-host/src/platform_http.rs` at 6b6d9c22 (`on_service_http_resolved`, `ServiceHttpJob`).
+- File routes are served on that path. There is no second listener.
+- `sign-result` signs file results again.
+
+5.4 Application host routes. After 5.3.
+- The host serves `HostRouteSet::Application` (permission.mine, roles, grants, users, counters) on the path from 5.3, built from `wamn.application`.
+- The Application half of `services/control/src/host_route.rs` and `application_route.rs` moves into `services/host`. The control service keeps the Control half.
+- `workflow.start` refuses with the existing unavailable refusal until 3.4, and the `workflow` field leaves the handler.
+
 ## Open items
 
 - Checks in phase 3: Helm values size for the largest application (3.2); each KCL `check:` rule also in Rust or SQL (3.5); `/_wamn/residency` goes unless 3.5 needs it; 3.5 creates the operation service account and application principals.
@@ -349,6 +401,9 @@ Issues:
 - 3.4: the workflow authoring check reads `catalog.packages` and the live workload, not the release document.
 - 3.6: the control service takes the issuer from `session_issuer` and stage takes it from `platform.identity_issuer`. They become the one identity issuer address setting (E6, K).
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
+- Integration code as sibling components in the application workload, linked by named import, in place of the host's integration loader. The runtime routes an import labelled with a component name to that component. Research, not ruled.
+- 3.4: `workflow.start` refuses in the host until the workflow service serves it.
+- 3.5: `registry.environment_application_connections` and `registry.environment_integrations` change with the environment file (one version for each connection name).
 
 # Part 2: Review log
 
@@ -1651,3 +1706,5 @@ Recommend a.
 **Ruled (D, 2026-11-16): Epic 4 scope.** Step 3.2 splits into Epic 4 (workload, invoke, SQL and auth, release document) and Epic 5 (connections, file routes, integrations, features built only when declared). Deploy facts reach the host in config key `wamn.application`, and the guest keeps `wamn.http.routes`. The grant cache lifetime travels in the workload config, and its registry columns and `platform.setting` rows go. The edge keeps what it uses of the release document and the wamn component pull, moved into `services/edge`. The control service uses `HostRouteSet::Control` directly. The epic checks the rendered Helm values size. No new tests until 3.8.
 
 **Ruled (D, 2026-11-16): Epic 4 scout questions.** `wamn.application` gains the serving component per operation, the coordinate names and delete as an operation type. `wamn-sql` keeps `wamn:operation` (`wamn-sql` depends on `wamn-engine`). No connections on the invoke path until Epic 5. 4.4 narrows to `LoadedRelease` and the request path, and `ServingManifest` stays for 3.4, 3.5 and Epic 5. The edge receives only the `LoadedRelease` parts and `pull_verified`.
+
+**Ruled (D, 2026-11-16): Epic 4 review.** Epic 4 is accepted. Three fixes move to Epic 5: the deploy refuses an operation name that two components declare; the session cache keeps a grant set only under the `principal_grants` condition; the deploy refuses two versions of one host interface package. The application host routes and the file routes have had no server since Epic 1 deleted `services/host/src/host/releases.rs` (b84b5739). Serving them moves to Epic 5.
