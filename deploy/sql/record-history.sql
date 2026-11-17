@@ -20,18 +20,6 @@
 -- Both trigger functions compare JSONB text, so a change of numeric scale alone
 -- is a change.
 
--- The file names wamn_db_owner, and a grant to a missing role fails the whole
--- apply. The attributes match ensure_db_owner_role_sql in provisioning.
-DO $db_owner$ BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
-                 WHERE rolname = 'wamn_db_owner') THEN
-    CREATE ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-  END IF;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $db_owner$;
-
 -- Caller identity belongs to the transaction, never to a session setting.
 CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION CURRENT_USER;
 CREATE SCHEMA IF NOT EXISTS wamn_authority AUTHORIZATION CURRENT_USER;
@@ -67,7 +55,8 @@ CREATE TABLE IF NOT EXISTS platform.login_principal (
 ALTER TABLE platform.login_principal OWNER TO CURRENT_USER;
 REVOKE ALL ON platform.login_principal FROM PUBLIC;
 INSERT INTO platform.login_principal(login, principal_id)
-VALUES ('wamn_db_owner', '770df186-ac15-579e-b46b-c297cae2011b')
+SELECT pg_get_userbyid(datdba), '770df186-ac15-579e-b46b-c297cae2011b'::uuid
+FROM pg_database WHERE datname = current_database()
 ON CONFLICT (login) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION wamn_authority.current_identity()
@@ -111,8 +100,8 @@ DO $identity_grants$
 DECLARE writer text;
 BEGIN
     FOR writer IN SELECT rolname FROM pg_roles WHERE rolname IN
-        ('wamn_app', 'wamn_query', 'wamn_platform', 'wamn_db_owner',
-         'wamn_system', 'wamn_control', 'wamn_identity_issuer', 'wamn_apply') LOOP
+        ('wamn_app', 'wamn_query', 'wamn_platform',
+         'wamn_system', 'wamn_system_reader', 'wamn_control', 'wamn_identity_issuer', 'wamn_apply') LOOP
         EXECUTE format('GRANT USAGE ON SCHEMA platform, wamn_authority TO %I', writer);
         IF writer <> current_user THEN
             EXECUTE format('REVOKE ALL ON platform.tx_identity, platform.login_principal FROM %I', writer);
@@ -242,6 +231,9 @@ BEGIN
         history || '_type_check',
         history || '_operation_check', operation_pattern,
         history || '_pkey');
+    IF to_regrole('wamn_platform') IS NOT NULL THEN
+        EXECUTE format('GRANT SELECT, DELETE ON %I.%I TO wamn_platform', schema, history);
+    END IF;
     -- The change feed reads the entries of a range of transactions.
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.%I (transaction_id)',
                    history || '_transaction_id_idx', schema, history);
@@ -377,23 +369,6 @@ END
 $log_row_change$;
 REVOKE ALL ON FUNCTION wamn_history.log_row_change() FROM PUBLIC;
 
--- apply-package runs package DDL as wamn_db_owner. It creates the history
--- tables and the triggers. CREATE TRIGGER needs EXECUTE on the trigger
--- function, and a trigger that fires needs no EXECUTE, so wamn_app gets none.
--- The log function calls wamn_history.row_image with the authority of the
--- writer, so every writer of a logged relation needs EXECUTE on it.
--- record-history-app-grants.sql grants it to wamn_app.
--- apply-package also creates the stamp and log functions of each package
--- relation in this schema (wamn-c8a5v.2), so wamn_db_owner holds CREATE.
--- The platform relations keep the shared functions of this file.
-GRANT USAGE, CREATE ON SCHEMA wamn_history TO wamn_db_owner;
-GRANT EXECUTE ON FUNCTION wamn_history.stamp_row() TO wamn_db_owner;
-GRANT EXECUTE ON FUNCTION wamn_history.create_history_table(text, text, boolean)
-    TO wamn_db_owner;
-GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_db_owner;
-GRANT EXECUTE ON FUNCTION wamn_history.timestamptz_image(timestamptz) TO wamn_db_owner;
-GRANT EXECUTE ON FUNCTION wamn_history.log_row_change() TO wamn_db_owner;
-
 -- SQLx writes the duration after commit. Migration identity stays immutable.
 CREATE OR REPLACE FUNCTION wamn_history.guard_sqlx_migration()
 RETURNS trigger
@@ -415,4 +390,3 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION wamn_history.guard_sqlx_migration() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION wamn_history.guard_sqlx_migration() TO wamn_db_owner;

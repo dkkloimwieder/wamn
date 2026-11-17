@@ -3,7 +3,7 @@
 //!
 //! Every route but `permission.mine` needs `admin`, which the router tests
 //! before the handler runs. A route runs in one host-owned transaction under
-//! the environment's `wamn_administration` login, which binds `app.user_id`
+//! the environment's `wamn_platform` login, which binds `app.user_id`
 //! to the caller and `app.operation` to the route's sealed operation id. A
 //! role or permission write first takes the project lock that `wamn` and
 //! release reconciliation take. The writes are the functions of

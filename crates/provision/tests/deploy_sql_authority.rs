@@ -62,7 +62,8 @@ fn psql(url: &str, database: Option<&str>, script: &str) -> String {
 /// run inside a transaction; `CATALOG_SCHEMA` owns its own `BEGIN`. Neither
 /// tolerates `psql -1`.
 fn apply(url: &str, sql: &str) {
-    let sql = sql.replace("\\ir record-history.sql", RECORD_HISTORY);
+    let sql = sql.replace("\\ir record-history.sql", RECORD_HISTORY)
+        .replace("\\ir project-roles.sql", include_str!("../../../deploy/sql/project-roles.sql"));
     let (written, out) = Command::new("psql")
         .arg(url)
         .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
@@ -114,18 +115,9 @@ fn reset(admin_url: &str) {
     // sufficient: it takes every in-database ACL entry naming these roles with
     // it, and a role still named by a `relacl` cannot be dropped.
     for role in [
-        "wamn_app",
-        // `wamn-0h0g.12.69`: run-state.sql creates and grants to this one for
-        // the same reason it creates `wamn_platform` — it NAMES it, and a GRANT
-        // to a missing role fails the whole apply. Dropped here BEFORE the group
-        // it is a member of, so the reset leaves no edge behind.
-        "wamn_run_retention",
-        // `record-history.sql` creates this one because it grants to it.
-        "wamn_db_owner",
-        // `CATALOG_SCHEMA_SQL` creates the stable audit retention role
-        // (`wamn-emtx.13`).
-        "wamn_audit_retention",
-        "wamn_platform",
+        wamn_role::APP_ROLE,
+        wamn_role::QUERY_ROLE,
+        wamn_role::PLATFORM_ROLE,
         // Probe roles this file's live arms mint. A leftover one fails the next
         // run's `CREATE ROLE` rather than masking anything, but the condition is
         // supposed to be re-runnable against a surviving cluster.
@@ -215,7 +207,7 @@ const ACTOR_C: &str = "00000000-0000-4000-8000-00000000000c";
 const OPERATOR: &str = "00000000-0000-4000-8000-0000000000e0";
 
 /// Apply the real artifacts and create two stamped relations the way
-/// apply-package does. `wamn_db_owner` owns the tables and creates the
+/// apply-package does. the database owner owns the tables and creates the
 /// triggers, so the fixture itself exercises the schema USAGE and function
 /// EXECUTE grants. Returns the project database URL and the guest role.
 fn record_history_fixture(admin: &str) -> (String, wamn_identity_protocol::LoginName) {
@@ -233,9 +225,9 @@ fn record_history_fixture(admin: &str) -> (String, wamn_identity_protocol::Login
     );
     apply(
         &db_url,
-        "GRANT CREATE ON DATABASE wamn TO wamn_db_owner;\n\
+        "GRANT CREATE ON DATABASE wamn TO CURRENT_USER;\n\
          BEGIN;\n\
-         SET LOCAL ROLE wamn_db_owner;\n\
+         SET LOCAL ROLE CURRENT_USER;\n\
          CREATE SCHEMA rh_probe;\n\
          CREATE TABLE rh_probe.stamped (\n\
              id integer PRIMARY KEY, note text NOT NULL,\n\
@@ -490,7 +482,7 @@ const UPDATE_OPERATION: &str = "wamn-probe:logged/update@1.0.0";
 const REPAIR_OPERATION: &str = "admin:repair-grades";
 
 /// Apply `record-history.sql` a second time, then create three logged
-/// relations the way apply-package does, as `wamn_db_owner`. `logged` has the
+/// relations the way apply-package does, as the database owner. `logged` has the
 /// stamp trigger and a column that an overlay migration adds. `projected` has a
 /// project history table. `keyless` has no primary key. The guest holds only
 /// INSERT on each history table.
@@ -500,7 +492,7 @@ fn record_history_log_fixture(admin: &str) -> (String, wamn_identity_protocol::L
     apply(
         &db_url,
         "BEGIN;\n\
-         SET LOCAL ROLE wamn_db_owner;\n\
+         SET LOCAL ROLE CURRENT_USER;\n\
          CREATE TABLE rh_probe.logged (\n\
              id integer PRIMARY KEY, note text NOT NULL, revision integer NOT NULL,\n\
              created_at timestamptz NOT NULL, created_by uuid NOT NULL,\n\
@@ -639,7 +631,7 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     );
     assert_query(
         &db_url,
-        "SELECT bool_and(relowner='wamn_db_owner'::regrole) FROM pg_class WHERE oid IN ('rh_probe.logged_history'::regclass,pg_get_serial_sequence('rh_probe.logged_history','position')::regclass)",
+        "SELECT bool_and(relowner=(SELECT datdba FROM pg_database WHERE datname=current_database())) FROM pg_class WHERE oid IN ('rh_probe.logged_history'::regclass,pg_get_serial_sequence('rh_probe.logged_history','position')::regclass)",
     );
 
     // The type CHECK accepts only insert, update, and delete.
@@ -669,7 +661,7 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
         &db_url,
         &format!(
             "BEGIN;\n\
-             SET LOCAL ROLE wamn_db_owner;\n\
+             SET LOCAL ROLE CURRENT_USER;\n\
              {}{}\
              SELECT wamn_history.create_history_table('rh_probe', repeat('r', 31), false);\n\
              COMMIT;\n\
@@ -704,7 +696,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
     fn assert_history_grants(url: &str) {
         assert_query(
             url,
-            "SELECT has_schema_privilege('wamn_db_owner','wamn_history','CREATE') AND has_schema_privilege('wamn_db_owner','wamn_history','USAGE') AND bool_and(has_function_privilege('wamn_db_owner',oid,'EXECUTE')) FROM pg_proc WHERE pronamespace='wamn_history'::regnamespace",
+            "SELECT has_schema_privilege(CURRENT_USER,'wamn_history','CREATE') AND has_schema_privilege(CURRENT_USER,'wamn_history','USAGE') AND bool_and(has_function_privilege(CURRENT_USER,oid,'EXECUTE')) FROM pg_proc WHERE pronamespace='wamn_history'::regnamespace",
         );
         assert_query(
             url,
@@ -790,7 +782,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
             if app_role {
                 apply(&admin, &sql::ensure_app_acl_role_sql());
             }
-            apply(&system_url, sql::ensure_db_owner_role_sql());
+            apply(&system_url, sql::ensure_project_roles_sql());
             // Bootstrap caller identity before the system install writes stamped rows.
             apply(
                 &system_url,
@@ -1426,7 +1418,7 @@ fn a_numeric_scale_only_update_moves_the_stamps_on_postgres() {
     apply(
         &db_url,
         "BEGIN;\n\
-         SET LOCAL ROLE wamn_db_owner;\n\
+         SET LOCAL ROLE CURRENT_USER;\n\
          CREATE TABLE rh_probe.measured (\n\
              id integer PRIMARY KEY, amount numeric NOT NULL,\n\
              created_at timestamptz NOT NULL, created_by uuid NOT NULL,\n\
@@ -1490,7 +1482,7 @@ fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
     apply(
         &db_url,
         "BEGIN;\n\
-         SET LOCAL ROLE wamn_db_owner;\n\
+         SET LOCAL ROLE CURRENT_USER;\n\
          CREATE TABLE rh_probe.amounts (id integer PRIMARY KEY, amount numeric NOT NULL);\n\
          SELECT wamn_history.create_history_table('rh_probe', 'amounts', false);\n\
          CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.amounts\n\

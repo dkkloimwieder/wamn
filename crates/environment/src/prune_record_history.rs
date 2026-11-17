@@ -5,8 +5,8 @@
 //! `wamn_record_history_log` trigger argument is `P<n>D`, and the verb reads that
 //! argument from `pg_trigger`. It skips an `unlimited` relation.
 //!
-//! **Role:** the verb connects as a targeted `wamn_audit_retention` credential
-//! generation and refuses any other login. apply-package grants that role
+//! **Role:** the verb connects as a targeted `wamn_platform` credential
+//! login. The platform role holds
 //! `DELETE` and `SELECT (row_key, position, changed_at, transaction_id)` on the history
 //! tables that the verb prunes. It also grants the watermark read and write.
 //!
@@ -43,8 +43,8 @@ use wamn_provision::{
 /// Inputs of one record history retention run.
 #[derive(Debug)]
 pub struct PruneRecordHistoryRequest {
-    /// Postgres URL for this project's `wamn_audit_retention` credential
-    /// generation. The verb refuses any other login.
+    /// Postgres URL for this project's `wamn_platform` credential
+    /// login.
     pub database_url: String,
 
     pub org: wamn_registry::OrgId,
@@ -77,9 +77,11 @@ pub struct PrunedHistory {
 pub async fn prune_expired_record_history(
     request: PruneRecordHistoryRequest,
 ) -> anyhow::Result<Vec<PrunedHistory>> {
-    let mut client = wamn_postgres::connect(&request.database_url)
-        .await
-        .context("audit retention credential connect")?;
+    let mut client = wamn_postgres::connect(
+        &wamn_provision::workload_role::platform_configuration(&request.database_url)?,
+    )
+    .await
+    .context("audit retention credential connect")?;
 
     let result = async {
         prune(&mut client).await

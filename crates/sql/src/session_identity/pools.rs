@@ -25,9 +25,7 @@ impl WamnPostgres {
         let timeout = cfg.statement_timeout_ms.to_string();
         let size = u32::try_from(match class {
             AuthorityClass::GuestSql | AuthorityClass::DynamicSql => cfg.guest_pool_max_size,
-            AuthorityClass::ExecutorPlatform
-            | AuthorityClass::CallableHttp
-            | AuthorityClass::Administration => cfg.platform_pool_max_size,
+            AuthorityClass::Platform => cfg.platform_pool_max_size,
         })?;
         Ok(PgPoolOptions::new()
             .max_connections(size)

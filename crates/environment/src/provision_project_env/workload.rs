@@ -39,6 +39,37 @@ pub(crate) async fn provision(
         .next()
         .context("control database host is absent")?
         .trim_end_matches("-rw");
+    let reader =
+        wamn_provision::system_reader::managed_role(&document.org, &document.env, control_database);
+    reconcile(
+        &platform.system_database_url,
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        &document.org,
+        control_cluster,
+        &reader,
+    )
+    .await?;
+    wait_role(&mut control, &reader.name).await?;
+    let reader_config = configuration(
+        document.org.as_str(),
+        control_cluster,
+        control_options.get_host().to_owned(),
+        control_options.get_port(),
+        control_database.to_owned(),
+        reader.name,
+        reader.password_secret.name.clone(),
+    );
+    let reader_map = json!({"apiVersion":"v1","kind":"ConfigMap",
+        "metadata":{"name":reader.password_secret.name,"namespace":namespace},
+        "data":{"system-reader.json":reader_config.to_json()?}});
+    kubectl::apply(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        namespace,
+        &reader_map,
+    )
+    .await?;
     let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
     let triple = document.triple();
     let mut data = serde_json::Map::new();
@@ -81,12 +112,23 @@ pub(crate) async fn provision(
             WorkloadRoleIdentityType::Org => unreachable!("org roles are not project credentials"),
         };
         let username = workload_login(family, identity)?;
-        let secret = wamn_provision::workload_secret_name(
+        let mut secret = wamn_provision::workload_secret_name(
             family,
             &document.org,
             &document.project,
             &document.env,
         );
+        if family == WorkloadRoleFamily::Platform {
+            secret = wamn_provision::workload_role::platform_managed_role(database)
+                .password_secret
+                .name;
+        }
+        if family == WorkloadRoleFamily::Migration {
+            secret = wamn_provision::migrations::MigrationDatabase::Project
+                .managed_role(database)
+                .password_secret
+                .name;
+        }
         let connection = if is_control {
             &mut control
         } else {
@@ -103,7 +145,11 @@ pub(crate) async fn provision(
             &platform.target.context,
             &document.org,
             role_cluster,
-            &managed_role(username.clone(), family.acl_role(), secret.clone()),
+            &if family == WorkloadRoleFamily::Migration {
+                wamn_provision::migrations::MigrationDatabase::Project.managed_role(database)
+            } else {
+                managed_role(username.clone(), family.acl_role(), secret.clone())
+            },
         )
         .await?;
         wait_role(connection, &username).await?;

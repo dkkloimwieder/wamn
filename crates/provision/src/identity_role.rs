@@ -3,7 +3,7 @@ use postgres_protocol::escape::escape_identifier;
 use sha2::{Digest as _, Sha256};
 use std::fmt::Write as _;
 
-pub const IDENTITY_ISSUER_ROLE: &str = "wamn_identity_issuer";
+use wamn_role::IDENTITY_ISSUER_ROLE;
 /// Exact database served by the identity authority.
 pub const IDENTITY_ISSUER_DATABASE: &str = "wamn_system";
 /// Tables that allow full row mutations by the signing authority.
@@ -195,7 +195,7 @@ pub fn grant_identity_issuer_surface_sql() -> String {
          GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO {role}; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON \
            identity.session_keys, identity.session_signing_state TO {role}; GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO {role};",
-        crate::sql::ensure_acl_role_sql(IDENTITY_ISSUER_ROLE),
+        crate::sql::ensure_system_roles_sql(),
     );
     for (schema, table, columns) in IDENTITY_ISSUER_READ_COLUMNS {
         let columns = columns

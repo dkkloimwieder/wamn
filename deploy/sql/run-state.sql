@@ -7,13 +7,7 @@
 -- same convention as deploy/sql/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 condition
 -- fixtures carry their own `runs` copy (postgres-init.sql schema
 -- `s3`) so flowbench exercises the rewired runner; this file is the production schema and the
--- live-apply target. Assumes the pre-existing `wamn_app` ACL role;
--- `wamn_platform` and `wamn_run_retention` are the two roles this file creates
--- itself, because it NAMES them -- the base policy arms below target the first
--- (`wamn-0h0g.22.17`) and the `runs` grants target the second
--- (`wamn-0h0g.12.69`) -- and naming a role that may not exist is an apply-time
--- failure rather than a degradation. Role and
--- targeted LOGIN credential-generation lifecycle is provisioning-owned.
+-- live-apply target. Shared roles are installed by provisioning first.
 --
 -- The database isolates the project. FORCE RLS requires a protected caller identity.
 --
@@ -26,52 +20,10 @@
 
 CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
 
--- The shared platform group role every non-guest project-base-grants arm below targets
--- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
--- `crates/provision/src/project_key.rs` already gives for its own
--- bootstrap: naming a role that may not exist adds a new precondition to every
--- applier — seven live acceptance tests plus the production path in `services/cli` — and
--- `CREATE POLICY ... TO wamn_platform` fails outright against a cluster without
--- it.
---
--- EXCEPTION-guarded under the shared `wamn_role_bootstrap` advisory lock, the
--- `ensure_platform_group_role_sql` shape. Roles are CLUSTER-global, so two
--- appliers that do not both take the lock can each observe the role absent and
--- both issue `CREATE ROLE`.
-DO $platform_group$ BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
-                 WHERE rolname = 'wamn_platform') THEN
-    CREATE ROLE wamn_platform NOLOGIN NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-  END IF;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $platform_group$;
-
--- The stable run-retention ACL role the `runs` grants below name
--- (`wamn-0h0g.12.69`). Created HERE for exactly the reason `wamn_platform` is:
--- a `GRANT ... TO` a role that does not exist fails the whole apply, and every
--- in-tree applier of this artifact -- a dozen live acceptance tests plus the production
--- reconcile path -- would otherwise acquire a new precondition. The stable role
--- is a grant carrier only; its targeted A/B LOGIN generations, their CONNECT and
--- their Secret are provisioning-owned.
---
--- EXCEPTION-guarded under the shared advisory lock, the same shape and for the
--- same reason: roles are CLUSTER-global and two appliers can each observe the
--- role absent.
-DO $run_retention$ BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
-                 WHERE rolname = 'wamn_run_retention') THEN
-    CREATE ROLE wamn_run_retention NOLOGIN NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-  END IF;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $run_retention$;
 REVOKE ALL PRIVILEGES ON SCHEMA wamn_run
-    FROM PUBLIC, wamn_run_retention;
+    FROM PUBLIC, wamn_platform;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
-GRANT USAGE ON SCHEMA wamn_run TO wamn_run_retention;
+GRANT USAGE ON SCHEMA wamn_run TO wamn_platform;
 
 -- Causation is fixed by the admission transaction. Normal run-state updates
 -- may advance status/checkpoints, but cannot rewrite event ancestry.
@@ -117,7 +69,7 @@ BEGIN
 END
 $$;
 
--- `wamn_run_retention` holds DELETE for history pruning, and `wamn_app` still
+-- `wamn_platform` holds DELETE for history pruning, and `wamn_app` still
 -- retains it pending the guest-login retirement. The table grant cannot express
 -- the prune statement's terminal-state predicate, so this ordinary
 -- invoker-rights trigger makes that predicate caller-independent.
@@ -282,54 +234,9 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 CREATE TRIGGER runs_terminal_delete_only
 BEFORE DELETE ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
--- Hot HTTP and stream delivery no longer author runs, and executor lease/reap
--- no longer belongs to the guest ACL. `wamn_app` therefore retains only the
--- read and terminal-history pruning surface; private management INSERT and
--- executor UPDATE grants are provisioned to their dedicated authorities by
--- their owning cutovers. `runs_terminal_delete_only` still confines retention.
---
--- `wamn_run_retention` (`wamn-0h0g.12.69`) is run history pruning's OWN
--- principal, and the grant below is its ENTIRE authority anywhere in the
--- cluster: `DELETE`, plus `SELECT` on EXACTLY the two columns the prune
--- statement's WHERE clause reads. The `SELECT` is COLUMN-TARGETED and that is
--- load bearing, not tidiness. `wamn_run_retention` is a member of
--- `wamn_platform`, whose permissive policy admits every row after caller binding, so a
--- table-level `SELECT` here would let a retention credential read EVERY
--- project's `input_json`, `result_json` and `state_json` — measured. Column
--- scoping is the only grant-shaped bound available: PostgreSQL privileges are
--- relation- and column-shaped, never row-shaped, so what the shared arm buys
--- retention is limited HERE or nowhere.
---
--- The membership itself is not optional. Measured on PostgreSQL 18.6: with the
--- `wamn_platform` edge revoked, a retention generation holding exactly these
--- grants reads zero rows and deletes zero rows — RLS is FORCEd and no policy
--- matches the connected role, so PostgreSQL DEFAULT-DENIES silently. The arm is
--- what makes retention work at all; the column list is what keeps it cheap.
---
--- It needs nothing on `wamn_run.run_queue`: measured, the `ON DELETE CASCADE`
--- referential action in deploy/sql/run-queue.sql fires as an internal
--- referential-integrity trigger that consults neither the deleter's table grants
--- nor that relation's FORCE RLS policy, so a retention session holding zero
--- queue privilege still cascades the queue row away.
---
--- THE ACCEPTED RESIDUAL (`wamn-0h0g.22.34`). Column scoping bounds WHAT a
--- retention credential may read; it bounds nothing about WHOSE rows it may
--- delete. A raw session holding a retention generation credential can DELETE
--- another project's terminal runs after it binds a caller identity. PostgreSQL
--- privileges apply to relations and columns, not individual rows. There is no grant that expresses "only this project's rows".
---
--- This is ACCEPTED, not overlooked, on silo reasoning: ONE PROJECT-ENVIRONMENT
--- DATABASE SERVES EXACTLY ONE PROJECT, so the "other project" the residual
--- reaches does not exist in this plane. The walls are the database boundary and the credential.
---
--- `runs_terminal_delete_only` REMAINS THE GUARD and must not be weakened: it is
--- what keeps the residual confined to terminal history rather than live runs,
--- and it is caller-independent because it is an invoker-rights trigger rather
--- than a grant. If a tier ever places two projects in one database, the shape to
--- reach for is a project arm on that trigger. It is deliberately NOT built here,
--- because today it would guard against a neighbour that cannot exist.
+-- Application SQL reads run history. Platform work also prunes terminal runs;
+-- runs_terminal_delete_only keeps active runs from being deleted.
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
-    FROM PUBLIC, wamn_app, wamn_run_retention;
+    FROM PUBLIC, wamn_app, wamn_platform;
 GRANT SELECT ON wamn_run.runs TO wamn_app;
-GRANT SELECT (status, created_at), DELETE
-    ON wamn_run.runs TO wamn_run_retention;
+GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_platform;

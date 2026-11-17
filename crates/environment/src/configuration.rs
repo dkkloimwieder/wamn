@@ -5,7 +5,7 @@
 //! `platform.integration`,
 //! `platform.number_sequence` and `platform.setting` on the path that writes
 //! the application rows of [`crate::application`]: with the environment's
-//! `wamn_administration` login, in one transaction on the project database
+//! `wamn_platform` login, in one transaction on the project database
 //! that binds the caller and the route's sealed operation id. The database is
 //! the org boundary, so these tables have no project column and no row
 //! security. The application reads these rows and writes none of them.
@@ -122,7 +122,7 @@ impl PlatformConfiguration {
 /// Write the rows of `configuration`, and return how many rows were inserted
 /// or changed.
 ///
-/// The caller runs this on the `wamn_administration` login in a transaction
+/// The caller runs this on the `wamn_platform` login in a transaction
 /// that binds `app.user_id` and `app.operation` for recorded writes.
 /// Projection writes follow foreign key order: external systems, integrations, connections.
 pub async fn write_configuration(

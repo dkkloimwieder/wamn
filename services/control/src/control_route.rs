@@ -12,7 +12,7 @@
 //!
 //! A write that changes administrative authority or membership also changes the
 //! application rows of each environment it covers, with the environment's
-//! `wamn_administration` login from the mounted Secret
+//! `wamn_platform` login from the mounted Secret
 //! `wamn-control-administration-<org>`, one transaction per environment
 //! (docs/architecture/overview.md#organization-membership-and-administration).
 //! Every authority mutation commits system state first. Projection then locks

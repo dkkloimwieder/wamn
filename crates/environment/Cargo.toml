@@ -15,6 +15,7 @@ name = "netsuite_publication"
 path = "../../apps/netsuite/tests/publication.rs"
 
 [dependencies]
+wamn-role.workspace = true
 wamn-connection = { workspace = true }
 wamn-events.workspace = true
 wamn-platform-install.workspace = true

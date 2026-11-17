@@ -83,7 +83,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: 
     wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     seed(&mut client).await;
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE CURRENT_USER")
         .execute(&mut client)
         .await
         .map(drop)
@@ -193,7 +193,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions(pool: 
             .is_err()
     );
     sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,parameter_schema,operations,exports,published_at) SELECT integration_type,2,parameter_schema,operations,exports,now() FROM registry.integration_type_version WHERE integration_type='http' AND version=1").execute(&mut client).await.map(drop).unwrap();
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE CURRENT_USER")
         .execute(&mut client)
         .await
         .map(drop)
@@ -256,7 +256,7 @@ async fn two_packages_can_bind_distinct_names_to_one_connection_without_authorit
     second
         .connections
         .insert("second".parse().unwrap(), declaration);
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE CURRENT_USER")
         .execute(&mut client)
         .await
         .map(drop)
@@ -307,7 +307,7 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate(pool: sqlx:
     let store = wamn_connection::credentials::MemoryStore::default();
     wamn_connection::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"127.0.0.1:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
-    sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,write_interfaces,published_at) SELECT integration_type,2,digest,'{\"type\":\"object\",\"properties\":{\"authority\":{\"type\":\"string\"},\"unit\":{\"type\":\"integer\"}},\"required\":[\"authority\",\"unit\"]}',operations,exports,write_interfaces,now() FROM registry.integration_type_version WHERE integration_type='modbus' AND version=1; SET ROLE wamn_db_owner").execute(&mut client).await.map(drop).unwrap();
+    sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,write_interfaces,published_at) SELECT integration_type,2,digest,'{\"type\":\"object\",\"properties\":{\"authority\":{\"type\":\"string\"},\"unit\":{\"type\":\"integer\"}},\"required\":[\"authority\",\"unit\"]}',operations,exports,write_interfaces,now() FROM registry.integration_type_version WHERE integration_type='modbus' AND version=1; SET ROLE CURRENT_USER").execute(&mut client).await.map(drop).unwrap();
     let mut doc = document();
     doc.integrations.clear();
     doc.integrations.insert(
@@ -363,7 +363,7 @@ async fn blobstore_interfaces_accept_another_storage_provider(pool: sqlx::PgPool
     .await
     .unwrap();
     tx.commit().await.unwrap();
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE CURRENT_USER")
         .execute(&mut client)
         .await
         .map(drop)
@@ -425,7 +425,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface(pool: sqlx::PgPo
     let store = wamn_connection::credentials::MemoryStore::default();
     wamn_connection::credentials::define(&mut tx,&"acme".parse().unwrap(),&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"192.168.1.2:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE CURRENT_USER")
         .execute(&mut client)
         .await
         .map(drop)
@@ -515,7 +515,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: 
         .unwrap();
     let mut doc = document();
     doc.target = "remote".into();
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE CURRENT_USER")
         .execute(&mut client)
         .await
         .map(drop)
@@ -545,7 +545,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: 
             version: None,
         },
     );
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE CURRENT_USER")
         .execute(&mut client)
         .await
         .map(drop)
@@ -589,7 +589,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings(pool: 
         .map(drop)
         .unwrap();
     doc.target = "cloud".into();
-    sqlx::raw_sql("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE CURRENT_USER")
         .execute(&mut client)
         .await
         .map(drop)

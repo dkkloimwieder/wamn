@@ -2,52 +2,20 @@
 
 use std::fmt;
 
-use sha2::{Digest as _, Sha256};
 use wamn_identity_protocol::AuthorityClass;
 use wamn_registry::app_identity_hash;
 
 use crate::name::GUEST_SECRET_PREFIX;
 
-/// The shared NOLOGIN group role every non-guest project-base-grants arm targets
-/// (`wamn-0h0g.22.17`).
-///
-/// ONE role, not one per family, and no `BYPASSRLS` anywhere. The project base grants
-/// are the GUEST base grants: narrowing it `TO wamn_app` does not EXEMPT a platform
-/// principal, because PostgreSQL DEFAULT-DENIES when RLS is enabled and no
-/// policy matches the connected role. Each governed relation therefore carries
-/// exactly one permissive arm `TO wamn_platform`, and the family's table grants
-/// stay the thing that limits what it can reach.
-pub const PLATFORM_GROUP_ROLE: &str = "wamn_platform";
-
 pub(crate) const IDENTITY_HASH_HEX_LEN: usize = 40;
 
-/// Exhaustive provisioning families. Adding authority requires a code change.
-///
-/// `wamn-0h0g.13.59` froze this vocabulary at six families.
-/// `wamn-0h0g.13.61` deliberately expands that frozen set once, from six to
-/// seven, by admitting the project-environment-identity-bound management-admitter
-/// family.
-/// `wamn-0fqa` is the third deliberate expansion, from seven to ten, admitting
-/// the three role families `wamn-0h0g.22.14`'s ruled AuthorityClass mapping
-/// names and this vocabulary did not yet carry: executor-platform,
-/// callable-HTTP admitter and event-materializer. The fourth ruled row,
-/// guest-sql, already mapped to [`WorkloadRoleFamily::App`]. Only the families
-/// land here; keying credential selection by authority class is
-/// `wamn-0h0g.22.8`.
-/// `wamn-ctc8.15.2` adds a dedicated project-environment session role reader;
-/// it carries no runtime authority class and no operation-permission read.
-/// `wamn-emtx.13` adds the project-identity-bound audit retention family, which removes
-/// expired record history entries.
-/// `wamn-0h0g.10.15` removes the effect-writer family, which had no runtime
-/// consumer.
-/// `wamn-a40n.2` adds the project-environment administration family, the
-/// credential of the host-run administration routes, and the org-identity-bound
-/// control family, the credential of an org's control host.
+/// Project database login families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
     App,
     Query,
     Migration,
+    Platform,
 }
 
 impl WorkloadRoleFamily {
@@ -57,25 +25,22 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 3] = [
-        Self::App,
-        Self::Query,
-        Self::Migration,
-    ];
+    pub const ALL: [Self; 4] = [Self::App, Self::Query, Self::Migration, Self::Platform];
 
-    /// Stable NOLOGIN ACL role inherited by this family's logins.
+    /// Stable NOLOGIN group role inherited by this family.
     pub const fn acl_role(self) -> &'static str {
         match self {
             Self::App => AuthorityClass::GuestSql.acl_role(),
             Self::Query => AuthorityClass::DynamicSql.acl_role(),
-            Self::Migration => crate::migration::OWNER_ROLE,
+            Self::Migration => wamn_role::PLATFORM_ROLE,
+            Self::Platform => wamn_role::PLATFORM_ROLE,
         }
     }
 
     /// Prefix of the role identity digest, within the PostgreSQL name limit.
     pub const fn login_prefix(self) -> &'static str {
         match self {
-            Self::Migration => crate::migration::LOGIN_PREFIX,
+            Self::Migration => wamn_role::MIGRATION_ROLE,
             _ => self.acl_role(),
         }
     }
@@ -83,13 +48,12 @@ impl WorkloadRoleFamily {
     /// Exact identity class used to derive login identities.
     pub const fn identity_type(self) -> WorkloadRoleIdentityType {
         match self {
-            Self::App | Self::Query | Self::Migration => {
+            Self::App | Self::Query | Self::Migration | Self::Platform => {
                 WorkloadRoleIdentityType::ProjectEnvKey
-            }
-            // Identity follows the RESOURCE PLANE, not the consumer's home: these
-            // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
-            // One credential per org on the control database; `provision-org`
-            // mints it (owner ruling of 2026-09-30 on `wamn-a40n.2`).
+            } // Identity follows the RESOURCE PLANE, not the consumer's home: these
+              // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
+              // One credential per org on the control database; `provision-org`
+              // mints it (owner ruling of 2026-09-30 on `wamn-a40n.2`).
         }
     }
 
@@ -106,37 +70,9 @@ impl WorkloadRoleFamily {
             .filter(|family| family.is_project_env_provisioned())
     }
 
-    /// Whether this family's logins are membered into
-    /// [`PLATFORM_GROUP_ROLE`] and so reach the permissive project-base-grants arm.
-    ///
-    /// DERIVED from the two facts that already decide it, never tabulated:
-    ///
-    /// * [`Self::App`] is the GUEST. The minimum exists to admit it, and a
-    ///   platform arm would hand it every project's rows — the exact
-    ///   cross-project read `wamn-0h0g.22.6` closed.
-    /// * A [`WorkloadRoleIdentityType::Control`] or [`WorkloadRoleIdentityType::Org`]
-    ///   family's credentials reach the CONTROL database, whose store carries its own restrictive
-    ///   (`deploy/sql/control-portable-store.sql`). None of them holds a grant
-    ///   on any relation carrying the project-plane minimum, so membership would
-    ///   be authority without a reader.
-    /// * [`Self::AuditRetention`] is not a member either (`wamn-emtx` ruling
-    ///   61), and for the same reason: no reader needs the edge. Its grants
-    ///   reach only package history tables, which carry no row security.
-    ///
-    /// `Retention` is `ProjectEnvKey`-identity-bound and is a member anyway. Its login names
-    /// carry a project DIGEST, but `current_project_key` recovers a key only from
-    /// the guest login pattern, and widening that regex is refused
-    /// (`wamn-0h0g.22.17` owner ruling). The shared arm therefore makes it
-    /// cross-project on the relations it holds grants on; the project predicate it
-    /// keeps in its own statements is what re-narrows it.
+    /// Whether this family inherits the platform group.
     pub const fn is_platform_grain(self) -> bool {
-        !matches!(
-            self,
-            Self::App | Self::Query | Self::Migration
-        ) && !matches!(
-            self.identity_type(),
-            WorkloadRoleIdentityType::Control | WorkloadRoleIdentityType::Org
-        )
+        matches!(self, Self::Platform | Self::Migration)
     }
 
     /// The family's operator-facing name, in the hyphenated convention.
@@ -146,15 +82,9 @@ impl WorkloadRoleFamily {
     /// to. The wildcard arm is what makes an admitted family reach every
     /// derived flag, Secret prefix and message without an edit here.
     pub fn label(self) -> String {
-        match self {
-            // `wamn-0h0g.13.59` froze this label before the role name carried
-            // its `run_` qualifier; deriving it would rename the family in
-            // operator-facing text for no gain.
-            _ => self
-                .acl_role()
-                .trim_start_matches("wamn_")
-                .replace('_', "-"),
-        }
+        self.login_prefix()
+            .trim_start_matches("wamn_")
+            .replace('_', "-")
     }
 
     /// The stem this family's provisioning flags and Secret name are built from.
@@ -196,12 +126,7 @@ impl WorkloadRoleFamily {
         }
     }
 
-    pub(crate) const fn identity_domain(self) -> &'static [u8] {
-        match self {
-            Self::App | Self::Query => b"wamn.app.identity.v0.1",
-            Self::Migration => b"wamn.migration.identity.v0.1",
-        }
-    }
+
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -306,55 +231,17 @@ pub fn workload_role_identity_hash(
             actual,
         });
     }
-    // The App family delegates to `wamn-identity-protocol`, which the
-    // RUNTIME can reach, because `wamn-0h0g.22.6.7` makes the runtime make sure that
-    // a resolved guest credential belongs to the project it is about to serve.
-    // Delegation, not duplication — there is still ONE definition.
-    if matches!(family, WorkloadRoleFamily::App | WorkloadRoleFamily::Query) {
-        let WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key,
-            database,
-        } = identity
-        else {
-            unreachable!("identity type was validated above")
-        };
-        return Ok(app_identity_hash(project_env_key, database));
-    }
-
-    let mut preimage = Vec::new();
-    frame(&mut preimage, family.identity_domain());
-    match identity {
-        WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key,
-            database,
-        } => {
-            push_field(&mut preimage, "project_env_key", project_env_key.as_str());
-            push_field(&mut preimage, "database", database);
+    match family {
+        WorkloadRoleFamily::App | WorkloadRoleFamily::Query => {
+            let WorkloadRoleIdentity::ProjectEnvKey { project_env_key, database } = identity else {
+                unreachable!("identity type was validated above")
+            };
+            Ok(app_identity_hash(project_env_key, database))
         }
-        WorkloadRoleIdentity::ProjectEnvironment {
-            org,
-            project,
-            environment,
-            database,
-        }
-        | WorkloadRoleIdentity::Control {
-            org,
-            project,
-            environment,
-            database,
-        } => {
-            push_field(&mut preimage, "org", org.as_str());
-            push_field(&mut preimage, "project", project.as_str());
-            push_field(&mut preimage, "environment", environment.as_str());
-            push_field(&mut preimage, "database", database);
-        }
-        WorkloadRoleIdentity::Org { org, database } => {
-            push_field(&mut preimage, "org", org.as_str());
-            push_field(&mut preimage, "database", database);
+        WorkloadRoleFamily::Migration | WorkloadRoleFamily::Platform => {
+            Ok(database_identity_hash(family.login_prefix(), identity.database()))
         }
     }
-    let digest = hex::encode(Sha256::digest(preimage));
-    Ok(digest[..IDENTITY_HASH_HEX_LEN].to_string())
 }
 
 /// Derive one bounded LOGIN role for a closed workload family.
@@ -368,13 +255,36 @@ pub fn workload_login(
     ))
 }
 
-fn push_field(preimage: &mut Vec<u8>, tag: &str, value: &str) {
-    frame(preimage, tag.as_bytes());
-    frame(preimage, value.as_bytes());
+/// The database name identifies each project owner and platform login.
+pub(crate) fn database_identity_hash(role: &str, database: &str) -> String {
+    let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([role, database]));
+    digest.hex()[..IDENTITY_HASH_HEX_LEN].to_owned()
 }
 
-fn frame(preimage: &mut Vec<u8>, value: &[u8]) {
-    let length = u64::try_from(value.len()).expect("a framed identity field fits u64");
-    preimage.extend_from_slice(&length.to_be_bytes());
-    preimage.extend_from_slice(value);
+/// The single platform login of one project database.
+pub fn platform_login(database: &str) -> wamn_identity_protocol::LoginName {
+    wamn_registry::name::credential_login(
+        wamn_role::PLATFORM_ROLE,
+        &database_identity_hash(wamn_role::PLATFORM_ROLE, database),
+    )
+}
+
+/// Platform work and retention share this project credential.
+pub fn platform_managed_role(database: &str) -> crate::connection::ManagedRole {
+    let login = platform_login(database);
+    let secret = login.as_str().replace('_', "-");
+    crate::connection::managed_role(login, wamn_role::PLATFORM_ROLE, secret)
+}
+
+/// Select the platform credential from public project connection facts.
+pub fn platform_configuration(input: &str) -> anyhow::Result<String> {
+    let input = wamn_postgres::configuration(input)?;
+    if !input.trim_start().starts_with('{') {
+        return Ok(input.into_owned());
+    }
+    let mut config: wamn_postgres::ConnectionConfig = serde_json::from_str(&input)?;
+    let role = platform_managed_role(&config.database);
+    config.username = role.name;
+    config.credentials.name = role.password_secret.name;
+    config.to_json()
 }

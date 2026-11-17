@@ -18,8 +18,8 @@ use serde_json::{Value, json};
 
 use postgres_protocol::escape::escape_identifier;
 use wamn_provision::{
-    APP_ROLE, INSTANCE_SUFFIX_LEN, project_env_database_name, project_env_namespace,
-    project_env_secret_name, sql, validate_project_env,
+    INSTANCE_SUFFIX_LEN, project_env_database_name, project_env_namespace, project_env_secret_name,
+    validate_project_env,
 };
 use wamn_provision::{Org, Placement, cluster_of};
 use wamn_identity::{
@@ -249,7 +249,7 @@ pub async fn provision_project_env(
     let db_name = project_env_database_name(org, project, env, &instance);
 
     // Render the artifacts the runbook applies.
-    let database_values = serde_json::json!({"database":{"name":db_name,"cluster":cluster,"connectionLimit":args.connection_limit}});
+    let database_values = serde_json::json!({"database":{"name":db_name,"cluster":cluster,"owner":wamn_provision::migration::login(&db_name),"connectionLimit":args.connection_limit}});
     // Ordinary provisioning establishes cluster roles before it creates the
     // database. The shared-login drain is an operator finalizer and is emitted
     // only by a successful App login preparation after every carrier has a

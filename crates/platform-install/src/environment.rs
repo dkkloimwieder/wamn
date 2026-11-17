@@ -86,19 +86,21 @@ pub async fn connection(
         placement,
     };
     let cluster = wamn_provision::cluster_of(&org, &policy).name;
+    let database = wamn_provision::project_env_database_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+        &instance,
+    );
+    let owner = wamn_provision::migrations::MigrationDatabase::Project.managed_role(&database);
     Ok(crate::credentials::configuration(
         triple.org.as_str(),
         &cluster,
         format!("{cluster}-rw.{}.svc.cluster.local", triple.org),
         5432,
-        wamn_provision::project_env_database_name(
-            &triple.org,
-            &triple.project,
-            &triple.env,
-            &instance,
-        ),
-        "wamn_apply".parse()?,
-        "wamn-apply".into(),
+        database,
+        owner.name,
+        owner.password_secret.name,
     ))
 }
 
@@ -161,7 +163,7 @@ pub async fn provision(
         target,
         &chart.join("platform/environment"),
         &name,
-        json!({"database":{"name":connection.database,"cluster":cluster},"bootstrap":if initial { json!({"name":format!("bootstrap-{}",&wamn_digest::bytes_sha256(connection.database.as_bytes()).hex()[..20]),"credential":format!("{cluster}-superuser"),"ca":connection.server_ca.name}) } else {Value::Null}}),
+        json!({"database":{"name":connection.database,"cluster":cluster,"owner":role.name},"bootstrap":if initial { json!({"name":format!("bootstrap-{}",&wamn_digest::bytes_sha256(connection.database.as_bytes()).hex()[..20]),"credential":format!("{cluster}-superuser"),"ca":connection.server_ca.name}) } else {Value::Null}}),
     )
     .await?;
     wamn_kubernetes::kubectl::wait(
@@ -197,7 +199,7 @@ pub async fn remove_database(
         .strip_suffix("-ca")
         .context("project cluster CA")?;
     apply(target,&chart.join("platform/environment"),&name,
-        json!({"database":{"name":connection.database,"cluster":cluster,"ensure":"absent","reclaimPolicy":if data {"delete"} else {"retain"}}})).await?;
+        json!({"database":{"name":connection.database,"cluster":cluster,"owner":wamn_provision::migration::login(&connection.database),"ensure":"absent","reclaimPolicy":if data {"delete"} else {"retain"}}})).await?;
     wamn_kubernetes::kubectl::wait(
         &target.kubeconfig,
         &target.context,

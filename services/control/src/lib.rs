@@ -120,7 +120,7 @@ impl Configuration {
             "control credentials must belong to the org namespace"
         );
         ensure!(
-            config.apply_database.username.as_str() == wamn_provision::apply::APPLY_ROLE,
+            config.apply_database.username.as_str() == wamn_role::APPLY_ROLE,
             "operation configuration requires the apply role"
         );
         let (_, digest) = config

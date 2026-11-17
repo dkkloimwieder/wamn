@@ -10,6 +10,7 @@ test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-p
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements", "wamn-engine/wasm_component_model_implements"]
 
 [dependencies]
+wamn-role.workspace = true
 wamn-number-pattern.workspace = true
 serde = { workspace = true, features = ["derive"] }
 wamn-authentication = { workspace = true }

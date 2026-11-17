@@ -165,8 +165,7 @@ async fn apply(
     let mut executor = wamn_postgres::connect(migration_options)
         .await
         .context("connect as the migration login")?;
-    let login =
-        wamn_provision::migration::require_login(&mut executor, project_env_key).await?;
+    let login = wamn_provision::migration::require_login(&mut executor).await?;
     let catalog_database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut *client)
         .await?;
@@ -298,8 +297,9 @@ async fn ensure_model_schemas(
     for schema in schemas {
         let schema = wamn_postgres::schema::BareSchemaName::new(schema)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION wamn_db_owner",
-            schema.quoted()
+            "CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION {}",
+            schema.quoted(),
+            postgres_protocol::escape::escape_identifier(login.as_str())
         )))
         .execute(&mut *connection)
         .await?;

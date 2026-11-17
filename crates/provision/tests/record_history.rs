@@ -54,7 +54,7 @@ async fn fresh_control_history_stamps_production_writes(pool: sqlx::PgPool) {
     {
         let batches: &[&str] = &[
             "DO $$ BEGIN IF to_regrole('wamn_system') IS NULL THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;",
-            wamn_provision::sql::ensure_db_owner_role_sql(),
+            wamn_provision::sql::ensure_project_roles_sql(),
             &format!(
                 "GRANT CREATE ON DATABASE {} TO wamn_system",
                 postgres_protocol::escape::escape_identifier(

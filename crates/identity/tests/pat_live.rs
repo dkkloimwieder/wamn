@@ -16,7 +16,7 @@ const TTL: Duration = Duration::from_secs(3600);
 
 #[sqlx::test(migrations = false)]
 async fn platform_pat_round_trip_on_postgres(pool: sqlx::PgPool) {
-    // The system schema creates the cluster-wide wamn_system and wamn_db_owner roles.
+    // The system schema creates the cluster-wide wamn_system role.
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::url(&pool);
     let url = test_database.as_str().to_owned();

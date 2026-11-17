@@ -310,8 +310,7 @@ async fn delete_locked(
     roles::delete_control_roles(admin_url, triple, platform).await?;
     lines.push("deleted the environment's control logins (or they were gone)".into());
     if data {
-        let mut roles = instance_roles(triple, &instance, &project_env_key)?;
-        roles.push(wamn_provision::migrations::MigrationDatabase::Project.login(&database));
+        let roles = instance_roles(triple, &instance, &project_env_key)?;
         let project_connection =
             wamn_platform_install::environment::connection(admin_url, triple).await?;
         let cluster = project_connection

@@ -81,19 +81,18 @@ impl Operation {
         if self.privileged() {
             let owner = wamn_provision::migrations::MigrationDatabase::Project
                 .managed_role(database);
-            needs.push((owner.password_secret.name, "owner", "/credentials/owner"));
+            needs.push((
+                owner.password_secret.name.clone(),
+                "owner",
+                "/credentials/owner",
+            ));
             needs.push((
                 wamn_provision::project_env_cdc_secret_name(org, project, env),
                 "capture",
                 "/credentials/capture",
             ));
             needs.push((
-                wamn_provision::workload_secret_name(
-                    wamn_provision::WorkloadRoleFamily::Migration,
-                    org,
-                    project,
-                    env,
-                ),
+                owner.password_secret.name,
                 "migration",
                 "/credentials/migration",
             ));
