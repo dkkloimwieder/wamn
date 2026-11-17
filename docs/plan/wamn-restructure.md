@@ -570,7 +570,7 @@ Issues:
   - dispatches to the service's `entry.call`
 - Publish refuses authored routes under that prefix.
 - An application host route `workflow.run` (admin only) admits a durable run, dispatches it to `entry.run`, and returns the run id.
-- `workflow.author`, `workflow.enable`, `workflow.disable` and `workflow.list` are application host routes (admin only). Enable takes the lifecycle lock, checks the graph against the host's `wamn.application`, stores the enable LSN and creates the workflow's consumer. Disable deletes it.
+- `workflow.author`, `workflow.enable`, `workflow.disable` and `workflow.list` are application host routes (admin only). Enable takes the environment key on the project database, checks the graph against the host's `wamn.application`, reads the source stream's last sequence and then the LSN, stores the LSN, and creates the workflow's consumer starting one after that sequence. Environment apply and delete also take that key on each project database they change. Disable deletes it.
 - `workflow.start` goes: its route, its contract, its CLI verb and the `workflow_not_served` refusal.
 
 7.5 Authoring check and CLI.
@@ -619,6 +619,8 @@ Issues:
 - 3.6: the first signing key, the installer source for the identity envelope settings, and the `CN=control-<org>` certificate.
 - 3.7: the TypeScript clients cannot be generated again until codegen is reworked (the `admin_covered` contract changed in Epic 6).
 - Topic entry node: after 3.4. It uses one pull consumer for each Topic workflow, like Data change, plus a publish grant for application subjects.
+- 3.5: a deploy checks the enabled workflows against the new `wamn.application`, under the environment key on the project database, and refuses when an enabled workflow names a sibling or export the release removes.
+- The environment source stream has unlimited retention (`broker/events.rs::source_stream_config`: `Limits`, no age, byte or message limit). Set a retention limit.
 
 # Part 2: Review log
 
@@ -2015,3 +2017,5 @@ Facts:
 - The service runs in every application workload. Nodes are called through the host. `node_digests_json` goes with `manifest_digest`. The authoring check reads the live WorkloadDeployment. Data-change consumers are bound in the workload config. The event crate merge is part of this epic.
 
 **Ruled (D, 2026-11-17): Epic 7 scout answers.** wasmCloud refuses NATS handlers on a service, so the service pulls. One durable pull consumer for each enabled Data change workflow, filtered to its entity, created at enable and deleted at disable by the host. Workflow author, enable, disable and list are application host routes; control's workflow routes go. The enable LSN replaces `enable_sequence`. Graph format 0.2 with typed entry nodes and a response node. Exact dispatch by sibling and export. One checkpoint at the Response. A Request call admits a run row at its start when any reachable node can write. Request permission `wamn-workflow:<application>/<workflow_id>`. No role grant to the `workflow` user; the host reads the `execution_role` grants directly. emit is refused until Topic.
+
+**Ruled (D, 2026-11-17): Epic 7 lock and deliver policy.** The host takes the environment key on the project database, and environment apply and delete take it there too. A new workflow consumer starts one after the source stream's last sequence, read before the enable LSN. Open items added: the 3.5 deploy check of enabled workflows, and the source stream retention limit.
