@@ -65,6 +65,7 @@ struct OperationAuthority {
     grant: Option<wamn_catalog::registered_operation::RegisteredOperation>,
     schema: Option<String>,
     transaction: bool,
+    signed_fields: bool,
 }
 
 impl WamnPostgres {
@@ -105,6 +106,9 @@ impl WamnPostgres {
                                 grant,
                                 schema: component.schema.clone(),
                                 transaction: operation.host_transaction,
+                                signed_fields: operation
+                                    .signed_result
+                                    .is_some_and(|result| !result.fields.is_empty()),
                             },
                         ))
                     })
@@ -141,6 +145,7 @@ struct OpenOperation {
     write: bool,
     source: CanonicalName,
     settled: bool,
+    signed_fields: bool,
 }
 
 impl OpenOperation {
@@ -302,22 +307,27 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
 
     async fn sign_result(
         accessor: &Accessor<T, Self>,
-        _payload: String,
+        payload: String,
     ) -> wash_runtime::wasmtime::Result<Result<String, wamn_engine::operation::node_types::NodeError>>
     {
         let store = accessor
             .with(|mut access| state(access.get().table).cloned())
             .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
         let current = store.open.lock().await;
-        current
+        let current = current
             .as_ref()
             .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
-        Ok(Err(wamn_engine::operation::node_types::NodeError::Terminal(
-            wamn_engine::operation::node_types::ErrorDetail {
-                code: Some("result_signing_unavailable".into()),
-                message: "result signing is not available until connections return".into(),
-            },
-        )))
+        if !current.signed_fields {
+            return Ok(Ok(payload));
+        }
+        Ok(Err(
+            wamn_engine::operation::node_types::NodeError::Terminal(
+                wamn_engine::operation::node_types::ErrorDetail {
+                    code: Some("result_signing_unavailable".into()),
+                    message: "result signing is not available until connections return".into(),
+                },
+            ),
+        ))
     }
 
     async fn finish_read(
@@ -641,6 +651,7 @@ async fn begin(
         source,
         write: !authorize_only,
         settled: true,
+        signed_fields: admitted.signed_fields,
     };
     if authorize_only {
         let transaction = open
@@ -808,6 +819,7 @@ impl WamnPostgres {
                 write: true,
                 source: operation.clone(),
                 settled: true,
+                signed_fields: false,
             };
             let claim = claim_operation(
                 &open,

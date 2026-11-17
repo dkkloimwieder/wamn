@@ -123,6 +123,7 @@ impl Writes<'_, '_> {
             operation,
             &request.to_string(),
             None,
+            &[],
         )
         .await
     }

@@ -120,6 +120,11 @@ impl ControlRoutes<'_> {
         } else {
             None
         };
+        let applications = if matches!(operation, "connection.delete" | "integration.delete") {
+            crate::environment_status::applications(self.org, &target.project, env).await?
+        } else {
+            Vec::new()
+        };
         let mut result = administration::execute(
             &mut project,
             writer,
@@ -128,6 +133,7 @@ impl ControlRoutes<'_> {
             operation,
             payload,
             source,
+            &applications,
         )
         .await?;
         if operation == "connection.authorize" {

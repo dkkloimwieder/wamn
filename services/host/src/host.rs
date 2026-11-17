@@ -98,7 +98,7 @@ pub struct HostArgs {
     /// The host configuration file that the operator chart renders for the
     /// host group's `plugins` entries (docs/plan/alignment.md R6, R9).
     #[arg(long = "user-config")]
-    pub user_config: Option<PathBuf>,
+    pub user_config: PathBuf,
 
     /// The address of the `wasmcloud:nats` bindings, when it is not the data
     /// connection. Left out, a binding that names no `servers` takes the data
@@ -236,12 +236,19 @@ pub struct HostArgs {
     pub allowed_hosts: Vec<String>,
 }
 
-/// The `host.plugins` entries of the chart's host configuration file. Only
-/// the native entries the release chart declares are read: a plugin with an
-/// image, a file, `configFrom` or `secretFrom` is refused.
+/// Native plugin declarations and mounted Secret catalogs from the host chart.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UserConfig {
     host: UserHost,
+    #[serde(default)]
+    secrets: std::collections::BTreeMap<String, UserSecret>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserSecret {
+    dir: PathBuf,
 }
 
 #[derive(serde::Deserialize)]
@@ -260,6 +267,8 @@ struct UserPlugin {
     bindings: std::collections::BTreeMap<String, UserBinding>,
     #[serde(default)]
     workload_config: Option<String>,
+    #[serde(default)]
+    secret_from: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -276,6 +285,20 @@ struct UserBinding {
 fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::PluginBindings> {
     let config: UserConfig =
         serde_yaml::from_str(source).context("decode the host configuration file")?;
+    for entry in &config.host.plugins {
+        for secret in &entry.secret_from {
+            let source = config
+                .secrets
+                .get(secret)
+                .context("plugin Secret is absent from host secrets catalog")?;
+            anyhow::ensure!(
+                entry.id == wamn_sql::WAMN_POSTGRES_ID
+                    && source.dir
+                        == PathBuf::from("/etc/wasmcloud/host-plugin-secrets").join(secret),
+                "unsupported plugin Secret projection"
+            );
+        }
+    }
     let mut bindings = plugin::PluginBindings::new();
     for entry in config.host.plugins {
         let policy = match entry.workload_config.as_deref() {
@@ -493,9 +516,25 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             )?
         },
     );
+    let source = tokio::fs::read_to_string(&args.user_config)
+        .await
+        .with_context(|| {
+            format!(
+                "read the host configuration file {}",
+                args.user_config.display()
+            )
+        })?;
+    let mut user_config: UserConfig =
+        serde_yaml::from_str(&source).context("decode host configuration")?;
+    let postgres_config = user_config
+        .host
+        .plugins
+        .iter_mut()
+        .find(|plugin| plugin.id == wamn_sql::WAMN_POSTGRES_ID)
+        .map(|plugin| std::mem::take(&mut plugin.config))
+        .unwrap_or_default();
     let projects = Arc::new(projects::Projects::default());
-    let credentials = Arc::new(projects::Credentials(Arc::clone(&projects)));
-    let postgres = Arc::new(WamnPostgres::with_provider(credentials));
+    let postgres = Arc::new(WamnPostgres::from_host_config(&postgres_config)?);
     postgres.set_authorization_store(Arc::new(authentication::Authorization::new(
         Arc::downgrade(&postgres),
     )));
@@ -531,22 +570,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::<FlowHttpRouting>::clone(&flow_http),
     ];
 
-    let native_event_bindings = if let Some(path) = &args.user_config {
-        let source = tokio::fs::read_to_string(path)
-            .await
-            .with_context(|| format!("read the host configuration file {}", path.display()))?;
-        plugins.push(Arc::new(
-            plugin::wasmcloud_nats::WasmcloudNats::new()
-                .with_memory_budget(host_memory.max_guest_memory)
-                .with_lattice_prefixes(vec![
-                    format!("{}.", wash_runtime::washlet::HOST_API_PREFIX),
-                    format!("{}.", wash_runtime::washlet::OPERATOR_API_PREFIX),
-                ]),
-        ));
-        Some(plugin_bindings(&args, &source)?)
-    } else {
-        None
-    };
+    plugins.push(Arc::new(
+        plugin::wasmcloud_nats::WasmcloudNats::new()
+            .with_memory_budget(host_memory.max_guest_memory)
+            .with_lattice_prefixes(vec![
+                format!("{}.", wash_runtime::washlet::HOST_API_PREFIX),
+                format!("{}.", wash_runtime::washlet::OPERATOR_API_PREFIX),
+            ]),
+    ));
+    let native_event_bindings = plugin_bindings(&args, &source)?;
 
     // Count the same plugins supplied to the native host, including the optional bridge.
     let cleanup_budget = host_cleanup_budget(plugins.len())?;
@@ -554,9 +586,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     for plugin in plugins {
         host_builder = host_builder.with_plugin(plugin)?;
     }
-    if let Some(bindings) = native_event_bindings {
-        host_builder = host_builder.with_plugin_bindings(bindings);
-    }
+    host_builder = host_builder.with_plugin_bindings(native_event_bindings);
     let mut builder = host_builder
         .with_engine((*engine).clone())
         .with_config(host_config)

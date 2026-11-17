@@ -66,7 +66,12 @@ impl WamnBlobstore {
             let release = &context.release;
             let facts = &context.connections;
             anyhow::ensure!(
-                facts.project_env_key() == &release.target().project_env_key,
+                facts.project_env_key()
+                    == &wamn_registry::name::project_env_key(
+                        &release.org,
+                        &release.project,
+                        &release.environment
+                    ),
                 "file connection target mismatch"
             );
             let id = *facts
@@ -84,13 +89,6 @@ impl WamnBlobstore {
                     && matches!(configuration.integration_type.as_str(), "s3" | "gcs"),
                 "not a file connection"
             );
-            let version = facts
-                .release(&release.release().manifest_digest)
-                .await?
-                .version(&id);
-            facts
-                .version(&configuration.integration_type, version)
-                .await?;
             let bound = BlobstoreDefinition::parse_for(
                 &configuration.parameters,
                 provider(&configuration.integration_type)?,
@@ -111,7 +109,7 @@ impl WamnBlobstore {
                 container,
                 Arc::clone(&client.signer),
                 bound.cdn_host,
-                &release.target().environment,
+                &release.environment,
                 deadline,
             ))
         };

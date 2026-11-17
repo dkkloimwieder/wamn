@@ -208,47 +208,6 @@ CREATE TABLE catalog.connection_requirement (
     PRIMARY KEY (component_digest, package_id, name)
 );
 
-CREATE TABLE catalog.release_connection (
-    manifest_digest text NOT NULL,
-    connection_id uuid NOT NULL,
-    version integer NOT NULL,
-    created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
-    updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
-    PRIMARY KEY (manifest_digest, connection_id),
-    FOREIGN KEY (connection_id) REFERENCES platform.connection (id)
-);
-
-CREATE TABLE catalog.connection_binding (
-    manifest_digest text NOT NULL,
-    component_digest text NOT NULL,
-    package_id text NOT NULL,
-    name text NOT NULL,
-    connection_id uuid NOT NULL,
-    created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
-    updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
-    PRIMARY KEY (manifest_digest, component_digest, package_id, name),
-    FOREIGN KEY (manifest_digest, connection_id)
-        REFERENCES catalog.release_connection (manifest_digest, connection_id),
-    FOREIGN KEY (component_digest, package_id, name)
-        REFERENCES catalog.connection_requirement (component_digest, package_id, name)
-);
-
-DO $connection_history$
-DECLARE relation text;
-BEGIN
-    FOREACH relation IN ARRAY ARRAY['release_connection', 'connection_binding'] LOOP
-        EXECUTE format('CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON catalog.%I '
-            'FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(''created_at'', ''created_by'', ''updated_at'', ''updated_by'')', relation);
-        PERFORM wamn_history.create_history_table('catalog', relation, false);
-        EXECUTE format('CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON catalog.%I '
-            'FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change(''unlimited'')', relation);
-    END LOOP;
-END $connection_history$;
-
 -- One version of one workflow of an environment (docs/plan/workflows.md R8).
 -- The control connection writes it after `author_workflow` evaluates the graph conditions
 -- against the serving release. A version row is immutable except `enabled`,
@@ -338,7 +297,7 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'packages',
-        'connection_requirement', 'release_connection', 'connection_binding',
+        'connection_requirement',
         'workflows'
     ] LOOP
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
@@ -374,8 +333,6 @@ $immutable_facts$;
 
 GRANT SELECT ON catalog.packages,
     catalog.connection_requirement,
-    catalog.release_connection,
-    catalog.connection_binding,
     catalog.workflows
 TO wamn_app;
 

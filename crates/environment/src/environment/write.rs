@@ -22,6 +22,8 @@ pub async fn release_values(
     application: &wamn_catalog::ApplicationName,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &wamn_digest::Digest,
+    bindings: &[super::bindings::Binding],
+    integration_repository: &str,
     actor: &str,
     source: wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
@@ -30,6 +32,8 @@ pub async fn release_values(
         application,
         manifest,
         manifest_digest,
+        bindings,
+        integration_repository,
         actor,
         source,
     )

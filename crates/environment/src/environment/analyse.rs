@@ -53,8 +53,6 @@ pub struct Installed {
 pub struct ProjectState {
     pub installed: BTreeMap<wamn_catalog::PackageName, Installed>,
     pub schema_report: Option<crate::migrations::SchemaReport>,
-    /// `(manifest_digest, component_digest, store_alias, instance_id)`.
-    pub bindings: BTreeSet<(String, String, String, String)>,
 }
 
 /// The release the document names, as OCI holds it.
@@ -269,7 +267,7 @@ pub(crate) async fn read_row(
     )
 }
 
-/// Read installed SQL and release bindings as the project database owner.
+/// Read installed SQL as the project database owner; deploy facts live in Helm values.
 /// Only an absent database returns `None`; unreadable state returns its cause.
 pub async fn read_project(url: &str) -> anyhow::Result<Option<ProjectState>> {
     let mut client = match connect_project(url).await {
@@ -302,22 +300,11 @@ pub async fn read_project(url: &str) -> anyhow::Result<Option<ProjectState>> {
             },
         );
     }
-    let bindings = sqlx::query(
-        "SELECT manifest_digest, component_digest, name, connection_id::text \
-               FROM catalog.connection_binding",
-    )
-    .fetch_all(&mut *transaction)
-    .await
-    .context("read the connection bindings")?
-    .into_iter()
-    .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
-    .collect();
     let schema_report = Some(crate::platform_migrations::observe_project(&mut transaction).await?);
     transaction.commit().await.context("end the project read")?;
     Ok(Some(ProjectState {
         installed,
         schema_report,
-        bindings,
     }))
 }
 

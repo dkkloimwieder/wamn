@@ -1,7 +1,7 @@
 //! Connection administration in one project database, with system-owned type metadata.
 
 use serde_json::{Value, json};
-use sqlx::{Connection as _, Row as _};
+use sqlx::Connection as _;
 use uuid::Uuid;
 use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::{Store, StoreVersion};
@@ -109,10 +109,21 @@ pub async fn execute(
     operation: &str,
     payload: &str,
     source: Option<&mut sqlx::PgConnection>,
+    applications: &[wamn_catalog::application_config::ApplicationConfig],
 ) -> Result<Value, ConnectionError> {
     let mut request: Value =
         serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))?;
     validate_request(operation, &request)?;
+    if matches!(operation, "connection.delete" | "integration.delete") {
+        let id: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM platform.connection WHERE name=$1")
+                .bind(request["name"].as_str())
+                .fetch_optional(&mut **project)
+                .await?;
+        if let Some(id) = id {
+            super::references::refuse_application_references(applications, &id.to_string())?;
+        }
+    }
     let credential = request
         .as_object_mut()
         .expect("validated object")
@@ -174,7 +185,24 @@ pub async fn execute(
             .iter()
             .map(|v| (v["version"].to_string(), v["parameter_schema"].clone()))
             .collect();
-        for schema in required_connection_versions(project, &id.to_string(), &published).await? {
+        for schema in required_connection_versions(
+            system,
+            org,
+            &request["project"]
+                .as_str()
+                .expect("validated project")
+                .parse()
+                .map_err(|_| refuse("invalid_input", "project"))?,
+            &request["env"]
+                .as_str()
+                .expect("validated env")
+                .parse()
+                .map_err(|_| refuse("invalid_input", "env"))?,
+            request["name"].as_str().expect("validated name"),
+            &published,
+        )
+        .await?
+        {
             validate_version_parameters(&request["parameters"], &schema)?;
         }
         let external: Option<Uuid> = if let Some(name) = request["external_system"].as_str() {
@@ -533,19 +561,26 @@ async fn store_credential(
     Ok(json!({"id":id.to_string(),"store":store,"ref":reference,"version":version,"hint":hint}))
 }
 
-/// Read versions retained until apply contracts releases outside the live set.
+/// Validate edits against the registry's desired connection selections.
 pub async fn required_connection_versions(
-    environment: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    connection: &str,
+    system: &mut sqlx::PgConnection,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
+    env: &wamn_registry::EnvName,
+    name: &str,
     published: &Value,
 ) -> Result<Vec<Value>, ConnectionError> {
-    let mut schemas = Vec::new();
-    for row in sqlx::query("SELECT DISTINCT version FROM catalog.release_connection WHERE connection_id=$1::text::uuid").bind(connection).fetch_all(&mut **environment).await? {
-        let version: i32 = row.get(0);
-        let schema = published.get(version.to_string()).ok_or_else(|| refuse("invalid_input", "version"))?;
-        schemas.push(schema.clone());
-    }
-    Ok(schemas)
+    let versions: Vec<i32> = sqlx::query_scalar("SELECT DISTINCT version FROM registry.environment_integrations WHERE org=$1 AND project=$2 AND env=$3 AND name=$4 UNION SELECT DISTINCT connection_version FROM registry.environment_application_connections WHERE org=$1 AND project=$2 AND env=$3 AND connection_name=$4 AND connection_version IS NOT NULL")
+        .bind(org).bind(project).bind(env).bind(name).fetch_all(system).await?;
+    versions
+        .into_iter()
+        .map(|version| {
+            published
+                .get(version.to_string())
+                .cloned()
+                .ok_or_else(|| refuse("invalid_input", "version"))
+        })
+        .collect()
 }
 
 fn validate_required_fields(parameters: &Value, schema: &Value) -> Result<(), ConnectionError> {

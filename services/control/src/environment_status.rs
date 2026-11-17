@@ -112,3 +112,49 @@ fn status_value(state: &EnvironmentState) -> Value {
             .collect::<Vec<_>>(),
     })
 }
+
+/// Read deployed application facts from the route components of this project environment.
+pub async fn applications(
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
+    env: &wamn_registry::EnvName,
+) -> anyhow::Result<Vec<wamn_catalog::application_config::ApplicationConfig>> {
+    use anyhow::Context as _;
+    let api = KubernetesApi::in_cluster()?;
+    let coordinate = wamn_registry::name::host_status(org, project, env);
+    let workloads = api
+        .get(format!(
+            "/apis/runtime.wasmcloud.dev/v1alpha1/namespaces/{org}/workloaddeployments"
+        ))
+        .await?;
+    let mut applications = Vec::new();
+    for workload in workloads["items"]
+        .as_array()
+        .context("workload list has no items")?
+    {
+        if workload["metadata"]["annotations"]["wamn.environment"].as_str() != Some(&coordinate) {
+            continue;
+        }
+        let components = workload["spec"]["template"]["spec"]["components"]
+            .as_array()
+            .context("application workload has no components")?;
+        let config = components
+            .iter()
+            .find_map(|component| {
+                component["localResources"]["config"]
+                    [wamn_catalog::application_config::APPLICATION_CONFIG]
+                    .as_str()
+            })
+            .context("application workload has no wamn.application")?;
+        let application: wamn_catalog::application_config::ApplicationConfig =
+            serde_json::from_str(config)?;
+        anyhow::ensure!(
+            &application.org == org
+                && &application.project == project
+                && &application.environment == env,
+            "application workload coordinate mismatch"
+        );
+        applications.push(application);
+    }
+    Ok(applications)
+}

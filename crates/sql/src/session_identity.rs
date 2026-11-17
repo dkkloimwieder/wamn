@@ -87,8 +87,12 @@ pub struct WamnPostgres {
         std::sync::RwLock<HashMap<String, Arc<super::operation::OperationWorkload>>>,
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
+    pub(super) host_projects:
+        std::collections::BTreeMap<wamn_registry::ProjectId, super::host_project::HostProject>,
+    pub(super) host_credentials: Option<Arc<super::host_project::HostCredentials>>,
+    pub(super) host_project_bind: tokio::sync::Mutex<()>,
     /// Pools indexed by project and authenticated login.
-    pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
+    pub(super) pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
     /// The single invocation and workload authority registry.
     pub scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
     /// Connections destroyed instead of repooled (chaos-acceptance-test observability).
@@ -204,6 +208,9 @@ impl WamnPostgres {
         Self {
             authorization: std::sync::OnceLock::new(),
             provider,
+            host_projects: std::collections::BTreeMap::new(),
+            host_credentials: None,
+            host_project_bind: tokio::sync::Mutex::new(()),
             pools: std::sync::RwLock::new(HashMap::new()),
             scopes: Arc::default(),
             operation_workloads: std::sync::RwLock::default(),

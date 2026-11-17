@@ -35,8 +35,8 @@ org: ""
 roles: []
 # Application sibling components pinned by OCI manifest digest.
 components: []
-# The wamn:postgres interfaces imported by these components.
-postgresInterfaces: []
+# Platform and named integration interfaces imported by these components.
+hostInterfaces: []
 
 # Shared environment host selected by application workloads.
 hostGroup: ""

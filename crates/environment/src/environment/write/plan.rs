@@ -34,6 +34,8 @@ pub(super) async fn release_values(
     application: &wamn_catalog::ApplicationName,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &wamn_digest::Digest,
+    bindings: &[super::super::bindings::Binding],
+    integration_repository: &str,
     actor: &str,
     source: wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
@@ -47,7 +49,9 @@ pub(super) async fn release_values(
         &document.env,
         application,
         seconds,
-    );
+        bindings,
+        integration_repository,
+    )?;
     let names = roles.iter().map(|role| role.name).collect();
     let selection = document
         .applications
@@ -80,8 +84,7 @@ pub(super) async fn release_values(
             source,
         )?;
     let mut components = Vec::with_capacity(manifest.components.len());
-    let mut postgres =
-        std::collections::BTreeMap::<(String, String), std::collections::BTreeSet<String>>::new();
+
     for component in &manifest.components {
         let image = source
             .image_reference(&component.descriptor.component_digest)
@@ -89,23 +92,8 @@ pub(super) async fn release_values(
         components.push(serde_yaml::to_value(serde_json::json!({
             "name": release_chart::component_name(component), "image": image,
         }))?);
-        for import in &component.descriptor.imports {
-            let Some(import) = import.strip_prefix("wamn:postgres/") else {
-                continue;
-            };
-            let (interface, version) = import
-                .rsplit_once('@')
-                .context("postgres import has no version")?;
-            postgres
-                .entry(("postgres".to_owned(), version.to_owned()))
-                .or_default()
-                .insert(interface.to_owned());
-        }
     }
     rendered["components"] = Value::Sequence(components);
-    rendered["postgresInterfaces"] = serde_yaml::to_value(postgres.into_iter().map(|((package, version), interfaces)| {
-        serde_json::json!({"namespace": "wamn", "package": package, "version": version, "interfaces": interfaces})
-    }).collect::<Vec<_>>())?;
     rendered["webClients"] = serde_yaml::to_value(
         selection
             .client

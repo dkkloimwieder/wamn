@@ -57,12 +57,7 @@ pub fn ensure_app_acl_role_sql() -> String {
 
 /// Catalog relations read by callable-HTTP connection authorization.
 ///
-pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 4] = [
-    "releases",
-    "connection_requirement",
-    "connection_binding",
-    "release_connection",
-];
+pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 2] = ["releases", "connection_requirement"];
 
 /// The `catalog.workflows` columns that callable-HTTP connection authorization
 /// reads: the key of one workflow version and its graph. The admitter gets
@@ -104,13 +99,8 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
 /// determination: this family holds no write privilege anywhere in `catalog`,
 /// so a column list would withhold only labels and timestamps while making a
 /// statement that reads one more column fail in production instead of at review.
-pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 5] = [
-    "workflows",
-    "connection_requirement",
-    "connection_binding",
-    "release_connection",
-    "releases",
-];
+pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 3] =
+    ["workflows", "connection_requirement", "releases"];
 
 /// Every `runs` column the executor-platform family WRITES, and no other
 /// (`wamn-0h0g.22.37`).

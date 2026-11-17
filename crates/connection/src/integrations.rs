@@ -15,7 +15,6 @@ use wamn_oci::package_artifact::{PackageRegistry, Repository};
 
 use crate::connection_facts::{ConnectionFacts, bounded};
 use crate::connection_memory::{ConnectionFact, ConnectionStatus};
-use crate::database::ProjectDatabase;
 
 type InstanceKey = (uuid::Uuid, i64, Option<uuid::Uuid>);
 
@@ -33,7 +32,7 @@ struct ReadState {
 
 struct ReadResources {
     facts: Arc<ConnectionFacts>,
-    manifest_digest: wamn_digest::Digest,
+    application: Arc<wamn_catalog::application_config::ApplicationConfig>,
     registry: PackageRegistry,
     registry_credentials: RegistryCredentialSource,
     state: Mutex<ReadState>,
@@ -43,7 +42,7 @@ impl std::fmt::Debug for ReadResources {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ReadResources")
-            .field("manifest_digest", &self.manifest_digest)
+            .field("application", &self.application.application)
             .finish_non_exhaustive()
     }
 }
@@ -51,8 +50,7 @@ impl std::fmt::Debug for ReadResources {
 #[derive(Debug)]
 struct ComponentReads {
     resources: Arc<ReadResources>,
-    component: wamn_digest::Digest,
-    package: wamn_catalog::PackageName,
+    component: String,
     names: HashSet<String>,
 }
 
@@ -68,14 +66,15 @@ impl ConnectionDispatch for ComponentReads {
         if !self.names.contains(name) {
             return Ok(None);
         }
-        let release = self
-            .resources
-            .facts
-            .release(&self.resources.manifest_digest)
-            .await?;
-        let Some(_) = release.binding(&self.component, &self.package, name) else {
+        if wamn_catalog::application_config::binding(
+            &self.resources.application,
+            &self.component,
+            name,
+        )
+        .is_none()
+        {
             return Ok(None);
-        };
+        }
         let Some(instance) = self.resolve(name).await? else {
             return Ok(None);
         };
@@ -91,11 +90,14 @@ impl ConnectionDispatch for ComponentReads {
         // Serialize fact observations and first links so an old observation cannot
         // evict a newer link, and concurrent misses prepare only one instance.
         let mut state = resources.state.lock().await;
-        let release = resources.facts.release(&resources.manifest_digest).await?;
-        let Some(binding) = release.binding(&self.component, &self.package, name) else {
+        let Some(binding) = wamn_catalog::application_config::binding(
+            &resources.application,
+            &self.component,
+            name,
+        ) else {
             return Ok(None);
         };
-        let id = binding.connection_id;
+        let id = binding.connection_id.parse()?;
         let fact = resources.facts.connection(&id).await?;
         state.observe(id, fact.as_ref());
         let Some(fact) = fact.filter(|fact| fact.status == ConnectionStatus::Active) else {
@@ -109,14 +111,15 @@ impl ConnectionDispatch for ComponentReads {
         if generation.runtime_type != "wasm" {
             return Ok(None);
         }
-        let version = resources
-            .facts
-            .version(&generation.integration_type, Some(binding.version))
-            .await?;
-        let digest = version
-            .digest
-            .as_ref()
-            .context("wasm version has no digest")?;
+        let reference = binding
+            .integration
+            .as_deref()
+            .context("wasm integration has no reference")?;
+        let (repository_name, digest) = reference
+            .rsplit_once('@')
+            .context("integration reference is not pinned")?;
+        let digest: wamn_digest::Digest = digest.parse()?;
+        let digest = &digest;
         if let Some(linked) = state.linked.get(&key)
             && linked.digest == *digest
         {
@@ -137,14 +140,16 @@ impl ConnectionDispatch for ComponentReads {
         let bytes = if let Some(bytes) = state.bytes.get(digest) {
             Arc::clone(bytes)
         } else {
-            let registry_name =
-                wamn_catalog::parse_component_artifact_base(&resources.registry.artifact_base)?;
+            let registry_name = wamn_catalog::parse_component_artifact_base(repository_name)?;
             let credential = resources
                 .registry_credentials
                 .credentials(registry_name.registry())
                 .await?;
             let repository = Repository::with_auth(
-                &resources.registry,
+                &PackageRegistry {
+                    artifact_base: repository_name.to_owned(),
+                    ..resources.registry.clone()
+                },
                 digest,
                 RegistryAuth::Basic(
                     credential.username().to_owned(),
@@ -199,23 +204,27 @@ pub struct Integrations {
 
 impl Integrations {
     /// Read immutable declarations before the application stores load.
-    pub async fn new(
+    pub fn new(
         facts: Arc<ConnectionFacts>,
-        release: &wamn_catalog::serving_context::ServingContext,
-        database: &dyn ProjectDatabase,
+        release: Arc<wamn_catalog::application_config::ApplicationConfig>,
         project: &wamn_registry::ProjectId,
         registry: PackageRegistry,
         registry_credentials: RegistryCredentialSource,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
-            facts.project_env_key() == &release.target().project_env_key
-                && facts.environment() == &release.target().environment
+            facts.project_env_key()
+                == &wamn_registry::name::project_env_key(
+                    &release.org,
+                    &release.project,
+                    &release.environment
+                )
+                && facts.environment() == &release.environment
                 && facts.project() == project,
             "integration project authority mismatch"
         );
         let resources = Arc::new(ReadResources {
             facts,
-            manifest_digest: release.release().manifest_digest,
+            application: release,
             registry,
             registry_credentials,
             state: Mutex::new(ReadState {
@@ -225,18 +234,14 @@ impl Integrations {
         });
         let mut imports = HashMap::new();
         let mut declarations = HashMap::new();
-        for component in &release.manifest().components {
-            let digest = &component.descriptor.component_digest;
-            let package = &component.package_id;
-            let mut connection = database.read_connection(project).await?;
-            let declared: Vec<(String, String)> = sqlx::query_as(
-                "SELECT name,interface FROM catalog.connection_requirement WHERE package_id=$1 AND component_digest=$2",
-            )
-            .bind(package)
-            .bind(digest)
-            .fetch_all(connection.connection())
-            .await?;
-            connection.commit().await?;
+        for component in &resources.application.components {
+            let digest = &component.digest;
+            let package = &component.package;
+            let declared: Vec<_> = component
+                .connections
+                .iter()
+                .map(|binding| (binding.name.to_string(), binding.interface.clone()))
+                .collect();
             let declared: Vec<_> = declared
                 .into_iter()
                 .filter(|(_, interface)| !host_interface(interface))
@@ -248,8 +253,7 @@ impl Integrations {
                 .collect();
             let dispatch = Arc::new(ComponentReads {
                 resources: Arc::clone(&resources),
-                component: *digest,
-                package: package.clone(),
+                component: component.name.clone(),
                 names: names.clone(),
             });
             let key = (*digest, package.clone());
@@ -320,7 +324,7 @@ impl Integrations {
 }
 
 fn host_interface(interface: &str) -> bool {
-    interface.starts_with("wamn:connection/") || interface.starts_with("wasmcloud:blobstore/")
+    interface.starts_with("wamn:connection/") || interface == "wasmcloud:blobstore" || interface.starts_with("wasmcloud:blobstore/")
 }
 
 #[derive(Debug)]
@@ -344,15 +348,13 @@ impl ConnectionDispatch for ComponentImports {
         let context = crate::invocation::context(scopes, scope)?;
         anyhow::ensure!(
             Arc::ptr_eq(&context.connections, &self.resources.facts)
-                && context.release.release().manifest_digest == self.resources.manifest_digest,
+                && *context.release == *self.resources.application,
             "integration invocation release mismatch"
         );
         let declared = scopes
             .read::<crate::invocation::Scope, _>(scope, |record| {
                 record.invocation.as_ref().is_some_and(|invocation| {
-                    invocation
-                        .connection(context.release.manifest(), &alias)
-                        .is_some()
+                    invocation.connection(&context.release, &alias).is_some()
                 })
             })
             .unwrap_or(false);

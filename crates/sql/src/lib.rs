@@ -16,6 +16,7 @@ use wash_runtime::wasmtime::component::{Component, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 mod executor;
+mod host_project;
 pub mod number_counter;
 mod operation;
 mod operation_transaction;
@@ -325,6 +326,14 @@ impl HostPlugin for WamnPostgres {
         WAMN_POSTGRES_ID
     }
 
+    fn binding_schema(&self) -> wash_runtime::plugin::BindingSchema {
+        wash_runtime::plugin::BindingSchema::with_host_owned_keys(
+            self.host_projects
+                .keys()
+                .map(wamn_registry::ProjectId::as_str),
+        )
+    }
+
     fn world(&self) -> WitWorld {
         WitWorld {
             imports: HashSet::from([
@@ -347,6 +356,20 @@ impl HostPlugin for WamnPostgres {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
+        if let Some(config) = item
+            .local_resources()
+            .config
+            .get(wamn_catalog::application_config::APPLICATION_CONFIG)
+        {
+            let application: wamn_catalog::application_config::ApplicationConfig =
+                serde_json::from_str(config)?;
+            let key = wamn_registry::name::project_env_key(
+                &application.org,
+                &application.project,
+                &application.environment,
+            );
+            self.bind_host_project(&application.project, &key).await?;
+        }
         if let Some(store) = self.authorization.get()
             && let Some(config) = item
                 .local_resources()
