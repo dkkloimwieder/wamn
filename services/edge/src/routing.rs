@@ -1,6 +1,6 @@
 //! The edge's manifest-based route policy, retained until the edge design.
 use crate::release::EdgeRelease;
-use wamn_catalog::{AttachmentRef, AttachmentType, ServedAttachment};
+use wamn_catalog::AttachmentType;
 use wamn_engine::flow_http_routing::{RoutePolicy, RouteProvider};
 
 impl RouteProvider for EdgeRelease {
@@ -16,15 +16,8 @@ impl RouteProvider for EdgeRelease {
         ) {
             return None;
         }
-        let read = match attachment {
-            ServedAttachment::Authored(AttachmentRef::Route(route)) => manifest
-                .route(&route.package_id, &route.component, &route.operation)
-                .is_some_and(|route| route.type_.is_read()),
-            ServedAttachment::Host(route) => route.route.type_.is_read(),
-        };
         Some(RoutePolicy {
             policy: attachment.auth_policy(),
-            read,
         })
     }
 }

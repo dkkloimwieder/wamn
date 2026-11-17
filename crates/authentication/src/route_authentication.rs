@@ -3,12 +3,9 @@
 //! The route plugin in [`wamn_engine::flow_http_routing`] resolves each
 //! attachment and its policy. For a policy that names a credential it calls
 //! [`PlatformRouteAuthenticator`]. That authenticator verifies a PAT through
-//! the system identity reader, or a session through the issuer keys. It then
-//! reads the caller's permissions through the existing callable-HTTP
-//! project pool. Each read answer stays in the host's
-//! [auth memory](wamn_authority::auth_cache), so a repeated caller costs no read.
-//! A signature policy verifies the raw body with the bound connection's
-//! credential and returns its active service principal.
+//! the system identity reader, or an access token through the configured issuer.
+//! It reads authorization from the project database. Signature policies verify the
+//! raw body with the bound connection credential and return its active principal.
 
 use std::sync::Arc;
 
@@ -18,14 +15,13 @@ use tracing::Instrument as _;
 use wamn_catalog::AttachmentAuthPolicy;
 use wamn_engine::flow_http_routing::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, Header,
-    RouteAuthenticator, RouteCredential, authentication_unavailable, require_csrf,
-    required_bearer_token, route_credential, signature_unauthorized, unauthorized,
+    RouteAuthenticator, RouteCredential, authentication_unavailable, required_bearer_token,
+    route_credential, signature_unauthorized, unauthorized,
 };
 use wamn_identity::PrincipalType;
-use wamn_identity_protocol::verifier::SessionVerifier;
 
+use crate::access_token::AccessTokenVerifier;
 use crate::authorization::AuthorizationStore;
-use crate::session_keys::IssuerKeys;
 use wamn_connection::connection_facts::ConnectionFacts;
 use wamn_connection::connection_memory::ConnectionStatus;
 
@@ -68,36 +64,23 @@ impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusRead
 #[derive(Debug)]
 pub struct PlatformRouteAuthenticator {
     postgres: Arc<dyn AuthorizationStore>,
-    projects: std::collections::HashMap<wamn_registry::ProjectEnvKey, Arc<ConnectionFacts>>,
     connection_cache: Option<Arc<dyn wamn_connection::connection_facts::ConnectionCache>>,
     identity_reader: Option<sqlx::PgPool>,
-    verifiers: std::collections::HashMap<wamn_registry::ProjectEnvKey, SessionVerifier<IssuerKeys>>,
+    verifier: Option<AccessTokenVerifier>,
 }
 
 impl PlatformRouteAuthenticator {
-    /// Bind the host's project and optional identity reader and session verifier.
+    /// Bind a host to its authorization store and configured issuer.
     pub fn new<S: AuthorizationStore + 'static>(
         postgres: Arc<S>,
-        facts: impl IntoIterator<Item = Arc<ConnectionFacts>>,
-        identity: Option<(
-            sqlx::PgPool,
-            std::collections::HashMap<wamn_registry::ProjectEnvKey, SessionVerifier<IssuerKeys>>,
-        )>,
+        identity_reader: Option<sqlx::PgPool>,
+        verifier: Option<AccessTokenVerifier>,
     ) -> Self {
-        let projects: std::collections::HashMap<_, _> = facts
-            .into_iter()
-            .map(|facts| (facts.project_env_key().to_owned(), facts))
-            .collect();
-        let (identity_reader, verifiers) = match identity {
-            Some((reader, verifiers)) => (Some(reader), verifiers),
-            None => (None, std::collections::HashMap::new()),
-        };
         Self {
             postgres,
-            projects,
             connection_cache: None,
             identity_reader,
-            verifiers,
+            verifier,
         }
     }
 
@@ -113,9 +96,6 @@ impl PlatformRouteAuthenticator {
         &self,
         project: &wamn_registry::ProjectEnvKey,
     ) -> Result<Arc<ConnectionFacts>, AuthRejection> {
-        if let Some(facts) = self.projects.get(project) {
-            return Ok(Arc::clone(facts));
-        }
         Arc::clone(
             self.connection_cache
                 .as_ref()
@@ -123,29 +103,6 @@ impl PlatformRouteAuthenticator {
         )
         .project_facts(project)
         .map_err(|_| authentication_unavailable())
-    }
-
-    /// Construct route authority without connection credentials for interface tests.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn for_test<S: AuthorizationStore + 'static>(
-        postgres: Arc<S>,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-        identity_reader: Option<sqlx::PgPool>,
-        verifier: Option<SessionVerifier<IssuerKeys>>,
-    ) -> Self {
-        Self::new(
-            postgres,
-            [],
-            identity_reader.map(|reader| {
-                (
-                    reader,
-                    verifier
-                        .into_iter()
-                        .map(|verifier| (project_env_key.to_owned(), verifier))
-                        .collect(),
-                )
-            }),
-        )
     }
 
     async fn authenticate_signature(
@@ -206,24 +163,49 @@ impl PlatformRouteAuthenticator {
         Ok(fact.service_principal_id)
     }
 
-    /// `cookie_headers` is `Some` only when `token` arrived by the session
-    /// cookie; those requests then pass the CSRF test. Its flag is whether
-    /// the route requires the CSRF header, which a read route does not.
     async fn authenticate_session(
         &self,
         token: &str,
-        cookie_headers: Option<(&[Header], bool)>,
-        project_env_key: &wamn_registry::ProjectEnvKey,
+        project: &wamn_registry::ProjectId,
+        request: &AuthenticationRequest<'_>,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
-        let verifier = self
-            .verifiers
-            .get(project_env_key)
+        let token = self
+            .verifier
+            .as_ref()
+            .ok_or_else(unauthorized)?
+            .verify(token)
+            .await
+            .map_err(|_| unauthorized())?;
+        let principal = self
+            .postgres
+            .resolve_subject(project, request.target, token.issuer(), token.subject())
+            .await
+            .map_err(|error| {
+                tracing::warn!(error = %error, "project subject read unavailable");
+                authentication_unavailable()
+            })?
             .ok_or_else(unauthorized)?;
-        if let Some((headers, required)) = cookie_headers {
-            require_csrf(required, None, headers)?;
+        let permissions = self
+            .postgres
+            .user_operation_permissions(project, request.target, &principal)
+            .instrument(tracing::info_span!("wamn.auth.permissions"))
+            .await
+            .map_err(|error| {
+                tracing::warn!(error = %error, "route operation grants unavailable");
+                authentication_unavailable()
+            })?;
+        if !token.is_current() || !permissions.user {
+            return Err(unauthorized());
         }
-        verifier.verify(token).await.map_err(|_| unauthorized())?;
-        Err(unauthorized())
+        let active_role = permissions.active_role();
+        Ok(AuthenticatedCaller::new(
+            request.attachment_id.clone(),
+            principal,
+            CredentialType::Session,
+            permissions.admin,
+            permissions.references.into_iter().collect(),
+            active_role,
+        ))
     }
 }
 
@@ -280,18 +262,23 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 None,
             )));
         }
+        if request.policy == AttachmentAuthPolicy::None {
+            return Ok(None);
+        }
+        let token = match route_credential(&request)? {
+            RouteCredential::Session(token) => {
+                return self
+                    .authenticate_session(token, project, &request)
+                    .await
+                    .map(Some);
+            }
+            RouteCredential::Pat(token) => token,
+        };
         let AuthenticationRequest {
             target,
             attachment_id,
-            headers,
             ..
         } = request;
-        if let RouteCredential::Session { token, csrf } = route_credential(&request)? {
-            return self
-                .authenticate_session(token, csrf.map(|required| (headers, required)), target)
-                .await
-                .map(Some);
-        }
         let span = tracing::info_span!(
             target: "wamn::route",
             "wamn.route.authenticate",
@@ -302,7 +289,6 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .identity_reader
                 .as_ref()
                 .ok_or_else(authentication_unavailable)?;
-            let token = required_bearer_token(headers)?;
             let principal = self
                 .postgres
                 .route_pat(project, target, identity_reader, token)
@@ -365,67 +351,40 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
     }
 }
 
-/// Admits a request to a route of the control serving root
-/// (docs/architecture/execution.md#control-sessions).
-///
+/// Authenticate the bearer identity for a control endpoint. Control reads eligibility in SQL.
+#[derive(Debug)]
 pub struct ControlRouteAuthenticator {
-    verifier: SessionVerifier<IssuerKeys>,
-}
-
-impl std::fmt::Debug for ControlRouteAuthenticator {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ControlRouteAuthenticator")
-            .finish_non_exhaustive()
-    }
+    verifier: AccessTokenVerifier,
 }
 
 impl ControlRouteAuthenticator {
-    /// `verifier` is bound to the org and its control audience.
-    pub fn new(verifier: SessionVerifier<IssuerKeys>) -> Self {
+    /// Use the verifier bound to the configured control org.
+    pub fn new(verifier: AccessTokenVerifier) -> Self {
         Self { verifier }
     }
-}
 
-impl ControlRouteAuthenticator {
-    /// Authenticate an org control endpoint without an application release.
+    /// Verify the bearer subject and recover the system principal UUID.
     pub async fn authenticate_control(
         &self,
-        _attachment_id: &wamn_catalog::canonical_name::CanonicalName,
-        read: bool,
-        headers: &[wamn_engine::flow_http_routing::Header],
-    ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        use wamn_engine::flow_http_routing::session_cookie;
-        let cookie = session_cookie(headers)?;
-        if cookie.is_some()
-            && headers
-                .iter()
-                .any(|header| header.name.eq_ignore_ascii_case("authorization"))
-        {
-            return Err(unauthorized());
-        }
-        let (token, csrf) = match cookie {
-            Some(token) => (token, Some(!read)),
-            None => (required_bearer_token(headers)?, None),
-        };
-        if let Some(required) = csrf {
-            require_csrf(required, None, headers)?;
-        }
-        self.verifier
-            .verify(token)
+        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
+        headers: &[Header],
+    ) -> Result<AuthenticatedCaller, AuthRejection> {
+        let token = self
+            .verifier
+            .verify(required_bearer_token(headers)?)
             .await
             .map_err(|_| unauthorized())?;
-        Err(unauthorized())
-    }
-}
-
-#[async_trait::async_trait]
-impl RouteAuthenticator for ControlRouteAuthenticator {
-    async fn authenticate(
-        &self,
-        request: AuthenticationRequest<'_>,
-    ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        self.authenticate_control(request.attachment_id, request.read, request.headers)
-            .await
+        let principal = token.subject().parse().map_err(|_| unauthorized())?;
+        if !token.is_current() {
+            return Err(unauthorized());
+        }
+        Ok(AuthenticatedCaller::new(
+            attachment_id.clone(),
+            principal,
+            CredentialType::Session,
+            false,
+            Default::default(),
+            None,
+        ))
     }
 }

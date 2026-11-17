@@ -2,9 +2,7 @@
 
 use crate::flow_http_routing::{RoutePolicy, RouteProvider};
 use std::collections::HashMap;
-use wamn_catalog::application_config::{
-    APPLICATION_CONFIG, ApplicationConfig, ApplicationOperationType,
-};
+use wamn_catalog::application_config::{APPLICATION_CONFIG, ApplicationConfig};
 use wamn_catalog::http_routes::{HTTP_ROUTES_CONFIG, RouteDefinition};
 
 /// The application and route facts shared by host request readers.
@@ -50,13 +48,12 @@ impl RouteProvider for WorkloadRoutes {
             .routes
             .iter()
             .find(|route| route.attachment_id == id.as_str())?;
-        let operation =
-            self.application.components.iter().find_map(|component| {
-                component.operations.get(route.sealed_operation_id.as_str())
-            })?;
+        self.application
+            .components
+            .iter()
+            .find_map(|component| component.operations.get(route.sealed_operation_id.as_str()))?;
         Some(RoutePolicy {
             policy: &route.auth_policy,
-            read: operation.type_ == Some(ApplicationOperationType::Read),
         })
     }
 }

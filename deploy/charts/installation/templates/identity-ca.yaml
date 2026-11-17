@@ -1,4 +1,4 @@
-{{- if or .Values.control.enabled .Values.edge.enabled }}
+{{- if or .Values.identity.enabled .Values.control.enabled .Values.edge.enabled }}
 {{- $certificate := lookup "v1" "Secret" .Values.org "identity-tls" }}
 {{- with $certificate }}
 {{- $ca := index .data "ca.crt" | b64dec }}

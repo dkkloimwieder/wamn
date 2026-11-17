@@ -132,13 +132,3 @@ fn unix_seconds() -> Result<i64, IdentityError> {
 fn refused() -> IdentityError {
     IdentityError::new(IdentityErrorType::InvalidInput, "session token refused")
 }
-
-/// Refuse legacy session admission until the host verifier is replaced.
-pub async fn session_is_active(
-    _client: &mut sqlx::PgConnection,
-    _claims: &AccessTokenClaims,
-    _project: &wamn_registry::ProjectId,
-    _environment: &wamn_registry::EnvName,
-) -> Result<bool, IdentityError> {
-    Ok(false)
-}

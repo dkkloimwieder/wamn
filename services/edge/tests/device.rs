@@ -19,7 +19,7 @@ use wamn_edge::samples::{Sample, SampleStore};
 use wamn_edge::status;
 use wamn_edge::store::EdgeStore;
 
-use support::{ATTACHMENT, PRINCIPAL, ROLE, bundle, config, key, start};
+use support::{ATTACHMENT, PRINCIPAL, ROLE, bundle, config, start};
 
 /// A pseudo-terminal pair: the controller that the test writes, and the path
 /// of the device that the edge reads.
@@ -56,8 +56,7 @@ async fn pending(samples: &SampleStore, count: usize) -> Vec<Sample> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: input:edge-application, env:WAMN_FLOW_HTTP_COMPONENT"]
 async fn each_frame_is_one_call_one_intent_and_one_sample() {
-    let (_, public) = key("key-one", 1);
-    let (directory, digest) = bundle("device", &public);
+    let (directory, digest) = bundle("device");
     let (mut controller, device) = pseudo_terminal();
     let mut config = config(&directory, digest);
     config.device = Some(DeviceConfig {

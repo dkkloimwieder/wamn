@@ -692,7 +692,7 @@ The `shape` node turns the row event into the item array that `label-render` tak
 
 A PAT-authenticated service can start an invoker workflow with its own held role.
 The host derives that role from current grants, with the existing single-role or held-admin selection rule.
-A service never borrows a user's active role. User sessions with a service role or any unheld role still refuse.
+A service never borrows a user's active role. A session uses the active role selected from its current project grants.
 
 An event trigger names a source package, entity, operations and an optional condition over the old and new images.
 Provisioning declares one durable consumer per application source before hosts attach.
@@ -742,16 +742,14 @@ The host keeps both answers in its [auth memory](#auth-memory).
 Service credentials use their authored application grants and cannot mint a user session.
 The route authenticator requires neither the platform operator subject nor a system `admin` role.
 
-An org access token identifies the principal. It carries no roles or server-side login authority.
-The host and control currently refuse session requests until their RFC 9068 verification is installed.
-The legacy session permission path refuses admission until the host verifier is replaced.
+The host verifies every org access token and resolves its exact `(iss, sub)` to an active user in the project database.
+It caches successful resolutions under the project grant lifetime and reads permissions with the local UUID.
+The same project grant reader supplies roles for a session and a PAT.
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference.
 Missing, revoked, expired, or mismatched authority returns 401.
-An unavailable identity read refuses admission with 503. The read has a five-second timeout.
+An unavailable project identity or grant read refuses admission with 503.
 Logout, reset, account disablement, and membership removal prevent further renewal. Issued access tokens expire within 900 seconds.
-PAT revocation retains the existing [auth memory](#auth-memory) behavior.
-A host that cannot receive drops caches nothing, so it reads every request.
-The configured revocation bound applies when a drop is lost.
+PAT resolution uses its own credential checks. The host's [local cache](#auth-memory) bounds the lifetime of cached project facts.
 Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
 
 Create an API identity with `wamn create-api-service`.
@@ -764,42 +762,16 @@ A partial creation can be retried. An API service cannot receive the reserved `a
 
 ### Auth memory
 
-The host answers the auth facts of a repeated caller from its memory, so they cost no Postgres round-trip.
-The [memory](../../crates/authority/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the one NATS.
-The key `<project_env_key>.<principal>` holds the grants of a principal and whether the project has its user row.
-The key `<project_env_key>.environment` holds the environment status.
-One read of `platform."user"`, `platform.user_role` and `platform.permission` answers permission and user-row requests.
-Invocation binds and workflow callers use the guest login. Route authentication uses the callable-HTTP login.
-Both use the same grants reader and memory value.
-A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
-The environment host watches each project through that project's event client and keeps its connection facts separate. A fact read for one project never supplies another project's authority.
-The control host serves every project, so it watches every key.
-Each environment input declares the project's `revocation_seconds`. Deploy writes this grant cache lifetime into `wamn.application` in each workload; the registry does not store it.
-The required input is an integer from 0 to 3600 seconds. Zero disables caching.
-The value is not written to `platform.setting`.
+Host authentication keeps positive project facts in its local Moka cache.
+A key includes its project environment, so one project's results cannot authorize another.
+Deploy writes the environment input `revocation_seconds` into the workload's `wamn.application` configuration.
+The value sets the project cache lifetime and ranges from 0 to 3600 seconds. Zero disables caching.
 
-Moka keeps admitted PATs and active sessions in the host that read them, with the configured expiry.
-The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.
-A delete of the key `=identity.<principal>` drops the PATs and sessions of the principal on every host.
-A `ProjectEnvKey` contains three lowercase registry names separated by `--`.
-The identity prefix `=identity` cannot be a project deployment key.
-A host does not keep a token answer when any identity key changed during its read.
-A watch reset also invalidates reads already in progress.
-Every cached token answer ends at its credential deadline, even when the configured bound is longer.
-While the watch is broken, the host keeps no fact and opens the bucket again.
-If the stream ends or the NATS client loses its connection, the watch breaks.
-The host makes sure of the connection, because the client reconnects without ending the stream.
-A host without the bucket keeps no fact either, and reads every request from Postgres.
-
-Every function that writes one of these facts takes an [`AuthDrops`](../../crates/broker/src/auth_changes.rs) and records the change in it.
-Its caller deletes the keys of the list after the commit. `wamn-broker::Publisher` publishes both authorization and connection changes through one client.
-A change of a user row or a user role deletes the key of the principal.
-A change of a role, a permission or the environment status deletes every key of the project.
-A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal delete the identity key of the principal.
-The writers are the application host, the control host, the identity service and `wamn`.
-The identity service and `wamn` read the connection from `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT` and `WAMN_NATS_TLS_KEY`, with a client certificate of the wasmCloud CA.
-`WAMN_NATS_TLS_SERVER_NAME` names the server certificate when a port-forward reaches the server.
-A lost delete waits for at most the configured bound.
+The host verifies every session token. A positive subject lookup maps the issuer and subject to the active user UUID.
+On a grant cache miss, one read of `platform."user"`, `platform.user_role`, and `platform.permission` supplies the UUID's permissions.
+Invocation binds and workflow callers use the guest login. Route authentication uses the host's platform login.
+Missing users, inactive users, and empty grant sets are read again on the next request.
+Cached facts expire on the local project lifetime. Token validity remains bounded by the issuer's expiry and signing keys.
 
 The org audience is `urn:wamn:control:{org}`.
 One password login gives one access token for the org, shared by its environments and control routes.
@@ -819,21 +791,20 @@ Logout, disable, reset, expiry, or renewal replay prevents further renewal.
 Authentication deadlines govern new admission and do not cancel accepted work.
 
 The [signer](../../crates/identity/src/session_token.rs) owns the access-token claims and minting bounds.
-The previous session profile and its shared claim types are removed.
-Until the RFC 9068 verifier is installed, host and control session admission refuse every session.
+The [verifier](../../crates/authentication/src/access_token.rs) requires `at+jwt`, EdDSA, and the configured issuer and audience.
+It allows 30 seconds of clock tolerance for expiry and future issuance.
 The edge refuses every protected route until its identity design is defined.
 PAT and signature policies on the application host retain their existing behavior.
 
 Identity temporarily retains its cookie carrier, including the readable CSRF cookie, without a signed CSRF claim.
-Host cookie admission refuses requests while cookie and CSRF handling move to the web service.
+Host and control admit sessions only through `Authorization: Bearer`. Browser forwarding of that header belongs to the web service.
 The browser keeps no tokens in its body or storage.
 The shared browser runtime signs in directly to the deployment's org and renews on load and before expiry.
 
 ### Connection memory
 
 The host answers the connection facts of a call from its memory, so a repeated call reads Postgres and the credential store only on a miss.
-The [memory](../../crates/connection/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
-It follows the revision and watch rules of the [auth memory](#auth-memory).
+The [memory](../../crates/connection/src/connection_memory.rs) describes the connection facts and their cache keys.
 Connection facts keep their own 60-second expiry.
 The [shared replica](../../crates/authority/src/kv_memory.rs) holds these rules for both memories.
 The key `<project_env_key>.connection.<connection id>` holds the active generation, effective status, credential id, and service principal id.
@@ -991,7 +962,7 @@ An `env delete` deletes every key of the environment.
 Every org in `registry.orgs` has the org audience `urn:wamn:control:<org>`.
 The same token serves application and control requests. Login requires active org membership, without an administration grant.
 Control reads org and project administration separately from the system database.
-Control session admission currently refuses requests until the RFC 9068 verifier is installed.
+Control uses the verified subject UUID for the existing org and project eligibility reads.
 
 ### Consistent session access
 
@@ -999,7 +970,7 @@ Sessions and PATs use the same operation permission condition: the caller holds 
 Every user session receives the same current authority tests without operation-specific password prompts.
 Renewal stays automatic during active use and never extends the absolute login deadline.
 
-Password login liveness belongs to identity. The legacy active-session reads currently refuse admission.
+Password login liveness belongs to identity. Hosts check token expiry and project identity status during admission.
 
 Server authorization is authoritative. The UI may hide unavailable actions, but the router or host handler always enforces authority.
 
@@ -1030,12 +1001,9 @@ The fixed application-administration operations are **not grantable** to authore
 
 `admin` is the only built-in application role.
 
-Tokens carry no signed roles. Session admission currently refuses requests until the host verifier is installed.
 A service principal has no user active role, even when it holds an application permission.
 Principal and grant writes record `AuthDrops`, and their callers publish the deletions after commit.
 A failed deletion is logged without retry. The auth cache TTL bounds stale access.
-
-A session currently receives 401 while the host verifier is replaced.
 
 Every other role:
 
@@ -1185,10 +1153,9 @@ Password buffers erase their owned bytes on drop. Diagnostics redact passwords a
 
 ## Session keys
 
-The host uses an explicit HTTPS issuer endpoint and nonempty trusted CA configuration.
+The host and control each use an explicit issuer, HTTPS JWKS address, exact org audience, EdDSA allowlist, and a nonempty CA bundle.
 It does not discover endpoints, follow redirects, use ambient proxies, or add ambient trust roots.
-A fetched key set replaces the preceding complete set.
-Unknown keys cannot obtain authority from another issuer.
+Each verifier stores the complete JWKS in its local Moka cache. An unknown key ID triggers a rate-limited refresh from the configured address.
 
 Key freshness is bounded to 300 seconds from request start, including the response's HTTP `Age`.
 The cache permits one fetch per issuer at a time, with starts at least one second apart.
@@ -1216,7 +1183,7 @@ Replicas serialize rotation with an issuer lock. Restarting a replica does not r
 An issuer without an active key requires explicit activation, including after removal of a compromised key.
 The previous public key stays available for the longest token lifetime plus clock tolerance after its signing cutoff.
 
-The [key cache](../../crates/authentication/src/session_keys.rs) and [key owner](../../crates/identity/src/session_keys.rs) define these bounds.
+The [key cache](../../crates/authentication/src/access_token.rs) and [key owner](../../crates/identity/src/session_keys.rs) define these bounds.
 
 ## Operator clients
 

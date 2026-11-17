@@ -98,47 +98,14 @@ impl HeldOperationGrants {
     }
 }
 
-/// A session presents authority that its principal does not currently hold.
-#[derive(Debug)]
-pub struct SessionGrantRefusal {
-    type_: &'static str,
-}
-
-impl std::fmt::Display for SessionGrantRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.type_)
-    }
-}
-
-impl std::error::Error for SessionGrantRefusal {}
-
-/// The grants an active principal holds, from all its roles or only from the
-/// `signed` roles it still holds.
-pub fn session_grants(
-    _grants: &wamn_authority::auth_cache::PrincipalGrants,
-    _roles: &[wamn_identity_protocol::RoleName],
-) -> anyhow::Result<HeldOperationGrants> {
-    Err(SessionGrantRefusal {
-        type_: "session verification is unavailable",
-    }
-    .into())
-}
-
-pub fn held_grants(
-    grants: &wamn_authority::auth_cache::PrincipalGrants,
-    signed: Option<&[wamn_identity_protocol::RoleName]>,
-) -> HeldOperationGrants {
-    let mut held = HeldOperationGrants {
-        user: grants.user,
-        ..HeldOperationGrants::default()
-    };
+/// Collect permissions and roles from an active project principal.
+pub fn held_grants(grants: &PrincipalGrants) -> HeldOperationGrants {
+    let mut held = HeldOperationGrants::default();
     if !grants.active || !grants.present {
         return held;
     }
+    held.user = grants.user;
     for (role, permissions) in &grants.roles {
-        if signed.is_some_and(|signed| !signed.iter().any(|signed| signed.as_str() == role)) {
-            continue;
-        }
         held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
         held.references.extend(permissions.iter().cloned());
         held.roles.insert(role.clone());
@@ -173,13 +140,14 @@ pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
         project: &wamn_registry::ProjectId,
         key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<bool>;
-    async fn session_operation_permissions(
+    /// Resolve an external identity to an active user in the project database.
+    async fn resolve_subject(
         &self,
         project: &wamn_registry::ProjectId,
         key: &wamn_registry::ProjectEnvKey,
-        roles: &[wamn_identity_protocol::RoleName],
-        principal: &wamn_identity_protocol::PrincipalId,
-    ) -> anyhow::Result<HeldOperationGrants>;
+        issuer: &str,
+        subject: &str,
+    ) -> anyhow::Result<Option<wamn_identity_protocol::PrincipalId>>;
     async fn user_operation_permissions(
         &self,
         project: &wamn_registry::ProjectId,

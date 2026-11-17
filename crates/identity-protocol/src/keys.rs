@@ -3,7 +3,17 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 
-use crate::{SessionError, SessionErrorType};
+/// A stored public key does not match the Ed25519 profile.
+#[derive(Debug)]
+pub struct PublicKeyError(&'static str);
+
+impl std::fmt::Display for PublicKeyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+impl std::error::Error for PublicKeyError {}
 
 /// The fixed-profile public JWK; private and unknown parameters are refused.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -32,7 +42,7 @@ pub struct SessionJwks {
 }
 
 /// Validate the exact JWK profile and decode its public verification bytes.
-pub fn decode_public_key(key: &PublicSessionKey) -> Result<[u8; 32], SessionError> {
+pub fn decode_public_key(key: &PublicSessionKey) -> Result<[u8; 32], PublicKeyError> {
     if key.kid.is_empty()
         || key.kty != "OKP"
         || key.crv != "Ed25519"
@@ -50,8 +60,8 @@ pub fn decode_public_key(key: &PublicSessionKey) -> Result<[u8; 32], SessionErro
         .map_err(|_| invalid("session public key must contain 32 bytes"))
 }
 
-fn invalid(message: &'static str) -> SessionError {
-    SessionError::new(SessionErrorType::InvalidKey, message)
+fn invalid(message: &'static str) -> PublicKeyError {
+    PublicKeyError(message)
 }
 
 impl PublicSessionKey {

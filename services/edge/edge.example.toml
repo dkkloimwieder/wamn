@@ -15,14 +15,6 @@ environment = "edge"
 dir = "/var/lib/wamn-edge/release"
 digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
-[session]
-# The session key file that the release installs, and the target that a
-# session must name. The organization also partitions every operation claim.
-keys = "/var/lib/wamn-edge/release/session-keys.json"
-issuer = "https://identity.example.test"
-org = "org-a"
-audience = "org-a/edge"
-
 [store]
 # The SQLite file of operation claims and samples. One edge process holds it.
 db = "/var/lib/wamn-edge/edge.db"

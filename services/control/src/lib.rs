@@ -34,6 +34,9 @@ pub struct Configuration {
     pub database: wamn_postgres::ConnectionConfig,
     pub apply_database: wamn_postgres::ConnectionConfig,
     pub session_issuer: String,
+    pub session_jwks_url: String,
+    pub session_audience: String,
+    pub session_algorithms: Vec<String>,
     pub session_jwks_ca: PathBuf,
     pub administration_dir: PathBuf,
     pub worker: wamn_kubernetes::job::Worker,
@@ -206,20 +209,12 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
     let pool = wamn_postgres::pool(&database, 4).await?;
     let identity_databases = config.administration_dir.clone();
     let identity_system = config.apply_database.to_json()?;
-    let keys = wamn_authentication::session_keys::IssuerKeys::new(
-        wamn_authentication::session_keys::IssuerKeysConfig::new(
-            &config.session_issuer,
-            &format!(
-                "{}/.well-known/jwks.json",
-                config.session_issuer.trim_end_matches('/')
-            ),
-            &std::fs::read(&config.session_jwks_ca)?,
-        )?,
-    );
-    let verifier = wamn_identity_protocol::verifier::SessionVerifier::new(
-        keys,
-        config.org.as_str(),
-        &wamn_identity::control::org_audience(&config.org)?,
+    let verifier = wamn_authentication::access_token::AccessTokenVerifier::new(
+        &config.session_issuer,
+        &config.session_jwks_url,
+        &config.session_audience,
+        &config.session_algorithms,
+        &config.session_jwks_ca,
     )?;
     let oauth = config
         .oauth_encryption

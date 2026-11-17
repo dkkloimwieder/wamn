@@ -1,31 +1,13 @@
-//! Protected edge routes refuse requests until the edge identity design is defined.
+//! Protected edge routes refuse requests pending the edge identity design.
 
 use wamn_engine::flow_http_routing::{
-    AuthRejection, AuthenticatedCaller, AuthenticationRequest, RouteAuthenticator, RouteCredential,
-    route_credential, unauthorized,
+    AuthRejection, AuthenticatedCaller, AuthenticationRequest, RouteAuthenticator,
+    signature_unauthorized, unauthorized,
 };
-use wamn_identity_protocol::file_keys::FileKeys;
-use wamn_identity_protocol::verifier::SessionVerifier;
 
-/// Legacy edge verifier with protected routes closed.
-pub struct EdgeAuthenticator {
-    verifier: SessionVerifier<FileKeys>,
-}
-
-impl std::fmt::Debug for EdgeAuthenticator {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("EdgeAuthenticator")
-            .finish_non_exhaustive()
-    }
-}
-
-impl EdgeAuthenticator {
-    /// Retain the configured legacy key source while protected routes are closed.
-    pub fn new(verifier: SessionVerifier<FileKeys>) -> Self {
-        Self { verifier }
-    }
-}
+/// The device does not admit callers to protected HTTP routes.
+#[derive(Debug)]
+pub struct EdgeAuthenticator;
 
 #[async_trait::async_trait]
 impl RouteAuthenticator for EdgeAuthenticator {
@@ -33,13 +15,9 @@ impl RouteAuthenticator for EdgeAuthenticator {
         &self,
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let RouteCredential::Session { token, .. } = route_credential(&request)? else {
-            return Err(unauthorized());
-        };
-        self.verifier
-            .verify(token)
-            .await
-            .map_err(|_| unauthorized())?;
-        Err(unauthorized())
+        Err(match request.policy {
+            wamn_catalog::AttachmentAuthPolicy::Signature { .. } => signature_unauthorized(),
+            _ => unauthorized(),
+        })
     }
 }

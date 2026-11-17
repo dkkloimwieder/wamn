@@ -50,6 +50,31 @@ runtime-operator:
         value: "16"
       - name: WAMN_PG_PLATFORM_POOL_MAX
         value: "8"
+      - name: WAMN_SESSION_ISSUER
+        valueFrom:
+          configMapKeyRef:
+            name: wamn-host-settings
+            key: WAMN_SESSION_ISSUER
+      - name: WAMN_SESSION_JWKS_URL
+        valueFrom:
+          configMapKeyRef:
+            name: wamn-host-settings
+            key: WAMN_SESSION_JWKS_URL
+      - name: WAMN_SESSION_AUDIENCE
+        valueFrom:
+          configMapKeyRef:
+            name: wamn-host-settings
+            key: WAMN_SESSION_AUDIENCE
+      - name: WAMN_SESSION_ALGORITHMS
+        valueFrom:
+          configMapKeyRef:
+            name: wamn-host-settings
+            key: WAMN_SESSION_ALGORITHMS
+      - name: WAMN_SESSION_JWKS_CA
+        valueFrom:
+          configMapKeyRef:
+            name: wamn-host-settings
+            key: WAMN_SESSION_JWKS_CA
       - name: WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT
         value: "65536"
       - name: WASMTIME_POOLING_TABLE_KEEP_RESIDENT

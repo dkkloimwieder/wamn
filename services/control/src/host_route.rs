@@ -397,11 +397,11 @@ impl HostRouteDelivery {
             }
         }
         let authentication = match &self.control_authenticator {
-            Some(authenticator) => authenticator.authenticate_control(id, read, &headers).await,
+            Some(authenticator) => authenticator.authenticate_control(id, &headers).await,
             None => Err(wamn_engine::flow_http_routing::authentication_unavailable()),
         };
         let caller = match authentication {
-            Ok(caller) => caller,
+            Ok(caller) => Some(caller),
             Err(error) => return answer(error.status, json!({"error":{"code":error.code}})),
         };
         let payload = if read {

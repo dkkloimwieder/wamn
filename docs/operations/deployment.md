@@ -896,6 +896,10 @@ Identity login uses the org audience `urn:wamn:control:<org>`.
 The identity chart no longer accepts session target ConfigMaps or project database reader credentials.
 The chart retains access to the identity database credential and its CA.
 
+The installation writes `WAMN_SESSION_ISSUER`, `WAMN_SESSION_JWKS_URL`, `WAMN_SESSION_AUDIENCE`, `WAMN_SESSION_ALGORITHMS`, and `WAMN_SESSION_JWKS_CA` into the org's `wamn-host-settings` ConfigMap.
+Environment hosts read these defaults and mount the org's `identity-ca` ConfigMap at `/etc/identity-ca`.
+Control reads the same verifier settings from its mounted configuration.
+
 The HTTP interface keeps its `credential-unavailable` result.
 
 `wamn-kubernetes` owns Secret reads and writes. Each update preserves `resourceVersion` and retries concurrent changes.

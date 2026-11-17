@@ -503,12 +503,6 @@ impl From<wamn_identity_protocol::secret::TokenError> for IdentityError {
     }
 }
 
-impl From<wamn_identity_protocol::SessionError> for IdentityError {
-    fn from(source: wamn_identity_protocol::SessionError) -> Self {
-        Self::new(IdentityErrorType::InvalidInput, source.to_string())
-    }
-}
-
 /// Create a passwordless user principal for an externally authenticated
 /// subject.
 ///

@@ -5,7 +5,6 @@
 //! org role `org-admin`, or the project role `project-admin` in a project of
 //! the org, grants control authority in that org.
 
-use crate::session_token::AccessTokenClaims;
 use sqlx::Row as _;
 
 use crate::org::ORG_ADMIN_ROLE;
@@ -29,11 +28,6 @@ const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'))";
 
 const PROJECT_ADMIN_SQL: &str = "SELECT identity.is_project_admin($1,$2,$3) AND $4='project-admin'";
-
-/// The org audience, shared by its environments and control routes.
-pub fn org_audience(org: &wamn_registry::OrgId) -> Result<String, IdentityError> {
-    Ok(wamn_registry::name::org_audience(org))
-}
 
 /// The org of an org audience, or `None` when the audience is not one.
 pub fn org_audience_org(audience: &str) -> Option<wamn_registry::OrgId> {
@@ -148,14 +142,6 @@ pub async fn org_projects_page(
             })
         })
         .collect::<Result<_, IdentityError>>()
-}
-
-/// Refuse legacy control-session admission until its verifier is replaced.
-pub async fn control_session_is_active(
-    _client: &mut sqlx::PgConnection,
-    _claims: &AccessTokenClaims,
-) -> Result<bool, IdentityError> {
-    Ok(false)
 }
 
 #[cfg(test)]
