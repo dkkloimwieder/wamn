@@ -37,7 +37,7 @@ Org → environment → project → application. One boundary per level.
 - Identity is "first insert wins": each transaction first inserts `platform.tx_identity` (unlogged, `xid8` key). `wamn_authority.current_identity()` reads it. Migration and platform logins resolve their identity through `platform.login_principal`.
 - A guest `COMMIT` is caught at host commit, not by a SQL text check: the finish statement requires the `platform.tx_identity` row for `pg_current_xact_id()`. If it is missing, the invocation fails and the connection is discarded (W41).
 - SECURITY DEFINER functions are owned by their database's owner (`datdba`), set `search_path=pg_catalog`, have no PUBLIC EXECUTE and are not grantable. Grant tests are refusal tests plus invariants derived from the role model.
-- Grants: one project database read, cached in the host's local `moka` cache. One lifetime per project (a project setting), positive answers only. No NATS replica, no drop notices.
+- Grants: one project database read, cached in the host's local `moka` cache. One lifetime per project, written by the deploy into the workload config, positive answers only. No NATS replica, no drop notices.
 - Admin inheritance (org, environment, project admin) is stored as rows in each project database. No system database read per request.
 - `platform."user"` keeps `id` (UUID) as primary key and is unique on `(issuer, sub)`. One writer: `wamn_environment::application`. The four platform principals are seed rows in the schema.
 - Roles and ACLs are run-time data. The permission vocabulary is derived from the schema and the operations. Applications ship with an `admin` role only. Bounds on calls are a project setting.
@@ -137,7 +137,7 @@ Org → environment → project → application. One boundary per level.
 
 Phase 1 deletion, phase 2 restructure (no behaviour change), phase 3 code editing. All deletion up front; the project may be non-functional across epics; every step compiles. One epic is fully scoped at a time, the next after review; work inside an epic runs in parallel.
 
-Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path; 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 install and isolation; 3.7 codegen; 3.8 tests.
+Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (Epic 4: the host serves one application; Epic 5: connections, files, integrations); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 install and isolation; 3.7 codegen; 3.8 tests.
 
 ## Epic 1: phase 1 deletion
 
@@ -269,6 +269,62 @@ Issues:
 - The host's lookup by `(iss, sub)` is step 3.3. Do not change it here.
 
 Rulings on the scout questions (D, 2026-11-16): logins stay suffixed per project database until 3.6; `registry.connection_principal` keeps control row security for connection principals; `configuration.rs` loses its external system, integration and connection writes; the workflow user is a fifth seed row; stage and the control service take the issuer from the identity issuer address setting; the `Database` owner in `database.yaml` is the project's migration login, and `clusters.yaml` waits for 3.6.
+
+## Epic 4: step 3.2, part 1, the host serves one application
+
+Rules:
+- Only the work listed here. Connections, file routes, integrations and features built only when declared are Epic 5. The workflow service is 3.4.
+- Done means all of these pass:
+  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
+  - The schema-apply check from Epic 3.
+  - `helm template` of the release chart, with values for the largest fixture application in `apps/`. The rendered values must stay under Helm's 1 MiB release limit. Report the size.
+  - A local Postgres container is allowed for these checks only.
+- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
+- No kind or cluster runs, nothing on GCP.
+- Generated code is regenerated, never edited by hand.
+
+Issues:
+
+4.1 Application workload. Runs first, alone.
+- The release chart (`deploy/charts/release/templates`) renders one `WorkloadDeployment` per application. The last version of that template is `workloads.yaml` at commit 6b6d9c22; use it as the starting point. The workload holds:
+  - the route guest
+  - every application component, by stock OCI reference and digest
+  - host interfaces: `wasi:http` handler with `config.host`, `wamn:flow-http-routing`, `wasi:config`, `wamn:operation`, and the `wamn:postgres` interfaces the components import
+- Components are published with stock `push_component` (`application/wasm`). The wamn component media types (`COMPONENT_LAYER_MEDIA_TYPE`, `COMPONENT_CONFIG_MEDIA_TYPE`) and `pull_verified` leave the publish and host paths.
+- The route guest is the platform's one pinned image. If `xtask build-platform` does not publish it, stop and ask.
+- The deploy (`wamn_environment::release_chart` and `environment::write`) writes two config keys on the route guest:
+  - `wamn.http.routes`: the route table, as today
+  - `wamn.application`, one JSON document holding:
+    - for each operation: public or private, whether the host begins the transaction, read or write, and the idempotency key field
+    - the application's database schema
+    - the project's grant cache lifetime
+- The grant cache lifetime moves into the workload config, and these go:
+  - `registry.environment_projects.revocation_seconds`
+  - `registry.environment_applications.revocation_seconds`
+  - the `revocation-seconds` rows written by `environment/document.rs::write_revocation_configuration`, and that function
+  - the application-level field in the environment input
+  The project-level value in the environment input stays, as the deploy's input.
+
+4.2 to 4.4 run in parallel after 4.1:
+
+4.2 Host operation plugin.
+- A `wamn:operation` plugin in `wamn-engine`, registered in `services/host`. For each application component, it resolves `ResolvedWorkload::dispatch_target` in `on_workload_resolved` and holds it for the binding. `invoke` calls the component through it.
+- JSON conversion stays (`engine/operation/json.rs`).
+- Delete the host's own component handling: `engine/operation/native_workload.rs`, its pull of application components, the warm list, and the repeated `NativePolicy::admit` (one check per invocation).
+- Code the edge still uses moves into `services/edge` (4.4 rule).
+
+4.3 SQL and auth.
+- The fixed statements of a transaction go as one batch at begin and one at commit (`wamn-sql`: operation transaction, write log).
+- `begin-operation` reuses the caller that `authenticate` produced. The second grants read goes.
+- Grants, environment status, PAT admission and session answers live in one local `moka` cache, with the project lifetime from `wamn.application`. It caches positive answers only.
+- Environment status comes from that cache.
+- `services/host/src/host/projects.rs` reads the projects file once, not on each request.
+
+4.4 The release document goes.
+- Delete `ServingManifest` (`wamn_catalog::serving_manifest`), `LoadedRelease` (`wamn_engine::release_manifest`) and their readers in the 13 crates that use them. The route data each reader needs comes from the workload config written in 4.1.
+- The control service builds its routes from `HostRouteSet::Control` directly. `LoadedRelease::control_root()` goes.
+- Workflow authoring checks a graph against `catalog.packages` and the live workload, not the release document.
+- The edge: the parts of `LoadedRelease`, `ServingManifest` and the wamn component pull (`pull_verified`) that `services/edge` still uses move into `services/edge`, unchanged, until the edge design. Nothing outside the edge uses them.
 
 ## Open items
 
@@ -1585,3 +1641,5 @@ Recommend a.
 **Ruled (D, 2026-11-16): Epic 3 scope.** `platform."user"` keeps `id` and adds `UNIQUE (issuer, sub)` (1a); the platform principals are seed rows (2a); connection limits wait for 3.6 (3a); the epic is checked by applying the schema to a fresh local Postgres (4a); `catalog.release_connection` and `catalog.connection_binding` lose `project_env_key` now and are deleted in 3.2 (5a). Fact: admin inheritance is already stored as rows (`application::project_authority`, run on org and project admin grants), so N3 needs no work.
 
 **Ruled (D, 2026-11-16): Epic 3 scout questions.** 21 questions answered (see the Epic 3 section of Part 1). Facts behind the changed answers: project databases share the org cluster, so logins span all of them (11); `control_principal` is the row policy of `identity.principals` (Q1, Q3); `configuration.rs` connection writes have no caller with rows (10); `workflow_user_id()` is a fixed constant (17).
+
+**Ruled (D, 2026-11-16): Epic 4 scope.** Step 3.2 splits into Epic 4 (workload, invoke, SQL and auth, release document) and Epic 5 (connections, file routes, integrations, features built only when declared). Deploy facts reach the host in config key `wamn.application`, and the guest keeps `wamn.http.routes`. The grant cache lifetime travels in the workload config, and its registry columns and `platform.setting` rows go. The edge keeps what it uses of the release document and the wamn component pull, moved into `services/edge`. The control service uses `HostRouteSet::Control` directly. The epic checks the rendered Helm values size. No new tests until 3.8.
