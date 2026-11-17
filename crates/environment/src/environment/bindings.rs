@@ -80,6 +80,23 @@ pub async fn analyse(
                     .any(|package| definition.packages.contains(&package.package.id))
         })
         .collect();
+    let environment_target = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT target_id::text FROM registry.environments WHERE org=$1 AND env=$2",
+    )
+    .bind(&document.org)
+    .bind(&document.env)
+    .fetch_optional(&mut *system)
+    .await?;
+    if matches!(&environment_target, Some(None)) {
+        return Err(refuse(
+            "environment_target_missing",
+            format!(
+                "environment {}/{} has no target",
+                document.org, document.env
+            ),
+        ));
+    }
+    let environment_target = environment_target.flatten();
     for (name, version) in document.integrations.iter().filter(|(name, _)| {
         applications.iter().any(|(_, definition)| {
             definition
@@ -90,8 +107,21 @@ pub async fn analyse(
     }) {
         let connection=sqlx::query("SELECT c.id::text,c.integration_type,g.parameters,c.active_generation,c.target_id::text,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1 AND c.status='active'")
             .bind(name).fetch_optional(&mut *project).await?.ok_or_else(||refuse("connection_unavailable",name))?;
-        let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 AND e.target_id=destination.id LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
-            .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection.get::<String,_>(4)).bind(&document.target).bind(connection.get::<i64,_>(3)).bind(&document.org).bind(&document.env).bind(version.version)
+        let connection_target: &str = connection.get(4);
+        let environment_target = environment_target
+            .as_deref()
+            .ok_or_else(|| refuse("connection_unavailable", name))?;
+        if connection_target != environment_target {
+            return Err(refuse(
+                "connection_target_mismatch",
+                format!(
+                    "connection {name} target {connection_target} does not match environment {}/{} target {environment_target}",
+                    document.org, document.env
+                ),
+            ));
+        }
+        let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
+            .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection_target).bind(&document.target).bind(connection.get::<i64,_>(3)).bind(&document.org).bind(&document.env).bind(version.version)
             .fetch_optional(&mut *system).await?.ok_or_else(||refuse("connection_unavailable",name))?;
         let runtime: String = row.get(2);
         let schema: Option<serde_json::Value> = row.get(4);
