@@ -74,7 +74,7 @@ Org → environment → project → application. One boundary per level.
 ## Identity and login
 
 - wamn keeps its own identity service for now, built so a SaaS provider can replace it.
-- The host verifies standard JWTs from settings (issuer, JWKS address, audience, algorithms) with `jsonwebtoken` and `jwks-cache`, with RFC 9068 checks, and reads only `iss`, `sub`, `aud`, `exp`. Roles come from the project database.
+- The host verifies standard JWTs from settings (issuer, JWKS address, audience, algorithms) with `jsonwebtoken` and a small JWKS fetcher (configured CA only, a fetch again on an unknown kid), with RFC 9068 checks, and reads only `iss`, `sub`, `aud`, `exp`. Roles come from the project database.
 - One token audience for each org: one login gives one token for every environment of the org and for the control routes.
 - Cookies and CSRF live in `wamn-web`; the host sees only bearer tokens.
 - Session liveness is the provider's job: 15-minute tokens, no renewal after logout or disable.
@@ -430,9 +430,10 @@ Issues:
 - One login is one password check (one Argon2 check) and gives one org token. Session targets, `with_session_targets` and `/password/environments` go.
 - The lifetime stays 900 seconds. Renewal is refused after logout or disable.
 - The `wamn-session+jwt` profile and its types in `wamn-identity-protocol` go.
+- The login request names the org audience in `aud`. Any active org member may log in. Identity activates only keys published at least the JWKS cache lifetime plus a margin earlier.
 
 6.2 Verification in the host and control.
-- Host and control verify tokens with `jsonwebtoken` and `jwks-cache`, from settings:
+- Host and control verify tokens with `jsonwebtoken` and a small JWKS fetcher (jsonwebtoken 11 `JwkSet`, the host's moka cache, a reqwest 0.13 client with only the configured CA, a fetch again on an unknown kid), from settings:
   - issuer, JWKS address, audience and allowed algorithms (`EdDSA`)
   - the CA bundle that the JWKS fetch trusts
 - RFC 9068 checks: `typ`, an exact `iss`, `aud`, `exp` with 30 seconds of tolerance, and `iat` not in the future.
@@ -443,6 +444,7 @@ Issues:
   - `session_is_active` and `control_session_is_active`
 - Cookie and CSRF handling leave the host (`engine/flow_http_routing.rs`). The host accepts only `Authorization: Bearer`.
 - Control keeps its control-eligibility read on the system database.
+- The environment host group defaults carry the verifier settings. The edge refuses protected routes until the edge design is done.
 
 6.3 Cookies and CSRF in `wamn-web`.
 - `wamn-web` proxies login, renewal and logout. It takes the tokens from identity's JSON response and sets these `__Host-` cookies:
@@ -453,11 +455,13 @@ Issues:
 - When it forwards a request, `wamn-web` replaces the cookies with `Authorization: Bearer`.
 - The HMAC key is a Secret that the web chart mounts.
 - Identity's cookie carrier (`password.rs`, `CSRF_COOKIE`, `cookie_response`) goes. Identity returns tokens as JSON only.
+- Login, enrollment, recovery and reset require a same-origin `Origin` header in place of the signed CSRF check. The cookies live until the login deadline. platform-install writes the Secret `wamn-web-csrf`.
 
 6.4 Admin rows for users.
 - `project_authority` writes the `admin` user role row for a user who holds org admin or project admin, and removes it when the user stops holding it. Every path that changes org or project admin calls it.
 - Admin grants and revokes through `mutate_grant` stay refused, so every `admin` row is inherited.
 - `user.list` puts `admin_covered` back, as "holds `admin`".
+- Blocked by 6.7.
 
 6.5 Service principals and PATs in the project database.
 - `app-schema.sql` gets `platform.pat`:
@@ -478,16 +482,19 @@ Issues:
   - `identity-client`'s PAT issuer
   - the host's `identity_reader`
 - `api_service.rs` and `provision_project_env/pat_secrets.rs` use the new path.
+- Connection principals and application principals also live only in the project database. `registry.connection_principal` goes.
+- The operator PAT and the management-author PAT are retired. Nothing in production issued them.
 
 6.6 User management through control.
 - Control routes for users: create, invite, disable and list.
 - One adapter in the control service calls identity over the operator-certificate HTTPS hop. Identity checks that the certificate subject is the control service's. Control is the only caller.
 - The installer and `api_service` stop calling identity directly and use control routes.
 - Identity gets a route for `disable_principal`. A disabled user cannot renew.
+- Control uses its own certificate, `CN=control-<org>`. `user.disable` refuses while the user has an active membership in another org.
 
 6.7 Identity fixes.
 - Identity trusts `x-forwarded-for` only from a configured number of trusted proxy hops, the way `wamn-web` does.
-- The signing private key is encrypted with the envelope that OAuth tokens use (`connection/oauth_encryption.rs`: a key file or Cloud KMS).
+- The signing private key is encrypted with the envelope that OAuth tokens use, moved into the new crate `wamn-envelope`, and stored in `identity.session_keys.private_key_envelope`.
 - Two identity replicas (`deploy/charts/identity`). Password requests use a database pool, not a new connection for each request. Key rotation stays correct with two replicas.
 - One control-eligibility rule: `environment-admin` goes, with its table, the SQL branch (`system-schema.sql`, near line 1222), `grant_environment_admin` and `revoke_environment_admin`.
 
@@ -523,6 +530,9 @@ Issues:
 - Edge device design: how exclusive connections are enforced at the edge (inference: one edge runtime for each site, so a local mutex may be enough).
 - A call limit for each application, if a real case appears: either a per-host semaphore named as per-host, or a Postgres design decided with real numbers.
 - 3.7: nothing writes the host route TypeScript clients since `cargo xtask host-route-clients` was removed.
+- 3.6: nothing in the install fills the `wamn-control-administration-<org>` map that control reads its project logins from.
+- 3.6: the first signing key, the installer source for the identity envelope settings, and the `CN=control-<org>` certificate.
+- 3.7: the TypeScript clients cannot be generated again until codegen is reworked (the `admin_covered` contract changed in Epic 6).
 
 # Part 2: Review log
 
@@ -1889,3 +1899,13 @@ Recommend a.
 - Facts:
   - The host authenticated no user and no API user after Epic 5: it had no session verifiers and no system login for `route_pat`.
   - `project_authority` wrote admin rows only for services.
+
+**Ruled (D, 2026-11-17): Epic 6 scout questions.** The agent's recommendations are accepted, with three changes:
+- The envelope code goes into a new crate, `wamn-envelope`, not `wamn-oci`.
+- The operator and management-author PATs are retired (no production caller issued them).
+- The key column is renamed `private_key_envelope`.
+Service row email stays `<subject>@<platform domain>`. `jwks-cache` is replaced by a small fetcher, because its reqwest 0.12 and jsonwebtoken 10 do not match the workspace.
+Facts:
+- Login was limited to control holders (`holds_control`), and one login cost two password checks.
+- Nothing in the install fills the control administration map.
+- The environment host group has no verifier settings.
