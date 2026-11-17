@@ -102,6 +102,7 @@ mod component {
         reason = "the eight IPv6 segments map directly to the WIT tuple"
     )]
     fn exchange(frame: Option<&[u8; 12]>) -> Result<Vec<u8>, Error> {
+        let _call = wamn::integration::bound::begin().map_err(|_| Error::Unavailable)?;
         let authority = wamn::integration::bound::authority();
         // Modbus connections use an explicit IP literal and TCP port.
         let address: core::net::SocketAddr = authority.parse().map_err(transport)?;

@@ -99,12 +99,9 @@ pub(crate) fn validate_connection_code(
     })?;
     let signature = || -> anyhow::Result<()> {
         let health = ty
-            .get_export(raw, crate::integration::HEALTH)
+            .get_export(raw, "wamn:integration/health@0.1.0")
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "integration world must export {}",
-                    crate::integration::HEALTH
-                )
+                anyhow::anyhow!("integration world must export wamn:integration/health@0.1.0")
             })?;
         let ComponentItem::ComponentInstance(health) = health.ty else {
             anyhow::bail!("integration health is not an interface instance");
@@ -1344,3 +1341,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "component_admission/integration_tests.rs"]
+mod integration_tests;

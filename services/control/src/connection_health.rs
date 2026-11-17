@@ -2,19 +2,11 @@
 
 use std::sync::Arc;
 
-use moka::sync::Cache;
-use oci_client::secrets::RegistryAuth;
-use wamn_engine::integration::{Integration, IntegrationBinding};
-use wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource;
-use wamn_oci::package_artifact::{PackageRegistry, Repository};
-
 use wamn_http::{self, transport::HttpTransport};
 
 /// Process-owned artifact cache. Candidate instances have fresh stores.
 pub struct ConnectionHealth {
     transport: Arc<HttpTransport>,
-    registry: Option<(PackageRegistry, RegistryCredentialSource)>,
-    bytes: Cache<wamn_digest::Digest, Arc<Vec<u8>>>,
 }
 
 impl std::fmt::Debug for ConnectionHealth {
@@ -25,20 +17,7 @@ impl std::fmt::Debug for ConnectionHealth {
 
 impl ConnectionHealth {
     pub fn new(transport: Arc<HttpTransport>) -> Self {
-        Self {
-            transport,
-            registry: None,
-            bytes: wamn_connection::connection_facts::bounded(),
-        }
-    }
-
-    pub fn with_registry(
-        mut self,
-        registry: PackageRegistry,
-        credentials: RegistryCredentialSource,
-    ) -> Self {
-        self.registry = Some((registry, credentials));
-        self
+        Self { transport }
     }
 
     /// Link candidate values and return only non-secret health diagnostics.
@@ -46,7 +25,6 @@ impl ConnectionHealth {
         &self,
         integration_type: &wamn_registry::integration_code::IntegrationCode,
         runtime: &str,
-        digest: Option<&wamn_digest::Digest>,
         parameters: &serde_json::Value,
         auth_type: &str,
         credential: Option<&str>,
@@ -69,52 +47,10 @@ impl ConnectionHealth {
                 }
                 _ => Err("integration health unavailable".into()),
             },
-            "wasm" | "native" => self
-                .guest(integration_type, digest, parameters, auth_type, credential)
-                .await
-                .map_err(|_| "integration health failed".to_owned()),
+            "wasm" | "native" => {
+                Err("integration health unavailable outside an application workload".into())
+            }
             _ => Err("integration health unavailable".into()),
         }
-    }
-
-    async fn guest(
-        &self,
-        code: &wamn_registry::integration_code::IntegrationCode,
-        digest: Option<&wamn_digest::Digest>,
-        parameters: &serde_json::Value,
-        auth_type: &str,
-        credential: Option<&str>,
-    ) -> anyhow::Result<()> {
-        use anyhow::Context as _;
-        let digest = digest.context("integration digest absent")?;
-        let bytes = if let Some(bytes) = self.bytes.get(digest) {
-            bytes
-        } else {
-            let (registry, credentials) = self
-                .registry
-                .as_ref()
-                .context("integration registry absent")?;
-            let base = wamn_catalog::parse_component_artifact_base(&registry.artifact_base)?;
-            let credential = credentials.credentials(base.registry()).await?;
-            let repository = Repository::with_auth(
-                registry,
-                digest,
-                RegistryAuth::Basic(credential.username().into(), credential.password().into()),
-            )?;
-            let bytes = Arc::new(
-                wamn_oci::package_artifact::integration::pull_from(&repository, code, digest).await?,
-            );
-            self.bytes.insert(*digest, Arc::clone(&bytes));
-            bytes
-        };
-        let binding = IntegrationBinding::new(
-            parameters["authority"]
-                .as_str()
-                .context("integration authority absent")?,
-            credential.map(str::to_owned),
-        )?
-        .with_parameters(parameters.clone(), auth_type);
-        let integration = Integration::load(&bytes, binding).await?;
-        integration.health().await?.map_err(anyhow::Error::msg)
     }
 }

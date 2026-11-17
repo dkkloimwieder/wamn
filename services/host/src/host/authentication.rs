@@ -1,8 +1,11 @@
 //! Positive admission facts shared by the host's application workloads.
 
 use std::collections::HashMap;
-use std::sync::{RwLock, Weak};
+use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant, SystemTime};
+use wamn_connection::connection_facts::{
+    ConnectionAnswer, ConnectionCache, ConnectionFacts, Secret,
+};
 
 use anyhow::Context as _;
 use moka::sync::Cache;
@@ -20,6 +23,7 @@ enum Fact {
     Environment,
     Grants(PrincipalId),
     Pat([u8; 32]),
+    Connection(uuid::Uuid),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -34,6 +38,7 @@ enum Answer {
     ActiveEnvironment,
     Grants(PrincipalGrants),
     Pat(AuthenticatedPrincipal),
+    Connection(Arc<ConnectionAnswer>),
 }
 
 struct Expiry;
@@ -51,20 +56,34 @@ impl moka::Expiry<Key, Answer> for Expiry {
 #[derive(Debug)]
 pub(super) struct Authorization {
     postgres: Weak<WamnPostgres>,
+    envelope: Option<Arc<wamn_connection::oauth_encryption::Envelope>>,
+    applications: RwLock<HashMap<String, Weak<ApplicationConfig>>>,
     lifetimes: RwLock<HashMap<ProjectEnvKey, (ProjectId, Duration)>>,
     answers: Cache<Key, Answer>,
+    locks: Arc<wamn_connection::database::ResourceLocks>,
 }
 
 impl Authorization {
     pub(super) fn new(postgres: Weak<WamnPostgres>) -> Self {
         Self {
             postgres,
+            envelope: None,
+            locks: Arc::default(),
             lifetimes: RwLock::default(),
+            applications: RwLock::default(),
             answers: Cache::builder()
                 .max_capacity(MAX_AUTHORIZATION_ENTRIES)
                 .expire_after(Expiry)
                 .build(),
         }
+    }
+
+    pub(super) fn with_oauth_encryption(
+        mut self,
+        envelope: Option<Arc<wamn_connection::oauth_encryption::Envelope>>,
+    ) -> Self {
+        self.envelope = envelope;
+        self
     }
 
     fn postgres(&self) -> anyhow::Result<std::sync::Arc<WamnPostgres>> {
@@ -174,7 +193,9 @@ impl AuthorizationStore for Authorization {
             .principal_grants(project, project_key, principal)
             .await?;
         let permissions = authorization::session_grants(&grants, roles)?;
-        self.answers.insert(key, Answer::Grants(grants));
+        if grants.present && grants.active && !grants.roles.is_empty() {
+            self.answers.insert(key, Answer::Grants(grants));
+        }
         Ok(permissions)
     }
 
@@ -212,5 +233,149 @@ impl AuthorizationStore for Authorization {
             self.answers.insert(key, Answer::Pat(principal.clone()));
         }
         Ok(principal)
+    }
+}
+
+impl ConnectionCache for Authorization {
+    fn bind_application(
+        &self,
+        workload: &str,
+        application: &Arc<ApplicationConfig>,
+    ) -> anyhow::Result<()> {
+        self.configure_application(application)?;
+        let mut applications = self
+            .applications
+            .write()
+            .expect("application facts lock poisoned");
+        applications.retain(|_, application| application.strong_count() != 0);
+        applications.insert(workload.to_owned(), Arc::downgrade(application));
+        Ok(())
+    }
+
+    fn locks(&self) -> Arc<wamn_connection::database::ResourceLocks> {
+        Arc::clone(&self.locks)
+    }
+    fn get(&self, project: &ProjectEnvKey, id: &uuid::Uuid) -> Option<Arc<ConnectionAnswer>> {
+        let (name, _) = self
+            .lifetimes
+            .read()
+            .expect("authorization lifetimes lock poisoned")
+            .get(project)?
+            .clone();
+        let key = self.key(&name, project, Fact::Connection(*id)).ok()?;
+        match self.answers.get(&key)? {
+            Answer::Connection(answer) => Some(answer),
+            _ => None,
+        }
+    }
+    fn insert(&self, project: &ProjectEnvKey, id: uuid::Uuid, answer: Arc<ConnectionAnswer>) {
+        let configured = self
+            .lifetimes
+            .read()
+            .expect("authorization lifetimes lock poisoned")
+            .get(project)
+            .cloned();
+        if let Some((name, _)) = configured
+            && let Ok(key) = self.key(&name, project, Fact::Connection(id))
+        {
+            self.answers.insert(key, Answer::Connection(answer));
+        }
+    }
+    fn invalidate(&self, project: &ProjectEnvKey, id: &uuid::Uuid) {
+        let configured = self
+            .lifetimes
+            .read()
+            .expect("authorization lifetimes lock poisoned")
+            .get(project)
+            .cloned();
+        if let Some((name, _)) = configured
+            && let Ok(key) = self.key(&name, project, Fact::Connection(*id))
+        {
+            self.answers.invalidate(&key);
+        }
+    }
+    fn credential(&self, project: &ProjectEnvKey, id: &uuid::Uuid) -> Option<Arc<Secret>> {
+        self.answers.iter().find_map(|(key, _)| {
+            if key.project_env_key != *project {
+                return None;
+            }
+            let Fact::Connection(connection) = key.fact else {
+                return None;
+            };
+            let answer = self.get(project, &connection)?;
+            (answer.fact.credential_id == Some(*id))
+                .then(|| answer.secret.as_ref().map(Arc::clone))
+                .flatten()
+        })
+    }
+    fn integration(
+        self: Arc<Self>,
+        workload: &str,
+        id: &uuid::Uuid,
+    ) -> anyhow::Result<(Arc<ConnectionFacts>, bool)> {
+        let id = id.to_string();
+        let application = self
+            .applications
+            .read()
+            .expect("application facts lock poisoned")
+            .get(workload)
+            .and_then(Weak::upgrade)
+            .context("integration workload is not configured")?;
+        let binding = application
+            .components
+            .iter()
+            .flat_map(|component| &component.connections)
+            .find(|binding| {
+                binding.connection_id == id
+                    && binding.runtime_type == wamn_catalog::RuntimeType::Wasm
+            })
+            .context("integration connection undeclared")?;
+        let exclusive = binding.exclusive;
+        Ok((self.facts(application)?, exclusive))
+    }
+    fn project_facts(
+        self: Arc<Self>,
+        project: &ProjectEnvKey,
+    ) -> anyhow::Result<Arc<ConnectionFacts>> {
+        let application = self
+            .applications
+            .read()
+            .expect("application facts lock poisoned")
+            .values()
+            .filter_map(Weak::upgrade)
+            .find(|app| {
+                &wamn_registry::name::project_env_key(&app.org, &app.project, &app.environment)
+                    == project
+            })
+            .context("project is not configured")?;
+        self.facts(application)
+    }
+    fn facts(
+        self: Arc<Self>,
+        application: Arc<ApplicationConfig>,
+    ) -> anyhow::Result<Arc<ConnectionFacts>> {
+        self.configure_application(&application)?;
+        let postgres = self.postgres()?;
+        let key = wamn_registry::name::project_env_key(
+            &application.org,
+            &application.project,
+            &application.environment,
+        );
+        Ok(Arc::new(
+            ConnectionFacts::new(
+                Arc::default(),
+                Arc::new(
+                    wamn_connection::connection_credentials::ConnectionCredentials::for_org(
+                        &application.org,
+                    ),
+                ),
+                &postgres,
+                &key,
+                &application.project,
+                &application.environment,
+            )
+            .with_oauth_encryption(self.envelope.as_ref().map(Arc::clone))
+            .with_cache(self, application),
+        ))
     }
 }

@@ -89,10 +89,15 @@ impl HttpTransport {
     fn from_tls(mut tls: rustls::ClientConfig) -> Self {
         tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         Self {
-            inner: Arc::new(Inner {
-                tls: Arc::new(tls),
-            }),
+            inner: Arc::new(Inner { tls: Arc::new(tls) }),
             invocation: None,
+        }
+    }
+
+    pub(crate) fn for_invocation(&self, scope: &str, execution: InvocationExecution) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            invocation: Some((scope.into(), execution)),
         }
     }
 
@@ -197,7 +202,6 @@ impl HttpTransport {
             "HTTP request ended",
         )
     }
-
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -241,10 +245,13 @@ impl TransportError {
         self.phase == Phase::BeforeDispatch
     }
 
+    pub(crate) fn is_response_lost(&self) -> bool {
+        self.phase == Phase::ResponseBody
+    }
+
     pub(crate) fn is_timeout(&self) -> bool {
         self.type_ == ErrorType::Timeout && self.phase != Phase::ResponseBody
     }
-
 }
 
 impl fmt::Debug for TransportError {

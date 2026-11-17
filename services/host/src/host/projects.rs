@@ -35,7 +35,10 @@ impl Projects {
     }
 }
 
-pub(super) struct Authentication(pub(super) Arc<Projects>);
+pub(super) struct Authentication(
+    pub(super) Arc<Projects>,
+    pub(super) Arc<super::authentication::Authorization>,
+);
 impl std::fmt::Debug for Authentication {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Authentication").finish_non_exhaustive()
@@ -48,18 +51,19 @@ impl RouteAuthenticator for Authentication {
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
         let coordinate = wamn_registry::ProjectEnvKey::triple(request.target);
-        let state = self
-            .0
-            .get(&coordinate.project)
-            .ok_or_else(authentication_unavailable)?;
-        let authenticator = {
+        let authenticator = if let Some(state) = self.0.get(&coordinate.project) {
             let state = state.read().map_err(|_| authentication_unavailable())?;
-            let (_, authenticator) = state
+            state
                 .authentication
                 .as_ref()
                 .filter(|(key, _)| key == request.target)
-                .ok_or_else(authentication_unavailable)?;
-            Arc::clone(authenticator)
+                .map(|(_, authenticator)| Arc::clone(authenticator))
+                .ok_or_else(authentication_unavailable)?
+        } else {
+            Arc::new(
+                PlatformRouteAuthenticator::new(Arc::clone(&self.1), [], None)
+                    .with_connection_cache(Arc::clone(&self.1) as _),
+            )
         };
         authenticator.authenticate(request).await
     }

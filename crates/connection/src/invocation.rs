@@ -35,6 +35,7 @@ impl ReleaseContext {
 /// Connection facts installed by the host after admission.
 #[derive(Debug, Default)]
 pub struct Scope {
+    pub principal: Option<wamn_identity_protocol::PrincipalId>,
     pub context: Option<Arc<ReleaseContext>>,
     pub invocation: Option<ConnectionInvocation>,
 }
