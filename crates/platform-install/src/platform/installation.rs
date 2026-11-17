@@ -114,8 +114,13 @@ pub async fn apply(
 
 pub fn host_settings(document: &ClusterDocument) -> Value {
     let mut values = json!({});
+    let issuer = super::identity::issuer(document.org.as_str());
     values["hostEnvironment"] = json!({
-        "DOCKER_CONFIG":"/etc/wamn/registry", "WAMN_SESSION_ISSUER":super::identity::issuer(document.org.as_str()),
+        "DOCKER_CONFIG":"/etc/wamn/registry",
+        "WAMN_SESSION_ISSUER":issuer,
+        "WAMN_SESSION_JWKS_URL":format!("{issuer}/.well-known/jwks.json"),
+        "WAMN_SESSION_AUDIENCE":wamn_registry::name::org_audience(&document.org),
+        "WAMN_SESSION_ALGORITHMS":"EdDSA",
         "WAMN_SESSION_JWKS_CA":"/etc/identity-ca/ca.crt",
     });
     values

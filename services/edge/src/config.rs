@@ -38,18 +38,6 @@ const OVERRIDES: &[(&str, &[&str], Shape)] = &[
         &["release", "digest"],
         Shape::Text,
     ),
-    ("WAMN_EDGE_SESSION_KEYS", &["session", "keys"], Shape::Text),
-    (
-        "WAMN_EDGE_SESSION_ISSUER",
-        &["session", "issuer"],
-        Shape::Text,
-    ),
-    ("WAMN_EDGE_SESSION_ORG", &["session", "org"], Shape::Text),
-    (
-        "WAMN_EDGE_SESSION_AUDIENCE",
-        &["session", "audience"],
-        Shape::Text,
-    ),
     ("WAMN_EDGE_DB", &["store", "db"], Shape::Text),
     ("WAMN_EDGE_ROUTE_HOST", &["http", "route_host"], Shape::Text),
     ("WAMN_EDGE_LISTEN", &["http", "listen"], Shape::Text),
@@ -108,7 +96,6 @@ const OVERRIDES: &[(&str, &[&str], Shape)] = &[
 pub struct EdgeConfig {
     pub target: TargetConfig,
     pub release: ReleaseConfig,
-    pub session: SessionConfig,
     pub store: StoreConfig,
     pub http: HttpConfig,
     /// The device loop. Without it, the box serves routes only.
@@ -149,20 +136,6 @@ pub struct ReleaseConfig {
     pub dir: PathBuf,
     /// The pinned digest of `edge-release.json`.
     pub digest: wamn_digest::Digest,
-}
-
-/// The sessions that local routes accept.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SessionConfig {
-    /// The session key file that the release installs.
-    pub keys: PathBuf,
-    /// The session issuer that signs the keys.
-    pub issuer: String,
-    /// The organization a session must name. It also partitions every operation claim.
-    pub org: wamn_registry::OrgId,
-    /// The project-environment identity a session must name.
-    pub audience: String,
 }
 
 /// The run-state file.
@@ -340,10 +313,6 @@ mod tests {
                 ("WAMN_PROJECT", "plant"),
                 ("WAMN_EDGE_BUNDLE_DIR", "/bundle"),
                 ("WAMN_EDGE_BUNDLE_DIGEST", digest.as_str()),
-                ("WAMN_EDGE_SESSION_KEYS", "/keys.json"),
-                ("WAMN_EDGE_SESSION_ISSUER", "https://issuer"),
-                ("WAMN_EDGE_SESSION_ORG", "org-a"),
-                ("WAMN_EDGE_SESSION_AUDIENCE", "org-a/edge"),
                 ("WAMN_EDGE_DB", "/edge.db"),
                 ("WAMN_EDGE_ROUTE_HOST", "edge.localhost"),
                 ("WAMN_EDGE_LISTEN", "127.0.0.1:0"),

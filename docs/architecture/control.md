@@ -16,7 +16,7 @@ It also checks the org control login and the fixed apply login.
 | `org` | Org served by this process |
 | `http_addr`, `public_origin` | Bind address and public control origin |
 | `database`, `apply_database` | Public connection objects for control reads and lifecycle writes |
-| `session_issuer`, `session_jwks_ca` | Session authority and its public trust bundle |
+| `session_issuer`, `session_jwks_url`, `session_audience`, `session_algorithms`, `session_jwks_ca` | Bearer issuer, key-set address, org audience, EdDSA allowlist, and the CA bundle path |
 | `administration_dir` | Project administration connection files, named by `control_administration_key` |
 | `worker.image` | Pinned `control` image for operation Jobs |
 | `worker.service_account` | Org worker account for existing platform updates and platform SQL |

@@ -16,7 +16,7 @@ sqlx = { workspace = true, features = ["sqlite"] }
 wamn-digest = { workspace = true, features = ["sqlx"] }
 # The edge links the engine without cloud service plugins.
 wamn-engine = { workspace = true }
-# Local routes verify sessions over a key file, and grants name role slugs.
+# Device identity and role slugs.
 wamn-identity-protocol = { workspace = true }
 # The admitted component facts and the serving manifest of a release bundle.
 wamn-catalog = { workspace = true }
@@ -61,9 +61,6 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 # The tests write the edge_device bundle with the dev loop's bundle writer.
 wamn-dev = { workspace = true }
-# The route test signs sessions with a file key.
-base64 = { workspace = true }
-ring = { workspace = true }
 # The device test writes frames into a pseudo-terminal pair.
 rustix = { workspace = true, features = ["pty"] }
 # The forward test serves an HTTPS platform with its own certificate authority.

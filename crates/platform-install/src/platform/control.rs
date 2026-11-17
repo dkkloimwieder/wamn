@@ -5,8 +5,8 @@ use std::path::Path;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 
-use wamn_kubernetes::kubectl;
 use wamn_kubernetes::Target;
+use wamn_kubernetes::kubectl;
 
 use super::artifact_plan::SelectedChart;
 use super::document::ClusterDocument;
@@ -200,7 +200,11 @@ pub(super) fn resource_entry(
         .transpose()?;
     let config = json!({"org":org,"http_addr":"0.0.0.0:80",
         "apply_database":connection("wamn_apply".parse::<wamn_identity_protocol::LoginName>()?,"wamn-apply".into()),
-        "session_issuer":super::identity::issuer(org.as_str()),"session_jwks_ca":"/etc/identity-ca/ca.crt",
+        "session_issuer":super::identity::issuer(org.as_str()),
+        "session_jwks_url":format!("{}/.well-known/jwks.json", super::identity::issuer(org.as_str())),
+        "session_audience":wamn_registry::name::org_audience(org),
+        "session_algorithms":["EdDSA"],
+        "session_jwks_ca":"/etc/identity-ca/ca.crt",
         "administration_dir":"/etc/wamn/control-administration","worker":{"image":chart.image("control")?,"configuration":configuration,"service_account":wamn_registry::name::operation(org)},
         "chart":chart.reference(),
         "registry_auth_file":"/credentials/registry/config.json",

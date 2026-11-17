@@ -13,8 +13,8 @@ use wamn_authentication::authorization::{self, AuthorizationStore, HeldOperation
 use wamn_authority::auth_cache::PrincipalGrants;
 use wamn_catalog::application_config::ApplicationConfig;
 use wamn_identity::AuthenticatedPrincipal;
+use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::secret::PatToken;
-use wamn_identity_protocol::{PrincipalId, RoleName};
 use wamn_registry::{ProjectEnvKey, ProjectId};
 use wamn_sql::WamnPostgres;
 
@@ -22,6 +22,7 @@ use wamn_sql::WamnPostgres;
 enum Fact {
     Environment,
     Grants(PrincipalId),
+    Subject([u8; 32]),
     Pat([u8; 32]),
     Connection(uuid::Uuid),
 }
@@ -37,6 +38,7 @@ struct Key {
 enum Answer {
     ActiveEnvironment,
     Grants(PrincipalGrants),
+    Subject(PrincipalId),
     Pat(AuthenticatedPrincipal),
     Connection(Arc<ConnectionAnswer>),
 }
@@ -171,30 +173,29 @@ impl AuthorizationStore for Authorization {
         Ok(grants)
     }
 
-    async fn session_operation_permissions(
+    async fn resolve_subject(
         &self,
         project: &ProjectId,
-        project_key: &ProjectEnvKey,
-        roles: &[RoleName],
-        principal: &PrincipalId,
-    ) -> anyhow::Result<HeldOperationGrants> {
-        let key = self.key(project, project_key, Fact::Grants(*principal))?;
-        if let Some(Answer::Grants(grants)) = self.answers.get(&key)
-            && let Ok(permissions) = authorization::session_grants(&grants, roles)
-        {
-            return Ok(permissions);
+        key: &ProjectEnvKey,
+        issuer: &str,
+        subject: &str,
+    ) -> anyhow::Result<Option<PrincipalId>> {
+        let mut digest = wamn_digest::Hasher::new();
+        digest.update(issuer.len().to_be_bytes());
+        digest.update(issuer);
+        digest.update(subject);
+        let key = self.key(project, key, Fact::Subject(digest.finalize()))?;
+        if let Some(Answer::Subject(principal)) = self.answers.get(&key) {
+            return Ok(Some(principal));
         }
-        // A cached grant set can admit a session, but a missing signed role
-        // must read again: refused session admissions are never retained.
-        let grants = self
+        let principal = self
             .postgres()?
-            .principal_grants(project, project_key, principal)
+            .resolve_subject(project, issuer, subject)
             .await?;
-        let permissions = authorization::session_grants(&grants, roles)?;
-        if grants.present && grants.active && !grants.roles.is_empty() {
-            self.answers.insert(key, Answer::Grants(grants));
+        if let Some(principal) = principal {
+            self.answers.insert(key, Answer::Subject(principal));
         }
-        Ok(permissions)
+        Ok(principal)
     }
 
     async fn user_operation_permissions(
@@ -206,7 +207,7 @@ impl AuthorizationStore for Authorization {
         let grants = self
             .principal_grants(project, project_key, principal)
             .await?;
-        Ok(authorization::held_grants(&grants, None))
+        Ok(authorization::held_grants(&grants))
     }
 
     async fn route_pat(

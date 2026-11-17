@@ -29,9 +29,7 @@ use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
 use wamn_edge::{refusals, status};
 
-use support::{
-    ATTACHMENT, AUDIENCE, ENVIRONMENT, HOST, ISSUER, ORG, PRINCIPAL, PROJECT, ROLE, bundle, key,
-};
+use support::{ATTACHMENT, ENVIRONMENT, HOST, ORG, PRINCIPAL, PROJECT, ROLE, bundle};
 
 const TOKEN: &str = "wamn_pat_edge_forward_test";
 /// A PAT that the platform does not accept.
@@ -268,12 +266,6 @@ environment = "{ENVIRONMENT}"
 dir = "{dir}"
 digest = "{digest}"
 
-[session]
-keys = "{keys}"
-issuer = "{ISSUER}"
-org = "{ORG}"
-audience = "{AUDIENCE}"
-
 [store]
 db = "{db}"
 
@@ -299,7 +291,6 @@ key_field = "value.idempotency_key"
 credential_bound = {credential_bound}
 "#,
         dir = directory.display(),
-        keys = directory.join("session-keys.json").display(),
         db = directory.join("edge.db").display(),
         device = device.display(),
         token = token_file.display(),
@@ -386,8 +377,7 @@ async fn until(platform: &Platform, what: &str, done: impl Fn(&Received) -> bool
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: input:edge-application, env:WAMN_FLOW_HTTP_COMPONENT"]
 async fn a_sample_is_forwarded_once_across_kills() {
-    let (_, public) = key("key-one", 1);
-    let (directory, digest) = bundle("forward", &public);
+    let (directory, digest) = bundle("forward");
     let (mut controller, device) = pseudo_terminal();
     let port = free_port();
     let (ca_file, acceptor) = tls(&directory);
@@ -510,8 +500,7 @@ async fn a_sample_is_forwarded_once_across_kills() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: input:edge-application, env:WAMN_FLOW_HTTP_COMPONENT"]
 async fn a_refused_pat_stops_the_forward_at_the_bound() {
-    let (_, public) = key("key-one", 1);
-    let (directory, digest) = bundle("forward-credential", &public);
+    let (directory, digest) = bundle("forward-credential");
     let (mut controller, device) = pseudo_terminal();
     let port = free_port();
     let (ca_file, acceptor) = tls(&directory);
@@ -614,8 +603,7 @@ async fn samples_reach_a_live_platform_once_across_kills() {
         .trim()
         .to_owned();
     let ca_file = PathBuf::from(live("WAMN_EDGE_LIVE_CA_FILE"));
-    let (_, public) = key("key-one", 1);
-    let (directory, digest) = bundle("forward-live", &public);
+    let (directory, digest) = bundle("forward-live");
     let (mut controller, device) = pseudo_terminal();
     let config = configuration(
         &directory,
