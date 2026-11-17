@@ -93,7 +93,10 @@ pub(super) async fn release_values(
             "name": release_chart::component_name(component), "image": image,
         }))?);
     }
-    rendered["components"] = Value::Sequence(components);
+    rendered["components"]
+        .as_sequence_mut()
+        .expect("release values contain a component list")
+        .extend(components);
     rendered["webClients"] = serde_yaml::to_value(
         selection
             .client
