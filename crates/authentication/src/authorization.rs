@@ -196,6 +196,25 @@ pub fn held_grants(
 /// Host transport and authorization memory used by route authentication.
 #[async_trait::async_trait]
 pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
+    /// Register deploy-owned cache coordinates when an application workload binds.
+    fn configure_application(
+        &self,
+        _application: &wamn_catalog::application_config::ApplicationConfig,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Admit the system PAT; connection ownership remains a separate check.
+    async fn route_pat(
+        &self,
+        _project: &wamn_registry::ProjectId,
+        _key: &wamn_registry::ProjectEnvKey,
+        reader: &sqlx::PgPool,
+        token: &str,
+    ) -> anyhow::Result<Option<wamn_identity::AuthenticatedPrincipal>> {
+        route_pat(reader, token).await
+    }
+
     async fn environment_inactive(
         &self,
         project: &wamn_registry::ProjectId,
@@ -220,4 +239,19 @@ pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
         key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<PrincipalGrants>;
+}
+
+/// Read PAT admission without retaining the answer, for control and edge callers.
+pub async fn route_pat(
+    reader: &sqlx::PgPool,
+    token: &str,
+) -> anyhow::Result<Option<wamn_identity::AuthenticatedPrincipal>> {
+    let mut transaction = wamn_identity::transaction::read_pool(
+        reader,
+        &wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
+    )
+    .await?;
+    let principal = wamn_identity::authenticate_route_pat(&mut transaction, token).await?;
+    transaction.commit().await?;
+    Ok(principal)
 }

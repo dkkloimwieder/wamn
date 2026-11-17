@@ -141,52 +141,12 @@ impl OperationTransaction {
             .lock()
             .expect("request element finish lock poisoned")
             .take();
-        let check_identity = finish.is_none();
-        if let Some([key, status, output]) = finish {
-            let result = sqlx::query_scalar::<_, bool>(super::write_log::COMMIT_FINISH_SQL)
-                .bind(&key)
-                .bind(&status)
-                .bind(&output)
-                .bind(&xid)
-                .fetch_one(connection.connection())
-                .await;
-            match result {
-                Ok(true) => {}
-                Ok(false) => {
-                    mark_finished();
-                    return Err(PgCommitFailure::Uncertain(PgError::ConnectionUnavailable));
-                }
-                Err(error) => {
-                    mark_finished();
-                    return Err(PgCommitFailure::RolledBack(super::types::map_pg_error(
-                        &error,
-                    )));
-                }
-            }
-        }
-        if let Some(run) = &self.causation {
-            let json = serde_json::to_string(run).expect("Causation serializes to JSON");
-            if let Err(error) =
-                sqlx::query("SELECT pg_logical_emit_message(true, 'wamn.causation', $1::text)")
-                    .bind(json)
-                    .execute(connection.connection())
-                    .await
-            {
-                mark_finished();
-                return Err(PgCommitFailure::RolledBack(super::types::map_pg_error(
-                    &error,
-                )));
-            }
-        }
-        let result = async {
-            if check_identity {
-                super::write_log::check_commit_identity(connection.connection(), &xid).await?;
-            }
-            sqlx::query("COMMIT")
-                .execute(connection.connection())
-                .await
-                .map(drop)
-        }
+        let result = super::write_log::commit_transaction(
+            connection.connection(),
+            &xid,
+            finish.as_ref(),
+            self.causation.as_ref(),
+        )
         .await;
         match result {
             Ok(()) => {
@@ -194,12 +154,15 @@ impl OperationTransaction {
                 connection.repool();
                 Ok(())
             }
-            Err(error) => {
+            Err(failure) => {
                 mark_finished();
-                // A mismatched identity raises division by zero before COMMIT.
-                let ended_early = error
-                    .as_database_error()
-                    .is_some_and(|error| error.code().is_some_and(|code| code == "22012"));
+                let error = failure.source;
+                // A missing claim rolls back; a missing caller means the guest
+                // may already have committed the host's work.
+                let ended_early = !failure.identity_checked
+                    && error
+                        .as_database_error()
+                        .is_some_and(|error| error.code().is_some_and(|code| code == "22012"));
                 let answered = error.as_database_error().is_some();
                 drop(connection);
                 let error = super::types::map_pg_error(&error);

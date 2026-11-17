@@ -244,11 +244,11 @@ async fn open_stream(
                 } else {
                     let QueryTransaction::Dynamic(xid) = &transaction else { unreachable!() };
                     let committed = async {
-                        super::write_log::check_commit_identity(connection.connection(), xid).await?;
-                        sqlx::query("COMMIT").execute(connection.connection()).await
+                        super::write_log::commit_transaction(connection.connection(), xid, None, None)
+                            .await.map_err(|error| error.source)
                     }.await;
                     match committed {
-                        Ok(_) => { connection.repool(); Ok(()) }
+                        Ok(()) => { connection.repool(); Ok(()) }
                         Err(error) => {
                             let _ = outcome.send(Err(wash_runtime::wasmtime::format_err!(
                                 "finish dynamic SQL host transaction: {error}"

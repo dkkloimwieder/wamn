@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
+use crate::invocation::{AuthorizedInvocation, InvocationRequest};
 use anyhow::Context as _;
 use wamn_catalog::canonical_name::CanonicalName;
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
@@ -724,14 +724,8 @@ async fn begin(
             }),
             invocation: Some(admitted.invocation.clone()),
             read: admitted.read,
-            principal: if authorize_only {
-                PrincipalVerification::Authenticated
-            } else {
-                PrincipalVerification::Required
-            },
         },
     )
-    .await
     .map_err(|error| {
         if error
             .downcast_ref::<wamn_engine::native_routes::OperationRefusal>()

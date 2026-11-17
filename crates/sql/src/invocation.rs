@@ -70,13 +70,6 @@ pub struct AuthorizedInvocation {
     pub caller: Option<AuthenticatedCaller>,
 }
 
-/// Whether authentication already established the principal's project membership.
-#[derive(Debug, Clone, Copy)]
-pub enum PrincipalVerification {
-    Required,
-    Authenticated,
-}
-
 /// Released facts needed to admit one call, shared by native and guest entries.
 #[derive(Debug)]
 pub struct InvocationRequest<'a> {
@@ -88,12 +81,11 @@ pub struct InvocationRequest<'a> {
     pub causation: Option<Causation>,
     pub invocation: Option<ConnectionInvocation>,
     pub read: bool,
-    pub principal: PrincipalVerification,
 }
 
 impl AuthorizedInvocation {
-    /// Install both authority records. Cancellation drops them even during a principal read.
-    pub async fn enter(
+    /// Install both authority records for the caller admitted by authentication.
+    pub fn enter(
         postgres: &WamnPostgres,
         request: InvocationRequest<'_>,
     ) -> anyhow::Result<Arc<Self>> {
@@ -106,7 +98,6 @@ impl AuthorizedInvocation {
             causation,
             invocation,
             read,
-            principal,
         } = request;
         wamn_engine::native_routes::authorize_registered_operation(
             caller.as_ref(),
@@ -132,11 +123,7 @@ impl AuthorizedInvocation {
             ],
             InvocationTrace::capture(),
         )?;
-        let owner = Arc::new(Self { lifetime, caller });
-        if matches!(principal, PrincipalVerification::Required) {
-            postgres.verify_scope_principal(owner.id()).await?;
-        }
-        Ok(owner)
+        Ok(Arc::new(Self { lifetime, caller }))
     }
 
     pub fn id(&self) -> &str {
