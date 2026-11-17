@@ -959,10 +959,7 @@ No entry column names a project, and administration holds no project derivation 
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
 The CLI role writer makes sure of the target database against the registry and needs the administration grants. It requires no superuser or row-security bypass.
 It refuses an `project_env_key` that differs from the registry environment key, so role writes invalidate the selected environment's cached grants.
-The session role reader holds `SELECT` only on `user.id`, `user.status`, `user_role.user_id`, and `user_role.role_name`.
-Its connection selects the environment database. Its query filters by principal ID and active status.
-The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
-One login of the family serves each environment, and two hosts hold it: the application host of the environment and the control host of its org.
+Identity password login reads active org membership in the system database and needs no project role reader.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
 A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
 The log copies full rows, including `api_key.key_hash`.

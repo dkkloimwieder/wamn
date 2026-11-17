@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["dep:opentelemetry_sdk", "dep:tracing-subscriber", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-identity-protocol/test-util", ]
+test-util = ["dep:opentelemetry_sdk", "dep:tracing-subscriber", "wamn-engine/test-util", "wamn-catalog/test-util", ]
 
 [dependencies]
 wamn-digest.workspace = true

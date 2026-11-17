@@ -22,6 +22,13 @@ use crate::{IdentityError, IdentityErrorType};
 /// Public overlap after the signing cutoff: 900-second lifetime plus 30 seconds.
 pub const KEY_RETENTION_SECONDS: i64 = 930;
 
+/// The maximum public JWKS cache lifetime advertised by identity.
+pub const JWKS_CACHE_SECONDS: i64 = 300;
+/// Allow thirty seconds beyond cache expiry before a published key signs.
+pub const KEY_PUBLICATION_MARGIN_SECONDS: i64 = 30;
+/// A key must be published for the full cache lifetime plus the safety margin.
+const KEY_PUBLICATION_DELAY_SECONDS: i64 = JWKS_CACHE_SECONDS + KEY_PUBLICATION_MARGIN_SECONDS;
+
 /// Generate and commit a new public generation without activating it.
 ///
 /// Private PKCS#8 bytes are generated internally and never returned.
@@ -90,16 +97,18 @@ async fn activate_session_key_if_current(
     }
     let row = sqlx::query(
         "SELECT signing_cutoff IS NULL AND private_key_envelope IS NOT NULL \
+         AND published_at + ($3::bigint * interval '1 second') <= clock_timestamp() \
          FROM identity.session_keys WHERE issuer = $1 AND kid::text = $2",
     )
     .bind(issuer)
     .bind(kid)
+    .bind(KEY_PUBLICATION_DELAY_SECONDS)
     .fetch_optional(&mut *transaction)
     .await
     .map_err(key_database_error)?;
     if !row.is_some_and(|row| row.get::<bool, _>(0)) {
         return Err(invalid(
-            "session activation requires an unretired published key",
+            "session activation requires an unretired key published ahead of the JWKS cache lifetime",
         ));
     }
     if active.as_deref() != Some(kid) {
@@ -142,11 +151,17 @@ pub async fn rotate_session_keys(
              WHERE s.issuer=$1 AND k.published_at + ($2::bigint * interval '1 second') <= clock_timestamp()").to_string())).bind(issuer).bind(seconds).fetch_optional(&mut *client).await.map_err(key_database_error)?;
         if let Some(due) = due {
             let expected: String = due.get(0);
-            let pending = sqlx::query(sqlx::AssertSqlSafe(("SELECT kid::text FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL \
+            let pending = sqlx::query(sqlx::AssertSqlSafe(("SELECT kid::text, published_at + ($2::bigint * interval '1 second') <= clock_timestamp() FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL \
                  AND kid IS DISTINCT FROM (SELECT active_kid FROM identity.session_signing_state WHERE issuer=$1) \
-                 ORDER BY published_at DESC LIMIT 1").to_string())).bind(issuer).fetch_optional(&mut *client).await.map_err(key_database_error)?;
-            let kid = if let Some(row) = pending { row.get(0) } else { publish_session_key(client, issuer, envelope).await?.kid };
-            activate_session_key_if_current(client, issuer, &kid, Some(&expected)).await?;
+                 ORDER BY published_at ASC LIMIT 1").to_string())).bind(issuer).bind(KEY_PUBLICATION_DELAY_SECONDS).fetch_optional(&mut *client).await.map_err(key_database_error)?;
+            if let Some(row) = pending {
+                if row.get::<bool, _>(1) {
+                    let kid: String = row.get(0);
+                    activate_session_key_if_current(client, issuer, &kid, Some(&expected)).await?;
+                }
+            } else {
+                publish_session_key(client, issuer, envelope).await?;
+            }
         }
         retire_session_keys(client, issuer).await?;
         Ok(())

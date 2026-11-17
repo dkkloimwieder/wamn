@@ -13,7 +13,7 @@ import { userSections } from "../src/users";
 import { CONTROL, identity, input } from "./fixtures";
 
 function mount(path: string, orgAdmin = true, projects = ["widgets", "gadgets"]) {
-  const session = identity(true, [], undefined, {
+  const session = identity(true, undefined, {
     org_admin: orgAdmin,
     projects: projects.map((project) => ({ project, project_admin: true })),
   });

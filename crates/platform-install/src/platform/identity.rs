@@ -19,18 +19,8 @@ pub(crate) fn issuer(namespace: &str) -> String {
 pub enum Mode {
     /// Key discovery without NATS or session exchange.
     Foundation,
-    /// Session exchange with explicit targets and optional revocation transport.
-    Session {
-        targets: Vec<SessionTargetMount>,
-        nats: Option<(String, String)>,
-    },
-}
-
-/// A mounted target and the public database references used by its reader.
-#[derive(Debug, serde::Serialize)]
-pub struct SessionTargetMount {
-    pub name: String,
-    pub connection: wamn_postgres::ConnectionConfig,
+    /// Password exchange with optional revocation transport.
+    Session { nats: Option<(String, String)> },
 }
 
 /// Identity chart inputs.
@@ -60,19 +50,12 @@ pub fn chart_input(input: &ChartInput<'_>) -> anyhow::Result<Value> {
         .image
         .rsplit_once(':')
         .context("identity image has no tag or digest")?;
-    let (targets, nats) = match &input.mode {
-        Mode::Foundation => (&[][..], None),
-        Mode::Session { targets, nats } => (targets.as_slice(), nats.as_ref()),
+    let nats = match &input.mode {
+        Mode::Foundation => None,
+        Mode::Session { nats } => nats.as_ref(),
     };
     let (nats_url, nats_secret) =
         nats.map_or(("", ""), |(url, secret)| (url.as_str(), secret.as_str()));
-    for target in targets {
-        ensure!(
-            target.connection.credentials.namespace == input.namespace
-                && target.connection.server_ca.namespace == input.namespace,
-            "session credentials and CA must share the identity namespace"
-        );
-    }
     Ok(
         json!({"chart":input.chart, "version":crate::release_chart::read_platform_version(&input.chart.join("Chart.yaml"))?,
         "name":input.name, "namespace":input.namespace,
@@ -80,7 +63,7 @@ pub fn chart_input(input: &ChartInput<'_>) -> anyhow::Result<Value> {
             "issuer":input.issuer,"databaseSecret":input.database_secret,"tlsSecret":input.tls_secret,
             "operatorCaSecret":input.operator_ca_secret,"resendSecret":input.resend_secret,
             "resendFrom":input.resend_from,"inviteUrl":input.invite_url,
-            "authNats":{"url":nats_url,"tlsSecret":nats_secret},"sessionTargetSecrets":targets}}),
+            "authNats":{"url":nats_url,"tlsSecret":nats_secret}}}),
     )
 }
 
@@ -103,7 +86,6 @@ pub(super) fn platform_chart_input(
         resend_from: "",
         invite_url: "",
         mode: Mode::Session {
-            targets: Vec::new(),
             nats: Some((NATS_URL.into(), "wamn-identity-nats".into())),
         },
     })?;

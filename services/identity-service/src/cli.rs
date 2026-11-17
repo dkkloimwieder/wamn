@@ -7,9 +7,7 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use serde_json::json;
-use tokio::io::AsyncReadExt as _;
 use tokio::net::TcpListener;
-use wamn_provision::session_target::SessionTarget;
 use wamn_identity::session_keys::{
     activate_session_key, publish_session_key, remove_compromised_session_key, retire_session_keys,
 };
@@ -94,9 +92,6 @@ enum Command {
         /// Dedicated client-certificate CA for provisioning operators that mint PATs.
         #[arg(long, env = "WAMN_IDENTITY_OPERATOR_CA")]
         operator_ca: Option<PathBuf>,
-        /// Mounted provisioner-generated target file; repeat for each admitted audience.
-        #[arg(long)]
-        session_target: Vec<PathBuf>,
         /// Rotate signing keys at this interval. The default is 30 days.
         #[arg(long, default_value_t = crate::DEFAULT_KEY_ROTATION.as_secs())]
         key_rotation_seconds: u64,
@@ -136,7 +131,6 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         tls_cert,
         tls_key,
         operator_ca,
-        session_target,
         key_rotation_seconds,
         trusted_proxy_hops,
     } = cli.command
@@ -160,31 +154,8 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
                 }
             }
         };
-        let mut targets = Vec::with_capacity(session_target.len());
-        for path in session_target {
-            // Bound startup parsing even if a mounted file is malformed or grows.
-            const MAX_TARGET_BYTES: u64 = 65_536;
-            let file = tokio::fs::File::open(path)
-                .await
-                .map_err(|_| IdentityServiceError::new("read identity session target failed"))?;
-            let mut bytes = Vec::new();
-            file.take(MAX_TARGET_BYTES + 1)
-                .read_to_end(&mut bytes)
-                .await
-                .map_err(|_| IdentityServiceError::new("read identity session target failed"))?;
-            if bytes.len() as u64 > MAX_TARGET_BYTES {
-                return Err(IdentityServiceError::new(
-                    "identity session target is too large",
-                ));
-            }
-            targets.push(
-                SessionTarget::from_json(&bytes)
-                    .map_err(|_| IdentityServiceError::new("identity session target refused"))?,
-            );
-        }
         let config = config
             .with_trusted_proxy_hops(trusted_proxy_hops)
-            .with_session_targets(targets)?
             .with_key_rotation(std::time::Duration::from_secs(key_rotation_seconds))?;
         let certificate = tokio::fs::read(tls_cert)
             .await

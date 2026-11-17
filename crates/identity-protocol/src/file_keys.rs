@@ -11,7 +11,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::keys::{PublicSessionKey, SessionJwks, decode_public_key};
-use crate::token::refused;
 use crate::verifier::{KeyEvidence, KeySource};
 use crate::{SessionError, SessionErrorType};
 
@@ -64,7 +63,10 @@ impl KeySource for FileKeys {
     }
 
     async fn key(&self, kid: &str) -> Result<FileKey, SessionError> {
-        self.keys.get(kid).cloned().ok_or_else(refused)
+        self.keys
+            .get(kid)
+            .cloned()
+            .ok_or_else(|| SessionError::new(SessionErrorType::Refused, "session key refused"))
     }
 }
 

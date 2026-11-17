@@ -24,30 +24,10 @@ use wamn_engine::flow_http_routing::{
 use wamn_identity::PrincipalType;
 use wamn_identity_protocol::verifier::SessionVerifier;
 
-use crate::authorization::{AuthorizationStore, SessionGrantRefusal};
+use crate::authorization::AuthorizationStore;
 use crate::session_keys::IssuerKeys;
 use wamn_connection::connection_facts::ConnectionFacts;
 use wamn_connection::connection_memory::ConnectionStatus;
-
-async fn admit_session<T>(
-    verifier: &SessionVerifier<IssuerKeys>,
-    token: &str,
-    cookie_headers: Option<(&[Header], bool)>,
-    permissions: impl AsyncFnOnce(
-        &wamn_identity_protocol::token::SessionClaims,
-    ) -> Result<T, AuthRejection>,
-) -> Result<(wamn_identity_protocol::PrincipalId, T), AuthRejection> {
-    let session = verifier.verify(token).await.map_err(|_| unauthorized())?;
-    if let Some((headers, requires_csrf)) = cookie_headers {
-        require_csrf(requires_csrf, session.claims().csrf.as_ref(), headers)?;
-    }
-    let permissions = permissions(session.claims()).await?;
-    // Permission I/O cannot extend the evidence that admits a request.
-    if session.require_admission().is_err() {
-        verifier.verify(token).await.map_err(|_| unauthorized())?;
-    }
-    Ok((session.claims().sub, permissions))
-}
 
 /// The application host's read of the status of its environment
 /// (docs/architecture/execution.md#routing-and-availability): its row of
@@ -231,46 +211,19 @@ impl PlatformRouteAuthenticator {
     /// the route requires the CSRF header, which a read route does not.
     async fn authenticate_session(
         &self,
-        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
         token: &str,
         cookie_headers: Option<(&[Header], bool)>,
-        project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
         let verifier = self
             .verifiers
             .get(project_env_key)
             .ok_or_else(unauthorized)?;
-        let (principal, permissions) =
-            admit_session(verifier, token, cookie_headers, async |claims| {
-                self.postgres
-                    .session_operation_permissions(
-                        project,
-                        project_env_key,
-                        &claims.roles,
-                        &claims.sub,
-                    )
-                    .instrument(tracing::info_span!("wamn.auth.permissions"))
-                    .await
-                    .map_err(|error| {
-                        if error.downcast_ref::<SessionGrantRefusal>().is_some() {
-                            unauthorized()
-                        } else {
-                            tracing::warn!(error = %error, "route operation grants unavailable");
-                            authentication_unavailable()
-                        }
-                    })
-            })
-            .await?;
-        let active_role = permissions.active_role();
-        Ok(AuthenticatedCaller::new(
-            attachment_id.clone(),
-            principal,
-            CredentialType::Session,
-            permissions.admin,
-            permissions.references.into_iter().collect(),
-            active_role,
-        ))
+        if let Some((headers, required)) = cookie_headers {
+            require_csrf(required, None, headers)?;
+        }
+        verifier.verify(token).await.map_err(|_| unauthorized())?;
+        Err(unauthorized())
     }
 }
 
@@ -335,13 +288,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         } = request;
         if let RouteCredential::Session { token, csrf } = route_credential(&request)? {
             return self
-                .authenticate_session(
-                    attachment_id,
-                    token,
-                    csrf.map(|required| (headers, required)),
-                    project,
-                    target,
-                )
+                .authenticate_session(token, csrf.map(|required| (headers, required)), target)
                 .await
                 .map(Some);
         }
@@ -444,7 +391,7 @@ impl ControlRouteAuthenticator {
     /// Authenticate an org control endpoint without an application release.
     pub async fn authenticate_control(
         &self,
-        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
+        _attachment_id: &wamn_catalog::canonical_name::CanonicalName,
         read: bool,
         headers: &[wamn_engine::flow_http_routing::Header],
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
@@ -461,21 +408,14 @@ impl ControlRouteAuthenticator {
             Some(token) => (token, Some(!read)),
             None => (required_bearer_token(headers)?, None),
         };
-        let (principal, ()) = admit_session(
-            &self.verifier,
-            token,
-            csrf.map(|required| (headers, required)),
-            async |_| Ok(()),
-        )
-        .await?;
-        Ok(Some(AuthenticatedCaller::new(
-            attachment_id.clone(),
-            principal,
-            CredentialType::Session,
-            false,
-            std::collections::HashSet::new(),
-            None,
-        )))
+        if let Some(required) = csrf {
+            require_csrf(required, None, headers)?;
+        }
+        self.verifier
+            .verify(token)
+            .await
+            .map_err(|_| unauthorized())?;
+        Err(unauthorized())
     }
 }
 

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
 import { Shell } from "../src/shell";
-import { AUD, CONTROL, ONE, ADMIN, identity, open } from "./fixtures";
+import { AUD, CONTROL, ADMIN, identity, open } from "./fixtures";
 
 describe("the app shell", () => {
   it.each([CONTROL, AUD])("renders an empty audience layout at %s and refuses unknown paths", async (aud) => {
@@ -206,7 +206,7 @@ describe("the app shell", () => {
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/administration/users`));
     cleanup();
 
-    const member = identity(true, ONE, { admin: false, permissions: ["acme:pallet/query"] });
+    const member = identity(true, { admin: false, permissions: ["acme:pallet/query"] });
     open(`/${AUD}/administration/roles`, member.fetch);
     expect(await screen.findByRole("link", { name: "Go to audience home" })).toBeDefined();
     cleanup();
@@ -216,7 +216,7 @@ describe("the app shell", () => {
   });
 
   it("shows no page for the address of a route the caller does not hold", async () => {
-    const { fetch } = identity(true, ONE, { admin: false, permissions: ["acme:pallet/get"] });
+    const { fetch } = identity(true, { admin: false, permissions: ["acme:pallet/get"] });
     open(`/${AUD}/pallets/abc/update`, fetch);
     expect(await screen.findByRole("link", { name: "Go to audience home" })).toBeDefined();
     expect(screen.queryByText(/update abc/)).toBeNull();
@@ -224,7 +224,7 @@ describe("the app shell", () => {
 
   it("shows a project-admin only the projects it administers, and no org destination", async () => {
     const mine = { org_admin: false, projects: [{ project: "widgets", project_admin: true }] };
-    const { fetch } = identity(true, ONE, ADMIN, mine);
+    const { fetch } = identity(true, ADMIN, mine);
     open(`/${CONTROL}`, fetch);
     expect(await screen.findByText("members of widgets")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets`));

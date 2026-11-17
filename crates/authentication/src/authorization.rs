@@ -115,25 +115,13 @@ impl std::error::Error for SessionGrantRefusal {}
 /// The grants an active principal holds, from all its roles or only from the
 /// `signed` roles it still holds.
 pub fn session_grants(
-    grants: &wamn_authority::auth_cache::PrincipalGrants,
-    roles: &[wamn_identity_protocol::RoleName],
+    _grants: &wamn_authority::auth_cache::PrincipalGrants,
+    _roles: &[wamn_identity_protocol::RoleName],
 ) -> anyhow::Result<HeldOperationGrants> {
-    if !grants.active || !grants.user {
-        return Err(SessionGrantRefusal {
-            type_: "session principal is not an active user",
-        }
-        .into());
+    Err(SessionGrantRefusal {
+        type_: "session verification is unavailable",
     }
-    if !roles
-        .iter()
-        .all(|role| grants.roles.contains_key(role.as_str()))
-    {
-        return Err(SessionGrantRefusal {
-            type_: "session principal does not hold a signed role",
-        }
-        .into());
-    }
-    Ok(held_grants(grants, Some(roles)))
+    .into())
 }
 
 pub fn held_grants(

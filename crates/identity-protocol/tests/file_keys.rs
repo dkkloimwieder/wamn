@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::EncodingKey;
@@ -14,13 +13,8 @@ use serde_json::json;
 use wamn_identity_protocol::SessionErrorType;
 use wamn_identity_protocol::file_keys::FileKeys;
 use wamn_identity_protocol::keys::PublicSessionKey;
-use wamn_identity_protocol::token::{SessionAuthority, SessionClaims, session_header};
-use wamn_identity_protocol::verifier::SessionVerifier;
 
 const ISSUER: &str = "https://identity.example.test";
-const ORG: &str = "org-a";
-const AUDIENCE: &str = "org-a/dev";
-const PRINCIPAL: &str = "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b";
 
 /// A key pair from a fixed seed, and its public JWK under `kid`.
 fn key(kid: &str, _seed: u8) -> (EncodingKey, PublicSessionKey) {
@@ -47,70 +41,6 @@ fn key_file(document: &serde_json::Value) -> PathBuf {
     ));
     std::fs::write(&path, serde_json::to_vec(document).expect("encode")).expect("write");
     path
-}
-
-fn sign(pair: &EncodingKey, kid: &str, issuer: &str) -> String {
-    let now = i64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_secs(),
-    )
-    .expect("the clock fits in i64");
-    let claims = SessionClaims {
-        iss: issuer.into(),
-        sub: PRINCIPAL.parse().unwrap(),
-        org: ORG.into(),
-        aud: AUDIENCE.into(),
-        roles: vec!["operator".parse().unwrap()],
-        exp: now + 300,
-        iat: now - 10,
-        jti: "token-1".into(),
-        authority: SessionAuthority::Login(PRINCIPAL.parse().unwrap()),
-        csrf: None,
-    };
-    let header = session_header(kid);
-    jsonwebtoken::encode(&header, &claims, pair).unwrap()
-}
-
-#[tokio::test]
-async fn a_token_signed_by_a_file_key_verifies() {
-    let (one, one_public) = key("key-one", 1);
-    let (_, two_public) = key("key-two", 2);
-    let path = key_file(&json!({"keys": [one_public, two_public]}));
-    let keys = FileKeys::load(&path, ISSUER).expect("load");
-    let verifier = SessionVerifier::new(keys, ORG, AUDIENCE).expect("verifier");
-
-    let session = verifier
-        .verify(&sign(&one, "key-one", ISSUER))
-        .await
-        .expect("a token signed by a loaded key verifies");
-    assert_eq!(session.claims().sub, PRINCIPAL.parse().unwrap());
-    assert_eq!(
-        session.claims().roles,
-        ["operator"
-            .parse::<wamn_identity_protocol::RoleName>()
-            .unwrap()]
-    );
-    session.require_admission().expect("a file key stays fresh");
-}
-
-#[tokio::test]
-async fn an_unknown_kid_another_key_or_another_issuer_is_refused() {
-    let (one, one_public) = key("key-one", 1);
-    let (other, _) = key("key-other", 3);
-    let path = key_file(&json!({"keys": [one_public]}));
-    let verifier =
-        SessionVerifier::new(FileKeys::load(&path, ISSUER).expect("load"), ORG, AUDIENCE)
-            .expect("verifier");
-
-    for token in [
-        sign(&other, "key-other", ISSUER),
-        sign(&other, "key-one", ISSUER),
-        sign(&one, "key-one", "https://another.example.test"),
-    ] {
-        assert!(verifier.verify(&token).await.is_err());
-    }
 }
 
 #[test]

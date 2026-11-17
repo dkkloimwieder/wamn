@@ -926,7 +926,7 @@ It also removes the RC runner and the separate identity/session cluster journey.
 
 The historical Receiving cluster combinations covered command histories, membership revocation, postcommit delivery, and materialization.
 The WMS combinations covered deployed routes, label failures after commit, delivery, and host restart with compiled code reuse.
-The combined identity journey covered key rotation, TLS, session targets, and membership changes.
+The old session-profile tests were removed with per-environment session targets. Epic 6 runs build and clippy checks without tests.
 The RC runner combined bootstrap with socket and trace Jobs.
 These historical combinations receive no replacement in Epic 2.
 DEP2-13 supplies focused coverage through product deployment commands.

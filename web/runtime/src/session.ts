@@ -1,8 +1,7 @@
 /**
  * The platform login, carried by cookie.
  *
- * `/password/environments` lists what the account can reach, and
- * `/password/session` signs in to one of them. With the carrier "cookie" the
+ * `/password/session` signs in to the deployment's org. With the carrier "cookie" the
  * identity service sets the session, CSRF and renewal cookies, and the body
  * holds the user id and the two expiry times. The page holds no token and writes nothing
  * to browser storage. The keeper renews the session on load and again before
@@ -10,17 +9,6 @@
  */
 
 import * as z from "zod/mini";
-
-/**
- * One audience the account can reach: a project environment, or the control
- * audience of an org, which has no project and no environment.
- */
-export interface Environment {
-  readonly aud: string;
-  readonly org: string;
-  readonly project?: string;
-  readonly env?: string;
-}
 
 /** The user id and expiry times of the session token and login, in Unix seconds. */
 export interface SessionTimes {
@@ -61,46 +49,6 @@ function refusedBy(path: string, response: Response): Error {
 async function times(response: Response): Promise<SessionTimes> {
   const document = TIMES.parse(await response.json());
   return { userId: document.sub, expiresAt: document.expires_at, loginExpiresAt: document.login_expires_at };
-}
-
-/** The environments of an org, optionally filtered by project, that this account can sign in to. */
-export async function environments(
-  email: string,
-  password: string,
-  filter: { readonly org: string; readonly project?: string },
-  options: SessionOptions = {},
-): Promise<Environment[]> {
-  return (await environmentPage(email, password, filter, {}, options)).environments;
-}
-
-/** One authorized audience page. Each request shares the login rate limit. */
-export async function environmentPage(
-  email: string,
-  password: string,
-  filter: { readonly org: string; readonly project?: string },
-  paging: { readonly limit?: number; readonly cursor?: string },
-  options: SessionOptions = {},
-): Promise<{ environments: Environment[]; nextCursor: string | null; total: number | null }> {
-  const response = await post(
-    "/password/environments",
-    { email, password, org: filter.org, project: filter.project, ...paging },
-    options,
-  );
-  if (!response.ok) {
-    const retry = response.status === 429 ? response.headers.get("retry-after") : null;
-    if (retry) throw new Error(`/password/environments answered 429. Retry after ${retry} seconds.`);
-    throw refusedBy("/password/environments", response);
-  }
-  const document = (await response.json()) as {
-    environments: Environment[];
-    next_cursor: string | null;
-    total: number | null;
-  };
-  return {
-    environments: document.environments ?? [],
-    nextCursor: document.next_cursor ?? null,
-    total: document.total ?? null,
-  };
 }
 
 /**
@@ -153,7 +101,7 @@ async function refusalOf(path: string, response: Response): Promise<Error> {
   return new Error(typeof answer?.error === "string" ? answer.error : `${path} answered ${response.status}`);
 }
 
-/** Sign in to one environment. The identity service sets the cookies. */
+/** Sign in to one org. The identity service sets the cookies. */
 export async function signIn(
   email: string,
   password: string,
@@ -219,7 +167,7 @@ export interface Clock {
 
 /** What the keeper needs besides the identity service. */
 export interface KeeperOptions extends SessionOptions {
-  /** The environment the page serves. One origin serves one environment. */
+  /** The org audience of the deployment. */
   readonly aud: string;
   /** Called on every change of the session. */
   readonly onState: (state: SessionState) => void;

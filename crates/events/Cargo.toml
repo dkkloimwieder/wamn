@@ -41,7 +41,6 @@ workspace = true
 [dev-dependencies]
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-connection = { workspace = true, features = ["test-util"] }
-wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 wamn-events = { path = ".", features = ["test-util"] }
 wamn-sql = { workspace = true, features = ["test-util"] }
 wamn-provision = { workspace = true, features = ["test-util"] }

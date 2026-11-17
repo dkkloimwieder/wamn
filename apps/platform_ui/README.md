@@ -26,10 +26,9 @@ No data entry action opens a modal.
 Records supplies wfe pagination for every table, with 25 rows per page and the total returned row count.
 The application selects each page from the returned rows and limits the current page when rows disappear.
 These APIs return complete arrays without server pagination: `project.list`, `user.list`, `environment.list`, `member.list`, `control.mine`, `environment.status`, and `release.profile`.
-The identity endpoint `/password/environments` also lacks server pagination.
 Workloads, conditions, and live releases come from `environment.status`.
 Operations and roles come from `release.profile`.
-Membership and audience tables use the same pagination.
+Membership tables use the same pagination.
 Refresh requests fresh data from each table’s owning API, including `control.mine` for project administrators.
 
 The environment home uses one `environment.status` read for Release, Users with a role, Roles, Memberships, and Workloads tiles.
@@ -69,13 +68,12 @@ Sign-in, invitation, recovery, reset, and no-access pages use standalone wfe Ent
 Theme and a main landmark wrap each default viewport panel. These pages contain no dashboard Frame.
 Identity forms use `@wfe/form` and FormView. The no-access panel contains a return link.
 
-After sign-in, an audience table replaces the form.
-Its columns show the org, project, and environment.
-Breadcrumbs appear on dashboard screens after audience selection. Every breadcrumb uses literal uppercase text, including record names.
-Identity screens and audience choice omit breadcrumbs.
-
-An audience with no available screens shows a named empty-state card and a link to audience selection.
-One audience opens automatically.
+Sign-in uses the org from `/config.json` and posts once to `/password/session` with `aud=urn:wamn:control:<org>`.
+There is no environment chooser or discovery password check.
+The shell opens the org's control address after login. Pasted application addresses use the same org token.
+Breadcrumbs appear on dashboard screens and use literal uppercase text, including record names.
+Identity screens omit breadcrumbs.
+An audience with no available screens shows an empty-state card with a link to the org sign-in page.
 
 Each dashboard uses `Theme` from wfe with its unchanged light defaults.
 WFE owns the theme properties, styles, fonts, and licenses.
@@ -86,7 +84,7 @@ The type test keeps `strict` enabled and omits `exactOptionalPropertyTypes`, whi
 
 From the repository root, run `pnpm --filter @wamn/platform-ui lint`, `test`, or `build`.
 The build writes `apps/platform_ui/dist`.
-The page reads only the org from `/config.json` and offers the audiences that identity returns for that org.
+The page reads only the org from `/config.json` and signs in directly to that org.
 The platform UI is a platform asset with no `wamn.k` or package artifact.
 [Building](../../docs/operations/building.md#platform-ui) owns its build record.
 [Deployment](../../docs/operations/deployment.md#platform-ui-files) owns upload and routing at `control.wamn.dev`.

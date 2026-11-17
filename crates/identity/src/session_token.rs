@@ -1,28 +1,47 @@
-//! Session-token signing and the active-session read.
+//! RFC 9068 access-token signing with the issuer's active key in Postgres.
 //!
-//! The token profile and its verification live in `wamn-identity-protocol`. This module
-//! signs with the issuer's active key in Postgres and reads whether a session's
-//! authority is still active. No token is persisted or logged.
+//! Password login records own renewal and revocation. No access token is persisted or logged.
 
-use sqlx::Row as _;
 use std::{
     fmt,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use wamn_identity_protocol::token::{
-    MAXIMUM_LIFETIME, SessionAuthority, SessionClaims, session_header,
-};
+use serde::{Deserialize, Serialize};
+use wamn_identity_protocol::PrincipalId;
+
+/// Access tokens live for at most fifteen minutes.
+pub const MAXIMUM_LIFETIME: i64 = 900;
+
+/// RFC 9068 claims issued to the web client, without authorization or cookie state.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccessTokenClaims {
+    /// Configured identity issuer.
+    pub iss: String,
+    /// The identity principal UUID.
+    pub sub: PrincipalId,
+    /// The org audience.
+    pub aud: String,
+    /// Exclusive expiry in Unix seconds.
+    pub exp: i64,
+    /// Actual signing time in Unix seconds.
+    pub iat: i64,
+    /// Unique token identifier.
+    pub jti: String,
+    /// The client that requested the access token.
+    pub client_id: String,
+}
 
 use crate::{
     IdentityError, IdentityErrorType,
-    session_keys::{corrupt_key, key_database_error, sign_message},
+    session_keys::{corrupt_key, sign_message},
 };
 
 /// A bearer token with redacted diagnostics and no persistence behavior.
 pub struct IssuedSessionToken {
     token: String,
-    claims: SessionClaims,
+    claims: AccessTokenClaims,
 }
 
 impl IssuedSessionToken {
@@ -32,7 +51,7 @@ impl IssuedSessionToken {
     }
 
     /// Borrow the JWT claims with the signing-time age bounds applied.
-    pub fn claims(&self) -> &SessionClaims {
+    pub fn claims(&self) -> &AccessTokenClaims {
         &self.claims
     }
 }
@@ -66,12 +85,18 @@ pub fn minting_times(
 /// token before that commit succeeds. Supplied JWT claim times are always replaced.
 pub async fn sign_session_token_in_transaction(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    mut claims: SessionClaims,
+    mut claims: AccessTokenClaims,
     validation_started_at: i64,
     absolute_expiry: Option<i64>,
     envelope: &wamn_envelope::encryption::Envelope,
 ) -> Result<IssuedSessionToken, IdentityError> {
-    claims.validate()?;
+    if claims.iss.trim().is_empty()
+        || claims.aud.is_empty()
+        || claims.jti.is_empty()
+        || claims.client_id != "wamn-web"
+    {
+        return Err(refused());
+    }
     let issuer = claims.iss.clone();
     let token = sign_message(transaction, &issuer, envelope, |kid, key| {
         let now = unix_seconds()?;
@@ -82,7 +107,9 @@ pub async fn sign_session_token_in_transaction(
                 return Err(refused());
             }
         }
-        let header = session_header(kid);
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::EdDSA);
+        header.typ = Some("at+jwt".into());
+        header.kid = Some(kid.into());
         jsonwebtoken::encode(&header, &claims, key).map_err(|_| corrupt_key())
     })
     .await?;
@@ -106,26 +133,12 @@ fn refused() -> IdentityError {
     IdentityError::new(IdentityErrorType::InvalidInput, "session token refused")
 }
 
-/// Make sure of current session authority and membership without caching an approval.
-///
-/// Signature and exact audience verification must precede this read. The caller
-/// supplies project and environment from the loaded release, never the request.
+/// Refuse legacy session admission until the host verifier is replaced.
 pub async fn session_is_active(
-    client: &mut sqlx::PgConnection,
-    claims: &SessionClaims,
-    project: &wamn_registry::ProjectId,
-    environment: &wamn_registry::EnvName,
+    _client: &mut sqlx::PgConnection,
+    _claims: &AccessTokenClaims,
+    _project: &wamn_registry::ProjectId,
+    _environment: &wamn_registry::EnvName,
 ) -> Result<bool, IdentityError> {
-    let SessionAuthority::Login(login) = &claims.authority;
-    sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.principals p \
-                  WHERE p.id=$1 AND p.type='user' AND p.status='active' \
-         AND identity.has_project_access(p.id,$2,$4,$3) \
-         AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=$2 AND om.status='active') AND \
-         EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id=$5 \
-         AND l.principal_id=p.id AND l.issuer=$6 AND l.audience=$7 AND l.revoked_at IS NULL \
-         AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp()))").bind(claims.sub).bind(&claims.org).bind(project).bind(environment).bind(login).bind(&claims.iss).bind(&claims.aud).fetch_one(&mut *client)
-        .await
-        .map_err(key_database_error)?
-        .try_get(0)
-        .map_err(key_database_error)
+    Ok(false)
 }

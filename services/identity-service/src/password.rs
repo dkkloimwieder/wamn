@@ -17,12 +17,8 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection as Client;
 use tokio::sync::Semaphore;
-use wamn_provision::PlatformComponent;
 use wamn_identity::{
-    IdentityErrorType,
-    control::{control_audience, control_audience_org, control_orgs_page},
-    create_or_reuse_user,
-    paging::{ListPage, Order},
+    IdentityErrorType, create_or_reuse_user,
     password::{
         Password, PasswordError, PasswordErrorType, PasswordWork, RefusalCause,
         authenticate_password, enroll_password, issue_invitation, issue_reset, password_work,
@@ -31,6 +27,7 @@ use wamn_identity::{
     password_login,
     session_token::{IssuedSessionToken, sign_session_token_in_transaction},
 };
+use wamn_provision::PlatformComponent;
 
 use zeroize::Zeroizing;
 
@@ -79,102 +76,6 @@ struct EnrollmentRequest {
     invitation: String,
     password: String,
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EnvironmentsRequest {
-    email: String,
-    password: String,
-    #[serde(default)]
-    org: Option<wamn_registry::OrgId>,
-    #[serde(default)]
-    project: Option<wamn_registry::ProjectId>,
-    #[serde(default, deserialize_with = "present")]
-    limit: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present")]
-    cursor: Option<serde_json::Value>,
-}
-
-fn present<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<serde_json::Value>, D::Error> {
-    serde_json::Value::deserialize(deserializer).map(Some)
-}
-
-impl EnvironmentsRequest {
-    fn paging_input(&self) -> serde_json::Value {
-        let mut input = serde_json::Map::new();
-        if let Some(limit) = &self.limit {
-            input.insert("limit".into(), limit.clone());
-        }
-        if let Some(cursor) = &self.cursor {
-            input.insert("cursor".into(), cursor.clone());
-        }
-        input.into()
-    }
-}
-
-/// The org and project that `/password/environments` lists. A missing value
-/// matches every org or project. The control audience of an org has no
-/// project, so the org alone selects it.
-#[derive(Default)]
-struct ProjectFilter {
-    org: Option<wamn_registry::OrgId>,
-    project: Option<wamn_registry::ProjectId>,
-}
-
-impl ProjectFilter {
-    fn holds(&self, org: &wamn_registry::OrgId, project: &wamn_registry::ProjectId) -> bool {
-        self.org.as_ref().is_none_or(|wanted| wanted == org)
-            && self.project.as_ref().is_none_or(|wanted| wanted == project)
-    }
-}
-
-fn discovery_page(
-    input: &serde_json::Value,
-    principal: &PrincipalId,
-    filter: &ProjectFilter,
-) -> Result<ListPage, wamn_identity::IdentityError> {
-    ListPage::new(
-        input,
-        "/password/environments",
-        serde_json::json!({"principal":principal.to_string().as_str(), "org":filter.org, "project":filter.project}),
-        Order::Audience,
-    )
-}
-
-/// Where a discovery page's control orgs start and how many it reads.
-/// Control audiences come first. None means the cursor is past them.
-fn control_window(page: &ListPage) -> Option<(Option<wamn_registry::OrgId>, Option<i64>)> {
-    match page.after_type() {
-        Some(1) => None,
-        Some(_) => Some((
-            page.after(1).and_then(control_audience_org),
-            page.read_limit(),
-        )),
-        None => Some((None, page.read_limit())),
-    }
-}
-
-/// Where a discovery page's application audiences start.
-fn application_after(page: &ListPage) -> std::ops::Bound<&str> {
-    match (page.after_type(), page.after(1)) {
-        (Some(1), Some(after)) => std::ops::Bound::Excluded(after),
-        _ => std::ops::Bound::Unbounded,
-    }
-}
-
-/// One audience the login may select. A control audience has no project
-/// and no environment.
-#[derive(Serialize)]
-struct Environment<'a> {
-    aud: std::borrow::Cow<'a, str>,
-    org: &'a wamn_registry::OrgId,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    project: Option<&'a wamn_registry::ProjectId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    env: Option<&'a wamn_registry::EnvName>,
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LoginRequest {
@@ -394,38 +295,16 @@ async fn handle(
                 Err(error) => enrollment_refusal(&mut *database, &principal, &error).await,
             }
         }
-        "/password/session" | "/password/environments" => {
-            let (email, password, audience, carrier, filter, paging) =
-                if parts.uri.path() == "/password/environments" {
-                    let Ok(request) = serde_json::from_slice::<EnvironmentsRequest>(&bytes) else {
-                        return invalid();
-                    };
-                    let paging = request.paging_input();
-                    let filter = ProjectFilter {
-                        org: request.org,
-                        project: request.project,
-                    };
-                    (
-                        request.email,
-                        request.password,
-                        None,
-                        Carrier::Bearer,
-                        filter,
-                        paging,
-                    )
-                } else {
-                    let Ok(request) = serde_json::from_slice::<LoginRequest>(&bytes) else {
-                        return invalid();
-                    };
-                    (
-                        request.email,
-                        request.password,
-                        Some(request.aud),
-                        request.carrier,
-                        ProjectFilter::default(),
-                        serde_json::json!({}),
-                    )
-                };
+        "/password/session" => {
+            let Ok(LoginRequest {
+                email,
+                password,
+                aud: audience,
+                carrier,
+            }) = serde_json::from_slice(&bytes)
+            else {
+                return invalid();
+            };
             let Ok(password) = Password::new(password) else {
                 return session::unauthorized();
             };
@@ -489,81 +368,6 @@ async fn handle(
                     Ok(None) => return session::unauthorized(),
                     Err(error) => return password_failure(&error),
                 };
-            let Some(audience) = audience else {
-                let Ok(page) = discovery_page(&paging, principal.principal().id(), &filter) else {
-                    return invalid();
-                };
-                let orgs = match control_window(&page) {
-                    None => Vec::new(),
-                    Some((after_org, limit)) => match control_orgs_page(
-                        &mut tx,
-                        principal.principal().id(),
-                        filter.org.as_ref(),
-                        after_org.as_ref(),
-                        limit,
-                    )
-                    .await
-                    {
-                        Ok(orgs) => orgs,
-                        Err(_) => return unavailable(),
-                    },
-                };
-                let mut environments = Vec::new();
-                for org in &orgs {
-                    let Ok(aud) = control_audience(org) else {
-                        return unavailable();
-                    };
-                    environments.push(Environment {
-                        aud: aud.into(),
-                        org,
-                        project: None,
-                        env: None,
-                    });
-                }
-                let read_limit = page
-                    .read_limit()
-                    .map(|limit| usize::try_from(limit).expect("read limit is at most 101"));
-                if read_limit.is_none_or(|limit| environments.len() < limit) {
-                    let after = application_after(&page);
-                    for (_, configured) in inner
-                        .targets
-                        .range::<str, _>((after, std::ops::Bound::Unbounded))
-                    {
-                        let target = &configured.binding;
-                        let triple = target.triple();
-                        if !filter.holds(&triple.org, &triple.project) {
-                            continue;
-                        }
-                        match session::authorized_roles(inner, &principal, configured).await {
-                            Ok(_) => {
-                                environments.push(Environment {
-                                    aud: target.audience().into(),
-                                    org: &triple.org,
-                                    project: Some(&triple.project),
-                                    env: Some(&triple.env),
-                                });
-                                if read_limit.is_some_and(|limit| environments.len() >= limit) {
-                                    break;
-                                }
-                            }
-                            Err(error) => match error.type_ {
-                                session::FailureType::Unauthorized => (),
-                                session::FailureType::Unavailable => return unavailable(),
-                            },
-                        }
-                    }
-                }
-                let answer = page.answer("environments", environments, |entry| {
-                    serde_json::json!([u8::from(entry.project.is_some()), entry.aud])
-                });
-                return match serde_json::to_vec(&answer) {
-                    Ok(bytes) => response(StatusCode::OK, "application/json", bytes),
-                    Err(_) => unavailable(),
-                };
-            };
-            let Some(target) = session::audience(inner, &audience) else {
-                return session::unauthorized();
-            };
             let renewal = match password_login::create_login(
                 &mut tx,
                 principal.principal().id(),
@@ -576,16 +380,8 @@ async fn handle(
                 Ok(None) => return session::unauthorized(),
                 Err(_) => return unavailable(),
             };
-            let authority = wamn_identity_protocol::token::SessionAuthority::Login(
-                match renewal.login.id.parse() {
-                    Ok(id) => id,
-                    Err(_) => return unavailable(),
-                },
-            );
             let claims =
-                match session::claims_for_audience(inner, &mut tx, &principal, &target, authority)
-                    .await
-                {
+                match session::claims_for_audience(inner, &mut tx, &principal, &audience).await {
                     Ok(claims) => claims,
                     Err(error) => return authority_failure(&error),
                 };
@@ -754,9 +550,6 @@ async fn handle(
                 }
                 return logged_out(request.carrier);
             }
-            let Some(target) = session::audience(inner, &request.aud) else {
-                return session::unauthorized();
-            };
             let renewal =
                 match password_login::rotate_login(&mut tx, &inner.issuer, &request.aud, &secret)
                     .await
@@ -770,19 +563,17 @@ async fn handle(
                     }
                     Err(_) => return unavailable(),
                 };
-            let authority = wamn_identity_protocol::token::SessionAuthority::Login(
-                match renewal.login.id.parse() {
-                    Ok(id) => id,
-                    Err(_) => return unavailable(),
-                },
-            );
-            let claims =
-                match session::claims_for_audience(inner, &mut tx, &principal, &target, authority)
-                    .await
-                {
-                    Ok(claims) => claims,
-                    Err(error) => return authority_failure(&error),
-                };
+            let claims = match session::claims_for_audience(
+                inner,
+                &mut tx,
+                &principal,
+                &request.aud,
+            )
+            .await
+            {
+                Ok(claims) => claims,
+                Err(error) => return authority_failure(&error),
+            };
             finish_session(
                 tx,
                 claims,
@@ -806,13 +597,13 @@ fn authority_failure(error: &session::ExchangeFailure) -> Response<Full<Bytes>> 
 
 async fn finish_session(
     mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
-    mut claims: wamn_identity_protocol::token::SessionClaims,
+    claims: wamn_identity::session_token::AccessTokenClaims,
     renewal: password_login::Renewal,
     started_at: i64,
     carrier: Carrier,
     envelope: &wamn_envelope::encryption::Envelope,
 ) -> Response<Full<Bytes>> {
-    // The cookie carrier binds a fresh readable CSRF token to the signed session by its hash.
+    // The cookie carrier remains until web owns cookies and CSRF.
     let csrf = match carrier {
         Carrier::Bearer => None,
         Carrier::Cookie => {
@@ -821,7 +612,6 @@ async fn finish_session(
                 return unavailable();
             }
             let csrf = hex::encode(bytes);
-            claims.csrf = Some(wamn_digest::bytes_sha256(csrf.as_bytes()));
             Some(csrf)
         }
     };
@@ -1109,165 +899,8 @@ mod tests {
     use std::convert::Infallible;
     use std::sync::Arc;
     use tokio::net::TcpListener;
-    use wamn_provision::identity_role::identity_issuer_login;
     use wamn_oci::package_artifact::http_client::HttpClient;
-
-    #[test]
-    fn a_filter_lists_only_its_org_and_project() {
-        let filter = ProjectFilter {
-            org: Some("dkk".parse().unwrap()),
-            project: Some("wms".parse().unwrap()),
-        };
-        assert!(filter.holds(&"dkk".parse().unwrap(), &"wms".parse().unwrap()));
-        assert!(!filter.holds(&"dkk".parse().unwrap(), &"receiving".parse().unwrap()));
-        assert!(!filter.holds(&"other".parse().unwrap(), &"wms".parse().unwrap()));
-        assert!(
-            ProjectFilter::default().holds(&"dkk".parse().unwrap(), &"receiving".parse().unwrap())
-        );
-    }
-
-    #[test]
-    fn discovery_pages_bind_principal_filters_and_preserve_complete_totals() {
-        let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
-        let filter = ProjectFilter {
-            org: Some("acme".parse().unwrap()),
-            project: Some("widgets".parse().unwrap()),
-        };
-        let rows = vec![
-            json!([0, "urn:wamn:control:acme"]),
-            json!([1, "app-a"]),
-            json!([1, "app-b"]),
-        ];
-        let first = discovery_page(&json!({"limit":1}), &principal, &filter).unwrap();
-        let answer = first.answer("environments", rows[..2].to_vec(), Clone::clone);
-        {
-            let observed = &(answer["environments"]);
-            assert_eq!(observed.as_array().expect("array").len(), 1);
-            assert_eq!(observed[0], serde_json::json!(rows[0]));
-        };
-        assert!(answer["total"].is_null());
-        let next = discovery_page(
-            &json!({"limit":1,"cursor":answer["next_cursor"]}),
-            &principal,
-            &filter,
-        )
-        .unwrap();
-        assert_eq!(next.after_type(), Some(0));
-        assert_eq!(next.after(1), Some("urn:wamn:control:acme"));
-        let answer = next.answer("environments", rows[1..].to_vec(), Clone::clone);
-        let last = discovery_page(
-            &json!({"cursor":answer["next_cursor"]}),
-            &principal,
-            &filter,
-        )
-        .unwrap();
-        let answer = last.answer("environments", rows[2..].to_vec(), Clone::clone);
-        {
-            let observed = &(answer["environments"]);
-            assert_eq!(observed.as_array().expect("array").len(), 1);
-            assert_eq!(observed[0], serde_json::json!(rows[2]));
-        };
-        assert!(answer["next_cursor"].is_null());
-        assert!(answer["total"].is_null());
-        for input in [json!({}), json!({"limit":100})] {
-            let answer = discovery_page(&input, &principal, &filter).unwrap().answer(
-                "environments",
-                rows.clone(),
-                Clone::clone,
-            );
-            assert_eq!(answer["total"], 3);
-            assert!(answer["next_cursor"].is_null());
-        }
-        let controls = first.answer(
-            "environments",
-            vec![
-                json!([0, "urn:wamn:control:acme"]),
-                json!([0, "urn:wamn:control:other"]),
-            ],
-            Clone::clone,
-        );
-        let input = json!({"cursor":controls["next_cursor"]});
-        let control = discovery_page(&input, &principal, &filter).unwrap();
-        assert_eq!(control.after_type(), Some(0));
-        assert_eq!(
-            control.after(1).and_then(control_audience_org),
-            Some("acme".parse().unwrap())
-        );
-        assert!(discovery_page(&input, &principal, &ProjectFilter::default()).is_err());
-        assert!(
-            discovery_page(
-                &input,
-                &principal,
-                &ProjectFilter {
-                    org: filter.org.clone(),
-                    project: None
-                }
-            )
-            .is_err()
-        );
-        let other: PrincipalId = "00000000-0000-0000-0000-000000000002".parse().unwrap();
-        assert!(discovery_page(&input, &other, &filter).is_err());
-    }
-
-    #[test]
-    fn discovery_steps_from_control_orgs_to_application_audiences_across_a_page_boundary() {
-        let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
-        let filter = ProjectFilter {
-            org: Some("acme".parse().unwrap()),
-            project: None,
-        };
-        let key = |entry: &serde_json::Value| entry.clone();
-        let acme = json!([0, "urn:wamn:control:acme"]);
-        let app = json!([1, "app-a"]);
-        // Page one reads the control orgs first, then fills the lookahead with an application.
-        let first = discovery_page(&json!({"limit":1}), &principal, &filter).unwrap();
-        assert_eq!(control_window(&first), Some((None, Some(2))));
-        assert_eq!(application_after(&first), std::ops::Bound::Unbounded);
-        let answer = first.answer("environments", vec![acme.clone(), app.clone()], key);
-        {
-            let observed = &(answer["environments"]);
-            assert_eq!(observed.as_array().expect("array").len(), 1);
-            assert_eq!(observed[0], serde_json::json!(acme));
-        };
-        // Page two continues after the control org and finds no more of them,
-        // so it reads the applications from the start.
-        let second = discovery_page(
-            &json!({"limit":1,"cursor":answer["next_cursor"]}),
-            &principal,
-            &filter,
-        )
-        .unwrap();
-        assert_eq!(second.after_type(), Some(0));
-        assert_eq!(
-            control_window(&second),
-            Some((Some("acme".parse().unwrap()), Some(2)))
-        );
-        assert_eq!(application_after(&second), std::ops::Bound::Unbounded);
-        let answer = second.answer("environments", vec![app.clone()], key);
-        {
-            let observed = &(answer["environments"]);
-            assert_eq!(observed.as_array().expect("array").len(), 1);
-            assert_eq!(observed[0], serde_json::json!(app));
-        };
-        assert!(answer["next_cursor"].is_null());
-        assert!(answer["total"].is_null());
-        // A cursor on an application skips the control orgs and continues after it.
-        let apps = first.answer("environments", vec![app, json!([1, "app-b"])], key);
-        let third = discovery_page(
-            &json!({"limit":1,"cursor":apps["next_cursor"]}),
-            &principal,
-            &filter,
-        )
-        .unwrap();
-        assert_eq!(third.after_type(), Some(1));
-        assert_eq!(control_window(&third), None);
-        assert_eq!(
-            application_after(&third),
-            std::ops::Bound::Excluded("app-a")
-        );
-        let all = discovery_page(&json!({}), &principal, &filter).unwrap();
-        assert_eq!(control_window(&all), Some((None, None)));
-    }
+    use wamn_provision::identity_role::identity_issuer_login;
 
     #[sqlx::test(migrations = false)]
     async fn admission_stamps_every_bucket_as_the_platform_principal(pool: sqlx::PgPool) {
@@ -1309,49 +942,6 @@ mod tests {
                 .get::<i64, _>(0),
             3
         );
-    }
-
-    #[tokio::test]
-    async fn discovery_refuses_bad_paging_and_retains_throttle_response() {
-        let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
-        for input in [
-            json!({"limit":null}),
-            json!({"limit":0}),
-            json!({"limit":101}),
-            json!({"limit":1.5}),
-            json!({"limit":"25"}),
-            json!({"cursor":null}),
-            json!({"cursor":""}),
-            json!({"cursor":"bad"}),
-        ] {
-            let mut body = input;
-            body["email"] = json!("a@example.invalid");
-            body["password"] = json!("password");
-            let request: EnvironmentsRequest = serde_json::from_value(body).unwrap();
-            assert!(
-                discovery_page(
-                    &request.paging_input(),
-                    &principal,
-                    &ProjectFilter::default()
-                )
-                .is_err()
-            );
-        }
-        let response = invalid();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        {
-            let observed = &(serde_json::from_slice::<serde_json::Value>(
-                &response.into_body().collect().await.unwrap().to_bytes(),
-            )
-            .unwrap());
-            assert_eq!(
-                observed["error"],
-                serde_json::json!("password request refused")
-            );
-        };
-        let response = throttled();
-        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(response.headers()["retry-after"], "60");
     }
 
     #[tokio::test]
@@ -1400,14 +990,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let bob = wamn_identity::create_user(
-            &mut admin.client,
-            "bob",
-            "bob@example.invalid",
-            "Bob",
-        )
-        .await
-        .unwrap();
+        let bob =
+            wamn_identity::create_user(&mut admin.client, "bob", "bob@example.invalid", "Bob")
+                .await
+                .unwrap();
         let mut url = url::Url::parse(db.url()).unwrap();
         url.set_username(identity_issuer_login(issuer).unwrap().as_str())
             .unwrap();

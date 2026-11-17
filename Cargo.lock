@@ -6211,10 +6211,8 @@ dependencies = [
  "sha2 0.11.0",
  "sqlx",
  "subtle",
- "tokio",
  "uuid",
  "wamn-digest",
- "wamn-identity-protocol",
  "wamn-role",
  "zeroize",
 ]

@@ -1,4 +1,4 @@
-//! Identity types, credential formats, wire messages and session verification.
+//! Identity types, credential formats, wire messages and public key documents.
 
 use std::fmt;
 
@@ -14,8 +14,6 @@ mod principal;
 pub use principal::{ParseIdentityError, PrincipalId, RoleName};
 pub mod pat_prefix;
 pub mod secret;
-#[cfg(feature = "test-util")]
-pub mod test_util;
 pub mod wire;
 
 mod platform;
@@ -26,7 +24,6 @@ pub use platform::{
 
 pub mod file_keys;
 pub mod keys;
-pub mod token;
 pub mod verifier;
 
 /// Stable classes of session failure.

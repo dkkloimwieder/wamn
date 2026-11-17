@@ -14,7 +14,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
@@ -27,7 +26,6 @@ use wamn_edge::config::{
 };
 use wamn_edge::serve::{EdgeHost, serve};
 use wamn_identity_protocol::keys::PublicSessionKey;
-use wamn_identity_protocol::token::{SessionAuthority, SessionClaims};
 
 pub const PACKAGE: &str = "edge_device";
 /// A registered export is keyed by its permission identity.
@@ -58,39 +56,6 @@ pub fn key(kid: &str, seed: u8) -> (Ed25519KeyPair, PublicSessionKey) {
         x: URL_SAFE_NO_PAD.encode(pair.public_key().as_ref()),
     };
     (pair, public)
-}
-
-/// A session for `roles`, signed by `pair` under `kid`.
-pub fn session(pair: &Ed25519KeyPair, kid: &str, roles: &[&str]) -> String {
-    let now = i64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_secs(),
-    )
-    .expect("the clock fits in i64");
-    let claims = SessionClaims {
-        iss: ISSUER.into(),
-        sub: PRINCIPAL.parse().unwrap(),
-        org: ORG.into(),
-        aud: AUDIENCE.into(),
-        roles: roles.iter().map(|role| role.parse().unwrap()).collect(),
-        exp: now + 300,
-        iat: now - 10,
-        jti: "token-1".into(),
-        authority: SessionAuthority::Login(PRINCIPAL.parse().unwrap()),
-        csrf: None,
-    };
-    let header = URL_SAFE_NO_PAD.encode(
-        serde_json::to_vec(
-            &serde_json::json!({"alg":"EdDSA", "typ":"wamn-session+jwt", "kid":kid}),
-        )
-        .expect("header"),
-    );
-    let body = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).expect("claims"));
-    let signed = format!("{header}.{body}");
-    let signature = URL_SAFE_NO_PAD.encode(pair.sign(signed.as_bytes()).as_ref());
-    format!("{signed}.{signature}")
 }
 
 /// Copy the bundle into a directory named for the test, add the key file, and

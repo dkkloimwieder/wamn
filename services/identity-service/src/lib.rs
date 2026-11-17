@@ -8,7 +8,6 @@ mod password;
 mod pat;
 mod session;
 
-use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::fmt;
 use std::sync::Arc;
@@ -28,9 +27,8 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 use tokio_rustls::TlsAcceptor;
-use wamn_provision::identity_role::identity_issuer_login;
-use wamn_provision::session_target::SessionTarget;
 use wamn_identity::session_keys::session_jwks;
+use wamn_provision::identity_role::identity_issuer_login;
 
 // Match the public-key client's total fetch bound. No retry or stale response
 // is introduced when TLS, request headers, or the authoritative read stalls.
@@ -46,7 +44,6 @@ pub struct IdentityConfig {
     key_rotation: Duration,
     trusted_proxy_hops: usize,
     connection: String,
-    targets: BTreeMap<String, SessionTarget>,
     mail: Option<mail::MailConfig>,
 }
 
@@ -70,7 +67,6 @@ impl IdentityConfig {
             key_rotation: DEFAULT_KEY_ROTATION,
             trusted_proxy_hops: 0,
             connection,
-            targets: BTreeMap::new(),
             mail: None,
         })
     }
@@ -103,25 +99,6 @@ impl IdentityConfig {
         self.mail = Some(mail::MailConfig::Local(path));
         self
     }
-
-    /// Configure password login for provisioned, distinct audiences.
-    pub fn with_session_targets(
-        mut self,
-        targets: Vec<SessionTarget>,
-    ) -> Result<Self, IdentityServiceError> {
-        for target in targets {
-            if self
-                .targets
-                .insert(target.audience().to_owned(), target)
-                .is_some()
-            {
-                return Err(IdentityServiceError::new(
-                    "duplicate identity session audience",
-                ));
-            }
-        }
-        Ok(self)
-    }
 }
 
 /// Shared service state containing no exported private key material.
@@ -142,15 +119,6 @@ struct Inner {
     database: Mutex<Database>,
     // PAT issuance needs a transaction, so it holds its own connection.
     issuance: Mutex<Database>,
-    targets: BTreeMap<String, ConfiguredTarget>,
-}
-
-#[derive(Debug)]
-struct ConfiguredTarget {
-    binding: SessionTarget,
-    // One connection per used environment supports the existing live-successor
-    // retirement rule. Unused environments consume no database connections.
-    reader: Mutex<Option<Database>>,
 }
 
 pub(crate) struct Database {
@@ -236,19 +204,6 @@ impl IdentityService {
                 passwords,
                 database: Mutex::new(database),
                 issuance,
-                targets: config
-                    .targets
-                    .into_iter()
-                    .map(|(audience, binding)| {
-                        (
-                            audience,
-                            ConfiguredTarget {
-                                binding,
-                                reader: Mutex::new(None),
-                            },
-                        )
-                    })
-                    .collect(),
             }),
         })
     }
@@ -292,7 +247,6 @@ impl IdentityService {
                     | "/users"
                     | "/password/enroll"
                     | "/password/session"
-                    | "/password/environments"
                     | "/password/renew"
                     | "/password/logout"
                     | "/password/logout-all"
@@ -332,9 +286,12 @@ impl IdentityService {
                                     response(StatusCode::OK, "application/json", bytes);
                                 response.headers_mut().insert(
                                     "cache-control",
-                                    "public, max-age=300"
-                                        .parse()
-                                        .expect("constant cache policy"),
+                                    format!(
+                                        "public, max-age={}",
+                                        wamn_identity::session_keys::JWKS_CACHE_SECONDS
+                                    )
+                                    .parse()
+                                    .expect("constant cache policy"),
                                 );
                                 response
                                     .headers_mut()

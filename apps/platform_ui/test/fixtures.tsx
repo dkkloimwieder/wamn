@@ -143,8 +143,6 @@ const CONTROL_SECTIONS: readonly ShellSection[] = [
   },
 ];
 
-export const ONE = [{ aud: AUD, org: "acme", project: "widgets", env: "dev" }];
-
 /** What `permission.mine` answers an admin. */
 export const ADMIN = { admin: true, permissions: [] };
 
@@ -161,11 +159,10 @@ const ORG_ADMIN = {
 
 /**
  * The identity service, holding one session cookie or none, with the
- * environments it lists, and the application host's `permission.mine`.
+ * application host's `permission.mine`.
  */
 export function identity(
   signedIn: boolean,
-  listed: readonly unknown[] = ONE,
   mine: unknown = ADMIN,
   control: unknown = ORG_ADMIN,
 ) {
@@ -204,12 +201,6 @@ export function identity(
       );
     }
     switch (path) {
-      case "/password/environments":
-        return Promise.resolve(
-          new Response(JSON.stringify({ environments: listed, next_cursor: null, total: listed.length }), {
-            status: 200,
-          }),
-        );
       case "/password/session":
         state.signedIn = true;
         return Promise.resolve(times());
