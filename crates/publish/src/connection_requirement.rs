@@ -99,14 +99,12 @@ mod palette_tests {
 /// Prepare requirements only for components in the selected release, without installing SQL.
 pub async fn prepare_release(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &wamn_registry::ProjectEnvKey,
     release: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
     source: Option<
         wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
     >,
 ) -> anyhow::Result<()> {
-    use wamn_engine::artifact_source::ArtifactSource as _;
     let source = source
         .map(wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSource::new)
         .transpose()?;
@@ -125,11 +123,7 @@ pub async fn prepare_release(
                     let source = source
                         .as_ref()
                         .context("set WAMN_COMPONENT_ARTIFACT_BASE for palette activation")?;
-                    let fact = component
-                        .descriptor
-                        .clone()
-                        .into_admitted(wamn_catalog::palette_target(project_env_key));
-                    let bytes = source.pull_verified(&fact.component).await?;
+                    let bytes = source.pull_component(&component.descriptor.component_digest).await?;
                     let interface =
                         require_imports(&bytes, alias.as_str(), &declaration.interface)?;
                     let mode = match declaration.mode {
@@ -164,13 +158,7 @@ pub async fn prepare_release(
         let source = source
             .as_ref()
             .context("set WAMN_COMPONENT_ARTIFACT_BASE for activation")?;
-        let target = wamn_catalog::ComponentPackageCoordinate::new(
-            project_env_key,
-            package.package.id.clone(),
-            package.package.version.clone(),
-        )?;
-        let admitted = component.descriptor.clone().into_admitted(target);
-        let bytes = source.pull_verified(&admitted.component).await?;
+        let bytes = source.pull_component(&component.descriptor.component_digest).await?;
         write(
             tx,
             package,

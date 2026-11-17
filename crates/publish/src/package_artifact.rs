@@ -42,14 +42,13 @@ use oci_client::Reference;
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentDeclaration, ComponentDescriptor,
-    ComponentPackageCoordinate, component_artifact_reference,
+    component_artifact_reference,
 };
 use wamn_codegen::AUTHORED_MANIFEST;
 use wamn_catalog::manifest::{PackageManifest, PolicyContractState};
-use wamn_engine::component_artifact::component_artifact_config_bytes;
 use wamn_oci::package_artifact::registry_credentials::read_registry_push_credentials;
 
-use crate::component_admission::{AdmitComponentRequest, admit_component, publish_and_verify};
+use crate::component_admission::{AdmitComponentRequest, admit_component};
 use crate::component_declaration::authored_base_digests;
 use wamn_digest::bytes_sha256;
 pub use wamn_oci::package_artifact::{
@@ -216,12 +215,6 @@ pub(crate) async fn connection_components(
     let descriptors = read_descriptors(root)?;
     if !descriptors.is_empty() {
         use wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSource;
-        use wamn_engine::artifact_source::ArtifactSource as _;
-        let target = ComponentPackageCoordinate::new(
-            &admission_project_env_key(),
-            manifest.package.id.clone(),
-            manifest.package.version.clone(),
-        )?;
         let mut result = Vec::new();
         for descriptor in descriptors {
             let names = component_connection_names(manifest, &descriptor.component)?;
@@ -233,9 +226,8 @@ pub(crate) async fn connection_components(
                     .context("set WAMN_COMPONENT_ARTIFACT_BASE for package install")?
                     .clone(),
             )?;
-            let facts = descriptor.into_admitted(target.clone());
-            let bytes = source.pull_verified(&facts.component).await?;
-            result.push((facts.component.component_digest, names.to_vec(), bytes));
+            let bytes = source.pull_component(&descriptor.component_digest).await?;
+            result.push((descriptor.component_digest, names.to_vec(), bytes));
         }
         return Ok(result);
     }
@@ -714,8 +706,7 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
     })
 }
 
-/// Push one admitted component under its digest and pull it back through the
-/// production puller.
+/// Push one admitted component as a stock application/wasm artifact under its byte digest.
 async fn push_component_artifact(
     registry: &PackageRegistry,
     artifact_base: &str,
@@ -731,15 +722,21 @@ async fn push_component_artifact(
     let credentials =
         read_registry_push_credentials(&registry.registry_auth_file, artifact.registry())
             .context("load the component registry push credential")?;
-    publish_and_verify(
-        &reference,
-        registry.insecure_registry,
-        &registry.oci_ca_paths,
+    wash_runtime::oci::set_extra_ca_certificates(&registry.oci_ca_paths)?;
+    wash_runtime::oci::push_component(
+        &reference.to_string(),
         &component.bytes,
-        &component_artifact_config_bytes(&component.facts),
-        credentials.as_ref(),
+        wash_runtime::oci::OciConfig {
+            credentials: credentials.as_ref().map(|credentials| {
+                (credentials.username().to_owned(), credentials.password().to_owned())
+            }),
+            insecure: registry.insecure_registry,
+            ..Default::default()
+        },
+        None,
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 /// Where `apply-package` reads a package from: one of `--package` or

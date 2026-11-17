@@ -37,48 +37,6 @@ impl EnvironmentDocument {
     }
 }
 
-/// Write declared credential revocation bounds before starting an authenticated host.
-/// The caller binds the provisioning actor in its project transaction.
-///
-/// # Errors
-/// Returns an error if the project configuration cannot be written.
-pub async fn write_revocation_configuration(
-    client: &mut sqlx::PgConnection,
-    document: &EnvironmentDocument,
-) -> Result<u64, wamn_identity::IdentityError> {
-    use crate::configuration::{
-        PlatformConfiguration, Setting, write_configuration,
-    };
-    let settings = std::iter::once(Setting {
-        target_type: "project".into(),
-        target_id: document.project.to_string(),
-        key: "revocation-seconds".into(),
-        value: document.revocation_seconds.into(),
-        locked: true,
-    })
-    .chain(
-        document
-            .applications
-            .iter()
-            .map(|(name, selection)| Setting {
-                target_type: "application".into(),
-                target_id: name.to_string(),
-                key: "revocation-seconds".into(),
-                value: selection.revocation_seconds.into(),
-                locked: true,
-            }),
-    )
-    .collect();
-    write_configuration(
-        client,
-        &PlatformConfiguration {
-            settings,
-            ..Default::default()
-        },
-    )
-    .await
-}
-
 /// Read protected configuration as the provisioning component.
 pub(super) async fn read_configuration(
     connection: &mut sqlx::PgConnection,
@@ -128,7 +86,6 @@ impl EnvironmentDocument {
             env: self.env.clone(),
             target: self.target.clone(),
             policy: self.policy.clone(),
-            revocation_seconds: self.revocation_seconds,
             schema: self.schema,
             applications: self
                 .applications
@@ -142,7 +99,6 @@ impl EnvironmentDocument {
                                 DeclaredRelease::Digest(digest) => Some(*digest),
                             },
                             hostname: application.hostname.clone(),
-                            revocation_seconds: application.revocation_seconds,
                             client: application.client.clone(),
                             connections: application.connections.clone(),
                         },
@@ -162,7 +118,7 @@ impl EnvironmentDocument {
             env: configuration.env,
             target: configuration.target,
             policy: configuration.policy,
-            revocation_seconds: configuration.revocation_seconds,
+            revocation_seconds: None,
             schema: configuration.schema,
             applications: configuration
                 .applications
@@ -172,7 +128,6 @@ impl EnvironmentDocument {
                         name,
                         ApplicationSelection {
                             hostname: application.hostname,
-                            revocation_seconds: application.revocation_seconds,
                             client: application.client,
                             connections: application.connections,
                             current: application
@@ -196,7 +151,7 @@ mod tests {
     fn configuration() -> Value {
         json!({"org":"acme","project":"wms","env":"prod","target":"cloud",
             "policy":"prod","revocation_seconds":60,"schema":{"mode":"reset"},
-            "applications":{"wms":{"hostname":"wms.example","revocation_seconds":5,
+            "applications":{"wms":{"hostname":"wms.example",
                 "connections":{"erp":"shared-erp"},
                 "client":{"package":"wamn_wms","web":format!("sha256:{:064x}",1)}}},
             "integrations":{"shared-erp":{"version":1}}})
@@ -210,7 +165,6 @@ mod tests {
         for version in [1, i32::MAX] {
             let mut input = configuration();
             input["revocation_seconds"] = json!(3600);
-            input["applications"]["wms"]["revocation_seconds"] = json!(0);
             input["applications"]["wms"]["connections"]["erp"] =
                 json!(format!("shared-erp@{version}"));
             let document = parse(input).unwrap();
@@ -288,142 +242,4 @@ mod tests {
         Ok(())
     }
 
-    #[sqlx::test(migrations = false)]
-    async fn registry_configuration_constraints(pool: sqlx::PgPool) -> anyhow::Result<()> {
-        use wamn_catalog::configuration;
-        let _lock = wamn_test_postgres::lock();
-        let database = wamn_test_postgres::url(&pool);
-        wamn_provision::test_database::system(database.as_str()).await;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_provision::test_database::seed_org_project_env_sql(
-                &"acme".parse().unwrap(),
-                &"wms".parse().unwrap(),
-                &"prod".parse().unwrap(),
-            ),
-        ))
-        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
-        .await?;
-        let triple = Triple::new(
-            "acme".parse().unwrap(),
-            "prod".parse().unwrap(),
-            "wms".parse().unwrap(),
-        );
-        let mut connection = wamn_postgres::connect(database.as_str()).await?;
-        let expected =
-            EnvironmentDocument::from_json(&serde_json::to_vec(&configuration())?)?.configuration();
-        let mut transaction =
-            crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-        assert!(configuration::write(&mut transaction, &expected).await?);
-        transaction.commit().await?;
-        for change in [
-            |c: &mut configuration::EnvironmentConfiguration| c.policy = "missing".parse().unwrap(),
-            |c: &mut configuration::EnvironmentConfiguration| c.target = "missing".into(),
-            |c: &mut configuration::EnvironmentConfiguration| c.revocation_seconds = 3601,
-            |c: &mut configuration::EnvironmentConfiguration| {
-                c.applications.get_mut("wms").unwrap().revocation_seconds = 3601;
-            },
-            |c: &mut configuration::EnvironmentConfiguration| {
-                c.applications
-                    .get_mut("wms")
-                    .unwrap()
-                    .connections
-                    .get_mut("erp")
-                    .unwrap()
-                    .version = Some(0);
-            },
-            |c: &mut configuration::EnvironmentConfiguration| {
-                c.applications.get_mut("wms").unwrap().hostname = "Invalid Host".into()
-            },
-            |c: &mut configuration::EnvironmentConfiguration| {
-                c.applications.get_mut("wms").unwrap().connections.insert(
-                    "".into(),
-                    configuration::ConnectionReference {
-                        name: "shared-erp".into(),
-                        version: None,
-                    },
-                );
-            },
-            |c: &mut configuration::EnvironmentConfiguration| {
-                c.applications.get_mut("wms").unwrap().connections.insert(
-                    "erp".into(),
-                    configuration::ConnectionReference {
-                        name: "org:other:erp".into(),
-                        version: None,
-                    },
-                );
-            },
-            |c: &mut configuration::EnvironmentConfiguration| {
-                c.integrations.get_mut("shared-erp").unwrap().version = 0
-            },
-        ] {
-            let mut invalid = expected.clone();
-            change(&mut invalid);
-            let mut transaction =
-                crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-            if configuration::write(&mut transaction, &invalid)
-                .await
-                .is_ok()
-            {
-                assert!(transaction.commit().await.is_err());
-            } else {
-                transaction.rollback().await?;
-            }
-        }
-        // SQL exercises constraints that the Rust input types cannot express.
-        for &statement in wamn_registry::test_util::invalid_configuration_sql() {
-            let mut transaction =
-                crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-            assert!(
-                sqlx::query(statement)
-                    .execute(&mut *transaction)
-                    .await
-                    .is_err()
-            );
-            transaction.rollback().await?;
-        }
-        assert_eq!(
-            read_configuration(&mut connection, &triple).await?.as_ref(),
-            Some(&expected)
-        );
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_provision::test_database::seed_org_project_env_sql(
-                &"acme".parse().unwrap(),
-                &"wms".parse().unwrap(),
-                &"dev".parse().unwrap(),
-            ),
-        ))
-        .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
-        .await?;
-        let mut redirected = expected.clone();
-        redirected.policy = "dev".parse().unwrap();
-        redirected.revocation_seconds = 0;
-        let mut transaction =
-            crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-        let refusal = configuration::write(&mut transaction, &redirected)
-            .await
-            .expect_err("configuration must not redirect an existing project database");
-        assert!(matches!(refusal, sqlx::Error::InvalidArgument(_)));
-        transaction.commit().await?;
-        assert_eq!(
-            read_configuration(&mut connection, &triple).await?.as_ref(),
-            Some(&expected)
-        );
-        let missing = Triple::new(
-            "acme".parse().unwrap(),
-            "prod".parse().unwrap(),
-            "missing".parse().unwrap(),
-        );
-        assert!(
-            read_configuration(&mut connection, &missing)
-                .await?
-                .is_none()
-        );
-        let mut absent = expected;
-        absent.project = missing.project;
-        let mut transaction =
-            crate::provision_project_env::provisioning_transaction(&mut connection).await?;
-        assert!(!configuration::write(&mut transaction, &absent).await?);
-        transaction.rollback().await?;
-        Ok(())
-    }
 }

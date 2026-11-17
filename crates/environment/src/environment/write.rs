@@ -17,12 +17,13 @@ pub fn render(input: &ValuesInput) -> anyhow::Result<Value> {
 }
 
 /// Build release values from the application selection and artifact repositories.
-pub fn release_values(
+pub async fn release_values(
     document: &EnvironmentDocument,
     application: &wamn_catalog::ApplicationName,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &wamn_digest::Digest,
     actor: &str,
+    source: wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     plan::release_values(
         document,
@@ -30,7 +31,9 @@ pub fn release_values(
         manifest,
         manifest_digest,
         actor,
+        source,
     )
+    .await
 }
 
 /// Read the host placement body used to observe replica policy.

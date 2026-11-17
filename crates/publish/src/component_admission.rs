@@ -2,7 +2,7 @@
 //!
 //! This is the sole production caller of component byte admission. It validates
 //! the local bytes against their package and declaration. `push-package` pushes
-//! each admitted component with [`publish_and_verify`] and pulls it back.
+//! each admitted component with stock `push_component`.
 
 pub(super) mod plan;
 pub use plan::portable_requirement;
@@ -14,13 +14,8 @@ use plan::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::Context as _;
-use oci_client::client::{Config, ImageLayer};
-use oci_client::manifest::OciImageManifest;
-use oci_client::secrets::RegistryAuth;
-use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::ComponentConnectionRequirement;
 use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_catalog::package_schema::package_metadata;
@@ -29,12 +24,6 @@ use wamn_catalog::{
     ComponentDescriptor,
 };
 use wamn_engine::component_admission::validate_component_admission;
-use wamn_engine::component_artifact::component_artifact_layout;
-use wamn_oci::package_artifact::read_ca_bundles;
-use wamn_oci::package_artifact::registry_credentials::RegistryCredentials;
-
-/// Bound each registry connect/read phase without adding a second deployment knob.
-const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stable prefix for package/component projection refusals.
 pub const COMPONENT_PROJECTION_REFUSAL: &str = "component-projection-refused";
@@ -269,89 +258,6 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
 struct ExpectedOperationContract {
     component: wamn_catalog::canonical_name::CanonicalName,
     public: bool,
-}
-
-pub async fn publish_and_verify(
-    reference: &Reference,
-    insecure: bool,
-    oci_ca_paths: &[PathBuf],
-    component_bytes: &[u8],
-    config_bytes: &[u8],
-    credentials: Option<&RegistryCredentials>,
-) -> anyhow::Result<()> {
-    // Built here rather than borrowed from `wash_runtime::oci`, which exposes no
-    // client-construction seam. Its `push_component` mints the config blob
-    // itself from `WasmConfig` and tags the layer `WASM_LAYER_MEDIA_TYPE`; this
-    // artifact carries the platform's own `component_artifact_layout`, whose
-    // config blob is the admitted-component fact `pull_verified` verifies again
-    // below. Routing through that API would discard the admitted fact. See
-    // `docs/architecture/native-alignment.md#retained-wamn-implementations`
-    // (`wamn-kdhw`).
-    let (client, auth) = registry_client(reference, insecure, oci_ca_paths, credentials)?;
-    let (layer, config, manifest) = artifact_layout(component_bytes, config_bytes);
-
-    client
-        .push(
-            reference,
-            std::slice::from_ref(&layer),
-            config,
-            &auth,
-            Some(manifest),
-        )
-        .await
-        .with_context(|| format!("push component artifact {reference}"))?;
-
-    Ok(())
-}
-
-/// One registry client for the component repository of `reference`, and its
-/// authentication.
-pub fn registry_client(
-    reference: &Reference,
-    insecure: bool,
-    oci_ca_paths: &[PathBuf],
-    credentials: Option<&RegistryCredentials>,
-) -> anyhow::Result<(OciClient, RegistryAuth)> {
-    let base = wamn_catalog::parse_component_artifact_base(&format!(
-        "{}/{}",
-        reference.resolve_registry(),
-        reference.repository()
-    ))?;
-    let client = wamn_oci::package_artifact::registry_source::RegistrySource::new(
-        base,
-        insecure,
-        REGISTRY_IO_TIMEOUT,
-    )
-    .with_ca_bundles(read_ca_bundles(oci_ca_paths).context("read component registry CA bundles")?)
-    .client()
-    .context("configure component registry push client")?;
-    // No credential: the auth file states an anonymous push for this registry.
-    let auth = credentials.map_or(RegistryAuth::Anonymous, |credentials| {
-        RegistryAuth::Basic(
-            credentials.username().to_owned(),
-            credentials.password().to_owned(),
-        )
-    });
-    Ok((client, auth))
-}
-
-pub(crate) fn artifact_layout(
-    component_bytes: &[u8],
-    config_bytes: &[u8],
-) -> (ImageLayer, Config, OciImageManifest) {
-    let layout = component_artifact_layout(component_bytes, config_bytes);
-    let layer = ImageLayer::new(
-        layout.component_bytes().to_vec(),
-        layout.layer_media_type().to_owned(),
-        None,
-    );
-    let config = Config::new(
-        layout.config_bytes().to_vec(),
-        layout.config_media_type().to_owned(),
-        None,
-    );
-    let manifest = OciImageManifest::build(std::slice::from_ref(&layer), &config, None);
-    (layer, config, manifest)
 }
 
 #[cfg(test)]

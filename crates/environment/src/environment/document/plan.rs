@@ -12,8 +12,9 @@ pub struct EnvironmentDocument {
     pub target: String,
     /// A policy of `registry.env_policies`, by name.
     pub policy: wamn_registry::EnvName,
-    /// Maximum project credential revocation delay, in seconds.
-    pub revocation_seconds: u32,
+    /// Grant cache lifetime from deploy input; absent in applied registry settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revocation_seconds: Option<u32>,
     #[serde(default)]
     pub schema: Schema,
     /// Application name to its selection and membership.
@@ -35,8 +36,6 @@ pub struct ApplicationSelection {
     #[serde(skip)]
     pub current: DeclaredRelease,
     pub hostname: String,
-    /// Maximum application credential revocation delay, in seconds.
-    pub revocation_seconds: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
     /// Transient membership from the verified release manifest.
@@ -133,9 +132,11 @@ impl EnvironmentDocument {
     ///
     /// When a field is unknown or missing, or a value is refused.
     pub fn from_json(bytes: &[u8]) -> anyhow::Result<Self> {
-        let configuration: wamn_catalog::configuration::EnvironmentConfiguration =
-            serde_json::from_slice(bytes).context("decode the environment JSON")?;
-        let document = Self::from_configuration(configuration);
+        let document: Self = serde_json::from_slice(bytes).context("decode the environment JSON")?;
+        ensure!(
+            document.revocation_seconds.is_some(),
+            "revocation_seconds is required in environment input"
+        );
         document.require_valid()?;
         Ok(document)
     }
@@ -144,14 +145,10 @@ impl EnvironmentDocument {
         wamn_provision::validate_project_env(&self.org, &self.project, &self.env)
             .context("the environment coordinate is not valid")?;
         ensure!(
-            self.revocation_seconds <= 3600,
+            self.revocation_seconds.is_none_or(|seconds| seconds <= 3600),
             "revocation_seconds must be between 0 and 3600"
         );
         for (name, application) in &self.applications {
-            ensure!(
-                application.revocation_seconds <= 3600,
-                "application {name}: revocation_seconds must be between 0 and 3600"
-            );
             let hostname = &application.hostname;
             ensure!(
                 !hostname.is_empty()
@@ -247,10 +244,9 @@ impl EnvironmentDocument {
         ] {
             lines.push(format!("    {key} = {}", quote(value)));
         }
-        lines.push(format!(
-            "    revocation_seconds = {}",
-            self.revocation_seconds
-        ));
+        if let Some(seconds) = self.revocation_seconds {
+            lines.push(format!("    revocation_seconds = {seconds}"));
+        }
         if let Some(mode) = self.schema.mode {
             let mode = serde_json::to_string(&mode).expect("a schema mode encodes");
             lines.push(format!("    schema = {{mode = {mode}}}"));
@@ -273,10 +269,9 @@ impl EnvironmentDocument {
                 .collect::<Vec<_>>()
                 .join(", ");
             lines.push(format!(
-                "        {} = {{\n            hostname = {}\n            revocation_seconds = {}\n            connections = {{{bindings}}}",
+                "        {} = {{\n            hostname = {}\n            connections = {{{bindings}}}",
                 quote(name.as_str()),
-                quote(&application.hostname),
-                application.revocation_seconds
+                quote(&application.hostname)
             ));
             if let Some(client) = &application.client {
                 lines.push(format!(

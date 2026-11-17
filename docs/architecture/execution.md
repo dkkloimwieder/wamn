@@ -772,20 +772,9 @@ Both use the same grants reader and memory value.
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
 The environment host watches each project through that project's event client and keeps its connection facts separate. A fact read for one project never supplies another project's authority.
 The control host serves every project, so it watches every key.
-Each environment document declares the project's `revocation_seconds` and each application's `revocation_seconds`.
-Both values are required integers from 0 to 3600 seconds.
-The bound is the longest time a revoked caller stays admitted when a drop is lost. Zero disables caching.
-Release preparation writes these values as `revocation-seconds` rows in `platform.setting` before Helm starts the host.
-Local development writes the same configuration before taking its database template.
-The HTTP admitter reads these rows through its existing read authority.
-The project row uses `target_type = project` and the project name as `target_id`.
-Each application row uses `target_type = application` and its declared application name as `target_id`.
-A host with authenticated routes refuses missing or invalid configuration at startup.
-It uses the shortest bound across the project and its applications for shared auth facts.
-Zero disables caching. A configuration change takes effect when the host restarts.
-The auth bucket has no platform-wide expiry. It holds at most 1 MiB of facts.
-A full bucket refuses a cache write, and the host keeps reading Postgres.
-The replica measures each value from its original publication time.
+Each environment input declares the project's `revocation_seconds`. Deploy writes this grant cache lifetime into `wamn.application` in each workload; the registry does not store it.
+The required input is an integer from 0 to 3600 seconds. Zero disables caching.
+The value is not written to `platform.setting`.
 
 Moka keeps admitted PATs and active sessions in the host that read them, with the configured expiry.
 The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.

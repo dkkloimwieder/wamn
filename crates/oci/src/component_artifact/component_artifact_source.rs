@@ -159,6 +159,54 @@ pub struct ComponentArtifactSource {
 }
 
 impl ComponentArtifactSource {
+    /// Resolve a stock component tag to the immutable image reference used by a workload.
+    pub async fn image_reference(&self, digest: &wamn_digest::Digest) -> anyhow::Result<String> {
+        let artifact = self.config.source.base().reference(digest);
+        let reference = artifact.to_string().parse::<Reference>()?;
+        let auth = self.config.source.auth().await?;
+        let (manifest, image_digest) = self
+            .config
+            .source
+            .client()?
+            .pull_image_manifest(&reference, &auth)
+            .await?;
+        anyhow::ensure!(
+            manifest.layers.len() == 1
+                && manifest.layers[0].media_type == "application/wasm"
+                && manifest.layers[0].digest == digest.to_string(),
+            "component image differs from its package descriptor"
+        );
+        Ok(format!(
+            "{}/{}@{}",
+            artifact.registry(),
+            artifact.repository(),
+            image_digest
+        ))
+    }
+
+    /// Pull a stock application/wasm artifact for package publication checks.
+    pub async fn pull_component(&self, digest: &wamn_digest::Digest) -> anyhow::Result<Vec<u8>> {
+        let artifact = self.config.source.base().reference(digest);
+        let reference = artifact.to_string().parse::<Reference>()?;
+        let auth = self.config.source.auth().await?;
+        let mut image = self
+            .config
+            .source
+            .client()?
+            .pull(&reference, &auth, vec!["application/wasm"])
+            .await?;
+        anyhow::ensure!(
+            image.layers.len() == 1,
+            "component image must contain one layer"
+        );
+        let bytes = image.layers.remove(0).data;
+        anyhow::ensure!(
+            wamn_digest::bytes_sha256(&bytes) == *digest,
+            "component image differs from its package descriptor"
+        );
+        Ok(bytes.into())
+    }
+
     /// Construct a source from explicit validated transport configuration.
     ///
     /// The client is built once here, so an unusable configuration refuses

@@ -13,7 +13,7 @@ GRANT SELECT ON registry.orgs, registry.env_policies, registry.environment_proje
     wamn_authority.author_login_projects TO wamn_apply;
 GRANT SELECT (org, id), INSERT (org, id) ON registry.projects TO wamn_apply;
 GRANT INSERT (org, env, project, secret_name, secret_namespace, instance_suffix) ON registry.environment_projects TO wamn_apply;
-GRANT UPDATE (secret_name, secret_namespace, revocation_seconds, schema_mode)
+GRANT UPDATE (secret_name, secret_namespace, schema_mode)
     ON registry.environment_projects TO wamn_apply;
 GRANT SELECT, INSERT, UPDATE, DELETE ON registry.environment_applications,
     registry.environment_application_connections, registry.environment_integrations TO wamn_apply;

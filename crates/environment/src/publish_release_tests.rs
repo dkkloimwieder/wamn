@@ -68,7 +68,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
     let mut document = crate::environment::document::EnvironmentDocument::from_json(
         serde_json::json!({"org":"acme", "project":"erp", "env":"dev",
                 "target": "cloud", "policy":"dev","revocation_seconds":60,
-                "applications": {"erp": {"revocation_seconds":5,"hostname": "erp.acme.example"}}})
+                "applications": {"erp": {"hostname": "erp.acme.example"}}})
         .to_string()
         .as_bytes(),
     )

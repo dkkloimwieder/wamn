@@ -1,4 +1,4 @@
-use super::{AttachmentType, Mapping, ServingManifest, Value, ensure};
+use super::{Mapping, ServingManifest, Value, ensure};
 use anyhow::Context as _;
 
 /// The Helm release name of an application: `r-<slug>-<hash>`.
@@ -29,13 +29,15 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
     wamn_registry::name::resource_suffix(release_name, role.as_str())
 }
 
-/// The application HTTP role exists when the manifest has an HTTP route attachment.
+/// Every application has one route workload, including applications without HTTP routes.
 /// Each role's configuration derives from the coordinate.
 pub fn roles(
     manifest: &ServingManifest,
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
+    application: &wamn_catalog::ApplicationName,
+    grant_cache_seconds: u32,
 ) -> Vec<Role> {
     let project_env_key = wamn_provision::project_env_key(org, project, env);
     let target = |extra: &[(&str, &str)]| -> Mapping {
@@ -49,29 +51,106 @@ pub fn roles(
         .map(|(key, value)| ((*key).into(), (*value).into()))
         .collect()
     };
-    let mut roles = Vec::new();
-    if manifest
-        .every_attachment()
-        .any(|(_, attachment)| attachment.attachment_type() == AttachmentType::Http)
-    {
-        roles.push(Role {
-            name: RoleName::Http,
-            config: {
-                let mut config = target(&[]);
-                config.insert(
-                    wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
-                    serde_json::to_string(&wamn_catalog::http_routes::route_data(
-                        manifest,
-                        &manifest.digest(),
-                    ))
-                    .expect("route data is JSON")
-                    .into(),
-                );
-                config
-            },
-        });
+    let application = application_config(
+        manifest,
+        org,
+        project,
+        env,
+        application,
+        grant_cache_seconds,
+    );
+    let mut config = target(&[]);
+    config.insert(
+        wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
+        serde_json::to_string(&wamn_catalog::http_routes::route_data(
+            manifest,
+            &manifest.digest(),
+        ))
+        .expect("route data is JSON")
+        .into(),
+    );
+    config.insert(
+        wamn_catalog::application_config::APPLICATION_CONFIG.into(),
+        serde_json::to_string(&application)
+            .expect("application config is JSON")
+            .into(),
+    );
+    vec![Role {
+        name: RoleName::Http,
+        config,
+    }]
+}
+
+fn application_config(
+    manifest: &ServingManifest,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
+    env: &wamn_registry::EnvName,
+    application: &wamn_catalog::ApplicationName,
+    grant_cache_seconds: u32,
+) -> wamn_catalog::application_config::ApplicationConfig {
+    use wamn_catalog::application_config::{
+        ApplicationComponent, ApplicationConfig, ApplicationOperation, ApplicationOperationType,
+    };
+    ApplicationConfig {
+        org: org.clone(),
+        project: project.clone(),
+        environment: env.clone(),
+        application: application.clone(),
+        grant_cache_seconds,
+        components: manifest
+            .components
+            .iter()
+            .map(|component| ApplicationComponent {
+                name: component_name(component),
+                package: component.package_id.clone(),
+                schema: component.runtime_schema.clone(),
+                operations: component
+                    .descriptor
+                    .operations
+                    .iter()
+                    .map(|(name, operation)| {
+                        let route = manifest.route(
+                            &component.package_id,
+                            &component.descriptor.component,
+                            name,
+                        );
+                        (
+                            name.clone(),
+                            ApplicationOperation {
+                                component: component_name(component),
+                                public: operation.registered_operation.is_some(),
+                                host_transaction: operation.host_transaction,
+                                type_: route.map(|route| match route.type_ {
+                                    wamn_catalog::OperationType::Delete => {
+                                        ApplicationOperationType::Delete
+                                    }
+                                    type_ if type_.is_read() => ApplicationOperationType::Read,
+                                    _ => ApplicationOperationType::Write,
+                                }),
+                                idempotency_key: route.filter(|route| !route.type_.is_read()).map(
+                                    |route| {
+                                        route
+                                            .idempotency
+                                            .clone()
+                                            .unwrap_or_else(|| "request_id".to_owned())
+                                    },
+                                ),
+                            },
+                        )
+                    })
+                    .collect(),
+            })
+            .collect(),
     }
-    roles
+}
+
+/// The sibling name used by both chart components and operation dispatch facts.
+pub fn component_name(component: &wamn_catalog::ServingComponent) -> String {
+    format!(
+        "{}-{}",
+        component.package_id, component.descriptor.component
+    )
 }
 
 /// Render the install values of one application.

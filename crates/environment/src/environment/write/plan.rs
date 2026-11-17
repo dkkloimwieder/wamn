@@ -29,14 +29,25 @@ pub(in crate::environment) fn host_group(mut group: Mapping) -> anyhow::Result<M
 }
 
 /// Build release values from the document, artifact, policy, and host overlay.
-pub(super) fn release_values(
+pub(super) async fn release_values(
     document: &EnvironmentDocument,
     application: &wamn_catalog::ApplicationName,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &wamn_digest::Digest,
     actor: &str,
+    source: wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
-    let roles = release_chart::roles(manifest, &document.org, &document.project, &document.env);
+    let seconds = document
+        .revocation_seconds
+        .context("deploy requires revocation_seconds from the environment input")?;
+    let roles = release_chart::roles(
+        manifest,
+        &document.org,
+        &document.project,
+        &document.env,
+        application,
+        seconds,
+    );
     let names = roles.iter().map(|role| role.name).collect();
     let selection = document
         .applications
@@ -64,6 +75,37 @@ pub(super) fn release_values(
         roles,
         actor: actor.to_owned(),
     })?;
+    let source =
+        wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSource::new(
+            source,
+        )?;
+    let mut components = Vec::with_capacity(manifest.components.len());
+    let mut postgres =
+        std::collections::BTreeMap::<(String, String), std::collections::BTreeSet<String>>::new();
+    for component in &manifest.components {
+        let image = source
+            .image_reference(&component.descriptor.component_digest)
+            .await?;
+        components.push(serde_yaml::to_value(serde_json::json!({
+            "name": release_chart::component_name(component), "image": image,
+        }))?);
+        for import in &component.descriptor.imports {
+            let Some(import) = import.strip_prefix("wamn:postgres/") else {
+                continue;
+            };
+            let (interface, version) = import
+                .rsplit_once('@')
+                .context("postgres import has no version")?;
+            postgres
+                .entry(("postgres".to_owned(), version.to_owned()))
+                .or_default()
+                .insert(interface.to_owned());
+        }
+    }
+    rendered["components"] = Value::Sequence(components);
+    rendered["postgresInterfaces"] = serde_yaml::to_value(postgres.into_iter().map(|((package, version), interfaces)| {
+        serde_json::json!({"namespace": "wamn", "package": package, "version": version, "interfaces": interfaces})
+    }).collect::<Vec<_>>())?;
     rendered["webClients"] = serde_yaml::to_value(
         selection
             .client
