@@ -1,6 +1,18 @@
 //! Blob storage resolves bindings under the shared invocation authority.
 
+use super::binding::BindingError;
+use std::collections::HashSet;
 use std::sync::Arc;
+use wamn_authority::effect_span;
+use wamn_authority::effect_span::{EffectIdentity, record_wiring};
+use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
+use wash_runtime::engine::workload::WorkloadItem;
+use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+use wash_runtime::wasmtime::component::Linker;
+use wash_runtime::wit::{WitInterface, WitWorld};
+
+/// The host registration for wasmcloud:blobstore.
+pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
 
 use object_store::aws::AmazonS3Builder;
 use object_store::gcp::GoogleCloudStorageBuilder;
@@ -44,19 +56,11 @@ impl WamnBlobstore {
         wamn_connection::invocation::invocation(&self.postgres.scopes, component_id)
     }
 
-    /// The absolute deadline of the admitted invocation.
-    pub fn invocation_deadline(&self, component_id: &str) -> Option<tokio::time::Instant> {
-        self.postgres
-            .scopes
-            .execution(component_id)
-            .map(|execution| execution.deadline())
-    }
-
     /// Open file storage after the native host authorizes its package binding.
     pub async fn file_store(
         &self,
         context: &wamn_connection::invocation::ReleaseContext,
-        connection_name: &str,
+        id: uuid::Uuid,
         read_only: bool,
         deadline: tokio::time::Instant,
     ) -> Result<super::files::FileStore, super::files::FileStorageError> {
@@ -74,12 +78,6 @@ impl WamnBlobstore {
                     ),
                 "file connection target mismatch"
             );
-            let id = *facts
-                .env_connections()
-                .await?
-                .connections
-                .get(connection_name)
-                .context("no file connection")?;
             let fact = active_fact(facts, &id)
                 .await?
                 .context("file connection disabled")?;
@@ -125,6 +123,59 @@ impl WamnBlobstore {
                 "open",
                 error.into_boxed_dyn_error(),
             )
+        })
+    }
+
+    pub(super) async fn container_for(
+        &self,
+        component_id: &str,
+        alias: &wamn_catalog::canonical_name::CanonicalName,
+    ) -> Result<BoundContainer, BindingError> {
+        let resolve = async {
+            let context =
+                wamn_connection::invocation::context(&self.postgres.scopes, component_id)?;
+            let invocation = self
+                .invocation(component_id)
+                .ok_or_else(|| anyhow::anyhow!("no connection invocation"))?;
+            let binding = invocation
+                .connection(&context.release, alias)
+                .filter(|binding| binding.interface == "wasmcloud:blobstore")
+                .ok_or_else(|| anyhow::anyhow!("no declared blobstore binding"))?;
+            let package = &invocation.package_id;
+            let read_only = binding
+                .mode
+                .read_only(package, &binding.name)
+                .ok_or_else(|| anyhow::anyhow!("no connection mode"))?;
+            let id = binding.connection_id.parse()?;
+            let facts = &context.connections;
+            let fact = active_fact(facts, &id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("connection disabled"))?;
+            let generation = facts.generation(&id, fact.active_generation).await?;
+            anyhow::ensure!(generation.runtime_type == "host", "not a native store");
+            let bound = BlobstoreDefinition::parse_for(
+                &generation.parameters,
+                provider(&binding.integration_type)?,
+            )?;
+            let client = self.client(facts, id, &fact, &bound).await?;
+            Ok::<_, anyhow::Error>(
+                BoundContainer::new(
+                    Arc::clone(&client.store),
+                    bound.container,
+                    bound.prefix,
+                    ConnectionAuthority::Live {
+                        facts: Arc::clone(facts),
+                        id,
+                        generation: fact.active_generation,
+                    },
+                )
+                .with_read_only(read_only),
+            )
+        }
+        .await;
+        resolve.map_err(|error| {
+            tracing::warn!(%error, component_id, %alias, "blobstore authority refused");
+            BindingError::unauthorized()
         })
     }
 
@@ -288,4 +339,90 @@ pub async fn health(
         )
         .await?;
     Ok(())
+}
+
+pub(super) fn blobstore_span(
+    plugin: &WamnBlobstore,
+    component_id: &str,
+    operation: &'static str,
+) -> tracing::Span {
+    let make_span = |identity: Option<&wamn_authority::identity::SessionIdentity>| {
+        effect_span!(
+            "wamn.blobstore",
+            EffectIdentity {
+                project_env_key: identity
+                    .as_ref()
+                    .and_then(|identity| identity.project_env_key.as_ref()),
+                project: identity
+                    .as_ref()
+                    .and_then(|identity| identity
+                        .project
+                        .as_ref()
+                        .map(wamn_registry::ProjectId::as_str))
+                    .unwrap_or(""),
+                component: component_id,
+            },
+            None,
+            effect.operation = operation,
+        )
+    };
+    let span = plugin
+        .postgres
+        .scopes
+        .read::<wamn_sql::invocation::Authority, _>(component_id, |record| {
+            make_span(Some(&record.identity))
+        })
+        .unwrap_or_else(|| make_span(None));
+    let invocation = plugin.invocation(component_id);
+    record_wiring(
+        &span,
+        invocation
+            .as_ref()
+            .map(wamn_connection::connection::ConnectionInvocation::effect_wiring),
+    );
+    span
+}
+
+#[async_trait::async_trait]
+impl HostPlugin for WamnBlobstore {
+    fn id(&self) -> &'static str {
+        WAMN_BLOBSTORE_ID
+    }
+
+    fn world(&self) -> WitWorld {
+        WitWorld {
+            imports: HashSet::from([
+                WitInterface::from("wasmcloud:blobstore/types@0.1.0"),
+                WitInterface::from("wasmcloud:blobstore/container@0.1.0"),
+                WitInterface::from("wasmcloud:blobstore/blobstore@0.1.0"),
+            ]),
+            exports: HashSet::new(),
+        }
+    }
+    async fn on_workload_item_bind<'a>(
+        &self,
+        item: &mut WorkloadItem<'a>,
+        interfaces: WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        if interfaces.contains("wasmcloud", "blobstore", &[]) {
+            add_to_linker(item.linker()?)?;
+        }
+        Ok(())
+    }
+}
+
+/// Wire the blobstore host functions into a linker.
+pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
+    super::bindings::wasmcloud::blobstore::types::add_to_linker::<SharedCtx, SharedCtx>(
+        linker,
+        extract_active_ctx,
+    )?;
+    super::bindings::wasmcloud::blobstore::container::add_to_linker::<SharedCtx, SharedCtx>(
+        linker,
+        extract_active_ctx,
+    )?;
+    super::bindings::wasmcloud::blobstore::blobstore::add_to_linker::<SharedCtx, SharedCtx>(
+        linker,
+        extract_active_ctx,
+    )
 }

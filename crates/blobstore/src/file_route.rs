@@ -9,17 +9,28 @@
 
 use crate::files::{FileStorageError, FileStorageErrorType, FileStore, MAX_URL_LIFETIME};
 use crate::plugin::WamnBlobstore;
+use bytes::Bytes;
+use futures_util::TryStreamExt as _;
+use http_body_util::{BodyExt as _, Full, StreamBody};
+use hyper::body::{Body as _, Frame};
 use sqlx::Row as _;
+use std::collections::BTreeMap;
 use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
+use tokio::io::{AsyncRead, ReadBuf};
+use wasmtime_wasi_http::WasiBody;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 use wamn_catalog::application_config::ApplicationConfig;
 use wamn_catalog::{HostAttachment, HostHandler};
-use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::flow_http_routing::{
+    AuthenticatedCaller, CredentialType, FlowHttpRouting, Header, RoutePolicy,
+};
 use wamn_identity_protocol::PrincipalId;
 use wamn_sql::WamnPostgres;
 
@@ -79,6 +90,14 @@ impl FileRefusal {
             Self::BindingRefused => "binding_refused",
             Self::Referenced => "file_referenced",
             Self::CdnHostRequired => "cdn_host_required",
+        }
+    }
+    fn status(self) -> u16 {
+        match self {
+            Self::InvalidInput => 400,
+            Self::PermissionDenied | Self::Private | Self::BindingRefused => 403,
+            Self::NotFound => 404,
+            Self::Referenced | Self::CdnHostRequired => 409,
         }
     }
 }
@@ -156,7 +175,6 @@ impl From<FileStorageError> for FileError {
 #[derive(Debug, Clone)]
 pub struct FileConnection {
     pub id: String,
-    pub name: String,
     pub generation: i64,
     pub definition: Value,
     pub read_only: bool,
@@ -202,7 +220,7 @@ impl fmt::Debug for RegistryFileConnections {
 impl FileConnections for RegistryFileConnections {
     async fn generations(&self) -> Result<Vec<FileConnection>, FileError> {
         let mut generations = Vec::new();
-        for (name, id) in self
+        for (_name, id) in self
             .facts
             .env_connections()
             .await
@@ -234,7 +252,6 @@ impl FileConnections for RegistryFileConnections {
             definition["provider"] = serde_json::json!(generation.integration_type);
             generations.push(FileConnection {
                 id: id.to_string(),
-                name,
                 generation: fact.active_generation,
                 definition,
                 read_only: false,
@@ -310,7 +327,6 @@ impl FileConnections for RegistryFileConnections {
         }
         Ok(FileConnection {
             id: id.to_string(),
-            name: generation.name.clone(),
             generation: fact.active_generation,
             definition: generation.parameters.clone(),
             read_only,
@@ -340,6 +356,13 @@ struct ExposeRequest {
     exposure: Exposure,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UploadQuery {
+    binding: wamn_catalog::canonical_name::CanonicalName,
+    name: String,
+}
+
 /// File handlers of one released application environment.
 pub struct FileRoutes {
     pub(crate) release: Arc<ApplicationConfig>,
@@ -348,7 +371,6 @@ pub struct FileRoutes {
     pub(crate) blobstore: Arc<WamnBlobstore>,
     pub(crate) connections: Arc<dyn FileConnections>,
     pub(crate) project: wamn_registry::ProjectId,
-    administration_url: Option<String>,
 }
 impl fmt::Debug for FileRoutes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -367,7 +389,6 @@ impl FileRoutes {
         blobstore: Arc<WamnBlobstore>,
         connections: Arc<dyn FileConnections>,
         project: wamn_registry::ProjectId,
-        administration_url: Option<String>,
     ) -> Self {
         Self {
             release: Arc::clone(&context.release),
@@ -376,29 +397,14 @@ impl FileRoutes {
             blobstore,
             connections,
             project,
-            administration_url,
         }
     }
 
     async fn lock(&self, id: Uuid) -> Result<sqlx::PgConnection, FileError> {
-        let url = self.administration_url.as_deref().ok_or_else(|| {
-            failed(
-                "administration",
-                anyhow::anyhow!("file mutation requires the administration login"),
-            )
-        })?;
-        let mut client = wamn_postgres::connect(url)
+        self.postgres
+            .lock_file(&self.project, id)
             .await
-            .map_err(|error| failed("administration", error))?;
-        let allowed: bool = sqlx::query("SELECT NOT rolsuper AND pg_has_role(current_user, $1, 'MEMBER') FROM pg_roles WHERE rolname = current_user").bind(wamn_identity_protocol::AuthorityClass::Platform.acl_role()).fetch_one(&mut client).await?.try_get(0)?;
-        if !allowed {
-            return Err(refused(FileRefusal::PermissionDenied, "administration"));
-        }
-        sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
-            .bind(format!("wamn:file:{id}"))
-            .fetch_one(&mut client)
-            .await?;
-        Ok(client)
+            .map_err(|error| failed("administration", error))
     }
 
     async fn store(
@@ -431,7 +437,10 @@ impl FileRoutes {
             .blobstore
             .file_store(
                 &self.context,
-                &connection.name,
+                connection
+                    .id
+                    .parse()
+                    .map_err(|error| failed("connection", error))?,
                 connection.read_only,
                 deadline,
             )
@@ -474,6 +483,81 @@ impl FileRoutes {
             )
             .await
             .map_err(|error| failed("catalog", error))?
+    }
+
+    /// Stage bytes, commit one row, then promote staging to the live key.
+    pub async fn put(
+        &self,
+        caller: &AuthenticatedCaller,
+        application: &wamn_catalog::ApplicationName,
+        binding: &wamn_catalog::canonical_name::CanonicalName,
+        name: &str,
+        media_type: &str,
+        body: impl AsyncRead + Unpin + Send,
+    ) -> Result<Uuid, FileError> {
+        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
+        let principal = principal(caller, "put")?;
+        if name.is_empty() || name.contains(['\0', '\r', '\n']) || !valid_media_type(media_type) {
+            return Err(refused(FileRefusal::InvalidInput, "metadata"));
+        }
+        let (connection, store) = self
+            .store(application, Some(binding), None, true, deadline)
+            .await?;
+        let id = Uuid::new_v4();
+        let staged = store.stage(id, body).await?;
+        let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
+        self.postgres.administration_transaction(&self.project, &principal,
+            &format!("wamn-control:file/put@{}", wamn_catalog::host_route_version()).parse().expect("file operation"), async |client| {
+                sqlx::query("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')").bind(id.to_string()).bind(application).bind(&connection.id).bind(name).bind(media_type).bind(size).bind(staged.sha256).bind(&staged.blob_key).execute(&mut *client).await.map(|result| result.rows_affected())?;
+                Ok::<_, FileError>(())
+            }).await.map_err(|error| failed("catalog", error))??;
+        // A committed row remains readable through staging if promotion fails.
+        if let Err(error) = store.finish(id).await {
+            tracing::warn!(%error, %id, "file promotion deferred to the next read");
+        }
+        Ok(id)
+    }
+
+    /// Only a session with file.get reaches the application URL, including public files.
+    async fn get(
+        &self,
+        caller: &AuthenticatedCaller,
+        application: &wamn_catalog::ApplicationName,
+        id: Uuid,
+    ) -> Result<hyper::Response<WasiBody>, FileError> {
+        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
+        let principal = principal(caller, "get")?;
+        if caller.credential_type() != CredentialType::Session {
+            return Err(refused(FileRefusal::PermissionDenied, "session"));
+        }
+        let row = self.record(&principal, application, id, "get").await?;
+        require_exposure(row.exposure)?;
+        let (_, store) = self
+            .store(
+                application,
+                None,
+                Some(row.connection_id.as_str()),
+                false,
+                deadline,
+            )
+            .await?;
+        let body = store
+            .get(&row.blob_key)
+            .await?
+            .into_stream()
+            .map_ok(Frame::data)
+            .map_err(|error| {
+                tracing::warn!(%error, "file response stream failed");
+                wasmtime_wasi_http::Error::InternalError(Some("file response stream failed".into()))
+            });
+        hyper::Response::builder()
+            .status(200)
+            .header("content-type", &row.media_type)
+            .header("content-length", row.size)
+            .header("cache-control", "private, no-store")
+            .header("x-content-type-options", "nosniff")
+            .body(StreamBody::new(body).boxed_unsync())
+            .map_err(|error| failed("response", error))
     }
 
     async fn delete(
@@ -589,64 +673,19 @@ impl FileRoutes {
         Ok(json!({"file_id": request.file_id, "exposure": request.exposure, "url": url}))
     }
 
-    /// Sign only under an active native operation's component authority.
-    /// This method has no HTTP request field or guest byte-transfer interface.
+    /// Sign a file under the operation authority retained by SQL after commit or replay.
     pub async fn signed_url(
         &self,
-        invocations: &WamnBlobstore,
-        component_id: &str,
-        caller: &AuthenticatedCaller,
+        principal: &PrincipalId,
         id: Uuid,
         lifetime: Duration,
+        deadline: tokio::time::Instant,
     ) -> Result<String, FileError> {
         let lifetime = signed_lifetime(lifetime)?;
-        let deadline = invocations
-            .invocation_deadline(component_id)
-            .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
-        let invocation = invocations
-            .invocation(component_id)
-            .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
-        if !matches!(
-            invocation.closure,
-            wamn_connection::connection::ConnectionExecutionClosure::Released
-        ) {
-            return Err(refused(FileRefusal::PermissionDenied, "operation"));
-        }
         let application = &self.release.application;
-        let served = self
-            .release
-            .components
-            .iter()
-            .find(|component| {
-                component.package == invocation.package_id
-                    && component.digest == invocation.component_digest
-            })
-            .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
-        let operation = served
-            .operations
-            .get(&invocation.operation)
-            .filter(|operation| operation.public)
-            .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
-        if !caller.permits(invocation.operation.as_str()) || operation.signed_result.is_none() {
-            return Err(refused(FileRefusal::PermissionDenied, "operation"));
-        }
-        let principal = caller.principal_id();
         let row = self.record(principal, application, id, "get").await?;
-        let pin = Some(row.connection_id.as_str());
-        let connection = self.connections.lookup(application, None, pin).await?;
-        require_binding(&self.release, application, None, pin, &connection, false)?;
-        // Signing is the host's declared result work. The operation grant
-        // supplies read authority without a guest blobstore import. The
-        // registry requires an active connection and uses its active generation.
-        // Reads do not require a current application binding.
-        let store = self
-            .blobstore
-            .file_store(
-                &self.context,
-                &connection.name,
-                connection.read_only,
-                deadline,
-            )
+        let (_, store) = self
+            .store(application, None, Some(&row.connection_id), false, deadline)
             .await?;
         store
             .signed_url(&row.blob_key, lifetime)
@@ -675,6 +714,251 @@ impl FileRoutes {
             HostHandler::FileExpose => self.expose(caller, decode(payload)?).await,
             _ => Err(refused(FileRefusal::InvalidInput, "operation")),
         }
+    }
+    pub async fn http(
+        &self,
+        routing: &FlowHttpRouting,
+        request: hyper::Request<WasiBody>,
+    ) -> Option<hyper::Response<WasiBody>> {
+        let Some(route) = native_route(request.uri().path()) else {
+            return self.host_http(routing, request).await;
+        };
+        let result = self.http_request(routing, request, route).await;
+        Some(match result {
+            Ok(response) => response,
+            Err(error) => error_response(&error),
+        })
+    }
+
+    async fn host_http(
+        &self,
+        routing: &FlowHttpRouting,
+        request: hyper::Request<WasiBody>,
+    ) -> Option<hyper::Response<WasiBody>> {
+        let (id, attachment) = wamn_catalog::HostRouteSet::Application
+            .attachments()
+            .filter(|(_, attachment)| {
+                matches!(
+                    attachment.route.handler,
+                    HostHandler::FilePut
+                        | HostHandler::FileGet
+                        | HostHandler::FileDelete
+                        | HostHandler::FileExpose
+                )
+            })
+            .find(|(_, attachment)| {
+                attachment.definition["route"]["path"].as_str() == Some(request.uri().path())
+            })?;
+        let read = attachment.route.type_.is_read();
+        if request.method().as_str() != attachment.route.type_.http_method() {
+            return Some(response(
+                405,
+                &json!({"error":{"code":"method-not-allowed"}}),
+            ));
+        }
+        let headers = request
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value.to_str().ok().map(|value| Header {
+                    name: name.to_string(),
+                    value: value.to_owned(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let query = request.uri().query().unwrap_or_default().to_owned();
+        let mut body = request.into_body();
+        let mut bytes = Vec::new();
+        while let Some(frame) = body.frame().await {
+            let Ok(frame) = frame else {
+                return Some(response(400, &json!({"error":{"code":"invalid-body"}})));
+            };
+            if let Ok(data) = frame.into_data() {
+                if bytes.len().saturating_add(data.len()) > 1024 * 1024 {
+                    return Some(response(413, &json!({"error":{"code":"body-too-large"}})));
+                }
+                bytes.extend_from_slice(&data);
+            }
+        }
+        let target = wamn_registry::name::project_env_key(
+            &self.release.org,
+            &self.release.project,
+            &self.release.environment,
+        );
+        let caller = match routing
+            .authenticate_policy(
+                &target,
+                id,
+                RoutePolicy {
+                    policy: &attachment.auth_policy,
+                    read,
+                },
+                &headers,
+                &bytes,
+            )
+            .await
+        {
+            Ok(Some(caller)) => caller,
+            Ok(None) => return Some(response(401, &json!({"error":{"code":"unauthorized"}}))),
+            Err(error) => {
+                return Some(response(
+                    error.status,
+                    &json!({"error":{"code":error.code}}),
+                ));
+            }
+        };
+        let authorized = wamn_engine::native_routes::resolve_authorized_host_route(
+            wamn_catalog::HostRouteSet::Application,
+            id,
+            Some(&caller),
+        );
+        if !matches!(authorized, Some(Ok(_))) {
+            return Some(response(
+                403,
+                &json!({"error":{"code":"permission-denied"}}),
+            ));
+        }
+        let payload = if read {
+            match wamn_catalog::read_query::decode_read_query(&query) {
+                Ok(input) => json!([input]),
+                Err(_) => return Some(response(400, &json!({"error":{"code":"invalid-query"}}))),
+            }
+        } else {
+            match serde_json::from_slice::<Value>(&bytes) {
+                Ok(input) => input,
+                Err(_) => return Some(response(400, &json!({"error":{"code":"malformed-json"}}))),
+            }
+        };
+        if let Some(schema) = attachment.definition.get("input-schema") {
+            let mut schemas = boon::Schemas::new();
+            let mut compiler = boon::Compiler::new();
+            let location = "https://wamn.invalid/platform-input";
+            let valid = compiler.add_resource(location, schema.clone()).is_ok()
+                && compiler
+                    .compile(location, &mut schemas)
+                    .is_ok_and(|index| schemas.validate(&payload, index).is_ok());
+            if !valid {
+                return Some(response(400, &json!({"error":{"code":"invalid-input"}})));
+            }
+        }
+        let Some(elements) = payload.as_array().filter(|elements| elements.len() == 1) else {
+            return Some(response(400, &json!({"error":{"code":"invalid-input"}})));
+        };
+        let element = &elements[0];
+        let input = if read { element } else { &element["value"] };
+        let mut outcome = serde_json::Map::new();
+        if !read {
+            outcome.insert("request_id".into(), element["request_id"].clone());
+        }
+        match self.handle(attachment, &caller, &input.to_string()).await {
+            Ok(value) => {
+                outcome.insert("value".into(), value);
+            }
+            Err(error) if error.refusal.is_some() => {
+                outcome.insert("error".into(), json!({"code":error.refusal.expect("declared refusal").code(),"detail":
+                    if error.refusal == Some(FileRefusal::PermissionDenied) { json!({"operation":attachment.reference}) }
+                    else { json!({"field":error.field}) }}));
+            }
+            Err(error) => return Some(error_response(&error)),
+        }
+        Some(response(200, &Value::Array(vec![Value::Object(outcome)])))
+    }
+
+    async fn http_request(
+        &self,
+        routing: &FlowHttpRouting,
+        request: hyper::Request<WasiBody>,
+        route: NativeRoute,
+    ) -> Result<hyper::Response<WasiBody>, FileError> {
+        if route == NativeRoute::Invalid {
+            return Err(refused(FileRefusal::InvalidInput, "path"));
+        }
+        let action = match (&route, request.method().as_str()) {
+            (NativeRoute::Upload { .. }, "POST") => "put",
+            (NativeRoute::Get { .. }, "GET") => "get",
+            _ => return Ok(response(405, &json!({"error":"method_not_allowed"}))),
+        };
+        let id = format!("wamn-control-file-{action}-http")
+            .parse()
+            .expect("file attachment");
+        let headers: Result<Vec<_>, _> = request
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                value.to_str().map(|value| Header {
+                    name: name.to_string(),
+                    value: value.to_owned(),
+                })
+            })
+            .collect();
+        let headers = headers.map_err(|_| refused(FileRefusal::InvalidInput, "headers"))?;
+        let caller = match routing
+            .authenticate_policy(
+                &wamn_registry::name::project_env_key(
+                    &self.release.org,
+                    &self.release.project,
+                    &self.release.environment,
+                ),
+                &id,
+                RoutePolicy {
+                    policy: &wamn_catalog::HostRouteSet::Application
+                        .attachment(&id)
+                        .expect("file attachment")
+                        .auth_policy,
+                    read: action == "get",
+                },
+                &headers,
+                &[],
+            )
+            .await
+        {
+            Ok(Some(caller)) => caller,
+            Ok(None) => return Ok(response(401, &json!({"error":"unauthorized"}))),
+            Err(error) => return Ok(response(error.status, &json!({"error":error.code}))),
+        };
+        principal(&caller, action)?;
+        let response = match route {
+            NativeRoute::Invalid => Err(refused(FileRefusal::InvalidInput, "path")),
+            NativeRoute::Get { application, id } => self.get(&caller, &application, id).await,
+            NativeRoute::Upload { application } => {
+                let query = request
+                    .uri()
+                    .query()
+                    .ok_or_else(|| refused(FileRefusal::InvalidInput, "binding"))?;
+                let mut fields = BTreeMap::new();
+                for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+                    if fields
+                        .insert(key.into_owned(), value.into_owned())
+                        .is_some()
+                    {
+                        return Err(refused(FileRefusal::InvalidInput, "query"));
+                    }
+                }
+                let query: UploadQuery = serde_json::from_value(json!(fields))
+                    .map_err(|_| refused(FileRefusal::InvalidInput, "query"))?;
+                let media_type = request
+                    .headers()
+                    .get("content-type")
+                    .and_then(|value| value.to_str().ok())
+                    .ok_or_else(|| refused(FileRefusal::InvalidInput, "media_type"))?
+                    .to_owned();
+                let id = self
+                    .put(
+                        &caller,
+                        &application,
+                        &query.binding,
+                        &query.name,
+                        &media_type,
+                        BodyReader {
+                            body: request.into_body(),
+                            chunk: Bytes::new(),
+                        },
+                    )
+                    .await?;
+                Ok(response(201, &json!({"file_id":id})))
+            }
+        }?;
+        Ok(response)
     }
 }
 
@@ -787,6 +1071,95 @@ fn signed_lifetime(requested: Duration) -> Result<Duration, FileError> {
         Err(refused(FileRefusal::InvalidInput, "lifetime"))
     } else {
         Ok(requested.min(MAX_URL_LIFETIME))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum NativeRoute {
+    Invalid,
+    Upload {
+        application: wamn_catalog::ApplicationName,
+    },
+    Get {
+        application: wamn_catalog::ApplicationName,
+        id: Uuid,
+    },
+}
+fn native_route(path: &str) -> Option<NativeRoute> {
+    let parts: Vec<_> = path.split('/').collect();
+    match parts.as_slice() {
+        ["", "api", application, "files"] => Some(match application.parse() {
+            Ok(application) => NativeRoute::Upload { application },
+            Err(_) => NativeRoute::Invalid,
+        }),
+        ["", "api", application, "files", id] => Some(NativeRoute::Get {
+            application: match application.parse() {
+                Ok(application) => application,
+                Err(_) => return Some(NativeRoute::Invalid),
+            },
+            id: match id.parse() {
+                Ok(id) => id,
+                Err(_) => return Some(NativeRoute::Invalid),
+            },
+        }),
+        ["", "api", _, "files", ..] => Some(NativeRoute::Invalid),
+        _ => None,
+    }
+}
+fn response(status: u16, value: &Value) -> hyper::Response<WasiBody> {
+    hyper::Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .header("cache-control", "no-store")
+        .body(
+            Full::new(Bytes::from(value.to_string()))
+                .map_err(|never| match never {})
+                .boxed_unsync(),
+        )
+        .expect("fixed file response headers are valid")
+}
+fn error_response(error: &FileError) -> hyper::Response<WasiBody> {
+    if let Some(refusal) = error.refusal {
+        response(
+            refusal.status(),
+            &json!({"error":{"code":refusal.code(),"detail":{"field":error.field}}}),
+        )
+    } else {
+        tracing::warn!(%error,"native file route failed");
+        response(503, &json!({"error":"file_unavailable"}))
+    }
+}
+
+/// Adapt native request frames without collecting the body.
+struct BodyReader {
+    body: WasiBody,
+    chunk: Bytes,
+}
+impl AsyncRead for BodyReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        output: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if output.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        loop {
+            if !self.chunk.is_empty() {
+                let count = self.chunk.len().min(output.remaining());
+                output.put_slice(&self.chunk.split_to(count));
+                return Poll::Ready(Ok(()));
+            }
+            match std::task::ready!(Pin::new(&mut self.body).poll_frame(cx)) {
+                None => return Poll::Ready(Ok(())),
+                Some(Ok(frame)) => {
+                    if let Ok(bytes) = frame.into_data() {
+                        self.chunk = bytes;
+                    }
+                }
+                Some(Err(error)) => return Poll::Ready(Err(std::io::Error::other(error))),
+            }
+        }
     }
 }
 

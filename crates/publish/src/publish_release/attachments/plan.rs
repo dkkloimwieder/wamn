@@ -106,6 +106,20 @@ pub(in super::super) fn resolve_route_methods(
                 ),
             ));
         }
+        // Refuse both the forwarded stream URI and its browser /api form.
+        let file_prefix = |path: &str| {
+            path.strip_prefix('/')
+                .and_then(|path| path.split_once('/'))
+                .is_some_and(|(_, path)| path == "files" || path.starts_with("files/"))
+        };
+        if file_prefix(&normalized.path)
+            || normalized.path.strip_prefix("/api").is_some_and(file_prefix)
+        {
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::Document,
+                format!("attachment {attachment_id:?} uses the platform's file stream prefix"),
+            ));
+        }
         if !route_keys.insert((
             canonical_http_route_template(&normalized.path),
             normalized.method,

@@ -24,6 +24,8 @@ use wash_runtime::washlet::AttachedHostControl;
 
 mod authentication;
 mod commands;
+mod files;
+mod platform_http;
 mod projects;
 
 use wamn_authentication::route_authentication::EnvironmentStatusReader;
@@ -538,6 +540,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     postgres.set_authorization_store(Arc::new(authentication::Authorization::new(
         Arc::downgrade(&postgres),
     )));
+    let blobstore = Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+        &postgres,
+    )));
+    let files = Arc::new(files::Files::new(&postgres, Arc::clone(&blobstore)));
+    postgres.set_result_signer(
+        &(Arc::clone(&files) as Arc<dyn wamn_sql::result_signing::ResultSigner>),
+    );
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let authentication = Arc::new(projects::Authentication(Arc::clone(&projects)));
     let host_config = HostConfig {
@@ -558,6 +567,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .build(),
         ),
         logging,
+        blobstore,
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
         Arc::new(wamn_engine::operation::WamnOperation::new(
             Arc::clone(&postgres) as Arc<dyn plugin::HostPlugin>,
@@ -623,7 +633,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         }
         let server = Arc::new(ingress.build().await?);
         let http_handler: Arc<dyn wash_runtime::host::http::HostHandler> =
-            Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>;
+            Arc::new(platform_http::PlatformHttp::new(
+                Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>,
+                Arc::clone(&files),
+                Arc::clone(&flow_http),
+            ));
         let connections = server.connection_limit();
         probe_state.register(Arc::new(connections.clone()));
         ingress_connections = Some(connections);

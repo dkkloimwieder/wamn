@@ -5472,8 +5472,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "boon",
  "bytes",
  "futures-util",
+ "http-body-util",
+ "hyper",
  "moka",
  "object_store",
  "serde",
@@ -5491,11 +5494,11 @@ dependencies = [
  "wamn-engine",
  "wamn-identity-protocol",
  "wamn-oci",
- "wamn-postgres",
  "wamn-registry",
  "wamn-sql",
  "wamn-test-postgres",
  "wash-runtime",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -6028,9 +6031,12 @@ dependencies = [
  "anyhow",
  "async-nats",
  "async-trait",
+ "bytes",
  "clap",
  "futures-util",
+ "http-body-util",
  "humantime",
+ "hyper",
  "mimalloc",
  "moka",
  "opentelemetry",
@@ -6049,8 +6055,10 @@ dependencies = [
  "url",
  "wamn-authentication",
  "wamn-authority",
+ "wamn-blobstore",
  "wamn-broker",
  "wamn-catalog",
+ "wamn-connection",
  "wamn-engine",
  "wamn-identity",
  "wamn-identity-protocol",
@@ -6062,6 +6070,7 @@ dependencies = [
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]

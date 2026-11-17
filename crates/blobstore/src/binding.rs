@@ -15,6 +15,10 @@ enum BindingErrorType {
     Credential,
 }
 impl BindingError {
+    pub(crate) fn unauthorized() -> Self {
+        Self::refused(BindingErrorType::Credential, "blobstore binding refused")
+    }
+
     fn definition(source: wamn_catalog::ConnectionDefinitionError) -> Self {
         Self {
             type_: BindingErrorType::Definition,

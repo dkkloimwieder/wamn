@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-blobstore.workspace = true
+wamn-connection.workspace = true
+bytes.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+wasmtime-wasi-http.workspace = true
 wamn-postgres.workspace = true
 wamn-broker = { workspace = true }
 mimalloc = { workspace = true }

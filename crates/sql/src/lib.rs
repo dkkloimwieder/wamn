@@ -25,6 +25,7 @@ mod query;
 #[cfg(test)]
 mod query_tests;
 mod resources;
+pub mod result_signing;
 mod session_identity;
 mod types;
 pub mod write_log;

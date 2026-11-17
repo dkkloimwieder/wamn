@@ -26,5 +26,5 @@ metadata:
     {{- include "release.annotations" . | nindent 4 }}
   {{- end }}
 data:
-  route.json: {{ dict "host" .Values.routeHost "release" (default .Release.Name .Values.name) "api" (printf "http://%s-http.%s.svc.cluster.local" (default .Release.Name .Values.name) (default .Release.Namespace .Values.namespace)) "files" (ternary (printf "http://%s-files.%s.svc.cluster.local" (default .Release.Name .Values.name) (default .Release.Namespace .Values.namespace)) "" (not (empty .Values.applications))) | toJson | quote }}
+  route.json: {{ dict "host" .Values.routeHost "release" (default .Release.Name .Values.name) "api" (printf "http://%s-http.%s.svc.cluster.local" (default .Release.Name .Values.name) (default .Release.Namespace .Values.namespace)) | toJson | quote }}
 {{- end }}
