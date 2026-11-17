@@ -15,8 +15,7 @@ use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTab
 use super::session_identity::{SessionIdentityError, SessionIdentityErrorType};
 use super::write_log::{Claim, WriteLogStore};
 use super::{
-    OperationTransaction, PgCommitFailure, SessionIdentity, WAMN_POSTGRES_ID,
-    WamnPostgres,
+    OperationTransaction, PgCommitFailure, SessionIdentity, WAMN_POSTGRES_ID, WamnPostgres,
 };
 
 /// Delivery counters shared by all operations of this PostgreSQL plugin.
@@ -55,6 +54,8 @@ impl OperationMetrics {
 pub(super) struct OperationWorkload {
     pub(super) workload: Box<str>,
     identity: SessionIdentity,
+    application: Arc<wamn_catalog::application_config::ApplicationConfig>,
+    context: Option<Arc<wamn_connection::invocation::ReleaseContext>>,
     operations: BTreeMap<CanonicalName, OperationAuthority>,
 }
 
@@ -69,6 +70,15 @@ struct OperationAuthority {
 }
 
 impl WamnPostgres {
+    pub fn set_connection_cache(
+        &self,
+        cache: Arc<dyn wamn_connection::connection_facts::ConnectionCache>,
+    ) {
+        self.connection_cache
+            .set(cache)
+            .expect("connection cache is configured once");
+    }
+
     pub(super) fn bind_entry_instance(
         &self,
         workload: &str,
@@ -76,42 +86,61 @@ impl WamnPostgres {
         config: wamn_catalog::application_config::ApplicationConfig,
     ) -> anyhow::Result<()> {
         use wamn_catalog::application_config::ApplicationOperationType;
+        let config = Arc::new(config);
+        if let Some(cache) = self.connection_cache.get() {
+            cache.bind_application(workload, &config)?;
+        }
+        let context = if config
+            .components
+            .iter()
+            .any(|component| !component.connections.is_empty())
+        {
+            let cache = self
+                .connection_cache
+                .get()
+                .context("connection cache is not configured")?;
+            Some(Arc::new(wamn_connection::invocation::ReleaseContext::new(
+                Arc::clone(&config),
+                Arc::clone(cache).facts(Arc::clone(&config))?,
+            )?))
+        } else {
+            None
+        };
+        let application = Arc::clone(&config);
         let identity = SessionIdentity {
             project_env_key: Some(wamn_registry::name::project_env_key(
                 &config.org,
                 &config.project,
                 &config.environment,
             )),
-            project: Some(config.project),
-            application: Some(config.application),
+            project: Some(config.project.clone()),
+            application: Some(config.application.clone()),
             ..SessionIdentity::default()
         };
         let operations = config
             .components
-            .into_iter()
+            .iter()
             .flat_map(|component| {
-                component
-                    .operations
-                    .into_iter()
-                    .map(move |(name, operation)| {
-                        let grant = operation
-                            .public
-                            .then(|| name.as_str().parse())
-                            .transpose()?;
-                        Ok((
-                            name,
-                            OperationAuthority {
-                                read: operation.type_ == Some(ApplicationOperationType::Read),
-                                delete: operation.type_ == Some(ApplicationOperationType::Delete),
-                                grant,
-                                schema: component.schema.clone(),
-                                transaction: operation.host_transaction,
-                                signed_fields: operation
-                                    .signed_result
-                                    .is_some_and(|result| !result.fields.is_empty()),
-                            },
-                        ))
-                    })
+                component.operations.iter().map(move |(name, operation)| {
+                    let grant = operation
+                        .public
+                        .then(|| name.as_str().parse())
+                        .transpose()?;
+                    Ok((
+                        name.clone(),
+                        OperationAuthority {
+                            read: operation.type_ == Some(ApplicationOperationType::Read),
+                            delete: operation.type_ == Some(ApplicationOperationType::Delete),
+                            grant,
+                            schema: component.schema.clone(),
+                            transaction: operation.host_transaction,
+                            signed_fields: operation
+                                .signed_result
+                                .as_ref()
+                                .is_some_and(|result| !result.fields.is_empty()),
+                        },
+                    ))
+                })
             })
             .collect::<anyhow::Result<_>>()?;
         self.operation_workloads
@@ -122,6 +151,8 @@ impl WamnPostgres {
                 Arc::new(OperationWorkload {
                     workload: workload.into(),
                     identity,
+                    application,
+                    context,
                     operations,
                 }),
             );
@@ -619,7 +650,7 @@ async fn begin(
     let authority = AuthorizedInvocation::enter(
         &postgres,
         InvocationRequest {
-            context: None,
+            context: facts.context.as_ref().map(Arc::clone),
             scope: wamn_engine::operation::next_scope(workload).into_string(),
             identity,
             caller: caller.cloned(),
@@ -629,7 +660,13 @@ async fn begin(
                 root: delivery.clone(),
                 depth: 0,
             }),
-            invocation: None,
+            invocation: Some(
+                wamn_connection::connection::ConnectionInvocation::for_operation(
+                    &facts.application,
+                    &operation,
+                )
+                .map_err(|error| binding_error(OperationErrorType::Identity, workload, error))?,
+            ),
             read: admitted.read,
         },
     )

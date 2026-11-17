@@ -535,11 +535,38 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .unwrap_or_default();
     let projects = Arc::new(projects::Projects::default());
     let postgres = Arc::new(WamnPostgres::from_host_config(&postgres_config)?);
-    postgres.set_authorization_store(Arc::new(authentication::Authorization::new(
-        Arc::downgrade(&postgres),
-    )));
+    let envelope = args
+        .oauth_encryption
+        .as_deref()
+        .map(|config| -> anyhow::Result<_> {
+            Ok(Arc::new(wamn_connection::oauth_encryption::Envelope::open(
+                &serde_json::from_str(config)?,
+            )?))
+        })
+        .transpose()?;
+    let authorization = Arc::new(
+        authentication::Authorization::new(Arc::downgrade(&postgres))
+            .with_oauth_encryption(envelope),
+    );
+    postgres.set_authorization_store(Arc::clone(&authorization) as _);
+    postgres.set_connection_cache(Arc::clone(&authorization) as _);
+    let integration = Arc::new(wamn_connection::integrations::IntegrationBound::new(
+        Arc::clone(&authorization) as _,
+    ));
+    let connection_http = Arc::new(wamn_http::ConnectionHttp::new(
+        Arc::clone(&postgres.scopes),
+        Arc::new(wamn_http::transport::HttpTransport::new()?),
+        args.allowed_hosts
+            .iter()
+            .map(|host| host.parse())
+            .collect::<Result<Vec<_>, _>>()?
+            .into(),
+    ));
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
-    let authentication = Arc::new(projects::Authentication(Arc::clone(&projects)));
+    let authentication = Arc::new(projects::Authentication(
+        Arc::clone(&projects),
+        Arc::clone(&authorization),
+    ));
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,
         oci_pull_timeout: Some(Duration::from_secs(30)),
@@ -558,6 +585,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .build(),
         ),
         logging,
+        integration,
+        connection_http,
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
         Arc::new(wamn_engine::operation::WamnOperation::new(
             Arc::clone(&postgres) as Arc<dyn plugin::HostPlugin>,
@@ -844,9 +873,8 @@ where
     );
     // Admission closes completely before the queue drains.
     let ingress_result = wamn_engine::lifecycle::bounded_cleanup(remaining(), stop_ingress).await;
-    let drain_then_cleanup = async {
-        wamn_engine::lifecycle::bounded_cleanup(remaining(), native_cleanup).await
-    };
+    let drain_then_cleanup =
+        async { wamn_engine::lifecycle::bounded_cleanup(remaining(), native_cleanup).await };
     let (native_result, ()) = tokio::join!(
         drain_then_cleanup,
         tokio::time::sleep(propagation_delay.min(remaining()))
@@ -883,7 +911,6 @@ mod tests {
     use clap::Parser as _;
 
     use super::*;
-
 
     #[derive(Debug, clap::Parser)]
     struct TestCli {
@@ -964,7 +991,6 @@ host:
         );
     }
 
-
     #[test]
     fn chart_lifecycle_flags_parse_with_native_defaults() {
         let defaults = parse(["wamn-host"]).unwrap().args;
@@ -1006,14 +1032,6 @@ host:
         );
         assert!(cleanup_budget_for_plugins(7, Duration::MAX).is_err());
     }
-
-
-
-
-
-
-
-
 
     /// The chart's native memory settings reach `HostMemoryBudgets` intact.
     #[test]

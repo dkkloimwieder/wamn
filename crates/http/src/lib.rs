@@ -7,11 +7,26 @@
 //! wiring version/hash and the component tuple. No run, plan, frame or effect
 //! record participates.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::sync::Mutex;
+use std::sync::{Arc, RwLock};
+use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionFacts};
+use wamn_connection::connection_memory::ConnectionStatus;
+use wamn_engine::invocation_scope::InvocationScopes;
+use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
+use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
+use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+use wash_runtime::wasmtime::component::Accessor;
+use wash_runtime::wit::{WitInterface, WitWorld};
 
 use anyhow::Context as _;
+use tracing::Instrument as _;
+use wamn_authority::EffectOutcome;
+use wamn_authority::effect_span::{
+    EFFECT_OPERATION, EffectIdentity, EffectOutcomeGuard, HTTP_EFFECT_DURATION_MS, effect_span,
+    record_effect_ms, record_wiring,
+};
 
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
@@ -21,13 +36,13 @@ use wamn_authority::connection_authority::{
 };
 
 mod authentication;
-pub mod oauth_callback;
 mod jwt;
 mod network_policy;
+pub mod oauth_callback;
 pub mod transport;
 
-use transport::HttpTransport;
 use crate::oauth::{Request as Oauth2Request, Response as Oauth2Token};
+use transport::HttpTransport;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -46,10 +61,563 @@ mod bindings {
     });
 }
 
-use bindings::wamn::connection::http::Request;
-#[cfg(test)]
-use bindings::wamn::connection::http::Header;
+use bindings::wamn::connection::http::{self, Header, Request, Response};
 use wamn_authority::connection::ConnectionError;
+
+pub const CONNECTION_HTTP_ID: &str = "wamn-connection-http";
+
+#[derive(Debug)]
+struct ApplicationBinding {
+    workload: String,
+    application: wamn_catalog::application_config::ApplicationConfig,
+}
+
+/// HTTP host plugin. Only importing components receive its linker entries.
+#[derive(Debug)]
+pub struct ConnectionHttp {
+    scopes: Arc<InvocationScopes>,
+    transport: Arc<HttpTransport>,
+    allowed_hosts: Arc<[AllowedHost]>,
+    applications: Arc<RwLock<HashMap<String, ApplicationBinding>>>,
+    component: Option<String>,
+}
+impl ConnectionHttp {
+    pub fn new(
+        scopes: Arc<InvocationScopes>,
+        transport: Arc<HttpTransport>,
+        allowed_hosts: Arc<[AllowedHost]>,
+    ) -> Self {
+        Self {
+            scopes,
+            transport,
+            allowed_hosts,
+            applications: Arc::default(),
+            component: None,
+        }
+    }
+    async fn send(&self, scope: &str, request: &Request) -> Result<Response, ConnectionError> {
+        let execution = self
+            .scopes
+            .execution(scope)
+            .ok_or(ConnectionError::AttestationInvalid)?;
+        let context = wamn_connection::invocation::context(&self.scopes, scope)
+            .map_err(|_| ConnectionError::AttestationInvalid)?;
+        let invocation = wamn_connection::invocation::invocation(&self.scopes, scope)
+            .ok_or(ConnectionError::AttestationInvalid)?;
+        let alias = request
+            .requirement
+            .parse()
+            .map_err(|_| ConnectionError::Incompatible)?;
+        let binding = {
+            let applications = self
+                .applications
+                .read()
+                .expect("HTTP application bindings poisoned");
+            let application = self
+                .component
+                .as_ref()
+                .and_then(|id| applications.get(id))
+                .ok_or(ConnectionError::Unbound)?;
+            if application.application != *context.release {
+                return Err(ConnectionError::AttestationInvalid);
+            }
+            invocation
+                .connection(&context.release, &alias)
+                .ok_or(ConnectionError::Unbound)?
+        };
+        if binding.runtime_type != wamn_catalog::RuntimeType::Host
+            || binding.integration_type.as_str() != "http"
+        {
+            return Err(ConnectionError::Incompatible);
+        }
+        let read_only = binding
+            .mode
+            .read_only(&invocation.package_id, &binding.name)
+            .ok_or(ConnectionError::Incompatible)?;
+        if read_only
+            && !matches!(
+                request.method.to_ascii_uppercase().as_str(),
+                "GET" | "HEAD" | "OPTIONS"
+            )
+        {
+            return Err(ConnectionError::AuthorityDenied);
+        }
+        let id = binding
+            .connection_id
+            .parse()
+            .map_err(|_| ConnectionError::Unbound)?;
+        let facts = &context.connections;
+        let answer = facts
+            .answer(&id)
+            .await
+            .map_err(|_| ConnectionError::CredentialUnavailable)?
+            .filter(|answer| answer.fact.status == ConnectionStatus::Active)
+            .ok_or(ConnectionError::Unbound)?;
+        let transport = self.transport.for_invocation(scope, execution.clone());
+        let lock = if binding.exclusive {
+            Some(
+                wamn_connection::database::ResourceLock::acquire(
+                    &facts.reader(),
+                    facts.project(),
+                    facts.environment(),
+                    &*facts
+                        .locks()
+                        .map_err(|_| ConnectionError::CredentialUnavailable)?,
+                    &answer.fact,
+                    execution.deadline(),
+                    false,
+                )
+                .await
+                .map_err(|_| ConnectionError::Timeout)?,
+            )
+        } else {
+            None
+        };
+        let result = self
+            .send_active(facts, id, answer, &transport, scope, request)
+            .await;
+        if let Some(lock) = lock {
+            lock.release().await.map_err(|_| {
+                ConnectionError::Transport("connection lock rollback failed".into())
+            })?;
+        }
+        result
+    }
+    async fn send_active(
+        &self,
+        facts: &ConnectionFacts,
+        id: uuid::Uuid,
+        answer: Arc<ConnectionAnswer>,
+        transport: &HttpTransport,
+        scope: &str,
+        request: &Request,
+    ) -> Result<Response, ConnectionError> {
+        let (first, token) = self
+            .attempt(facts, id, &answer, transport, scope, request, None)
+            .await?;
+        if !matches!(first.status, 401 | 403) {
+            return Ok(first);
+        }
+        facts
+            .oauth_tokens()
+            .remove(&(id, answer.fact.active_generation));
+        let fresh = facts
+            .read_again(&id)
+            .await
+            .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        let oauth = first.status == 401
+            && wamn_connection::oauth_token::is_oauth(&answer.generation.auth_type);
+        let changed = fresh.as_ref().is_some_and(|fact| {
+            (fact.active_generation, fact.credential_id)
+                != (answer.fact.active_generation, answer.fact.credential_id)
+        });
+        if !changed && !oauth {
+            return Ok(first);
+        }
+        let fresh = facts
+            .answer(&id)
+            .await
+            .map_err(|_| ConnectionError::CredentialUnavailable)?
+            .filter(|answer| answer.fact.status == ConnectionStatus::Active)
+            .ok_or(ConnectionError::Unbound)?;
+        let result = self
+            .attempt(
+                facts,
+                id,
+                &fresh,
+                transport,
+                scope,
+                request,
+                if oauth && !changed {
+                    token.as_deref()
+                } else {
+                    None
+                },
+            )
+            .await;
+        match result {
+            Ok((response, _)) => {
+                if response.status == 401 {
+                    facts
+                        .oauth_tokens()
+                        .remove(&(id, fresh.fact.active_generation));
+                }
+                Ok(response)
+            }
+            Err(_) if oauth && !changed => Ok(first),
+            Err(error) => Err(error),
+        }
+    }
+    async fn attempt(
+        &self,
+        facts: &ConnectionFacts,
+        id: uuid::Uuid,
+        answer: &ConnectionAnswer,
+        transport: &HttpTransport,
+        scope: &str,
+        request: &Request,
+        rejected: Option<&str>,
+    ) -> Result<(Response, Option<String>), ConnectionError> {
+        let target = wamn_authority::normalize_portable_http_target(&request.path_and_query)
+            .map_err(|_| ConnectionError::AuthorityDenied)?;
+        let authority = wamn_authority::connection_authority::parse_http_definition(
+            &answer.generation.parameters,
+        )
+        .map_err(|_| ConnectionError::AuthorityDenied)?;
+        let mut decision = resolve_http_request(
+            &authority,
+            &target,
+            &self.allowed_hosts,
+            &network_policy::allows,
+            &TokioDnsResolver,
+        )
+        .await
+        .map_err(|_| ConnectionError::AuthorityDenied)?;
+        let auth_type = answer.generation.auth_type.as_str();
+        let empty = serde_json::json!({});
+        let parameters = answer.generation.parameters.get("auth").unwrap_or(&empty);
+        let material = answer.secret.as_ref().map(|secret| secret.expose());
+        let (headers, token) = if wamn_connection::oauth_token::is_oauth(auth_type) {
+            let principal = self
+                .scopes
+                .read::<wamn_connection::invocation::Scope, _>(scope, |record| record.principal)
+                .flatten()
+                .ok_or(ConnectionError::AttestationInvalid)?;
+            let token = self
+                .oauth2_token(
+                    facts,
+                    principal,
+                    &authority,
+                    (auth_type, parameters, material),
+                    &(id, answer.fact.active_generation),
+                    rejected,
+                    transport,
+                )
+                .await?;
+            (
+                HashMap::from([("authorization".into(), format!("Bearer {token}"))]),
+                Some(token),
+            )
+        } else {
+            (
+                authentication::headers(auth_type, parameters, material, request, &mut decision)?,
+                None,
+            )
+        };
+        let mut response = execute(transport, decision, request, headers).await?;
+        response
+            .external_system
+            .clone_from(&answer.generation.external_system);
+        Ok((response, token))
+    }
+    async fn oauth2_token(
+        &self,
+        facts: &ConnectionFacts,
+        principal: wamn_identity_protocol::PrincipalId,
+        authority: &HttpConnectionAuthority,
+        (auth_type, parameters, material): (&str, &serde_json::Value, Option<&str>),
+        key: &wamn_connection::oauth_token::CacheKey,
+        rejected: Option<&str>,
+        transport: &HttpTransport,
+    ) -> Result<String, ConnectionError> {
+        let oauth2_cache = facts.oauth_tokens();
+        if rejected.is_none()
+            && let Some(token) = oauth2_cache.get(key)
+        {
+            return Ok(token);
+        }
+        oauth2_cache.remove(key);
+        let envelope = facts
+            .oauth_encryption()
+            .ok_or(ConnectionError::CredentialUnavailable)?;
+        let available = wamn_connection::oauth_token::get(
+            wamn_connection::oauth_token::Request {
+                reader: &facts.reader(),
+                principal,
+                project: facts.project(),
+                environment: facts.environment(),
+                connection: key.0,
+                generation: key.1,
+                authorization_code: auth_type == "oauth2_authorization_code",
+                rejected,
+            },
+            &envelope,
+            |old| async move {
+                let refresh = if auth_type == "oauth2_authorization_code" {
+                    Some(
+                        old.and_then(|token| token.refresh_token)
+                            .ok_or_else(|| anyhow::anyhow!("OAuth refresh token missing"))?,
+                    )
+                } else {
+                    None
+                };
+                let request = oauth2_request(auth_type, parameters, material, refresh.as_deref())
+                    .map_err(|_| anyhow::anyhow!("OAuth credential unavailable"))?;
+                let decision = token_endpoint(
+                    authority,
+                    request.token_authority.as_deref(),
+                    &request.token_url,
+                    Some(&self.allowed_hosts),
+                )
+                .await?;
+                let token = fetch_health_token(transport, decision, &request)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("OAuth provider unavailable"))?;
+                Ok(wamn_connection::oauth_token::Fetched {
+                    token: wamn_connection::oauth_token::Token {
+                        access_token: Some(token.access_token),
+                        refresh_token: token.refresh_token,
+                    },
+                    expires_in: token.expires_in,
+                })
+            },
+        )
+        .await
+        .map_err(|error| {
+            if error.unauthorized {
+                ConnectionError::Unauthorized
+            } else {
+                ConnectionError::CredentialUnavailable
+            }
+        })?;
+        Ok(available.token)
+    }
+}
+async fn execute(
+    transport: &HttpTransport,
+    decision: wamn_authority::connection_authority::AuthorityDecision,
+    request: &Request,
+    credentials: HashMap<String, String>,
+) -> Result<Response, ConnectionError> {
+    if request
+        .body
+        .as_ref()
+        .is_some_and(|body| body.len() > transport::MAX_BODY_BYTES)
+    {
+        return Err(ConnectionError::Incompatible);
+    }
+    // Bound guest-controlled fields before copying them into a HeaderMap.
+    // The transport repeats these bounds after credentials and trace injection.
+    let header_bytes = request.headers.iter().try_fold(0usize, |total, header| {
+        total
+            .checked_add(header.name.len())?
+            .checked_add(header.value.len())
+    });
+    if request.headers.len() > transport::MAX_HEADERS
+        || header_bytes.is_none_or(|size| size > transport::MAX_HEADER_BYTES)
+        || request
+            .idempotency_key
+            .as_ref()
+            .is_some_and(|key| key.len() > transport::MAX_HEADER_BYTES)
+    {
+        return Err(ConnectionError::Incompatible);
+    }
+    let method = hyper::Method::from_bytes(request.method.as_bytes())
+        .map_err(|_| ConnectionError::Incompatible)?;
+    let headers = outbound_headers(request, credentials).map_err(|error| error)?;
+    let body = request.body.as_deref().unwrap_or_default();
+    let mut outbound = hyper::Request::builder()
+        .method(method)
+        .uri(decision.logical_url.as_ref())
+        .body(body)
+        .map_err(|_| ConnectionError::Incompatible)?;
+    *outbound.headers_mut() = headers;
+    let response = transport
+        .send_once(&decision, outbound)
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "trusted HTTP transport failed");
+            if error.is_before_dispatch() {
+                ConnectionError::Transport("connection-client-unavailable".to_owned())
+            } else if error.is_response_lost() {
+                ConnectionError::Transport("connection-response-lost".into())
+            } else if error.is_timeout() {
+                ConnectionError::Timeout
+            } else {
+                ConnectionError::Transport(error.to_string())
+            }
+        })?;
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| Header {
+            name: name.as_str().to_string(),
+            value: value.as_bytes().to_vec(),
+        })
+        .collect();
+    let body = response.into_body().to_vec();
+    Ok(Response {
+        external_system: None,
+        status,
+        headers,
+        body,
+    })
+}
+
+#[async_trait::async_trait]
+impl HostPlugin for ConnectionHttp {
+    fn id(&self) -> &'static str {
+        CONNECTION_HTTP_ID
+    }
+    fn world(&self) -> WitWorld {
+        WitWorld {
+            imports: HashSet::from([WitInterface::from("wamn:connection/http@0.1.0")]),
+            exports: HashSet::new(),
+        }
+    }
+    async fn on_workload_item_bind<'a>(
+        &self,
+        item: &mut WorkloadItem<'a>,
+        _: WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        let WorkloadItem::Component(component) = &*item else {
+            anyhow::bail!("HTTP connection requires an application component");
+        };
+        let bound = Arc::new(Self {
+            scopes: Arc::clone(&self.scopes),
+            transport: Arc::clone(&self.transport),
+            allowed_hosts: Arc::clone(&self.allowed_hosts),
+            applications: Arc::clone(&self.applications),
+            component: Some(component.id().to_owned()),
+        });
+        item.add_plugin(CONNECTION_HTTP_ID, bound);
+        http::add_to_linker::<_, SharedCtx>(item.linker()?, extract_active_ctx)?;
+        Ok(())
+    }
+    async fn on_workload_resolved(
+        &self,
+        workload: &ResolvedWorkload,
+        component_id: &str,
+    ) -> anyhow::Result<()> {
+        let components = workload.components();
+        let components = components.read().await;
+        let route = components
+            .values()
+            .find(|component| component.name() == "flow-http")
+            .context("flow-http missing")?;
+        let application: wamn_catalog::application_config::ApplicationConfig =
+            serde_json::from_str(
+                route
+                    .local_resources()
+                    .config
+                    .get(wamn_catalog::application_config::APPLICATION_CONFIG)
+                    .context("wamn.application missing")?,
+            )?;
+        if application
+            .components
+            .iter()
+            .any(|component| !component.connections.is_empty())
+        {
+            self.applications
+                .write()
+                .expect("HTTP application bindings poisoned")
+                .insert(
+                    component_id.to_owned(),
+                    ApplicationBinding {
+                        workload: workload.id().to_owned(),
+                        application,
+                    },
+                );
+        }
+        Ok(())
+    }
+    async fn on_workload_unbind(&self, workload: &str, _: WitInterfaces<'_>) -> anyhow::Result<()> {
+        self.applications
+            .write()
+            .expect("HTTP application bindings poisoned")
+            .retain(|_, binding| binding.workload != workload);
+        Ok(())
+    }
+}
+impl http::Host for ActiveCtx<'_> {}
+impl<T: Send + 'static> http::HostWithStore<T> for SharedCtx {
+    async fn send(
+        accessor: &Accessor<T, Self>,
+        request: Request,
+    ) -> wash_runtime::wasmtime::Result<Result<Response, http::ConnectionError>> {
+        let (plugin, scope) = accessor.with(|mut access| {
+            let ctx = access.get();
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                ctx.try_get_plugin::<ConnectionHttp>(CONNECTION_HTTP_ID)?,
+                Arc::clone(&ctx.component_id),
+            ))
+        })?;
+        let trace = accessor
+            .with(|mut access| wamn_engine::invocation_trace::invocation_trace(&mut access.get()));
+        trace
+            .run(async move {
+                let context = wamn_connection::invocation::context(&plugin.scopes, &scope).ok();
+                let project_key = context
+                    .as_ref()
+                    .map(|context| context.connections.project_env_key());
+                let project = context
+                    .as_ref()
+                    .map_or("", |context| context.connections.project().as_str());
+                let span = effect_span!(
+                    "wamn.connection_http",
+                    EffectIdentity {
+                        project_env_key: project_key,
+                        project,
+                        component: &scope
+                    },
+                    None,
+                    effect.operation = "send",
+                );
+                let invocation = wamn_connection::invocation::invocation(&plugin.scopes, &scope);
+                record_wiring(
+                    &span,
+                    invocation
+                        .as_ref()
+                        .map(wamn_connection::connection::ConnectionInvocation::effect_wiring),
+                );
+                let mut observed = EffectOutcomeGuard::new(
+                    &span,
+                    invocation.and_then(|invocation| invocation.effects),
+                );
+                let started = std::time::Instant::now();
+                let result = plugin.send(&scope, &request).instrument(span).await;
+                record_effect_ms(
+                    &HTTP_EFFECT_DURATION_MS,
+                    EFFECT_OPERATION,
+                    "send",
+                    project,
+                    started.elapsed(),
+                );
+                let outcome = match &result {
+                    Ok(_) => EffectOutcome::Responded,
+                    Err(ConnectionError::Timeout) => EffectOutcome::Timeout,
+                    Err(ConnectionError::Transport(detail))
+                        if detail == "connection-client-unavailable" =>
+                    {
+                        EffectOutcome::RefusedBeforeDispatch
+                    }
+                    Err(ConnectionError::Transport(detail))
+                        if detail == "connection-response-lost" =>
+                    {
+                        EffectOutcome::ResponseLost
+                    }
+                    Err(ConnectionError::Transport(_)) => EffectOutcome::EffectUncertain,
+                    Err(_) => EffectOutcome::RefusedBeforeDispatch,
+                };
+                observed.settle(outcome, result.is_err());
+                Ok(result.map_err(wit_error))
+            })
+            .await
+    }
+}
+fn wit_error(error: ConnectionError) -> http::ConnectionError {
+    match error {
+        ConnectionError::Unbound => http::ConnectionError::Unbound,
+        ConnectionError::Incompatible => http::ConnectionError::Incompatible,
+        ConnectionError::AuthorityDenied => http::ConnectionError::AuthorityDenied,
+        ConnectionError::AttestationInvalid => http::ConnectionError::AttestationInvalid,
+        ConnectionError::CredentialUnavailable => http::ConnectionError::CredentialUnavailable,
+        ConnectionError::Timeout => http::ConnectionError::Timeout,
+        ConnectionError::Transport(detail) => http::ConnectionError::Transport(detail),
+        ConnectionError::Unauthorized => http::ConnectionError::Unauthorized,
+    }
+}
 
 fn oauth2_request(
     auth_type: &str,
@@ -301,12 +869,10 @@ fn health_status(status: u16) -> anyhow::Result<()> {
 mod tests {
 
     use super::*;
-    use std::sync::Arc;
     use crate::bindings::wamn::connection::http::Header;
+    use std::sync::Arc;
 
-    use crate::test_util::{
-        effect_request, interface_address,
-    };
+    use crate::test_util::{effect_request, interface_address};
 
     mod oauth2_tests;
 
@@ -408,7 +974,6 @@ mod tests {
             assert_eq!(actual.trace_state(), expected.trace_state());
         }
     }
-
 }
 
 #[cfg(test)]
@@ -422,7 +987,6 @@ mod connection_mode_tests {
             super::health_status(status).expect_err("unhealthy status");
         }
     }
-
 }
 
 mod oauth;

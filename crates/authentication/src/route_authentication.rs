@@ -21,8 +21,8 @@ use wamn_engine::flow_http_routing::{
     RouteAuthenticator, RouteCredential, authentication_unavailable, require_csrf,
     required_bearer_token, route_credential, signature_unauthorized, unauthorized,
 };
-use wamn_identity_protocol::verifier::SessionVerifier;
 use wamn_identity::PrincipalType;
+use wamn_identity_protocol::verifier::SessionVerifier;
 
 use crate::authorization::{AuthorizationStore, SessionGrantRefusal};
 use crate::session_keys::IssuerKeys;
@@ -89,6 +89,7 @@ impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusRead
 pub struct PlatformRouteAuthenticator {
     postgres: Arc<dyn AuthorizationStore>,
     projects: std::collections::HashMap<wamn_registry::ProjectEnvKey, Arc<ConnectionFacts>>,
+    connection_cache: Option<Arc<dyn wamn_connection::connection_facts::ConnectionCache>>,
     identity_reader: Option<sqlx::PgPool>,
     verifiers: std::collections::HashMap<wamn_registry::ProjectEnvKey, SessionVerifier<IssuerKeys>>,
 }
@@ -114,9 +115,34 @@ impl PlatformRouteAuthenticator {
         Self {
             postgres,
             projects,
+            connection_cache: None,
             identity_reader,
             verifiers,
         }
+    }
+
+    pub fn with_connection_cache(
+        mut self,
+        cache: Arc<dyn wamn_connection::connection_facts::ConnectionCache>,
+    ) -> Self {
+        self.connection_cache = Some(cache);
+        self
+    }
+
+    fn connection_facts(
+        &self,
+        project: &wamn_registry::ProjectEnvKey,
+    ) -> Result<Arc<ConnectionFacts>, AuthRejection> {
+        if let Some(facts) = self.projects.get(project) {
+            return Ok(Arc::clone(facts));
+        }
+        Arc::clone(
+            self.connection_cache
+                .as_ref()
+                .ok_or_else(authentication_unavailable)?,
+        )
+        .project_facts(project)
+        .map_err(|_| authentication_unavailable())
     }
 
     /// Construct route authority without connection credentials for interface tests.
@@ -215,11 +241,8 @@ impl PlatformRouteAuthenticator {
             .verifiers
             .get(project_env_key)
             .ok_or_else(unauthorized)?;
-        let (principal, permissions) = admit_session(
-            verifier,
-            token,
-            cookie_headers,
-            async |claims| {
+        let (principal, permissions) =
+            admit_session(verifier, token, cookie_headers, async |claims| {
                 self.postgres
                     .session_operation_permissions(
                         project,
@@ -237,9 +260,8 @@ impl PlatformRouteAuthenticator {
                             authentication_unavailable()
                         }
                     })
-            },
-        )
-        .await?;
+            })
+            .await?;
         let active_role = permissions.active_role();
         Ok(AuthenticatedCaller::new(
             attachment_id.clone(),
@@ -276,10 +298,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         if let AttachmentAuthPolicy::Signature { header, credential } = request.policy {
             let principal = self
                 .authenticate_signature(
-                    self.projects
-                        .get(request.target)
-                        .ok_or_else(signature_unauthorized)?
-                        .as_ref(),
+                    self.connection_facts(request.target)?.as_ref(),
                     header,
                     credential,
                     request.headers,
@@ -357,7 +376,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         .strip_prefix("connection-")
                         .and_then(|id| id.parse::<uuid::Uuid>().ok())
                         .ok_or_else(unauthorized)?;
-                    let facts = self.projects.get(target).ok_or_else(unauthorized)?;
+                    let facts = self.connection_facts(target)?;
                     let active = facts
                         .connection(&connection)
                         .await

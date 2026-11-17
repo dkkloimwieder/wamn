@@ -83,6 +83,11 @@ impl ControlRoutes<'_> {
             transaction.rollback().await?;
             context
         };
+        if matches!(context["runtime_type"].as_str(), Some("wasm" | "native")) {
+            return Ok(
+                json!({"ok":false,"error":"integration health unavailable outside an application workload"}),
+            );
+        }
         let schemas = context["schemas"]
             .as_array()
             .ok_or_else(|| invalid("version"))?;
@@ -201,11 +206,6 @@ impl ControlRoutes<'_> {
         let health = self
             .connection_health
             .ok_or_else(|| invalid("integration_type"))?;
-        let digest = version["digest"]
-            .as_str()
-            .map(str::parse::<wamn_digest::Digest>)
-            .transpose()
-            .map_err(anyhow::Error::from)?;
         let integration_type = context["integration_type"]
             .as_str()
             .ok_or_else(|| invalid("integration_type"))?
@@ -217,7 +217,6 @@ impl ControlRoutes<'_> {
                 context["runtime_type"]
                     .as_str()
                     .ok_or_else(|| invalid("integration_type"))?,
-                digest.as_ref(),
                 &request["parameters"],
                 auth,
                 credential.as_deref(),

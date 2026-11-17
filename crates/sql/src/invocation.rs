@@ -107,6 +107,7 @@ impl AuthorizedInvocation {
         if let Some(context) = &context {
             validate_context(&identity, context)?;
         }
+        let principal = identity.user_id;
         let mut authorities = vec![Box::new(Authority {
             identity,
             causation,
@@ -115,6 +116,7 @@ impl AuthorizedInvocation {
         }) as Box<dyn InvocationAuthority>];
         if context.is_some() || invocation.is_some() {
             authorities.push(Box::new(Scope {
+                principal,
                 context,
                 invocation,
             }));

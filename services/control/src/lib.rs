@@ -258,16 +258,15 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             platform,
             system_database: wamn_provision::migrations::MigrationDatabase::System
                 .configuration(&config.apply_database.to_json()?)?,
-            integration_registry: integration_registry.clone(),
-            registry_credentials: registry_credentials.clone(),
+            integration_registry,
+            registry_credentials,
         }))
         .with_worker(config.worker)
         .with_operation_jobs(wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?)
         .with_registry_token_metadata(config.registry_token_metadata)
-        .with_connection_health(Arc::new(
-            crate::connection_health::ConnectionHealth::new(transport)
-                .with_registry(integration_registry, registry_credentials),
-        ))
+        .with_connection_health(Arc::new(crate::connection_health::ConnectionHealth::new(
+            transport,
+        )))
         .with_oauth(oauth.as_ref().map(Arc::clone)),
     );
     let callback_databases = Arc::new(config.administration_dir);

@@ -1,7 +1,4 @@
-//! Connection credentials in project databases, with system-owned integration types.
-//!
-//! Secret material never enters guests or stored run facts. Project pools select
-//! connection data; the system pool supplies types, targets and principal status.
+//! Connection rows and credential references read only through the project platform login.
 
 use std::sync::Arc;
 
@@ -46,7 +43,6 @@ struct ProjectReader {
 pub struct ConnectionCredentials {
     org: Option<wamn_registry::OrgId>,
     store: Option<Arc<dyn wamn_kubernetes::Store>>,
-    database: Option<sqlx::PgPool>,
     project: Option<ProjectReader>,
 }
 
@@ -54,18 +50,17 @@ impl std::fmt::Debug for ConnectionCredentials {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConnectionCredentials")
-            .field("available", &self.database.is_some())
+            .field("available", &self.project.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl ConnectionCredentials {
-    /// Use the system pool for integration type metadata.
-    pub fn from_database(client: sqlx::PgPool, org: &wamn_registry::OrgId) -> Self {
+    /// Read connection rows without a system database.
+    pub fn for_org(org: &wamn_registry::OrgId) -> Self {
         Self {
             org: Some(org.to_owned()),
             store: None,
-            database: Some(client),
             project: None,
         }
     }
@@ -113,6 +108,16 @@ impl ConnectionCredentials {
             .await
     }
 
+    pub async fn owned_database(
+        &self,
+        project: &wamn_registry::ProjectId,
+        environment: &wamn_registry::EnvName,
+    ) -> anyhow::Result<sqlx::PgConnection> {
+        self.project_database(project, environment)?
+            .owned_connection(project)
+            .await
+    }
+
     pub fn org(&self) -> anyhow::Result<&wamn_registry::OrgId> {
         self.org.as_ref().context("connection reader has no org")
     }
@@ -128,7 +133,6 @@ impl ConnectionCredentials {
         Self {
             org: None,
             store: None,
-            database: None,
             project: None,
         }
     }
@@ -161,22 +165,6 @@ impl ConnectionCredentials {
 /// [`ConnectionCredentials::env_connections`] returns rows that never change
 /// under their keys.
 impl ConnectionCredentials {
-    async fn reader(&self) -> anyhow::Result<sqlx::Transaction<'_, sqlx::Postgres>> {
-        let mut tx = self
-            .database
-            .as_ref()
-            .context("system reader unavailable")?
-            .begin()
-            .await?;
-        sqlx::query(
-            "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')",
-        )
-        .bind(wamn_identity_protocol::PlatformComponent::Executor.principal_id())
-        .execute(&mut *tx)
-        .await?;
-        Ok(tx)
-    }
-
     /// The active generation, status, credential, principal and lease coordinates of one
     /// connection of the environment.
     pub async fn connection_fact(
@@ -187,19 +175,10 @@ impl ConnectionCredentials {
     ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
         let database = self.project_database(project, environment)?;
         let mut local = database.read_connection(project).await?;
-        let mut system = self.reader().await?;
-        let row = wamn_registry::connections::fact(
-            local.connection(),
-            &mut system,
-            self.org()?,
-            project,
-            environment,
-            id,
-        )
-        .await
-        .context("read connection fact")?;
+        let row = wamn_registry::connections::fact(local.connection(), id)
+            .await
+            .context("read connection fact")?;
         local.commit().await?;
-        system.commit().await?;
         Ok(row.map(|row| crate::connection_memory::ConnectionFact {
             active_generation: row.active_generation,
             status: if row.active {
@@ -208,10 +187,9 @@ impl ConnectionCredentials {
                 crate::connection_memory::ConnectionStatus::Disabled
             },
             credential_id: row.credential_id,
-            exclusive: row.exclusive,
             target_id: row.target_id,
             resource_key: row.resource_key,
-            target_type: row.target_type,
+            authority: row.authority,
             service_principal_id: row.service_principal_id,
         }))
     }
@@ -226,13 +204,10 @@ impl ConnectionCredentials {
     ) -> anyhow::Result<Option<ConnectionGeneration>> {
         let database = self.project_database(project, environment)?;
         let mut local = database.read_connection(project).await?;
-        let mut system = self.reader().await?;
-        let row =
-            wamn_registry::connections::generation(local.connection(), &mut system, id, generation)
-                .await
-                .context("read connection generation")?;
+        let row = wamn_registry::connections::generation(local.connection(), id, generation)
+            .await
+            .context("read connection generation")?;
         local.commit().await?;
-        system.commit().await?;
         Ok(row)
     }
 
@@ -276,26 +251,9 @@ impl ConnectionCredentials {
         local.commit().await?;
         Ok(rows)
     }
-
-    /// One published version of an integration type, or its newest one.
-    pub async fn integration_version(
-        &self,
-        integration_type: &wamn_registry::integration_code::IntegrationCode,
-        version: Option<i32>,
-    ) -> anyhow::Result<Option<IntegrationVersion>> {
-        let mut client = self
-            .database
-            .as_ref()
-            .context("system reader unavailable")?
-            .acquire()
-            .await?;
-        wamn_registry::connections::integration_version(&mut client, integration_type, version)
-            .await
-            .context("read the integration version")
-    }
 }
 
-pub use wamn_registry::connections::{ConnectionGeneration, IntegrationVersion};
+pub use wamn_registry::connections::ConnectionGeneration;
 
 #[cfg(test)]
 mod tests {
