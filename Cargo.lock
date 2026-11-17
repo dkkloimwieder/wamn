@@ -5858,6 +5858,7 @@ dependencies = [
  "wamn-kubernetes",
  "wamn-registry",
  "wash-runtime",
+ "wat",
 ]
 
 [[package]]

@@ -107,22 +107,21 @@ impl AuthorizedInvocation {
         if let Some(context) = &context {
             validate_context(&identity, context)?;
         }
-        let lifetime = postgres.scopes.enter(
-            scope,
-            [
-                Box::new(Authority {
-                    identity,
-                    causation,
-                    read,
-                    ..Authority::default()
-                }) as Box<dyn InvocationAuthority>,
-                Box::new(Scope {
-                    context,
-                    invocation,
-                }),
-            ],
-            InvocationTrace::capture(),
-        )?;
+        let mut authorities = vec![Box::new(Authority {
+            identity,
+            causation,
+            read,
+            ..Authority::default()
+        }) as Box<dyn InvocationAuthority>];
+        if context.is_some() || invocation.is_some() {
+            authorities.push(Box::new(Scope {
+                context,
+                invocation,
+            }));
+        }
+        let lifetime = postgres
+            .scopes
+            .enter(scope, authorities, InvocationTrace::capture())?;
         Ok(Arc::new(Self { lifetime, caller }))
     }
 

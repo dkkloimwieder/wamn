@@ -31,7 +31,7 @@ use wamn_catalog::edge_bundle::{
 use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME};
 use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::{ArtifactSource as _, LocalComponentSource};
-use wamn_engine::operation::native_workload::NativeComponent;
+use crate::native_operation::native_workload::NativeComponent;
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget, validate_component_in_release};
 
 use crate::grants::Grants;

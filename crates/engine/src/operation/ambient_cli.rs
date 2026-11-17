@@ -9,10 +9,10 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 use wasmtime_wasi::cli::{WasiCli, WasiCliCtx, WasiCliCtxView, WasiCliView as _};
 use wasmtime_wasi::p2::bindings::cli;
 
-pub(crate) const ID: &str = "wamn-empty-cli";
+pub const ID: &str = "wamn-empty-cli";
 
 #[derive(Debug)]
-pub(crate) struct EmptyCli;
+pub struct EmptyCli;
 
 fn empty_context(ctx: &mut SharedCtx) -> WasiCliCtxView<'_> {
     *ctx.active_ctx.ctx.cli() = WasiCliCtx::default();
