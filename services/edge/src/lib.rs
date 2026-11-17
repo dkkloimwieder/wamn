@@ -44,6 +44,7 @@ pub mod device;
 pub mod forward;
 pub mod grants;
 pub mod operation;
+pub mod native_operation;
 pub mod policy;
 pub mod refusals;
 pub mod release;

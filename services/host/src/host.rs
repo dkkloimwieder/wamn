@@ -516,6 +516,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         ),
         logging,
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
+        Arc::new(wamn_engine::operation::WamnOperation::new(
+            Arc::clone(&postgres) as Arc<dyn plugin::HostPlugin>,
+        )),
         Arc::<WamnPostgres>::clone(&postgres),
         // wamn-0h0g.15.96: READER 3 of the loaded release. Route projection stays wholly
         // in-memory; a PAT-protected route additionally carries the targeted

@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use wamn_catalog::AdmittedComponent;
-use wamn_engine::operation::invocation_policy::ApplicationHost;
-use wamn_engine::operation::native_workload::{
+use crate::native_operation::invocation_policy::ApplicationHost;
+use crate::native_operation::native_workload::{
     NativeApplication, NativeWorkloadSpec, load_native_application,
 };
 use wamn_engine::operation::next_scope;

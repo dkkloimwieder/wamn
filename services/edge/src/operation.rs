@@ -12,7 +12,7 @@ use wamn_engine::entry_operation::operation::{self, Begun, Refusal};
 use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::native_routes::{authorize_registered_operation, bounded_node_deadline_ms};
-use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
+use crate::native_operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wash_runtime::engine::ctx::{ActiveCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};

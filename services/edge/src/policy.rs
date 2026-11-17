@@ -12,9 +12,9 @@ use tokio::time::Instant;
 use wamn_catalog::AdmittedComponent;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::native_routes::authorize_released_operation;
-use wamn_engine::operation::invocation_policy::{InvocationPolicy, InvocationScope};
-use wamn_engine::operation::native_call::{NativeCallFailure, NativeInvocation};
-use wamn_engine::operation::native_workload::native_component_name;
+use crate::native_operation::invocation_policy::{InvocationPolicy, InvocationScope};
+use crate::native_operation::native_call::{NativeCallFailure, NativeInvocation};
+use crate::native_operation::native_workload::native_component_name;
 use wamn_engine::release_manifest::LoadedRelease;
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -196,7 +196,7 @@ mod tests {
     use std::time::Duration;
     use wamn_engine::flow_http_routing::CredentialType;
     use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
-    use wamn_engine::operation::native_workload::{
+    use crate::native_operation::native_workload::{
         NativeApplication, NativeWorkloadSpec, load_native_application,
     };
     use wamn_engine::operation::node_types;
@@ -246,7 +246,7 @@ mod tests {
                 deadline_ms: Some(1000),
                 config: "null".into(),
             },
-            input: wamn_engine::operation::native_call::NativeInput::Encoded("{}".into()),
+            input: crate::native_operation::native_call::NativeInput::Encoded("{}".into()),
             deadline: Instant::now() + Duration::from_secs(60),
             facts: EdgeFacts::entry(Some(AuthenticatedCaller::new(
                 "record-http".parse().unwrap(),
