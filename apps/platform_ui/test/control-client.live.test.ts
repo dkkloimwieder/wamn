@@ -65,9 +65,6 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
       rows.forEach((row, index) =>
         expect(observed).toHaveProperty(["value", "users", String(index), "roles"], row["roles"]),
       );
-      rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "users", String(index), "adminCovered"], row["admin_covered"]),
-      );
       for (const [wireName, member] of [
         ["total", "total"],
         ["next_cursor", "nextCursor"],

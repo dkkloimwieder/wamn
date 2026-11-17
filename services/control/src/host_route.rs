@@ -5,14 +5,11 @@
 //! instead of a component. [`HostRouteDelivery`] serves the native platform
 //! routes of the loaded release.
 
-use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use wamn_catalog::serving_context::ServingContext;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteSet};
-use wamn_engine::application::WorkloadRoutes;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
@@ -22,9 +19,7 @@ use wamn_identity::control::{control_projects_page, is_org_admin, org_projects_p
 use wamn_identity::paging::Order;
 use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::PrincipalId;
-use wamn_sql::WamnPostgres;
 
-use crate::application_route::{ApplicationRoutes, WorkflowRoutes};
 use crate::control_route::{ControlRoutes, Refusal, control_page};
 
 /// Native control execution after the route checks the caller's current authority.
@@ -38,55 +33,35 @@ pub trait ControlExecution: Send + Sync + fmt::Debug {
     ) -> anyhow::Result<Value>;
 }
 
-/// What the handlers of one host read.
-pub enum HostRouteHandlers {
-    /// The application administration routes of one project environment.
-    Application {
-        postgres: Arc<WamnPostgres>,
-        project: wamn_registry::ProjectId,
-        /// The identity reader of `wamn_system` and the org of the host, for
-        /// the covering test of an `admin` revoke. A host without an
-        /// authenticated route has none.
-        identity: Option<(sqlx::PgPool, wamn_registry::OrgId)>,
-        config: Arc<WorkloadRoutes>,
-        workflow: Arc<ServingContext>,
-    },
-    /// The control routes of one org, through its `control` login.
-    Control {
-        /// The `control` login for reads.
-        control: sqlx::PgPool,
-        /// A second `control` login that holds one write transaction at a
-        /// time, so a read never runs inside a write.
-        writer: Arc<tokio::sync::Mutex<sqlx::PgConnection>>,
-        /// The operator client of the identity service, for `user.invite`.
-        identity: Option<PatIssuerConfig>,
-        /// The configured identity issuer address used for project user rows.
-        issuer: String,
-        /// The mounted Secret `wamn-control-administration-<org>`: one file
-        /// per environment that holds its administration login.
-        administration: Option<std::path::PathBuf>,
-        /// The runtime status source selected by the serving mode.
-        status: Arc<dyn crate::environment_status::StatusSource>,
-        org: wamn_registry::OrgId,
-    },
+/// The control routes of one org, through its `control` login.
+pub struct HostRouteHandlers {
+    /// The `control` login for reads.
+    pub control: sqlx::PgPool,
+    /// A second `control` login that holds one write transaction at a
+    /// time, so a read never runs inside a write.
+    pub writer: Arc<tokio::sync::Mutex<sqlx::PgConnection>>,
+    /// The operator client of the identity service, for `user.invite`.
+    pub identity: Option<PatIssuerConfig>,
+    /// The configured identity issuer address used for project user rows.
+    pub issuer: String,
+    /// The mounted Secret `wamn-control-administration-<org>`: one file
+    /// per environment that holds its administration login.
+    pub administration: Option<std::path::PathBuf>,
+    /// The runtime status source selected by the serving mode.
+    pub status: Arc<dyn crate::environment_status::StatusSource>,
+    pub org: wamn_registry::OrgId,
 }
 
 impl fmt::Debug for HostRouteHandlers {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Application { project, .. } => formatter
-                .debug_struct("Application")
-                .field("project", project)
-                .finish_non_exhaustive(),
-            Self::Control { org, .. } => formatter
-                .debug_struct("Control")
-                .field("org", org)
-                .finish_non_exhaustive(),
-        }
+        formatter
+            .debug_struct("Control")
+            .field("org", &self.org)
+            .finish_non_exhaustive()
     }
 }
 
-/// Serves the host routes of a loaded release.
+/// Serves the native Control route set.
 pub struct HostRouteDelivery {
     registry_token_metadata: bool,
     operation_jobs: Option<wamn_kubernetes::kubernetes_api::KubernetesApi>,
@@ -109,7 +84,7 @@ impl fmt::Debug for HostRouteDelivery {
 }
 
 impl HostRouteDelivery {
-    /// Serve the native platform routes of the loaded release.
+    /// Serve the native Control route set.
     pub fn new(handlers: HostRouteHandlers) -> Self {
         Self {
             handlers,
@@ -130,24 +105,6 @@ impl HostRouteDelivery {
     ) -> Self {
         self.control_authenticator = Some(authenticator);
         self
-    }
-
-    fn attachments(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &'static wamn_catalog::canonical_name::CanonicalName,
-            &'static HostAttachment,
-        ),
-    > + '_ {
-        self.route_set().attachments()
-    }
-
-    fn route_set(&self) -> HostRouteSet {
-        match self.handlers {
-            HostRouteHandlers::Application { .. } => HostRouteSet::Application,
-            HostRouteHandlers::Control { .. } => HostRouteSet::Control,
-        }
     }
 
     /// Use the process-owned artifact and transport resources for candidate tests.
@@ -195,42 +152,25 @@ impl HostRouteDelivery {
         self
     }
 
-    /// Share the native file handlers with the JSON mutation routes.
+    /// Serve an authenticated Control operation.
     async fn handle(
         &self,
         attachment: &HostAttachment,
         caller: &AuthenticatedCaller,
-        request_id: Option<&str>,
         payload: &str,
     ) -> Result<serde_json::Value, Refusal> {
         let principal = caller.principal_id();
-        match (attachment.route.handler, &self.handlers) {
-            (
-                HostHandler::PermissionMine,
-                HostRouteHandlers::Application {
-                    postgres,
-                    project,
-                    config,
-                    ..
-                },
-            ) => {
-                let held = postgres
-                    .held_operation_grants(
-                        project,
-                        &config.project_env_key,
-                        principal,
-                        &attachment.operation.clone().into(),
-                    )
-                    .await
-                    .map_err(Refusal::Failed)?;
-                let permissions = if held.admin {
-                    served_references(config)
-                } else {
-                    held.references.into_iter().collect()
-                };
-                Ok(json!({ "admin": held.admin, "permissions": permissions }))
-            }
-            (HostHandler::ControlMine, HostRouteHandlers::Control { control, org, .. }) => {
+        let HostRouteHandlers {
+            control,
+            writer,
+            identity,
+            issuer,
+            administration,
+            status,
+            org,
+        } = &self.handlers;
+        match attachment.route.handler {
+            HostHandler::ControlMine => {
                 let mut transaction =
                     wamn_identity::transaction::read_pool(control, principal).await?;
                 let org_admin = is_org_admin(&mut transaction, principal, org).await?;
@@ -278,54 +218,7 @@ impl HostRouteDelivery {
                 transaction.commit().await?;
                 Ok(answer)
             }
-            (
-                HostHandler::WorkflowStart,
-                HostRouteHandlers::Application {
-                    postgres,
-                    project,
-                    workflow,
-                    ..
-                },
-            ) => {
-                WorkflowRoutes {
-                    postgres,
-                    project,
-                    release: workflow,
-                }
-                .start_workflow(caller, payload)
-                .await
-            }
-            (
-                _,
-                HostRouteHandlers::Application {
-                    postgres,
-                    project,
-                    identity,
-                    config,
-                    ..
-                },
-            ) => {
-                ApplicationRoutes {
-                    postgres,
-                    project,
-                    config,
-                    identity: identity.as_ref().map(|(client, org)| (client, org)),
-                }
-                .handle(attachment, principal, request_id, payload)
-                .await
-            }
-            (
-                _,
-                HostRouteHandlers::Control {
-                    control,
-                    writer,
-                    identity,
-                    issuer,
-                    administration,
-                    status,
-                    org,
-                },
-            ) => {
+            _ => {
                 ControlRoutes {
                     control,
                     writer,
@@ -346,24 +239,6 @@ impl HostRouteDelivery {
             }
         }
     }
-}
-
-/// Every operation the release serves, without its package version: the
-/// registered operations of its components and its host routes.
-fn served_references(config: &WorkloadRoutes) -> BTreeSet<String> {
-    let registered = config
-        .application
-        .components
-        .iter()
-        .flat_map(|component| &component.operations)
-        .filter(|(_, operation)| operation.public)
-        .map(|(operation, _)| {
-            wamn_catalog::sealed_operation_reference(operation.as_str()).to_owned()
-        });
-    let host = HostRouteSet::Application
-        .attachments()
-        .map(|(_, attachment)| attachment.reference.clone());
-    registered.chain(host).collect()
 }
 
 /// The one request element of a host route request: its request id and its input. A
@@ -407,7 +282,7 @@ impl HostRouteDelivery {
     ) -> DeliveryReport {
         let resolved = match &request.source {
             Source::Attachment(id) => {
-                resolve_authorized_host_route(self.route_set(), id, caller.as_ref())
+                resolve_authorized_host_route(HostRouteSet::Control, id, caller.as_ref())
             }
             Source::Registration(_) => None,
         };
@@ -438,15 +313,7 @@ impl HostRouteDelivery {
                 Value::Array(vec![Value::Object(request_element)]).to_string()
             ))
         };
-        match self
-            .handle(
-                attachment,
-                &caller,
-                request_id.as_deref(),
-                &input.to_string(),
-            )
-            .await
-        {
+        match self.handle(attachment, &caller, &input.to_string()).await {
             Ok(result) => outcome("value", result),
             Err(Refusal::Declared { code, detail }) => {
                 let mut error = serde_json::Map::new();
@@ -471,7 +338,6 @@ impl HostRouteDelivery {
     /// Serve a platform endpoint through native ingress.
     pub async fn http(
         &self,
-        routing: &wamn_engine::flow_http_routing::FlowHttpRouting,
         request: hyper::Request<wasmtime_wasi_http::WasiBody>,
     ) -> hyper::Response<wasmtime_wasi_http::WasiBody> {
         use http_body_util::BodyExt as _;
@@ -492,7 +358,7 @@ impl HostRouteDelivery {
             );
             response
         };
-        let Some((id, attachment)) = self.attachments().find(|(_, attachment)| {
+        let Some((id, attachment)) = HostRouteSet::Control.attachments().find(|(_, attachment)| {
             attachment.definition["route"]["path"].as_str() == Some(request.uri().path())
         }) else {
             return answer(404, json!({"error":{"code":"route-not-found"}}));
@@ -533,25 +399,7 @@ impl HostRouteDelivery {
         }
         let authentication = match &self.control_authenticator {
             Some(authenticator) => authenticator.authenticate_control(id, read, &headers).await,
-            None => match &self.handlers {
-                HostRouteHandlers::Application { config, .. } => {
-                    routing
-                        .authenticate_policy(
-                            &config.project_env_key,
-                            id,
-                            wamn_engine::flow_http_routing::RoutePolicy {
-                                policy: &attachment.auth_policy,
-                                read,
-                            },
-                            &headers,
-                            &bytes,
-                        )
-                        .await
-                }
-                HostRouteHandlers::Control { .. } => {
-                    Err(wamn_engine::flow_http_routing::authentication_unavailable())
-                }
-            },
+            None => Err(wamn_engine::flow_http_routing::authentication_unavailable()),
         };
         let caller = match authentication {
             Ok(caller) => caller,

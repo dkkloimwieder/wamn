@@ -55,7 +55,7 @@ export function RoleUsers(props: ScreenProps) {
               </RecordLink>
             ),
             actions: (cell) => (
-              <Show when={!(name === "admin" && cell.row.adminCovered)}>
+              <Show when={name !== "admin"}>
                 <ConfirmAction
                   label={`Revoke ${name} from ${cell.row.displayName ?? cell.row.email}`}
                   description={`Revoke ${name} from ${cell.row.displayName ?? cell.row.email}?`}

@@ -19,14 +19,6 @@ const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.p
     ON p.role_name = r.role_name \
     WHERE u.id = $1";
 
-const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permission.permission \
-    FROM platform.\"user\" AS \"user\" \
-    JOIN platform.user_role AS user_role \
-      ON user_role.user_id = \"user\".id \
-    LEFT JOIN platform.permission AS permission \
-      ON permission.role_name = user_role.role_name \
-    WHERE \"user\".id = $1 AND \"user\".status = 'active'";
-
 fn principal_grants_from_rows(
     rows: &[sqlx::postgres::PgRow],
 ) -> Result<wamn_authority::auth_cache::PrincipalGrants, sqlx::Error> {
@@ -57,18 +49,6 @@ pub async fn principal_grants(
     principal_grants_from_rows(&rows)
 }
 
-/// Read the active user's role and permission rows for a host route.
-pub async fn user_operation_permissions(
-    connection: &mut sqlx::PgConnection,
-    user_id: &wamn_identity_protocol::PrincipalId,
-) -> Result<HeldOperationGrants, sqlx::Error> {
-    let rows = sqlx::query(USER_OPERATION_PERMISSIONS_SQL)
-        .bind(user_id)
-        .fetch_all(connection)
-        .await?;
-    HeldOperationGrants::from_rows(&rows)
-}
-
 /// An absent environment row remains active.
 pub async fn environment_inactive(
     connection: &mut sqlx::PgConnection,
@@ -93,21 +73,6 @@ pub struct HeldOperationGrants {
 }
 
 impl HeldOperationGrants {
-    /// Fold rows of `(role_name, permission)`, where a null permission is a
-    /// role without permissions. The held references are the rows.
-    pub fn from_rows(rows: &[sqlx::postgres::PgRow]) -> Result<Self, sqlx::Error> {
-        let mut held = Self::default();
-        for row in rows {
-            let role: String = row.try_get(0)?;
-            held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
-            if let Some(reference) = row.try_get::<Option<String>, _>(1)? {
-                held.references.insert(reference);
-            }
-            held.roles.insert(role);
-        }
-        Ok(held)
-    }
-
     /// The one role a caller with these grants acts with
     /// (docs/architecture/execution.md#environment-workflows): `admin` for a
     /// holder of `admin`, the single role of a caller that holds exactly one,

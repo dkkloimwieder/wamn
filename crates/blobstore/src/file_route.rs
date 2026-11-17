@@ -717,12 +717,12 @@ impl FileRoutes {
         &self,
         routing: &FlowHttpRouting,
         request: hyper::Request<WasiBody>,
-    ) -> Option<hyper::Response<WasiBody>> {
+    ) -> std::ops::ControlFlow<hyper::Response<WasiBody>, hyper::Request<WasiBody>> {
         let Some(route) = native_route(request.uri().path()) else {
             return self.host_http(routing, request).await;
         };
         let result = self.http_request(routing, request, route).await;
-        Some(match result {
+        std::ops::ControlFlow::Break(match result {
             Ok(response) => response,
             Err(error) => error_response(&error),
         })
@@ -732,8 +732,8 @@ impl FileRoutes {
         &self,
         routing: &FlowHttpRouting,
         request: hyper::Request<WasiBody>,
-    ) -> Option<hyper::Response<WasiBody>> {
-        let (id, attachment) = wamn_catalog::HostRouteSet::Application
+    ) -> std::ops::ControlFlow<hyper::Response<WasiBody>, hyper::Request<WasiBody>> {
+        let Some((id, attachment)) = wamn_catalog::HostRouteSet::Application
             .attachments()
             .filter(|(_, attachment)| {
                 matches!(
@@ -746,10 +746,13 @@ impl FileRoutes {
             })
             .find(|(_, attachment)| {
                 attachment.definition["route"]["path"].as_str() == Some(request.uri().path())
-            })?;
+            })
+        else {
+            return std::ops::ControlFlow::Continue(request);
+        };
         let read = attachment.route.type_.is_read();
         if request.method().as_str() != attachment.route.type_.http_method() {
-            return Some(response(
+            return std::ops::ControlFlow::Break(response(
                 405,
                 &json!({"error":{"code":"method-not-allowed"}}),
             ));
@@ -769,11 +772,17 @@ impl FileRoutes {
         let mut bytes = Vec::new();
         while let Some(frame) = body.frame().await {
             let Ok(frame) = frame else {
-                return Some(response(400, &json!({"error":{"code":"invalid-body"}})));
+                return std::ops::ControlFlow::Break(response(
+                    400,
+                    &json!({"error":{"code":"invalid-body"}}),
+                ));
             };
             if let Ok(data) = frame.into_data() {
                 if bytes.len().saturating_add(data.len()) > 1024 * 1024 {
-                    return Some(response(413, &json!({"error":{"code":"body-too-large"}})));
+                    return std::ops::ControlFlow::Break(response(
+                        413,
+                        &json!({"error":{"code":"body-too-large"}}),
+                    ));
                 }
                 bytes.extend_from_slice(&data);
             }
@@ -797,9 +806,14 @@ impl FileRoutes {
             .await
         {
             Ok(Some(caller)) => caller,
-            Ok(None) => return Some(response(401, &json!({"error":{"code":"unauthorized"}}))),
+            Ok(None) => {
+                return std::ops::ControlFlow::Break(response(
+                    401,
+                    &json!({"error":{"code":"unauthorized"}}),
+                ));
+            }
             Err(error) => {
-                return Some(response(
+                return std::ops::ControlFlow::Break(response(
                     error.status,
                     &json!({"error":{"code":error.code}}),
                 ));
@@ -811,7 +825,7 @@ impl FileRoutes {
             Some(&caller),
         );
         if !matches!(authorized, Some(Ok(_))) {
-            return Some(response(
+            return std::ops::ControlFlow::Break(response(
                 403,
                 &json!({"error":{"code":"permission-denied"}}),
             ));
@@ -819,12 +833,22 @@ impl FileRoutes {
         let payload = if read {
             match wamn_catalog::read_query::decode_read_query(&query) {
                 Ok(input) => json!([input]),
-                Err(_) => return Some(response(400, &json!({"error":{"code":"invalid-query"}}))),
+                Err(_) => {
+                    return std::ops::ControlFlow::Break(response(
+                        400,
+                        &json!({"error":{"code":"invalid-query"}}),
+                    ));
+                }
             }
         } else {
             match serde_json::from_slice::<Value>(&bytes) {
                 Ok(input) => input,
-                Err(_) => return Some(response(400, &json!({"error":{"code":"malformed-json"}}))),
+                Err(_) => {
+                    return std::ops::ControlFlow::Break(response(
+                        400,
+                        &json!({"error":{"code":"malformed-json"}}),
+                    ));
+                }
             }
         };
         if let Some(schema) = attachment.definition.get("input-schema") {
@@ -836,11 +860,17 @@ impl FileRoutes {
                     .compile(location, &mut schemas)
                     .is_ok_and(|index| schemas.validate(&payload, index).is_ok());
             if !valid {
-                return Some(response(400, &json!({"error":{"code":"invalid-input"}})));
+                return std::ops::ControlFlow::Break(response(
+                    400,
+                    &json!({"error":{"code":"invalid-input"}}),
+                ));
             }
         }
         let Some(elements) = payload.as_array().filter(|elements| elements.len() == 1) else {
-            return Some(response(400, &json!({"error":{"code":"invalid-input"}})));
+            return std::ops::ControlFlow::Break(response(
+                400,
+                &json!({"error":{"code":"invalid-input"}}),
+            ));
         };
         let element = &elements[0];
         let input = if read { element } else { &element["value"] };
@@ -857,9 +887,9 @@ impl FileRoutes {
                     if error.refusal == Some(FileRefusal::PermissionDenied) { json!({"operation":attachment.reference}) }
                     else { json!({"field":error.field}) }}));
             }
-            Err(error) => return Some(error_response(&error)),
+            Err(error) => return std::ops::ControlFlow::Break(error_response(&error)),
         }
-        Some(response(200, &Value::Array(vec![Value::Object(outcome)])))
+        std::ops::ControlFlow::Break(response(200, &Value::Array(vec![Value::Object(outcome)])))
     }
 
     async fn http_request(
