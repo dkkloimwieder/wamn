@@ -34,6 +34,7 @@ impl std::fmt::Debug for Request {
 /// Retrying a partial creation reuses its identity and grants.
 pub async fn create(
     request: &Request,
+    identity_issuer: &str,
 ) -> anyhow::Result<wamn_identity_protocol::wire::PatResponse> {
     wamn_provision::validate_project_env(&request.org, &request.project, &request.env)?;
     ensure!(
@@ -115,6 +116,7 @@ pub async fn create(
     if !present {
         write_service(
             &mut tx,
+            identity_issuer,
             ApplicationUser {
                 principal_id: principal.id(),
                 email: &subject,

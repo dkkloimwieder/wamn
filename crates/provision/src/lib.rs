@@ -15,10 +15,10 @@ pub mod migration;
 pub mod migrations;
 mod name;
 pub mod operation_grants;
-pub mod platform_principals;
 /// The two T1 control-database read consumers' targeted credential contract.
 pub mod session_target;
 pub mod sql;
+pub mod transaction_identity;
 /// Test databases with the system control store minimum.
 #[cfg(any(test, feature = "test-util"))]
 #[path = "../tests/support/database.rs"]
@@ -35,7 +35,7 @@ pub use name::{
     project_env_namespace, project_env_secret_name, validate_project_env, validate_project_env_cdc,
     workload_secret_name,
 };
-pub use platform_principals::{bind_platform_principal_sql, platform_principals_sql};
+pub use transaction_identity::bind_platform_principal_sql;
 /// The platform component list, for callers that bind a component as the actor.
 pub use wamn_identity_protocol::PlatformComponent;
 pub use workload_role::{

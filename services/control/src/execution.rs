@@ -164,6 +164,7 @@ impl crate::host_route::ControlExecution for Execution {
                         system_database_url: self.system_database.clone(),
                         identity: self.identity.clone(),
                     },
+                    &self.platform.identity_issuer,
                 )
                 .await?;
                 Ok(serde_json::to_value(token)?)
