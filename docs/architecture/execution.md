@@ -509,17 +509,31 @@ The accessors in `wamn_authority` read only its caller row. A guest cannot repla
 
 A workflow is an authored graph that belongs to one application.
 Its entry is Request, Schedule or Data change.
-The workflow service manages the walk and calls `wamn:workflow/node.call` with a sibling name and export.
+The workflow service reads format 0.2 graphs and calls each sibling and export named in the graph through `wamn:workflow/node.call`.
 The host checks that pair against `wamn.application` on the `flow-http` sibling and dispatches to that component.
 The same lookup applies to palette nodes.
+Each entry passes the stored input unchanged, including when an admin runs the workflow.
+Retryable and rate-limited node errors get three attempts by default.
 The host creates an authority handle for each Request or run.
 The handle specifies who executes, their role, and the lease for a durable run.
+
+The first Response supplies the HTTP status and JSON body.
+If the walk has pending nodes, the service saves their state in a checkpoint and returns the Response.
+The service continues the walk after returning the Response.
+If the Request reaches its deadline before a Response, the call returns a timeout.
+The result of a durable Request run records the Response status and body.
 
 Schedule admission evaluates the five-field cron in UTC for the supplied minute.
 The input is `{"due":"<due RFC 3339>"}`, with UTC spelled as `Z`.
 The workflow version and UTC minute identify a schedule run.
 The host admits only one run across replicas.
 
+The service admits schedules each UTC minute and takes expired leases every 30 seconds.
+It starts each leased run immediately and renews the lease while the run is active.
+
+The service pulls from the durable consumer of each enabled Data change workflow.
+It acknowledges each message after admission and then runs any workflow for which it received a lease.
+It sends JetStream progress acknowledgements during long deliveries.
 For Data change, the host verifies the subject and the `Nats-Msg-Id` against the CDC envelope.
 It checks the source package, entity, operation and optional JMESPath condition.
 A change qualifies when its commit log sequence number is at least the workflow's enable LSN.

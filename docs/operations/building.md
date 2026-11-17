@@ -1,7 +1,7 @@
 # Building
 
 Run commands from the repository root with the pinned toolchain and committed lock files.
-The native toolchain is Rust 1.100.0 with Clippy, rustfmt, and `wasm32-wasip2`.
+The pinned Rust 1.100.0 toolchain includes Clippy, rustfmt, and the `wasm32-wasip2` and `wasm32-wasip3` targets.
 Native builds require system compiler tools and `protoc`.
 The web workspace uses Node 24.21.0 LTS and pnpm 12.9.1.
 TypeScript 7 compiles the web packages. The TypeScript 6 compatibility package supplies the API that ESLint requires.
@@ -65,6 +65,12 @@ cargo build --locked --offline -p wamn-host -p wamn-control -p wamn-cli -p wamn-
 `wamn-control` serves authenticated org control routes and runs authorized operation Jobs.
 `wamn` runs internal bootstrap steps.
 Development uses the identity service installed on `kind`. The CLI needs no identity process beside it.
+
+Build the workflow service for `wasm32-wasip3` from the repository root:
+
+```bash
+cargo build --manifest-path apps/Cargo.toml -p workflow-service --target wasm32-wasip3
+```
 
 [`wamn build`](#wamn-build) compiles the components of each package it builds.
 Each guest gets its own Cargo invocation, with the release profile, for `wasm32-wasip2`.
