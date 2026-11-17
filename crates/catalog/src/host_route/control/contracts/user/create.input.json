@@ -1,0 +1,24 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.email",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Email"
+    },
+    {
+      "path": "value.display_name",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Display name"
+    }
+  ]
+}

@@ -252,7 +252,7 @@ const DROP_ORG_ROLES_SQL: &str = "DELETE FROM identity.org_roles \
 const DEACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET status = 'inactive' \
     WHERE principal_id = $1 AND org = $2 AND status <> 'inactive'";
 
-const ORG_USERS_SQL: &str = "SELECT p.id, p.email, p.display_name, m.status, \
+const ORG_USERS_SQL: &str = "SELECT p.id, p.email, p.display_name, m.status, p.status, \
     EXISTS (SELECT 1 FROM identity.org_roles o \
         WHERE o.principal_id = p.id AND o.org = $1 AND o.role = $2) \
     FROM identity.org_memberships m JOIN identity.principals p ON p.id = m.principal_id \
@@ -272,7 +272,7 @@ pub struct MemberGrants {
 }
 
 /// Write the active org membership of an invited user, then each requested
-/// grant through its one write. Platform installation and `user.invite` call it.
+/// grant through its one write. Control also uses this for creation without grants.
 pub async fn invite_member(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
@@ -289,6 +289,51 @@ pub async fn invite_member(
     for (project, env) in &grants.memberships {
         grant_member(client, principal_id, org, project, env).await?;
     }
+    Ok(())
+}
+
+/// Disable a user of this org if no other org has an active membership.
+///
+/// The issuer calls this within a read-committed write transaction. The
+/// principal lock orders the membership check against concurrent activations
+/// and the status change against renewal.
+pub async fn disable_user(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    principal: &PrincipalId,
+    org: &wamn_registry::OrgId,
+) -> Result<(), IdentityError> {
+    let user = sqlx::query_scalar::<_, PrincipalId>(
+        "SELECT id FROM identity.principals WHERE id = $1 AND type = 'user' FOR NO KEY UPDATE",
+    )
+    .bind(principal)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| database_error(&error))?;
+    let (member, active_elsewhere): (bool, bool) = sqlx::query_as(
+        "SELECT EXISTS (SELECT FROM identity.org_memberships WHERE principal_id = $1 AND org = $2),
+                EXISTS (SELECT FROM identity.org_memberships
+                        WHERE principal_id = $1 AND org <> $2 AND status = 'active')",
+    )
+    .bind(principal)
+    .bind(org)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|error| database_error(&error))?;
+    if user.is_none() || !member {
+        return Err(IdentityError::refused(
+            IdentityErrorType::NotFound,
+            IdentityRefusal::UserNotFound,
+            "the org has no such user",
+        ));
+    }
+    if active_elsewhere {
+        return Err(IdentityError::refused(
+            IdentityErrorType::Conflict,
+            IdentityRefusal::UserInAnotherOrg,
+            "the user has an active membership in another org",
+        ));
+    }
+    crate::disable_principal(tx, principal).await?;
     Ok(())
 }
 
@@ -385,6 +430,8 @@ pub struct OrgUser {
     pub display_name: String,
     /// The org-local status: `active` or `inactive`.
     pub status: String,
+    /// The global principal status: `active` or `disabled`.
+    pub principal_status: String,
     /// Whether the user holds `org-admin` in the org.
     pub org_admin: bool,
 }
@@ -421,7 +468,8 @@ pub async fn org_users_page(
                 email: row.try_get(1).map_err(|error| database_error(&error))?,
                 display_name: row.try_get(2).map_err(|error| database_error(&error))?,
                 status: row.try_get(3).map_err(|error| database_error(&error))?,
-                org_admin: row.try_get(4).map_err(|error| database_error(&error))?,
+                principal_status: row.try_get(4).map_err(|error| database_error(&error))?,
+                org_admin: row.try_get(5).map_err(|error| database_error(&error))?,
             })
         })
         .collect()

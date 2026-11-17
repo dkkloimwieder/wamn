@@ -41,6 +41,7 @@ wamn-provision = { workspace = true }
 wamn-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 url = { workspace = true }
+x509-parser = "0.18.1"
 
 [dev-dependencies]
 chrono = { workspace = true, features = ["std"] }

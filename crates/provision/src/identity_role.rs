@@ -67,10 +67,7 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 10] = [
     ),
 ];
 
-/// Narrow password and invitation endpoint column grants. Identity creates a
-/// user that an invitation names
-/// (docs/architecture/overview.md#organization-membership-and-administration),
-/// and changes no principal it did not create.
+/// Narrow column grants for passwords and user management.
 pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
     ("principals", "SELECT", &["email"]),
     (
@@ -78,6 +75,7 @@ pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
         "INSERT",
         &["type", "subject", "email", "display_name"],
     ),
+    ("principals", "UPDATE", &["status", "disabled_at"]),
     (
         "password_credentials",
         "SELECT",

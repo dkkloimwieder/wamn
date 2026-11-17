@@ -1,6 +1,7 @@
 {{- if .Values.controlService }}
 {{- $name := default .Release.Name .Values.name }}
 {{- $namespace := default .Release.Namespace .Values.namespace }}
+{{- $org := required "Set org for the control client certificate." .Values.org }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -47,7 +48,7 @@ spec:
             - {name: work, mountPath: /work}
             - {name: administration, mountPath: /etc/wamn/control-administration, readOnly: true}
             - {name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}
-            - {name: identity-operator, mountPath: /etc/identity-operator, readOnly: true}
+            - {name: identity-control, mountPath: /etc/identity-control, readOnly: true}
             - {name: nats, mountPath: /credentials/nats, readOnly: true}
             - {name: registry, mountPath: /credentials/registry, readOnly: true}
             {{- if .Values.control.oauthSecret }}
@@ -60,8 +61,8 @@ spec:
         - name: administration
           configMap: {name: {{ .Values.control.administration }}}
         - {name: identity-ca, configMap: {name: identity-ca}}
-        - name: identity-operator
-          secret: {secretName: {{ .Values.control.operatorSecret }}}
+        - name: identity-control
+          secret: {secretName: {{ printf "control-%s" $org | quote }}}
         - name: nats
           secret: {secretName: {{ .Values.control.natsSecret }}}
         - name: registry

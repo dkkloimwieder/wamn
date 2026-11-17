@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::json;
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_environment::environment::Platform;
-use wamn_identity_client::PatIssuerConfig;
+use wamn_identity_client::{PatIssuerConfig, users::UserClient};
 
 /// Public component configuration. Database passwords stay in CNPG Secrets.
 #[derive(Debug, Deserialize)]
@@ -86,7 +86,7 @@ pub struct Events {
     pub dup_window_secs: u64,
 }
 
-/// The identity operator connection. Private keys stay in mounted files.
+/// The identity connection. Private keys stay in mounted files.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
@@ -96,6 +96,25 @@ pub struct Identity {
     pub server_ca: Option<PathBuf>,
 }
 impl Identity {
+    fn users(&self) -> anyhow::Result<Option<UserClient>> {
+        let Some(endpoint) = self.endpoint.as_deref() else {
+            return Ok(None);
+        };
+        UserClient::new(
+            endpoint,
+            self.client_cert
+                .as_deref()
+                .context("identity client certificate is required")?,
+            self.client_key
+                .as_deref()
+                .context("identity client key is required")?,
+            self.server_ca
+                .as_deref()
+                .context("identity server CA is required")?,
+        )
+        .map(Some)
+    }
+
     fn connection(&self) -> PatIssuerConfig {
         PatIssuerConfig {
             endpoint: self.endpoint.clone(),
@@ -237,7 +256,7 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
             writer: Arc::new(tokio::sync::Mutex::new(
                 wamn_postgres::connect(&database).await?,
             )),
-            identity: Some(config.identity.connection()),
+            identity: config.identity.users()?,
             issuer: config.session_issuer,
             administration: Some(config.administration_dir.clone()),
             status: Arc::new(crate::environment_status::KubernetesSource),

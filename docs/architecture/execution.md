@@ -129,8 +129,10 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:workflow/start@0.9.0` | Authority `Granted`. Takes `workflow_id`, `input_json` and `idempotency_key`, and admits one run of the enabled version of that [environment workflow](#environment-workflows). Answers `run_id`. Refusals: `invalid_input`, `active_role_required`, `workflow_not_enabled`, `workflow_not_served` and `idempotency_conflict`. |
 | `wamn-control:connection/authorize@0.9.0` | ProjectAdmin authority. Takes `project`, `env`, and `name`. Returns `authorization_url` for an authorization code connection. |
 | `wamn-control:control/mine@0.9.0` | `org_admin`, and projects reached by the current org or project grants. `project_admin` marks authority over the whole project. |
-| `wamn-control:user/list@0.9.0` | `users`: each member of the org with `principal_id`, `email`, `display_name`, the org-local `status` and `org_admin`. An `org-admin` reads it, and so does a `project-admin` of any project of the org. |
+| `wamn-control:user/list@0.9.0` | Each member has `principal_id`, `email`, `display_name`, the org membership `status`, the global `principal_status` and `org_admin`. Org admins and project admins in the org can read it. |
+| `wamn-control:user/create@0.9.0` | Takes `email` and `display_name`. Creates or reuses a user and activates its org membership without sending mail. Answers `principal_id` and `enrolled`. |
 | `wamn-control:user/invite@0.9.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
+| `wamn-control:user/disable@0.9.0` | Takes `principal_id` and disables the principal. Answers `principal_id` and `status: disabled`. Refuses with `user_in_another_org` if another org has an active membership for the user. |
 | `wamn-control:user/activate@0.9.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
 | `wamn-control:user/deactivate@0.9.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
 | `wamn-control:project/list@0.9.0` | `projects`: projects of the org as `{name, state}`. |
@@ -216,9 +218,11 @@ The four status routes need `org-admin`, and they write `registry.environments.s
 Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
-`user.invite` calls identity `POST /users` and `POST /invitations` with the configured identity operator certificate, through [`wamn-identity-client`](../../crates/identity-client/src/lib.rs).
-It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
-The host refuses an email or a display name that the identity rules refuse before it calls identity, and answers `user_refused` when identity refuses the user.
+Control calls identity through one HTTPS client with the certificate `CN=control-<org>`.
+`user.create` and `user.invite` call `POST /users` before writing the membership.
+`user.invite` also writes the requested grants. Control calls `POST /invitations` only when the user has no password.
+Control checks contact details before it calls identity. It answers `user_refused` when identity refuses the user.
+`user.disable` calls `POST /users/disable`. It makes no writes to project databases.
 The control set also serves `application.deploy`, `application.rollback`, `application.stop`, `release.retain`, `schema.diff`, `schema.apply`, `schema.reset`, and `operation.status`.
 Each route requires `ProjectAdmin` authority for `project` in the host's organization.
 The request names `project` and `env`.
@@ -1110,17 +1114,22 @@ The Rust web front normalizes the final address in the chain before proxying a p
 Direct requests without that header use the TLS peer address.
 Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
-Operators behind a shared proxy also share its source limit.
-
-`POST /invitations` requires the existing verified operator certificate and a `principal_id`.
+User management uses the client certificate that the operator CA verifies.
+The certificate subject must match `WAMN_IDENTITY_CONTROL_SUBJECT`, which is `CN=control-<org>`.
+User management shares the request limits. Its source is the TLS peer address.
+`POST /invitations` takes a `principal_id` and requires mail configuration.
 The service sends the one-time secret through Resend to that principal's stored email.
 A successful provider response means accepted for delivery, not confirmed inbox delivery.
 The service makes no automatic send retry and reports failed or uncertain sends as unavailable.
 
-`POST /users` requires the operator certificate and accepts `email` and `display_name`.
+`POST /users` accepts `email` and `display_name`.
 It creates the user of the email as `wamn:provisioning`, or reuses the user that has it, and answers 200 with `principal_id` and `enrolled`.
 The email folds to lower case and is also the subject. `enrolled` is true when the user has a password.
 An email that the identity rules refuse answers 400 with the reason, and a disabled user answers 409.
+
+`POST /users/disable` accepts `principal_id`. Identity checks the user's memberships in one database transaction.
+The route returns 404 if the user does not belong to the control org. It returns 409 if another org has an active membership.
+The route returns 204 after it disables the principal. A disabled principal cannot renew a login.
 
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
 `POST /password/session` accepts `email`, `password`, and `aud`, set to `urn:wamn:control:<org>`.

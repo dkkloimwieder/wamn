@@ -151,9 +151,13 @@ pub enum HostHandler {
     /// The members of the org
     /// (docs/architecture/overview.md#organization-membership-and-administration).
     UserList,
+    /// Create or reuse a user and make it a member of the org.
+    UserCreate,
     /// Create or reuse a user, make it a member of the org with the
     /// requested grants, and mail the invitation when it has no password.
     UserInvite,
+    /// Disable the global principal of a user of the org.
+    UserDisable,
     /// Make an org membership active.
     UserActivate,
     /// Revoke a member's access in the org from the leaves upward.
@@ -649,10 +653,24 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Control,
+        operation: "user.create",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserCreate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
         operation: "user.invite",
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::UserInvite,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.disable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserDisable,
     },
     HostRoute {
         set: HostRouteSet::Control,
