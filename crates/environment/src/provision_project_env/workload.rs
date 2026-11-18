@@ -1,220 +1,104 @@
-//! CNPG role credentials and non-secret component connection configuration.
+//! CloudNativePG logins and their public project connection configuration.
 
 use anyhow::Context as _;
-use serde_json::json;
-use wamn_provision::connection::managed_role;
-use wamn_provision::{
-    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, sql, workload_login,
-};
-use wamn_kubernetes::kubectl;
+use serde_json::{Value, json};
+use wamn_postgres::ConnectionConfig;
+use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
+use wamn_registry::Triple;
 
-use crate::environment::{Platform, document::EnvironmentDocument};
-
-pub(crate) use wamn_platform_install::credentials::{
-    configuration, reconcile, remove_roles, wait_role,
-};
-
-/// Provision every role once and publish only public connection facts in a ConfigMap.
-pub(crate) async fn provision(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    cluster: &str,
-    project_input: &str,
-    control_input: &str,
-) -> anyhow::Result<()> {
-    let namespace = document.org.as_str();
-    let mut project = wamn_postgres::connect(project_input).await?;
-    let mut control = wamn_postgres::connect(control_input).await?;
-    let project_options = wamn_postgres::connect_options(project_input).await?;
-    let control_options = wamn_postgres::connect_options(control_input).await?;
-    let project_database = project_options
-        .get_database()
-        .context("project database is absent")?;
-    let control_database = control_options
-        .get_database()
-        .context("control database is absent")?;
-    let control_cluster = control_options
-        .get_host()
-        .split('.')
-        .next()
-        .context("control database host is absent")?
-        .trim_end_matches("-rw");
-    let reader =
-        wamn_provision::system_reader::managed_role(&document.org, &document.env, control_database);
-    reconcile(
-        &platform.system_database_url,
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        &document.org,
-        control_cluster,
-        &reader,
-    )
-    .await?;
-    wait_role(&mut control, &reader.name).await?;
-    let reader_config = configuration(
-        document.org.as_str(),
-        control_cluster,
-        control_options.get_host().to_owned(),
-        control_options.get_port(),
-        control_database.to_owned(),
-        reader.name,
-        reader.password_secret.name.clone(),
-    );
-    let reader_map = json!({"apiVersion":"v1","kind":"ConfigMap",
-        "metadata":{"name":reader.password_secret.name,"namespace":namespace},
-        "data":{"system-reader.json":reader_config.to_json()?}});
-    kubectl::apply(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        namespace,
-        &reader_map,
-    )
-    .await?;
-    let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
-    let triple = document.triple();
-    let mut data = serde_json::Map::new();
-    data.insert(
-        "instance".into(),
-        super::read_project_env_instance(&platform.system_database_url, &triple)
-            .await?
-            .to_string()
-            .into(),
-    );
-    let mut application = None;
-    let mut dynamic = None;
-    for family in WorkloadRoleFamily::project_env_families() {
-        let is_control = family.identity_type() == WorkloadRoleIdentityType::Control;
-        let database = if is_control {
-            control_database
-        } else {
-            project_database
-        };
-        let role_cluster = if is_control { control_cluster } else { cluster };
-        let identity = match family.identity_type() {
-            WorkloadRoleIdentityType::ProjectEnvKey => WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: &key,
-                database,
-            },
-            WorkloadRoleIdentityType::ProjectEnvironment => {
-                WorkloadRoleIdentity::ProjectEnvironment {
-                    org: &document.org,
-                    project: &document.project,
-                    environment: &document.env,
-                    database,
+pub(crate) fn connections(
+    triple: &Triple,
+    owner: &ConnectionConfig,
+) -> anyhow::Result<Vec<(WorkloadRoleFamily, ConnectionConfig)>> {
+    let key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
+    let database = owner.database.as_str();
+    WorkloadRoleFamily::project_env_families()
+        .map(|family| {
+            let (username, secret) = match family {
+                WorkloadRoleFamily::Migration => {
+                    return Ok((family, owner.clone()));
                 }
-            }
-            WorkloadRoleIdentityType::Control => WorkloadRoleIdentity::Control {
-                org: &document.org,
-                project: &document.project,
-                environment: &document.env,
-                database,
-            },
-            WorkloadRoleIdentityType::Org => unreachable!("org roles are not project credentials"),
-        };
-        let username = workload_login(family, identity)?;
-        let mut secret = wamn_provision::workload_secret_name(
-            family,
-            &document.org,
-            &document.project,
-            &document.env,
-        );
-        if family == WorkloadRoleFamily::Platform {
-            secret = wamn_provision::workload_role::platform_managed_role(database)
-                .password_secret
-                .name;
-        }
-        if family == WorkloadRoleFamily::Migration {
-            secret = wamn_provision::migrations::MigrationDatabase::Project
-                .managed_role(database)
-                .password_secret
-                .name;
-        }
-        let connection = if is_control {
-            &mut control
-        } else {
-            &mut project
-        };
-        let surface = sql::stable_surface_sql(family)
-            .unwrap_or_else(|| sql::ensure_workload_acl_role_sql(family));
-        sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
-            .execute(&mut *connection)
-            .await?;
-        reconcile(
-            &platform.system_database_url,
-            &platform.target.kubeconfig,
-            &platform.target.context,
-            &document.org,
-            role_cluster,
-            &if family == WorkloadRoleFamily::Migration {
-                wamn_provision::migrations::MigrationDatabase::Project.managed_role(database)
-            } else {
-                managed_role(username.clone(), family.acl_role(), secret.clone())
-            },
-        )
-        .await?;
-        wait_role(connection, &username).await?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
-            family, database, &username,
-        )))
-        .execute(&mut *connection)
-        .await?;
-        if is_control {
-            let mapped: Option<String> =
-                sqlx::query_scalar(sql::upsert_control_author_project_env_key_mapping_sql())
-                    .bind(&username)
-                    .bind(&key)
-                    .bind(&document.org)
-                    .bind(&document.project)
-                    .bind(&document.env)
-                    .fetch_optional(&mut *connection)
-                    .await?;
-            anyhow::ensure!(
-                mapped.as_deref() == Some(key.as_str()),
-                "control login maps to another environment"
-            );
-        }
-        let host = if is_control {
-            control_options.get_host().to_owned()
-        } else {
-            platform
-                .database_host
-                .clone()
-                .unwrap_or_else(|| format!("{role_cluster}-rw.{namespace}.svc.cluster.local"))
-        };
-        let config = configuration(
-            document.org.as_str(),
-            role_cluster,
-            host,
-            platform.database_port,
-            database.into(),
-            username,
-            secret,
-        );
-        if family == WorkloadRoleFamily::App {
-            application = Some(serde_json::to_value(&config)?);
-        }
-        if family == WorkloadRoleFamily::Query {
-            dynamic = Some(serde_json::to_value(&config)?);
-        }
+                WorkloadRoleFamily::Platform => {
+                    let role = wamn_provision::workload_role::platform_managed_role(database);
+                    (role.name, role.password_secret.name)
+                }
+                _ => (
+                    workload_login(
+                        family,
+                        WorkloadRoleIdentity::ProjectEnvKey {
+                            project_env_key: &key,
+                            database,
+                        },
+                    )?,
+                    wamn_provision::workload_secret_name(
+                        family,
+                        &triple.org,
+                        &triple.project,
+                        &triple.env,
+                    ),
+                ),
+            };
+            let mut connection = owner.clone();
+            connection.username = username;
+            connection.credentials.name = secret;
+            Ok((family, connection))
+        })
+        .collect()
+}
 
+pub(crate) fn configuration_values(
+    triple: &Triple,
+    instance: &wamn_registry::instance_suffix::InstanceSuffix,
+    connections: &[(WorkloadRoleFamily, ConnectionConfig)],
+) -> anyhow::Result<Value> {
+    let mut data = serde_json::Map::new();
+    data.insert("instance".into(), instance.to_string().into());
+    for (family, connection) in connections {
         data.insert(
             format!("{}.json", family.component_stem()),
-            config.to_json()?.into(),
+            connection.to_json()?.into(),
         );
     }
-    data.insert("app.json".into(), json!({"compiled":application.context("application login is absent")?, "dynamic":dynamic.context("query login is absent")?}).to_string().into());
-    let name = wamn_provision::project_env_secret_name(
-        &document.org,
-        &document.project,
-        &document.env,
+    let login = |family| {
+        connections
+            .iter()
+            .find(|(candidate, _)| *candidate == family)
+            .map(|(_, connection)| connection)
+            .context("project login is absent")
+    };
+    data.insert(
+        "app.json".into(),
+        json!({
+            "compiled":login(WorkloadRoleFamily::App)?,
+            "dynamic":login(WorkloadRoleFamily::Query)?,
+        })
+        .to_string()
+        .into(),
     );
-    let config_map = json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":namespace},"data":data});
-    kubectl::apply(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        namespace,
-        &config_map,
-    )
-    .await?;
+    Ok(json!({
+        "name":wamn_provision::project_env_secret_name(&triple.org, &triple.project, &triple.env),
+        "data":data,
+    }))
+}
+
+pub(crate) async fn grant(
+    project: &mut sqlx::PgConnection,
+    connections: &[(WorkloadRoleFamily, ConnectionConfig)],
+) -> anyhow::Result<()> {
+    for (family, connection) in connections {
+        let surface = sql::stable_surface_sql(*family)
+            .unwrap_or_else(|| sql::ensure_workload_acl_role_sql(*family));
+        sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
+            .execute(&mut *project)
+            .await?;
+        wamn_platform_install::credentials::wait_role(project, &connection.username).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
+            *family,
+            &connection.database,
+            &connection.username,
+        )))
+        .execute(&mut *project)
+        .await?;
+    }
     Ok(())
 }

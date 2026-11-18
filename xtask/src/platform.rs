@@ -38,7 +38,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         "chart output {} exists",
         args.out.display()
     );
-    let chart = root.join("deploy/charts/release");
+    let chart = root.join("deploy/charts/application");
     let version = release_chart::chart_version(&chart)?;
     let ui = args
         .cluster
@@ -70,7 +70,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 &reference,
                 &bytes,
                 wash_runtime::oci::OciConfig {
-                    insecure: loopback(&args.registry),
+                    insecure: wamn_registry::registry_is_loopback(&args.registry),
                     ..Default::default()
                 },
                 Some(std::collections::HashMap::from([(
@@ -150,7 +150,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 &format!("{}/wamn/{image}:{version}", args.registry),
                 &bytes,
                 wash_runtime::oci::OciConfig {
-                    insecure: loopback(&args.registry),
+                    insecure: wamn_registry::registry_is_loopback(&args.registry),
                     ..Default::default()
                 },
                 None,
@@ -184,7 +184,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             let (bytes, _) = wash_runtime::oci::pull_component(
                 &format!("{repository}@{digest}"),
                 wash_runtime::oci::OciConfig {
-                    insecure: loopback(&args.registry),
+                    insecure: wamn_registry::registry_is_loopback(&args.registry),
                     ..Default::default()
                 },
                 wash_runtime::oci::OciPullPolicy::Always,
@@ -215,7 +215,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             let (bytes, _) = wash_runtime::oci::pull_component(
                 &pinned,
                 wash_runtime::oci::OciConfig {
-                    insecure: loopback(&args.registry),
+                    insecure: wamn_registry::registry_is_loopback(&args.registry),
                     ..Default::default()
                 },
                 wash_runtime::oci::OciPullPolicy::Always,
@@ -260,7 +260,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                     artifact_base: format!("{}/{}", reference.registry(), reference.repository()),
                     credentials: None,
                     registry_auth_file: PathBuf::default(),
-                    insecure_registry: loopback(&args.registry),
+                    insecure_registry: wamn_registry::registry_is_loopback(&args.registry),
                     oci_ca_paths: Vec::new(),
                 },
                 &packed.tag,
@@ -322,11 +322,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         ],
     )
     .await?;
-    let archive = args.out.join(format!("release-{version}.tgz"));
+    let archive = args.out.join(format!("application-{version}.tgz"));
     let destination = format!("oci://{}/wamn/charts", args.registry);
     let archive = archive.to_str().context("chart archive")?;
     let mut push = vec!["push", archive, destination.as_str()];
-    if loopback(&args.registry) {
+    if wamn_registry::registry_is_loopback(&args.registry) {
         push.push("--plain-http");
     }
     let registry_auth = std::env::var("WAMN_REGISTRY_AUTH_FILE").ok();
@@ -334,7 +334,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         push.extend(["--registry-config", configuration]);
     }
     process::run(&root, "helm", &push).await?;
-    let repository = format!("{}/wamn/charts/release", args.registry);
+    let repository = format!("{}/wamn/charts/application", args.registry);
     let digest = inspect(&root, &format!("{repository}:{version}")).await?;
     println!("oci://{repository}@{digest}");
     Ok(())
@@ -359,11 +359,4 @@ async fn inspect(root: &std::path::Path, reference: &str) -> anyhow::Result<wamn
         .as_str()
         .context("registry returned no digest")?;
     Ok(digest.parse()?)
-}
-
-fn loopback(registry: &str) -> bool {
-    matches!(
-        registry.split([':', '/']).next(),
-        Some("localhost" | "127.0.0.1")
-    ) || registry.starts_with("[::1]")
 }

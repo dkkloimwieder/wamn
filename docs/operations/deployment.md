@@ -18,13 +18,13 @@ Certificate subjects must match the endpoint names that their clients verify.
 
 From the source checkout, prepare the registry and artifacts as [building](building.md#local-platform-artifacts) describes.
 The example uses `localhost:5001`, as `deploy/kind/cluster.k` does.
-The published chart includes the pinned infrastructure, platform, org, and environment charts.
+The published application chart includes the pinned infrastructure, platform, org, environment, and project charts.
 On kind, `wamn platform deploy` reads `WAMN_REGISTRY_AUTH_FILE` to create the org namespace’s `wamn-registry-pull` Secret.
 Set this variable to the platform registry credential file before deployment.
 Deploy the chart reference that the build command prints:
 
 ```bash
-wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/release@sha256:<digest>
+wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/application@sha256:<digest>
 wamn platform status deploy/kind/cluster.k
 ```
 
@@ -66,7 +66,7 @@ Unselected UI, external mail, or telemetry does not prevent platform readiness.
 If bootstrap stops before control exists, repeat it with the same document and chart:
 
 ```bash
-wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/release@sha256:<digest>
+wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/application@sha256:<digest>
 ```
 
 Kubernetes and its operators own running resources. Helm owns release revisions.
@@ -129,7 +129,7 @@ kind delete cluster --name wamn-local
 To rebuild a disposable local platform, delete `wamn-local` with the command above.
 This removes its system database, every project database, and all cluster-local application state.
 Keep the shared registry and prepare current artifacts through [building](building.md#local-platform-artifacts).
-Run `wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/release@sha256:<digest>` again.
+Run `wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/application@sha256:<digest>` again.
 The new platform starts with zero applications. Redeploy each required application through `wamn deploy`.
 This procedure does not upgrade a persistent system database.
 
@@ -242,17 +242,20 @@ projects:
           orders: orders-api
 ```
 
-`wamn env apply environment.yaml` applies the projects in file order under one environment lock.
-It stops on the first error. If a project fails, fix the error and run the command again.
+`wamn env apply environment.yaml` holds one environment lock.
+The worker reserves the selected projects, upgrades the org chart once, and submits one host chart upgrade.
+It upgrades one project chart per project and runs that project's SQL in file order.
+The first project waits up to 120 seconds for the host chart's broker certificate.
+After the last project succeeds, the worker waits for the host rollout and removes unused connection pins on a full apply.
+If a project fails, the worker stops and names the project. Fix the error and run the command again to continue.
+New projects later in the file stay reserved without applied configuration.
 An omitted project schema mode follows the environment's disposable setting.
-The installer reconciles the database and role declarations. The environment library saves the configuration after provisioning succeeds.
-A new database receives its initial SQL through an installer bootstrap Job. That worker refuses an existing baseline.
-Later configuration updates use restricted connections and never read a superuser credential.
 Use `--disposable` only when first recording an environment that can be reset.
-Configure uses the environment chart to create the project's PostgreSQL publication. The publication selects the schemas of installed models for change data capture (CDC).
-The Job prepares the replication slot, then issues the shared environment Certificate and the project's reader Certificate.
-After the Certificates report ready, the Job reads the environment Secret. It waits up to 60 seconds for NATS to accept the account.
-The Job creates the project stream before it deploys the CDC reader from the pinned host image.
+The org chart declares the database logins. The project chart keeps their passwords across upgrades.
+The project chart creates the PostgreSQL publication for change data capture (CDC).
+For each project, the worker waits for the database, initializes its SQL when needed, and prepares the replication slot.
+After the certificates report ready, the worker reads the environment Secret and waits up to 60 seconds for NATS to accept the account.
+The worker creates the stream, waits for the CDC reader, and saves the project's applied configuration.
 The shared host group uses the runtime operator chart at version 2.12.1. Its `wasmcloud-nats` entry points to the broker and reads TLS files from `/etc/wasmcloud/host-plugin-secrets/<environment-secret>/`.
 
 Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Add `--data` and confirm the coordinate in a terminal to delete its database.

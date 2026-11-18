@@ -137,4 +137,4 @@ Application objects carry `org/env/project` in `wamn.environment`. Shared host p
 
 The environment host name is `h-<slug>-<hash>`. The hash comes from `org/env`, without a project. The environment chart owns its ServiceAccount and project projection.
 
-Application workloads select the shared environment host group. Each workload carries its own release digest and project deployment key in annotations. The `release` chart owns application workloads and route records. The `environment` chart owns the host Deployment. Application releases do not set release labels or release arguments on the host.
+Application workloads select the shared environment host group. Each workload carries its own release digest and project deployment key in annotations. The `application` chart owns application workloads and route records. The `environment` chart owns the host Deployment. Application releases do not set release labels or release arguments on the host.

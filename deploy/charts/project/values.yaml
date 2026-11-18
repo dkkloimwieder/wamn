@@ -1,0 +1,7 @@
+database: null
+publication: null
+cdcReader: null
+operations: null
+brokerCertificates: []
+loginSecrets: []
+databaseConfig: null

@@ -7,7 +7,7 @@ metadata:
   name: {{ (default $.Release.Name $.Values.name) }}-http
   namespace: {{ (default $.Release.Namespace $.Values.namespace) }}
   annotations:
-    {{- include "release.annotations" $ | nindent 4 }}
+    {{- include "application.annotations" $ | nindent 4 }}
 spec:
   type: ClusterIP
   ports:

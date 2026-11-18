@@ -236,10 +236,10 @@ pub async fn require_placement(
 }
 
 /// Replace one project's settings atomically and upsert the environment pins.
-/// The caller owns the environment lifecycle lock and binds the provisioning actor.
+/// The caller owns the environment lifecycle lock, checks placement, and binds the provisioning actor.
 ///
 /// # Errors
-/// Returns database errors or refuses a policy that changes established placement.
+/// Returns database errors.
 /// A missing deployment returns false.
 pub async fn write(
     connection: &mut sqlx::PgConnection,
@@ -247,7 +247,6 @@ pub async fn write(
 ) -> Result<bool, sqlx::Error> {
     let mut transaction = connection.begin().await?;
     let c = configuration;
-    require_placement(&mut transaction, &c.org, &c.env, &c.policy).await?;
     let mode = c.schema.mode.map(|mode| match mode {
         SchemaMode::Reset => "reset",
         SchemaMode::Migrate => "migrate",

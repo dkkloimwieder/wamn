@@ -5,9 +5,6 @@ runtime-operator:
   global:
     certificates:
       generate: false
-    nats:
-      schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
-      dataUrl: nats://wamn-nats.platform.svc.cluster.local:4222
   operator:
     allowSharedHosts: false
     watchNamespaces: []

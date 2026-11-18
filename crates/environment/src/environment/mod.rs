@@ -11,7 +11,6 @@ pub mod drain;
 pub mod ensure;
 pub mod lifecycle;
 pub mod runtime;
-pub mod show;
 pub mod sql;
 pub mod stage;
 pub mod write;

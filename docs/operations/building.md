@@ -30,7 +30,10 @@ These files own each schema.
 
 ## Platform version
 
-The platform version lives in `deploy/charts/release/Chart.yaml`.
+The platform version lives in `deploy/charts/application/Chart.yaml`.
+The published application chart archive includes the platform charts.
+Application releases install the stamped chart at `platform/application` inside that archive.
+This keeps the platform files out of the Helm release record.
 Keep `version` and `appVersion` equal.
 `cargo xtask build-platform` reads this version to tag images and role components.
 The published defaults keep the host image at `platform.host.image`.
@@ -404,7 +407,7 @@ That stage compiles every native package except `wamn-edge`, so the first image 
 They share the Cargo registry and Git caches with every checkout.
 The cache mounts are not in the image. The stage copies each binary out of the target cache to `/native-output`, and the image copies it from there.
 
-To bump the platform version, change `version` and `appVersion` in `deploy/charts/release/Chart.yaml` to the same new value.
+To bump the platform version, change `version` and `appVersion` in `deploy/charts/application/Chart.yaml` to the same new value.
 No other file holds the version.
 A version change runs the same BuildKit build with new output tags. BuildKit reuses unchanged layers.
 

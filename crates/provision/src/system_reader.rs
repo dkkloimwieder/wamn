@@ -1,24 +1,6 @@
-//! One system database reader login per environment.
+//! Grants for the system database reader role.
 
 use postgres_protocol::escape::escape_identifier;
-
-/// Declare one environment's reader, shared by all its projects.
-pub fn managed_role(
-    org: &wamn_registry::OrgId,
-    environment: &wamn_registry::EnvName,
-    database: &str,
-) -> crate::connection::ManagedRole {
-    let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([
-        wamn_role::SYSTEM_READER_ROLE,
-        org,
-        environment,
-        database
-    ]));
-    let login =
-        wamn_registry::name::credential_login(wamn_role::SYSTEM_READER_ROLE, &digest.hex()[..40]);
-    let secret = login.as_str().replace('_', "-");
-    crate::connection::managed_role(login, wamn_role::SYSTEM_READER_ROLE, secret)
-}
 
 /// Permit host authentication and integration type reads.
 pub fn grants_sql() -> String {

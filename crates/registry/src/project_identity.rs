@@ -1,4 +1,4 @@
-//! The framed identity digest, and the guest-SQL project key derived from it.
+//! Framed identity digests for database logins.
 //!
 //! This module exists so the RUNTIME can compute a project key without linking
 //! the provisioner (`wamn-0h0g.22.6.7`). After `wamn-0h0g.22.6` the guest's
@@ -39,12 +39,27 @@ pub(crate) fn frame(output: &mut Vec<u8>, value: &[u8]) {
 /// without it, one project in two project-environment databases would derive one
 /// key and collide on a single login.
 pub fn app_identity_hash(project_env_key: &crate::ProjectEnvKey, database: &str) -> String {
+    identity_hash(
+        APP_IDENTITY_DOMAIN,
+        [
+            ("project_env_key", project_env_key.as_str()),
+            ("database", database),
+        ],
+    )
+}
+
+/// The org and database hash used by SQL's `registry.control_org()`.
+pub fn control_identity_hash(org: &crate::OrgId, database: &str) -> String {
+    identity_hash(
+        b"wamn.control.identity.v0.1",
+        [("org", org.as_str()), ("database", database)],
+    )
+}
+
+fn identity_hash(domain: &[u8], fields: [(&str, &str); 2]) -> String {
     let mut preimage = Vec::new();
-    frame(&mut preimage, APP_IDENTITY_DOMAIN);
-    for (tag, value) in [
-        ("project_env_key", project_env_key.as_str()),
-        ("database", database),
-    ] {
+    frame(&mut preimage, domain);
+    for (tag, value) in fields {
         frame(&mut preimage, tag.as_bytes());
         frame(&mut preimage, value.as_bytes());
     }

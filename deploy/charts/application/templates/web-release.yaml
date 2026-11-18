@@ -6,7 +6,7 @@ metadata:
   namespace: {{ (default .Release.Namespace .Values.namespace) }}
   {{- if .Values.applications }}
   annotations:
-    {{- include "release.annotations" . | nindent 4 }}
+    {{- include "application.annotations" . | nindent 4 }}
   {{- end }}
 data:
   release.json: {{ dict "host" .Values.routeHost "digest" .Values.release.manifestDigest "clients" .Values.webClients "webs" .Values.webDigests "platformUi" .Values.platformUi "org" .Values.org "project" .Values.project | toJson | quote }}
@@ -23,7 +23,7 @@ metadata:
     wamn.route: "true"
   {{- if .Values.applications }}
   annotations:
-    {{- include "release.annotations" . | nindent 4 }}
+    {{- include "application.annotations" . | nindent 4 }}
   {{- end }}
 data:
   route.json: {{ dict "host" .Values.routeHost "release" (default .Release.Name .Values.name) "api" (printf "http://%s-http.%s.svc.cluster.local" (default .Release.Name .Values.name) (default .Release.Namespace .Values.namespace)) | toJson | quote }}

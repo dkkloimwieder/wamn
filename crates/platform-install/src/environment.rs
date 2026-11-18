@@ -4,19 +4,41 @@ use serde_json::{Value, json};
 use std::path::Path;
 use wamn_kubernetes::Target;
 
-pub async fn apply(
-    target: &Target,
-    chart: &Path,
-    name: &str,
-    overlay: Value,
-) -> anyhow::Result<()> {
-    let mut values = crate::platform::installed::release_values(target, &target.namespace, name)
-        .await?
-        .unwrap_or_else(|| json!({}));
-    crate::platform::resources::merge(&mut values, overlay);
+pub async fn apply(target: &Target, chart: &Path, name: &str, values: Value) -> anyhow::Result<()> {
     let entry = entry(chart, &target.namespace, name, values)?;
     let directory = tempfile::tempdir()?;
     crate::platform::resources::apply_release(target, &entry, directory.path()).await
+}
+
+/// Submit the project resources before the worker initializes the database and CDC slot.
+pub async fn apply_project(
+    target: &Target,
+    chart: &Path,
+    name: &str,
+    values: &Value,
+) -> anyhow::Result<()> {
+    apply_without_wait(target, &chart.join("platform/project"), name, values).await
+}
+
+/// Submit one release while its workload still needs provisioning work.
+pub async fn apply_without_wait(
+    target: &Target,
+    chart: &Path,
+    name: &str,
+    values: &Value,
+) -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("values.yaml");
+    std::fs::write(&path, serde_json::to_vec(values)?)?;
+    wamn_kubernetes::helm::recover_pending(target, name).await?;
+    wamn_kubernetes::helm::upgrade_without_wait(
+        target,
+        chart,
+        name,
+        &path,
+        std::time::Duration::from_secs(600),
+    )
+    .await
 }
 
 pub fn entry(chart: &Path, namespace: &str, name: &str, values: Value) -> anyhow::Result<Value> {
@@ -104,69 +126,26 @@ pub async fn capture_connection(
     let instance = wamn_registry::deployment::instance_suffix(&mut client, triple)
         .await?
         .context("project deployment is absent")?;
-    config.username = wamn_provision::cdc_object_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-        &instance,
-    )
-    .parse()?;
-    config.credentials.name = wamn_provision::project_env_cdc_secret_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-    );
+    config.username =
+        wamn_provision::cdc_object_name(&triple.org, &triple.project, &triple.env, &instance)
+            .parse()?;
+    config.credentials.name =
+        wamn_provision::project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
     config.to_json()
 }
 
-/// Apply the registry-derived role declaration before CNPG creates the database.
-pub async fn provision(
+/// Set the lifecycle values of an installed project.
+pub async fn update_project(
     target: &Target,
     chart: &Path,
-    registry: &str,
-    triple: &wamn_registry::Triple,
-    initial: bool,
-) -> anyhow::Result<wamn_postgres::ConnectionConfig> {
-    let connection = connection(registry, triple).await?;
-    let cluster = connection
-        .server_ca
-        .name
-        .strip_suffix("-ca")
-        .context("CNPG cluster CA")?;
-    let role = wamn_provision::migrations::MigrationDatabase::Project
-        .managed_role(&connection.database);
-    crate::credentials::reconcile(
-        registry,
-        &target.kubeconfig,
-        &target.context,
-        &triple.org,
-        cluster,
-        &role,
-    )
-    .await?;
-    let name = wamn_provision::environment_names::environment_resource_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-    )?;
-    apply(
-        target,
-        &chart.join("platform/environment"),
-        &name,
-        json!({"database":{"name":connection.database,"cluster":cluster,"owner":role.name},"bootstrap":if initial { json!({"name":format!("bootstrap-{}",&wamn_digest::bytes_sha256(connection.database.as_bytes()).hex()[..20]),"credential":format!("{cluster}-superuser"),"ca":connection.server_ca.name}) } else {Value::Null}}),
-    )
-    .await?;
-    wamn_kubernetes::kubectl::wait(
-        &target.kubeconfig,
-        &target.context,
-        triple.org.as_str(),
-        "database",
-        &connection.database,
-        "condition=Applied",
-        "120s",
-    )
-    .await?;
-    Ok(connection)
+    name: &str,
+    values: &Value,
+) -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("project-values.yaml");
+    std::fs::write(&path, serde_json::to_vec(values)?)?;
+    wamn_kubernetes::helm::recover_pending(target, name).await?;
+    wamn_kubernetes::helm::update_values(target, &chart.join("platform/project"), name, &path).await
 }
 
 /// The chart, rather than a direct CR patch, owns database disposal.
@@ -188,8 +167,8 @@ pub async fn remove_database(
         .name
         .strip_suffix("-ca")
         .context("project cluster CA")?;
-    apply(target,&chart.join("platform/environment"),&name,
-        json!({"database":{"name":connection.database,"cluster":cluster,"owner":wamn_provision::migration::login(&connection.database),"ensure":"absent","reclaimPolicy":if data {"delete"} else {"retain"}}})).await?;
+    update_project(target, chart, &name,
+        &json!({"database":{"name":connection.database,"cluster":cluster,"owner":wamn_provision::migration::login(&connection.database),"ensure":"absent","reclaimPolicy":if data {"delete"} else {"retain"}}})).await?;
     wamn_kubernetes::kubectl::wait(
         &target.kubeconfig,
         &target.context,

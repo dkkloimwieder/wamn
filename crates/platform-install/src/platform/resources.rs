@@ -56,26 +56,6 @@ pub(crate) async fn upgrade_release(
     .await
 }
 
-/// Require the references rendered by this release before changing any resource.
-pub(crate) async fn require_inputs(target: &Target, entry: &Value) -> anyhow::Result<()> {
-    let objects = wamn_kubernetes::helm::template(entry)?;
-    wamn_kubernetes::helm::require_references(
-        entry["namespace"].as_str().context("service namespace")?,
-        &objects,
-        async |namespace, type_, name| {
-            kubectl::get(
-                &target.kubeconfig,
-                &target.context,
-                namespace,
-                &type_.to_ascii_lowercase(),
-                name,
-            )
-            .await
-        },
-    )
-    .await
-}
-
 pub use super::installed::release_values;
 
 /// Build a namespace prerequisite.

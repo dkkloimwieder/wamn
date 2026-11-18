@@ -56,7 +56,6 @@ pub async fn update(
             let values = chart.selection_values(document, selection, installed)?;
             let entry = serde_json::json!({"chart":owner_chart.directory().join("platform/environment"), "version":owner_chart.version,
                 "name":name, "namespace":namespace, "values":values});
-            resources::require_inputs(target, &entry).await?;
             resources::upgrade_release(&owner, &entry, directory).await
         }).await;
         lock.release().await;
@@ -86,7 +85,6 @@ pub async fn update(
         UpgradeTarget::Host { .. } => unreachable!(),
     }
     let entry = installation::platform_entry(chart, values)?;
-    resources::require_inputs(target, &entry).await?;
     resources::apply_release(target, &entry, directory).await
 }
 

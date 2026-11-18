@@ -39,8 +39,7 @@ subjects:
   - kind: ServiceAccount
     name: {{ .capture }}
     namespace: {{ $.Release.Namespace }}
-{{- range $privileged := list false true }}
-{{- $name := printf "%s-%s" $operation.name (ternary "sql" "code" $privileged) }}
+{{- $name := printf "%s-operation" $operation.name }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -81,7 +80,6 @@ rules:
   - apiGroups: [runtime.wasmcloud.dev]
     resources: [workloaddeployments]
     verbs: [get, list, watch, create, update, patch, delete]
-  {{- if $privileged }}
   - apiGroups: [""]
     resources: [secrets]
     verbs: [patch]
@@ -98,7 +96,6 @@ rules:
     resources: [databases]
     resourceNames: [{{ $operation.database | quote }}]
     verbs: [get, list, watch, patch]
-  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -113,5 +110,4 @@ subjects:
   - kind: ServiceAccount
     name: {{ $name }}
     namespace: {{ $.Release.Namespace }}
-{{- end }}
 {{- end }}

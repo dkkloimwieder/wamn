@@ -1,8 +1,8 @@
-use super::{
-    Triple, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, cdc_object_name,
-    project_env_database_name, workload_login,
-};
+use super::{Triple, cdc_object_name, project_env_database_name};
 use anyhow::Context as _;
+use wamn_provision::{
+    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_login,
+};
 
 /// The families whose logins name the instance's database: a
 /// control or org family's target names the control database, so its roles

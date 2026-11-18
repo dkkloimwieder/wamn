@@ -106,47 +106,6 @@ pub async fn set_platform_domain(
     Ok(())
 }
 
-/// Reconcile the apply login after the SQL schema installer completes.
-pub async fn provision_apply(input: &str) -> anyhow::Result<()> {
-    let mut connection = wamn_postgres::connect(input).await?;
-    let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
-    let options = wamn_postgres::connect_options(input).await?;
-    let cluster = options
-        .get_host()
-        .split('.')
-        .next()
-        .context("database host is absent")?
-        .trim_end_matches("-rw");
-    let kubeconfig = std::env::var_os("KUBECONFIG").map_or_default(std::path::PathBuf::from);
-    let role =
-        wamn_provision::connection::managed_role(wamn_role::APPLY_ROLE.parse()?, "", "wamn-apply".into());
-    crate::credentials::reconcile(
-        input,
-        &kubeconfig,
-        "",
-        &api.namespace.parse::<wamn_registry::OrgId>()?,
-        cluster,
-        &role,
-    )
-    .await?;
-    crate::credentials::wait_role(&mut connection, &role.name).await?;
-    sqlx::raw_sql(wamn_provision::apply::APPLY_GRANTS_SQL)
-        .execute(&mut connection)
-        .await?;
-    let config = crate::credentials::configuration(
-        &api.namespace,
-        cluster,
-        options.get_host().into(),
-        options.get_port(),
-        "wamn_system".into(),
-        role.name,
-        role.password_secret.name,
-    );
-    let value = serde_json::json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"wamn-apply","namespace":api.namespace},"data":{"apply.json":config.to_json()?}});
-    wamn_kubernetes::kubectl::apply(&kubeconfig, "", &api.namespace, &value).await?;
-    Ok(())
-}
-
 /// Database state recorded by the atomic system bootstrap.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SystemState {

@@ -1,6 +1,5 @@
 use super::{
     Authorities, EnvironmentDocument, EnvironmentRow, Platform,
-    Value,
 };
 
 pub(super) fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option<String> {
@@ -41,15 +40,6 @@ pub(crate) async fn project_url(
     )
 }
 
-/// The newest entry of `helm history` with status `deployed` or `superseded`.
-pub(crate) fn newest_successful(history: &[Value]) -> Option<&Value> {
-    history
-        .iter()
-        .filter(|entry| matches!(entry["status"].as_str(), Some("deployed" | "superseded")))
-        .max_by_key(|entry| entry["revision"].as_u64())
-}
-
-/// Every reason the document is refused against the authorities (§10.1 step 3).
 pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String> {
     let mut refusals = Vec::new();
     if let Some(release) = &authorities.release {

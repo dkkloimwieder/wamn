@@ -21,16 +21,13 @@
 use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 mod resources;
-mod roles;
 mod rows;
 pub use plan::{instance_families, instance_roles};
 pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
 use wamn_provision::sql::drop_replication_slot_sql;
-use wamn_provision::workload_role::{
-    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_login,
-};
+
 use wamn_provision::{
     cdc_object_name, control_administration_secret_name, project_env_database_name,
 };
@@ -58,10 +55,12 @@ pub async fn delete(
     data: bool,
     admin_url: &str,
 ) -> anyhow::Result<Vec<String>> {
+    let mut platform = platform.clone();
+    super::runtime::resolve_platform(&mut platform)?;
     LifecycleLock::hold(
         wamn_postgres::connect(&platform.system_database_url).await?,
         triple,
-        async |_| Box::pin(delete_locked(platform, triple, data, admin_url)).await,
+        async |_| Box::pin(delete_locked(&platform, triple, data, admin_url)).await,
     )
     .await
 }
@@ -241,8 +240,7 @@ async fn delete_locked(
                 lines.push(format!("deleted stream {stream}"));
             }
         }
-        let last = wamn_broker::authorization::remove_project(&platform.target, triple).await?;
-        resources::delete_event_certificates(platform, triple, last).await?;
+
 
         // Slot administration belongs to the capture login on the recorded cluster.
         if cr_present {
@@ -273,8 +271,6 @@ async fn delete_locked(
             }
         }
 
-        resources::delete_publication(platform, &database).await?;
-        lines.push(format!("deleted publication {database} (or it was gone)"));
 
         if let Some(lock) = &project_lock
             && !data
@@ -321,51 +317,14 @@ async fn delete_locked(
         lines.push("removed the chart-owned database resource".into());
     }
 
-    // The roles, only with the database: a retained database keeps its
-    // owner roles for manual recovery.
-    roles::delete_control_roles(admin_url, triple, platform).await?;
-    lines.push("deleted the environment's control logins (or they were gone)".into());
+    let last = wamn_broker::authorization::remove_project(&platform.target, triple).await?;
+    resources::delete_event_certificates(platform, triple, last).await?;
     if data {
         let roles = instance_roles(triple, &instance, &project_env_key)?;
-        let project_connection =
-            wamn_platform_install::environment::connection(admin_url, triple).await?;
-        let cluster = project_connection
-            .server_ca
-            .name
-            .strip_suffix("-ca")
-            .context("project cluster CA")?;
-        crate::provision_project_env::workload::remove_roles(
-            &platform.system_database_url,
-            &platform.target.kubeconfig,
-            &platform.target.context,
-            org,
-            cluster,
-            &roles,
-        )
-        .await?;
-        lines.push(format!("dropped {} roles (or they were gone)", roles.len()));
-    }
-
-    let configurations = [
-        wamn_provision::project_env_secret_name(org, project, env),
-    ];
-    let mut arguments = vec!["delete", "configmap", "--ignore-not-found"];
-    arguments.extend(configurations.iter().map(String::as_str));
-    let deleted = kubectl(platform, org.as_str(), &arguments, None).await?;
-    if !deleted.is_empty() {
-        lines.push(deleted);
-    }
-    let mut secrets = WorkloadRoleFamily::project_env_families()
-        .map(|family| wamn_provision::workload_secret_name(family, org, project, env))
-        .collect::<Vec<_>>();
-    secrets.push(wamn_provision::project_env_cdc_secret_name(
-        org, project, env,
-    ));
-    let mut arguments = vec!["delete", "secret", "--ignore-not-found"];
-    arguments.extend(secrets.iter().map(String::as_str));
-    let deleted = kubectl(platform, org.as_str(), &arguments, None).await?;
-    if !deleted.is_empty() {
-        lines.push(deleted);
+        wamn_platform_install::org::remove_roles(
+            &platform.target, &platform.chart, admin_url, org, &roles,
+        ).await?;
+        lines.push(format!("retired {} roles (or they were gone)", roles.len()));
     }
 
     // Keep the registry inputs until the credential store and its account are gone.

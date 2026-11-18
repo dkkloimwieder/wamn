@@ -70,11 +70,7 @@ fn cdc_schema_sql_bundle(
 }
 
 /// Configuration for a reader whose connection is mounted from its own ConfigMap.
-pub fn reader_configuration(
-    triple: &Triple,
-    cdc_name: &str,
-    nats_url: &str,
-) -> ReaderConfig {
+pub fn reader_configuration(triple: &Triple, cdc_name: &str, nats_url: &str) -> ReaderConfig {
     ReaderConfig {
         org: triple.org.clone(),
         project: triple.project.clone(),
@@ -172,10 +168,26 @@ pub async fn start_reader(
         None,
     )
     .await?;
-    kubectl(
-        kubeconfig,
-        context,
-        namespace,
+    wait_reader_ready(
+        &wamn_kubernetes::Target {
+            kubeconfig: kubeconfig.into(),
+            context: context.into(),
+            namespace: namespace.into(),
+        },
+        triple,
+    )
+    .await
+}
+
+pub(super) async fn wait_reader_ready(
+    target: &wamn_kubernetes::Target,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+    wamn_kubernetes::kubectl::kubectl(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
         &[
             "rollout",
             "status",
@@ -184,6 +196,6 @@ pub async fn start_reader(
         ],
         None,
     )
-    .await?;
-    Ok(())
+    .await
+    .map(drop)
 }
