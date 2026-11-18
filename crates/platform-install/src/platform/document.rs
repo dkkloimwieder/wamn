@@ -8,7 +8,6 @@
 
 use std::borrow::Cow;
 use std::path::Path;
-use std::str::FromStr;
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
@@ -38,7 +37,7 @@ fn default_build_cloud_cap_usd() -> f64 {
     3.0
 }
 
-/// One existing Helm owner selected for a platform code upgrade.
+/// One existing Helm owner observed by platform status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpgradeTarget {
     Control,
@@ -48,31 +47,6 @@ pub enum UpgradeTarget {
         release: String,
         group: String,
     },
-}
-
-impl FromStr for UpgradeTarget {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> anyhow::Result<Self> {
-        match value {
-            "control" => Ok(Self::Control),
-            "identity" => Ok(Self::Identity),
-            _ => {
-                let (release, group) = value
-                    .strip_prefix("host:")
-                    .and_then(|host| host.split_once('/'))
-                    .context("target must be control, identity, or host:<release>/<group>")?;
-                ensure!(
-                    name(release, 53) && name(group, 63),
-                    "host target requires a Helm release name and a host group name"
-                );
-                Ok(Self::Host {
-                    release: release.to_owned(),
-                    group: group.to_owned(),
-                })
-            }
-        }
-    }
 }
 
 impl UpgradeTarget {

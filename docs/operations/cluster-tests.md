@@ -1,6 +1,6 @@
 # Cluster tests
 
-Use the [platform deployment test](running-tests.md#platform-and-environment-apply-on-kind) for the product platform command.
+The [platform deployment test](running-tests.md#platform-and-environment-apply-on-kind) requires the Epic 10 installation path.
 Choose an [output directory](running-tests.md#capture-a-run) and follow the [cleanup](running-tests.md#cleanup) procedure.
 
 DEP2-02 removes the Receiving, WMS, RC, and combined identity/session cluster runners.

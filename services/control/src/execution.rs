@@ -38,8 +38,8 @@ impl crate::host_route::ControlExecution for Execution {
             | "pat.issue"
             | "pat.list"
             | "pat.revoke" => self.service(operation, caller, payload).await,
-            "platform.update" | "platform.operation_status" => {
-                self.platform(operation, payload).await
+            "platform.schema" | "platform.operation_status" => {
+                self.platform_schema(operation, payload).await
             }
             "integration.publish" => {
                 #[derive(Deserialize)]

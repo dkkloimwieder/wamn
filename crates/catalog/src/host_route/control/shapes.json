@@ -101,7 +101,7 @@
     "api_service/create.errors.json",
     "application/stop.errors.json",
     "integration/publish.errors.json",
-    "platform/update.errors.json",
+    "platform/schema.errors.json",
     "platform/operation_status.errors.json",
     "capture_gap/recover.errors.json",
     "capture_gap/close.errors.json",
@@ -123,7 +123,7 @@
     "schema/apply.result.json",
     "schema/reset.result.json",
     "application/stop.result.json",
-    "platform/update.result.json",
+    "platform/schema.result.json",
     "environment/configure.result.json",
     "environment/delete.result.json"
   ],

@@ -7,31 +7,19 @@
       "values": []
     },
     {
-      "path": "value.type",
+      "path": "value.target",
       "type": "text",
       "nullable": false,
       "values": []
     },
     {
-      "path": "value.document",
+      "path": "value.projects",
       "type": "json",
-      "nullable": true,
+      "nullable": false,
       "values": []
     },
     {
-      "path": "value.selection",
-      "type": "text",
-      "nullable": true,
-      "values": []
-    },
-    {
-      "path": "value.target",
-      "type": "text",
-      "nullable": true,
-      "values": []
-    },
-    {
-      "path": "value.project",
+      "path": "value.org",
       "type": "text",
       "nullable": true,
       "values": []
@@ -45,7 +33,7 @@
     {
       "path": "value.apply",
       "type": "bool",
-      "nullable": true,
+      "nullable": false,
       "values": []
     }
   ]
