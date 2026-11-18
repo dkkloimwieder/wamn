@@ -87,7 +87,7 @@ Org → environment → project → application. One boundary per level.
 - Application developers are the main users of Data change. A component declares in `wamn.k` the models and ops (`insert`, `update`, `delete`) it handles and the role it runs as, and exports a small wamn handler interface that takes the event as JSON.
 - Deploy renders one durable JetStream subscription for each declared (model, op) into the workload config, aimed at the route guest `flow-http`, which exports the stock `wasmcloud:nats/jetstream-handler`. The stock plugin creates the consumers. Only declared models get consumers. `flow-http` checks the owner package and dispatches to the declared component through the operation path, as the `workflow` user with the declared role.
 - One handler for each (owner package, model, op) in an application: deploy refuses two. A developer who wants two reactions puts them in one component. The host accepts `dispatch-data-change` only from `flow-http`.
-- Delivery is at least once, with no run row. The message id lets a handler skip repeats.
+- Delivery is at least once, with no run row. The message id lets a handler skip repeats. A handler has the same host-transaction setting as an operation, on by default: one transaction for each delivery, committed when the handler returns ok and rolled back on an error. Turn it off for handlers that make long external calls.
 - One NATS account per environment. The environment host group has one stock `wasmcloud-nats` entry, and each workload narrows its grants to its project's stream and subjects.
 - Each CDC reader has its own publish-only user in the environment account. The source stream keeps messages for 7 days, under a byte limit below the account's limit.
 
@@ -561,7 +561,7 @@ Issues:
 - A loop:
   - each minute, admit the due schedules and run them at once
   - every 30 seconds, take runs whose lease expired and run them
-- It pulls from the consumer of each enabled Data change workflow through stock `wasmcloud:nats/jetstream`: admit the run through the host, ack, then run it.
+- It pulls from the consumer of each enabled Data change workflow through stock `wasmcloud:nats/jetstream`: admit the run through the host, ack, then run it. It refreshes its consumer list every 30 seconds and pulls with a 30-second long wait.
 - It exports `wamn:workflow` `entry`.
 - The graph walk is ported from the router deleted in 07c1f3ee3 (`07c1f3ee3^`), with the same node retries (3 by default).
 - Response node: status and a JSON body. Nodes after a Response continue as a durable run.
@@ -606,6 +606,7 @@ Issues:
 - One entry for each (application, model, op), with queue group `<application>-<model>-<op>`. Release planning refuses two components that declare the same (owner package, model, op).
 - The export is `wamn:handler@0.1.0/data-change` (`handle(event: string) -> result<_, string>`). `wamn:operation` gets `dispatch-data-change(component, event)`, which the host accepts only from `flow-http`.
 - At least once, no run row. Handler calls to wamn host functions run as the `workflow` user with the declared role.
+- The invocation authority gets a handler case: connections come from the component's own bindings, and no per-operation grant check applies. Each handler has the operation host-transaction setting, on by default; when on, the transaction commits on ok and rolls back on an error.
 
 7.7 Event crate merge. Runs last.
 - `wamn-events` and `wamn-event-wire` merge into `wamn-event`, and the event transport code that nothing calls is deleted.
@@ -2052,3 +2053,5 @@ Facts:
 - Ops are `insert`, `update` and `delete`, and `wamn.k` names a model of the component's package.
 
 **Ruled (D, 2026-11-17): one Data change handler for each model and op.** The stock `message-handle` does not say which consumer delivered a message, so an application has one subscription for each (model, op), and release planning refuses two components that declare the same (owner package, model, op). A failure re-runs only that handler. The host accepts `dispatch-data-change` only from the route guest, so one component cannot run another's handler under its role.
+
+**Ruled (D, 2026-11-17): handler transactions and workflow polling.** A Data change handler has no operation. The invocation authority gets a handler case, and the handler takes the operation host-transaction setting, on by default, with one transaction per delivery tied to the ack. The workflow service refreshes its consumer list every 30 seconds instead of every second, and pulls with a 30-second long wait. One run at a time per consumer stays until something is measured.
