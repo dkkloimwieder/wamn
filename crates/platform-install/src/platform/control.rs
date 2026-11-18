@@ -142,6 +142,7 @@ pub(super) fn resource_entry(
     let configuration = format!("{name}-configuration");
     let database = super::installation::SYSTEM_DATABASE;
     let control_login = crate::roles::control(org, database);
+    let migration = wamn_provision::migrations::MigrationDatabase::System.managed_role(database);
     let connection = |username, secret| {
         crate::credentials::configuration(
             org.as_str(),
@@ -190,7 +191,8 @@ pub(super) fn resource_entry(
     Ok(
         json!({"chart":chart.application_chart(),"version":chart.version,"name":name,"namespace":org,
         "values":{"controlService":true,"org":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},
-        "control":{"image":chart.image("control")?,"configuration":config,"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::name::control_service_account(org)},
+        "control":{"image":chart.image("control")?,"configuration":config,"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::name::control_service_account(org),
+            "systemMigrationSecret":migration.password_secret.name},
         "platform":{"chart":chart.reference()}}}),
     )
 }

@@ -180,8 +180,7 @@ The control image runs workers and reads the installed chart reference.
 The installed control configuration names the pinned worker image and its configuration.
 Environment provisioning creates separate code and SQL ServiceAccounts and namespace Roles.
 Reset uses the existing lifecycle worker account to stop and resume the shared environment host.
-Configure creates the CDC reader's ServiceAccount and Role from `operations.capture` before it deploys the reader.
-This account can read only the project's replication credential and database CA. Delete removes it with the reader.
+Configure creates the CDC reader's ServiceAccount from `operations.capture`. The Deployment mounts the replication login and the project's database CA certificate. Delete removes the account with the reader.
 
 
 Set `WAMN_CONTROL_URL` to the deployed control host and `WAMN_TOKEN` to your password session token.
@@ -794,7 +793,7 @@ Use the environment's identity Deployment and require its readiness before issui
 
 Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` for platform SQL operations.
 Control selects its installed chart and pinned worker image.
-System target reads its managed migration login's basic-auth Secret in the org namespace.
+The system worker reads the named migration login and CA Secrets in the org namespace and stages the database files before connecting.
 Both targets execute SQL in a bounded Job in that namespace.
 
 ```bash
@@ -887,13 +886,16 @@ Run `wamn provision-system --platform-domain DOMAIN` in the org namespace.
 For explicit PostgreSQL access, also pass the system migration login's connection through `--migration-database-url`.
 It declares the restricted apply login through CloudNativePG and publishes its connection data in the `wamn-apply` ConfigMap.
 The installer supplies that public apply connection object in the native control configuration.
-The other apply phases use the restricted credential. The SQLx constructor reads its native basic-auth Secret and cluster CA.
+The other apply phases use the restricted credential from the worker's database volume.
 
 ## PostgreSQL client TLS
 
 Runtime pools, OAuth transactions, and resource leases use SQLx with verified TLS.
 Component configuration names the database host, port, database, login, basic-auth Secret, and CNPG CA Secret.
-Both Secrets and the consumer belong to the org namespace.
+Both Secrets and the consumer belong to the org namespace. Hosts, CDC readers, identity and control use read-only database mounts.
+Operation workers copy the selected Secret keys to a memory-backed volume as the database names become known.
+The database client reads `username`, `password` and `ca.crt` from `/etc/wamn/db/<login-secret>/`. It makes sure that the username matches the configured login.
+The control administration directory supplies the same files for project connections.
 Explicit operator connection strings must name a readable CA file through `sslrootcert`.
 The database hostname must match the server certificate.
 The provisioned CNPG clusters accept client connections only over TLS.
@@ -914,7 +916,7 @@ Those processes use explicit operator connection URLs with verified TLS.
 They do not supply a local connection credential store.
 Identity login uses the org audience `urn:wamn:org:<org>`.
 The identity chart no longer accepts session target ConfigMaps or project database reader credentials.
-The chart retains access to the identity database credential and its CA.
+The identity Deployment mounts the system login and CA certificate.
 
 The installation writes `WAMN_SESSION_ISSUER`, `WAMN_SESSION_JWKS_URL`, `WAMN_SESSION_AUDIENCE`, `WAMN_SESSION_ALGORITHMS`, and `WAMN_SESSION_JWKS_CA` into the org's `wamn-host-settings` ConfigMap.
 Environment hosts read these defaults and mount the org's `identity-ca` ConfigMap at `/etc/identity-ca`.

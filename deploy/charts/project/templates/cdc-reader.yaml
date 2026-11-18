@@ -1,4 +1,7 @@
 {{- with .Values.cdcReader }}
+{{- $operations := required "operations is required for the CDC reader" $.Values.operations }}
+{{- $login := required "operations.captureSecret is required for the CDC reader" $operations.captureSecret }}
+{{- $cluster := required "operations.cluster is required for the CDC reader" $operations.cluster }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -31,8 +34,8 @@ spec:
       annotations:
         wamn.dev/cdc-configuration: {{ list .connection .configuration | toJson | sha256sum | quote }}
     spec:
-      automountServiceAccountToken: true
-      serviceAccountName: {{ required "operations.capture is required for the CDC reader" (get (default dict $.Values.operations) "capture") | quote }}
+      automountServiceAccountToken: false
+      serviceAccountName: {{ required "operations.capture is required for the CDC reader" $operations.capture | quote }}
       {{- with .registrySecret }}
       imagePullSecrets: [{name: {{ . | quote }}}]
       {{- end }}
@@ -43,10 +46,24 @@ spec:
           args: [--config, /etc/wamn/cdc/reader.json]
           volumeMounts:
             - {name: cdc, mountPath: /etc/wamn/cdc, readOnly: true}
+            - {name: database, mountPath: /etc/wamn/db, readOnly: true}
             - {name: nats, mountPath: /etc/wamn/nats, readOnly: true}
       volumes:
         - name: cdc
           configMap: {name: {{ .name | quote }}}
+        - name: database
+          projected:
+            defaultMode: 0400
+            sources:
+              - secret:
+                  name: {{ $login | quote }}
+                  items:
+                    - {key: username, path: {{ printf "%s/username" $login | quote }}}
+                    - {key: password, path: {{ printf "%s/password" $login | quote }}}
+              - secret:
+                  name: {{ printf "%s-ca" $cluster | quote }}
+                  items:
+                    - {key: ca.crt, path: {{ printf "%s/ca.crt" $login | quote }}}
         - name: nats
           secret: {secretName: {{ .natsSecret | quote }}}
 {{- end }}

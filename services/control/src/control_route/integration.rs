@@ -95,16 +95,16 @@ impl ControlRoutes<'_> {
             }
         }
         authorized.commit().await?;
-        let urls = self.logins(&[(target.project.clone(), env.clone())])?;
-        let mut client = wamn_postgres::connect(&urls[0]).await?;
+        let login = self.login(&target.project, env).await?;
+        let mut client = wamn_postgres::connect(login).await?;
         let mut project = client.begin().await?;
         sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)").bind(caller).bind(&attachment.operation).execute(&mut *project).await?;
         let mut source_client;
         let mut source_tx;
         let source = if operation == "connection.copy" {
             let source_env = target.source_env.as_ref().expect("validated source env");
-            let urls = self.logins(&[(target.project.clone(), source_env.clone())])?;
-            source_client = wamn_postgres::connect(&urls[0]).await?;
+            let login = self.login(&target.project, source_env).await?;
+            source_client = wamn_postgres::connect(login).await?;
             source_tx =
                 wamn_identity::transaction::read_connection(&mut source_client, caller).await?;
             Some(&mut *source_tx)

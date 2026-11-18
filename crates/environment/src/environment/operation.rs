@@ -144,6 +144,7 @@ pub async fn application(
                 &triple,
             )
             .await?;
+            platform.prepare_database(&connection).await?;
             let owner = connection.to_json()?;
             let release = wamn_catalog::resource_names::application_release_name(
                 &triple.org,
@@ -367,14 +368,11 @@ async fn apply_sql(
         &values,
     )
     .await?;
-    let capture = wamn_platform_install::environment::capture_connection(
-        &platform.system_database_url,
-        triple,
-    )
-    .await?;
+    let capture = wamn_platform_install::environment::capture_configuration(connection.clone())?;
+    platform.prepare_database(&capture).await?;
     resources::prepare_cdc(
         owner,
-        &capture,
+        &capture.to_json()?,
         &connection.database,
         &publication,
         &schemas,
@@ -446,6 +444,7 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                 &triple,
             )
             .await?;
+            platform.prepare_database(&conn).await?;
             let owner = conn.to_json()?;
             LifecycleLock::hold(
                 wamn_postgres::connect(&owner).await?,

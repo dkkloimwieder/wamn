@@ -75,8 +75,8 @@ impl ControlRoutes<'_> {
             )
             .await?;
             authorized.commit().await?;
-            let urls = self.logins(&[(project.clone(), env.clone())])?;
-            let mut client = wamn_postgres::connect(&urls[0]).await?;
+            let login = self.login(&project, env).await?;
+            let mut client = wamn_postgres::connect(login).await?;
             let mut transaction =
                 wamn_identity::transaction::read_connection(&mut client, caller).await?;
             let context = administration::configure(

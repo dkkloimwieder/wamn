@@ -499,7 +499,6 @@ pub async fn run_with_shutdown(
     shutdown: ReaderShutdown,
 ) -> anyhow::Result<()> {
     use sqlx::ConnectOptions as _;
-    use std::io::Write as _;
     let token = shutdown.token;
     let options = tokio::select! {
         biased;
@@ -511,15 +510,6 @@ pub async fn run_with_shutdown(
         .query_pairs()
         .find(|(name, _)| name == "sslrootcert")
         .map(|(_, value)| value.into_owned());
-    let mut certificate = tempfile::NamedTempFile::new()?;
-    let ca = match ca {
-        Some(ca) if ca.starts_with("-----BEGIN CERTIFICATE-----") => {
-            certificate.write_all(ca.as_bytes())?;
-            Some(certificate.path().to_string_lossy().into_owned())
-        }
-        Some(ca) => Some(ca.strip_prefix("file: ").unwrap_or(&ca).to_owned()),
-        None => None,
-    };
     // SQLx serializes certificate files with a prefix and includes its statement
     // cache setting. The replication client expects libpq connection options.
     let pairs: Vec<_> = input
@@ -529,7 +519,9 @@ pub async fn run_with_shutdown(
         .collect();
     input.query_pairs_mut().clear().extend_pairs(pairs);
     if let Some(ca) = ca {
-        input.query_pairs_mut().append_pair("sslrootcert", &ca);
+        input
+            .query_pairs_mut()
+            .append_pair("sslrootcert", ca.strip_prefix("file: ").unwrap_or(&ca));
     }
     args.cdc_url = input.into();
     let nats_options = wamn_broker::nats::tls_options(

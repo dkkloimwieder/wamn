@@ -25,10 +25,10 @@ pub async fn response(
         &project,
         &environment,
     ));
-    let Ok(database_url) = tokio::fs::read_to_string(path).await else {
+    let Ok(login) = wamn_postgres::mounted_options(&path).await else {
         return page(503, "callback database unavailable");
     };
-    let Ok(mut database) = wamn_postgres::connect(database_url.trim()).await else {
+    let Ok(mut database) = wamn_postgres::connect(login).await else {
         return page(503, "callback database unavailable");
     };
     let result = oauth

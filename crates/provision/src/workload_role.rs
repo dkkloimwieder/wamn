@@ -224,9 +224,15 @@ pub fn platform_configuration(input: &str) -> anyhow::Result<String> {
     if !input.trim_start().starts_with('{') {
         return Ok(input.into_owned());
     }
-    let mut config: wamn_postgres::ConnectionConfig = serde_json::from_str(&input)?;
+    platform_connection(serde_json::from_str(&input)?)?.to_json()
+}
+
+/// Select the platform login on the same project endpoint.
+pub fn platform_connection(
+    mut config: wamn_postgres::ConnectionConfig,
+) -> anyhow::Result<wamn_postgres::ConnectionConfig> {
     config.username = wamn_role::PLATFORM_LOGIN.parse()?;
     config.credentials.name =
         wamn_registry::name::project_login_secret(&config.database, config.username.as_str());
-    config.to_json()
+    Ok(config)
 }

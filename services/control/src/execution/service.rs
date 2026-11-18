@@ -33,7 +33,8 @@ impl Execution {
         let input = Value::Object(input);
         wamn_provision::validate_project_env(&self.org, &target.project, &target.env)?;
         let key = wamn_provision::control_administration_key(&target.project, &target.env);
-        let login = std::fs::read_to_string(self.administration.join(key))
+        let login = wamn_postgres::ConnectionConfig::read(&self.administration.join(key))
+            .await
             .context("read the project's administration login")?;
         let mut system_connection = wamn_postgres::connect(&self.control_database)
             .await
@@ -64,15 +65,14 @@ impl Execution {
             &target.env,
             &instance,
         );
-        let (_, database) = wamn_postgres::identity(login.trim())
-            .context("read the identity of the project administration login")?;
         ensure!(
-            database == expected,
+            login.database == expected,
             "administration login names another project database"
         );
-        let mut project = wamn_postgres::connect(login.trim())
-            .await
-            .context("connect the project's administration login")?;
+        let mut project =
+            wamn_postgres::connect(login.mounted_options(&self.administration).await?)
+                .await
+                .context("connect the project's administration login")?;
         let mut transaction = project.begin().await?;
         if operation != "pat.list" {
             let sealed = wamn_catalog::operation_token(

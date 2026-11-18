@@ -165,6 +165,7 @@ async fn configure_project(
     let schemas = if unconfigured {
         Vec::new()
     } else {
+        platform.prepare_database(connection).await?;
         let mut project =
             installer::environment::wait_project_connection(&owner, &connection.database).await?;
         let unfinished = super::drain::unfinished(&mut project, &triple.env, application).await?;
@@ -208,7 +209,8 @@ async fn configure_project(
         wamn_broker::authorization::certificate(&recovery, &recovery, &recovery),
     ]);
     values["environmentDocument"] = applied_document.into();
-    values["cdcReader"] = reader_values(platform, triple, &publication, &capture).await?;
+    values["cdcReader"] =
+        reader_values(platform, triple, &publication, &capture.to_json()?).await?;
     let paused = super::capture_gap::is_open(&mut *lock.client().await, triple).await?;
     values["cdcReader"]["pause"] = paused.into();
     // Wait for the database first because the reader needs the slot created below.
@@ -233,6 +235,11 @@ async fn configure_project(
     )
     .await?;
 
+    if unconfigured {
+        platform.prepare_database(connection).await?;
+    }
+    platform.prepare_database(&capture).await?;
+    let capture = capture.to_json()?;
     LifecycleLock::hold(
         installer::environment::wait_project_connection(&owner, &connection.database).await?,
         triple,

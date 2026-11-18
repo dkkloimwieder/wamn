@@ -102,7 +102,9 @@ impl Configuration {
             .context("read native control configuration")?;
         ensure!(
             config.database.credentials.namespace == config.org
-                && config.apply_database.credentials.namespace == config.org,
+                && config.apply_database.credentials.namespace == config.org
+                && config.database.server_ca.namespace == config.org
+                && config.apply_database.server_ca.namespace == config.org,
             "control credentials must belong to the org namespace"
         );
         ensure!(
@@ -121,6 +123,7 @@ impl Configuration {
     fn platform(&self) -> anyhow::Result<Platform> {
         Ok(Platform {
             system_database_url: self.apply_database.to_json()?,
+            database_files: None,
             target: wamn_kubernetes::Target {
                 kubeconfig: "/work/kubeconfig".into(),
                 context: "operation".into(),
@@ -187,7 +190,8 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     let database = config.database.to_json()?;
     let pool = wamn_postgres::pool(&database, 4).await?;
     let identity_databases = config.administration_dir.clone();
-    let identity_system = config.apply_database.to_json()?;
+    let identity_system = wamn_provision::migrations::MigrationDatabase::System
+        .configuration(&config.apply_database.to_json()?)?;
     let verifier = wamn_authentication::access_token::AccessTokenVerifier::new(
         &config.session_issuer,
         &config.session_jwks_url,
@@ -224,8 +228,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
             administration: config.administration_dir.clone(),
             control_database: database,
             registry_token_metadata: config.registry_token_metadata,
-            system_database: wamn_provision::migrations::MigrationDatabase::System
-                .configuration(&config.apply_database.to_json()?)?,
+            system_database: identity_system.clone(),
             integration_registry,
             registry_credentials,
         }))

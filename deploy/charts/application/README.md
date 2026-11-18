@@ -10,3 +10,6 @@ It checks enabled workflows before it runs Helm rollback.
 Application upgrades and rollbacks use `--wait=watcher`. The project operation Role already grants `list` and `watch` on this chart's ConfigMaps, Services, and WorkloadDeployments.
 
 Deploy uses the `workflow` NATS binding for the workflow service. It adds the `ingress` binding when the application declares Data change handlers.
+
+When `controlService` is enabled, the control pod projects the system control login and `control.systemMigrationSecret` under `/etc/wamn/db/<login-secret>/`. Each directory contains `username`, `password` and the system CA's `ca.crt`.
+The existing control administration directory supplies the public configuration and credential files for project connections.
