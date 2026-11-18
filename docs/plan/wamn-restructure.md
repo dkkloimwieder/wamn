@@ -692,19 +692,23 @@ Issues:
 - The `org` chart's cluster list, its `trials`, `standard` and `dedicated` templates, and its login Secrets go.
 - The system database cluster moves to namespace `platform`. Until Epic 10, the `installation` chart renders it.
 - Env apply drops any step that existed only because the `org` chart held every project's logins.
+- Fixed logins (`wamn_app_login`, `wamn_query_login`, `wamn_platform_login`, `wamn_migration`, `wamn_cdc`) as members of the group roles, with derived connection limits. One database block per environment in the environment file. One ObjectStore and ScheduledBackup per project, prefixes in a shared bucket. `initdb` creates the database; Cluster and ObjectStore are kept unless `--data`. System login Secrets are rendered in `platform` and in each org from one value.
 
 9.2 The org boundary (Q, K7b).
 - The `org` chart renders the namespace, the RBAC, a quota and a default-deny NetworkPolicy, with the allow rules the platform needs.
 - Every Role in wamn's own charts names its Secrets with `resourceNames`. The account running Helm keeps the recorded exception until 9.3.
 - `wamn-platform-operations` loses full Secret writes, and `bind` and `escalate`, unless the scout shows a need. Control's org Role loses `get` on every Secret.
+- Default-deny NetworkPolicy with named allow rules; public egress only on the ports integrations declare, with wash-runtime's `allowedHosts`. No `escalate`; `bind` only with `resourceNames`. `wamn-credential-<project>` is created empty by the project chart and written by control under server-side apply.
 
 9.3 Helm release storage.
 - Each org's Helm releases are stored in their own namespace, which holds only release records. Each chart places its objects in the org namespace explicitly (`metadata.namespace`).
 - The account running Helm gets Secret `list` only in that namespace, and name-scoped rights in the org namespace.
+- Releases are stored in `wamn-helm-<org>`; Helm runs with `--server-side=true`. Watched charts keep `list` and `watch` on their non-Secret kinds, a recorded exception.
 
 9.4 NATS (R).
 - The environment user splits into a restricted workload user for the hosts and an admin user for Rust tooling (`ensure_stream` and others). The workload user receives replies only on its own inbox prefix.
 - `wamn-nats-authorization` is rendered by a chart, ending its C1 exception.
+- The workflow service and `ingress` use named NATS bindings with inbox prefixes under the workload user. Each org's NATS accounts live in their own Secret, included by the server's base config.
 
 9.5 Connection secrets.
 - The host stops reading connection secrets from the Kubernetes API on each call, by the option D rules after the scout.
@@ -763,6 +767,9 @@ Issues:
 - After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
 - When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
 - After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
+- Epic 10: D6, the host NATS URLs default to `nats.<release namespace>` while the service is `wamn-nats.platform`, and hosts start no HTTP listener. D7, `registry.event_readers` has no writer, so capture-gap recovery refuses on a fresh project.
+- After the restructure: NATS JWT accounts with a resolver, replacing file-based accounts. NATS's own docs treat splitting auth into include files as buying time before moving off centralized configuration.
+- Epic 10 or later: NATS runs as one pod with one-replica streams, so adding an org (a new accounts Secret mount) restarts the broker for 10 to 60 seconds, and core NATS messages in that gap are lost. Three NATS pods with three-replica streams would keep quorum through a rolling restart.
 
 # Part 2: Review log
 
@@ -2224,3 +2231,5 @@ Facts:
 **Ruled (D, 2026-11-18): CloudNativePG 1.30.2.** wamn moves from operator 1.29.1 (series past end of life) to 1.30.2 (chart 0.29.2), the Barman Cloud plugin chart to 0.9.0, and the PostgreSQL image pin to 18.7, for the 1.30 security fixes. `DatabaseRole` (new in 1.30) is a 3.6 item.
 
 **Ruled (D, 2026-11-18): step 3.6 split.** Epic 9 does isolation (W2, Q, the org chart of K7b, Helm release storage, R, connection secrets, P5's `wamn-postgres` edge); Epic 10 does install (the `platform` chart, J, K, K4, K5, L1, the bootstrap items, NATS volume sizing); the first kind run follows Epic 10. With one Cluster per project database, each project Cluster declares its own logins in its managed-role list, so `DatabaseRole` is not needed. Hand-written OpenTofu waits until after the first kind run.
+
+**Ruled (D, 2026-11-18): Epic 9 scout answers.** Fixed project logins with derived connection limits; environment-level database sizing; one ObjectStore and ScheduledBackup per project; `initdb` creates the database; Cluster and ObjectStore kept unless `--data`; system login Secrets rendered in `platform` and each org. Default-deny NetworkPolicy with named allow rules, public egress only on declared integration ports; no `escalate`; `wamn-credential-<project>` created empty by the chart and written by control under server-side apply. Helm releases stored in `wamn-helm-<org>` with server-side apply; watched charts keep list and watch on non-Secret kinds. Named NATS bindings with inbox prefixes for the workflow service and `ingress`; one NATS accounts Secret per org, included by the server config, so no org can change another's accounts. Connection secrets stay an API read by name, with a stronger cache. `wamn-postgres` mounts only `username`, `password` and `ca.crt`. D6 and D7 go to Epic 10.
