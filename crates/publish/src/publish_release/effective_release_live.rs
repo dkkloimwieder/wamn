@@ -154,7 +154,7 @@ fn base_and_overlay_project_admitted_routes() {
     // Both packages name widget-get-http. The overlay's replaces the base's, so
     // the release carries a route to each package's component.
     let read = |input: &PackageInput| {
-        read_package_attachments(&[input.root.join("publication/attachments.json")])
+        read_package_attachments(std::slice::from_ref(&input.root))
             .expect("read the package attachment document")
     };
     let mut authored_attachments = read(&inputs[0]);

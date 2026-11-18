@@ -1,7 +1,11 @@
-use super::{Mapping, ServingManifest, Value, ensure};
+use super::{Mapping, Value, ensure};
 use anyhow::Context as _;
 use std::collections::{BTreeMap, BTreeSet};
-use wamn_catalog::{PackageName, manifest::PackageManifest};
+use wamn_catalog::{
+    ComponentDescriptor, PackageName,
+    canonical_name::CanonicalName,
+    manifest::{PackageManifest, deploy::PublishedComponent},
+};
 
 /// The Helm release name of an application: `r-<slug>-<hash>`.
 ///
@@ -34,8 +38,8 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 /// Every application has one route workload, including applications without HTTP routes.
 /// Each role's configuration derives from the coordinate.
 pub fn roles(
-    manifest: &ServingManifest,
     package_manifests: &BTreeMap<PackageName, PackageManifest>,
+    package_digest: &wamn_digest::Digest,
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
@@ -51,18 +55,32 @@ pub fn roles(
     let mut components = Vec::new();
     let mut declared_connections = std::collections::BTreeMap::new();
     let mut integrations = std::collections::BTreeMap::new();
-    let component_names: std::collections::BTreeSet<_> = manifest
-        .components
-        .iter()
-        .map(component_name)
+    let component_names: BTreeSet<_> = published_components(package_manifests)
+        .map(|(package, component)| component_name(package, &component.descriptor.component))
         .chain(std::iter::once("ingress".to_owned()))
         .collect();
     let stream = wamn_registry::name::stream_name(org, project, env);
     let mut subscriptions = BTreeSet::new();
     let mut handlers = BTreeMap::new();
-    let mut typed_operations = std::collections::BTreeSet::new();
-    for component in &manifest.components {
-        let name = component_name(component);
+    let mut typed_operations = BTreeSet::new();
+    let route_contracts = wamn_publish::publish_release::route_contracts(package_manifests)?;
+    let routes = wamn_publish::publish_release::deployment_routes(
+        package_manifests,
+        &route_contracts,
+        application,
+        package_digest,
+    )?;
+    let schemas = package_manifests
+        .iter()
+        .map(|(id, package)| {
+            Ok((
+                id,
+                wamn_publish::publish_release::deploy_runtime_schema(package, package_manifests)?,
+            ))
+        })
+        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+    for (package_id, component) in published_components(package_manifests) {
+        let name = component_name(package_id, &component.descriptor.component);
         let mut connections = Vec::new();
         for binding in bindings
             .iter()
@@ -162,11 +180,9 @@ pub fn roles(
         }
         let mut operations = std::collections::BTreeMap::new();
         for (operation_name, operation) in &component.descriptor.operations {
-            let route = manifest.route(
-                &component.package_id,
-                &component.descriptor.component,
-                operation_name,
-            );
+            let route = route_contracts
+                .get(&(package_id.clone(), operation_name.clone()))
+                .filter(|route| route.type_ != wamn_catalog::OperationType::EventHandler);
             let type_ = route.map(|route| match route.type_ {
                 wamn_catalog::OperationType::Delete => ApplicationOperationType::Delete,
                 type_ if type_.is_read() => ApplicationOperationType::Read,
@@ -195,15 +211,16 @@ pub fn roles(
                 },
             );
         }
-        let package = package_manifests.get(&component.package_id);
+        let package = &package_manifests[package_id];
         let declaration = package
-            .and_then(|package| package.components.get(component.descriptor.component.as_str()))
+            .components
+            .get(component.descriptor.component.as_str())
             .and_then(|declaration| declaration.data_change.as_ref());
         ensure!(
             component.descriptor.data_change == declaration.is_some(),
             "component {name} has a data change export that differs from its verified package manifest"
         );
-        let data_change = if let (Some(package), Some(declaration)) = (package, declaration) {
+        let data_change = if let Some(declaration) = declaration {
             let mut models = Vec::with_capacity(declaration.models.len());
             for (model, ops) in &declaration.models {
                 let relation = package.models.get(model)
@@ -212,10 +229,14 @@ pub fn roles(
                 let entity = model;
                 for op in ops {
                     let op = op.as_str();
-                    if let Some(previous) = handlers.insert((&relation.owner, model, op), component) {
+                    if let Some(previous) = handlers.insert(
+                        (&relation.owner, model, op),
+                        (package_id, &component.descriptor.component),
+                    ) {
                         anyhow::bail!(
                             "components {} and {name} both handle data changes for {}/{model}/{op}",
-                            component_name(previous), relation.owner,
+                            component_name(previous.0, previous.1),
+                            relation.owner,
                         );
                     }
                     let subject = wamn_registry::name::event_subject(org, project, env, &format!("{entity}.{op}"));
@@ -238,10 +259,10 @@ pub fn roles(
         };
         components.push(ApplicationComponent {
             name,
-            package: component.package_id.clone(),
+            package: package_id.clone(),
             digest: component.descriptor.component_digest,
             connections,
-            schema: component.runtime_schema.clone(),
+            schema: schemas[package_id].clone(),
             operations,
             data_change,
         });
@@ -267,17 +288,15 @@ pub fn roles(
     }
     config.insert(
         wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
-        serde_json::to_string(&wamn_catalog::http_routes::route_data(
-            manifest,
-            &manifest.digest(),
-        ))?
-        .into(),
+        serde_json::to_string(&routes)?.into(),
     );
     config.insert(
         wamn_catalog::application_config::APPLICATION_CONFIG.into(),
         serde_json::to_string(&application)?.into(),
     );
-    let mut host_interfaces = host_interfaces(manifest, !integrations.is_empty())?;
+    let descriptors =
+        published_components(package_manifests).map(|(_, component)| &component.descriptor);
+    let mut host_interfaces = host_interfaces(descriptors, !integrations.is_empty())?;
     if !subscriptions.is_empty() {
         host_interfaces.push(serde_json::json!({
             "namespace": "wasmcloud",
@@ -299,14 +318,14 @@ pub fn roles(
 }
 
 /// Unnamed platform imports, including bound when the workload has integration siblings.
-pub fn host_interfaces(
-    manifest: &ServingManifest,
+pub fn host_interfaces<'a>(
+    components: impl IntoIterator<Item = &'a ComponentDescriptor>,
     has_integrations: bool,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let mut packages =
         std::collections::BTreeMap::<(&str, &str), (&str, std::collections::BTreeSet<&str>)>::new();
-    for component in &manifest.components {
-        for import in &component.descriptor.imports {
+    for component in components {
+        for import in &component.imports {
             let Some((package, rest)) = import.split_once('/') else {
                 continue;
             };
@@ -332,12 +351,21 @@ pub fn host_interfaces(
     Ok(interfaces)
 }
 
+pub(crate) fn published_components(
+    packages: &BTreeMap<PackageName, PackageManifest>,
+) -> impl Iterator<Item = (&PackageName, &PublishedComponent)> {
+    packages.iter().flat_map(|(package, manifest)| {
+        manifest
+            .deploy
+            .iter()
+            .flat_map(|deploy| deploy.components.values())
+            .map(move |component| (package, component))
+    })
+}
+
 /// The sibling name used by both chart components and operation dispatch facts.
-pub fn component_name(component: &wamn_catalog::ServingComponent) -> String {
-    format!(
-        "{}-{}",
-        component.package_id, component.descriptor.component
-    )
+pub fn component_name(package: &PackageName, component: &CanonicalName) -> String {
+    format!("{package}-{component}")
 }
 
 /// Render the install values of one application.

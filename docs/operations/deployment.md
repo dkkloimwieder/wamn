@@ -194,12 +194,12 @@ Remote operations need no kubeconfig, target database URL, or local chart.
 The environment file supplies the project and environment names.
 The server reads the canonical document and selects all runtime inputs.
 
-Source publication stays local and submits only its release digest.
+Source publication stays local and returns the top package OCI digest.
 Source builds require `DATABASE_URL` for disposable build databases and the existing registry inputs.
-Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, `WAMN_RELEASE_ARTIFACT_BASE`, and `WAMN_REGISTRY_AUTH_FILE` for publication.
+Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE` for publication.
 `WAMN_OCI_CA_PATHS` supplies optional registry certificates.
 For an HTTP registry, the existing `WAMN_RELEASE_HOST_GROUP` document supplies `--allow-insecure-registries` in `extraArgs`.
-`wamn schema publish` only publishes and starts no Job.
+`wamn publish` uses the existing build output and starts no Job.
 
 Application, schema and administration commands require `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
 Control selects the installed database, chart, registry and broker configuration.
@@ -210,7 +210,7 @@ See [Native control](../architecture/control.md) for the service and worker conf
 A NULL project schema mode marks an unconfigured deployment. Configuration resolves an omitted mode from the environment’s disposable setting.
 Application rows hold hostnames, client pins and desired release digests.
 Other rows hold connection aliases and integration versions. The shared environment owns its target and policy.
-Postgres constrains these values. Package membership comes from the selected release manifest.
+Postgres constrains these values. The top package pins the base packages by OCI digest.
 Environment documents contain no release digest or package membership. Old document shapes are refused.
 Set the project `revocation_seconds` to an integer from 0 to 3600. Deploy writes this grant cache lifetime into each application workload.
 The value bounds the lifetime of positive grant answers.
@@ -232,7 +232,7 @@ The last project removes the environment account and shared Certificate after de
 These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
 Use `wamn revoke-pat --project PROJECT --env ENV --prefix PREFIX` from an org admin session.
 Other lifecycle operations take the coordinate and read the registry.
-Helm history records the applied release. Each release manifest defines its packages.
+Helm history records the applied release. The top package's deploy section pins its dependency closure.
 The configuration export contains no code selection.
 Use a source package directory for source deployment. Use an application release digest for deployment without source:
 
@@ -278,7 +278,7 @@ An environment name or explicit `reset` mode grants no authority to discard data
 Editing the mode alone executes no SQL and changes no application selection.
 
 ```bash
-wamn schema publish apps/sample_app --env environments/dev/environment.k
+wamn publish apps/sample_app --env environments/dev/environment.k
 wamn schema diff sample_app --env environments/dev/environment.k
 wamn schema apply sample_app --env environments/dev/environment.k
 wamn schema apply sample_app --env environments/dev/environment.k --release sha256:<release-digest>
@@ -528,45 +528,19 @@ A physical schema change follows the selected mode and recorded disposable autho
 
 Read each command's current required arguments with `--help`.
 
-## Publish a release
+## Publish a package
 
-Publish a source package through the product command:
+Run this command after building the package and its bases.
 
 ```bash
-wamn schema publish apps/wamn_receiving --env environments/dev/environment.k
+wamn publish apps/wamn_receiving --env environments/dev/environment.k
 ```
 
-Publication verifies package and component artifacts and prints the immutable release digest.
-The environment document selects the application package closure.
+Set `WAMN_PACKAGE_ARTIFACT_BASE` and `WAMN_COMPONENT_ARTIFACT_BASE` to the package and component repositories.
+Set `WAMN_REGISTRY_AUTH_FILE` to a credential file with access to both repositories.
+Publication pushes the bases first and records their OCI digests in the dependent packages.
+The command prints the digest of the top package. [Package and component formats](building.md#reading-a-pushed-package)
 
-Source publication records the release by its canonical manifest digest.
-If the release has an HTTP attachment, publication composes the pinned route guest with the application.
-Set `WAMN_COMPONENT_ARTIFACT_BASE` for this step. `WAMN_INGRESS_COMPONENT` can name another route guest file.
-It pushes the entry to `<component-artifact-base>/entries`, beside the members.
-The tag of the entry is its content digest. If that tag is already present with the same bytes, publication reuses it and pushes nothing.
-The manifest records the entry as `entries@sha256:<manifest-digest>`, a path relative to the component artifact base.
-It also records the member byte digests.
-Each host joins the entry path with its own `WAMN_COMPONENT_ARTIFACT_BASE`, as it does for the members.
-The manifest names no registry, so a release copied with its components and entry starts in the new registry.
-The release chart starts that entry with `poolSize: 0`.
-Workflow recovery uses the live workload for each application.
-An unfinished run retains its workflow version and any saved Response checkpoint.
-The host takes no process release digest or release registry argument.
-It pushes the manifest to the release repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the digest.
-The credential of `--registry-auth-file` must pull the packages and push to the release repository.
-Each component of the release carries its admitted descriptor from the package artifact.
-Set `RELEASE_DIGEST` to it.
-The manifest names no environment key and no environment, so one release has one digest in every environment.
-The composed `project_env_key` is `<org>--<environment>--<project>`.
-An environment name contains 1 to 40 lowercase letters, digits, or isolated hyphens.
-It starts and ends with a letter or digit. The three key components share a 41-byte budget.
-Org and project names also refuse the reserved `wamn` prefix. Environment names permit that prefix.
-`wamn-registry` parses both values at external boundaries.
-The separate `environment` field keeps the short name.
-The release also names no route host.
-The route host is only the `host` of the http workload config. The router matches routes under it.
-`publish-release` takes the same `--oci-ca-path` input as `push-package`.
-Use `wamn deploy --release` to select the published application.
 
 ## Web client files
 

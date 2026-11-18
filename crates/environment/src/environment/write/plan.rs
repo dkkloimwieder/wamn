@@ -29,26 +29,25 @@ pub(in crate::environment) fn host_group(mut group: Mapping) -> anyhow::Result<M
 }
 
 /// Build release values from the document, artifact, policy, and host overlay.
-pub(super) async fn release_values(
+pub(super) fn release_values(
     document: &EnvironmentDocument,
     application: &wamn_catalog::ApplicationName,
-    manifest: &wamn_catalog::ServingManifest,
     package_manifests: &std::collections::BTreeMap<
         wamn_catalog::PackageName,
         wamn_catalog::manifest::PackageManifest,
     >,
-    manifest_digest: &wamn_digest::Digest,
+    package_digest: &wamn_digest::Digest,
     bindings: &[super::super::bindings::Binding],
     integration_repository: &str,
     actor: &str,
-    source: wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
+    component_repository: &str,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let seconds = document
         .revocation_seconds
         .context("deploy requires revocation_seconds from the environment input")?;
     let roles = release_chart::roles(
-        manifest,
         package_manifests,
+        package_digest,
         &document.org,
         &document.project,
         &document.env,
@@ -65,12 +64,7 @@ pub(super) async fn release_values(
     let applications = std::collections::BTreeMap::from([(
         application.to_owned(),
         wamn_catalog::ApplicationDefinition {
-            packages: manifest
-                .release
-                .packages
-                .iter()
-                .map(|package| package.package_id().to_owned())
-                .collect(),
+            packages: package_manifests.keys().cloned().collect(),
             connections: std::collections::BTreeMap::new(),
         },
     )]);
@@ -78,26 +72,25 @@ pub(super) async fn release_values(
         org: document.org.clone(),
         project: document.project.clone(),
         env: document.env.clone(),
-        manifest_digest: manifest_digest.to_owned(),
+        manifest_digest: *package_digest,
         route_host: selection.hostname.clone(),
         applications,
         roles,
         actor: actor.to_owned(),
     })?;
-    let source =
-        wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSource::new(
-            source,
-        )?;
-    let mut components = Vec::with_capacity(manifest.components.len());
-
-    for component in &manifest.components {
-        let image = source
-            .image_reference(&component.descriptor.component_digest)
-            .await?;
-        components.push(serde_yaml::to_value(serde_json::json!({
-            "name": release_chart::component_name(component), "image": image,
-        }))?);
-    }
+    let repository = wamn_catalog::parse_component_artifact_base(component_repository)?;
+    let components = release_chart::published_components(package_manifests)
+        .map(|(package, component)| {
+            let name = release_chart::component_name(package, &component.descriptor.component);
+            let image = format!(
+                "{}/{}@{}",
+                repository.registry(),
+                repository.repository(),
+                component.image_digest
+            );
+            serde_yaml::to_value(serde_json::json!({"name": name, "image": image}))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     rendered["components"]
         .as_sequence_mut()
         .expect("release values contain a component list")

@@ -1,19 +1,8 @@
 use super::{
     BTreeMap, EMPTY_CONFIG, EMPTY_CONFIG_MEDIA_TYPE, PACKAGE_ARTIFACT_TYPE, PackedLayer, Path,
-    PathBuf, bytes_sha256, ensure,
+    bytes_sha256, ensure,
 };
 use anyhow::Context as _;
-
-pub(crate) fn component_connection_names<'a>(
-    manifest: &'a wamn_catalog::manifest::PackageManifest,
-    component: &wamn_catalog::canonical_name::CanonicalName,
-) -> anyhow::Result<&'a [wamn_catalog::canonical_name::CanonicalName]> {
-    manifest
-        .components
-        .get(component.as_str())
-        .map(|declaration| declaration.connections.as_slice())
-        .with_context(|| format!("package declares no component {component}"))
-}
 
 /// The canonical image manifest bytes of `layers`.
 pub(super) fn image_manifest(
@@ -78,17 +67,95 @@ pub(super) fn tar_layer(
         .with_context(|| format!("finish the {title} layer"))
 }
 
-/// The file of the package-relative `logical` path. A `generated/` path names
-/// a file of the package's output root.
-pub(super) fn physical_path(root: &Path, logical: &str) -> PathBuf {
-    let logical = Path::new(logical);
-    if let Ok(output) = logical.strip_prefix("generated") {
-        wamn_codegen::output_root(root).join(output)
-    } else if root.join("generated").is_dir() {
-        root.join(logical)
-    } else {
-        wamn_codegen::output_root(root).join(logical)
+/// Check the tar path before comparing or unpacking its bytes.
+pub(super) fn migration_path<'entry, R: std::io::Read>(
+    entry: &'entry tar::Entry<'_, R>,
+) -> anyhow::Result<std::borrow::Cow<'entry, Path>> {
+    let path = entry.path().context("read the migration path")?;
+    ensure!(
+        path.components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+            && super::MIGRATION_PATHS.iter().any(|directory| {
+                path.strip_prefix(directory)
+                    .is_ok_and(|file| !file.as_os_str().is_empty())
+            }),
+        "migration entry {} must be inside migrations/ or history/",
+        path.display()
+    );
+    Ok(path)
+}
+
+/// Preserve every previous filename and byte. New SQLx migration versions must sort
+/// above the highest version from either directory.
+pub(super) fn validate_append(
+    previous: &[u8],
+    current: &BTreeMap<String, Vec<u8>>,
+) -> anyhow::Result<()> {
+    use std::io::Read as _;
+    let mut archive = tar::Archive::new(previous);
+    let mut existing = std::collections::BTreeSet::new();
+    let mut highest = None;
+    let mut buffer = [0; 4096];
+    for entry in archive
+        .entries()
+        .context("read the predecessor migration tar")?
+    {
+        let mut entry = entry.context("read a predecessor migration")?;
+        ensure!(
+            entry.header().entry_type() == tar::EntryType::Regular,
+            "predecessor entry is not a regular file"
+        );
+        let path = migration_path(&entry)?;
+        let name = path
+            .to_str()
+            .context("predecessor migration name is not UTF-8")?
+            .to_owned();
+        let bytes = current
+            .get(&name)
+            .with_context(|| format!("removed migration {name}"))?;
+        ensure!(
+            entry.size() == u64::try_from(bytes.len())?,
+            "changed migration {name}"
+        );
+        for chunk in bytes.chunks(buffer.len()) {
+            entry.read_exact(&mut buffer[..chunk.len()])?;
+            ensure!(buffer[..chunk.len()] == *chunk, "changed migration {name}");
+        }
+        if let Some(version) = migration_version(&name)? {
+            highest = highest.max(Some(version));
+        }
+        ensure!(
+            existing.insert(name),
+            "predecessor migration tar repeats an entry"
+        );
     }
+    for name in current.keys().filter(|name| !existing.contains(*name)) {
+        let version = migration_version(name)?
+            .with_context(|| format!("new migration {name} needs a numbered SQLx filename"))?;
+        if let Some(highest) = highest {
+            ensure!(
+                version > highest,
+                "new migration {name} must have a version above {highest}"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn migration_version(path: &str) -> anyhow::Result<Option<i64>> {
+    // SQLx reads the files directly inside migrations/ and history/.
+    let Some((_, name)) = path.split_once('/') else {
+        return Ok(None);
+    };
+    let Some((version, description)) = name.split_once('_') else {
+        return Ok(None);
+    };
+    if name.contains('/') || description.strip_suffix(".sql").is_none() {
+        return Ok(None);
+    }
+    Ok(Some(version.parse().with_context(|| {
+        format!("read migration version from {path}")
+    })?))
 }
 
 /// Refuse package declarations before the reader drops retired fields.

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use wamn_build::{BuildRequest, build_package};
 
 use anyhow::{Context as _, ensure};
-use wamn_catalog::PackageCoordinate;
 use wamn_catalog::manifest::PackageManifest;
 use wamn_codegen::{
     build::{default_output_root, package_output},
@@ -13,7 +12,6 @@ use wamn_codegen::{
 };
 use wamn_environment::environment::document::EnvironmentDocument;
 use wamn_publish::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
-use wamn_publish::publish_release::{PublishReleaseRequest, publish_release};
 
 fn read_package_manifest(root: &Path) -> anyhow::Result<PackageManifest> {
     let bytes = if wamn_codegen::is_authored(root) {
@@ -30,7 +28,7 @@ pub async fn publish_from_env(
     root: &Path,
     database_url: &str,
 ) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
-    publish_source_from_env(document, build(document, root, database_url, false).await?).await
+    publish_source_from_env(build(document, root, database_url, false).await?).await
 }
 
 /// Build and publish immutable development coordinates derived from source content.
@@ -39,7 +37,7 @@ pub async fn publish_development_from_env(
     root: &Path,
     database_url: &str,
 ) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
-    publish_source_from_env(document, build(document, root, database_url, true).await?).await
+    publish_source_from_env(build(document, root, database_url, true).await?).await
 }
 
 /// Publish the selected source closure's existing build output without rebuilding.
@@ -48,30 +46,28 @@ pub async fn publish_built_from_env(
     document: &EnvironmentDocument,
     root: &Path,
 ) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
-    let (application, roots) = sources(document, root)?;
-    let packages = roots
-        .iter()
-        .map(|root| {
-            let record = build_record::read(&wamn_codegen::output_root(root))?;
-            Ok(PackageCoordinate::new(
-                record.package.id,
-                record.package.version,
-            )?)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    publish_source_from_env(
-        document,
-        SourceBuild {
-            application,
-            roots,
-            packages,
+    let root = root
+        .canonicalize()
+        .context("resolve selected package root")?;
+    let output = wamn_codegen::output_root(&root);
+    let output_parent = output.parent().context("build directory has no parent")?;
+    let roots = ordered_sources(
+        root,
+        |root| {
+            let path = wamn_codegen::package_manifest_path(root);
+            let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+            Ok(PackageManifest::from_slice(&bytes)?)
         },
-    )
+        |id| Ok(package_output(output_parent, id)),
+    )?;
+    publish_source_from_env(SourceBuild {
+        application: selected_application(document)?.clone(),
+        roots,
+    })
     .await
 }
 
 async fn publish_source_from_env(
-    document: &EnvironmentDocument,
     source: SourceBuild,
 ) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
     let variable = |name: &str| {
@@ -93,19 +89,12 @@ async fn publish_source_from_env(
             .map(Into::into)
             .collect(),
     };
-    publish_built(
-        document,
-        source,
-        registry,
-        &variable("WAMN_COMPONENT_ARTIFACT_BASE")?,
-    )
-    .await
+    publish_built(source, registry, &variable("WAMN_COMPONENT_ARTIFACT_BASE")?).await
 }
 
 struct SourceBuild {
     application: wamn_catalog::ApplicationName,
     roots: Vec<PathBuf>,
-    packages: Vec<PackageCoordinate>,
 }
 
 async fn build(
@@ -115,7 +104,6 @@ async fn build(
     development: bool,
 ) -> anyhow::Result<SourceBuild> {
     let (application, roots) = sources(document, root)?;
-    let mut packages = Vec::with_capacity(roots.len());
     for root in &roots {
         let mut request = BuildRequest::new(root, &default_output_root(root), database_url);
         let digest = development.then(|| content_digest(root)).transpose()?;
@@ -125,23 +113,15 @@ async fn build(
                 digest,
             )?);
         }
-        let record = build_package(&request).await?;
+        build_package(&request).await?;
         if let Some(digest) = digest {
             ensure!(
                 digest == content_digest(root)?,
                 "source changed during development build; retry"
             );
         }
-        packages.push(PackageCoordinate::new(
-            record.package.id,
-            record.package.version,
-        )?);
     }
-    Ok(SourceBuild {
-        application,
-        roots,
-        packages,
-    })
+    Ok(SourceBuild { application, roots })
 }
 
 /// Source directories and exact configuration inputs consumed by a package build.
@@ -244,55 +224,29 @@ fn hash_inputs(
 }
 
 async fn publish_built(
-    document: &EnvironmentDocument,
     source: SourceBuild,
     registry: PackageRegistry,
     component_artifact_base: &str,
 ) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
     let SourceBuild {
         application,
-        roots,
-        packages,
+        mut roots,
     } = source;
+    // A dependency-first walk visits the selected source package last.
+    let top = roots.pop().context("source package closure is empty")?;
     let mut publication = PushPackageRequest {
         package: PathBuf::new(),
         registry,
         component_artifact_base: component_artifact_base.to_owned(),
     };
+    let mut bases = BTreeMap::new();
     for root in roots {
         publication.package = root;
-        push_package(&publication).await?;
+        let published = push_package(&publication, &bases).await?;
+        bases.insert(published.coordinate.clone(), published);
     }
-    let selection = document
-        .applications
-        .get(&application)
-        .expect("source resolution selected an existing application");
-    let digest = publish_release(
-        PublishReleaseRequest {
-            applications: [(
-                application.clone(),
-                wamn_catalog::ApplicationDefinition {
-                    packages: packages
-                        .iter()
-                        .map(|package| package.package_id().to_owned())
-                        .collect(),
-                    connections: selection
-                        .connections
-                        .iter()
-                        .map(|(alias, connection)| (alias.clone(), connection.to_string()))
-                        .collect(),
-                },
-            )]
-            .into(),
-            application: None,
-            org: document.org.clone(),
-            project: document.project.clone(),
-            environment: document.env.clone(),
-            packages,
-        },
-        &publication.registry,
-    )
-    .await?;
+    publication.package = top;
+    let digest = push_package(&publication, &bases).await?.digest;
     Ok((application, digest))
 }
 
@@ -304,17 +258,34 @@ pub fn sources(
     let root = root
         .canonicalize()
         .context("resolve selected package root")?;
-    let manifest = read_package_manifest(&root)?;
+    let output = default_output_root(&root);
+    let application = selected_application(document)?.clone();
+    let roots = ordered_sources(root, read_package_manifest, |id| {
+        build_record::source_root(&package_output(&output, id))
+    })?;
+    Ok((application, roots))
+}
+
+fn selected_application(
+    document: &EnvironmentDocument,
+) -> anyhow::Result<&wamn_catalog::ApplicationName> {
     ensure!(
         document.applications.len() == 1,
         "select one application before publishing source"
     );
-    let application = document
+    Ok(document
         .applications
         .keys()
         .next()
-        .expect("one application");
-    let output = default_output_root(&root);
+        .expect("one application"))
+}
+
+fn ordered_sources(
+    root: PathBuf,
+    read: impl Fn(&Path) -> anyhow::Result<PackageManifest>,
+    base_root: impl Fn(&wamn_catalog::PackageName) -> anyhow::Result<PathBuf>,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let manifest = read(&root)?;
     let mut manifests = BTreeMap::new();
     manifests.insert(manifest.package.id.clone(), (root, manifest));
     loop {
@@ -326,8 +297,8 @@ pub fn sources(
         let Some(id) = missing else {
             break;
         };
-        let root = build_record::source_root(&package_output(&output, &id))?;
-        let manifest = read_package_manifest(&root)?;
+        let root = base_root(&id)?;
+        let manifest = read(&root)?;
         ensure!(
             manifest.package.id == id,
             "source directory does not declare package {id}"
@@ -340,7 +311,7 @@ pub fn sources(
     for id in manifests.keys() {
         visit(id, &manifests, &mut visiting, &mut visited, &mut roots)?;
     }
-    Ok((application.to_owned(), roots))
+    Ok(roots)
 }
 
 fn visit<'a>(

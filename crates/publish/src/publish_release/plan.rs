@@ -51,25 +51,42 @@ pub(crate) fn application_runtime_schema(
     manifests: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
     components: &BTreeSet<ServingComponent>,
 ) -> anyhow::Result<Option<String>> {
+    runtime_schema(manifest, manifests, |dependency| {
+        has_base_exports(
+            dependency,
+            components
+                .iter()
+                .filter(|component| component.package_id == manifest.package.id)
+                .flat_map(|component| component.descriptor.operations.keys()),
+        )
+    })
+}
+
+fn has_base_exports<'a>(
+    dependency: &wamn_catalog::manifest::BaseDependencyRequirement,
+    mut operations: impl Iterator<Item = &'a wamn_catalog::canonical_name::CanonicalName>,
+) -> bool {
+    let prefix = format!("{}:", dependency.package.as_str().replace('_', "-"));
+    let version = format!("@{}", dependency.version);
+    operations.any(|name| name.as_str().starts_with(&prefix) && name.as_str().ends_with(&version))
+}
+
+fn runtime_schema<'a>(
+    manifest: &'a wamn_catalog::manifest::PackageManifest,
+    manifests: &'a BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
+    composes: impl Fn(&wamn_catalog::manifest::BaseDependencyRequirement) -> bool,
+) -> anyhow::Result<Option<String>> {
     let mut members = vec![manifest];
-    for dependency in manifest.base_dependencies.values() {
-        let prefix = format!("{}:", dependency.package.as_str().replace('_', "-"));
-        if components
-            .iter()
-            .filter(|component| component.package_id == manifest.package.id)
-            .any(|component| {
-                component.descriptor.operations.keys().any(|name| {
-                    name.as_str().starts_with(&prefix)
-                        && name.as_str().ends_with(&format!("@{}", dependency.version))
-                })
-            })
-        {
-            members.push(
-                manifests
-                    .get(&dependency.package)
-                    .with_context(|| format!("missing base manifest {}", dependency.package))?,
-            );
-        }
+    for dependency in manifest
+        .base_dependencies
+        .values()
+        .filter(|dependency| composes(dependency))
+    {
+        members.push(
+            manifests
+                .get(&dependency.package)
+                .with_context(|| format!("missing base manifest {}", dependency.package))?,
+        );
     }
     let schemas = members
         .into_iter()
@@ -102,23 +119,31 @@ pub(crate) fn application_runtime_schema(
     }
 }
 
-/// Select applications whose admitted component includes the integration base.
-pub fn composes_integration(
+fn deployed_exports(
     manifest: &wamn_catalog::manifest::PackageManifest,
-    components: &BTreeSet<ServingComponent>,
-) -> bool {
+) -> impl Iterator<Item = &wamn_catalog::canonical_name::CanonicalName> {
+    manifest
+        .deploy
+        .iter()
+        .flat_map(|deploy| deploy.components.values())
+        .flat_map(|component| component.descriptor.operations.keys())
+}
+
+/// Return whether the deployed package composes the integration base.
+pub fn composes_integration(manifest: &wamn_catalog::manifest::PackageManifest) -> bool {
     manifest.base_dependencies.values().any(|dependency| {
-        let prefix = format!("{}:", dependency.package.as_str().replace('_', "-"));
         dependency.package.as_str() == "wamn_integration"
-            && components
-                .iter()
-                .filter(|component| component.package_id == manifest.package.id)
-                .any(|component| {
-                    component.descriptor.operations.keys().any(|name| {
-                        name.as_str().starts_with(&prefix)
-                            && name.as_str().ends_with(&format!("@{}", dependency.version))
-                    })
-                })
+            && has_base_exports(dependency, deployed_exports(manifest))
+    })
+}
+
+/// Derive the workload schema from its admitted exports and the closure's SQL.
+pub fn deploy_runtime_schema(
+    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
+) -> anyhow::Result<Option<String>> {
+    runtime_schema(manifest, manifests, |dependency| {
+        has_base_exports(dependency, deployed_exports(manifest))
     })
 }
 
@@ -183,7 +208,16 @@ pub(super) fn pin_runtime_schemas(
     let schemas = manifests
         .iter()
         .map(|(id, manifest)| {
-            if composes_integration(manifest, &components) {
+            if manifest.base_dependencies.values().any(|dependency| {
+                dependency.package.as_str() == "wamn_integration"
+                    && has_base_exports(
+                        dependency,
+                        components
+                            .iter()
+                            .filter(|component| &component.package_id == id)
+                            .flat_map(|component| component.descriptor.operations.keys()),
+                    )
+            }) {
                 application_dependency_permissions(manifest, &dependency_manifests)?;
             }
             application_runtime_schema(manifest, manifests, &components)
@@ -202,8 +236,7 @@ pub(super) fn pin_runtime_schemas(
         .collect())
 }
 
-/// The admitted components of the opened package artifacts, each from its
-/// descriptor layer, in the target of `project_env_key`.
+/// Project admitted components into the edge bundle format.
 pub(super) fn project_components(
     components: &ReleaseComponents,
 ) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {

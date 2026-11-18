@@ -3,31 +3,58 @@
 use sqlx::Row as _;
 pub(super) mod plan;
 pub(crate) use plan::exported_interfaces;
-pub use plan::require_imports;
-
-use std::path::Path;
+#[cfg(test)]
+use plan::require_imports;
 
 use anyhow::{Context as _, ensure};
 use wamn_catalog::manifest::PackageManifest;
 
+/// Install admitted connection requirements from the published package.
 pub async fn install(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    root: &Path,
     manifest: &PackageManifest,
-    source: Option<
-        &wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
-    >,
 ) -> anyhow::Result<u64> {
     if manifest.connections.is_empty() {
         return Ok(0);
     }
+    let deploy = manifest
+        .deploy
+        .as_ref()
+        .context("package has no compiled deploy section")?;
+    ensure!(
+        deploy.declarations.is_empty(),
+        "install requires a published package"
+    );
     let mut written = 0;
-    for (digest, connections, bytes) in Box::pin(crate::package_artifact::connection_components(
-        root, manifest, source,
-    ))
-    .await?
-    {
-        written += write(tx, manifest, &digest, &connections, &bytes).await?;
+    for component in deploy.components.values() {
+        let digest = component.descriptor.component_digest;
+        for connection in &component.descriptor.connections {
+            let name = connection
+                .store_alias
+                .name()
+                .context("package connection needs a fixed alias")?;
+            let declaration = manifest
+                .connections
+                .get(name)
+                .with_context(|| format!("package declares no connection {name}"))?;
+            let mode = match declaration.mode {
+                wamn_catalog::manifest::ConnectionMode::Read => "read",
+                wamn_catalog::manifest::ConnectionMode::Write => "write",
+            };
+            written += sqlx::query("INSERT INTO catalog.connection_requirement (component_digest,package_id,name,interface,mode) \
+                 VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING")
+                .bind(digest).bind(&manifest.package.id).bind(name).bind(&declaration.interface).bind(mode)
+                .execute(&mut **tx).await?.rows_affected();
+            let exact: bool = sqlx::query("SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE component_digest=$1 \
+                 AND package_id=$2 AND name=$3 AND interface=$4 AND mode=$5)")
+                .bind(digest).bind(&manifest.package.id).bind(name).bind(&declaration.interface).bind(mode)
+                .fetch_one(&mut **tx).await?.get(0);
+            ensure!(
+                exact,
+                "package {} connection {name} differs from its installed requirement",
+                manifest.package.id
+            );
+        }
     }
     Ok(written)
 }
@@ -96,94 +123,12 @@ mod palette_tests {
     }
 }
 
-/// Prepare requirements only for components in the selected release, without installing SQL.
-pub async fn prepare_release(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    release: &wamn_catalog::ServingManifest,
-    packages: &[PackageManifest],
-    source: Option<
-        wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig,
-    >,
-) -> anyhow::Result<()> {
-    let source = source
-        .map(wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSource::new)
-        .transpose()?;
-    for component in &release.components {
-        if component.package_id.as_str() == wamn_catalog::PALETTE_PACKAGE_ID {
-            for connection in &component.descriptor.connections {
-                for ((owner, alias), declaration) in palette_connections(connection, packages) {
-                    if !release
-                        .release
-                        .packages
-                        .iter()
-                        .any(|package| package.package_id() == owner)
-                    {
-                        continue;
-                    }
-                    let source = source
-                        .as_ref()
-                        .context("set WAMN_COMPONENT_ARTIFACT_BASE for palette activation")?;
-                    let bytes = source.pull_component(&component.descriptor.component_digest).await?;
-                    let interface =
-                        require_imports(&bytes, alias.as_str(), &declaration.interface)?;
-                    let mode = match declaration.mode {
-                        wamn_catalog::manifest::ConnectionMode::Read => "read",
-                        wamn_catalog::manifest::ConnectionMode::Write => "write",
-                    };
-                    sqlx::query("INSERT INTO catalog.connection_requirement(component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING")
-                    .bind(component.descriptor.component_digest).bind(owner)
-                    .bind(alias).bind(&interface).bind(mode).execute(&mut **tx).await?;
-                    let exact: bool = sqlx::query("SELECT EXISTS(SELECT FROM catalog.connection_requirement WHERE component_digest=$1 AND package_id=$2 AND name=$3 AND interface=$4 AND mode=$5)")
-                    .bind(component.descriptor.component_digest).bind(owner)
-                    .bind(alias).bind(&interface).bind(mode).fetch_one(&mut **tx).await?.get(0);
-                    ensure!(
-                        exact,
-                        "palette connection differs from its installed requirement"
-                    );
-                }
-            }
-            continue;
-        }
-        let package = packages
-            .iter()
-            .find(|package| package.package.id == component.package_id)
-            .context("release component has no package manifest")?;
-        let names = crate::package_artifact::component_connection_names(
-            package,
-            &component.descriptor.component,
-        )?;
-        if names.is_empty() {
-            continue;
-        }
-        let source = source
-            .as_ref()
-            .context("set WAMN_COMPONENT_ARTIFACT_BASE for activation")?;
-        let bytes = source.pull_component(&component.descriptor.component_digest).await?;
-        write(
-            tx,
-            package,
-            &component.descriptor.component_digest,
-            names,
-            &bytes,
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-/// Insert or reuse exact requirements from digest-verified component bytes.
-pub async fn write(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    manifest: &PackageManifest,
-    digest: &wamn_digest::Digest,
-    connections: &[wamn_catalog::canonical_name::CanonicalName],
+/// Check that the component's exact named imports match its package declarations.
+pub(crate) fn validate_connections(
     bytes: &[u8],
-) -> anyhow::Result<u64> {
-    let mut written = 0;
-    ensure!(
-        wamn_digest::bytes_sha256(bytes) == *digest,
-        "component differs from its admitted digest {digest}"
-    );
+    manifest: &PackageManifest,
+    connections: &[wamn_catalog::canonical_name::CanonicalName],
+) -> anyhow::Result<()> {
     let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?
     else {
         anyhow::bail!("connection authority needs a component binary")
@@ -214,24 +159,11 @@ pub async fn write(
     for name in connections {
         let declaration = manifest
             .connections
-            .get(name.as_str())
+            .get(name)
             .with_context(|| format!("package declares no connection {name}"))?;
-        let interface = require_imports(bytes, name.as_str(), &declaration.interface)?;
-        let mode = match declaration.mode {
-            wamn_catalog::manifest::ConnectionMode::Read => "read",
-            wamn_catalog::manifest::ConnectionMode::Write => "write",
-        };
-        written += sqlx::query("INSERT INTO catalog.connection_requirement (component_digest,package_id,name,interface,mode) \
-             VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(digest).bind(&manifest.package.id).bind(name).bind(&interface).bind(mode).execute(&mut **tx).await.map(|result| result.rows_affected())?;
-        let exact: bool = sqlx::query("SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE component_digest=$1 \
-             AND package_id=$2 AND name=$3 AND interface=$4 AND mode=$5)").bind(digest).bind(&manifest.package.id).bind(name).bind(&interface).bind(mode).fetch_one(&mut **tx).await?.get(0);
-        ensure!(
-            exact,
-            "package {} connection {name} differs from its installed requirement",
-            manifest.package.id
-        );
+        plan::require_import(&resolve, world, name.as_str(), &declaration.interface)?;
     }
-    Ok(written)
+    Ok(())
 }
 
 #[cfg(test)]

@@ -27,11 +27,13 @@ pub(super) fn emit_package_publication(
                 ));
             }
         }
-        components.insert(component.to_string(), json!({
-            "target": {"package-id": manifest.package.id, "package-version": manifest.package.version},
-            "component": component, "interface-version": "0.1.0", "operations": declaration.exports,
-            "connections": manifest.component_connections(component)?,
-        }));
+        components.insert(
+            component.to_string(),
+            json!({
+                "interface-version": "0.1.0", "operations": declaration.exports,
+                "connections": manifest.component_connections(component)?,
+            }),
+        );
     }
     let routes = &manifest.routes;
     let modes = routes.auth_modes.as_deref().unwrap_or(&[]);

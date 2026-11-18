@@ -104,12 +104,13 @@ Each library has one concern. Directory names follow crate names without the `wa
 
 ## Release identity
 
-The compiler checks authored documents and writes final component and route declarations once.
-Publication verifies component bytes and writes immutable package and release artifacts.
-The catalog reads served facts. It does not repeat authoring rules.
-A release fixes package versions, component digests, base pins, SQL, connections, and routes.
-The separate HTTP route component calls application components through the host.
+The compiler writes route policy and component declarations to the `deploy` section of `wamn.json`.
+Publication checks the component bytes, pushes stock wasmCloud images and records their OCI digests.
+The top package digest identifies the application content. The package records the exact OCI digest of each base.
+The package carries its SQL migrations and history in a separate tar layer.
+The HTTP route component calls application components through the host.
 Only overlays compose with their pinned bases.
+
 
 ## Environment lifecycle
 

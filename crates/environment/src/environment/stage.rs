@@ -13,7 +13,7 @@ use super::Platform;
 use super::analyse::{self, Installed};
 use super::document::EnvironmentDocument;
 use wamn_postgres::connect;
-use wamn_publish::package_artifact::{OpenedPackage, PackageSource, open_package_source};
+use wamn_publish::package_artifact::{OpenedPackage, open_package};
 
 /// Create each integration application principal and its declared dependency role.
 /// An identical apply writes no rows.
@@ -25,16 +25,13 @@ pub async fn materialize_application_principals(
     platform: &Platform,
     project_url: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
-    manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
 ) -> anyhow::Result<()> {
     use wamn_identity_protocol::PlatformComponent;
 
     let applications = packages
         .iter()
-        .filter(|package| {
-            wamn_publish::publish_release::composes_integration(package, &manifest.components)
-        })
+        .filter(|package| wamn_publish::publish_release::composes_integration(package))
         .collect::<Vec<_>>();
     if applications.is_empty() {
         return Ok(());
@@ -53,20 +50,23 @@ pub async fn materialize_application_principals(
     .execute(&mut *transaction)
     .await
     .map(drop)?;
-    for package in applications {
-        let subject = wamn_catalog::resource_names::application_subject(
-            project_env_key,
-            &package.package.id,
-        );
-        wamn_identity::application::service::write_service(&mut transaction, &domain, &subject, &subject)
-            .await?;
+    for package in &applications {
+        let subject =
+            wamn_catalog::resource_names::application_subject(project_env_key, &package.package.id);
+        wamn_identity::application::service::write_service(
+            &mut transaction,
+            &domain,
+            &subject,
+            &subject,
+        )
+        .await?;
         let role = format!(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
         );
         wamn_identity::application::create_role(&mut transaction, &role).await?;
     }
-    write_runtime_grants(&mut transaction, project_env_key, manifest, packages).await?;
+    write_runtime_grants(&mut transaction, project_env_key, &applications, packages).await?;
     transaction.commit().await?;
     Ok(())
 }
@@ -76,20 +76,16 @@ pub async fn materialize_application_principals(
 async fn write_runtime_grants(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &wamn_registry::ProjectEnvKey,
-    manifest: &wamn_catalog::ServingManifest,
+    applications: &[&PackageManifest],
     packages: &[PackageManifest],
 ) -> anyhow::Result<()> {
     let dependency_manifests = packages
         .iter()
         .map(|package| (&package.package.id, package))
         .collect();
-    for package in packages.iter().filter(|package| {
-        wamn_publish::publish_release::composes_integration(package, &manifest.components)
-    }) {
-        let subject = wamn_catalog::resource_names::application_subject(
-            project_env_key,
-            &package.package.id,
-        );
+    for package in applications {
+        let subject =
+            wamn_catalog::resource_names::application_subject(project_env_key, &package.package.id);
         let principal = wamn_identity::application::service::active_service(transaction, &subject)
             .await?
             .with_context(|| format!("application principal {subject} is absent or inactive; run env initialize"))?;
@@ -173,12 +169,9 @@ pub(super) async fn open(
              its artifact"
         );
     };
-    open_package_source(PackageSource::Artifact {
-        tag: format!("{id}-{version}").parse()?,
-        registry: platform.registry(base).await?,
-    })
-    .await
-    .with_context(|| format!("open package artifact {id}@{version}"))
+    open_package(&platform.registry(base).await?, id, version)
+        .await
+        .with_context(|| format!("open package artifact {id}@{version}"))
 }
 
 #[cfg(test)]

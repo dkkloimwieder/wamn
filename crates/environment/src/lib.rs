@@ -19,9 +19,6 @@ pub mod prune_record_history;
 pub mod prune_run_history;
 
 #[cfg(test)]
-mod publish_release_tests;
-
-#[cfg(test)]
 mod web_artifact_tests;
 
 pub mod release_chart;

@@ -158,34 +158,56 @@ pub fn render_package_declaration(
     component: &wamn_catalog::canonical_name::CanonicalName,
     project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> Result<Value, ComponentDeclarationError> {
-    let invalid = |source: String| {
-        ComponentDeclarationError::invalid(
-            ComponentDeclarationErrorType::ManifestInvalid,
-            package_root,
-            source,
-        )
-    };
-    let mut declarations = wamn_codegen::publication::read_components(package_root)
-        .map_err(|source| invalid(format!("read compiled component declarations: {source:#}")))?;
-    let declaration = declarations
-        .remove(component)
-        .ok_or_else(|| invalid(format!("component {component} was not compiled")))?;
+    let path = wamn_codegen::package_manifest_path(package_root);
+    let bytes = fs::read(&path).map_err(|source| ComponentDeclarationError::read(&path, source))?;
+    let mut manifest =
+        wamn_catalog::manifest::PackageManifest::from_slice(&bytes).map_err(|source| {
+            ComponentDeclarationError::invalid(
+                ComponentDeclarationErrorType::ManifestInvalid,
+                &path,
+                source.to_string(),
+            )
+        })?;
+    let declaration =
+        package_declaration(&mut manifest, component, project_env_key).map_err(|source| {
+            ComponentDeclarationError::invalid(
+                ComponentDeclarationErrorType::ManifestInvalid,
+                &path,
+                source.to_string(),
+            )
+        })?;
+    serde_json::to_value(declaration)
+        .map_err(|source| ComponentDeclarationError::parse(&path, source))
+}
+
+/// Take a build's declaration and supply the project coordinate admission needs.
+pub(crate) fn package_declaration(
+    manifest: &mut wamn_catalog::manifest::PackageManifest,
+    component: &wamn_catalog::canonical_name::CanonicalName,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+) -> anyhow::Result<wamn_catalog::ComponentDeclaration> {
+    use anyhow::Context as _;
+    let declaration = manifest
+        .deploy
+        .as_mut()
+        .and_then(|deploy| deploy.declarations.remove(component))
+        .with_context(|| format!("component {component} was not compiled"))?;
     let target = wamn_catalog::ComponentPackageCoordinate::new(
         project_env_key,
-        declaration.target.package_id().clone(),
-        declaration.target.package_version().clone(),
-    )
-    .map_err(|source| invalid(source.to_string()))?;
-    let document = wamn_catalog::ComponentDeclaration {
-        data_change: false,
+        manifest.package.id.clone(),
+        manifest.package.version.clone(),
+    )?;
+    Ok(wamn_catalog::ComponentDeclaration {
         target,
-        component: declaration.component,
+        data_change: manifest
+            .components
+            .get(component.as_str())
+            .is_some_and(|component| component.data_change.is_some()),
+        component: component.to_owned(),
         interface_version: declaration.interface_version,
         operations: declaration.operations,
         connections: declaration.connections,
-    };
-    serde_json::to_value(document)
-        .map_err(|source| ComponentDeclarationError::parse(package_root, source))
+    })
 }
 
 /// Resolve a palette declaration into concrete connection names for a package fixture.

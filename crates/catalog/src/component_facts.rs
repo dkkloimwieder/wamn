@@ -423,6 +423,22 @@ pub struct ComponentDescriptor {
 }
 
 impl ComponentDescriptor {
+    /// Check the stored admission against its package and audited imports.
+    pub fn verify_projection(
+        &self,
+        package: &crate::PackageName,
+        version: &crate::package_version::PackageVersion,
+    ) -> Result<(), ComponentFactError> {
+        verify_projection(
+            package,
+            version,
+            self.data_change,
+            &self.operations,
+            &self.imports,
+            &self.effects,
+        )
+    }
+
     /// The descriptor of `component`. Its target is dropped.
     pub fn new(component: AdmittedComponent, connections: Vec<ComponentConnection>) -> Self {
         Self {
@@ -548,7 +564,8 @@ pub fn normalize_component_fact(
     let mut operations = BTreeMap::new();
     for (export, operation) in declaration.operations {
         validate_registered_operation_target(
-            &declaration.target,
+            &declaration.target.package_id,
+            &declaration.target.package_version,
             &export,
             operation.registered_operation.as_ref(),
         )?;
@@ -620,15 +637,34 @@ pub fn normalize_component_fact(
 pub fn verify_stored_effect_projection(
     component: &AdmittedComponent,
 ) -> Result<(), ComponentFactError> {
-    if component.operations.is_empty() && !component.data_change {
+    verify_projection(
+        &component.target.package_id,
+        &component.target.package_version,
+        component.data_change,
+        &component.operations,
+        &component.imports,
+        &component.effects,
+    )
+}
+
+fn verify_projection(
+    package: &crate::PackageName,
+    version: &crate::package_version::PackageVersion,
+    data_change: bool,
+    operations: &BTreeMap<CanonicalName, AdmittedComponentOperation>,
+    imports: &[String],
+    effects: &[AdmittedComponentEffect],
+) -> Result<(), ComponentFactError> {
+    if operations.is_empty() && !data_change {
         return Err(ComponentFactError::new(
             ComponentFactErrorType::EmptyOperationSet,
             "component operations must not be empty",
         ));
     }
-    for (export, operation) in &component.operations {
+    for (export, operation) in operations {
         validate_registered_operation_target(
-            &component.target,
+            package,
+            version,
             export,
             operation.registered_operation.as_ref(),
         )?;
@@ -640,24 +676,20 @@ pub fn verify_stored_effect_projection(
             ComponentFactError::new(ComponentFactErrorType::InvalidSchema, error.to_string())
         })?;
     }
-    refuse_application_operation_imports(&component.imports)?;
-    normalize_effects(component.effects.clone(), &component.imports).map(|_| ())
+    refuse_application_operation_imports(imports)?;
+    normalize_effects(effects.to_vec(), imports).map(|_| ())
 }
 
 fn validate_registered_operation_target(
-    target: &ComponentPackageCoordinate,
+    package: &crate::PackageName,
+    version: &crate::package_version::PackageVersion,
     export: &CanonicalName,
     operation: Option<&crate::registered_operation::RegisteredOperation>,
 ) -> Result<(), ComponentFactError> {
     let Some(operation) = operation else {
         return Ok(());
     };
-    validate_canonical_operation_for_package(
-        operation,
-        &target.package_id,
-        &target.package_version,
-    )
-    .map_err(|error| {
+    validate_canonical_operation_for_package(operation, package, version).map_err(|error| {
         ComponentFactError::new(
             ComponentFactErrorType::NonCanonicalIdentity,
             error.to_string(),

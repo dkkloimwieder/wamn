@@ -46,8 +46,17 @@ pub(in super::super) fn resolve_route_methods(
     BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
     PublishManifestError,
 > {
-    validate_authored_attachment_routes(authored)?;
-    let mut resolved = authored.clone();
+    resolve_owned_route_methods(authored.clone(), route_contracts)
+}
+
+pub(in super::super) fn resolve_owned_route_methods(
+    mut resolved: BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
+    route_contracts: &RouteContracts,
+) -> Result<
+    BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
+    PublishManifestError,
+> {
+    validate_authored_attachment_routes(&resolved)?;
     let mut route_keys = BTreeSet::new();
     for (attachment_id, attachment) in &mut resolved {
         if !matches!(

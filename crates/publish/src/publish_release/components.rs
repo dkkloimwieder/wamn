@@ -236,7 +236,7 @@ pub(super) fn resolve_route_component<'a>(
 /// Refuse an anonymous attachment that reaches a registered operation, an
 /// operation that begins a host transaction, or a transactional statement at
 /// `site`.
-fn refuse_anonymous_reach(
+pub(super) fn refuse_anonymous_reach(
     attachment_id: &wamn_catalog::canonical_name::CanonicalName,
     operation: &AdmittedComponentOperation,
     site: &str,

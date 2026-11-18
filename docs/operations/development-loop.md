@@ -10,13 +10,11 @@ The deployed release stays available after the command exits.
 Use the [deployment procedure](deployment.md) to install a disposable development platform.
 Apply its authored `environment.k` through `wamn env apply`.
 Make the registry and control endpoint reachable from the development machine.
-The installed local registry enables `REGISTRY_STORAGE_DELETE_ENABLED` for retention.
-Installation refuses to reuse a registry without that setting.
 Use the platform's own credential and identity services for connections and sign-in.
 
 Set `WAMN_CONTROL_URL` to the control service URL and `WAMN_TOKEN` to the caller's token.
 Set `DATABASE_URL` to the PostgreSQL server that the package builder uses for disposable build databases.
-Set the existing publication inputs: `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, `WAMN_RELEASE_ARTIFACT_BASE`, and `WAMN_REGISTRY_AUTH_FILE`.
+Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE` for publication.
 `WAMN_INGRESS_COMPONENT` selects the stamped HTTP route component and its adjacent palette.
 If the registry needs extra trust roots, set `WAMN_OCI_CA_PATHS`.
 The platform and local publication inputs must use the same stamped artifacts.
@@ -29,7 +27,7 @@ Build the bases before the overlay when you prepare their build records.
 [Building](building.md) describes package output and its source records.
 
 ```bash
-"$CARGO_TARGET_DIR/debug/wamn" schema publish apps/platform_fixture --env environment.k
+"$CARGO_TARGET_DIR/debug/wamn" publish apps/platform_fixture --env environment.k
 "$CARGO_TARGET_DIR/debug/wamn" schema apply platform_fixture --release <published-digest> --env environment.k
 "$CARGO_TARGET_DIR/debug/wamn" dev --config environment.k --overlay-root apps/platform_fixture --watch
 ```
@@ -43,9 +41,9 @@ Interrupting the watcher waits for the active deployment to finish.
 Use the product schema commands when application SQL needs to change.
 The watcher does not reset application data on each save.
 
-Package tags are immutable.
-Publication refuses changed bytes for an existing package coordinate.
-The development builder assigns each source snapshot an immutable prerelease coordinate.
+Package tags point to the latest digest published under each version.
+A replacement must preserve every migration and use higher numbers for additions.
+The development builder assigns each source snapshot a content-derived prerelease tag.
 For example, `0.1.0-dev.h0123456789ab` uses the first 12 hexadecimal digits of its content digest.
 The prefix `h` keeps all-digit digests valid in semantic versions.
 The digest includes package sources, shared build inputs, and built bases.
@@ -53,11 +51,7 @@ A repeated save uses the same coordinate. Changed content gets a new coordinate.
 The builder records the matching base versions and component digests in overlays.
 It writes development SQL history to build output without changing authored history.
 Only dev package manifests carry the OCI publication timestamp `org.opencontainers.image.created`.
-Repeat publication reuses the existing timestamp and manifest digest.
-The retention operation deletes expired dev manifests by digest.
-It keeps a digest when any pinned or non-dev tag references it. Dev tags expire after seven days.
-It reads pins from `ServingManifest.release.packages` across the release repository.
-It leaves older tags without publication timestamps untouched.
+A repeat publication under the same tag keeps the original timestamp.
 
 ## Measure one change
 
@@ -73,7 +67,7 @@ Run the three phases separately:
 /usr/bin/time -f 'deployment %e seconds' "$CARGO_TARGET_DIR/debug/wamn" deploy --application platform_fixture --release <published-digest> --env environment.k
 ```
 
-The publish command reads existing build output and prints its application and digest.
+The publish command reads existing build output and prints the top package OCI digest.
 The deploy command waits for the control operation to finish.
 Request the fixture's changed HTTP route and compare its returned value with the source change.
 Record build, publication, and deployment times separately.

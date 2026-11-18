@@ -1,4 +1,5 @@
 pub(super) mod plan;
+pub(crate) use plan::published_components;
 pub use plan::{
     Role, RoleName, TELEMETRY_VARIABLES, ValuesInput, component_name, host_interfaces,
     release_name, roles, values, workload_name,
@@ -6,4 +7,3 @@ pub use plan::{
 
 use anyhow::ensure;
 use serde_yaml::{Mapping, Value};
-use wamn_catalog::ServingManifest;

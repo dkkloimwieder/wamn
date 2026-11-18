@@ -1,65 +1,71 @@
 //! Project the release's application routes for publication.
 pub use crate::http_route_data::*;
 use crate::{
-    AttachmentAuthPolicy, AttachmentRef, OperationType, ServedAttachment, ServingManifest,
+    AttachmentAuthPolicy, AttachmentType, OperationType, ServingManifest, ServingRoute,
     parse_attachment_auth_policy,
 };
+
 const ADAPTER_GOVERNED_BYTES: u64 = u32::MAX as u64;
 /// The only route configuration key read by the HTTP component.
 pub const HTTP_ROUTES_CONFIG: &str = "wamn.http.routes";
-/// Prepare the route table from the release selected for this workload.
+
+/// Prepare the route table from an edge bundle manifest.
 pub fn route_data(
     manifest: &ServingManifest,
     release_digest: &wamn_digest::Digest,
 ) -> Vec<RouteDefinition> {
     manifest
-        .every_served_attachment()
+        .attachments
+        .iter()
         .filter_map(|(id, attachment)| {
             if !matches!(
-                attachment.attachment_type(),
-                crate::AttachmentType::Http | crate::AttachmentType::Studio
+                attachment.type_,
+                AttachmentType::Http | AttachmentType::Studio
             ) {
                 return None;
             }
-            if matches!(
-                attachment,
-                ServedAttachment::Authored(AttachmentRef::Route(_))
-            ) {
-                route_definition(manifest, id, attachment, release_digest)
-            } else {
-                None
-            }
+            let operation = manifest.route(
+                &attachment.package_id,
+                &attachment.component,
+                &attachment.operation,
+            )?;
+            let signs_files = manifest.signs_file_results(
+                &operation.package_id,
+                &operation.component,
+                &operation.operation,
+            );
+            route_definition(
+                id,
+                &attachment.definition,
+                &attachment.auth_policy,
+                operation,
+                signs_files,
+                release_digest,
+            )
         })
         .collect()
 }
-fn route_definition(
-    manifest: &ServingManifest,
+
+/// Project a route and its admitted operation into the ingress configuration.
+pub fn route_definition(
     attachment_id: &crate::canonical_name::CanonicalName,
-    attachment: ServedAttachment<'_>,
+    definition: &serde_json::Value,
+    auth_policy: &serde_json::Value,
+    operation: &ServingRoute,
+    signs_files: bool,
     release_digest: &wamn_digest::Digest,
 ) -> Option<RouteDefinition> {
-    let route = attachment.definition().get("route")?;
-    let body_limit = match attachment.definition().get("raw-body-bytes") {
+    let route = definition.get("route")?;
+    let body_limit = match definition.get("raw-body-bytes") {
         Some(raw_body_bytes) => {
             let authored = raw_body_bytes.get("maximum")?.as_u64()?;
             u32::try_from(authored).ok()?.into()
         }
         None => ADAPTER_GOVERNED_BYTES,
     };
-    let operation = match attachment {
-        ServedAttachment::Authored(AttachmentRef::Route(attachment)) => manifest.route(
-            &attachment.package_id,
-            &attachment.component,
-            &attachment.operation,
-        ),
-        ServedAttachment::Host(_) => None,
-    };
-    let signs_files = operation.is_some_and(|route| {
-        manifest.signs_file_results(&route.package_id, &route.component, &route.operation)
-    });
     Some(RouteDefinition {
-        read_limits: operation.filter(|route| route.type_.is_read()).map(|_| {
-            let request_element_schema = &attachment.definition()["input-schema"]["items"];
+        read_limits: operation.type_.is_read().then(|| {
+            let request_element_schema = &definition["input-schema"]["items"];
             let properties = &request_element_schema["properties"];
             let filter = &properties["filter"];
             ReadLimits {
@@ -89,17 +95,15 @@ fn route_definition(
             }
         }),
         operation_deadline_ms: 30_000,
-        sealed_operation_id: operation?.operation.to_string(),
-        auth_policy: attachment.auth_policy().clone(),
-        idempotency_rule: operation
-            .filter(|route| !route.type_.is_read())
-            .map(|route| {
-                route
-                    .idempotency
-                    .clone()
-                    .unwrap_or_else(|| "request_id".to_owned())
-            }),
-        etag_inputs: operation.filter(|_| !signs_files).and_then(|route| {
+        sealed_operation_id: operation.operation.to_string(),
+        auth_policy: auth_policy.clone(),
+        idempotency_rule: (!operation.type_.is_read()).then(|| {
+            operation
+                .idempotency
+                .clone()
+                .unwrap_or_else(|| "request_id".to_owned())
+        }),
+        etag_inputs: (!signs_files).then_some(operation).and_then(|route| {
             let type_ = match route.type_ {
                 OperationType::Get => EtagType::Get(route.revision.clone()?),
                 OperationType::Query | OperationType::Projection if !route.reads.is_empty() => {
@@ -125,15 +129,9 @@ fn route_definition(
         path: route.get("path")?.as_str()?.to_string(),
         method: route.get("method")?.as_str()?.to_string(),
         body_limit,
-        cache_control: operation
-            .filter(|_| !signs_files)
-            .map(|route| route.type_)
-            .and_then(|type_| {
-                read_cache_control(
-                    type_,
-                    parse_attachment_auth_policy(attachment.auth_policy()),
-                )
-            }),
+        cache_control: (!signs_files)
+            .then_some(operation.type_)
+            .and_then(|type_| read_cache_control(type_, parse_attachment_auth_policy(auth_policy))),
     })
 }
 

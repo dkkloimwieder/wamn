@@ -5,7 +5,9 @@ mod sql;
 use anyhow::{Context as _, ensure};
 use sql::{generated_function_name, log_function_sql, stamp_function_sql};
 use std::collections::BTreeMap;
-use wamn_catalog::manifest::installation::{ModelDeclaration, PackageManifest, RecordHistoryColumn};
+use wamn_catalog::manifest::{
+    ModelDeclaration, PackageManifest, RecordHistoryColumn, source_name::SourceName,
+};
 use wamn_record_history::{LOG_TRIGGER, STAMP_TRIGGER, history_table_name};
 
 const NAME_BYTE_LIMIT: usize = 64;
@@ -125,7 +127,7 @@ SELECT a.attname::text, \
 pub(crate) async fn render(
     root: &std::path::Path,
     manifest: &PackageManifest,
-    columns: &BTreeMap<wamn_catalog::canonical_name::CanonicalName, Vec<RelationColumn>>,
+    columns: &BTreeMap<SourceName, Vec<RelationColumn>>,
 ) -> anyhow::Result<String> {
     let mut statements = retired_triggers(root, manifest).await?;
     for (id, model) in manifest
@@ -258,8 +260,8 @@ async fn retired_triggers(
             };
             if manifest.models.values().any(|model| {
                 model.owner == manifest.package.id
-                    && model.schema == relation.schemaname
-                    && model.table == relation.relname
+                    && model.schema.as_str() == relation.schemaname
+                    && model.table.as_str() == relation.relname
             }) {
                 continue;
             }

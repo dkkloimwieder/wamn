@@ -3,7 +3,7 @@
 //!
 //! Analysis compiles nothing new and writes nothing. It reads each authority
 //! once (§5): the policy and the environment row in the system database, the
-//! release manifest from OCI, the installed state in the project database, the newest
+//! package closure from OCI, the installed state in the project database, the newest
 //! successful Helm revision and the live set. It then tests the document
 //! against them and returns the plan, or the refusals.
 
@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use sqlx::PgConnection as Client;
-use wamn_catalog::ServingManifest;
+use wamn_catalog::{PackageName, manifest::PackageManifest};
 use wamn_postgres::connect;
 
 use super::Platform;
@@ -59,9 +59,7 @@ pub struct ProjectState {
 #[derive(Debug, Clone)]
 pub struct ReleaseFacts {
     pub digest: wamn_digest::Digest,
-    pub manifest: ServingManifest,
-    /// The store aliases the release's components require.
-    pub required_connections: BTreeSet<String>,
+    pub packages: BTreeMap<PackageName, PackageManifest>,
 }
 
 /// The newest successful revision of the release chart.

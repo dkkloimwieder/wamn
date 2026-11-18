@@ -21,9 +21,10 @@ Component facts carry these types. Their JSON fields stay strings.
 
 ## Grouping and publication
 
-`wamn-publish` owns package admission, artifact construction, and package and release publication.
-Package coordinates are immutable. Dev publication keeps its first publication time on repeat pushes.
-Release manifests carry no publication time, so their identity depends only on release content.
+`wamn-publish` admits components and publishes the package closure.
+A package tag points to the latest published digest. Each digest identifies immutable content.
+Dev publication keeps its first publication time.
+An edge bundle uses a separate serving manifest.
 
 The default is one component per package, exporting its declared operation set.
 A different import or connection requirement can justify a separate component.
@@ -35,10 +36,9 @@ Component names are package-local `snake_case` identifiers.
 An empty name refuses, and duplicate connection requirement sets refuse.
 Package operations version together even when their implementations occupy separate components.
 
-The compiler writes final component declarations in `publication/components.json` of the build output.
+The compiler writes component declarations to the `deploy` section of `wamn.json`.
 Each declaration carries inline input and output schemas from the compiled operation description.
-Its target names the package and version. Admission adds the environment coordinate once.
-Publication readers do not merge authored declarations or resolve schema references.
+Admission uses the package name and version from the enclosing document.
 A component declaration records its operations, ports, effects, static SQL, and connection requirements.
 Admission derives effects from the actual imports and compares the declared operation facts.
 Admission matches each platform import row by its exact package and version.
@@ -71,7 +71,8 @@ Each update uses its existing SQL and permissions. Acme's update does not call R
 Every application operation exports typed `run`. The host converts HTTP JSON using that export's WIT type.
 Admission refuses resource handles in this operation boundary because those handles belong to one store.
 
-An overlay package pins each base by digest in `base_dependencies`.
+An overlay package pins each base component's bytes in `base_dependencies`.
+The published deploy section also pins each base package's OCI digest.
 The overlay build composes each pinned base whose operations the overlay imports into the overlay component, and admission refuses a composed base that the package does not pin under that digest.
 A composed component also exports the interfaces of its members. The host routes only to declared operations.
 Each component declares its external connections. Every operation of that component receives those connections through the invocation authority.
@@ -84,23 +85,18 @@ The descriptor and release carry no per-member SQL sets or SQL ownership digests
 The host executes the SQL text that each member supplies under the operation's database identity.
 Base membership alone does not authorize an operation. The [execution rules](execution.md) test the entry's own grant.
 
-The serving manifest reads each export from its component descriptor.
-It stores no second operation map.
-Release membership names package versions and component digests.
-Publication uses WAMN-owned OCI media types and retains the component configuration needed to establish admission.
-The host compares bytes and artifact layout with the admitted facts before native loading.
-A generic component pull cannot discard that configuration and still satisfy the publication contract.
+Publication records each component's imports, exports, effects and connections in `wamn.json`.
+It uses wasmCloud's stock `push_component` to push the `application/wasm` layer.
+The OCI image digest identifies the image that the operator starts. The component byte digest identifies the Wasm layer.
+The edge bundle keeps its serving manifest and admitted component descriptors.
+
 
 ## Application HTTP invocation
 
-Publication selects the admitted application and verifies the pinned HTTP route component.
-It publishes the route component separately from application bytes.
-The existing `composed-entry` record identifies that route artifact and its application members.
-The host loads each admitted application from its own artifact.
-Overlays retain their build-time composition with their bases and their statement labels.
-
-Publication supplies the route table through `wasi:config`, under `wamn.http.routes`.
-The table includes paths, methods, accepted credentials, read limits, cache rules and the release digest.
+The application workload starts the route guest separately from the package components.
+The deploy values use the package closure's compiled routes and admitted exports.
+They supply the route table through `wasi:config`, under `wamn.http.routes`.
+The table includes paths, methods, accepted credentials, read limits, cache rules and the top package digest.
 The route component matches each method and path exactly.
 It calls `wamn:operation.invoke` with JSON, and the host calls the application's typed `run` export.
 The two components use separate stores, so the application call does not re-enter the route component.

@@ -61,18 +61,6 @@ pub fn write_package(
         base_digests: authored_base_digests(package)?.into_values().collect(),
     })?;
     let request = PublishReleaseRequest {
-        applications: [(
-            admission
-                .package_id()
-                .as_str()
-                .parse::<wamn_catalog::ApplicationName>()?,
-            wamn_catalog::ApplicationDefinition {
-                connections: std::collections::BTreeMap::new(),
-                packages: [admission.package_id().to_owned()].into(),
-            },
-        )]
-        .into(),
-        application: None,
         org: target.org.to_owned(),
         project: target.project.to_owned(),
         environment: target.environment.to_owned(),
