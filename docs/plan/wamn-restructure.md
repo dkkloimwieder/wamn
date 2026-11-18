@@ -158,7 +158,7 @@ Org → environment → project → application. One boundary per level.
 
 Phase 1 deletion, phase 2 restructure (no behaviour change), phase 3 code editing. All deletion up front; the project may be non-functional across epics; every step compiles. One epic is fully scoped at a time, the next after review; work inside an epic runs in parallel.
 
-Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (Epic 4: the host serves one application; Epic 5: connections, files, integrations, application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 install and isolation; 3.7 codegen; 3.7b crate boundaries; 3.8 tests.
+Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (Epic 4: the host serves one application; Epic 5: connections, files, integrations, application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 install and isolation (Epic 9 isolation, then Epic 10 install); 3.7 codegen; 3.7b crate boundaries; 3.8 tests.
 
 ## Epic 1: phase 1 deletion
 
@@ -671,6 +671,47 @@ Issues:
 8.6 `wamn-kubernetes` dependencies.
 - The name builders leave `wamn-kubernetes`, so it drops `wamn-registry` and `wamn-catalog` (today one type, `ApplicationName`).
 
+## Epic 9: step 3.6, isolation
+
+Rules:
+- Only the work listed here. The `platform` chart, install (J), settings (K), K4, K5, the install defects (L1), the bootstrap items and NATS volume sizing are Epic 10.
+- Done means all of these pass:
+  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
+  - The schema-apply check.
+  - `helm template` of every changed chart. Each Helm release record stays under 1 MiB. Report the sizes.
+  - A local Postgres container is allowed for these checks only.
+- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
+- No kind or cluster runs, nothing on GCP.
+- Generated code is regenerated, never edited by hand.
+
+Issues:
+
+9.1 One CloudNativePG Cluster per project database (W2).
+- The `project` chart renders the project's `Cluster`, its `Database`, its backup objects and its logins. Sizing (instances, storage, CPU, memory) comes from the environment file.
+- Each project Cluster declares that project's logins in its own managed-role list, each with a connection limit: migration (owner), application, read-only, platform, CDC replication. Login names lose their per-database suffix.
+- The `org` chart's cluster list, its `trials`, `standard` and `dedicated` templates, and its login Secrets go.
+- The system database cluster moves to namespace `platform`. Until Epic 10, the `installation` chart renders it.
+- Env apply drops any step that existed only because the `org` chart held every project's logins.
+
+9.2 The org boundary (Q, K7b).
+- The `org` chart renders the namespace, the RBAC, a quota and a default-deny NetworkPolicy, with the allow rules the platform needs.
+- Every Role in wamn's own charts names its Secrets with `resourceNames`. The account running Helm keeps the recorded exception until 9.3.
+- `wamn-platform-operations` loses full Secret writes, and `bind` and `escalate`, unless the scout shows a need. Control's org Role loses `get` on every Secret.
+
+9.3 Helm release storage.
+- Each org's Helm releases are stored in their own namespace, which holds only release records. Each chart places its objects in the org namespace explicitly (`metadata.namespace`).
+- The account running Helm gets Secret `list` only in that namespace, and name-scoped rights in the org namespace.
+
+9.4 NATS (R).
+- The environment user splits into a restricted workload user for the hosts and an admin user for Rust tooling (`ensure_stream` and others). The workload user receives replies only on its own inbox prefix.
+- `wamn-nats-authorization` is rendered by a chart, ending its C1 exception.
+
+9.5 Connection secrets.
+- The host stops reading connection secrets from the Kubernetes API on each call, by the option D rules after the scout.
+
+9.6 `wamn-postgres` loses `wamn-kubernetes` (P5).
+- Its credentials come from mounted files, as the host's project logins already do.
+
 ## Open items
 
 - Checks in phase 3: Helm values size for the largest application (3.2).
@@ -680,7 +721,6 @@ Issues:
 - 3.8: `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs` run the binary `wamn-ctl`, which Epic 1 deleted.
 - 3.8: `docs/operations/running-tests.md` describes test targets that no longer exist.
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
-- 3.6: a connection limit for each login, set in the CloudNativePG managed roles.
 - After 3.5 only the edge reads `ServingManifest`. It goes with the edge design.
 - 3.6: the control service takes the issuer from `session_issuer` and stage takes it from `platform.identity_issuer`. They become the one identity issuer address setting (E6, K).
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
@@ -706,7 +746,6 @@ Issues:
   Goal: the host and the CDC reader link neither `wamn-kubernetes` nor `wamn-provision`.
 - 3.8: 19 crates still define a `test-util` feature, against AA. Phase 2.4 did not do this. `wamn-http` and `wamn-publish` enable test crates through it.
 - With P5: generic HTTP clients live in infrastructure crates. `wamn-kubernetes::http_transport` is used by `wamn-web` and `wamn-edge`, and `wamn-oci::package_artifact::http_client` by `wamn-http` and `wamn-identity-service`. Use one small client module, or `reqwest` directly, so these crates stop linking Kubernetes or OCI code.
-- 3.6, needs research and a ruling: the host reads connection secrets from the Kubernetes API on each call (`host/authentication.rs` builds `ConnectionCredentials::for_org`; `connection_credentials::read_secret` calls `KubernetesStore::in_cluster`). Epic 5 chose mounted `secretFrom` for project logins, and upstream has plugin-backed secrets (`plugin/secret_source.rs`, `wasmcloud_secrets`).
 - 3.7b: `platform.tx_identity` is written in eight crates (`connection`, `environment`, `http`, `identity`, `provision`, `sql`, `services/control`, `services/identity-service`), through two helper modules (`provision/transaction_identity.rs`, `identity/transaction.rs`) and inline SQL. One function owns it.
 - 3.7b: the identity service writes users and passwords as `PlatformComponent::Provisioning` (`users.rs`, `password.rs`) and depends on `wamn-provision` for it. It uses its own principal, and principal ids move to a small crate.
 - 3.7b: `Refusal` moves out of `services/host/src/host/application_route.rs` into a module that both route modules use; today `host/workflow/lifecycle.rs` imports it upward from `application_route`. Optional, for a clear boundary only: `host::workflow` becomes its own crate. The host binary links it either way.
@@ -718,15 +757,12 @@ Issues:
 - 3.6: the NATS volume (10 Gi today) must hold the sum of all environment accounts, which is 256 MiB times the number of projects across all environments. Size it at install.
 - 3.6: `cluster.k` checks the GCP project ID, the zone and the bucket names, but no Rust or SQL code does. Add the three checks in Rust.
 - The xtask dependency check fails on `wamn-edge`, which links `oci-client` through wash-runtime. This predates Epic 7. Fix the check's allowance or the dependency.
-- 3.6: RBAC that reaches past its need: `wamn-platform-operations` gives `wamn-operation-<org>` full Secret writes and RBAC `bind` and `escalate` in the platform namespace, and control's org Role has `get` on every Secret in the org namespace. Shrink both to named resources.
 - 3.7: `apps/platform_ui` reads residency and live fields from the old status contract. Regenerate its clients against the new `environment.status` and `application.rollback` contracts.
 - Recorded exceptions to C1 until 3.6: operation Jobs and their per-request input ConfigMaps, `wamn-credential-*` (written by connection administration at run time), and `wamn-nats-authorization`.
 - 3.6: `platform update` still reads installation and host values back with `helm get values` (`platform/deploy.rs`), because no other source holds them. The `platform` chart replaces it.
-- 3.6: the environment user is both the hosts' workload NATS credential and the Rust tooling credential (`ensure_stream` and others), with full rights in the environment account. So any workload in an environment holds those rights, limited only by its workload's `subject-allow` narrowing. Split it into a restricted workload user for hosts, with its own inbox prefix through a named binding, and a separate admin user for tooling.
 - After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
 - When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
-- 3.6: Helm stores each release as a Secret and lists them across the release namespace, so the account running Helm can list every Secret in the org namespace, including `wamn-credential-*` and the NATS certificates. Move Helm release storage into a per-org namespace that holds only release records, with each chart placing its objects in the org namespace explicitly (`metadata.namespace`). Secret list then covers only release records, and the org namespace keeps name-scoped rights. Verify that Helm v4 places and tracks objects outside the release namespace this way.
-- 3.6: CloudNativePG 1.30 adds a `DatabaseRole` resource, which manages roles as standalone objects. Today the org chart declares every project's logins in each Cluster's managed-role list, which is why env apply reserves every project and upgrades the org chart once with all their logins. With `DatabaseRole`, each project chart can own its own roles. Decide this with one Cluster per project database (W2).
+- After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
 
 # Part 2: Review log
 
@@ -2186,3 +2222,5 @@ Facts:
 **Ruled (D, 2026-11-18): Secret watch scope.** No Role or ClusterRole in wamn's own charts grants `watch` on Secrets. `platform update` uses no Helm wait on the `installation` chart, which renders a Secret, and waits in Rust for the rollout of the Deployment it changed. Vendored operator charts keep their upstream RBAC; the rule does not cover them.
 
 **Ruled (D, 2026-11-18): CloudNativePG 1.30.2.** wamn moves from operator 1.29.1 (series past end of life) to 1.30.2 (chart 0.29.2), the Barman Cloud plugin chart to 0.9.0, and the PostgreSQL image pin to 18.7, for the 1.30 security fixes. `DatabaseRole` (new in 1.30) is a 3.6 item.
+
+**Ruled (D, 2026-11-18): step 3.6 split.** Epic 9 does isolation (W2, Q, the org chart of K7b, Helm release storage, R, connection secrets, P5's `wamn-postgres` edge); Epic 10 does install (the `platform` chart, J, K, K4, K5, L1, the bootstrap items, NATS volume sizing); the first kind run follows Epic 10. With one Cluster per project database, each project Cluster declares its own logins in its managed-role list, so `DatabaseRole` is not needed. Hand-written OpenTofu waits until after the first kind run.
