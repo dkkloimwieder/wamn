@@ -1,6 +1,6 @@
 {{- if .Values.controlService }}
 {{- $name := default .Release.Name .Values.name }}
-{{- $namespace := default .Release.Namespace .Values.namespace }}
+{{- $namespace := include "application.namespace" . }}
 {{- $org := required "Set org for the control client certificate." .Values.org }}
 {{- $database := .Values.control.configuration.database }}
 {{- $login := required "Set control.configuration.database.credentials.name." $database.credentials.name }}

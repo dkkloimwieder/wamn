@@ -137,14 +137,13 @@ Kubernetes removes completed Jobs after one hour.
 There is no operation history database.
 
 The server selects the image, command, namespace, actor, chart, and credential references.
-Deploy, rollback, and diff use the apply and registry credentials.
-Apply and reset also receive the project platform-migration, package-migration, and capture credentials.
+Operation workers stage the system migration login and CA in the Job's in-memory volume. They stage project logins and the project CA as needed.
 Reset advances replication through the capture login and removes package objects through their migration login.
 SQL steps run inside the authorized operation Job with their owning role credentials.
 The control image runs workers and reads the installed chart reference.
 The installed control configuration names the pinned worker image and its configuration.
-Environment provisioning creates separate code and SQL ServiceAccounts and namespace Roles.
-Reset uses the existing lifecycle worker account to stop and resume the shared environment host.
+Deploy, rollback, stop, schema apply, reset, and capture-gap recovery and close all use the org worker ServiceAccount because they run Helm.
+Schema diff alone uses the project operation ServiceAccount. It can read declared application workloads and stage named migration credentials and database CAs in the Job's database volume.
 Configure creates the CDC reader's ServiceAccount from `operations.capture`. The Deployment mounts the replication login and the project's database CA certificate. Delete removes the account with the reader.
 
 
@@ -211,6 +210,13 @@ projects:
         connections:
           orders: orders-api
 ```
+
+Helm installs, upgrades, and rollbacks use `--server-side=true`.
+Environment and application installs and upgrades pass `--skip-crds`. The installation release provides the runtime resource types.
+Org release records go in `wamn-helm-<org>`. The charts use an explicit org namespace value for their workloads and credentials.
+The storage namespace must exist before the org chart runs. The trusted install entry point in Epic 10 will create it.
+Use this layout for new installs. Existing Helm records and their resource ownership stay in place.
+The kstatus watcher retains `list` and `watch` on the non-Secret kinds that environment and application charts render.
 
 `wamn env apply environment.yaml` holds one environment lock.
 The worker reserves the selected projects. It starts one environment chart upgrade with `--wait=watcher` before it configures the projects.

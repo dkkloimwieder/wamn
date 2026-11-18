@@ -3,7 +3,10 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
-use wamn_kubernetes::{Target, helm};
+use wamn_kubernetes::{
+    Target,
+    helm::{self, Install, Wait},
+};
 
 /// Recover the host release and prepare one upgrade that waits for readiness.
 pub async fn prepare_host_upgrade<'a>(
@@ -16,12 +19,21 @@ pub async fn prepare_host_upgrade<'a>(
     let path = directory.path().join("values.yaml");
     std::fs::write(&path, serde_json::to_vec(values)?)?;
     let chart = chart.join("platform/environment");
-    helm::recover_pending(target, &name, helm::Wait::Watcher).await?;
+    let namespace = helm::org_release_namespace(&target.namespace);
+    helm::recover_pending(target, &namespace, &name, Wait::Watcher).await?;
     Ok(async move {
         let _directory = directory;
-        helm::upgrade_watched(target, &chart, &name, &path, Duration::from_secs(600))
-            .await
-            .with_context(|| format!("upgrade environment host {name}"))
+        helm::upgrade(
+            target,
+            &namespace,
+            &chart,
+            &name,
+            &path,
+            Wait::Watcher,
+            Install::SkipCrds,
+        )
+        .await
+        .with_context(|| format!("upgrade environment host {name}"))
     })
 }
 
@@ -35,12 +47,15 @@ pub async fn apply_application(
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("application.yaml");
     std::fs::write(&path, serde_yaml::to_string(values)?)?;
-    helm::upgrade_watched(
+    let namespace = helm::org_release_namespace(&target.namespace);
+    helm::upgrade(
         target,
+        &namespace,
         &chart.join("platform/application"),
         name,
         &path,
-        Duration::from_secs(600),
+        Wait::Watcher,
+        Install::SkipCrds,
     )
     .await
 }
@@ -55,13 +70,16 @@ pub async fn apply_project(
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("values.yaml");
     std::fs::write(&path, serde_json::to_vec(values)?)?;
-    helm::recover_pending(target, name, helm::Wait::None).await?;
-    helm::upgrade_without_wait(
+    let namespace = helm::org_release_namespace(&target.namespace);
+    helm::recover_pending(target, &namespace, name, Wait::None).await?;
+    helm::upgrade(
         target,
+        &namespace,
         &chart.join("platform/project"),
         name,
         &path,
-        Duration::from_secs(600),
+        Wait::None,
+        Install::ExistingNamespace,
     )
     .await
 }
@@ -215,6 +233,7 @@ pub fn database_values(
     sizing["ownerSecret"] = json!(connection.credentials.name);
     let extensions = wamn_provision::sql::PLATFORM_EXTENSIONS.map(|name| json!({"name":name}));
     Ok(json!({
+        "namespace":connection.credentials.namespace,
         "cluster":sizing,
         "database":{
             "name":database,"cluster":cluster,"owner":connection.username,"extensions":extensions
@@ -227,13 +246,22 @@ pub async fn update_project(
     target: &Target,
     chart: &Path,
     name: &str,
-    values: &Value,
+    mut values: Value,
 ) -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("project-values.yaml");
-    std::fs::write(&path, serde_json::to_vec(values)?)?;
-    helm::recover_pending(target, name, helm::Wait::None).await?;
-    helm::update_values(target, &chart.join("platform/project"), name, &path).await
+    values["namespace"] = target.namespace.as_str().into();
+    std::fs::write(&path, serde_json::to_vec(&values)?)?;
+    let namespace = helm::org_release_namespace(&target.namespace);
+    helm::recover_pending(target, &namespace, name, Wait::None).await?;
+    helm::update_values(
+        target,
+        &namespace,
+        &chart.join("platform/project"),
+        name,
+        &path,
+    )
+    .await
 }
 
 /// Uninstall the project release. Storage and its ObjectStore are kept by default.
@@ -249,7 +277,8 @@ pub async fn remove_database(
         &triple.env,
     )?;
     if data {
-        update_project(target, chart, &name, &json!({"deleteData":true})).await?;
+        update_project(target, chart, &name, json!({"deleteData":true})).await?;
     }
-    helm::uninstall(target, &name, helm::Wait::None).await
+    let namespace = helm::org_release_namespace(&target.namespace);
+    helm::uninstall(target, &namespace, &name, Wait::None).await
 }

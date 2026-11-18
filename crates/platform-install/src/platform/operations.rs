@@ -1,6 +1,9 @@
-//! Environment worker accounts are owned by the project chart.
+//! Project chart values for schema diff, change capture, and worker configuration.
 use serde_json::{Value, json};
+use wamn_provision::migrations::MigrationDatabase;
 use wamn_registry::Triple;
+
+use super::installation::{SYSTEM_CLUSTER, SYSTEM_DATABASE};
 
 pub fn values<'a>(
     triple: &Triple,
@@ -19,23 +22,31 @@ pub fn values<'a>(
         &triple.env,
     );
     let capture_secret = wamn_registry::name::project_login_secret(database, wamn_role::CDC_LOGIN);
-    let application_releases: Vec<_> = applications
+    let diff_workloads: Vec<_> = applications
         .map(|application| {
-            wamn_catalog::resource_names::application_release_name(
+            let release = wamn_catalog::resource_names::application_release_name(
                 &triple.org,
                 &triple.project,
                 &triple.env,
                 application,
-            )
+            );
+            wamn_registry::name::resource_suffix(&release, "http")
         })
         .collect();
+    let diff_secrets = [
+        MigrationDatabase::System.managed_role(SYSTEM_DATABASE).password_secret.name,
+        format!("{SYSTEM_CLUSTER}-ca"),
+        MigrationDatabase::Project.managed_role(database).password_secret.name,
+        format!("{cluster}-ca"),
+    ];
     Ok(json!({
         "operations":{
-            "name":name,"cluster":cluster,"database":database,
+            "name":name,"cluster":cluster,
             "capture":capture,"captureSecret":capture_secret,
             "hostGroup":wamn_registry::name::environment_host_name(&triple.org, &triple.env),
             "controlDeployment":wamn_registry::name::control_resource(&triple.org),
-            "applicationReleases":application_releases,
+            "diffWorkloads":diff_workloads,
+            "diffSecrets":diff_secrets,
         },
         "credentials":{
             "name":wamn_registry::credential_secret_name(&triple.org, &triple.project, &triple.env),

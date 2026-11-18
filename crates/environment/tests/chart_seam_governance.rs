@@ -14,7 +14,7 @@ fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
         serde_yaml::from_slice(&fs::read(chart.join("Chart.yaml")).unwrap()).unwrap();
     let objects = wamn_kubernetes::helm::template(&serde_json::json!({
         "chart": chart, "version": metadata["version"], "name": "wamn-control", "namespace": "platform",
-        "values": {"controlService": true, "org": "acme", "control": {
+        "values": {"controlService": true, "org": "acme", "namespace": "platform", "control": {
             "image": "wamn-control:dev", "account": "control",
             "configuration": {"database": {
                 "credentials": {"name": "wamn-control-db"},

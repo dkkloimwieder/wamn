@@ -1,10 +1,12 @@
+namespace: ""
+
 image:
   repository: wamn-identity
   tag: dev
   pullPolicy: IfNotPresent
 
 # Set the configured HTTPS issuer and existing Secret names before installation.
-# The Secrets must exist in the release namespace.
+# The Secrets must exist in the namespace named above.
 issuer: ""
 
 # Trust only the forwarding web proxy. The service default is zero.

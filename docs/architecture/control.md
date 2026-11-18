@@ -40,8 +40,8 @@ Control reads the current package digest and content revision from the WorkloadD
 Only the rollback worker reads Helm history for the target package and application configuration.
 Job status is visible only through the authorized target and operation annotations.
 
-The project chart creates the `<coord>-operation` account.
-Environment configuration and operations that change the shared host use the org worker account.
+Deploy, rollback, stop, schema apply, schema reset, capture-gap recovery and close, and environment lifecycle Jobs use the org worker account for Helm.
+The project chart creates the `<coordinate>-operation` account for schema diff. It stages files from named database Secrets and reads declared application workloads.
 Workers select managed database logins from the project placement and write their ServiceAccount kubeconfig under `/work`.
 They fetch the named Secrets in the org and write only `username`, `password` and `ca.crt` to a memory-backed volume at `/etc/wamn/db/<login-secret>/`.
 The recovery Job mounts its project recovery certificate. It can read only that project's source stream and receive replies on its own inbox.

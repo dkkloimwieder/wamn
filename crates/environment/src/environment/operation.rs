@@ -280,7 +280,8 @@ pub async fn application(
                             super::drain::describe(&unfinished)
                         );
                         use wamn_kubernetes::helm::{self, Wait};
-                        helm::uninstall(&platform.target, &release, Wait::Watcher).await?;
+                        let namespace = helm::org_release_namespace(&platform.target.namespace);
+                        helm::uninstall(&platform.target, &namespace, &release, Wait::Watcher).await?;
                         Ok(json!({"stopped":name}))
                     }
                 },
@@ -365,7 +366,7 @@ async fn apply_sql(
         &platform.target,
         &platform.chart,
         &coord,
-        &values,
+        values,
     )
     .await?;
     let capture = wamn_platform_install::environment::capture_configuration(connection.clone())?;

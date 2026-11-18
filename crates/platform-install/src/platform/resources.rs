@@ -3,8 +3,11 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
-use std::time::Duration;
-use wamn_kubernetes::{Target, helm::Wait, kubectl};
+use wamn_kubernetes::{
+    Target,
+    helm::{self, Install, Wait},
+    kubectl,
+};
 
 pub async fn helm(target: &Target, arguments: &[&std::ffi::OsStr]) -> anyhow::Result<Vec<u8>> {
     let mut args = vec![
@@ -25,15 +28,11 @@ pub(crate) async fn apply_release(
     wait: Wait,
 ) -> anyhow::Result<()> {
     let name = entry["name"].as_str().context("service release name")?;
-    let owner = Target {
-        namespace: entry["namespace"]
-            .as_str()
-            .context("service namespace")?
-            .into(),
-        ..target.clone()
-    };
-    wamn_kubernetes::helm::recover_pending(&owner, name, wait).await?;
-    upgrade_release(&owner, entry, directory, wait).await
+    let namespace = entry["namespace"]
+        .as_str()
+        .context("service release namespace")?;
+    helm::recover_pending(target, namespace, name, wait).await?;
+    upgrade_release(target, entry, directory, wait, Install::CreateNamespace).await
 }
 
 /// Upgrade one release after the caller recovers pending operations.
@@ -42,18 +41,23 @@ pub(crate) async fn upgrade_release(
     entry: &Value,
     directory: &Path,
     wait: Wait,
+    install: Install,
 ) -> anyhow::Result<()> {
     let name = entry["name"].as_str().context("service release name")?;
+    let namespace = entry["namespace"]
+        .as_str()
+        .context("service release namespace")?;
     let chart = entry["chart"].as_str().context("service chart")?;
     let values = directory.join(format!("values-{name}.yaml"));
     std::fs::write(&values, serde_json::to_vec(&entry["values"])?)?;
-    wamn_kubernetes::helm::upgrade(
+    helm::upgrade(
         target,
+        namespace,
         Path::new(chart),
         name,
         &values,
-        Duration::from_secs(600),
         wait,
+        install,
     )
     .await
 }

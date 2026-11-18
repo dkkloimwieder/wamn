@@ -10,22 +10,24 @@ use wamn_catalog::{
     application_config::{APPLICATION_CONFIG, ApplicationConfig},
 };
 use wamn_digest::Digest;
+use wamn_kubernetes::helm;
 use wamn_registry::Triple;
 
 use super::Platform;
 
 async fn helm(platform: &Platform, arguments: &[&str]) -> anyhow::Result<std::process::Output> {
     let target = &platform.target;
+    let namespace = helm::org_release_namespace(&target.namespace);
     let mut args = vec![
         OsStr::new("--kubeconfig"),
         target.kubeconfig.as_os_str(),
         OsStr::new("--kube-context"),
         target.context.as_ref(),
         OsStr::new("--namespace"),
-        target.namespace.as_ref(),
+        OsStr::new(namespace.as_ref()),
     ];
     args.extend(arguments.iter().map(OsStr::new));
-    wamn_kubernetes::helm::output(&args).await
+    helm::output(&args).await
 }
 
 async fn get(platform: &Platform, args: &[&str]) -> anyhow::Result<Option<Vec<u8>>> {
@@ -160,6 +162,7 @@ pub(super) async fn run(platform: &Platform, release: &str, revision: u32) -> an
             "rollback",
             release,
             &revision.to_string(),
+            "--server-side=true",
             "--wait=watcher",
             "--timeout",
             "600s",

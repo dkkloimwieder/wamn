@@ -4,7 +4,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .name }}-operations
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "project.namespace" $ | quote }}
 data:
   cluster: {{ .cluster | quote }}
   environment.yaml: |-
@@ -14,119 +14,40 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ .capture }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "project.namespace" $ | quote }}
 {{- $name := printf "%s-operation" $operation.name }}
+{{- if not $operation.diffSecrets }}
+{{- fail "Set operations.diffSecrets to the database Secret names for schema diff." }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ $name }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "project.namespace" $ | quote }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ $name }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "project.namespace" $ | quote }}
 rules:
   - apiGroups: [""]
-    # Helm release records remain in the org namespace until 9.3.
     resources: [secrets]
-    verbs: [get, list, create, update, delete]
-  - apiGroups: [""]
-    resources: [configmaps, services]
-    verbs: [get, list, watch, create, update, patch, delete]
-  - apiGroups: [""]
-    resources: [pods, events]
-    verbs: [get, list, watch]
-  - apiGroups: [apps]
-    resources: [deployments]
-    verbs: [get, list, watch, create, update, patch, delete]
-  - apiGroups: [apps]
-    resources: [replicasets]
-    verbs: [get, list, watch]
-  - apiGroups: [networking.k8s.io]
-    resources: [networkpolicies]
-    # Helm's watcher observes NetworkPolicies without a name selector.
-    verbs: [list, watch]
-  - apiGroups: [networking.k8s.io]
-    resources: [networkpolicies]
-    resourceNames:
-      {{- range (include "project.networkPolicyNames" $ | fromJson) }}
-      - {{ . | quote }}
-      {{- end }}
-      {{- range .applicationReleases }}
-      - {{ printf "%s-allow-public-integration-ports" . | quote }}
-      {{- end }}
-    verbs: [get, create, patch, delete]
-  - apiGroups: [discovery.k8s.io]
-    resources: [endpointslices]
-    verbs: [list]
+    resourceNames: {{ $operation.diffSecrets | toJson }}
+    verbs: [get]
+  {{- with $operation.diffWorkloads }}
   - apiGroups: [runtime.wasmcloud.dev]
     resources: [workloaddeployments]
-    verbs: [get, list, watch, create, update, patch, delete]
-  {{- $logins := get (default dict $.Values.cluster) "roles" }}
-  {{- if or $.Values.credentials $logins }}
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames:
-      {{- with $.Values.credentials }}
-      - {{ .name | quote }}
-      {{- end }}
-      {{- range $logins }}
-      - {{ .passwordSecret.name | quote }}
-      {{- end }}
-    verbs: [patch]
-  {{- end }}
-  - apiGroups: [postgresql.cnpg.io]
-    resources: [clusters]
-    resourceNames: [{{ $operation.cluster | quote }}]
-    verbs: [get, patch]
-  {{- if and $.Values.cluster $.Values.cluster.backup }}
-  - apiGroups: [postgresql.cnpg.io]
-    resources: [scheduledbackups]
-    resourceNames: [{{ printf "%s-backup" $operation.cluster | quote }}]
-    verbs: [get, patch]
-  - apiGroups: [barmancloud.cnpg.io]
-    resources: [objectstores]
-    resourceNames: [{{ printf "%s-store" $operation.cluster | quote }}]
-    verbs: [get, patch]
-  {{- end }}
-  - apiGroups: [postgresql.cnpg.io]
-    resources: [databases]
-    resourceNames: [{{ $operation.database | quote }}]
-    verbs: [get, list, watch, patch]
-  - apiGroups: [postgresql.cnpg.io]
-    resources: [publications]
-    resourceNames: [{{ $operation.database | quote }}]
-    verbs: [get, list, watch, patch]
-  - apiGroups: [""]
-    resources: [serviceaccounts]
-    resourceNames: [{{ $name | quote }}, {{ $operation.capture | quote }}]
-    verbs: [get, list, watch, patch]
-  - apiGroups: [rbac.authorization.k8s.io]
-    resources: [roles, rolebindings]
-    resourceNames:
-      - {{ $name | quote }}
-      {{- with $.Values.credentials }}
-      - {{ .name | quote }}
-      {{- end }}
-    verbs: [get, list, watch, patch]
-  {{- with $.Values.brokerCertificates }}
-  - apiGroups: [cert-manager.io]
-    resources: [certificates]
-    resourceNames:
-    {{- range . }}
-      - {{ .name | quote }}
-    {{- end }}
-    verbs: [get, list, watch, patch]
+    resourceNames: {{ . | toJson }}
+    verbs: [get]
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ $name }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "project.namespace" $ | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -134,5 +55,5 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: {{ $name }}
-    namespace: {{ $.Release.Namespace }}
+    namespace: {{ include "project.namespace" $ | quote }}
 {{- end }}

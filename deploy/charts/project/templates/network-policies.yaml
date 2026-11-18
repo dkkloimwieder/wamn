@@ -6,7 +6,7 @@
 {{- $worker := dict "app.kubernetes.io/component" "wamn-worker" }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: {{ $policy.databaseClients }}, namespace: {{ $.Release.Namespace }}}
+metadata: {name: {{ $policy.databaseClients }}, namespace: {{ include "project.namespace" $ | quote }}}
 spec:
   podSelector:
     matchLabels: {{ $cluster | toJson }}
@@ -30,7 +30,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: {{ $name }}, namespace: {{ $.Release.Namespace }}}
+metadata: {name: {{ $name }}, namespace: {{ include "project.namespace" $ | quote }}}
 spec:
   podSelector:
     matchLabels: {{ $labels | toJson }}
@@ -44,7 +44,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: {{ $policy.operator }}, namespace: {{ $.Release.Namespace }}}
+metadata: {name: {{ $policy.operator }}, namespace: {{ include "project.namespace" $ | quote }}}
 spec:
   podSelector:
     matchLabels: {{ $cluster | toJson }}
@@ -59,7 +59,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: {{ $policy.replication }}, namespace: {{ $.Release.Namespace }}}
+metadata: {name: {{ $policy.replication }}, namespace: {{ include "project.namespace" $ | quote }}}
 spec:
   podSelector:
     matchLabels: {{ $cluster | toJson }}
@@ -73,7 +73,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: {{ $policy.cdcPostgres }}, namespace: {{ $.Release.Namespace }}}
+metadata: {name: {{ $policy.cdcPostgres }}, namespace: {{ include "project.namespace" $ | quote }}}
 spec:
   podSelector:
     matchLabels: {{ $reader | toJson }}
@@ -86,7 +86,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: {{ $policy.cdcNats }}, namespace: {{ $.Release.Namespace }}}
+metadata: {name: {{ $policy.cdcNats }}, namespace: {{ include "project.namespace" $ | quote }}}
 spec:
   podSelector:
     matchLabels: {{ $reader | toJson }}
@@ -103,7 +103,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: {{ $policy.objectStorage }}, namespace: {{ $.Release.Namespace }}}
+metadata: {name: {{ $policy.objectStorage }}, namespace: {{ include "project.namespace" $ | quote }}}
 spec:
   podSelector:
     matchLabels: {{ $cluster | toJson }}

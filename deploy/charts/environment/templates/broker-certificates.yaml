@@ -8,7 +8,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ .name }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "environment.namespace" $ | quote }}
 spec: {{ .spec | toJson }}
 {{- end }}
 {{- with .Values.brokerAdminCertificate }}
@@ -18,7 +18,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ $secret }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "environment.namespace" $ | quote }}
 rules:
 - apiGroups: [""]
   resources: [secrets]
@@ -29,13 +29,13 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ $secret }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "environment.namespace" $ | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ $secret }}
 subjects:
 - kind: ServiceAccount
-  name: wamn-operation-{{ $.Release.Namespace }}
-  namespace: {{ $.Release.Namespace }}
+  name: wamn-operation-{{ include "environment.namespace" $ }}
+  namespace: {{ include "environment.namespace" $ | quote }}
 {{- end }}

@@ -6,7 +6,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .name }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "project.namespace" $ | quote }}
 data:
   connection.json: {{ .connection | quote }}
   reader.json: {{ .configuration | toJson | quote }}
@@ -15,7 +15,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .name }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "project.namespace" $ | quote }}
   annotations:
     wamn.environment: {{ .coordinate | quote }}
 spec:

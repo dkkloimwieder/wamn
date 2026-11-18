@@ -3,7 +3,7 @@
 Identity runs two replicas. Each replica uses eight pooled password connections and a dedicated connection for signing-key rotation.
 The issuer advisory lock serializes rotation across replicas. Each signature reads the active database key under the issuer lock.
 
-Set `issuer`, `databaseSecret` and `tlsSecret` to the existing authority and credential resources.
+Set `namespace` to the org namespace and set `issuer`, `databaseSecret` and `tlsSecret` to the existing authority and credential resources.
 The pod projects `username` and `password` from `databaseSecret` and `ca.crt` from the org copy of `wamn-pg-ca` under `/etc/wamn/db/<databaseSecret>/`.
 
 For user management, set `operatorCaSecret` to the CA that signs the control client certificate.
