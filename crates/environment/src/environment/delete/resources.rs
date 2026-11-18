@@ -56,13 +56,15 @@ pub(super) async fn require_ownership(
     }
     let (org, env) = (&triple.org, &triple.env);
     let cdc = name::cdc_nats_certificate(triple);
+    let recovery = name::recovery_nats_user(triple);
     for (certificate, secret, user) in [
         (
             name::environment_nats_certificate(org, env),
             name::environment_nats_secret(org, env),
             name::environment_nats_user(org, env),
         ),
-        (cdc.clone(), cdc, name::cdc_nats_user(triple)),
+        (cdc.clone(), cdc, name::cdc_nats_user(org, &triple.project, env)),
+        (recovery.clone(), recovery.clone(), recovery),
     ] {
         if let Some(object) = get(platform, namespace, "certificate", &certificate).await? {
             anyhow::ensure!(
@@ -93,7 +95,7 @@ pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyho
         let release = name::environment_resource_name(&triple.org, &triple.project, &triple.env);
         wamn_platform_install::environment::update_project(
             &platform.target, &platform.chart, &release,
-            &serde_json::json!({"cdcReader":{"paused":true},"publication":{"reclaimPolicy":"delete"}}),
+            &serde_json::json!({"cdcReader":{"pause":true},"publication":{"reclaimPolicy":"delete"}}),
         ).await?;
     }
     crate::environment::cdc_reader::wait_reader_stopped(
@@ -111,6 +113,7 @@ pub(super) async fn delete_event_certificates(
     last: bool,
 ) -> anyhow::Result<()> {
     delete_secret(platform, &name::cdc_nats_certificate(triple)).await?;
+    delete_secret(platform, &name::recovery_nats_user(triple)).await?;
     if last {
         let host_release = name::environment_host_name(&triple.org, &triple.env);
         wamn_kubernetes::helm::uninstall(&platform.target, &host_release).await?;

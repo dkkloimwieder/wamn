@@ -150,15 +150,13 @@ GET requests use the existing read query parameters.
 POST requests also supply `request_id` in the existing request envelope.
 
 `POST /wamn_control/application/deploy` takes `application` and a published `release` digest.
-It selects and deploys that release's declared application.
-`POST /wamn_control/application/rollback` takes `application` and an optional `release` digest.
-Both operations change code selections without running SQL.
-Initialize application SQL through the explicit schema operation before the first code deployment.
+The worker checks enabled workflows, applies the package SQL, then upgrades the application chart.
+`POST /wamn_control/application/rollback` takes `application` and an optional `revision`.
+It checks enabled workflows against the target and restores the chart content.
 
-`POST /wamn_control/schema/diff` and `POST /wamn_control/schema/apply` accept optional `application` and `release` members.
-Without `application`, they process the environment's selected applications.
-An explicit release requires an application.
-`POST /wamn_control/schema/reset` resets the whole disposable environment.
+`POST /wamn_control/schema/diff` requires `application` and accepts an optional `release` digest.
+`POST /wamn_control/schema/apply` requires both.
+`POST /wamn_control/schema/reset` resets the selected project in a disposable environment.
 These routes expose no system SQL operation.
 
 Each start response returns `job`, the Kubernetes Job name.
@@ -166,7 +164,7 @@ Each start response returns `job`, the Kubernetes Job name.
 It returns `state` and a log tail of at most 100 lines and 32 KiB.
 States are `pending`, `running`, `succeeded`, and `failed`.
 Every read repeats project authorization and compares the Job's target with the request.
-Jobs stop after 15 minutes.
+Jobs stop after 15 minutes. The CLI polls for up to 16 minutes.
 Kubernetes removes completed Jobs after one hour.
 There is no operation history database.
 
@@ -255,7 +253,9 @@ The org chart declares the database logins. The project chart keeps their passwo
 The project chart creates the PostgreSQL publication for change data capture (CDC).
 For each project, the worker waits for the database, initializes its SQL when needed, and prepares the replication slot.
 After the certificates report ready, the worker reads the environment Secret and waits up to 60 seconds for NATS to accept the account.
-The worker creates the stream, waits for the CDC reader, and saves the project's applied configuration.
+The worker creates the stream and saves the project's applied configuration.
+The project chart mounts the YAML document in later project Jobs.
+The reader stays paused while a capture gap is open.
 The shared host group uses the runtime operator chart at version 2.12.1. Its `wasmcloud-nats` entry points to the broker and reads TLS files from `/etc/wasmcloud/host-plugin-secrets/<environment-secret>/`.
 
 Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Add `--data` and confirm the coordinate in a terminal to delete its database.
@@ -272,33 +272,27 @@ Use a source package directory for source deployment. Use an application release
 wamn deploy apps/sample_app --application sample_app --env environments/dev/environment.yaml
 wamn deploy --release sha256:<release-digest> --application sample_app --env environments/dev/environment.yaml
 wamn rollback sample_app --env environments/dev/environment.yaml
-wamn rollback sample_app --release sha256:<release-digest> --env environments/dev/environment.yaml
+wamn rollback sample_app --revision 3 --env environments/dev/environment.yaml
 wamn status --env environments/dev/environment.yaml
 wamn status sample_app --env environments/dev/environment.yaml
 ```
 
 Status reports each project in the file. An application name selects its project.
+For each workload, status reports the deployed package digest, content revision, and workload conditions.
 
 Publication needs no destination database.
-Run `wamn env apply environments/dev/environment.yaml` before applying application SQL and deploying code.
+Run `wamn env apply environments/dev/environment.yaml` before deploying the application.
 Each application owns its Helm history, workloads, Services, and route ConfigMaps.
 The environment chart owns one host for each org and environment. All projects share it.
 Application workloads and file Services select that host. Database credentials and event bindings remain separate for each project.
 Status reports application release state.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
-Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
-Helm is the only owner of release history. Deploy names the application and release digest.
-After a failed head, rollback restores the latest successful revision, including its web client pin.
-After a successful head, rollback restores the preceding distinct release and client pair.
-An explicit rollback digest selects that release. Rollback preserves installed SQL.
-Failed Helm upgrades keep their revision and pods for inspection. Rollback is an explicit operation.
-
-Deployment prepares bindings and grants before Helm changes the application.
-Readiness precedes a bounded drain wait, which lets old hosts finish their work.
-The policy's `drain_bound_seconds` supplies the pod termination grace period. Observation allows another 15 seconds for pod removal.
-Rollout retains older bindings, release facts and generated permissions.
-A separate retention operation removes facts that no live host, current selection or unfinished run needs.
-If host observation fails, retention refuses cleanup.
+A source deploy builds and publishes once. A digest deploy starts with the published package.
+Both forms submit one Job. The worker resolves the package closure and environment bindings under the lifecycle lock.
+It refuses if an enabled workflow calls a sibling or export absent from the candidate.
+It applies pending SQL and creates the application principals before running `helm upgrade --wait`.
+Deploy preserves installed data. Write migrations that remain compatible with the code already running.
+If the Helm upgrade fails, the SQL that committed remains installed. Retry with the same package digest after fixing the failure.
 Environment apply refuses unfinished runs in the selected application.
 Environment delete checks all applications in the project environment unless you pass `--data`.
 If the lifecycle lock session fails, the operation stops and returns an error.
@@ -313,24 +307,14 @@ An environment name or explicit `reset` mode grants no authority to discard data
 Editing the mode alone executes no SQL and changes no application selection.
 
 ```bash
-wamn publish apps/sample_app --env environments/dev/environment.yaml
+wamn publish apps/target/wamn/sample_app
 wamn schema diff sample_app --env environments/dev/environment.yaml
-wamn schema apply sample_app --env environments/dev/environment.yaml
-wamn schema apply sample_app --env environments/dev/environment.yaml --release sha256:<release-digest>
-wamn schema diff apps/sample_app --env environments/dev/environment.yaml
-wamn schema apply apps/sample_app --env environments/dev/environment.yaml
+wamn schema apply sample_app --env environments/dev/environment.yaml --release sha256:<package-digest>
 wamn schema reset --project sample_project --env environments/dev/environment.yaml
 ```
 
-An application name selects its latest successful Helm release. `--release` selects another application release for SQL without selecting its code.
-A source diff requires current build output and performs no publication or mutation.
-A deployed source apply builds and publishes first, then executes those immutable bytes through the same SQL Job.
-`schema publish` prints the application release digest without installing SQL or selecting code.
-Development uses the same control routes for schema diff and apply. See [development loop](development-loop.md).
-
-In `migrate`, explicit apply executes pending files in dependency order and preserves existing rows.
-The watcher initializes absent packages but does not advance installed SQL.
-Code deployment preserves installed SQL.
+Schema diff uses the live package digest unless you supply `--release`.
+Schema apply uses the supplied package digest and applies migrations in dependency order without upgrading the application chart.
 An ordinary migration file and its completion record commit together.
 `catalog.packages` stores the current package version and artifact source.
 A separate SQLx history table records each package and environment's applied versions and checksums.
@@ -346,11 +330,10 @@ Earlier committed files remain applied.
 
 ### Reset target and recovery
 
-Every schema apply in `reset` mode resets application state in the existing project database.
 An explicit schema reset selects the whole project database.
 Type the project name at the terminal prompt. Every application in that project is affected.
 The registry must authorize data loss by recording the environment as disposable.
-Neither operation resets `wamn_system` or another environment.
+Reset stays within the selected project database.
 
 Before stopping users, WAMN resolves all retained package artifacts and validates their migration files.
 The lifecycle lock excludes application deployment during reset.
@@ -367,7 +350,7 @@ These grants name each model schema explicitly. Reset excludes the separate hist
 CDC preparation restores capture after package apply.
 The database keeps its identity.
 After migrations succeed, WAMN resumes the existing application selections.
-If a reset fails, users remain stopped. Repair the failure and repeat the same schema apply with its release.
+If a reset fails, users can remain stopped. Inspect the Job log before attempting recovery.
 
 ### Nontransactional SQL
 
@@ -531,8 +514,8 @@ Platform deployment owns system initialization, the initial organization, and th
 Do not repeat the removed numbered installer or its initial application pass.
 
 Application publication is independent of the destination database.
-`environment::apply` provisions shared environment resources.
-Apply application SQL before `wamn deploy` selects the targeted code release.
+`wamn env apply` provisions shared environment resources.
+The deploy Job applies SQL before upgrading the application release.
 Platform deployment performs no application pass.
 
 The optional `client` field pins an application web artifact: `client = {package = "wamn_receiving", web = "<full web digest>"}`.
@@ -549,8 +532,7 @@ Deploy a published release through control:
 wamn deploy --env <document> --application <application> --release <digest>
 ```
 
-The operation worker holds the targeted application lock and a shared environment lock.
-Different applications can deploy concurrently. A whole-environment reset takes the exclusive environment lock.
+The operation worker holds the environment lock through SQL and the application rollout.
 A CI completion order does not set deployment precedence.
 
 The deployed capture owner sets replican identity from the installed published package artifacts.
@@ -570,7 +552,7 @@ Read each command's current required arguments with `--help`.
 Run this command after building the package and its bases.
 
 ```bash
-wamn publish apps/wamn_receiving --env environments/dev/environment.yaml
+wamn publish apps/target/wamn/wamn_receiving
 ```
 
 Set `WAMN_PACKAGE_ARTIFACT_BASE` and `WAMN_COMPONENT_ARTIFACT_BASE` to the package and component repositories.
@@ -628,7 +610,7 @@ Deployment needs no source checkout, pnpm installation, or local UI output.
 Kind keeps an empty web bucket and selects no platform UI.
 
 The control root is `https://control.wamn.dev`.
-The org chart runs `wamn-control --config /etc/wamn/control/config.json` in the org namespace.
+The org chart runs `wamn-control --config /etc/wamn/control/config.json platform` in the org namespace.
 The native service has no route guest or application release.
 The control Service selects that Deployment.
 Local platform deployment installs control without a UI upload. GCP integration for public control access remains unfinished.
@@ -848,13 +830,15 @@ Application package migrations keep their own streams.
 
 ## Rollback and maintenance
 
-Rollback restores the latest successful revision after a failed head. Otherwise, it restores the preceding distinct release and client pin.
-Use `--release <digest>` to select an explicit published release.
-Both forms use the same selection and application deployment owner.
+Use `wamn rollback APP --revision N --env FILE` to restore the content of revision N.
+Without `--revision`, the worker finds the newest earlier deploy. It skips revisions that record a rollback.
+If no older deploy exists, the command reports the current content revision and refuses.
+The worker reads the target package digest from Helm, checks enabled workflows, and runs `helm rollback` under the lifecycle lock.
+Rollback keeps installed SQL migrations.
 
-A release digest selects exact bytes, but a mutable image tag does not.
-The installed package and its committed migrations remain in place.
-Reverse migration is not rollback.
+The WorkloadDeployment annotation `wamn.release-revision` names the revision whose content is live.
+Helm restores the saved manifest when it creates a rollback revision. After a rollback to N, status still reports N.
+Use the same revision numbers with `--revision`.
 
 Retention runs through its owning library interfaces.
 For backup and recovery, use CloudNativePG backup and recovery on the cluster.

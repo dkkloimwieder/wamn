@@ -7,6 +7,8 @@ runtime-operator:
       generate: false
   operator:
     allowSharedHosts: false
+    extraArgs:
+      - --nats-inbox-prefix=_INBOX_wasmcloud-operator
     watchNamespaces: []
     hostNamespaces: []
   nats:

@@ -20,24 +20,24 @@ pub struct CloseCaptureGapArgs {
 
 /// Recover one capture gap and print the row it wrote.
 pub async fn recover_capture_gap(args: RecoverCaptureGapArgs) -> anyhow::Result<()> {
-    let value = crate::operation_verbs::ControlHost::from_env()?
-        .call(
+    crate::operation_verbs::ControlHost::from_env()?
+        .project(
             "capture_gap.recover",
-            &serde_json::json!({"project":args.project,"env":args.env}),
+            &args.project,
+            &args.env,
+            serde_json::json!({}),
         )
-        .await?;
-    println!("{value}");
-    Ok(())
+        .await
 }
 
 /// Close the newest recorded gap through authenticated control.
 pub async fn close_capture_gap(args: CloseCaptureGapArgs) -> anyhow::Result<()> {
-    let value = crate::operation_verbs::ControlHost::from_env()?
-        .call(
+    crate::operation_verbs::ControlHost::from_env()?
+        .project(
             "capture_gap.close",
-            &serde_json::json!({"project":args.project,"env":args.env}),
+            &args.project,
+            &args.env,
+            serde_json::json!({}),
         )
-        .await?;
-    println!("{value}");
-    Ok(())
+        .await
 }

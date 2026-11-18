@@ -78,11 +78,8 @@ pub(super) fn check<'a>(
             WiringNode::Call {
                 sibling, export, ..
             } => {
-                let Some((component, operation)) = application
-                    .components
-                    .iter()
-                    .find(|component| component.name == sibling.as_str())
-                    .and_then(|component| Some((component, component.operations.get(export)?)))
+                let Some((component, operation)) =
+                    wamn_catalog::application_config::workflow_call(application, sibling, export)
                 else {
                     return Err(invalid(format!(
                         "node {id} names an unavailable sibling export"

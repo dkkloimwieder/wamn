@@ -4,7 +4,7 @@ use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_catalog::lifecycle_lock::LifecycleLock;
-use wamn_environment::environment::document::{EnvironmentDocument, EnvironmentFile};
+use wamn_environment::environment::document::EnvironmentFile;
 use wamn_identity_protocol::PrincipalId;
 use wamn_provision::migrations::MigrationDatabase;
 
@@ -13,6 +13,11 @@ use crate::{Configuration, execution::Execution};
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
+    ProjectOperation {
+        operation: crate::control_route::operations::Operation,
+        request: crate::control_route::operations::Request,
+        actor: PrincipalId,
+    },
     Environment {
         operation: String,
         project: wamn_registry::ProjectId,
@@ -41,7 +46,6 @@ impl Execution {
     pub(crate) async fn platform(
         &self,
         operation: &wamn_catalog::canonical_name::CanonicalName,
-        actor: &PrincipalId,
         payload: &str,
     ) -> anyhow::Result<Value> {
         let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
@@ -84,19 +88,17 @@ impl Execution {
             return wamn_kubernetes::job::observe(&api, &request.job, &coordinate, &[worker_type])
                 .await;
         }
-        let request: Request = serde_json::from_str(payload)?;
+        ensure!(
+            !matches!(serde_json::from_str::<Request>(payload)?, Request::ProjectOperation { .. }),
+            "project operations require project route authorization"
+        );
         let name = format!("op-{}", uuid::Uuid::new_v4());
         let worker = &self.worker;
         let mut job = wamn_kubernetes::job::manifest(
             &name,
             &worker.image,
             &["/usr/local/bin/wamn-control"],
-            &[
-                "--config",
-                "/etc/wamn/control/config.json",
-                "platform",
-                payload,
-            ],
+            &["--config", "/etc/wamn/control/config.json", "worker"],
         );
         job["metadata"]["annotations"] =
             json!({"wamn.dev/operation-target":coordinate,"wamn.dev/operation":worker_type});
@@ -107,51 +109,14 @@ impl Execution {
         job["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
         job["spec"]["template"]["spec"]["volumes"] = json!([
             {"name":"configuration","configMap":{"name":worker.configuration}},
-            {"name":"work","emptyDir":{}},
-            {"name":"administration","configMap":{"name":wamn_provision::control_administration_secret_name(&self.org)}}
+            {"name":"work","emptyDir":{}}
         ]);
         wamn_kubernetes::job::container(&mut job)["volumeMounts"] = json!([
             {"name":"configuration","mountPath":"/etc/wamn/control","readOnly":true},
-            {"name":"work","mountPath":"/work"},
-            {"name":"administration","mountPath":self.administration,"readOnly":true}
+            {"name":"work","mountPath":"/work"}
         ]);
-        wamn_kubernetes::job::mount(
-            &mut job,
-            "apply",
-            self.platform_database.credentials.name.as_str(),
-            "/credentials/apply",
-            &["username", "password"],
-        );
-        // The project SQL path reads the named login through its existing API access.
-        if !matches!(&request, Request::Schema { target, .. } if target == "project") {
-            let owner = MigrationDatabase::System.managed_role(&self.platform_database.database);
-            wamn_kubernetes::job::mount(
-                &mut job,
-                "owner",
-                &owner.password_secret.name,
-                "/credentials/owner",
-                &["username", "password"],
-            );
-        }
-        wamn_kubernetes::job::mount(
-            &mut job,
-            "identity-operator",
-            &wamn_registry::name::resource_suffix("operator", self.org.as_str()),
-            "/etc/identity-operator",
-            &["tls.crt", "tls.key"],
-        );
-        job["spec"]["template"]["spec"]["volumes"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"name":"identity-ca","configMap":{"name":"identity-ca"}}));
-        wamn_kubernetes::job::container(&mut job)["volumeMounts"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"name":"identity-ca","mountPath":"/etc/identity-ca","readOnly":true}));
-        wamn_kubernetes::job::registry(&mut job, self.platform.registry_token_metadata);
-        let actor = actor.to_string();
-        wamn_kubernetes::job::environment(&mut job, &[("WAMN_DEPLOY_ACTOR", &actor)]);
-        wamn_kubernetes::job::submit(&api, &job).await
+        wamn_kubernetes::job::registry(&mut job, self.registry_token_metadata);
+        wamn_kubernetes::job::submit(&api, &mut job, payload).await
     }
 }
 
@@ -162,6 +127,11 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
     crate::write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let mut output = Vec::new();
     match request {
+        Request::ProjectOperation {
+            operation,
+            request,
+            actor,
+        } => crate::worker::execute(config, platform, operation, request, &actor).await,
         Request::Environment {
             operation,
             project,
@@ -284,17 +254,9 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                                 env.clone(),
                                 project,
                             );
-                            project_schema(
-                                config,
-                                &platform,
-                                &lock,
-                                &triple,
-                                &sources,
-                                apply,
-                                &mut output,
-                            )
-                            .await
-                            .with_context(|| format!("platform SQL for {}", triple.project))?;
+                            project_schema(&platform, &lock, &triple, &sources, apply, &mut output)
+                                .await
+                                .with_context(|| format!("platform SQL for {}", triple.project))?;
                         }
                         Ok(())
                     })
@@ -308,7 +270,6 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
 }
 
 async fn project_schema(
-    config: &Configuration,
     platform: &wamn_environment::environment::Platform,
     lock: &LifecycleLock,
     triple: &wamn_registry::Triple,
@@ -318,23 +279,10 @@ async fn project_schema(
 ) -> anyhow::Result<()> {
     use std::io::Write as _;
 
-    EnvironmentDocument::read(platform, triple).await?;
-    let instance = wamn_registry::deployment::instance_suffix(&mut *lock.client().await, triple)
+    let system = MigrationDatabase::System.configuration(&platform.system_database_url)?;
+    let migration = wamn_platform_install::environment::connection(&system, triple)
         .await?
-        .context("project deployment is absent")?;
-    let database = wamn_provision::project_env_database_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-        &instance,
-    );
-    let key = wamn_provision::control_administration_key(&triple.project, &triple.env);
-    let input = std::fs::read_to_string(config.administration_dir.join(key))?;
-    ensure!(
-        wamn_postgres::identity(&input)?.1 == database,
-        "project SQL connection differs from the registry database"
-    );
-    let migration = MigrationDatabase::Project.configuration(&input)?;
+        .to_json()?;
     writeln!(output, "Project {}", triple.project)?;
     wamn_environment::environment::sql::project_schema(
         lock, triple, &migration, sources, apply, output,
@@ -346,11 +294,10 @@ impl Execution {
     pub(crate) async fn environment(
         &self,
         operation: &wamn_catalog::canonical_name::CanonicalName,
-        actor: &PrincipalId,
         payload: &str,
     ) -> anyhow::Result<Value> {
         if operation.as_str().ends_with("operation_status") {
-            return self.platform(operation, actor, payload).await;
+            return self.platform(operation, payload).await;
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -365,6 +312,6 @@ impl Execution {
         }
         let input: Input = serde_json::from_str(payload)?;
         let payload = json!({"type":"environment","operation":operation,"project":input.project,"env":input.env,"document":input.document,"application":input.application,"disposable":input.disposable,"data":input.data});
-        self.platform(operation, actor, &payload.to_string()).await
+        self.platform(operation, &payload.to_string()).await
     }
 }

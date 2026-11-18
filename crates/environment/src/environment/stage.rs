@@ -25,12 +25,12 @@ pub async fn materialize_application_principals(
     platform: &Platform,
     project_url: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
-    packages: &[PackageManifest],
+    packages: &BTreeMap<wamn_catalog::PackageName, PackageManifest>,
 ) -> anyhow::Result<()> {
     use wamn_identity_protocol::PlatformComponent;
 
     let applications = packages
-        .iter()
+        .values()
         .filter(|package| wamn_publish::publish_release::composes_integration(package))
         .collect::<Vec<_>>();
     if applications.is_empty() {
@@ -77,10 +77,10 @@ async fn write_runtime_grants(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &wamn_registry::ProjectEnvKey,
     applications: &[&PackageManifest],
-    packages: &[PackageManifest],
+    packages: &BTreeMap<wamn_catalog::PackageName, PackageManifest>,
 ) -> anyhow::Result<()> {
     let dependency_manifests = packages
-        .iter()
+        .values()
         .map(|package| (&package.package.id, package))
         .collect();
     for package in applications {
@@ -88,7 +88,7 @@ async fn write_runtime_grants(
             wamn_catalog::resource_names::application_subject(project_env_key, &package.package.id);
         let principal = wamn_identity::application::service::active_service(transaction, &subject)
             .await?
-            .with_context(|| format!("application principal {subject} is absent or inactive; run env initialize"))?;
+            .with_context(|| format!("application principal {subject} is absent or inactive"))?;
         let role = format!(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
@@ -105,7 +105,7 @@ async fn write_runtime_grants(
         .get(0);
         ensure!(
             owned,
-            "application role {role} is missing, authored, or shared; run env initialize or resolve its ownership"
+            "application role {role} is missing, authored, or shared or resolve its ownership"
         );
         for permission in wamn_publish::publish_release::application_dependency_permissions(
             package,
@@ -149,12 +149,12 @@ pub(super) async fn installed(
         .await?
         .context("the environment row is missing after step 4")?;
     system.commit().await?;
-    Ok(analyse::read_project(
-        &analyse::project_url(platform, document, &row).await?,
+    Ok(
+        analyse::read_project(&analyse::project_url(platform, document, &row).await?)
+            .await?
+            .context("the project database is missing after step 4")?
+            .installed,
     )
-    .await?
-    .context("the project database is missing after step 4")?
-    .installed)
 }
 
 /// The package artifact `<id>-<version>`, pulled from the registry.

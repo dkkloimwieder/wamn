@@ -111,3 +111,35 @@ pub fn binding<'a>(
         .iter()
         .find(|binding| binding.name.as_str() == name)
 }
+
+/// Find the declared export on an exact workload sibling.
+pub fn workflow_call<'a>(
+    application: &'a ApplicationConfig,
+    sibling: &crate::canonical_name::CanonicalName,
+    export: &crate::canonical_name::CanonicalName,
+) -> Option<(&'a ApplicationComponent, &'a ApplicationOperation)> {
+    let component = application
+        .components
+        .iter()
+        .find(|item| item.name == sibling.as_str())?;
+    Some((component, component.operations.get(export)?))
+}
+
+/// Verify that every call in an enabled graph is available in the candidate workload.
+pub fn check_workflow_references(
+    application: &ApplicationConfig,
+    graph: &crate::WiringDocument,
+) -> Result<(), crate::CatalogIdentityError> {
+    for (id, node) in &graph.nodes {
+        if let crate::WiringNode::Call {
+            sibling, export, ..
+        } = node
+            && workflow_call(application, sibling, export).is_none()
+        {
+            return Err(crate::CatalogIdentityError::InvalidDefinition {
+                message: format!("node {id} names an unavailable sibling export"),
+            });
+        }
+    }
+    Ok(())
+}

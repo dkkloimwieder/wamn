@@ -642,6 +642,10 @@ Issues:
 - Deploy creates the operation service accounts (`<env>-sql`, `<env>-code`) and the application principals, through charts and SQL.
 - `/_wamn/residency` goes unless the deploy flow needs it.
 - `wamn rollback [--revision N]` runs `helm rollback` in the worker Job, under the lock, after the enabled-workflow check. The application chart puts the top package digest and `.Release.Revision` on the WorkloadDeployment, and control reads them there.
+- Rollback reads revision N's package digest with `helm get values --revision N`, a recorded exception for rollback only. The `wamn.release-revision` annotation names the revision whose content is live. Without `--revision`, the target is the newest earlier revision that was a deploy, not a rollback.
+- `capture_gap.recover` and `capture_gap.close` are operation Jobs. The project chart's `pause` value stops the CDC reader, and the values builder keeps it paused while a capture gap is open. Rust no longer scales the reader.
+- `capture_gap.recover` reads the project's source stream with a per-project recovery user: stream info and message get on its own stream only, replies on its own inbox prefix. Control's `event_observer` setting goes.
+- Every restricted NATS user receives replies only on its own inbox prefix (`_INBOX_<user>.>`) and has no `_INBOX.>` subscribe right. The environment user is the one exception: it holds full rights in its own environment account.
 
 8.3 Publish and artifacts.
 - Publish does not pull back what it pushed. Tags are mutable: a publish under an existing tag with new content runs the append check against the digest the tag points to now, then moves the tag. A new tag has no append check.
@@ -691,7 +695,6 @@ Issues:
 - 3.6: the first signing key, the installer source for the identity envelope settings, and the `CN=control-<org>` certificate.
 - 3.7: the TypeScript clients cannot be generated again until codegen is reworked (the `admin_covered` contract changed in Epic 6).
 - Topic entry node: after 3.4. Topics use stock `wasmcloud:nats`: application components publish within their workload's grants, and a Topic workflow pulls from its own consumer like Data change.
-- The capture-gap observer in control is unwired (it defaults to `null`).
 - 3.7b: split `wamn-sql`. `WamnPostgres` has 77 inherent methods mixing pools, auth lookups, per-component scope state, plugin glue and workflow node dispatch, and eight modules form one cycle (crate root, `executor`, `invocation`, `operation`, `operation_transaction`, `resources`, `session_identity`, `write_log`).
   1. `pool`, `host_project` and `types` move into `wamn-postgres`, after it loses `wamn-kubernetes` (P5).
   2. The auth lookups (`read_project_pat`, `route_pat`, `principal_grants`, `read_principal_grants`, `user_operation_permissions`, `resolve_subject`, `require_provisioned_principal`, `oauth_connection`) move to `wamn-authentication`, taking a pool from `wamn-postgres`. The host's authorization cache (`services/host/src/host/authentication.rs`) moves there too and becomes the one `AuthorizationStore`. `WamnPostgres` stops implementing that trait. Today a lookup goes `WamnPostgres` → the host cache (`self.authorization.get()`) → back into `WamnPostgres` through a `Weak` pointer.
@@ -719,6 +722,8 @@ Issues:
 - 3.7: `apps/platform_ui` reads residency and live fields from the old status contract. Regenerate its clients against the new `environment.status` and `application.rollback` contracts.
 - Recorded exceptions to C1 until 3.6: operation Jobs and their per-request input ConfigMaps, `wamn-credential-*` (written by connection administration at run time), and `wamn-nats-authorization`.
 - 3.6: `platform update` still reads installation and host values back with `helm get values` (`platform/deploy.rs`), because no other source holds them. The `platform` chart replaces it.
+- After Epic 8 merges: move to wasmCloud v2.12.2, a patch release with no listed breaking changes. One commit: the wash-runtime crates to 2.12.2; both vendored runtime-operator charts to 2.12.2; any NATS image wamn pins to 2.12.15 (upstream #5955); then build and clippy. Why: wamn follows the wasmCloud release, and 2.12.2 carries runtime-operator rollout fixes (#5957, #5960, #5922), runtime fixes (#5945, #5980) and security dependency bumps (#5941 zstd, #5982 quinn-udp and OTel). Confirm that wamn does not link wash-runtime's own Postgres plugin, which #5953 and #5998 change.
+- 3.6: the environment user is both the hosts' workload NATS credential and the Rust tooling credential (`ensure_stream` and others), with full rights in the environment account. So any workload in an environment holds those rights, limited only by its workload's `subject-allow` narrowing. Split it into a restricted workload user for hosts, with its own inbox prefix through a named binding, and a separate admin user for tooling.
 
 # Part 2: Review log
 
@@ -2160,3 +2165,13 @@ Facts:
 **Ruled (D, 2026-11-18): capture-gap recovery and control's login.** Recover and close become operation Jobs that set the project chart's `pause` value, and the values builder keeps the reader paused while a gap is open, so a deploy cannot restart it early; the routes change from synchronous calls to operations. Control gets its own least-privilege system-database login, a member of `wamn_control`, under org row security; `wamn_apply` is not used for control's request path.
 
 **Ruled (D, 2026-11-18): env apply order.** Every selected project's registry row is reserved first, so the org chart is upgraded once with every project's logins. The host chart upgrade is submitted before the project loop and waited on after it; the first project waits for the broker certificate with a bounded wait. A failure leaves later projects reserved and unconfigured, which a rerun completes.
+
+**Ruled (D, 2026-11-18): wasmCloud v2.12.2.** wamn moves to v2.12.2 in one commit after Epic 8 merges. Nothing in it changes a ruling; #5932 (structural type imports) does not help the edge, whose NATS imports are functions and resources.
+
+**Ruled (D, 2026-11-18): rollback reads and numbers.** The worker reads the target revision's package digest from Helm for the workflow check, as a recorded exception for rollback only. The revision annotation names the revision whose content is live, so it stays N after a rollback to N. A rollback with no revision goes to the newest earlier revision that was a deploy, read from each candidate's rendered annotation, so a second rollback goes further back instead of forward.
+
+**Ruled (D, 2026-11-18): capture-gap recovery credential.** A per-project recovery user in the environment account may only get stream info and messages from its own project's stream, and receives replies only on its own inbox prefix. The CDC reader stays publish-only, and control's unwired `event_observer` setting goes.
+
+**Ruled (D, 2026-11-18): scoped inboxes for every NATS user.** The CDC reader user, and any other user that subscribed to `_INBOX.>`, gets its own inbox prefix, so no user can read replies meant for another user in its account. This corrects the earlier note that only the recovery user lacked one.
+
+**Ruled (D, 2026-11-18): the environment user and inbox scoping.** The environment user, which holds full rights in its account, is exempt from the scoped-inbox rule, because a scope would protect nothing. Every restricted user is scoped. Splitting the environment user into a restricted workload user and an admin user is a 3.6 item.

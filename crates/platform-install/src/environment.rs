@@ -10,6 +10,26 @@ pub async fn apply(target: &Target, chart: &Path, name: &str, values: Value) -> 
     crate::platform::resources::apply_release(target, &entry, directory.path()).await
 }
 
+/// Upgrade one application with SQL and workflow checks already complete.
+pub async fn apply_application(
+    target: &Target,
+    chart: &Path,
+    name: &str,
+    values: &serde_yaml::Value,
+) -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("application.yaml");
+    std::fs::write(&path, serde_yaml::to_string(values)?)?;
+    wamn_kubernetes::helm::upgrade_application(
+        target,
+        &chart.join("platform/application"),
+        name,
+        &path,
+        std::time::Duration::from_secs(600),
+    )
+    .await
+}
+
 /// Submit the project resources before the worker initializes the database and CDC slot.
 pub async fn apply_project(
     target: &Target,

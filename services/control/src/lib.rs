@@ -7,6 +7,7 @@ mod execution;
 mod host_route;
 pub mod platform;
 pub mod retention;
+mod worker;
 
 use std::{
     net::SocketAddr,
@@ -51,32 +52,9 @@ pub struct Configuration {
     #[serde(default)]
     pub oci_ca_paths: Vec<PathBuf>,
     pub events: Option<Events>,
-    pub event_observer: Option<Nats>,
     #[serde(default)]
     pub identity: Identity,
     pub oauth_encryption: Option<wamn_envelope::encryption::Configuration>,
-}
-
-/// The optional capture-gap observer broker connection.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Nats {
-    pub url: String,
-    pub ca: PathBuf,
-    pub cert: PathBuf,
-    pub key: PathBuf,
-    pub server_name: Option<String>,
-}
-impl Nats {
-    fn connection(&self) -> wamn_broker::nats::PlatformNats {
-        wamn_broker::nats::PlatformNats {
-            nats_url: self.url.clone(),
-            nats_tls_ca: self.ca.clone(),
-            nats_tls_cert: self.cert.clone(),
-            nats_tls_key: self.key.clone(),
-            nats_tls_server_name: self.server_name.clone(),
-        }
-    }
 }
 
 /// The installed event stream policy.
@@ -186,10 +164,8 @@ fn write_kubeconfig(path: &Path, namespace: &str) -> anyhow::Result<()> {
 }
 
 /// Serve org routes on native HTTP and drain active requests on shutdown.
-pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
-    config.worker.database_credential = config.apply_database.credentials.name.clone();
-    config.worker.administration = config.administration_dir.clone();
-    let platform = Arc::new(config.platform()?);
+pub async fn serve(config: Configuration) -> anyhow::Result<()> {
+    let platform = config.platform()?;
     write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let integration_registry = wamn_oci::package_artifact::PackageRegistry {
         artifact_base: config.integration_artifact_base.clone(),
@@ -248,11 +224,9 @@ pub async fn serve(mut config: Configuration) -> anyhow::Result<()> {
         .with_control_execution(Arc::new(execution::Execution {
             org: config.org.clone(),
             worker: config.worker.clone(),
-            platform_database: config.apply_database.clone(),
-            event_observer: config.event_observer.as_ref().map(Nats::connection),
             administration: config.administration_dir.clone(),
             control_database: database,
-            platform,
+            registry_token_metadata: config.registry_token_metadata,
             system_database: wamn_provision::migrations::MigrationDatabase::System
                 .configuration(&config.apply_database.to_json()?)?,
             integration_registry,

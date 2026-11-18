@@ -186,7 +186,7 @@ pub(super) fn resource_entry(
         "insecure_registry":insecure_registry,
         "registry_auth_file":"/credentials/registry/config.json",
         "events":{"stream_replicas":1,"dup_window_secs":120},
-        "event_observer":null,"identity":{"endpoint":super::identity::issuer(org.as_str()),"client_cert":"/etc/identity-control/tls.crt","client_key":"/etc/identity-control/tls.key","server_ca":"/etc/identity-ca/ca.crt"}});
+        "identity":{"endpoint":super::identity::issuer(org.as_str()),"client_cert":"/etc/identity-control/tls.crt","client_key":"/etc/identity-control/tls.key","server_ca":"/etc/identity-ca/ca.crt"}});
     Ok(
         json!({"chart":chart.application_chart(),"version":chart.version,"name":name,"namespace":org,
         "values":{"controlService":true,"org":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},

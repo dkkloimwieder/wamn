@@ -72,8 +72,10 @@ impl PackedPackage {
     /// Refuses a coordinate that cannot be used as an OCI tag.
     pub fn tag(
         &self,
-    ) -> Result<wamn_oci::package_artifact::tag::OciTag, wamn_oci::package_artifact::tag::ParseOciTagError>
-    {
+    ) -> Result<
+        wamn_oci::package_artifact::tag::OciTag,
+        wamn_oci::package_artifact::tag::ParseOciTagError,
+    > {
         format!("{}-{}", self.package_id, self.version).parse()
     }
 }
@@ -368,7 +370,11 @@ pub async fn push_package(
     let expected_migrations = finished
         .outputs
         .keys()
-        .filter(|path| MIGRATION_PATHS.iter().any(|directory| path.starts_with(directory)))
+        .filter(|path| {
+            MIGRATION_PATHS
+                .iter()
+                .any(|directory| path.starts_with(directory))
+        })
         .count();
     ensure!(
         expected_migrations == files.len(),
@@ -430,8 +436,12 @@ pub async fn push_package(
         let image_digest = if let Some(image) = known {
             image
         } else {
-            push_component_artifact(&request.registry, &request.component_artifact_base, &component)
-                .await?
+            push_component_artifact(
+                &request.registry,
+                &request.component_artifact_base,
+                &component,
+            )
+            .await?
         };
         images.insert(digest, image_digest);
         deploy.components.insert(
@@ -548,7 +558,10 @@ async fn push_component_artifact(
         &component.bytes,
         wash_runtime::oci::OciConfig {
             credentials: credentials.as_ref().map(|credentials| {
-                (credentials.username().to_owned(), credentials.password().to_owned())
+                (
+                    credentials.username().to_owned(),
+                    credentials.password().to_owned(),
+                )
             }),
             insecure: registry.insecure_registry,
             ..Default::default()
@@ -613,6 +626,25 @@ pub async fn open_package(
             version: version.clone(),
         })?;
     unpack_artifact(&tag, &pulled)
+}
+
+/// Open published package bytes by digest, independently of mutable tags.
+pub async fn open_package_digest(
+    registry: &PackageRegistry,
+    digest: &wamn_digest::Digest,
+) -> anyhow::Result<(OpenedPackage, PackageManifest)> {
+    let pulled = Repository::open(registry, digest)?
+        .pull()
+        .await?
+        .with_context(|| format!("package artifact {digest} is absent"))?;
+    let layer = pulled
+        .layers
+        .first()
+        .context("package has no manifest layer")?;
+    let manifest = PackageManifest::from_slice(&layer.bytes)?;
+    let identity = &manifest.package;
+    let tag = format!("{}-{}", identity.id, identity.version).parse()?;
+    Ok((unpack_artifact(&tag, &pulled)?, manifest))
 }
 
 /// Unpack the `layers` of the artifact `tag`, whose manifest digest is

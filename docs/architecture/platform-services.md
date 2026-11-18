@@ -323,12 +323,14 @@ The account contains all the environment's project streams. Accounts exchange no
 The `wamn-env-<org>--<env>` user has full rights in its environment account.
 The configure and delete Jobs use that account to manage streams. The host uses it to manage workflow consumers.
 Each project gives its CDC reader a separate `wamn-cdc-<key>` user in the same account.
-The reader can publish only to its project's event subjects and stream-info API. It subscribes to `_INBOX.>` for replies.
+The reader can publish only to its project's event subjects and stream-info API.
+The recovery worker has a separate `wamn-recovery-<key>` user. It can request stream info and read messages from its project's stream.
+Each restricted user receives replies only on `_INBOX_<user>.>`. The environment user keeps full rights within its account.
 
 The host group declares one unnamed stock `wasmcloud-nats` binding with `workloadConfig: deny`.
 The binding mounts the environment TLS Secret and limits access to the environment's project streams and subjects.
 Each application workload narrows those grants to its own project's stream and subjects.
-The capture-gap observer stays unwired. The NATS HTTP monitor binds to loopback.
+The NATS HTTP monitor binds to loopback.
 
 Delivery is at least once for application handlers.
 

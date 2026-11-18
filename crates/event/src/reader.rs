@@ -55,3 +55,10 @@ pub struct ReaderConfig {
     /// leaves `reserved` (E2). Default 256 MiB (≈16 WAL segments of headroom).
     pub slot_safe_wal_warn_bytes: i64,
 }
+
+impl ReaderConfig {
+    /// The restricted certificate identity used for publishing and replies.
+    pub fn nats_user(&self) -> String {
+        wamn_registry::name::cdc_nats_user(&self.org, &self.project, &self.env)
+    }
+}

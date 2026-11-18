@@ -1,19 +1,17 @@
 //! Repair lost replication slots and record operator resynchronization.
 //! Recovery keeps the reader stopped. Control restarts it after closing the gap.
 
+use super::plan::pg_lsn;
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
-use super::plan::pg_lsn;
 
 use anyhow::{Context as _, bail, ensure};
 use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::stream::RawMessageErrorKind;
 use chrono::{DateTime, Utc};
 
-use wamn_provision::{
-    cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
-};
 use wamn_event::{SourceEvent, verified_source_event_id};
+use wamn_provision::{cdc_object_name, project_env_database_name, sql, validate_project_env_cdc};
 use wamn_registry::Triple;
 use wamn_registry::sql::{
     close_capture_gap_sql, insert_capture_gap_sql, lock_newest_capture_gap_sql,
@@ -77,7 +75,7 @@ pub struct ClosedCaptureGap {
 pub async fn recover_capture_gap(
     args: &RecoverCaptureGapRequest,
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
-    target: &wamn_kubernetes::Target,
+    platform: &super::super::Platform,
 ) -> anyhow::Result<RecoveredCaptureGap> {
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
@@ -146,9 +144,10 @@ pub async fn recover_capture_gap(
         }
     };
 
+    let inbox = wamn_broker::nats::inbox_prefix(&wamn_registry::name::recovery_nats_user(&triple));
     let broker = async_nats::jetstream::new(
         args.nats
-            .connect()
+            .connect_with_inbox_prefix(&inbox)
             .await
             .context("connect the event observer credential")?,
     );
@@ -162,7 +161,9 @@ pub async fn recover_capture_gap(
 
     // Refusals leave a healthy Deployment running. Stop it before the repaired
     // slot can become visible to a restarting reader.
-    super::super::cdc_reader::stop_reader(
+    super::set_paused(platform, &triple, true).await?;
+    let target = &platform.target;
+    super::super::cdc_reader::wait_reader_stopped(
         &target.kubeconfig,
         &target.context,
         &target.namespace,

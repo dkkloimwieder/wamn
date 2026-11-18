@@ -236,6 +236,16 @@ impl KubernetesApi {
         .await
     }
 
+    /// Create a Job-owned input ConfigMap.
+    pub(crate) async fn create_operation_input(
+        &self,
+        namespace: &str,
+        input: &Value,
+    ) -> Result<(), Error> {
+        let path = format!("/api/v1/namespaces/{namespace}/configmaps");
+        successful(self.write(Method::POST, &path, input).await?, &path)
+    }
+
     /// Read bounded pod output without following the log.
     pub async fn pod_log(&self, namespace: &str, pod: &str) -> Result<String, Error> {
         const LIMIT: usize = 32 * 1024;

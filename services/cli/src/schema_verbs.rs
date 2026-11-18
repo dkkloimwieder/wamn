@@ -13,9 +13,9 @@ use crate::operation_verbs::ControlHost;
 pub enum SchemaCommand {
     /// Compare published SQL or built source with records without changing code or data.
     Diff(SchemaArgs),
-    /// Apply SQL without selecting code. Publish deployed source before the SQL Job.
+    /// Apply SQL for one published package digest without selecting code.
     #[command(
-        long_about = "Apply SQL without selecting application code. An application name uses its configured current release unless --release selects another published release. A source directory publishes first for deployed execution. Migrate mode applies pending SQL. Reset mode clears application state and reapplies migrations on every schema apply in a disposable environment."
+        long_about = "Apply pending SQL for the published package selected by --release. To clear a disposable project database, use schema reset."
     )]
     Apply(SchemaArgs),
     /// Build and publish a candidate without installing it in the target database.
@@ -81,10 +81,14 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
         SchemaCommand::Apply(args) => (args, true),
     };
     let file = EnvironmentFile::compile(&args.env)?;
+    ensure!(
+        !apply || args.release.is_some(),
+        "schema apply requires --release"
+    );
     let source = std::path::Path::new(args.application.as_str());
     let (triple, application, release) = match file.application_project(&args.application) {
         Ok(project) => (file.triple(project), args.application, args.release),
-        Err(error) if !source.is_dir() => return Err(error),
+        Err(error) if apply || !source.is_dir() => return Err(error),
         Err(_) => {
             ensure!(
                 args.release.is_none(),

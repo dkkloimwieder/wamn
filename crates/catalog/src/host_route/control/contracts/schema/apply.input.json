@@ -27,7 +27,7 @@
     {
       "path": "value.release",
       "type": "text",
-      "nullable": true,
+      "nullable": false,
       "values": []
     }
   ]

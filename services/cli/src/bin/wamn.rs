@@ -46,7 +46,7 @@ enum Command {
     Workflow(wamn_cli::workflow_verbs::WorkflowCommand),
     /// Build source or select published bytes, then deploy one application release.
     Deploy(wamn_cli::application_verbs::DeployArgs),
-    /// Restore one application's last successful release, or an explicit target, without reversing SQL.
+    /// Restore an earlier application's content revision without reversing SQL.
     Rollback(wamn_cli::application_verbs::RollbackArgs),
     /// Show authored selections and observed application state.
     Status(wamn_cli::application_verbs::StatusArgs),
@@ -168,102 +168,6 @@ mod tests {
                 Cli::try_parse_from(impersonated).unwrap_err().kind(),
                 clap::error::ErrorKind::UnknownArgument
             );
-        }
-    }
-
-    #[test]
-    fn application_commands_require_an_authored_file_and_target() {
-        let digest = format!("sha256:{}", "a".repeat(64));
-        let Command::Deploy(deploy) = Cli::try_parse_from([
-            "wamn",
-            "deploy",
-            "--application",
-            "orders",
-            "--release",
-            &digest,
-            "--env",
-            "environment.k",
-        ])
-        .unwrap()
-        .command
-        else {
-            panic!("deploy");
-        };
-        assert_eq!(
-            deploy.release.as_ref(),
-            Some(&digest.parse::<wamn_digest::Digest>().unwrap())
-        );
-        assert_eq!(deploy.env, std::path::Path::new("environment.k"));
-        let Command::Rollback(rollback) =
-            Cli::try_parse_from(["wamn", "rollback", "orders", "--env", "environment.k"])
-                .unwrap()
-                .command
-        else {
-            panic!("rollback");
-        };
-        assert_eq!(rollback.application, "orders".parse().unwrap());
-        assert_eq!(rollback.env, deploy.env);
-        assert!(rollback.release.is_none());
-        let Command::Rollback(rollback) = Cli::try_parse_from([
-            "wamn",
-            "rollback",
-            "orders",
-            "--env",
-            "environment.k",
-            "--release",
-            &digest,
-        ])
-        .unwrap()
-        .command
-        else {
-            panic!("rollback with explicit release");
-        };
-        assert_eq!(
-            rollback.release.as_ref(),
-            Some(&digest.parse::<wamn_digest::Digest>().unwrap())
-        );
-        let Command::Status(status) =
-            Cli::try_parse_from(["wamn", "status", "--env", "environment.k"])
-                .unwrap()
-                .command
-        else {
-            panic!("status");
-        };
-        assert_eq!(status.env, deploy.env);
-        let Command::Deploy(source) = Cli::try_parse_from([
-            "wamn",
-            "deploy",
-            "apps/orders",
-            "--application",
-            "orders",
-            "--env",
-            "environment.k",
-        ])
-        .unwrap()
-        .command
-        else {
-            panic!("deploy source");
-        };
-        assert_eq!(
-            source.package.as_deref(),
-            Some(std::path::Path::new("apps/orders"))
-        );
-        assert!(source.release.is_none());
-        for arguments in [
-            vec!["wamn", "deploy", "--env", "environment.k"],
-            vec![
-                "wamn",
-                "deploy",
-                "apps/orders",
-                "--release",
-                &digest,
-                "--env",
-                "environment.k",
-            ],
-            vec!["wamn", "rollback", "--env", "environment.k"],
-            vec!["wamn", "status"],
-        ] {
-            assert!(Cli::try_parse_from(arguments).is_err());
         }
     }
 

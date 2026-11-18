@@ -316,8 +316,7 @@ Generated client copies stay under `src/generated/`.
 ## Pushing a package
 
 Build the package and any bases before publication.
-Run `wamn publish <build directory> --env <environment file>` to publish that build output.
-You can also give the source package directory.
+Run `wamn publish <build directory>` to publish that build output.
 The command prints the top package OCI digest. An OCI digest is the SHA-256 hash of an image manifest.
 Publication checks the built bytes before pushing.
 A new tag starts a migration history. A replacement keeps every existing migration name and byte, including `history/`.

@@ -343,14 +343,14 @@ const ROUTES: &[HostRoute] = &[
         operation: "capture_gap.recover",
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::ControlExecution,
+        handler: HostHandler::OperationJob,
     },
     HostRoute {
         set: HostRouteSet::Control,
         operation: "capture_gap.close",
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::ControlExecution,
+        handler: HostHandler::OperationJob,
     },
     HostRoute {
         set: HostRouteSet::Control,

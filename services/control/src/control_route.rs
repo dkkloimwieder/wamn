@@ -38,7 +38,7 @@ use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 mod connection_test;
 mod integration;
-mod operations;
+pub(crate) mod operations;
 mod users;
 
 use std::path::Path;
@@ -49,15 +49,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
-use wamn_provision::control_administration_key;
 use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
-use wamn_identity_client::users::UserClient;
-use wamn_identity_protocol::PrincipalId;
-use wamn_identity::application::{
-    ApplicationTarget, project_authority, require_platform_rows, write_environment_status,
-};
 use wamn_environment::org::{
     create_project, org_environments, set_environment_status, status_environments,
+};
+use wamn_identity::application::{
+    ApplicationTarget, project_authority, require_platform_rows, write_environment_status,
 };
 use wamn_identity::control::{
     control_projects_page, is_org_admin, is_project_admin, org_projects_page,
@@ -70,6 +67,9 @@ use wamn_identity::org::{
 };
 use wamn_identity::paging::{ListPage, Order};
 use wamn_identity::{IdentityError, IdentityRefusal};
+use wamn_identity_client::users::UserClient;
+use wamn_identity_protocol::PrincipalId;
+use wamn_provision::control_administration_key;
 
 /// Why an org route did not answer.
 #[derive(Debug)]

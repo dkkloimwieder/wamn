@@ -497,7 +497,8 @@ pub async fn run_with_shutdown(
     args.cdc_url = input.into();
     let token = shutdown.token;
     let nats_options = wamn_broker::nats::tls_options(
-        async_nats::ConnectOptions::new(),
+        async_nats::ConnectOptions::new()
+            .custom_inbox_prefix(wamn_broker::nats::inbox_prefix(&args.nats_user())),
         args.nats_tls_ca.as_deref(),
         args.nats_tls_cert.as_deref(),
         args.nats_tls_key.as_deref(),

@@ -167,11 +167,8 @@ Each count read has a two-second timeout, and both reads run concurrently.
 A failed or timed-out read logs a warning and returns null for its counts, without failing the runtime status answer.
 
 The control service reads the shared host Deployment and application WorkloadDeployments from the org namespace.
-It reads `/_wamn/residency` on each live host through the Kubernetes pod proxy.
-The host reports each project's loaded application releases and unfinished runs, including releases that failed to load.
-An unavailable project remains unknown and does not hide another project's report.
-The `residency` result lists the application, manifest digest, loaded state, and run IDs.
-The host carries no single release digest. Application Helm histories remain independent.
+It reads the package digest and content revision from each WorkloadDeployment.
+The content revision stays the same after a rollback restores that revision's saved manifest.
 
 An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
@@ -233,7 +230,7 @@ The server builds the command and credential references after it repeats authori
 Each start route returns a Kubernetes Job name.
 `operation.status` compares that Job's target and reads its state and bounded log tail.
 The service submits Jobs through the shared runner and keeps no operation history.
-The protected `WAMN_DEPLOY_ACTOR` input carries the authenticated principal to the worker.
+The immutable Job input ConfigMap carries the authenticated principal to the worker.
 [Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential target, deadlines, and result bounds.
 
 The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `apps/target/wamn/wamn_control/control/client-ts`.

@@ -57,10 +57,7 @@ pub(super) fn release_values(
         integration_repository,
     )?;
     let names = roles.iter().map(|role| role.name).collect();
-    let selection = document
-        .applications
-        .get(application)
-        .with_context(|| format!("application {application} is not declared"))?;
+    let selection = &document.applications[application];
     let applications = std::collections::BTreeMap::from([(
         application.to_owned(),
         wamn_catalog::ApplicationDefinition {

@@ -90,31 +90,6 @@ pub fn reader_configuration(triple: &Triple, cdc_name: &str, nats_url: &str) -> 
     }
 }
 
-/// Stop the target reader without touching another environment's process or broker state.
-pub async fn stop_reader(
-    kubeconfig: &std::path::Path,
-    context: &str,
-    namespace: &str,
-    triple: &Triple,
-) -> anyhow::Result<()> {
-    use wamn_kubernetes::kubectl::kubectl;
-    let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
-    let deployment: Option<serde_json::Value> =
-        wamn_kubernetes::kubectl::get(kubeconfig, context, namespace, "deployment", &name).await?;
-    if deployment.is_none() {
-        return Ok(());
-    }
-    kubectl(
-        kubeconfig,
-        context,
-        namespace,
-        &["scale", "deployment", &name, "--replicas=0"],
-        None,
-    )
-    .await?;
-    wait_reader_stopped(kubeconfig, context, namespace, triple).await
-}
-
 /// Wait for reader pods, including pods left by an interrupted Deployment delete.
 pub async fn wait_reader_stopped(
     kubeconfig: &std::path::Path,
@@ -149,34 +124,6 @@ pub async fn wait_reader_stopped(
     .await
     .context("wait for the old CDC reader to stop")??;
     Ok(())
-}
-
-/// Start the reader and wait until its Deployment is ready.
-pub async fn start_reader(
-    kubeconfig: &std::path::Path,
-    context: &str,
-    namespace: &str,
-    triple: &Triple,
-) -> anyhow::Result<()> {
-    use wamn_kubernetes::kubectl::kubectl;
-    let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
-    kubectl(
-        kubeconfig,
-        context,
-        namespace,
-        &["scale", "deployment", &name, "--replicas=1"],
-        None,
-    )
-    .await?;
-    wait_reader_ready(
-        &wamn_kubernetes::Target {
-            kubeconfig: kubeconfig.into(),
-            context: context.into(),
-            namespace: namespace.into(),
-        },
-        triple,
-    )
-    .await
 }
 
 pub(super) async fn wait_reader_ready(

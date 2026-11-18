@@ -10,14 +10,15 @@ pub mod document;
 pub mod drain;
 pub mod ensure;
 pub mod lifecycle;
+pub mod operation;
 pub mod runtime;
 pub mod sql;
 pub mod stage;
 pub mod write;
 
-use wamn_identity::application::{self, ApplicationTarget};
 use sqlx::Connection as _;
 use std::collections::BTreeSet;
+use wamn_identity::application::{self, ApplicationTarget};
 
 use std::path::PathBuf;
 

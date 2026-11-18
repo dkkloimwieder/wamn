@@ -106,22 +106,46 @@ pub struct Worker {
     pub image: String,
     pub configuration: String,
     pub service_account: String,
-    #[serde(skip)]
-    pub database_credential: String,
-    #[serde(skip)]
-    pub administration: std::path::PathBuf,
 }
 
 /// Submit one bounded operation Job. The caller has already authorized its target.
 pub async fn submit(
     api: &crate::kubernetes_api::KubernetesApi,
-    job: &Value,
+    job: &mut Value,
+    request: &str,
 ) -> anyhow::Result<Value> {
+    let input = format!("{}-input", name(job));
+    job["spec"]["suspend"] = false.into();
+    job["spec"]["template"]["spec"]["volumes"]
+        .as_array_mut()
+        .expect("Job volumes")
+        .push(json!({"name":"request","configMap":{"name":input}}));
+    container(job)["volumeMounts"]
+        .as_array_mut()
+        .expect("operation volume mounts")
+        .push(json!({"name":"request","mountPath":"/etc/wamn/request","readOnly":true}));
+    // The pod waits for the volume while the Job deadline runs. The Job's UID
+    // is available for the owner reference before we create the input.
     let created = api.create_job(&api.namespace, job).await?;
     ensure!(
         created["metadata"]["name"] == job["metadata"]["name"],
         "Kubernetes returned a different Job"
     );
+    let uid = created["metadata"]["uid"]
+        .as_str()
+        .context("Job UID is absent")?;
+    api.create_operation_input(
+        &api.namespace,
+        &json!({
+            "apiVersion":"v1","kind":"ConfigMap","immutable":true,
+            "metadata":{"name":input,"ownerReferences":[{
+                "apiVersion":"batch/v1","kind":"Job","name":name(job),"uid":uid
+            }]},
+            "data":{"request.json":request}
+        }),
+    )
+    .await
+    .with_context(|| format!("create input for Job {}", name(job)))?;
     Ok(json!({"job":name(job)}))
 }
 
