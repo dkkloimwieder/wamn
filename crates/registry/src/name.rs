@@ -22,9 +22,19 @@ pub fn environment_nats_account(org: &crate::OrgId, env: &crate::EnvName) -> Str
     format!("ENV_{org}_{env}")
 }
 
-/// The full-access certificate user inside an environment account.
+/// The certificate user for the hosts in an environment account.
 pub fn environment_nats_user(org: &crate::OrgId, env: &crate::EnvName) -> String {
     format!("wamn-env-{}", environment_key(org, env))
+}
+
+/// The certificate user and Secret name for environment stream administration.
+pub fn environment_nats_admin(org: &crate::OrgId, env: &crate::EnvName) -> String {
+    format!("wamn-nats-admin-{}", environment_key(org, env))
+}
+
+/// The platform Secret that contains one org's broker accounts.
+pub fn org_nats_accounts_secret(org: &crate::OrgId) -> String {
+    format!("wamn-nats-accounts-{org}")
 }
 
 /// The ServiceAccount of the org control service.

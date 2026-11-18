@@ -511,7 +511,7 @@ The accessors in `wamn_authority` read only its caller row. A guest cannot repla
 
 Deploy resolves handler declarations from the verified package manifests. It adds their owner packages, entities, operations, and roles to `wamn.application`. Deploy refuses two handlers for the same owner package, model, and operation in an application.
 
-The application workload uses its unnamed NATS binding for JetStream. Deploy adds one durable subscription per entity and operation, with the queue group `<application>-<entity>-<op>`. The stock plugin sends messages to `ingress`. It matches the event's package, entity, and operation before it asks the host to call the handler.
+The workload uses the `ingress` NATS binding for Data change subscriptions. Deploy adds one durable subscription per entity and operation, with the queue group `<application>-<entity>-<op>`. The stock plugin sends messages to `ingress`. It matches the event's package, entity, and operation before it asks the host to call the handler.
 
 Only the workload's `ingress` can call `dispatch-data-change`. The host reads the declared role's grants and supplies the same SQL and connection scope it uses for workflow nodes. A successful call acknowledges the message after any host transaction commits. An error leaves the message for redelivery. Delivery is at least once and creates no workflow run row.
 
@@ -522,6 +522,7 @@ Edge uses the same `ingress.wasm`. It supplies the otherwise unbound NATS import
 A workflow is an authored graph that belongs to one application.
 Its entry is Request, Schedule or Data change.
 The workflow service reads format 0.2 graphs and calls each sibling and export named in the graph through `wamn:workflow/node.call`.
+Its labeled JetStream import selects the `workflow` NATS binding.
 The host checks that pair against `wamn.application` on the `ingress` sibling and dispatches to that component.
 The same lookup applies to palette nodes.
 Each entry passes the stored input unchanged, including when an admin runs the workflow.

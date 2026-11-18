@@ -4,6 +4,7 @@
 use sqlx::Row as _;
 
 use anyhow::Context as _;
+use wamn_broker::authorization::{INGRESS_BINDING, WORKFLOW_BINDING};
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
 use super::Platform;
@@ -112,6 +113,7 @@ fn set_nats_plugin(
         .join(",");
     let secret = name::environment_nats_secret(org, env);
     let directory = format!("/etc/wasmcloud/host-plugin-secrets/{secret}");
+    let inbox = wamn_broker::nats::inbox_prefix(&name::environment_nats_user(org, env));
     let entry = serde_json::json!({
         "id": "wasmcloud-nats",
         "workloadConfig": "deny",
@@ -123,6 +125,10 @@ fn set_nats_plugin(
             "tls-key": format!("{directory}/tls.key"),
             "stream-allow": streams,
             "subject-allow": name::environment_event_subjects(org, env),
+        },
+        "bindings": {
+            (WORKFLOW_BINDING): {"config": {"inbox-prefix": format!("{inbox}.{WORKFLOW_BINDING}")}},
+            (INGRESS_BINDING): {"config": {"inbox-prefix": format!("{inbox}.{INGRESS_BINDING}")}},
         },
     });
     if let Some(plugin) = plugins
@@ -153,15 +159,6 @@ pub(super) async fn prepare_host_upgrade<'a>(
         &values,
     )
     .await
-}
-
-/// Wait for the shared certificate, including when its object has yet to appear.
-pub(super) async fn wait_broker_certificate(
-    platform: &Platform,
-    triple: &Triple,
-) -> anyhow::Result<()> {
-    let name = name::environment_nats_certificate(&triple.org, &triple.env);
-    wait_certificate(platform, &name).await
 }
 
 pub(super) async fn wait_certificate(platform: &Platform, name: &str) -> anyhow::Result<()> {
@@ -356,12 +353,15 @@ async fn host_values(
         &name::environment_nats_secret(org, env),
         &name::environment_nats_user(org, env),
     );
+    let admin = name::environment_nats_admin(org, env);
+    let admin_certificate = wamn_broker::authorization::certificate(&admin, &admin, &admin);
     Ok(json!({
         "runtime-operator":{"runtime":{"hostGroups":[group],
             "terminationGracePeriodSeconds":policy.drain_bound_seconds,
             "serviceAccount":{"name":account}}},
         "credentialAccess":{"account":account,"secrets":secrets},
         "brokerCertificates":[certificate],
+        "brokerAdminCertificate":admin_certificate,
     }))
 }
 
@@ -387,13 +387,12 @@ pub(super) async fn ensure_stream(platform: &Platform, triple: &Triple) -> anyho
         .events
         .as_ref()
         .context("event stream policy is absent")?;
-    let broker = wamn_broker::authorization::environment_context(
+    let broker = wamn_broker::authorization::issued_admin_context(
         &platform.target,
         triple,
         wamn_platform_install::platform::identity::NATS_URL,
     )
-    .await?
-    .context("environment broker credential is absent")?;
+    .await?;
     wamn_broker::streams::provision(
         &broker,
         triple,

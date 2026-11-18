@@ -57,28 +57,35 @@ pub(super) async fn require_ownership(
     let (org, env) = (&triple.org, &triple.env);
     let cdc = name::cdc_nats_certificate(triple);
     let recovery = name::recovery_nats_user(triple);
-    for (certificate, secret, user) in [
+    let admin = name::environment_nats_admin(org, env);
+    let workload = name::environment_nats_certificate(org, env);
+    for (certificate, user) in [
         (
-            name::environment_nats_certificate(org, env),
-            name::environment_nats_secret(org, env),
-            name::environment_nats_user(org, env),
+            workload.as_str(),
+            name::environment_nats_user(org, env).as_str(),
         ),
-        (cdc.clone(), cdc, name::cdc_nats_user(org, &triple.project, env)),
-        (recovery.clone(), recovery.clone(), recovery),
+        (admin.as_str(), admin.as_str()),
+        (
+            cdc.as_str(),
+            name::cdc_nats_user(org, &triple.project, env).as_str(),
+        ),
+        (recovery.as_str(), recovery.as_str()),
     ] {
-        if let Some(object) = get(platform, namespace, "certificate", &certificate).await? {
+        if let Some(object) = get(platform, namespace, "certificate", certificate).await? {
             anyhow::ensure!(
-                object["spec"]["secretName"] == secret
+                object["spec"]["secretName"] == certificate
                     && object["spec"]["commonName"] == user
                     && object["spec"]["dnsNames"] == serde_json::json!([user]),
                 "refused: Certificate {certificate} does not belong to {triple}"
             );
         }
-        if let Some(object) = get(platform, namespace, "secret", &secret).await? {
+        if certificate != admin
+            && let Some(object) = get(platform, namespace, "secret", certificate).await?
+        {
             anyhow::ensure!(
                 object["metadata"]["annotations"]["cert-manager.io/certificate-name"]
                     == certificate,
-                "refused: Secret {secret} does not belong to Certificate {certificate}"
+                "refused: Secret {certificate} does not belong to its Certificate"
             );
         }
     }
@@ -121,6 +128,11 @@ pub(super) async fn delete_event_certificates(
         delete_secret(
             platform,
             &name::environment_nats_secret(&triple.org, &triple.env),
+        )
+        .await?;
+        delete_secret(
+            platform,
+            &name::environment_nats_admin(&triple.org, &triple.env),
         )
         .await?;
     }

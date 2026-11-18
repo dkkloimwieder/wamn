@@ -40,7 +40,11 @@ pub fn values(document: &ClusterDocument, chart: &SelectedChart) -> anyhow::Resu
     Ok(values)
 }
 
-pub fn platform_entry(chart: &SelectedChart, values: Value) -> anyhow::Result<Value> {
+pub fn platform_entry(chart: &SelectedChart, mut values: Value) -> anyhow::Result<Value> {
+    if values["global"]["natsAccountOrgs"].is_null() {
+        let org = values["org"].as_str().context("installation org")?;
+        values["global"]["natsAccountOrgs"] = json!([org]);
+    }
     entry(
         &chart.directory().join("platform/installation"),
         "wamn",
@@ -106,7 +110,6 @@ pub async fn apply(
     values: &mut Value,
     directory: &Path,
 ) -> anyhow::Result<()> {
-    wamn_broker::authorization::bootstrap(target).await?;
     let mut entry = platform_entry(chart, std::mem::take(values))?;
     let result = resources::apply_release(target, &entry, directory, Wait::Watcher).await;
     *values = entry["values"].take();

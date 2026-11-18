@@ -320,16 +320,17 @@ Its JetStream file storage limit is 256 MiB times the number of projects in the 
 It has zero memory storage and unlimited stream and consumer counts.
 The account contains all the environment's project streams. Accounts exchange no imports or exports.
 
-The `wamn-env-<org>--<env>` user has full rights in its environment account.
-The configure and delete Jobs use that account to manage streams. The host uses it to manage workflow consumers.
+The `wamn-nats-admin-<org>--<env>` user has full rights in its environment account.
+Configure reads its Secret by name after the Certificate is ready. Delete mounts the same Secret.
+Hosts use the restricted `wamn-env-<org>--<env>` user to read stream information, manage consumers, and acknowledge messages.
 Each project gives its CDC reader a separate `wamn-cdc-<key>` user in the same account.
 The reader can publish only to its project's event subjects and stream-info API.
 The recovery worker has a separate `wamn-recovery-<key>` user. It can request stream info and read messages from its project's stream.
-Each restricted user receives replies only on `_INBOX_<user>.>`. The environment user keeps full rights within its account.
+Each restricted user receives replies only on `_INBOX_<user>.>`.
 
-The host group declares one unnamed stock `wasmcloud-nats` binding with `workloadConfig: deny`.
-The binding mounts the environment TLS Secret and limits access to the environment's project streams and subjects.
-Each application workload narrows those grants to its own project's stream and subjects.
+The host group mounts the workload TLS Secret and declares the `workflow` and `ingress` bindings with `workloadConfig: deny`.
+Each binding uses a separate child inbox and narrows access to the application's project stream and subjects.
+The host's native workflow client uses a third child inbox on the same credential.
 The NATS HTTP monitor binds to loopback.
 
 Delivery is at least once for application handlers.

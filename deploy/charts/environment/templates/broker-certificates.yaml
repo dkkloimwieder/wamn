@@ -1,4 +1,8 @@
-{{- range .Values.brokerCertificates }}
+{{- $certificates := .Values.brokerCertificates }}
+{{- with .Values.brokerAdminCertificate }}
+{{- $certificates = append $certificates . }}
+{{- end }}
+{{- range $certificates }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -6,4 +10,32 @@ metadata:
   name: {{ .name }}
   namespace: {{ $.Release.Namespace }}
 spec: {{ .spec | toJson }}
+{{- end }}
+{{- with .Values.brokerAdminCertificate }}
+{{- $secret := .spec.secretName }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $secret }}
+  namespace: {{ $.Release.Namespace }}
+rules:
+- apiGroups: [""]
+  resources: [secrets]
+  resourceNames: [{{ $secret }}]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $secret }}
+  namespace: {{ $.Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $secret }}
+subjects:
+- kind: ServiceAccount
+  name: wamn-operation-{{ $.Release.Namespace }}
+  namespace: {{ $.Release.Namespace }}
 {{- end }}

@@ -158,7 +158,8 @@ async fn configure_project(
 ) -> anyhow::Result<()> {
     let triple = &outcome.triple;
     if first {
-        resources::wait_broker_certificate(platform, triple).await?;
+        let admin = name::environment_nats_admin(&triple.org, &triple.env);
+        resources::wait_certificate(platform, &admin).await?;
     }
     let unconfigured = super::document::read_configuration(&mut *lock.client().await, triple)
         .await?

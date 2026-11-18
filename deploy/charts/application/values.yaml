@@ -37,7 +37,7 @@ org: ""
 roles: []
 # Application and integration sibling components pinned by OCI manifest digest.
 components: []
-# Unnamed platform interfaces imported by these components.
+# Platform interfaces and named NATS bindings for this workload.
 hostInterfaces: []
 
 # Shared environment host selected by application workloads.

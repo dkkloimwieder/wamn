@@ -36,9 +36,10 @@ use wamn_registry::{Triple, name};
 use super::Platform;
 use super::analyse::application_releases;
 use super::ensure::{kubectl, project_url};
+use wamn_broker::authorization::{ADMIN_CREDENTIAL_DIR, admin_context, environment_account_exists};
 use wamn_catalog::lifecycle_lock::LifecycleLock;
-use wamn_postgres::connect;
 use wamn_kubernetes::helm;
+use wamn_postgres::connect;
 
 /// Delete the environment. With `data`, the database and its roles are
 /// dropped too, and an unfinished run does not stop the delete. The caller
@@ -230,11 +231,13 @@ async fn delete_locked(
             lines.push(format!("removed the environment's key of Secret {control}"));
         }
 
-        if wamn_broker::authorization::environment_account_exists(&platform.target, triple).await?
-            && let Some(broker) = wamn_broker::authorization::environment_context(
-                &platform.target, triple, wamn_platform_install::platform::identity::NATS_URL,
-            ).await?
-        {
+        if environment_account_exists(&platform.target, triple).await? {
+            let broker = admin_context(
+                triple,
+                wamn_platform_install::platform::identity::NATS_URL,
+                std::path::Path::new(ADMIN_CREDENTIAL_DIR),
+            )
+            .await?;
             let stream = name::stream_name(org, project, env);
             if wamn_broker::streams::delete(&broker, &stream).await? {
                 lines.push(format!("deleted stream {stream}"));
