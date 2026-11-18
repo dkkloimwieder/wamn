@@ -7,7 +7,7 @@ dependencies:
   version: 2.15.2
 - name: plugin-barman-cloud
   repository: https://cloudnative-pg.github.io/charts
-  version: 0.7.0
+  version: 0.9.0
 - name: opentelemetry-collector
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.178.3
@@ -20,5 +20,5 @@ dependencies:
 - name: application
   repository: file://../application
   version: 0.1.143
-digest: sha256:860b912a4e24f420e0676c77295dfb23dc1544672b51430a963c4c542b7d7412
-generated: "2026-11-18T12:41:38.494994534-05:00"
+digest: sha256:ab62275da544f0692f5b659fc081b131d6c5a0c14b95ba6d8949b006c24d46a9
+generated: "2026-11-18T13:34:19.250299-05:00"

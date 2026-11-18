@@ -726,6 +726,7 @@ Issues:
 - After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
 - When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
 - 3.6: Helm stores each release as a Secret and lists them across the release namespace, so the account running Helm can list every Secret in the org namespace, including `wamn-credential-*` and the NATS certificates. Move Helm release storage into a per-org namespace that holds only release records, with each chart placing its objects in the org namespace explicitly (`metadata.namespace`). Secret list then covers only release records, and the org namespace keeps name-scoped rights. Verify that Helm v4 places and tracks objects outside the release namespace this way.
+- 3.6: CloudNativePG 1.30 adds a `DatabaseRole` resource, which manages roles as standalone objects. Today the org chart declares every project's logins in each Cluster's managed-role list, which is why env apply reserves every project and upgrades the org chart once with all their logins. With `DatabaseRole`, each project chart can own its own roles. Decide this with one Cluster per project database (W2).
 
 # Part 2: Review log
 
@@ -2183,3 +2184,5 @@ Facts:
 **Ruled (D, 2026-11-18): CDC reader start order.** The reader waits up to 120 seconds for its own replication slot, which the worker creates only after the Publication is applied. So the reader starts after its Publication without reading the Publication object and without a second chart upgrade.
 
 **Ruled (D, 2026-11-18): Secret watch scope.** No Role or ClusterRole in wamn's own charts grants `watch` on Secrets. `platform update` uses no Helm wait on the `installation` chart, which renders a Secret, and waits in Rust for the rollout of the Deployment it changed. Vendored operator charts keep their upstream RBAC; the rule does not cover them.
+
+**Ruled (D, 2026-11-18): CloudNativePG 1.30.2.** wamn moves from operator 1.29.1 (series past end of life) to 1.30.2 (chart 0.29.2), the Barman Cloud plugin chart to 0.9.0, and the PostgreSQL image pin to 18.7, for the 1.30 security fixes. `DatabaseRole` (new in 1.30) is a 3.6 item.

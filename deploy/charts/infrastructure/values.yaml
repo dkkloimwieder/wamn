@@ -4,7 +4,7 @@ cert-manager:
     enabled: true
 cloudnative-pg:
   image:
-    tag: 1.29.2
+    tag: 1.30.2
   fullnameOverride: cnpg-controller-manager
   config:
     clusterWide: true
