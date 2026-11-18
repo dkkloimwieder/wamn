@@ -1,20 +1,17 @@
+{{- if not .Values.recovery }}
 {{- with .Values.database }}
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
   name: {{ .name }}
   namespace: {{ $.Release.Namespace }}
-  {{- if ne (default "present" .ensure) "absent" }}
-  annotations:
-    helm.sh/resource-policy: keep
-  {{- end }}
 spec:
   name: {{ .name }}
   owner: {{ required "database.owner is required" .owner }}
   cluster: {name: {{ .cluster }}}
-  ensure: {{ default "present" .ensure }}
-  databaseReclaimPolicy: {{ default "retain" .reclaimPolicy }}
-  {{- if ne .connectionLimit nil }}
-  connectionLimit: {{ .connectionLimit }}
+  databaseReclaimPolicy: retain
+  {{- with .extensions }}
+  extensions: {{ . | toJson }}
   {{- end }}
+{{- end }}
 {{- end }}

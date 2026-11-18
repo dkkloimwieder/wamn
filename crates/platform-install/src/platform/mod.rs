@@ -12,5 +12,3 @@ pub mod oauth;
 pub mod operations;
 pub mod resources;
 pub mod status;
-
-pub use crate::org;

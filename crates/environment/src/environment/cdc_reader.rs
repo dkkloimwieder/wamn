@@ -4,7 +4,7 @@ use sqlx::Row as _;
 use std::fmt::Write as _;
 use std::time::Duration;
 use wamn_event::reader::ReaderConfig;
-use wamn_provision::{project_env_cdc_secret_name, sql};
+use wamn_provision::{cdc_reader_name, sql};
 use wamn_registry::Triple;
 
 /// Restore the CDC slot, maps and grants after package SQL creates the model schemas.
@@ -24,9 +24,9 @@ pub async fn apply_cdc_sql(
         connected == database,
         "CDC SQL targets a different database"
     );
-    sqlx::raw_sql(sqlx::AssertSqlSafe(cdc_schema_sql_bundle(
-        schemas, cdc_name, database,
-    )))
+    let login = wamn_role::CDC_LOGIN.parse()?;
+    wamn_platform_install::credentials::wait_role(&mut client, &login).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(cdc_schema_sql_bundle(schemas, database)))
     .execute(&mut client)
     .await
     .map(drop)
@@ -43,7 +43,6 @@ pub async fn apply_cdc_sql(
 
 fn cdc_schema_sql_bundle(
     schemas: &[wamn_catalog::canonical_name::CanonicalName],
-    cdc_name: &str,
     db_name: &str,
 ) -> String {
     let mut bundle = String::new();
@@ -52,7 +51,7 @@ fn cdc_schema_sql_bundle(
             bundle,
             "\nGRANT CONNECT ON DATABASE {} TO {};",
             postgres_protocol::escape::escape_identifier(db_name),
-            postgres_protocol::escape::escape_identifier(cdc_name)
+            postgres_protocol::escape::escape_identifier(wamn_role::CDC_LOGIN)
         )
         .expect("write the empty capture grant");
     }
@@ -62,7 +61,7 @@ fn cdc_schema_sql_bundle(
             "\n{entity_map};\n{exclusion_map};\n{grants}",
             entity_map = sql::ensure_entity_map_sql(schema.as_str()),
             exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema.as_str()),
-            grants = sql::grant_replication_access_sql(db_name, cdc_name, schema.as_str()),
+            grants = sql::grant_replication_access_sql(db_name, wamn_role::CDC_LOGIN, schema.as_str()),
         )
         .expect("write CDC SQL into a string");
     }
@@ -130,6 +129,6 @@ pub(super) async fn wait_reader_ready(
     target: &wamn_kubernetes::Target,
     triple: &Triple,
 ) -> anyhow::Result<()> {
-    let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+    let name = cdc_reader_name(&triple.org, &triple.project, &triple.env);
     wamn_kubernetes::kubectl::wait_deployment_ready(target, &name, Duration::from_secs(120)).await
 }

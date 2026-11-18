@@ -3,11 +3,7 @@
 use std::fmt;
 
 use wamn_identity_protocol::AuthorityClass;
-use wamn_registry::app_identity_hash;
 
-use crate::name::GUEST_SECRET_PREFIX;
-
-pub(crate) const IDENTITY_HASH_HEX_LEN: usize = 40;
 
 /// Project database login families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +33,17 @@ impl WorkloadRoleFamily {
         }
     }
 
-    /// Prefix of the role identity digest, within the PostgreSQL name limit.
+    /// Fixed login in each project's Cluster.
+    pub const fn login_name(self) -> &'static str {
+        match self {
+            Self::App => wamn_role::APP_LOGIN,
+            Self::Query => wamn_role::QUERY_LOGIN,
+            Self::Migration => wamn_role::MIGRATION_ROLE,
+            Self::Platform => wamn_role::PLATFORM_LOGIN,
+        }
+    }
+
+    /// Stable role name used in labels.
     pub const fn login_prefix(self) -> &'static str {
         match self {
             Self::Migration => wamn_role::MIGRATION_ROLE,
@@ -108,24 +114,6 @@ impl WorkloadRoleFamily {
             _ => self.cli_stem(),
         }
     }
-
-    /// Which body this family's credential Secret carries.
-    ///
-    /// A closed vocabulary of SHAPES, not a per-family list: an
-    /// admitted family lands on the plain single-`url` Secret every consumer
-    /// already mounts through `secretKeyRef … key: url`, with no edit here.
-    /// Prefix of this family's credential Secret name.
-    ///
-    /// `wamn-<cli-stem>-` for every family whose Secret name was not frozen
-    /// first. The three overrides are the frozen ones and carry their reasons
-    /// on the constants themselves.
-    pub fn secret_prefix(self) -> String {
-        match self {
-            Self::App => GUEST_SECRET_PREFIX.to_string(),
-            _ => wamn_registry::name::workload_secret_prefix(&self.cli_stem()),
-        }
-    }
-
 
 }
 
@@ -217,63 +205,17 @@ impl fmt::Display for WorkloadRoleIdentityError {
 
 impl std::error::Error for WorkloadRoleIdentityError {}
 
-/// Derive the deterministic 160-bit identity suffix for one family.
-pub fn workload_role_identity_hash(
-    family: WorkloadRoleFamily,
-    identity: WorkloadRoleIdentity<'_>,
-) -> Result<String, WorkloadRoleIdentityError> {
-    let actual = identity.identity_type();
-    let expected = family.identity_type();
-    if actual != expected {
-        return Err(WorkloadRoleIdentityError {
-            family,
-            expected,
-            actual,
-        });
-    }
-    match family {
-        WorkloadRoleFamily::App | WorkloadRoleFamily::Query => {
-            let WorkloadRoleIdentity::ProjectEnvKey { project_env_key, database } = identity else {
-                unreachable!("identity type was validated above")
-            };
-            Ok(app_identity_hash(project_env_key, database))
-        }
-        WorkloadRoleFamily::Migration | WorkloadRoleFamily::Platform => {
-            Ok(database_identity_hash(family.login_prefix(), identity.database()))
-        }
-    }
-}
-
-/// Derive one bounded LOGIN role for a closed workload family.
+/// Select the fixed login for a project fixture.
 pub fn workload_login(
     family: WorkloadRoleFamily,
     identity: WorkloadRoleIdentity<'_>,
 ) -> Result<wamn_identity_protocol::LoginName, WorkloadRoleIdentityError> {
-    Ok(wamn_registry::name::credential_login(
-        family.login_prefix(),
-        &workload_role_identity_hash(family, identity)?,
-    ))
-}
-
-/// The database name identifies each project owner and platform login.
-pub(crate) fn database_identity_hash(role: &str, database: &str) -> String {
-    let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([role, database]));
-    digest.hex()[..IDENTITY_HASH_HEX_LEN].to_owned()
-}
-
-/// The single platform login of one project database.
-pub fn platform_login(database: &str) -> wamn_identity_protocol::LoginName {
-    wamn_registry::name::credential_login(
-        wamn_role::PLATFORM_ROLE,
-        &database_identity_hash(wamn_role::PLATFORM_ROLE, database),
-    )
-}
-
-/// Platform work and retention share this project credential.
-pub fn platform_managed_role(database: &str) -> crate::connection::ManagedRole {
-    let login = platform_login(database);
-    let secret = login.as_str().replace('_', "-");
-    crate::connection::managed_role(login, wamn_role::PLATFORM_ROLE, secret)
+    let actual = identity.identity_type();
+    let expected = family.identity_type();
+    if actual != expected {
+        return Err(WorkloadRoleIdentityError { family, expected, actual });
+    }
+    Ok(family.login_name().parse().expect("fixed project login"))
 }
 
 /// Select the platform credential from public project connection facts.
@@ -283,8 +225,8 @@ pub fn platform_configuration(input: &str) -> anyhow::Result<String> {
         return Ok(input.into_owned());
     }
     let mut config: wamn_postgres::ConnectionConfig = serde_json::from_str(&input)?;
-    let role = platform_managed_role(&config.database);
-    config.username = role.name;
-    config.credentials.name = role.password_secret.name;
+    config.username = wamn_role::PLATFORM_LOGIN.parse()?;
+    config.credentials.name =
+        wamn_registry::name::project_login_secret(&config.database, config.username.as_str());
     config.to_json()
 }

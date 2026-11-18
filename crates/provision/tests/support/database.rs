@@ -71,10 +71,10 @@ pub fn seed_org_project_env_sql(
     let actor = crate::PlatformComponent::Provisioning.principal_id();
     format!(
         "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{actor}','','fixture') ON CONFLICT(xid) DO NOTHING; \
-         INSERT INTO registry.orgs(id,placement_type) VALUES ({org},'dedicated') ON CONFLICT DO NOTHING; \
+         INSERT INTO registry.orgs(id) VALUES ({org}) ON CONFLICT DO NOTHING; \
          INSERT INTO registry.projects(org,id) VALUES ({org},{project}) ON CONFLICT DO NOTHING; \
-         INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) \
-         VALUES ({org},{env},'\"own\"',0,1,'1Gi','1','1Gi','postgres:18') ON CONFLICT DO NOTHING; \
+         INSERT INTO registry.env_policies(org,name) \
+         VALUES ({org},{env}) ON CONFLICT DO NOTHING; \
          WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ({org},{env},{env}) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ({org},{project},{env},'s1','aaaaaaa1') ON CONFLICT DO NOTHING;"
     )
 }
@@ -86,7 +86,7 @@ pub async fn package_migration_input(input: impl AsRef<str>) -> anyhow::Result<S
     let database = options
         .get_database()
         .ok_or_else(|| anyhow::anyhow!("fixture database is absent"))?;
-    let login = crate::migration::login(database);
+    let login = crate::migrations::MigrationDatabase::Project.login(database);
     let mut admin = wamn_postgres::connect(input).await?;
     let role = postgres_protocol::escape::escape_identifier(login.as_str());
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {role} LOGIN PASSWORD 'migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT wamn_platform TO {role} WITH INHERIT TRUE, SET FALSE; ALTER DATABASE {database} OWNER TO {role}",

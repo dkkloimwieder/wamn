@@ -1,0 +1,125 @@
+{{- with .Values.cluster }}
+{{- $namespace := $.Release.Namespace }}
+{{- $database := $.Values.database }}
+{{- $recovery := $.Values.recovery }}
+{{- $name := .name }}
+{{- if $recovery }}
+{{- if $database }}
+{{- fail "Install recovery in a separate release with only the source cluster values." }}
+{{- end }}
+{{- $name = printf "%s-restore" .name }}
+{{- end }}
+{{- if not (regexMatch "^[a-z]([a-z0-9-]{0,48}[a-z0-9])?$" $name) }}
+{{- fail "The Cluster name must be a DNS label of at most 50 characters." }}
+{{- end }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  {{- if and (not $recovery) (not $.Values.deleteData) }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  instances: {{ .instances }}
+  imageName: {{ required "cluster.image is required" .image | quote }}
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: {{ not (empty $recovery) }}
+  resources:
+    requests:
+      cpu: {{ .cpu | quote }}
+      memory: {{ .memory | quote }}
+  storage:
+    size: {{ .storage | quote }}
+  {{- if not $recovery }}
+  managed:
+    roles: {{ .roles | toJson }}
+  {{- end }}
+  postgresql:
+    pg_hba: [hostssl all all all scram-sha-256]
+    parameters:
+      max_slot_wal_keep_size: "1GB"
+      max_connections: {{ required "cluster.maxConnections is required" .maxConnections | quote }}
+      {{- if ge (int .instances) 2 }}
+      sync_replication_slots: "on"
+      hot_standby_feedback: "on"
+      logical_decoding_work_mem: "16MB"
+      {{- end }}
+  {{- if ge (int .instances) 2 }}
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: preferred
+  replicationSlots:
+    highAvailability:
+      enabled: true
+      synchronizeLogicalDecoding: true
+  {{- end }}
+  {{- if $recovery }}
+  {{- if not .backup }}
+  {{- fail "Recovery requires the source cluster's backup settings." }}
+  {{- end }}
+  bootstrap:
+    recovery:
+      source: {{ .name }}
+      {{- with $recovery.targetTime }}
+      recoveryTarget:
+        targetTime: {{ . | quote }}
+      {{- end }}
+  externalClusters:
+    - name: {{ .name }}
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: {{ .name }}-store
+          serverName: {{ .name }}
+  {{- else }}
+  bootstrap:
+    initdb:
+      database: {{ $database.name }}
+      owner: {{ $database.owner }}
+      secret: {name: {{ .ownerSecret }}}
+      postInitSQL:
+        - {{ required "cluster.initializeRoles is required" .initializeRoles | quote }}
+  {{- end }}
+  {{- with .backup }}
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ $name }}-store
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ $name }}-store
+  namespace: {{ $namespace }}
+  {{- if and (not $recovery) (not $.Values.deleteData) }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  retentionPolicy: {{ required "cluster.backup.retention is required" .retention | quote }}
+  configuration:
+    destinationPath: {{ printf "s3://%s/wal/%s" (required "cluster.backup.bucket is required" .bucket) $name | quote }}
+    endpointURL: {{ required "cluster.backup.endpoint is required" .endpoint | quote }}
+    s3Credentials:
+      accessKeyId: {name: {{ required "cluster.backup.secret is required" .secret | quote }}, key: ACCESS_KEY_ID}
+      secretAccessKey: {name: {{ .secret | quote }}, key: ACCESS_SECRET_KEY}
+    wal: {compression: gzip}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ $name }}-backup
+  namespace: {{ $namespace }}
+spec:
+  schedule: {{ required "cluster.backup.cadence is required" .cadence | quote }}
+  immediate: true
+  backupOwnerReference: self
+  cluster: {name: {{ $name }}}
+  method: plugin
+  pluginConfiguration: {name: barman-cloud.cloudnative-pg.io}
+  {{- end }}
+{{- end }}

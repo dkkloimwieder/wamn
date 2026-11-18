@@ -36,7 +36,7 @@ pub async fn write(
             )
             .await?;
             let row=super::analyse::read_row(&mut *lock.client().await,document).await?.context("environment is not provisioned")?;
-            let url=super::analyse::project_url(platform,document,&row).await?;
+            let url=super::analyse::project_url(document, &row)?;
             let mut client=super::analyse::connect_project(&url).await?;
             let mut system=wamn_postgres::connect(&platform.system_database_url).await?;
             sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE {}", wamn_role::SYSTEM_ROLE))).execute(&mut system).await?;

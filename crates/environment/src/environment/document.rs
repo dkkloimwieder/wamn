@@ -33,26 +33,6 @@ impl EnvironmentDocument {
         );
         Ok(document.into_projects().next().expect("one project"))
     }
-
-    /// Write this project as a one-project environment file.
-    pub fn to_yaml(self) -> anyhow::Result<String> {
-        EnvironmentFile {
-            org: self.org,
-            env: self.env,
-            target: self.target,
-            policy: self.policy,
-            revocation_seconds: self
-                .revocation_seconds
-                .context("environment has no revocation_seconds")?,
-            connections: self.integrations,
-            projects: vec![Project {
-                name: self.project,
-                schema: self.schema,
-                applications: self.applications,
-            }],
-        }
-        .to_yaml()
-    }
 }
 
 /// Read protected configuration as the provisioning component.

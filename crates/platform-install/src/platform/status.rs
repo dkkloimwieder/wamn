@@ -480,8 +480,9 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
             result.as_ref().ok(),
         );
     }
+    let system_service = format!("{}-rw", super::installation::SYSTEM_CLUSTER);
     for (namespace, service) in [
-        (document.org.as_str(), "wamn-pg-rw"),
+        ("platform", system_service.as_str()),
         (document.org.as_str(), "identity"),
         (document.org.as_str(), control_http.as_str()),
         ("hosts", "wamn-edge"),

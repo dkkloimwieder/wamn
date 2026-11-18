@@ -136,70 +136,98 @@ pub async fn wait_database_applied(
     .await
 }
 
-/// Resolve the recorded database on its owning CNPG cluster without reading credentials.
+/// Resolve the recorded database on its project's CNPG cluster.
 pub async fn connection(
     registry: &str,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<wamn_postgres::ConnectionConfig> {
     let mut client = wamn_postgres::connect(registry).await?;
-    let placement = wamn_registry::deployment::database_placement(&mut client, triple).await?;
-    let policy = sqlx::query(sqlx::AssertSqlSafe(
-        wamn_registry::sql::select_env_policy_sql(),
-    ))
-    .bind(&triple.org)
-    .bind(&placement.policy_name)
-    .fetch_one(&mut client)
-    .await?;
-    let policy = wamn_provision::env_policies::env_policy_from_row(&policy)?;
-    let instance = placement.instance_suffix;
-    let placement = match placement.placement_type.as_str() {
-        "pooled" => wamn_provision::Placement::Pooled {
-            pool: placement
-                .pool_cluster
-                .context("registered pool is absent")?,
-        },
-        "dedicated" => wamn_provision::Placement::Dedicated,
-        _ => anyhow::bail!("unknown org placement"),
-    };
-    let org = wamn_provision::Org {
-        id: triple.org.clone(),
-        placement,
-    };
-    let cluster = wamn_provision::cluster_of(&org, &policy).name;
-    let database = wamn_provision::project_env_database_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-        &instance,
-    );
+    let instance = wamn_registry::deployment::instance_suffix(&mut client, triple)
+        .await?
+        .with_context(|| format!("project deployment {triple} is absent"))?;
+    Ok(connection_for(triple, &instance))
+}
+
+/// Resolve a project endpoint from a generation already read from the registry.
+pub fn connection_for(
+    triple: &wamn_registry::Triple,
+    instance: &wamn_registry::instance_suffix::InstanceSuffix,
+) -> wamn_postgres::ConnectionConfig {
+    use wamn_registry::name;
+    let database =
+        name::project_env_database_name(&triple.org, &triple.project, &triple.env, instance);
     let owner = wamn_provision::migrations::MigrationDatabase::Project.managed_role(&database);
-    Ok(crate::credentials::configuration(
+    crate::credentials::configuration(
         triple.org.as_str(),
-        &cluster,
-        format!("{cluster}-rw.{}.svc.cluster.local", triple.org),
+        &name::project_cluster(&database),
+        name::project_database_host(&database, &triple.org),
         5432,
         database,
         owner.name,
         owner.password_secret.name,
-    ))
+    )
 }
 
-/// A capture login owns slot administration, independently of SQL schema ownership.
+/// A capture login owns slot administration independently of schema ownership.
 pub async fn capture_connection(
     registry: &str,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<String> {
-    let mut config = connection(registry, triple).await?;
-    let mut client = wamn_postgres::connect(registry).await?;
-    let instance = wamn_registry::deployment::instance_suffix(&mut client, triple)
-        .await?
-        .context("project deployment is absent")?;
-    config.username =
-        wamn_provision::cdc_object_name(&triple.org, &triple.project, &triple.env, &instance)
-            .parse()?;
+    capture_configuration(connection(registry, triple).await?)
+}
+
+/// Derive the project capture credential from the same endpoint as its owner.
+pub fn capture_configuration(
+    mut config: wamn_postgres::ConnectionConfig,
+) -> anyhow::Result<String> {
+    config.username = wamn_role::CDC_LOGIN.parse()?;
     config.credentials.name =
-        wamn_provision::project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+        wamn_registry::name::project_login_secret(&config.database, config.username.as_str());
     config.to_json()
+}
+
+/// Project sizing and role values for the chart.
+pub fn database_values(
+    connection: &wamn_postgres::ConnectionConfig,
+    replicas: u32,
+    mut sizing: Value,
+    settings: &Value,
+) -> anyhow::Result<Value> {
+    use wamn_registry::name;
+    let database = &connection.database;
+    let cluster = name::project_cluster(database);
+    let roles = crate::roles::project(database, replicas)?;
+    let max_connections = roles
+        .iter()
+        .filter_map(|role| role.connection_limit)
+        .sum::<u32>()
+        + 10;
+    if let Some(backup) = sizing.get_mut("backup") {
+        for key in ["endpoint", "bucket", "secret"] {
+            backup[key] = settings["backup"][key]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .with_context(|| format!("installation PostgreSQL backup {key} is absent"))?
+                .into();
+        }
+    }
+    sizing["name"] = json!(cluster);
+    sizing["image"] = settings["image"]
+        .as_str()
+        .context("installation PostgreSQL image is absent")?
+        .into();
+    sizing["roles"] = serde_json::to_value(roles)?;
+    // Reserve headroom for PostgreSQL and the operator.
+    sizing["maxConnections"] = max_connections.max(100).into();
+    sizing["initializeRoles"] = wamn_provision::sql::ensure_project_roles_sql().into();
+    sizing["ownerSecret"] = json!(connection.credentials.name);
+    let extensions = wamn_provision::sql::PLATFORM_EXTENSIONS.map(|name| json!({"name":name}));
+    Ok(json!({
+        "cluster":sizing,
+        "database":{
+            "name":database,"cluster":cluster,"owner":connection.username,"extensions":extensions
+        }
+    }))
 }
 
 /// Set the lifecycle values of an installed project.
@@ -216,11 +244,10 @@ pub async fn update_project(
     helm::update_values(target, &chart.join("platform/project"), name, &path).await
 }
 
-/// The chart, rather than a direct CR patch, owns database disposal.
+/// Uninstall the project release. Storage and its ObjectStore are kept by default.
 pub async fn remove_database(
     target: &Target,
     chart: &Path,
-    registry: &str,
     triple: &wamn_registry::Triple,
     data: bool,
 ) -> anyhow::Result<()> {
@@ -229,14 +256,8 @@ pub async fn remove_database(
         &triple.project,
         &triple.env,
     )?;
-    let connection = connection(registry, triple).await?;
-    let cluster = connection
-        .server_ca
-        .name
-        .strip_suffix("-ca")
-        .context("project cluster CA")?;
-    update_project(target, chart, &name,
-        &json!({"database":{"name":connection.database,"cluster":cluster,"owner":wamn_provision::migration::login(&connection.database),"ensure":"absent","reclaimPolicy":if data {"delete"} else {"retain"}}})).await?;
-    wait_database_applied(target, &connection.database, Duration::from_secs(600)).await?;
+    if data {
+        update_project(target, chart, &name, &json!({"deleteData":true})).await?;
+    }
     helm::uninstall(target, &name, helm::Wait::None).await
 }

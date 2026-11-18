@@ -32,7 +32,9 @@ Deployment creates or reuses `wamn-local` and connects its registry to the kind 
 Helm first installs cert-manager, CloudNativePG, and the TLS ingress controller.
 The platform chart then installs certificates, NATS, wasmCloud runtime operator 2.12.2, and the collector.
 The NATS file-store limit and volume size use the same value, `nats.config.jetstream.fileStore.pvc.size`. It defaults to `10Gi`.
-The org chart creates PostgreSQL in the org namespace.
+The installation chart creates the system PostgreSQL Cluster in namespace `platform`.
+It renders each system login Secret in `platform` and in the org with the same password.
+The org copy of the system CA contains only its public certificate.
 Bootstrap Jobs initialize SQL and credentials before the service components start.
 Identity, control, and the edge belong to the platform Helm release.
 Identity runs two replicas. Its chart requires the same envelope provider and wrapping key as the OAuth hosts.
@@ -224,6 +226,11 @@ env: dev
 target: cloud
 policy: dev
 revocation_seconds: 60
+database:
+  instances: 1
+  storage: 2Gi
+  cpu: 200m
+  memory: 256Mi
 connections:
   orders-api: {version: 2}
 projects:
@@ -242,7 +249,7 @@ projects:
 ```
 
 `wamn env apply environment.yaml` holds one environment lock.
-The worker reserves the selected projects, upgrades the org chart once, and starts one environment chart upgrade with `--wait=watcher`.
+The worker reserves the selected projects. It starts one environment chart upgrade with `--wait=watcher` before it configures the projects.
 It upgrades one project chart per project and runs that project's SQL in file order.
 The first project waits up to 120 seconds for the host chart's broker certificate.
 After the last project succeeds, the worker checks the environment chart's Helm result and removes unused connection pins on a full apply.
@@ -250,12 +257,14 @@ If a project fails, the worker stops and names the project. Fix the error and ru
 New projects later in the file stay reserved without applied configuration.
 An omitted project schema mode follows the environment's disposable setting.
 Use `--disposable` only when first recording an environment that can be reset.
-The org chart declares the database logins. The project chart keeps their passwords across upgrades.
-The org and project upgrades omit the Helm wait flag.
+The project chart declares one PostgreSQL Cluster and five managed logins per project.
+The environment YAML sets the database size for all projects. The installation values pin the PostgreSQL image.
+Project upgrades keep the login passwords and omit the Helm wait flag.
+See [Backup and recovery](backup-and-recovery.md) for backup settings.
 The worker reads each required PostgreSQL cluster, Database, certificate, and reader Deployment by name.
 The project chart creates the PostgreSQL publication for change data capture (CDC).
 For each project, the worker waits for the database to be applied and allows up to 120 seconds for it to accept a SQL connection.
-The worker initializes SQL when needed. It checks the publication in SQL before it creates the replication slot.
+CloudNativePG creates the database with `wamn_migration` as owner. The worker installs the project schema before restoring platform migrations. It checks the publication in SQL before it creates the replication slot.
 The CDC reader waits up to 120 seconds for its slot before it starts replication.
 After the certificates report ready, the worker reads the environment Secret and waits up to 60 seconds for NATS to accept the account.
 The worker creates the stream and saves the project's applied configuration.
@@ -263,7 +272,7 @@ The project chart mounts the YAML document in later project Jobs.
 The reader stays paused while a capture gap is open.
 The shared host group uses the runtime operator chart at version 2.12.2. Its `wasmcloud-nats` entry points to the broker and reads TLS files from `/etc/wasmcloud/host-plugin-secrets/<environment-secret>/`.
 
-Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Add `--data` and confirm the coordinate in a terminal to delete its database.
+Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Helm keeps the Cluster and ObjectStore by default. Add `--data` and confirm the coordinate to remove both resources.
 Delete stops the reader before it removes the stream, then removes the replication slot and publication.
 The last project removes the environment account and shared Certificate after deleting its stream.
 These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
@@ -616,7 +625,7 @@ Deployment needs no source checkout, pnpm installation, or local UI output.
 Kind keeps an empty web bucket and selects no platform UI.
 
 The control root is `https://control.wamn.dev`.
-The org chart runs `wamn-control --config /etc/wamn/control/config.json platform` in the org namespace.
+The installation chart runs `wamn-control --config /etc/wamn/control/config.json platform` in the org namespace.
 The native service has no route guest or application release.
 The control Service selects that Deployment.
 Local platform deployment installs control without a UI upload. GCP integration for public control access remains unfinished.
@@ -921,7 +930,7 @@ Configure and delete Jobs update the same document.
 The control service removes expired transaction identities every minute in a separate task.
 Cleanup runs do not overlap. Each database operation has a five-second limit.
 Shutdown cancels the task before the service drains HTTP connections.
-It connects to each configured project through its platform SQL credential and acts as `wamn_db_owner`.
+It connects to each configured project as `wamn_platform_login`.
 It also cleans the control database as `wamn_system`.
 It deletes rows with `xid < pg_snapshot_xmin(pg_current_snapshot())`.
 The UNLOGGED table `platform.tx_identity` stays outside CDC publications. A crash discards its rows.

@@ -133,9 +133,6 @@ impl Configuration {
             oci_ca_paths: self.oci_ca_paths.clone(),
             insecure_registry: self.insecure_registry,
             package_artifact_base: Some(self.package_artifact_base.clone()),
-            database_namespace: self.org.to_string(),
-            database_host: None,
-            database_port: 5432,
             host_group: None,
             identity_issuer: self.session_issuer.clone(),
             events: self.events.as_ref().map(|events| wamn_broker::EventBroker {

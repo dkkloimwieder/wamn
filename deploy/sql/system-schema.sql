@@ -207,45 +207,19 @@ DO $meta$ BEGIN
 END $meta$;
 
 -- ---------------------------------------------------------------------------
--- Orgs — the unit of isolation and billing. Carries only the id and a minimal
--- D18 PLACEMENT (crates/registry Placement): `placement_type` is `pooled`
--- (every env shares `pool_cluster`, the T3-style pool) or `dedicated` (the org
--- owns one cluster per recovery domain, `<org>-<owner(env)>`, DERIVED by
--- cluster_of — not stored). The retired `tier` / `prod_cluster` / `canary_cluster`
--- / `dev_cluster` columns are gone; sizing/HA/backup are env-policy knobs.
---
--- Structural CHECKs: `pooled ⟺ pool_cluster present` (a pooled org names its
--- shared pool; a dedicated org's clusters are derived, so pool is NULL) plus a
--- defensive charset/length backstop (cjv.20) on `id` and `pool_cluster` mirroring
--- crates/registry validate() (report_id_issues / report_name_issues) — `id` must be a
--- lowercase slug `[a-z0-9-]` (start/end alnum, NO consecutive hyphens — wamn-R27,
--- since `--` is the `wamn-db-<org>--<project>--<env>` component separator, so a
--- `--` run would let two triples collide onto one name), ≤ 40 bytes, and not under
--- the reserved `wamn` prefix (it mints `<org>-*` cluster / `wamn-db-<org>--*` Secret /
--- subdomain names); `pool_cluster` is a DNS-1123 label ≤ 63 and MAY carry the
--- `wamn` prefix (`wamn-pg`), so no reserved rule there. Invariant 4 (dev ≠ prod
--- recovery domain) is still the derivation's + validate()'s job, not a CHECK.
+-- Organizations are the units of isolation and billing.
+-- Double hyphens separate components of derived project names.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.orgs (
     id             text PRIMARY KEY,
-    placement_type text NOT NULL,
-    pool_cluster   text,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    CONSTRAINT orgs_placement_type_check
-        CHECK (placement_type IN ('pooled', 'dedicated')),
-    CONSTRAINT orgs_pool_cluster_check
-        CHECK ((placement_type = 'pooled') = (pool_cluster IS NOT NULL)),
     CONSTRAINT orgs_id_charset_check
         CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(id) <= 40
-               AND id <> 'wamn' AND id NOT LIKE 'wamn-%'),
-    CONSTRAINT orgs_pool_cluster_charset_check
-        CHECK (pool_cluster IS NULL
-               OR (pool_cluster ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
-                   AND char_length(pool_cluster) <= 63))
+               AND id <> 'wamn' AND id NOT LIKE 'wamn-%')
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON registry.orgs
@@ -263,35 +237,13 @@ REVOKE ALL ON FUNCTION registry.control_org() FROM PUBLIC;
 
 
 -- ---------------------------------------------------------------------------
--- Env policies (D18, wamn-8df.3; ORG-OWNED by wamn-8df.4) — each org's own
--- environment configurations (crates/registry EnvPolicy, keyed per org as
--- OrgEnvPolicy). The `name` IS the env slug: a project-env's `env` both
--- identifies it in the triple and (via the composite FK below) resolves its
--- policy in ITS ORG's set. `recovery_domain` is `jsonb` (`"own"` |
--- `{"shared-with": "<env>"}`) driving the cluster derivation; the rest are the
--- sizing / HA / backup knobs `provision-org` renders each cluster from.
---
--- NO PLATFORM-GLOBAL SEED: rows are STAMPED per org from a Template preset
--- (`trials` / `standard` / `dedicated`) by provision-org — insert-if-absent
--- (stamp_env_policy_sql), so an org's per-env customizations survive
--- re-provisioning and a template edit never silently resizes an existing
--- customer. Org-scoping is what lets a T2 org (canary shared-with prod) and a
--- T4 org (canary own) coexist on one platform. Cascades with its org.
+-- Organization-owned runtime policies. PostgreSQL sizing and backup cadence
+-- belong to the authored environment file.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.env_policies (
     -- the org FK (CASCADE) is added AFTER project_envs below — ordering note there
     org             text NOT NULL,
     name            text NOT NULL,
-    recovery_domain jsonb NOT NULL,
-    promotion_rank  int   NOT NULL,
-    instances       int   NOT NULL,
-    storage         text  NOT NULL,
-    cpu             text  NOT NULL,
-    memory          text  NOT NULL,
-    image           text  NOT NULL,
-    backup_cadence  text  NOT NULL DEFAULT '',
-    wal_retention   text  NOT NULL DEFAULT '',
-    hibernation     text  NOT NULL DEFAULT 'off',
     -- The readiness budget and drain bound of `env apply`
     -- (docs/architecture/overview.md#environment-lifecycle).
     readiness_budget_seconds int NOT NULL DEFAULT 600

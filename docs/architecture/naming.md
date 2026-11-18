@@ -123,6 +123,9 @@ Internal calls carry these types. HTTP and WIT fields remain strings.
 
 `wamn_registry::name` owns resource names, database names, NATS users, event subjects, and host status labels.
 Every derived project key orders its coordinates as `<org>--<env>--<project>`.
+The Cluster name uses the project coordinate and its recorded generation. It is a DNS label of at most 50 characters.
+Each project login Secret adds the login role to that identity and fits in 44 characters.
+The PostgreSQL publication and replication slot include the generation.
 Event subjects use `evt.<org>.<env>.<project>.<entity>.<operation>`.
 The database name adds the prefix `wamn-db-` and the stored instance suffix.
 Credential Secrets use the same coordinate order.

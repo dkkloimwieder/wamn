@@ -1,36 +1,16 @@
 //! Provisioning validation and database names.
 
 use crate::error::ProvisionError;
-use crate::workload_role::WorkloadRoleFamily;
 
 pub use wamn_registry::identifiers::MAX_PROJECT_ID_LEN;
 pub use wamn_registry::name::{
-    CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, GUEST_SECRET_PREFIX, INSTANCE_SUFFIX_LEN,
+    CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, INSTANCE_SUFFIX_LEN,
     MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, NAMESPACE_PREFIX, cdc_object_name,
-    control_administration_key, control_administration_secret_name, project_env_cdc_secret_name,
+    control_administration_key, control_administration_secret_name, cdc_reader_name,
     project_env_database_name, project_env_namespace, project_env_namespace_stem,
     project_env_secret_name,
 };
 pub use wamn_registry::project_env_key;
-
-/// Use the registry name for a project workload credential.
-pub fn workload_secret_name(
-    family: WorkloadRoleFamily,
-    org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
-    env: &wamn_registry::EnvName,
-) -> String {
-    wamn_registry::name::workload_secret_name(&family.secret_prefix(), org, project, env)
-}
-
-/// Use the application workload name for guest SQL credentials.
-pub fn project_env_guest_secret_name(
-    org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
-    env: &wamn_registry::EnvName,
-) -> String {
-    workload_secret_name(WorkloadRoleFamily::App, org, project, env)
-}
 
 /// Refuse coordinates whose database or namespace name exceeds its limit.
 pub fn validate_project_env(

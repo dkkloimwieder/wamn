@@ -1,10 +1,9 @@
 INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('00000000-0000-0000-0000-000000000001'::text::uuid,'','fixture','admin:fixture');
-INSERT INTO registry.orgs (id, placement_type) VALUES ('acme', 'dedicated');
+INSERT INTO registry.orgs (id) VALUES ('acme');
 INSERT INTO registry.projects (org, id) VALUES ('acme', 'app');
 INSERT INTO registry.env_policies
-    (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
-VALUES ('acme', 'dev', '"own"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18'),
-       ('acme', 'prod', '"own"', 1, 1, '1Gi', '1', '1Gi', 'postgres:18');
+    (org, name)
+VALUES ('acme', 'dev'), ('acme', 'prod');
 INSERT INTO registry.target (id, name, type, status)
 VALUES ('00000000-0000-0000-0000-000000000051', 'first', 'local', 'active'),
        ('00000000-0000-0000-0000-000000000052', 'second', 'local', 'active');

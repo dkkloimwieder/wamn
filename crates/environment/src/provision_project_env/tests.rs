@@ -1,22 +1,11 @@
 use super::registry::do_record_project_env;
 use sqlx::{Connection as _, Row as _};
 
-use super::*;
-
-/// The target cluster is DERIVED (D18 `cluster_of`) from the org's placement +
-/// the env's policy: a dedicated org owns `<org>-<owner(env)>`, a pooled org
-/// collapses every env onto its pool. (The live routing through the DB is
-/// validated by the in-cluster acceptance test; here we pin the pure derivation the
-/// subcommand calls.)
-#[test]
-fn cluster_is_derived_by_placement_and_policy() {
-    use wamn_provision::EnvPolicy;
-    let ded = Org::dedicated("demo".parse().unwrap());
-    assert_eq!(cluster_of(&ded, &EnvPolicy::dev()).name, "demo-dev");
-    assert_eq!(cluster_of(&ded, &EnvPolicy::prod()).name, "demo-prod");
-    let pooled = Org::pooled("try".parse().unwrap(), "wamn-pg");
-    assert_eq!(cluster_of(&pooled, &EnvPolicy::prod()).name, "wamn-pg");
-}
+use super::write_secret_json;
+use serde_json::{Value, json};
+use std::os::unix::fs::PermissionsExt as _;
+use std::fs::Permissions;
+use wamn_registry::Triple;
 
 #[test]
 fn secret_writes_replace_links_without_following_or_sharing_them() {

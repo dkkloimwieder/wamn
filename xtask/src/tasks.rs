@@ -445,6 +445,8 @@ pub fn collector(root: &Path, output: &Path) -> anyhow::Result<()> {
     let mut values: Value = serde_yaml::from_slice(&std::fs::read(
         root.join("deploy/charts/installation/values-gcp.yaml"),
     )?)?;
+    values["systemDatabase"] =
+        wamn_platform_install::platform::installation::system_database_values(&document.org)?;
     values["org"] = serde_json::Value::String(document.org.into());
     values["registry"] = document.registry.into();
     let entry = wamn_platform_install::environment::entry(

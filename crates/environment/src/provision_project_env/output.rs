@@ -8,7 +8,11 @@ use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 
 use anyhow::Context as _;
 
-use super::{AtomicU64, File, OpenOptions, Ordering, OsString, Path, PathBuf, Permissions, Value};
+use serde_json::Value;
+use std::ffi::OsString;
+use std::fs::{File, OpenOptions, Permissions};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(super) static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -69,12 +73,4 @@ pub fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
         let _ = std::fs::remove_file(&temp_path);
     }
     result
-}
-
-/// Write a rendered artifact to a path. An absent path or `-` writes nothing.
-pub(crate) fn write_output(path: Option<&Path>, text: &str) -> anyhow::Result<()> {
-    if let Some(path) = path.filter(|path| path.as_os_str() != "-") {
-        std::fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
-    }
-    Ok(())
 }

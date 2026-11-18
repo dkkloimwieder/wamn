@@ -238,7 +238,7 @@ pub async fn family(
         &format!(
             "SET ROLE {}",
             escape_identifier(
-                wamn_provision::migration::login(
+                wamn_provision::migrations::MigrationDatabase::Project.login(
                     url::Url::parse(&fixture.url)
                         .unwrap()
                         .path()
