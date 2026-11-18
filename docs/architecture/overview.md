@@ -103,6 +103,9 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `deploy/kind` | Local cluster deployment inputs |
 | `web` | Browser runtime, wfe packages, and shared browser tooling |
 
+Callers pass registry resource names and coordinate values to `wamn-kubernetes`.
+The control service selects the resources for environment status and the registry credentials for operation Jobs.
+
 ## Release identity
 
 The compiler writes route policy and component declarations to the `deploy` section of `wamn.json`.

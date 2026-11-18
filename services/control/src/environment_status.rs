@@ -6,8 +6,8 @@
 //! Application history remains in Helm, independently of runtime placement.
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_kubernetes::environment_state::observe_environment;
 use wamn_kubernetes::kubernetes_api::KubernetesApi;
+use wamn_registry::name;
 
 /// Read deployed status through the control service.
 #[async_trait::async_trait]
@@ -34,23 +34,45 @@ impl StatusSource for KubernetesSource {
         env: &wamn_registry::EnvName,
     ) -> anyhow::Result<Value> {
         let api = KubernetesApi::in_cluster()?;
-        let observed = observe_environment(
-            &api.namespace,
-            &wamn_registry::name::host_status(org, project, env),
-            |path| api.get(path),
-        )
-        .await?;
-        let group = wamn_registry::name::environment_host_name(org, env);
-        let summary = wamn_kubernetes::environment_state::environment_state(&observed, &group);
+        let namespace = &api.namespace;
+        let deployments = api
+            .get(format!("/apis/apps/v1/namespaces/{namespace}/deployments"))
+            .await?;
+        let workload_list = api
+            .get(format!(
+                "/apis/runtime.wasmcloud.dev/v1alpha1/namespaces/{namespace}/workloaddeployments"
+            ))
+            .await?;
+        // Preserve the status read's resource checks.
+        drop(
+            api.get(format!("/api/v1/namespaces/{namespace}/pods"))
+                .await?,
+        );
+
+        let coordinate = name::host_status(org, project, env);
+        let environment = format!("{org}/{env}");
+        let group = name::environment_host_name(org, env);
+        let deployment_name = name::host_deployment_name(&group);
+        let deployment = deployments["items"].as_array().and_then(|items| {
+            items.iter().find(|deployment| {
+                deployment["metadata"]["name"].as_str() == Some(deployment_name.as_str())
+                    && deployment["spec"]["template"]["metadata"]["annotations"]["wamn.environment"]
+                        .as_str()
+                        == Some(environment.as_str())
+            })
+        });
         let mut workloads = Vec::new();
-        for workload in observed.workloads["items"]
+        for workload in workload_list["items"]
             .as_array()
             .context("workload list has no items")?
         {
+            let annotations = &workload["metadata"]["annotations"];
+            if annotations["wamn.environment"].as_str() != Some(coordinate.as_str()) {
+                continue;
+            }
             let name = workload["metadata"]["name"]
                 .as_str()
                 .context("workload has no name")?;
-            let annotations = &workload["metadata"]["annotations"];
             let release =
                 wamn_environment::environment::document::workload_release_annotations(workload)?;
             let conditions = workload["status"]["conditions"]
@@ -64,15 +86,17 @@ impl StatusSource for KubernetesSource {
                 "package_digest":release.package_digest,"revision":release.revision,"conditions":conditions,
             }));
         }
-        let count = |read: fn(&wamn_kubernetes::environment_state::DeploymentStatus) -> u64| {
-            summary.deployment.as_ref().map_or(0, read)
+        let count = |field: &str| {
+            deployment
+                .and_then(|item| item["status"][field].as_u64())
+                .unwrap_or(0)
         };
         Ok(json!({
             "rollout":{
-                "replicas":count(|deployment| deployment.replicas),
-                "updated_replicas":count(|deployment| deployment.updated_replicas),
-                "ready_replicas":count(|deployment| deployment.ready_replicas),
-                "available_replicas":count(|deployment| deployment.available_replicas),
+                "replicas":count("replicas"),
+                "updated_replicas":count("updatedReplicas"),
+                "ready_replicas":count("readyReplicas"),
+                "available_replicas":count("availableReplicas"),
             },
             "workloads":workloads,
         }))

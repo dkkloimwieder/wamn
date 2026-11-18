@@ -1,14 +1,13 @@
 //! One typed Secret per environment, with one entry per credential UUID.
 
 use crate::{
-    Error, ErrorType, Store, StoreVersion, failure,
+    CredentialSecret, Error, ErrorType, Store, StoreVersion, failure,
     kubernetes_api::{KubernetesApi, successful},
     secret::Secret,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use hyper::{Method, StatusCode};
 use serde_json::json;
-use wamn_registry::{Triple, credential_secret_name};
 
 #[derive(Clone, Debug)]
 pub struct KubernetesStore {
@@ -58,7 +57,7 @@ impl KubernetesStore {
         reference: &str,
         version: &str,
         value: Option<&[u8]>,
-        target: Option<&Triple>,
+        target: Option<&CredentialSecret<'_>>,
     ) -> Result<(), Error> {
         uuid::Uuid::parse_str(version).map_err(|e| failure("resolve", reference, e))?;
         for _ in 0..5 {
@@ -77,7 +76,10 @@ impl KubernetesStore {
                 ));
             }
             if let Some(target) = target {
-                document.metadata.attributes.insert("labels".into(), json!({"wamn.org":target.org,"wamn.project":target.project,"wamn.env":&target.env}));
+                document.metadata.attributes.insert(
+                    "labels".into(),
+                    json!({"wamn.org":target.org,"wamn.project":target.project,"wamn.env":target.env}),
+                );
             }
             if let Some(value) = value {
                 document.data.insert(version.into(), STANDARD.encode(value));
@@ -114,17 +116,13 @@ impl KubernetesStore {
 impl Store for KubernetesStore {
     async fn put(
         &self,
-        target: &Triple,
+        target: CredentialSecret<'_>,
         credential_id: uuid::Uuid,
         value: &[u8],
     ) -> Result<StoreVersion, Error> {
-        if [
-            target.org.as_str(),
-            target.project.as_str(),
-            target.env.as_str(),
-        ]
-        .into_iter()
-        .any(str::is_empty)
+        if [target.org, target.project, target.env]
+            .into_iter()
+            .any(str::is_empty)
         {
             return Err(failure(
                 "put",
@@ -132,13 +130,12 @@ impl Store for KubernetesStore {
                 "the environment coordinate is absent",
             ));
         }
-        let reference = credential_secret_name(&target.org, &target.project, &target.env);
         let version = credential_id.to_string();
-        self.change(&reference, &version, Some(value), Some(target))
+        self.change(&target.name, &version, Some(value), Some(&target))
             .await?;
         Ok(StoreVersion {
             store: "k8s",
-            reference,
+            reference: target.name,
             version,
         })
     }

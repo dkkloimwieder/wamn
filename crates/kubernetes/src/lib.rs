@@ -1,6 +1,5 @@
 //! Shared Kubernetes transport, Secret storage, and bounded Job execution.
 
-pub mod environment_state;
 pub mod forward;
 pub mod helm;
 pub mod http_transport;
@@ -68,12 +67,21 @@ pub(crate) fn failure(
     }
 }
 
-/// Credential storage. Each write names its environment; values stay outside the database.
+/// The resolved Secret name and coordinate labels for a credential write.
+#[derive(Debug)]
+pub struct CredentialSecret<'a> {
+    pub name: String,
+    pub org: &'a str,
+    pub env: &'a str,
+    pub project: &'a str,
+}
+
+/// Credential storage. Values stay outside the database.
 #[async_trait::async_trait]
 pub trait Store: Send + Sync + fmt::Debug {
     async fn put(
         &self,
-        target: &wamn_registry::Triple,
+        target: CredentialSecret<'_>,
         credential_id: uuid::Uuid,
         value: &[u8],
     ) -> Result<StoreVersion, Error>;
