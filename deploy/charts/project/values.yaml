@@ -6,3 +6,6 @@ environmentDocument: null
 brokerCertificates: []
 loginSecrets: []
 databaseConfig: null
+credentials: null
+networkPolicy:
+  objectStorage: []

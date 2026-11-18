@@ -193,7 +193,12 @@ async fn configure_project(
     let mut values = outcome.database_values;
     installer::platform::resources::merge(
         &mut values,
-        installer::platform::operations::values(triple, &outcome.cluster, &connection.database)?,
+        installer::platform::operations::values(
+            triple,
+            &outcome.cluster,
+            &connection.database,
+            document.applications.keys(),
+        )?,
     );
     installer::platform::resources::merge(
         &mut values,

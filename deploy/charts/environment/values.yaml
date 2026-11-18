@@ -2,6 +2,9 @@ credentialAccess: null
 
 brokerCertificates: []
 
+networkPolicy:
+  projectClusters: []
+
 global:
   certificates:
     # The operator release owns the CA and the certificate Secrets in this
@@ -11,6 +14,8 @@ global:
 
 runtime-operator:
   # The cluster-singular halves of the subchart. The operator release owns them.
+  networkPolicy:
+    enabled: false
   operator:
     enabled: false
   nats:

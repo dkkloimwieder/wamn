@@ -9,7 +9,8 @@ const INSTALL_DEADLINE: Duration = Duration::from_mins(15);
 pub fn manifest(name: &str, image: &str, command: &[&str], arguments: &[&str]) -> Value {
     json!({"apiVersion":"batch/v1", "kind":"Job", "metadata":{"name":name},
         "spec":{"suspend":true, "backoffLimit":0, "activeDeadlineSeconds":INSTALL_DEADLINE.as_secs(),
-            "template":{"spec":{"restartPolicy":"Never", "automountServiceAccountToken":false,
+            "template":{"metadata":{"labels":{"app.kubernetes.io/component":"wamn-worker"}},
+                "spec":{"restartPolicy":"Never", "automountServiceAccountToken":false,
                 "containers":[{"name":"operation", "image":image, "command":command, "args":arguments, "env":[], "volumeMounts":[]}],
                 "volumes":[]}}}})
 }

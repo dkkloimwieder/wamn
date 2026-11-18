@@ -142,6 +142,7 @@ pub(super) fn resource_entry(
     let configuration = format!("{name}-configuration");
     let database = "wamn_system";
     let control_login = crate::roles::control(org, database);
+    let migration = wamn_provision::migrations::MigrationDatabase::System.managed_role(database);
     let connection = |username, secret| {
         crate::credentials::configuration(
             org.as_str(),
@@ -153,6 +154,14 @@ pub(super) fn resource_entry(
             secret,
         )
     };
+    let control_database = connection(control_login.name, control_login.password_secret.name);
+    let apply_database = connection("wamn_apply".parse()?, "wamn-apply".into());
+    let database_secrets = [
+        &control_database.credentials.name,
+        &control_database.server_ca.name,
+        &apply_database.credentials.name,
+        &migration.password_secret.name,
+    ];
     let platform_ui = chart
         .values()
         .get("platformUi")
@@ -171,8 +180,8 @@ pub(super) fn resource_entry(
     };
     let config = json!({"org":org,"http_addr":"0.0.0.0:80",
         "public_origin":format!("https://{}", document.route_hosts.control),
-        "database":connection(control_login.name, control_login.password_secret.name),
-        "apply_database":connection("wamn_apply".parse::<wamn_identity_protocol::LoginName>()?,"wamn-apply".into()),
+        "database":control_database,
+        "apply_database":apply_database,
         "session_issuer":super::identity::issuer(org.as_str()),
         "session_jwks_url":format!("{}/.well-known/jwks.json", super::identity::issuer(org.as_str())),
         "session_audience":wamn_registry::name::org_audience(org),
@@ -190,7 +199,8 @@ pub(super) fn resource_entry(
     Ok(
         json!({"chart":chart.application_chart(),"version":chart.version,"name":name,"namespace":org,
         "values":{"controlService":true,"org":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},
-        "control":{"image":chart.image("control")?,"configuration":config,"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::name::control_service_account(org)},
+        "control":{"image":chart.image("control")?,"configuration":config,"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::name::control_service_account(org),
+            "databaseSecrets":database_secrets},
         "platform":{"chart":chart.reference()}}}),
     )
 }

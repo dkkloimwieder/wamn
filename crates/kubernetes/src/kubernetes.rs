@@ -1,4 +1,4 @@
-//! One typed Secret per environment, with one entry per credential UUID.
+//! One typed Secret per project release, with one entry per credential UUID.
 
 use crate::{
     CredentialSecret, Error, ErrorType, Store, StoreVersion, failure,
@@ -60,55 +60,26 @@ impl KubernetesStore {
         target: Option<&CredentialSecret<'_>>,
     ) -> Result<(), Error> {
         uuid::Uuid::parse_str(version).map_err(|e| failure("resolve", reference, e))?;
-        for _ in 0..5 {
-            let existing = self.read(reference).await?;
-            let creates = existing.is_none();
-            if creates && value.is_none() {
-                return Ok(());
-            }
-            let mut document =
-                existing.unwrap_or_else(|| Secret::new(&self.api.namespace, reference));
-            if !creates && document.metadata.resource_version.is_none() {
-                return Err(failure(
-                    "update",
-                    reference,
-                    "Secret has no resourceVersion",
-                ));
-            }
-            if let Some(target) = target {
-                document.metadata.attributes.insert(
-                    "labels".into(),
-                    json!({"wamn.org":target.org,"wamn.project":target.project,"wamn.env":target.env}),
-                );
-            }
-            if let Some(value) = value {
-                document.data.insert(version.into(), STANDARD.encode(value));
-            } else if document.data.remove(version).is_none() {
-                return Ok(());
-            }
-            let path = self.path(reference)?;
-            let (method, path) = if creates {
-                (
-                    Method::POST,
-                    path.rsplit_once('/').expect("Secret path").0.to_owned(),
-                )
-            } else {
-                (Method::PUT, path)
-            };
-            let body = serde_json::to_value(document)
-                .map_err(|e| failure("encode Secret", reference, e))?;
-            let status = self.api.write(method, &path, &body).await?;
-            if status == StatusCode::CONFLICT || (!creates && status == StatusCode::NOT_FOUND) {
-                continue;
-            }
-            successful(status, reference)?;
-            return Ok(());
+        let secret_path = self.path(reference)?;
+        let patch_path = format!("{secret_path}?fieldManager=wamn-control");
+        let mut patch = json!({"data":{}});
+        patch["data"][version] =
+            value.map_or(serde_json::Value::Null, |bytes| STANDARD.encode(bytes).into());
+        if let Some(target) = target {
+            patch["metadata"] = json!({
+                "labels":{"wamn.org":target.org,"wamn.project":target.project,"wamn.env":target.env}
+            });
         }
-        Err(failure(
-            "update",
-            reference,
-            "Secret changed during five writes",
-        ))
+        let status = self.api.write(Method::PATCH, &patch_path, &patch).await?;
+        if status == StatusCode::NOT_FOUND {
+            if value.is_none() {
+                return Ok(());
+            }
+            let mut error = failure("patch", reference, "Kubernetes API answered 404 Not Found");
+            error.type_ = Some(ErrorType::ProjectCredentialSecretMissing);
+            return Err(error);
+        }
+        successful(status, reference)
     }
 }
 

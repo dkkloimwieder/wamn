@@ -298,6 +298,7 @@ async fn host_values(
         .find(|plugin| plugin["id"] == "wamn-postgres")
         .expect("inserted plugin");
     let mut secrets = Vec::new();
+    let mut clusters = std::collections::BTreeSet::new();
     postgres["config"] = json!({});
     let mut add_project =
         |project: &Triple, connection: &wamn_postgres::ConnectionConfig| -> anyhow::Result<()> {
@@ -336,6 +337,14 @@ async fn host_values(
         let connection =
             wamn_platform_install::environment::connection(&platform.system_database_url, &project)
                 .await?;
+        clusters.insert(
+            connection
+                .server_ca
+                .name
+                .strip_suffix("-ca")
+                .context("project cluster CA")?
+                .to_owned(),
+        );
         add_project(&project, &connection)?;
     }
     postgres["workloadConfig"] = "deny".into();
@@ -362,6 +371,7 @@ async fn host_values(
             "serviceAccount":{"name":account}}},
         "credentialAccess":{"account":account,"secrets":secrets},
         "brokerCertificates":[certificate],
+        "networkPolicy":{"projectClusters":clusters},
     }))
 }
 

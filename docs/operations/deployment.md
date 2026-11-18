@@ -32,7 +32,8 @@ Deployment creates or reuses `wamn-local` and connects its registry to the kind 
 Helm first installs cert-manager, CloudNativePG, and the TLS ingress controller.
 The platform chart then installs certificates, NATS, wasmCloud runtime operator 2.12.2, and the collector.
 The NATS file-store limit and volume size use the same value, `nats.config.jetstream.fileStore.pvc.size`. It defaults to `10Gi`.
-The org chart creates PostgreSQL in the org namespace.
+The org chart declares the org namespace, quota, base RBAC and default-deny policy.
+It also declares the current org PostgreSQL clusters.
 Bootstrap Jobs initialize SQL and credentials before the service components start.
 Identity, control, and the edge belong to the platform Helm release.
 Identity runs two replicas. Its chart requires the same envelope provider and wrapping key as the OAuth hosts.
@@ -889,9 +890,20 @@ Explicit operator connection strings must name a readable CA file through `sslro
 The database hostname must match the server certificate.
 The provisioned CNPG clusters accept client connections only over TLS.
 
+## Kubernetes network policies
+
+Org network policies deny ingress and egress by default. Supply the installation's API server and registry destinations as CIDR and TCP port pairs.
+The environment and project charts allow connections to their host group and database. The edge accepts ingress from Traefik on installations that use Traefik.
+Application deploy adds a public IPv4 egress policy for the TCP ports of that release's wasm integration authorities.
+The rule excludes fixed private and special-use ranges. The runtime still checks each integration's allowed hosts.
+
 ## Kubernetes credentials
 
-Kubernetes Secrets hold connection credentials. Each environment has one Secret with one entry per credential UUID.
+The project chart creates an empty `wamn-credential-<org>--<env>--<project>` Secret with room for one entry per credential UUID.
+Control reads and patches that Secret by name. Each merge patch updates one credential key and the labels control owns.
+Use Helm server-side apply for the project chart so the Secret keeps its credential keys on upgrade.
+Helm retains the Secret during uninstall. Environment deletion removes it explicitly.
+
 The database stores the Secret name and entry name. It accepts only `k8s` references.
 File-backed credential storage and `WAMN_CREDENTIAL_DIR` are removed.
 Deployed hosts read connection credentials through their in-cluster ServiceAccount.
@@ -911,7 +923,7 @@ Control reads the same verifier settings from its mounted configuration.
 The HTTP interface keeps its `credential-unavailable` result.
 
 Connection administration passes the registry's credential Secret name and the coordinate values to `wamn-kubernetes`.
-`wamn-kubernetes` reads and writes the Secret. Each update preserves `resourceVersion` and retries concurrent changes.
+Separate credential keys can change independently. The project chart must create the Secret before control writes credentials.
 `wamn-broker` owns the accounts document in `platform/wamn-nats-authorization`.
 The installer helper creates the Secret before Helm when it is absent. Step 3.6 supplies the fresh-install entry point that calls this helper.
 Configure and delete Jobs update the same document.

@@ -1,0 +1,127 @@
+{{- $org := .Values.org -}}
+{{- $control := dict "app.kubernetes.io/name" (printf "c-%s" $org) -}}
+{{- $worker := dict "app.kubernetes.io/component" "wamn-worker" -}}
+{{- $identity := dict "app.kubernetes.io/name" "wamn-identity" -}}
+{{- $host := dict "wasmcloud.com/name" "hostgroup" -}}
+{{- $cdc := dict "app.kubernetes.io/name" "wamn-cdc-reader" -}}
+{{- $postgres := dict "matchExpressions" (list (dict "key" "cnpg.io/cluster" "operator" "Exists")) -}}
+{{- $edge := dict "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" "hosts")) "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "wamn-edge")) -}}
+{{- $platform := dict "matchLabels" (dict "kubernetes.io/metadata.name" "platform") -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: {{ $org | quote }}}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-dns, namespace: {{ $org | quote }}}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-edge-to-control, namespace: {{ $org | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $control | toJson }}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{{ $edge | toJson }}]
+      ports: [{port: 80, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-identity-clients, namespace: {{ $org | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $identity | toJson }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - {{ $edge | toJson }}
+        - podSelector:
+            matchLabels: {{ $host | toJson }}
+        - podSelector:
+            matchLabels: {{ $control | toJson }}
+      ports: [{port: 8443, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-control-to-identity, namespace: {{ $org | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $control | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{ $identity | toJson }}
+      ports: [{port: 8443, protocol: TCP}]
+{{- range $name, $labels := dict "control" $control "worker" $worker "identity" $identity }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-{{ $name }}-to-postgres, namespace: {{ $org | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $labels | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {{ $platform | toJson }}
+          podSelector:
+            matchLabels: {cnpg.io/cluster: wamn-pg}
+        {{- if eq $name "identity" }}
+        - podSelector:
+            matchLabels: {cnpg.io/cluster: wamn-pg}
+        {{- else }}
+        - podSelector: {{ $postgres | toJson }}
+        {{- end }}
+      ports: [{port: 5432, protocol: TCP}]
+{{- end }}
+{{- range $name, $labels := dict "control" $control "worker" $worker }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-{{ $name }}-to-nats, namespace: {{ $org | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $labels | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {{ $platform | toJson }}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: nats, app.kubernetes.io/instance: wamn}
+      ports: [{port: 4222, protocol: TCP}]
+{{- end }}
+{{- $apiClients := dict "control" (dict "matchLabels" $control) "worker" (dict "matchLabels" $worker) "postgres" $postgres "host" (dict "matchLabels" $host) "cdc" (dict "matchLabels" $cdc) "identity" (dict "matchLabels" $identity) }}
+{{- $registryClients := dict "control" (dict "matchLabels" $control) "worker" (dict "matchLabels" $worker) "host" (dict "matchLabels" $host) }}
+{{- range $purpose, $destinations := dict "api-server" .Values.networkPolicy.apiServer "registry" .Values.networkPolicy.registry }}
+{{- if $destinations }}
+{{- range $name, $selector := ternary $apiClients $registryClients (eq $purpose "api-server") }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-{{ $name }}-to-{{ $purpose }}, namespace: {{ $org | quote }}}
+spec:
+  podSelector: {{ $selector | toJson }}
+  policyTypes: [Egress]
+  egress:
+    {{- range $destinations }}
+    - to: [{ipBlock: {cidr: {{ .cidr | quote }}}}]
+      ports: [{port: {{ .port | int }}, protocol: TCP}]
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

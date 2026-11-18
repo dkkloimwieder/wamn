@@ -19,7 +19,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         &repository.join("deploy/charts/project"),
         document.org.as_str(),
         "fixture",
-        operations::values(&document, cluster, database)?,
+        operations::values(&document, cluster, database, std::iter::empty())?,
     )?;
     let objects = wamn_kubernetes::helm::template(&entry)?;
     let mut identities = std::collections::BTreeSet::new();
