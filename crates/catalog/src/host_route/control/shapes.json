@@ -100,7 +100,6 @@
     "operation/status.errors.json",
     "api_service/create.errors.json",
     "application/stop.errors.json",
-    "release/retain.errors.json",
     "integration/publish.errors.json",
     "platform/update.errors.json",
     "platform/operation_status.errors.json",
@@ -124,7 +123,6 @@
     "schema/apply.result.json",
     "schema/reset.result.json",
     "application/stop.result.json",
-    "release/retain.result.json",
     "platform/update.result.json",
     "environment/configure.result.json",
     "environment/delete.result.json"

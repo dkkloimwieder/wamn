@@ -131,18 +131,5 @@ pub(super) async fn wait_reader_ready(
     triple: &Triple,
 ) -> anyhow::Result<()> {
     let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
-    wamn_kubernetes::kubectl::kubectl(
-        &target.kubeconfig,
-        &target.context,
-        &target.namespace,
-        &[
-            "rollout",
-            "status",
-            &format!("deployment/{name}"),
-            "--timeout=120s",
-        ],
-        None,
-    )
-    .await
-    .map(drop)
+    wamn_kubernetes::kubectl::wait_deployment_ready(target, &name, Duration::from_secs(120)).await
 }

@@ -5,7 +5,10 @@ metadata:
   namespace: {{ .Values.org }}
 rules:
   - apiGroups: [""]
-    resources: [secrets, configmaps]
+    resources: [secrets]
+    verbs: [get, list, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [configmaps]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: [postgresql.cnpg.io]
     resources: [clusters, scheduledbackups]

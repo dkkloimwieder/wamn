@@ -9,6 +9,7 @@ use crate::provision_project_env::{
 };
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
+use std::time::Duration;
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_platform_install as installer;
 use wamn_registry::{Triple, name};
@@ -63,7 +64,7 @@ pub async fn configure(
                 .iter()
                 .map(|project| project.project.as_str())
                 .collect();
-            let host = resources::submit_host(
+            let host = resources::prepare_host_upgrade(
                 &platform,
                 &first.org,
                 &first.env,
@@ -71,26 +72,32 @@ pub async fn configure(
                 &project_names,
             )
             .await?;
-            for (index, (project, outcome)) in projects.iter().zip(reserved).enumerate() {
-                configure_project(
-                    &platform,
-                    project,
-                    application,
-                    outcome,
-                    system_owner,
-                    &lock,
-                    index == 0,
-                    &applied_document,
-                )
-                .await
-                .with_context(|| {
-                    format!(
-                        "Configure project {} failed. Run env apply again to continue.",
-                        project.project
+            let configure_projects = async {
+                for (index, (project, outcome)) in projects.iter().zip(reserved).enumerate() {
+                    configure_project(
+                        &platform,
+                        project,
+                        application,
+                        outcome,
+                        system_owner,
+                        &lock,
+                        index == 0,
+                        &applied_document,
                     )
-                })?;
-            }
-            resources::wait_host_ready(&platform, &host).await?;
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Configure project {} failed. Run env apply again to continue.",
+                            project.project
+                        )
+                    })?;
+                }
+                anyhow::Ok(())
+            };
+            // Start Helm before project provisioning and observe its result after the project loop.
+            let (host_result, ()) =
+                tokio::try_join!(biased; async { anyhow::Ok(host.await) }, configure_projects)?;
+            host_result?;
             if application.is_none() {
                 let names: Vec<_> = first.integrations.keys().map(String::as_str).collect();
                 let mut connection = lock.client().await;
@@ -162,7 +169,8 @@ async fn configure_project(
     let schemas = if unconfigured {
         Vec::new()
     } else {
-        let mut project = wamn_postgres::connect(&owner).await?;
+        let mut project =
+            installer::environment::wait_project_connection(&owner, &connection.database).await?;
         let unfinished = super::drain::unfinished(&mut project, &triple.env, application).await?;
         ensure!(
             unfinished.is_empty(),
@@ -231,19 +239,22 @@ async fn configure_project(
     )?;
     installer::environment::apply_project(&platform.target, &platform.chart, &release, &values)
         .await?;
-    wamn_kubernetes::kubectl::wait(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        triple.org.as_str(),
-        "database",
+    wamn_kubernetes::kubectl::wait_ready(
+        &platform.target,
+        "cluster.postgresql.cnpg.io",
+        &outcome.cluster,
+        Duration::from_secs(120),
+    )
+    .await?;
+    installer::environment::wait_database_applied(
+        &platform.target,
         &connection.database,
-        "condition=Applied",
-        "120s",
+        Duration::from_secs(120),
     )
     .await?;
 
     LifecycleLock::hold(
-        wamn_postgres::connect(&owner).await?,
+        installer::environment::wait_project_connection(&owner, &connection.database).await?,
         triple,
         async |project_lock| {
             let mut client = project_lock.client().await;
@@ -282,16 +293,10 @@ async fn configure_project(
                 &schemas,
             )
             .await?;
-            wamn_kubernetes::kubectl::wait(
-                &platform.target.kubeconfig,
-                &platform.target.context,
-                triple.org.as_str(),
-                "certificate",
-                &certificate,
-                "condition=Ready",
-                "120s",
-            )
-            .await?;
+            tokio::try_join!(
+                resources::wait_certificate(platform, &certificate),
+                resources::wait_certificate(platform, &recovery),
+            )?;
             resources::ensure_stream(platform, triple).await?;
             if !paused {
                 super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;

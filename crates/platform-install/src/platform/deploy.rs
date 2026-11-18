@@ -1,16 +1,16 @@
 //! Deploy platform resources from their selected, prepared charts.
 
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::Context as _;
-use wamn_kubernetes::Target;
+use wamn_kubernetes::{Target, helm, kubectl};
 
 use super::artifact_plan::{self, SelectedChart};
 use super::document::{ClusterDocument, UpgradeTarget};
 use super::{control, identity, installation, installed::InstalledPlatform, resources};
 use serde_json::Value;
 use wamn_catalog::lifecycle_lock::LifecycleLock;
-use wamn_kubernetes::helm;
 
 /// Prepare an update of one existing owner without entering installation.
 ///
@@ -47,7 +47,7 @@ pub async fn update(
         )
         .await?;
         let result = lock.protect(async {
-            helm::recover_pending(&owner, &name).await?;
+            helm::recover_pending(&owner, &name, helm::Wait::Watcher).await?;
             let installed = installed_values(&owner, &name).await?;
             anyhow::ensure!(
                 host_target(&installed, group)? == coordinate,
@@ -56,7 +56,7 @@ pub async fn update(
             let values = chart.selection_values(document, selection, installed)?;
             let entry = serde_json::json!({"chart":owner_chart.directory().join("platform/environment"), "version":owner_chart.version,
                 "name":name, "namespace":namespace, "values":values});
-            resources::upgrade_release(&owner, &entry, directory).await
+            resources::upgrade_release(&owner, &entry, directory, helm::Wait::Watcher).await
         }).await;
         lock.release().await;
         return result;
@@ -65,27 +65,29 @@ pub async fn update(
         .await?
         .context("platform update requires an installed platform")?;
     let mut values = installed.values;
-    match selection {
-        UpgradeTarget::Control => {
-            values["control"] = control::resource_entry(document, chart, Some(&values["control"]))?
-                ["values"]
-                .take();
-            values["control"]["enabled"] = true.into();
-            values["control"]["name"] = wamn_registry::name::control_resource(&document.org).into();
-            values["control"]["namespace"] = document.org.as_str().into();
-        }
+    let (name, namespace) = selection.owner(document);
+    let (key, mut component) = match selection {
+        UpgradeTarget::Control => (
+            "control",
+            control::resource_entry(document, chart, Some(&values["control"]))?["values"].take(),
+        ),
         UpgradeTarget::Identity => {
-            identity::require_keys(registry, &document.org, std::time::Duration::from_secs(10))
-                .await?;
-            values["identity"] = identity::resource_entry(document, chart)?["values"].take();
-            values["identity"]["enabled"] = true.into();
-            values["identity"]["name"] = "identity".into();
-            values["identity"]["namespace"] = document.org.as_str().into();
+            identity::require_keys(registry, &document.org, Duration::from_secs(10)).await?;
+            ("identity", identity::resource_entry(document, chart)?["values"].take())
         }
         UpgradeTarget::Host { .. } => unreachable!(),
-    }
+    };
+    component["enabled"] = true.into();
+    component["name"] = name.as_ref().into();
+    component["namespace"] = namespace.into();
+    values[key] = component;
     let entry = installation::platform_entry(chart, values)?;
-    resources::apply_release(target, &entry, directory).await
+    resources::apply_release(target, &entry, directory, helm::Wait::None).await?;
+    let deployment = Target {
+        namespace: namespace.into(),
+        ..target.clone()
+    };
+    kubectl::wait_deployment_ready(&deployment, &name, Duration::from_secs(600)).await
 }
 
 fn host_target(

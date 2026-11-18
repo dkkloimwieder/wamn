@@ -160,7 +160,7 @@ pub(super) async fn run(platform: &Platform, release: &str, revision: u32) -> an
             "rollback",
             release,
             &revision.to_string(),
-            "--wait",
+            "--wait=watcher",
             "--timeout",
             "600s",
         ],

@@ -223,7 +223,7 @@ Control calls identity through one HTTPS client with the certificate `CN=control
 `user.invite` also writes the requested grants. Control calls `POST /invitations` only when the user has no password.
 Control checks contact details before it calls identity. It answers `user_refused` when identity refuses the user.
 `user.disable` calls `POST /users/disable`. It makes no writes to project databases.
-The control set also serves `application.deploy`, `application.rollback`, `application.stop`, `release.retain`, `schema.diff`, `schema.apply`, `schema.reset`, and `operation.status`.
+The control set also serves `application.deploy`, `application.rollback`, `application.stop`, `schema.diff`, `schema.apply`, `schema.reset`, and `operation.status`.
 Each route requires `ProjectAdmin` authority for `project` in the host's organization.
 The request names `project` and `env`.
 The server builds the command and credential references after it repeats authorization and resolves the target.

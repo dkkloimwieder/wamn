@@ -151,8 +151,17 @@ pub async fn application(
                 &triple.env,
                 name,
             );
+            let project = if matches!(operation, Application::Deploy { .. }) {
+                wamn_platform_install::environment::wait_project_connection(
+                    &owner,
+                    &connection.database,
+                )
+                .await?
+            } else {
+                wamn_postgres::connect(&owner).await?
+            };
             LifecycleLock::hold(
-                wamn_postgres::connect(&owner).await?,
+                project,
                 &triple,
                 async |project| match operation {
                     Application::Deploy {
@@ -269,7 +278,8 @@ pub async fn application(
                             "{}",
                             super::drain::describe(&unfinished)
                         );
-                        wamn_kubernetes::helm::uninstall(&platform.target, &release).await?;
+                        use wamn_kubernetes::helm::{self, Wait};
+                        helm::uninstall(&platform.target, &release, Wait::Watcher).await?;
                         Ok(json!({"stopped":name}))
                     }
                 },
@@ -369,7 +379,11 @@ async fn apply_sql(
         &publication,
         &schemas,
     )
-    .await
+    .await?;
+    if !paused {
+        super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;
+    }
+    Ok(())
 }
 
 async fn publication_schemas(
@@ -484,15 +498,15 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                     )
                     .await?;
                     apply_sql(platform, system, &triple, &conn, &owner, &packages).await?;
-                    let host = super::ensure::submit_host(
+                    super::ensure::prepare_host_upgrade(
                         platform,
                         &triple.org,
                         &triple.env,
                         &document.policy,
                         &[],
                     )
+                    .await?
                     .await?;
-                    super::ensure::wait_host_ready(platform, &host).await?;
                     Ok(json!({"reset":triple.project}))
                 },
             )

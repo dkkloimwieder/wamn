@@ -40,6 +40,7 @@ Supply `oauthEncryption` and, for a local provider, the existing `oauthSecret` i
 The [identity chart](../../deploy/charts/identity/README.md) defines these inputs and the trusted proxy count.
 Without a recorded org control release, deployment initializes `wamn_system`, the organization, identity, and control.
 Once control exists, authenticated platform updates select an existing owner with `--only`.
+For control and identity, the worker submits the installation chart and waits up to 600 seconds for the selected Deployment to roll out.
 Reapply does not refresh credentials.
 It does not rewrite the registry pull Secret, the Resend key Secret, the control operator Secret, or the identity signing keys.
 The command returns success only when every required component is ready.
@@ -241,17 +242,21 @@ projects:
 ```
 
 `wamn env apply environment.yaml` holds one environment lock.
-The worker reserves the selected projects, upgrades the org chart once, and submits one host chart upgrade.
+The worker reserves the selected projects, upgrades the org chart once, and starts one environment chart upgrade with `--wait=watcher`.
 It upgrades one project chart per project and runs that project's SQL in file order.
 The first project waits up to 120 seconds for the host chart's broker certificate.
-After the last project succeeds, the worker waits for the host rollout and removes unused connection pins on a full apply.
+After the last project succeeds, the worker checks the environment chart's Helm result and removes unused connection pins on a full apply.
 If a project fails, the worker stops and names the project. Fix the error and run the command again to continue.
 New projects later in the file stay reserved without applied configuration.
 An omitted project schema mode follows the environment's disposable setting.
 Use `--disposable` only when first recording an environment that can be reset.
 The org chart declares the database logins. The project chart keeps their passwords across upgrades.
+The org and project upgrades omit the Helm wait flag.
+The worker reads each required PostgreSQL cluster, Database, certificate, and reader Deployment by name.
 The project chart creates the PostgreSQL publication for change data capture (CDC).
-For each project, the worker waits for the database, initializes its SQL when needed, and prepares the replication slot.
+For each project, the worker waits for the database to be applied and allows up to 120 seconds for it to accept a SQL connection.
+The worker initializes SQL when needed. It checks the publication in SQL before it creates the replication slot.
+The CDC reader waits up to 120 seconds for its slot before it starts replication.
 After the certificates report ready, the worker reads the environment Secret and waits up to 60 seconds for NATS to accept the account.
 The worker creates the stream and saves the project's applied configuration.
 The project chart mounts the YAML document in later project Jobs.
@@ -290,7 +295,8 @@ The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 A source deploy builds and publishes once. A digest deploy starts with the published package.
 Both forms submit one Job. The worker resolves the package closure and environment bindings under the lifecycle lock.
 It refuses if an enabled workflow calls a sibling or export absent from the candidate.
-It applies pending SQL and creates the application principals before running `helm upgrade --wait`.
+It allows up to 120 seconds for the project database to accept a SQL connection.
+It applies pending SQL and creates the application principals before running `helm upgrade --wait=watcher`.
 Deploy preserves installed data. Write migrations that remain compatible with the code already running.
 If the Helm upgrade fails, the SQL that committed remains installed. Retry with the same package digest after fixing the failure.
 Environment apply refuses unfinished runs in the selected application.
@@ -833,7 +839,7 @@ Application package migrations keep their own streams.
 Use `wamn rollback APP --revision N --env FILE` to restore the content of revision N.
 Without `--revision`, the worker finds the newest earlier deploy. It skips revisions that record a rollback.
 If no older deploy exists, the command reports the current content revision and refuses.
-The worker reads the target package digest from Helm, checks enabled workflows, and runs `helm rollback` under the lifecycle lock.
+The worker reads the target package digest from Helm, checks enabled workflows, and runs `helm rollback --wait=watcher` under the lifecycle lock.
 Rollback keeps installed SQL migrations.
 
 The WorkloadDeployment annotation `wamn.release-revision` names the revision whose content is live.

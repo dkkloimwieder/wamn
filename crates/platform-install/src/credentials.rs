@@ -51,6 +51,20 @@ pub async fn wait_role(
     }
 }
 
+/// Retry opening a connection while the caller accepts connection failures.
+pub(crate) async fn connect_with_retry(
+    input: &str,
+    mut on_error: impl FnMut(anyhow::Error) -> anyhow::Result<()>,
+) -> anyhow::Result<sqlx::PgConnection> {
+    loop {
+        match wamn_postgres::connect(input).await {
+            Ok(connection) => return Ok(connection),
+            Err(error) => on_error(error)?,
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 /// Serialize org chart writes and cancel Helm if the registry session is lost.
 pub(crate) async fn with_chart_lock<T>(
     registry_input: &str,

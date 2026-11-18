@@ -1,15 +1,19 @@
 //! Shared kubectl execution and typed object operations.
 
 mod plan;
-use plan::{apply_request, decode_object, get_arguments, unreachable, wait_arguments};
+use plan::{apply_request, decode_object, get_arguments, unreachable};
 
 use std::path::Path;
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use serde::{Serialize, de::DeserializeOwned};
+use serde_json::Value;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::process::Command;
+
+use crate::Target;
 
 /// kubectl could not reach the API server, so the request did not run.
 ///
@@ -225,25 +229,83 @@ pub async fn get<T: DeserializeOwned>(
     decode_object(&output)
 }
 
-/// Wait for a condition, using kubectl's condition and duration syntax.
+/// Poll one Kubernetes object using only named GET requests.
 ///
 /// # Errors
-///
-/// Returns an error if kubectl fails, including when the timeout expires.
-pub async fn wait(
-    kubeconfig: &Path,
-    context: &str,
-    namespace: &str,
-    type_: &str,
+/// Names the object if the GET fails or the object is not ready within the timeout.
+pub async fn wait_named(
+    target: &Target,
+    kind: &str,
     name: &str,
-    condition: &str,
-    duration: &str,
+    timeout: Duration,
+    ready: impl Fn(&Value) -> bool,
 ) -> anyhow::Result<()> {
-    let arguments = wait_arguments(type_, name, condition, duration);
-    let arguments: Vec<_> = arguments.iter().map(String::as_str).collect();
-    kubectl(kubeconfig, context, namespace, &arguments, None)
-        .await
-        .map(drop)
+    tokio::time::timeout(timeout, async {
+        loop {
+            let object = get::<Value>(
+                &target.kubeconfig,
+                &target.context,
+                &target.namespace,
+                kind,
+                name,
+            )
+            .await?;
+            if object.as_ref().is_some_and(&ready) {
+                return anyhow::Ok(());
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
+    .await
+    .map_err(anyhow::Error::from)
+    .flatten()
+    .with_context(|| format!("wait for {kind} {name} in {}", target.namespace))
+}
+
+/// Wait for a named object's Ready condition.
+///
+/// # Errors
+/// Names the object if it cannot be observed or if the wait times out.
+pub async fn wait_ready(
+    target: &Target,
+    kind: &str,
+    name: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    wait_named(target, kind, name, timeout, |object| {
+        object["status"]["conditions"]
+            .as_array()
+            .is_some_and(|conditions| {
+                conditions.iter().any(|condition| {
+                    condition["type"] == "Ready" && condition["status"] == "True"
+                })
+            })
+    })
+    .await
+}
+
+/// Wait for all replicas of a named Deployment to roll out.
+///
+/// # Errors
+/// Names the Deployment if the GET fails or the rollout times out.
+pub async fn wait_deployment_ready(
+    target: &Target,
+    name: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    wait_named(target, "deployment", name, timeout, |object| {
+        let status = &object["status"];
+        let desired = object["spec"]["replicas"].as_u64().unwrap_or(1);
+        let updated = status["updatedReplicas"].as_u64().unwrap_or(0);
+        object["metadata"]["generation"]
+            .as_u64()
+            .zip(status["observedGeneration"].as_u64())
+            .is_some_and(|(generation, observed)| generation <= observed)
+            && updated >= desired
+            && status["replicas"].as_u64().unwrap_or(0) <= updated
+            && status["availableReplicas"].as_u64().unwrap_or(0) >= updated
+    })
+    .await
 }
 
 pub fn current_context(kubeconfig: &Path) -> anyhow::Result<String> {

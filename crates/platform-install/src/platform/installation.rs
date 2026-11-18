@@ -4,7 +4,7 @@ use super::{artifact_plan::SelectedChart, document::ClusterDocument, resources};
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
-use wamn_kubernetes::Target;
+use wamn_kubernetes::{Target, helm::Wait};
 
 pub async fn infrastructure(
     target: &Target,
@@ -16,7 +16,7 @@ pub async fn infrastructure(
         "wamn-infrastructure",
         json!({}),
     )?;
-    resources::apply_release(target, &entry, directory).await
+    resources::apply_release(target, &entry, directory, Wait::Watcher).await
 }
 
 pub fn values(document: &ClusterDocument, chart: &SelectedChart) -> anyhow::Result<Value> {
@@ -108,7 +108,7 @@ pub async fn apply(
 ) -> anyhow::Result<()> {
     wamn_broker::authorization::bootstrap(target).await?;
     let mut entry = platform_entry(chart, std::mem::take(values))?;
-    let result = resources::apply_release(target, &entry, directory).await;
+    let result = resources::apply_release(target, &entry, directory, Wait::Watcher).await;
     *values = entry["values"].take();
     result
 }

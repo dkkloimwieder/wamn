@@ -724,6 +724,9 @@ Issues:
 - 3.6: `platform update` still reads installation and host values back with `helm get values` (`platform/deploy.rs`), because no other source holds them. The `platform` chart replaces it.
 - After Epic 8 merges: move to wasmCloud v2.12.2, a patch release with no listed breaking changes. One commit: the wash-runtime crates to 2.12.2; both vendored runtime-operator charts to 2.12.2; any NATS image wamn pins to 2.12.15 (upstream #5955); then build and clippy. Why: wamn follows the wasmCloud release, and 2.12.2 carries runtime-operator rollout fixes (#5957, #5960, #5922), runtime fixes (#5945, #5980) and security dependency bumps (#5941 zstd, #5982 quinn-udp and OTel). Confirm that wamn does not link wash-runtime's own Postgres plugin, which #5953 and #5998 change.
 - 3.6: the environment user is both the hosts' workload NATS credential and the Rust tooling credential (`ensure_stream` and others), with full rights in the environment account. So any workload in an environment holds those rights, limited only by its workload's `subject-allow` narrowing. Split it into a restricted workload user for hosts, with its own inbox prefix through a named binding, and a separate admin user for tooling.
+- After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
+- When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
+- 3.6: Helm stores each release as a Secret and lists them across the release namespace, so the account running Helm can list every Secret in the org namespace, including `wamn-credential-*` and the NATS certificates. Move Helm release storage into a per-org namespace that holds only release records, with each chart placing its objects in the org namespace explicitly (`metadata.namespace`). Secret list then covers only release records, and the org namespace keeps name-scoped rights. Verify that Helm v4 places and tracks objects outside the release namespace this way.
 
 # Part 2: Review log
 
@@ -1392,7 +1395,7 @@ Documented order: `wamn env apply`, then `wamn schema apply`, then `wamn deploy`
 
 - A second environment provisioning path: `environment/mod.rs::apply`, `ensure::provision_resources`, `ensure::provision`, four `*_from_env` functions that read about 20 `WAMN_*` variables. About 1,100 lines.
 - `sql::initialize`, `stage::initialize`, `environment/status.rs::status` (261 lines), `rollback::rollback`, `dry_run`, `show::show`, `ReleaseCarrier`.
-- Routes with no CLI verb: `application.stop`, `release.retain`.
+- Routes with no CLI verb: `application.stop`.
 - Error texts name verbs that do not exist: `env provision`, `env initialize`, `env connections`.
 
 ### Possible defects found by reading (not run)
@@ -2175,3 +2178,9 @@ Facts:
 **Ruled (D, 2026-11-18): scoped inboxes for every NATS user.** The CDC reader user, and any other user that subscribed to `_INBOX.>`, gets its own inbox prefix, so no user can read replies meant for another user in its account. This corrects the earlier note that only the recovery user lacked one.
 
 **Ruled (D, 2026-11-18): the environment user and inbox scoping.** The environment user, which holds full rights in its account, is exempt from the scoped-inbox rule, because a scope would protect nothing. Every restricted user is scoped. Splitting the environment user into a restricted workload user and an admin user is a 3.6 item.
+
+**Ruled (D, 2026-11-18): Epic 8 review.** Accepted at `29bb71afe`. `release.retain` goes: with no release artifact there is nothing to retain. wamn does not use Helm's legacy waiter, which lane 8.2 chose because the operation Role grants only name-scoped rights and the watcher needs list and watch across the namespace. Waits are chosen per chart, so no wait adds a right on Secrets (Helm's own release storage still needs Secret list in the release namespace, a recorded exception): the `application` and `environment` charts, which render no Secret, use the kstatus watcher; the `project` and `org` charts, which do, use no Helm wait and bounded name-scoped waits in Rust. Deploy and env apply wait for the project database to accept connections before SQL. Helm v4.2.2 has no readiness annotations; the earlier instruction to add them was wrong.
+
+**Ruled (D, 2026-11-18): CDC reader start order.** The reader waits up to 120 seconds for its own replication slot, which the worker creates only after the Publication is applied. So the reader starts after its Publication without reading the Publication object and without a second chart upgrade.
+
+**Ruled (D, 2026-11-18): Secret watch scope.** No Role or ClusterRole in wamn's own charts grants `watch` on Secrets. `platform update` uses no Helm wait on the `installation` chart, which renders a Secret, and waits in Rust for the rollout of the Deployment it changed. Vendored operator charts keep their upstream RBAC; the rule does not cover them.

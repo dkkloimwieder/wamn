@@ -116,7 +116,8 @@ pub(super) async fn delete_event_certificates(
     delete_secret(platform, &name::recovery_nats_user(triple)).await?;
     if last {
         let host_release = name::environment_host_name(&triple.org, &triple.env);
-        wamn_kubernetes::helm::uninstall(&platform.target, &host_release).await?;
+        use wamn_kubernetes::helm::{self, Wait};
+        helm::uninstall(&platform.target, &host_release, Wait::Watcher).await?;
         delete_secret(
             platform,
             &name::environment_nats_secret(&triple.org, &triple.env),

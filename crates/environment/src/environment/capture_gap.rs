@@ -39,7 +39,11 @@ pub(super) async fn set_paused(
         &name,
         &json!({"cdcReader":{"pause":paused}}),
     )
-    .await
+    .await?;
+    if !paused {
+        super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;
+    }
+    Ok(())
 }
 
 /// Recover a lost slot while pausing its reader through the project chart.

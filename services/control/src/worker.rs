@@ -96,7 +96,6 @@ pub(crate) async fn execute(
             )
         }
         Operation::Reset => operation::reset(&platform, &file.into_project(&triple.project)?).await,
-        Operation::Retain => anyhow::bail!("release retention is unavailable"),
         _ => {
             let application = request.application.context("application is required")?;
             let document = file.into_project(&triple.project)?;
@@ -117,10 +116,7 @@ pub(crate) async fn execute(
                     Operation::Diff => operation::Application::Diff(request.release),
                     Operation::Rollback => operation::Application::Rollback(request.revision),
                     Operation::Stop => operation::Application::Stop,
-                    Operation::Reset
-                    | Operation::Retain
-                    | Operation::Recover
-                    | Operation::Close => {
+                    Operation::Reset | Operation::Recover | Operation::Close => {
                         unreachable!("handled project operation")
                     }
                 },

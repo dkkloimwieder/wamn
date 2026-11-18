@@ -389,13 +389,6 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Control,
-        operation: "release.retain",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::OperationJob,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
         operation: "application.deploy",
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,

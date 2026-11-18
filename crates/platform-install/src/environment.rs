@@ -2,12 +2,27 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
-use wamn_kubernetes::Target;
+use std::time::Duration;
+use wamn_kubernetes::{Target, helm};
 
-pub async fn apply(target: &Target, chart: &Path, name: &str, values: Value) -> anyhow::Result<()> {
-    let entry = entry(chart, &target.namespace, name, values)?;
+/// Recover the host release and prepare one upgrade that waits for readiness.
+pub async fn prepare_host_upgrade<'a>(
+    target: &'a Target,
+    chart: &Path,
+    name: String,
+    values: &Value,
+) -> anyhow::Result<impl Future<Output = anyhow::Result<()>> + use<'a>> {
     let directory = tempfile::tempdir()?;
-    crate::platform::resources::apply_release(target, &entry, directory.path()).await
+    let path = directory.path().join("values.yaml");
+    std::fs::write(&path, serde_json::to_vec(values)?)?;
+    let chart = chart.join("platform/environment");
+    helm::recover_pending(target, &name, helm::Wait::Watcher).await?;
+    Ok(async move {
+        let _directory = directory;
+        helm::upgrade_watched(target, &chart, &name, &path, Duration::from_secs(600))
+            .await
+            .with_context(|| format!("upgrade environment host {name}"))
+    })
 }
 
 /// Upgrade one application with SQL and workflow checks already complete.
@@ -20,12 +35,12 @@ pub async fn apply_application(
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("application.yaml");
     std::fs::write(&path, serde_yaml::to_string(values)?)?;
-    wamn_kubernetes::helm::upgrade_application(
+    helm::upgrade_watched(
         target,
         &chart.join("platform/application"),
         name,
         &path,
-        std::time::Duration::from_secs(600),
+        Duration::from_secs(600),
     )
     .await
 }
@@ -37,26 +52,16 @@ pub async fn apply_project(
     name: &str,
     values: &Value,
 ) -> anyhow::Result<()> {
-    apply_without_wait(target, &chart.join("platform/project"), name, values).await
-}
-
-/// Submit one release while its workload still needs provisioning work.
-pub async fn apply_without_wait(
-    target: &Target,
-    chart: &Path,
-    name: &str,
-    values: &Value,
-) -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("values.yaml");
     std::fs::write(&path, serde_json::to_vec(values)?)?;
-    wamn_kubernetes::helm::recover_pending(target, name).await?;
-    wamn_kubernetes::helm::upgrade_without_wait(
+    helm::recover_pending(target, name, helm::Wait::None).await?;
+    helm::upgrade_without_wait(
         target,
-        chart,
+        &chart.join("platform/project"),
         name,
         &path,
-        std::time::Duration::from_secs(600),
+        Duration::from_secs(600),
     )
     .await
 }
@@ -86,6 +91,49 @@ pub fn publication_values(
     json!({"publication":{"name":name,"cluster":cluster,"org":triple.org,"project":triple.project,"env":triple.env,
         "database":wamn_provision::project_env_database_name(&triple.org,&triple.project,&triple.env,instance),
         "schemas":schemas,"publish":wamn_provision::sql::CDC_PUBLISH}})
+}
+
+/// Wait for the project database to accept an authenticated SQL connection.
+///
+/// # Errors
+/// Names the database if it cannot be reached within 120 seconds.
+pub async fn wait_project_connection(
+    input: &str,
+    database: &str,
+) -> anyhow::Result<sqlx::PgConnection> {
+    let timeout = Duration::from_secs(120);
+    let mut last_error = None;
+    let connection = crate::credentials::connect_with_retry(input, |error| {
+        last_error = Some(error);
+        Ok(())
+    });
+    match tokio::time::timeout(timeout, connection).await {
+        Ok(result) => result,
+        Err(elapsed) => Err(last_error.unwrap_or_else(|| elapsed.into())),
+    }
+    .with_context(|| {
+        format!(
+            "project database {database} did not accept connections within {} seconds",
+            timeout.as_secs()
+        )
+    })
+}
+
+/// Wait for CloudNativePG to apply the current generation of a named database.
+///
+/// # Errors
+/// Names the Database if Kubernetes cannot read it or it stays unapplied.
+pub async fn wait_database_applied(
+    target: &Target,
+    database: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    wamn_kubernetes::kubectl::wait_named(target, "database", database, timeout, |object| {
+        object["status"]["applied"] == true
+            && object["metadata"]["generation"].is_u64()
+            && object["status"]["observedGeneration"] == object["metadata"]["generation"]
+    })
+    .await
 }
 
 /// Resolve the recorded database on its owning CNPG cluster without reading credentials.
@@ -164,8 +212,8 @@ pub async fn update_project(
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("project-values.yaml");
     std::fs::write(&path, serde_json::to_vec(values)?)?;
-    wamn_kubernetes::helm::recover_pending(target, name).await?;
-    wamn_kubernetes::helm::update_values(target, &chart.join("platform/project"), name, &path).await
+    helm::recover_pending(target, name, helm::Wait::None).await?;
+    helm::update_values(target, &chart.join("platform/project"), name, &path).await
 }
 
 /// The chart, rather than a direct CR patch, owns database disposal.
@@ -189,15 +237,6 @@ pub async fn remove_database(
         .context("project cluster CA")?;
     update_project(target, chart, &name,
         &json!({"database":{"name":connection.database,"cluster":cluster,"owner":wamn_provision::migration::login(&connection.database),"ensure":"absent","reclaimPolicy":if data {"delete"} else {"retain"}}})).await?;
-    wamn_kubernetes::kubectl::wait(
-        &target.kubeconfig,
-        &target.context,
-        triple.org.as_str(),
-        "database",
-        &connection.database,
-        "condition=Applied",
-        "600s",
-    )
-    .await?;
-    wamn_kubernetes::helm::uninstall(target, &name).await
+    wait_database_applied(target, &connection.database, Duration::from_secs(600)).await?;
+    helm::uninstall(target, &name, helm::Wait::None).await
 }

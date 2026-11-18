@@ -32,7 +32,6 @@ pub(crate) enum Operation {
     Deploy,
     Rollback,
     Stop,
-    Retain,
     Diff,
     Apply,
     Reset,
@@ -46,7 +45,6 @@ impl Operation {
             "application.deploy" => Self::Deploy,
             "application.rollback" => Self::Rollback,
             "application.stop" => Self::Stop,
-            "release.retain" => Self::Retain,
             "schema.diff" => Self::Diff,
             "schema.apply" => Self::Apply,
             "schema.reset" => Self::Reset,
@@ -61,7 +59,6 @@ impl Operation {
             Self::Deploy => "deploy",
             Self::Rollback => "rollback",
             Self::Stop => "stop",
-            Self::Retain => "retain",
             Self::Diff => "diff",
             Self::Apply => "apply",
             Self::Reset => "reset",
@@ -147,8 +144,7 @@ impl ControlRoutes<'_> {
                 name,
                 &coordinate,
                 &[
-                    "deploy", "rollback", "stop", "diff", "apply", "reset", "retain", "recover",
-                    "close",
+                    "deploy", "rollback", "stop", "diff", "apply", "reset", "recover", "close",
                 ],
             )
             .await
@@ -194,7 +190,7 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
         {
             return Err(invalid("application"));
         }
-        Operation::Reset | Operation::Retain | Operation::Recover | Operation::Close
+        Operation::Reset | Operation::Recover | Operation::Close
             if request.application.is_some() || request.release.is_some() =>
         {
             return Err(invalid("application"));
