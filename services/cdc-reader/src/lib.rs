@@ -365,6 +365,38 @@ struct Session {
     history: Vec<pg_walstream::TimelineSwitch>,
 }
 
+async fn wait_for_slot(
+    input: &str,
+    slot: &str,
+) -> anyhow::Result<sqlx::postgres::PgConnectOptions> {
+    use sqlx::Connection as _;
+
+    let timeout = Duration::from_secs(120);
+    let wait = async {
+        let options = wamn_postgres::connect_options(input).await?;
+        let mut client = sqlx::PgConnection::connect_with(&options).await?;
+        while !sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT FROM pg_catalog.pg_replication_slots WHERE slot_name = $1)",
+        )
+        .bind(slot)
+        .fetch_one(&mut client)
+        .await?
+        {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        anyhow::Ok(options)
+    };
+    tokio::time::timeout(timeout, wait)
+        .await
+        .with_context(|| {
+            format!(
+                "replication slot {slot} did not appear within {} seconds",
+                timeout.as_secs()
+            )
+        })?
+        .with_context(|| format!("read replication slot {slot} during startup"))
+}
+
 async fn open_session(
     args: &ReaderConfig,
     token: CancellationToken,
@@ -468,7 +500,12 @@ pub async fn run_with_shutdown(
 ) -> anyhow::Result<()> {
     use sqlx::ConnectOptions as _;
     use std::io::Write as _;
-    let options = wamn_postgres::connect_options(&args.cdc_url).await?;
+    let token = shutdown.token;
+    let options = tokio::select! {
+        biased;
+        () = token.cancelled() => return Ok(()),
+        result = wait_for_slot(&args.cdc_url, &args.slot) => result?,
+    };
     let mut input = options.to_url_lossy();
     let ca = input
         .query_pairs()
@@ -495,7 +532,6 @@ pub async fn run_with_shutdown(
         input.query_pairs_mut().append_pair("sslrootcert", &ca);
     }
     args.cdc_url = input.into();
-    let token = shutdown.token;
     let nats_options = wamn_broker::nats::tls_options(
         async_nats::ConnectOptions::new()
             .custom_inbox_prefix(wamn_broker::nats::inbox_prefix(&args.nats_user())),

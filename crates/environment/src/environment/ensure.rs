@@ -23,12 +23,13 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
         None,
     )
     .await?;
-    wamn_platform_install::environment::apply(
+    wamn_platform_install::environment::prepare_host_upgrade(
         &platform.target,
-        &platform.chart.join("platform/environment"),
-        &name,
-        values,
+        &platform.chart,
+        name.clone(),
+        &values,
     )
+    .await?
     .await?;
     let connection =
         wamn_platform_install::environment::connection(&platform.system_database_url, triple)
@@ -135,41 +136,23 @@ fn set_nats_plugin(
     Ok(())
 }
 
-/// Submit the shared host with both configured and newly reserved projects.
-pub(super) async fn submit_host(
-    platform: &Platform,
+/// Prepare the host upgrade with both configured and newly reserved projects.
+pub(super) async fn prepare_host_upgrade<'a>(
+    platform: &'a Platform,
     org: &OrgId,
     env: &EnvName,
     policy: &EnvName,
     reserved: &[&str],
-) -> anyhow::Result<String> {
+) -> anyhow::Result<impl Future<Output = anyhow::Result<()>> + use<'a>> {
     let name = name::environment_host_name(org, env);
     let values = host_values(platform, org, env, reserved, None, Some(policy)).await?;
-    wamn_platform_install::environment::apply_without_wait(
+    wamn_platform_install::environment::prepare_host_upgrade(
         &platform.target,
-        &platform.chart.join("platform/environment"),
-        &name,
+        &platform.chart,
+        name,
         &values,
     )
-    .await?;
-    Ok(name)
-}
-
-pub(super) async fn wait_host_ready(platform: &Platform, host: &str) -> anyhow::Result<()> {
-    kubectl(
-        platform,
-        &platform.target.namespace,
-        &[
-            "rollout",
-            "status",
-            &format!("deployment/{}", name::host_deployment_name(host)),
-            "--timeout=600s",
-        ],
-        None,
-    )
     .await
-    .map(drop)
-    .with_context(|| format!("wait for environment host {host}"))
 }
 
 /// Wait for the shared certificate, including when its object has yet to appear.
@@ -177,36 +160,18 @@ pub(super) async fn wait_broker_certificate(
     platform: &Platform,
     triple: &Triple,
 ) -> anyhow::Result<()> {
-    use std::time::Duration;
     let name = name::environment_nats_certificate(&triple.org, &triple.env);
-    let target = &platform.target;
-    tokio::time::timeout(Duration::from_secs(120), async {
-        loop {
-            let certificate = wamn_kubernetes::kubectl::get::<serde_json::Value>(
-                &target.kubeconfig,
-                &target.context,
-                triple.org.as_str(),
-                "certificate",
-                &name,
-            )
-            .await
-            .with_context(|| format!("read broker certificate {name}"))?;
-            if certificate.is_some_and(|certificate| {
-                certificate["status"]["conditions"]
-                    .as_array()
-                    .is_some_and(|conditions| {
-                        conditions.iter().any(|condition| {
-                            condition["type"] == "Ready" && condition["status"] == "True"
-                        })
-                    })
-            }) {
-                return Ok(());
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    })
+    wait_certificate(platform, &name).await
+}
+
+pub(super) async fn wait_certificate(platform: &Platform, name: &str) -> anyhow::Result<()> {
+    wamn_kubernetes::kubectl::wait_ready(
+        &platform.target,
+        "certificate",
+        name,
+        std::time::Duration::from_secs(120),
+    )
     .await
-    .with_context(|| format!("broker certificate {name} was not ready within 120 seconds"))?
 }
 
 async fn host_values(

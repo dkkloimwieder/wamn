@@ -27,7 +27,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
 rules:
 - apiGroups: [""]
-  resources: [secrets, configmaps, services, serviceaccounts]
+  resources: [secrets]
+  verbs: [get, list, create, update, patch, delete]
+- apiGroups: [""]
+  resources: [configmaps, services, serviceaccounts]
   verbs: [get, list, watch, create, update, patch, delete]
 - apiGroups: [""]
   resources: [pods, pods/log, pods/proxy, events]

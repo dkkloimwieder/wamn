@@ -79,6 +79,22 @@ pub fn template(entry: &serde_json::Value) -> anyhow::Result<Vec<serde_json::Val
         .collect()
 }
 
+/// Readiness strategy for a Helm release.
+#[derive(Clone, Copy, Debug)]
+pub enum Wait {
+    None,
+    Watcher,
+}
+
+impl Wait {
+    fn argument(self) -> Option<&'static OsStr> {
+        match self {
+            Self::None => None,
+            Self::Watcher => Some(OsStr::new("--wait=watcher")),
+        }
+    }
+}
+
 /// Install or upgrade one Helm owner and leave a failed revision available for inspection.
 pub async fn upgrade(
     target: &crate::Target,
@@ -86,8 +102,9 @@ pub async fn upgrade(
     name: &str,
     values: &std::path::Path,
     timeout: std::time::Duration,
+    wait: Wait,
 ) -> anyhow::Result<()> {
-    upgrade_with_readiness(target, chart, name, values, timeout, true, true).await
+    upgrade_with_readiness(target, chart, name, values, timeout, wait, true).await
 }
 
 /// Submit a release whose workload needs the caller's post-upgrade SQL.
@@ -98,18 +115,18 @@ pub async fn upgrade_without_wait(
     values: &std::path::Path,
     timeout: std::time::Duration,
 ) -> anyhow::Result<()> {
-    upgrade_with_readiness(target, chart, name, values, timeout, false, false).await
+    upgrade_with_readiness(target, chart, name, values, timeout, Wait::None, false).await
 }
 
-/// Upgrade an application in its provisioned org namespace and wait.
-pub async fn upgrade_application(
+/// Upgrade a release in its provisioned org namespace and wait with the watcher.
+pub async fn upgrade_watched(
     target: &crate::Target,
     chart: &std::path::Path,
     name: &str,
     values: &std::path::Path,
     timeout: std::time::Duration,
 ) -> anyhow::Result<()> {
-    upgrade_with_readiness(target, chart, name, values, timeout, true, false).await
+    upgrade_with_readiness(target, chart, name, values, timeout, Wait::Watcher, false).await
 }
 
 /// Change explicit values on an existing release without reading them back into the caller.
@@ -132,9 +149,6 @@ pub async fn update_values(
         "--reuse-values".as_ref(),
         "-f".as_ref(),
         values.as_os_str(),
-        // Project CR readiness is checked by its lifecycle owner. The legacy
-        // waiter avoids namespace-wide watches on named project resources.
-        "--wait=legacy".as_ref(),
         "--timeout".as_ref(),
         "600s".as_ref(),
         "--history-max".as_ref(),
@@ -150,7 +164,7 @@ async fn upgrade_with_readiness(
     name: &str,
     values: &std::path::Path,
     timeout: std::time::Duration,
-    wait: bool,
+    wait: Wait,
     create_namespace: bool,
 ) -> anyhow::Result<()> {
     let timeout = format!("{}s", timeout.as_secs());
@@ -172,9 +186,7 @@ async fn upgrade_with_readiness(
         "--history-max".as_ref(),
         "50".as_ref(),
     ];
-    if wait {
-        arguments.push("--wait".as_ref());
-    }
+    arguments.extend(wait.argument());
     if create_namespace {
         arguments.push("--create-namespace".as_ref());
     }
@@ -195,7 +207,7 @@ use plan::{Recovery, recovery};
 /// # Errors
 ///
 /// When Helm fails.
-pub async fn recover_pending(target: &Target, name: &str) -> anyhow::Result<()> {
+pub async fn recover_pending(target: &Target, name: &str, wait: Wait) -> anyhow::Result<()> {
     let filter = format!("^{name}$");
     let listed = run_text(&[
         "list".as_ref(),
@@ -222,27 +234,28 @@ pub async fn recover_pending(target: &Target, name: &str) -> anyhow::Result<()> 
         return Ok(());
     };
     match recovery(status) {
-        Some(Recovery::Uninstall) => uninstall(target, name).await,
-        Some(Recovery::Rollback) => run_text(&[
-            "rollback".as_ref(),
-            name.as_ref(),
-            "--kubeconfig".as_ref(),
-            target.kubeconfig.as_os_str(),
-            "--kube-context".as_ref(),
-            target.context.as_ref(),
-            "--namespace".as_ref(),
-            target.namespace.as_ref(),
-            "--wait".as_ref(),
-        ])
-        .await
-        .map(drop),
+        Some(Recovery::Uninstall) => uninstall(target, name, wait).await,
+        Some(Recovery::Rollback) => {
+            let mut arguments = vec![
+                "rollback".as_ref(),
+                name.as_ref(),
+                "--kubeconfig".as_ref(),
+                target.kubeconfig.as_os_str(),
+                "--kube-context".as_ref(),
+                target.context.as_ref(),
+                "--namespace".as_ref(),
+                target.namespace.as_ref(),
+            ];
+            arguments.extend(wait.argument());
+            run(&arguments).await.map(drop)
+        }
         None => Ok(()),
     }
 }
 
-/// Uninstall one application's release and wait for its objects to go.
-pub async fn uninstall(target: &Target, name: &str) -> anyhow::Result<()> {
-    run_text(&[
+/// Uninstall a release with its owner's wait strategy.
+pub async fn uninstall(target: &Target, name: &str, wait: Wait) -> anyhow::Result<()> {
+    let mut arguments = vec![
         "uninstall".as_ref(),
         name.as_ref(),
         "--kubeconfig".as_ref(),
@@ -251,11 +264,10 @@ pub async fn uninstall(target: &Target, name: &str) -> anyhow::Result<()> {
         target.context.as_ref(),
         "--namespace".as_ref(),
         target.namespace.as_ref(),
-        "--wait".as_ref(),
         "--ignore-not-found".as_ref(),
-    ])
-    .await
-    .map(drop)
+    ];
+    arguments.extend(wait.argument());
+    run(&arguments).await.map(drop)
 }
 
 pub async fn run_text(arguments: &[&std::ffi::OsStr]) -> anyhow::Result<String> {

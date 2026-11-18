@@ -9,7 +9,6 @@
 //! Partial initialization requires explicit repair. Interrupted migrations resume
 //! through `wamn platform schema apply --target system --chart <prepared-chart>`.
 //!
-use std::time::Duration;
 use std::{fmt, io};
 
 use anyhow::Context as _;
@@ -67,27 +66,22 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
 // Allow 30 seconds for the CNPG service to accept TCP after Cluster Ready,
 // well inside the platform Job's 15-minute deadline. Never replay initialization.
 const CONNECT_RETRIES: u32 = 30;
-const CONNECT_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 async fn connect_system_database(url: &str) -> anyhow::Result<Client> {
     let mut retries = 0;
-    loop {
-        match wamn_postgres::connect(url).await {
-            Ok(connection) => return Ok(connection),
-            Err(error) => {
-                let refused = error.chain().any(|cause| {
-                    cause
-                        .downcast_ref::<io::Error>()
-                        .is_some_and(|error| error.kind() == io::ErrorKind::ConnectionRefused)
-                });
-                if !refused || retries == CONNECT_RETRIES {
-                    return Err(error);
-                }
-                retries += 1;
-                tokio::time::sleep(CONNECT_RETRY_DELAY).await;
-            }
+    crate::credentials::connect_with_retry(url, |error| {
+        let refused = error.chain().any(|cause| {
+            cause
+                .downcast_ref::<io::Error>()
+                .is_some_and(|error| error.kind() == io::ErrorKind::ConnectionRefused)
+        });
+        if !refused || retries == CONNECT_RETRIES {
+            return Err(error);
         }
-    }
+        retries += 1;
+        Ok(())
+    })
+    .await
 }
 
 /// Record the deployment domain with the provisioning actor.
@@ -282,6 +276,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
     use tokio::net::{TcpListener, TcpStream};
     use tokio::task::JoinSet;
 

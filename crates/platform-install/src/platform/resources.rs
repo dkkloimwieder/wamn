@@ -4,8 +4,7 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
-use wamn_kubernetes::kubectl;
-use wamn_kubernetes::Target;
+use wamn_kubernetes::{Target, helm::Wait, kubectl};
 
 pub async fn helm(target: &Target, arguments: &[&std::ffi::OsStr]) -> anyhow::Result<Vec<u8>> {
     let mut args = vec![
@@ -18,11 +17,12 @@ pub async fn helm(target: &Target, arguments: &[&std::ffi::OsStr]) -> anyhow::Re
     wamn_kubernetes::helm::run(&args).await
 }
 
-/// Apply one service release and wait for readiness.
+/// Apply one service release with its caller's wait strategy.
 pub(crate) async fn apply_release(
     target: &Target,
     entry: &Value,
     directory: &Path,
+    wait: Wait,
 ) -> anyhow::Result<()> {
     let name = entry["name"].as_str().context("service release name")?;
     let owner = Target {
@@ -32,8 +32,8 @@ pub(crate) async fn apply_release(
             .into(),
         ..target.clone()
     };
-    wamn_kubernetes::helm::recover_pending(&owner, name).await?;
-    upgrade_release(&owner, entry, directory).await
+    wamn_kubernetes::helm::recover_pending(&owner, name, wait).await?;
+    upgrade_release(&owner, entry, directory, wait).await
 }
 
 /// Upgrade one release after the caller recovers pending operations.
@@ -41,6 +41,7 @@ pub(crate) async fn upgrade_release(
     target: &Target,
     entry: &Value,
     directory: &Path,
+    wait: Wait,
 ) -> anyhow::Result<()> {
     let name = entry["name"].as_str().context("service release name")?;
     let chart = entry["chart"].as_str().context("service chart")?;
@@ -52,6 +53,7 @@ pub(crate) async fn upgrade_release(
         name,
         &values,
         Duration::from_secs(600),
+        wait,
     )
     .await
 }

@@ -153,7 +153,7 @@ async fn delete_locked(
             );
         }
         for name in applications.values() {
-            helm::uninstall(&platform.target, name).await?;
+            helm::uninstall(&platform.target, name, helm::Wait::Watcher).await?;
             lines.push(format!("uninstalled {name}"));
         }
         super::ensure::suspend_project(platform, triple).await?;

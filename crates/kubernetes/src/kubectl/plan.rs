@@ -34,17 +34,3 @@ pub(super) fn decode_object<T: DeserializeOwned>(output: &str) -> anyhow::Result
             .context("decode the kubectl object")
     }
 }
-
-pub(super) fn wait_arguments(
-    type_: &str,
-    name: &str,
-    condition: &str,
-    duration: &str,
-) -> [String; 4] {
-    [
-        "wait".into(),
-        format!("{type_}/{name}"),
-        format!("--for={condition}"),
-        format!("--timeout={duration}"),
-    ]
-}

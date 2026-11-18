@@ -105,7 +105,8 @@ pub async fn remove_roles(
         // Waiting for them here would put both chart upgrades in a cycle.
         let path = directory.path().join("org-values.yaml");
         std::fs::write(&path, serde_json::to_vec(&values)?)?;
-        wamn_kubernetes::helm::recover_pending(target, &name).await?;
+        wamn_kubernetes::helm::recover_pending(target, &name, wamn_kubernetes::helm::Wait::None)
+            .await?;
         wamn_kubernetes::helm::upgrade_without_wait(
             target,
             &chart.join("platform/org"),
