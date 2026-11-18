@@ -315,7 +315,9 @@ The stream keeps messages for up to seven days and holds up to 256 MiB. It disca
 
 The platform runs one NATS server. Each client presents a certificate, and NATS maps its DNS name to a user.
 The scheduler users `wasmcloud-operator` and `wasmcloud-runtime` belong to the `PLATFORM` account, along with the restricted `wasmcloud-data` user.
-Each environment has its own `ENV_<org>_<env>` account. It has 1 GiB of JetStream file storage, zero memory storage, and unlimited stream and consumer counts.
+Each environment has its own `ENV_<org>_<env>` account.
+Its JetStream file storage limit is 256 MiB times the number of projects in the environment.
+It has zero memory storage and unlimited stream and consumer counts.
 The account contains all the environment's project streams. Accounts exchange no imports or exports.
 
 The `wamn-env-<org>--<env>` user has full rights in its environment account.

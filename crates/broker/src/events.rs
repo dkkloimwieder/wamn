@@ -10,6 +10,9 @@ use wamn_registry::Triple;
 /// One event batch holds at most four MiB.
 pub const EVENT_MAX_PULL_BYTES: i64 = 4 * 1024 * 1024;
 
+/// File storage limit in bytes for one project's source stream.
+pub const SOURCE_STREAM_MAX_BYTES: u32 = 256 * 1024 * 1024;
+
 /// Declare the source stream with explicit broker defaults.
 pub fn source_stream_config(
     target: &Triple,
@@ -25,7 +28,7 @@ pub fn source_stream_config(
         duplicate_window,
         max_consumers: -1,
         max_messages: -1,
-        max_bytes: 256 * 1024 * 1024,
+        max_bytes: i64::from(SOURCE_STREAM_MAX_BYTES),
         max_age: Duration::from_secs(7 * 24 * 60 * 60),
         discard: stream::DiscardPolicy::Old,
         max_messages_per_subject: -1,

@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 use wamn_kubernetes::{Target, kubectl, secret::Secret};
 use wamn_registry::{Triple, name};
 
+use crate::events::SOURCE_STREAM_MAX_BYTES;
+
 const NAMESPACE: &str = "platform";
 const AUTHORIZATION: &str = "wamn-nats-authorization";
 const FILE: &str = "authorization.conf";
@@ -76,6 +78,28 @@ fn platform_users() -> Vec<User> {
 
 type Accounts = BTreeMap<String, Account>;
 
+/// Refresh the file limit for a retained account and return its project count.
+fn update_file_limit(account: &mut Account, environment_user: &str) -> usize {
+    let project_count = account
+        .users
+        .iter()
+        .filter(|user| user.user != environment_user)
+        .count();
+    if project_count > 0 {
+        let max_file = u64::from(SOURCE_STREAM_MAX_BYTES) * project_count as u64;
+        account
+            .jetstream
+            .get_or_insert(JetStreamLimits {
+                max_mem: 0,
+                max_file,
+                max_streams: -1,
+                max_consumers: -1,
+            })
+            .max_file = max_file;
+    }
+    project_count
+}
+
 /// Seed the shared broker Secret before Helm. Preserve the installed environment accounts.
 pub async fn bootstrap(target: &Target) -> anyhow::Result<()> {
     if authorization_secret(target).await?.is_none() {
@@ -90,12 +114,7 @@ pub async fn provision_project(target: &Target, coordinate: &Triple) -> anyhow::
         let (org, project, env) = (&coordinate.org, &coordinate.project, &coordinate.env);
         let account = accounts.entry(name::environment_nats_account(org, env)).or_insert_with(|| {
             Account {
-                jetstream: Some(JetStreamLimits {
-                    max_mem: 0,
-                    max_file: 1024 * 1024 * 1024,
-                    max_streams: -1,
-                    max_consumers: -1,
-                }),
+                jetstream: None,
                 users: vec![User { user: name::environment_nats_user(org, env), permissions: None }],
             }
         });
@@ -105,6 +124,7 @@ pub async fn provision_project(target: &Target, coordinate: &Triple) -> anyhow::
         let info = format!("$JS.API.STREAM.INFO.{stream}");
         account.users.retain(|entry| entry.user != user);
         account.users.push(scoped_user(&user, &[&events, &info], &["_INBOX.>"]));
+        update_file_limit(account, &name::environment_nats_user(org, env));
         account.users.sort_unstable_by(|left, right| left.user.cmp(&right.user));
     })
     .await
@@ -113,12 +133,13 @@ pub async fn provision_project(target: &Target, coordinate: &Triple) -> anyhow::
 /// Remove the reader user. Return whether the shared credential can be retired.
 pub async fn remove_project(target: &Target, coordinate: &Triple) -> anyhow::Result<bool> {
     let account = name::environment_nats_account(&coordinate.org, &coordinate.env);
+    let environment_user = name::environment_nats_user(&coordinate.org, &coordinate.env);
     let reader = name::cdc_nats_user(coordinate);
     let mut last = false;
     update(target, |accounts| {
         last = accounts.get_mut(&account).is_none_or(|entry| {
             entry.users.retain(|user| user.user != reader);
-            entry.users.len() == 1
+            update_file_limit(entry, &environment_user) == 0
         });
         if last {
             accounts.remove(&account);
