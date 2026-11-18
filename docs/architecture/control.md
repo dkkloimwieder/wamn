@@ -5,7 +5,7 @@ It authenticates org sessions and checks current authority before each operation
 It has no application release, route guest, runtime operator registration, or host heartbeat.
 The platform chart deploys the `control` image.
 
-Start the service with `wamn-control --config /etc/wamn/control/config.json`.
+Start the service with `wamn-control --config /etc/wamn/control/config.json platform`.
 The installer owns this JSON file. Database passwords stay in CNPG Secrets.
 Both database fields use `wamn-postgres::ConnectionConfig`.
 The service refuses a database credential outside its org namespace.
@@ -22,35 +22,28 @@ It also checks the org control login and the fixed apply login.
 | `worker.service_account` | Org worker account for existing platform updates and platform SQL |
 | `worker.configuration` | ConfigMap that mounts `config.json` at `/etc/wamn/control` in each Job |
 | `chart` | Installed immutable chart reference |
-| `release_artifact_base`, `package_artifact_base`, `component_artifact_base`, `integration_artifact_base` | Installed artifact repositories |
+| `package_artifact_base`, `component_artifact_base`, `integration_artifact_base` | Installed artifact repositories |
 | `registry_auth_file` | Mounted registry credential file |
 | `registry_token_metadata` | Use the installed metadata credential source instead of the registry file |
 | `insecure_registry`, `oci_ca_paths` | Installed registry transport and public trust bundles |
-| `event_observer` | Optional broker connection for capture-gap observation. Installation leaves it unset. |
 | `events` | Optional event policy with `stream_replicas` and `dup_window_secs` |
 | `identity` | Optional operator `endpoint`, `client_cert`, `client_key`, and `server_ca` |
 | `oauth_encryption` | Optional envelope encryption configuration |
 
-Application operations use the shared Kubernetes Job runner.
-The service supplies the authenticated actor and reads the applied environment settings under that actor’s authority.
-The registry stores applied environment settings. Helm records deployment and rollback history.
-Control reads the current package digest and revision from the application WorkloadDeployment.
-Workers receive coordinates and release identities. A request cannot select an image, command, credential, namespace, or chart path.
-The worker calls `environment::operation::execute` once. It runs SQL in the same Job.
-`release.retain` calls the environment retention owner under its existing lock.
-That operation also removes expired dev package tags after it reads package pins from every published release.
+Control authorizes the target and submits one Kubernetes Job.
+It puts the request and authenticated actor in an immutable ConfigMap owned by that Job.
+The worker mounts this input and the applied environment document from the project chart.
+The request cannot select an image, command, credential, namespace, or chart path.
+
+Deploy resolves the package closure and bindings, checks enabled workflows, applies SQL, and upgrades the application under the lifecycle lock.
+Control reads the current package digest and content revision from the WorkloadDeployment.
+Only the rollback worker reads Helm history for the target package and application configuration.
 Job status is visible only through the authorized target and operation annotations.
 
-Operation Jobs mount the apply and registry credentials.
-Configure and delete Jobs read the environment's NATS Secret through Kubernetes. Configure reads it after the Certificate reports ready.
-SQL operations also mount the project platform-migration, package-migration, and capture credentials.
-Reset uses capture authority for replication and package-migration authority for package object deletion.
-Their names come from the registry coordinate, database identity, and the provisioning role definitions.
-No operation Job mounts a superuser credential.
-Jobs use the environment's existing `code` or `sql` ServiceAccount and a bounded lifetime.
-The chart must grant those accounts access only to their owning role Secrets.
-The worker writes its ServiceAccount kubeconfig under `/work`, which needs a writable volume.
-
+The project chart creates the `<coord>-operation` account.
+Environment configuration and operations that change the shared host use the org worker account.
+Workers select managed database logins from the project placement and write their ServiceAccount kubeconfig under `/work`.
+The recovery Job mounts its project recovery certificate. It can read only that project's source stream and receive replies on its own inbox.
 The private `prune-record-history` and `prune-run-history` worker commands serve chart retention tasks.
 They select the record or run retention login from the recorded project connection.
 The chart mounts that role's Secret and the public administration connection files.
@@ -66,7 +59,7 @@ Each route takes `project` and `env` and uses the matching login in the control 
 The system database supplies the platform domain for service email addresses.
 Service creation refuses with `platform-domain-unset` if the domain is missing.
 Workflow administration also uses server-selected connections and the authenticated principal.
-`wamn-environment` owns capture-gap recovery and reader lifecycle. Recovery selects the recorded capture role and the configured event observer. It accepts no database URL from the CLI.
+`wamn-environment` owns capture-gap recovery and reader lifecycle. Recovery selects the recorded capture role and its project recovery certificate. It accepts no database URL from the CLI.
 Integration publication pushes local build output first. The service verifies the published artifact before it records its version.
 
 `wamn` is the user CLI and runs internal bootstrap steps.

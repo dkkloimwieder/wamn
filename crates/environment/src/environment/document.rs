@@ -80,20 +80,6 @@ impl EnvironmentDocument {
         Ok(document)
     }
 
-    /// Read the applied settings with the package currently selected in Kubernetes.
-    pub async fn read_serving(platform: &super::Platform, triple: &Triple) -> anyhow::Result<Self> {
-        let mut document = Self::read(platform, triple).await?;
-        if !document.applications.is_empty() {
-            let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
-            for (name, application) in &mut document.applications {
-                if let Some(release) = workload_release(&api, triple, name).await? {
-                    application.current = DeclaredRelease::Digest(release.package_digest);
-                }
-            }
-        }
-        Ok(document)
-    }
-
     pub(super) async fn save(&self, connection: &mut sqlx::PgConnection) -> anyhow::Result<()> {
         ensure!(
             wamn_catalog::configuration::write(connection, &self.configuration()).await?,
@@ -187,6 +173,13 @@ pub async fn workload_release(
     else {
         return Ok(None);
     };
+    Ok(Some(workload_release_annotations(&workload)?))
+}
+
+/// Decode the live package digest and content revision from workload metadata.
+pub fn workload_release_annotations(
+    workload: &serde_json::Value,
+) -> anyhow::Result<WorkloadRelease> {
     let annotations = &workload["metadata"]["annotations"];
     let package_digest = annotations["wamn.package-digest"]
         .as_str()
@@ -202,10 +195,10 @@ pub async fn workload_release(
         revision > 0,
         "application workload Helm revision must be positive"
     );
-    Ok(Some(WorkloadRelease {
+    Ok(WorkloadRelease {
         package_digest,
         revision,
-    }))
+    })
 }
 
 #[cfg(test)]

@@ -40,7 +40,7 @@ Changes that arrive during a deployment wait for the next pass.
 A failed pass reports its error. A later source change retries the product operation.
 Interrupting the watcher waits for the active deployment to finish.
 The package SQL step applies pending migrations and keeps the SQLx checksum of each installed migration.
-The Epic 8.2 deploy worker calls this step before it installs the new code.
+The deploy worker applies SQL before it installs the new code, so a separate schema apply is optional.
 
 Package tags point to the latest digest published under each version.
 A replacement must preserve every migration and use higher numbers for additions.

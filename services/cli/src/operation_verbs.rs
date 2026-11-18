@@ -7,6 +7,9 @@ use anyhow::{Context as _, bail, ensure};
 use serde_json::{Value, json};
 use wamn_environment::environment::document::EnvironmentDocument;
 
+// The Job deadline is fifteen minutes. Allow time for scheduling and status delivery.
+const POLL_LIMIT: Duration = Duration::from_mins(16);
+
 pub(crate) struct ControlHost {
     url: String,
     token: String,
@@ -29,10 +32,21 @@ impl ControlHost {
         &self,
         operation: &str,
         coordinate: &wamn_registry::Triple,
+        value: Value,
+    ) -> anyhow::Result<()> {
+        self.project(operation, &coordinate.project, &coordinate.env, value)
+            .await
+    }
+
+    pub(crate) async fn project(
+        &self,
+        operation: &str,
+        project: &wamn_registry::ProjectId,
+        env: &wamn_registry::EnvName,
         mut value: Value,
     ) -> anyhow::Result<()> {
-        value["project"] = coordinate.project.as_str().into();
-        value["env"] = serde_json::json!(&coordinate.env);
+        value["project"] = serde_json::json!(project);
+        value["env"] = serde_json::json!(env);
         self.run_value(operation, value, "operation.status").await
     }
 
@@ -68,29 +82,37 @@ impl ControlHost {
                 target[field] = value.clone();
             }
         }
-        let mut previous = Value::Null;
-        loop {
-            let mut status =
-                crate::component_verbs::invoke(&self.url, &self.token, status_operation, &target)
-                    .await?;
-            let state = status["state"].take();
-            let name = state.as_str().context("operation state")?;
-            if state != previous {
-                println!("{}", json!({"job":job, "state":name}));
-            }
-            match name {
-                "succeeded" | "failed" => {
-                    println!("{}", status["log"].as_str().context("operation log tail")?);
-                    ensure!(name == "succeeded", "{operation} Job {job} failed");
-                    return Ok(());
+        tokio::time::timeout(POLL_LIMIT, async {
+            let mut previous = Value::Null;
+            loop {
+                let mut status = crate::component_verbs::invoke(
+                    &self.url,
+                    &self.token,
+                    status_operation,
+                    &target,
+                )
+                .await?;
+                let state = status["state"].take();
+                let name = state.as_str().context("operation state")?;
+                if state != previous {
+                    println!("{}", json!({"job":job, "state":name}));
                 }
-                "pending" | "running" => {
-                    previous = state;
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                match name {
+                    "succeeded" | "failed" => {
+                        println!("{}", status["log"].as_str().context("operation log tail")?);
+                        ensure!(name == "succeeded", "{operation} Job {job} failed");
+                        return Ok(());
+                    }
+                    "pending" | "running" => {
+                        previous = state;
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                    state => bail!("{operation} Job {job} returned unknown state {state}"),
                 }
-                state => bail!("{operation} Job {job} returned unknown state {state}"),
             }
-        }
+        })
+        .await
+        .with_context(|| format!("timed out waiting for {operation} Job {job}"))?
     }
 }
 

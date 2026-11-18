@@ -6,15 +6,16 @@ use std::path::PathBuf;
 #[derive(Parser)]
 struct Cli {
     #[arg(long)]
-    config: Option<PathBuf>,
+    config: PathBuf,
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    Platform,
     #[command(hide = true)]
-    Platform { request: String },
+    Worker,
 }
 
 #[tokio::main]
@@ -27,14 +28,11 @@ async fn main() -> anyhow::Result<()> {
         .log_internal_errors(false)
         .init();
     let cli = Cli::parse();
-    let config = wamn_control::Configuration::read(
-        cli.config
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("--config is required"))?,
-    )?;
+    let config = wamn_control::Configuration::read(&cli.config)?;
     match cli.command {
-        None => wamn_control::serve(config).await,
-        Some(Command::Platform { request }) => {
+        Command::Platform => wamn_control::serve(config).await,
+        Command::Worker => {
+            let request = std::fs::read_to_string("/etc/wamn/request/request.json")?;
             println!(
                 "{}",
                 wamn_control::platform::execute(&config, &request).await?

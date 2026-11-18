@@ -16,7 +16,7 @@ metadata:
   annotations:
     wamn.environment: {{ .coordinate | quote }}
 spec:
-  replicas: {{ ternary 0 1 (.paused | default false) }}
+  replicas: {{ ternary 0 1 (.pause | default false) }}
   strategy:
     type: Recreate
   selector:

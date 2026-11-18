@@ -2,6 +2,7 @@ database: null
 publication: null
 cdcReader: null
 operations: null
+environmentDocument: null
 brokerCertificates: []
 loginSecrets: []
 databaseConfig: null

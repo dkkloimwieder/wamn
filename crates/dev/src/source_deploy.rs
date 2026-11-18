@@ -48,14 +48,12 @@ async fn build_and_publish(
         let built = build_prepared(&request, &source, mode).await?;
         roots.push(package_output(&root, &built.package.id));
     }
-    publish_source_from_env(SourceBuild { application, roots }).await
+    let digest = publish_source_from_env(roots).await?;
+    Ok((application, digest))
 }
 
 /// Publish the selected package's existing build output without rebuilding.
-pub async fn publish_built_from_env(
-    document: &EnvironmentDocument,
-    root: &Path,
-) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
+pub async fn publish_built_from_env(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
     let root = wamn_codegen::output_root(&root.canonicalize()?);
     let parent = root
         .parent()
@@ -77,16 +75,10 @@ pub async fn publish_built_from_env(
     .into_iter()
     .map(|source| source.root)
     .collect();
-    publish_source_from_env(SourceBuild {
-        application: selected_application(document)?.clone(),
-        roots,
-    })
-    .await
+    publish_source_from_env(roots).await
 }
 
-async fn publish_source_from_env(
-    source: SourceBuild,
-) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
+async fn publish_source_from_env(roots: Vec<PathBuf>) -> anyhow::Result<wamn_digest::Digest> {
     let variable = |name: &str| {
         std::env::var(name).with_context(|| format!("set {name} for source publication"))
     };
@@ -106,23 +98,14 @@ async fn publish_source_from_env(
             .map(Into::into)
             .collect(),
     };
-    publish_built(source, registry, &variable("WAMN_COMPONENT_ARTIFACT_BASE")?).await
-}
-
-struct SourceBuild {
-    application: wamn_catalog::ApplicationName,
-    roots: Vec<PathBuf>,
+    publish_built(roots, registry, &variable("WAMN_COMPONENT_ARTIFACT_BASE")?).await
 }
 
 async fn publish_built(
-    source: SourceBuild,
+    mut roots: Vec<PathBuf>,
     registry: PackageRegistry,
     component_artifact_base: &str,
-) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
-    let SourceBuild {
-        application,
-        mut roots,
-    } = source;
+) -> anyhow::Result<wamn_digest::Digest> {
     // A dependency-first walk visits the selected source package last.
     let top = roots.pop().context("source package closure is empty")?;
     let mut publication = PushPackageRequest {
@@ -137,8 +120,7 @@ async fn publish_built(
         bases.insert(published.coordinate.clone(), published);
     }
     publication.package = top;
-    let digest = push_package(&publication, &bases).await?.digest;
-    Ok((application, digest))
+    Ok(push_package(&publication, &bases).await?.digest)
 }
 
 /// Resolve and compile the source closure in dependency order.

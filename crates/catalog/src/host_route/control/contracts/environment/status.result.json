@@ -2,12 +2,6 @@
   "class": "one",
   "fields": [
     {
-      "path": "digest",
-      "type": "text",
-      "nullable": true,
-      "values": []
-    },
-    {
       "path": "rollout.replicas",
       "type": "int32",
       "nullable": false,
@@ -38,6 +32,24 @@
       "values": []
     },
     {
+      "path": "workloads[].application",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "workloads[].package_digest",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "workloads[].revision",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    },
+    {
       "path": "workloads[].conditions[].type",
       "type": "text",
       "nullable": false,
@@ -46,18 +58,6 @@
     {
       "path": "workloads[].conditions[].status",
       "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "live[].digest",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "live[].pods",
-      "type": "int32",
       "nullable": false,
       "values": []
     },
@@ -77,30 +77,6 @@
       "path": "memberships",
       "type": "int32",
       "nullable": true,
-      "values": []
-    },
-    {
-      "path": "residency[].application",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "residency[].manifest_digest",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "residency[].loaded",
-      "type": "boolean",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "residency[].runs[]",
-      "type": "text",
-      "nullable": false,
       "values": []
     }
   ]

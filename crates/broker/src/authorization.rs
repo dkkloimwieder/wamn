@@ -68,22 +68,40 @@ fn scoped_user(user: &str, publish: &[&str], subscribe: &[&str]) -> User {
 }
 
 fn platform_users() -> Vec<User> {
-    let control = ["runtime.host.>", "runtime.operator.>", "_INBOX.>"];
+    let operator = "wasmcloud-operator";
+    let runtime = "wasmcloud-runtime";
+    let data = "wasmcloud-data";
+    let operator_inbox = inbox_subject(operator);
+    let runtime_inbox = inbox_subject(runtime);
+    let control = [
+        "runtime.host.>",
+        "runtime.operator.>",
+        &operator_inbox,
+        &runtime_inbox,
+    ];
     vec![
-        scoped_user("wasmcloud-operator", &control, &control),
-        scoped_user("wasmcloud-runtime", &control, &control),
-        scoped_user("wasmcloud-data", &[], &[]),
+        scoped_user(
+            operator,
+            &control,
+            &[control[0], control[1], &operator_inbox],
+        ),
+        scoped_user(runtime, &control, &[control[0], control[1], &runtime_inbox]),
+        scoped_user(data, &[], &[&inbox_subject(data)]),
     ]
+}
+
+fn inbox_subject(user: &str) -> String {
+    format!("{}.>", crate::nats::inbox_prefix(user))
 }
 
 type Accounts = BTreeMap<String, Account>;
 
 /// Refresh the file limit for a retained account and return its project count.
-fn update_file_limit(account: &mut Account, environment_user: &str) -> usize {
+fn update_file_limit(account: &mut Account) -> usize {
     let project_count = account
         .users
         .iter()
-        .filter(|user| user.user != environment_user)
+        .filter(|user| user.user.starts_with("wamn-cdc-"))
         .count();
     if project_count > 0 {
         let max_file = u64::from(SOURCE_STREAM_MAX_BYTES) * project_count as u64;
@@ -102,30 +120,47 @@ fn update_file_limit(account: &mut Account, environment_user: &str) -> usize {
 
 /// Seed the shared broker Secret before Helm. Preserve the installed environment accounts.
 pub async fn bootstrap(target: &Target) -> anyhow::Result<()> {
-    if authorization_secret(target).await?.is_none() {
-        update(target, |_| {}).await?;
-    }
-    Ok(())
+    update(target, |accounts| {
+        accounts.entry(PLATFORM.into()).or_default().users = platform_users();
+    })
+    .await
 }
 
-/// Grant the environment host full rights and restrict the reader to its own project.
+/// Grant the environment host full rights and restrict each project credential.
 pub async fn provision_project(target: &Target, coordinate: &Triple) -> anyhow::Result<()> {
     update(target, |accounts| {
         let (org, project, env) = (&coordinate.org, &coordinate.project, &coordinate.env);
-        let account = accounts.entry(name::environment_nats_account(org, env)).or_insert_with(|| {
-            Account {
+        let account = accounts
+            .entry(name::environment_nats_account(org, env))
+            .or_insert_with(|| Account {
                 jetstream: None,
-                users: vec![User { user: name::environment_nats_user(org, env), permissions: None }],
-            }
-        });
-        let user = name::cdc_nats_user(coordinate);
+                users: vec![User {
+                    user: name::environment_nats_user(org, env),
+                    permissions: None,
+                }],
+            });
+        let user = name::cdc_nats_user(org, project, env);
         let events = name::stream_subjects(org, project, env);
         let stream = name::stream_name(org, project, env);
         let info = format!("$JS.API.STREAM.INFO.{stream}");
-        account.users.retain(|entry| entry.user != user);
-        account.users.push(scoped_user(&user, &[&events, &info], &["_INBOX.>"]));
-        update_file_limit(account, &name::environment_nats_user(org, env));
-        account.users.sort_unstable_by(|left, right| left.user.cmp(&right.user));
+        let recovery = name::recovery_nats_user(coordinate);
+        let message = format!("$JS.API.STREAM.MSG.GET.{stream}");
+        let inbox = inbox_subject(&recovery);
+        account
+            .users
+            .retain(|entry| entry.user != user && entry.user != recovery);
+        account.users.push(scoped_user(
+            &user,
+            &[&events, &info],
+            &[&inbox_subject(&user)],
+        ));
+        account
+            .users
+            .push(scoped_user(&recovery, &[&info, &message], &[&inbox]));
+        update_file_limit(account);
+        account
+            .users
+            .sort_unstable_by(|left, right| left.user.cmp(&right.user));
     })
     .await
 }
@@ -133,13 +168,15 @@ pub async fn provision_project(target: &Target, coordinate: &Triple) -> anyhow::
 /// Remove the reader user. Return whether the shared credential can be retired.
 pub async fn remove_project(target: &Target, coordinate: &Triple) -> anyhow::Result<bool> {
     let account = name::environment_nats_account(&coordinate.org, &coordinate.env);
-    let environment_user = name::environment_nats_user(&coordinate.org, &coordinate.env);
-    let reader = name::cdc_nats_user(coordinate);
+    let reader = name::cdc_nats_user(&coordinate.org, &coordinate.project, &coordinate.env);
+    let recovery = name::recovery_nats_user(coordinate);
     let mut last = false;
     update(target, |accounts| {
         last = accounts.get_mut(&account).is_none_or(|entry| {
-            entry.users.retain(|user| user.user != reader);
-            update_file_limit(entry, &environment_user) == 0
+            entry
+                .users
+                .retain(|user| user.user != reader && user.user != recovery);
+            update_file_limit(entry) == 0
         });
         if last {
             accounts.remove(&account);
@@ -160,12 +197,21 @@ async fn update(target: &Target, mut edit: impl FnMut(&mut Accounts)) -> anyhow:
                 read_accounts(secret)?
             } else {
                 let mut accounts = Accounts::new();
-                accounts.insert(PLATFORM.into(), Account { users: platform_users(), jetstream: None });
+                accounts.insert(
+                    PLATFORM.into(),
+                    Account {
+                        users: platform_users(),
+                        jetstream: None,
+                    },
+                );
                 accounts
             };
             edit(&mut accounts);
             let document = serde_json::to_string(&accounts).context("encode broker accounts")?;
-            secret.data.insert(FILE.into(), STANDARD.encode(format!("{ACCOUNTS_PREFIX}{document}\n")));
+            secret.data.insert(
+                FILE.into(),
+                STANDARD.encode(format!("{ACCOUNTS_PREFIX}{document}\n")),
+            );
             Ok(())
         },
     )
@@ -173,7 +219,14 @@ async fn update(target: &Target, mut edit: impl FnMut(&mut Accounts)) -> anyhow:
 }
 
 async fn authorization_secret(target: &Target) -> anyhow::Result<Option<Secret>> {
-    kubectl::get(&target.kubeconfig, &target.context, NAMESPACE, "secret", AUTHORIZATION).await
+    kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        NAMESPACE,
+        "secret",
+        AUTHORIZATION,
+    )
+    .await
 }
 
 fn read_accounts(secret: &Secret) -> anyhow::Result<Accounts> {
@@ -186,13 +239,19 @@ fn read_accounts(secret: &Secret) -> anyhow::Result<Accounts> {
 
 /// Check whether a project can still have a source stream. On an interrupted delete,
 /// removing the account can succeed before cleanup removes the certificate Secret.
-pub async fn environment_account_exists(target: &Target, coordinate: &Triple) -> anyhow::Result<bool> {
+pub async fn environment_account_exists(
+    target: &Target,
+    coordinate: &Triple,
+) -> anyhow::Result<bool> {
     let Some(secret) = authorization_secret(target).await? else {
         return Ok(false);
     };
-    Ok(read_accounts(&secret)?.contains_key(
-        &name::environment_nats_account(&coordinate.org, &coordinate.env),
-    ))
+    Ok(
+        read_accounts(&secret)?.contains_key(&name::environment_nats_account(
+            &coordinate.org,
+            &coordinate.env,
+        )),
+    )
 }
 
 /// Parameters of the Helm-owned client Certificate mapped into its account by DNS SAN.
@@ -260,12 +319,19 @@ mod tests {
         for name in ["wasmcloud-operator", "wasmcloud-runtime"] {
             let user = users.iter().find(|user| user.user == name).unwrap();
             let permissions = user.permissions.as_ref().unwrap();
-            for subjects in [&permissions.publish, &permissions.subscribe] {
-                assert_eq!(
-                    subjects.allow,
-                    ["runtime.host.>", "runtime.operator.>", "_INBOX.>"]
-                );
-            }
+            assert_eq!(
+                permissions.publish.allow,
+                [
+                    "runtime.host.>",
+                    "runtime.operator.>",
+                    "_INBOX_wasmcloud-operator.>",
+                    "_INBOX_wasmcloud-runtime.>"
+                ]
+            );
+            assert_eq!(
+                permissions.subscribe.allow,
+                ["runtime.host.>", "runtime.operator.>", &inbox_subject(name)]
+            );
         }
     }
 }

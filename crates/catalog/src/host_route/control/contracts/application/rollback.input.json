@@ -25,8 +25,8 @@
       "values": []
     },
     {
-      "path": "value.release",
-      "type": "text",
+      "path": "value.revision",
+      "type": "int32",
       "nullable": true,
       "values": []
     }

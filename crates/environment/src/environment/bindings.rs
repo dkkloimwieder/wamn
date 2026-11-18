@@ -66,8 +66,9 @@ pub async fn analyse(
     system: &mut sqlx::PgConnection,
     project: &mut sqlx::PgConnection,
     document: &EnvironmentDocument,
-    packages: &[PackageManifest],
+    packages: impl IntoIterator<Item = &PackageManifest>,
 ) -> Result<Vec<Binding>, BindingError> {
+    let packages = packages.into_iter().collect::<Vec<_>>();
     let mut selected = BTreeMap::new();
     // Only referenced integrations of the selected package closure need connections.
     let applications: Vec<_> = document

@@ -116,6 +116,8 @@
     "service_principal/disable.errors.json"
   ],
   "operation.started": [
+    "capture_gap/recover.result.json",
+    "capture_gap/close.result.json",
     "application/deploy.result.json",
     "application/rollback.result.json",
     "schema/diff.result.json",

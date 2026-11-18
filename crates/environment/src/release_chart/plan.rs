@@ -18,14 +18,12 @@ pub fn release_name(
     env: &wamn_registry::EnvName,
     application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<String> {
-    Ok(
-        wamn_provision::environment_names::application_release_name(
-            org,
-            project,
-            env,
-            application,
-        )?,
-    )
+    Ok(wamn_provision::environment_names::application_release_name(
+        org,
+        project,
+        env,
+        application,
+    )?)
 }
 
 /// The name the release chart gives the WorkloadDeployment of `role` in
@@ -49,8 +47,8 @@ pub fn roles(
     integration_repository: &str,
 ) -> anyhow::Result<Vec<Role>> {
     use wamn_catalog::application_config::{
-        ApplicationComponent, ApplicationConfig, ApplicationConnection, ApplicationOperation,
-        ApplicationDataChange, ApplicationOperationType, DataChangeModel,
+        ApplicationComponent, ApplicationConfig, ApplicationConnection, ApplicationDataChange,
+        ApplicationOperation, ApplicationOperationType, DataChangeModel,
     };
     let mut components = Vec::new();
     let mut declared_connections = std::collections::BTreeMap::new();
@@ -239,8 +237,15 @@ pub fn roles(
                             relation.owner,
                         );
                     }
-                    let subject = wamn_registry::name::event_subject(org, project, env, &format!("{entity}.{op}"));
-                    subscriptions.insert(format!("{stream}:{subject}:new:{application}-{entity}-{op}"));
+                    let subject = wamn_registry::name::event_subject(
+                        org,
+                        project,
+                        env,
+                        &format!("{entity}.{op}"),
+                    );
+                    subscriptions.insert(format!(
+                        "{stream}:{subject}:new:{application}-{entity}-{op}"
+                    ));
                 }
                 models.push(DataChangeModel {
                     owner_package: relation.owner.clone(),
@@ -395,6 +400,8 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     values.insert("environment".into(), environment.into());
     values.insert("routeHost".into(), input.route_host.clone().into());
     values.insert("platformUi".into(), Value::Null);
+    values.insert("org".into(), input.org.to_string().into());
+    values.insert("project".into(), input.project.to_string().into());
     values.insert(
         "applications".into(),
         serde_yaml::to_value(&input.applications).context("render the applications")?,

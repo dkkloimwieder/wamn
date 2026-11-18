@@ -20,7 +20,7 @@ pub struct DeployArgs {
     /// The application to deploy.
     #[arg(long)]
     pub application: wamn_catalog::ApplicationName,
-    /// The target environment file. Apply application SQL before deploying code.
+    /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
     #[command(flatten)]
@@ -30,10 +30,10 @@ pub struct DeployArgs {
 #[derive(Debug, Args)]
 pub struct RollbackArgs {
     pub application: wamn_catalog::ApplicationName,
-    /// The published target release, to select an explicit release.
+    /// Restore the content of this Helm revision.
     #[arg(long)]
-    pub release: Option<wamn_digest::Digest>,
-    /// The target environment file. Rollback preserves schema.mode and other applications.
+    pub revision: Option<std::num::NonZeroU32>,
+    /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
 }
@@ -61,7 +61,12 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
                 &file.into_project(&triple.project)?,
                 Some(&args.application),
             )?;
-            let published = wamn_dev::source_deploy::publish_from_env(&document, &package, args.describe.mode(false)?).await?;
+            let published = wamn_dev::source_deploy::publish_from_env(
+                &document,
+                &package,
+                args.describe.mode(false)?,
+            )
+            .await?;
             published.1
         }
         None => args
@@ -83,7 +88,7 @@ pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
         .run(
             "application.rollback",
             &triple,
-            json!({"application":args.application,"release":args.release}),
+            json!({"application":args.application,"revision":args.revision}),
         )
         .await
 }

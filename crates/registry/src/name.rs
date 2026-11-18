@@ -244,13 +244,28 @@ pub fn environment_nats_secret(org: &crate::OrgId, env: &crate::EnvName) -> Stri
 }
 
 /// The publish-only certificate user for the project's CDC reader.
-pub fn cdc_nats_user(target: &crate::Triple) -> String {
-    format!("wamn-cdc-{}", project_env_key(&target.org, &target.project, &target.env))
+pub fn cdc_nats_user(
+    org: &crate::OrgId,
+    project: &crate::ProjectId,
+    env: &crate::EnvName,
+) -> String {
+    format!("wamn-cdc-{}", project_env_key(org, project, env))
 }
 
 /// The Certificate and TLS Secret of the project's CDC reader.
 pub fn cdc_nats_certificate(target: &crate::Triple) -> String {
-    format!("wamn-cdc-nats-{}", project_env_key(&target.org, &target.project, &target.env))
+    format!(
+        "wamn-cdc-nats-{}",
+        project_env_key(&target.org, &target.project, &target.env)
+    )
+}
+
+/// The project recovery user and its client Certificate and Secret name.
+pub fn recovery_nats_user(target: &crate::Triple) -> String {
+    format!(
+        "wamn-recovery-{}",
+        project_env_key(&target.org, &target.project, &target.env)
+    )
 }
 
 /// The subject ceiling shared by the projects of an environment.

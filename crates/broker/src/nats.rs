@@ -3,6 +3,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Root of the request inboxes for a restricted certificate user.
+pub fn inbox_prefix(user: &str) -> String {
+    format!("_INBOX_{user}")
+}
+
 /// The NATS connection of a platform process that is not a host: identity,
 /// wamn, the CDC reader and the provisioning Jobs. The server takes only a
 /// client certificate of the platform CA, and maps it to the process's user
@@ -42,8 +47,25 @@ impl PlatformNats {
 
     /// Connect with the client certificate.
     pub async fn connect(&self) -> anyhow::Result<async_nats::Client> {
+        self.connect_with_options(async_nats::ConnectOptions::new())
+            .await
+    }
+
+    /// Connect with the client certificate and a caller-selected inbox prefix.
+    pub async fn connect_with_inbox_prefix(
+        &self,
+        prefix: &str,
+    ) -> anyhow::Result<async_nats::Client> {
+        self.connect_with_options(async_nats::ConnectOptions::new().custom_inbox_prefix(prefix))
+            .await
+    }
+
+    async fn connect_with_options(
+        &self,
+        options: async_nats::ConnectOptions,
+    ) -> anyhow::Result<async_nats::Client> {
         let options = tls_options(
-            async_nats::ConnectOptions::new(),
+            options,
             Some(&self.nats_tls_ca),
             Some(&self.nats_tls_cert),
             Some(&self.nats_tls_key),

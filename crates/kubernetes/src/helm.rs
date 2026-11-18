@@ -87,7 +87,7 @@ pub async fn upgrade(
     values: &std::path::Path,
     timeout: std::time::Duration,
 ) -> anyhow::Result<()> {
-    upgrade_with_readiness(target, chart, name, values, timeout, true).await
+    upgrade_with_readiness(target, chart, name, values, timeout, true, true).await
 }
 
 /// Submit a release whose workload needs the caller's post-upgrade SQL.
@@ -98,7 +98,18 @@ pub async fn upgrade_without_wait(
     values: &std::path::Path,
     timeout: std::time::Duration,
 ) -> anyhow::Result<()> {
-    upgrade_with_readiness(target, chart, name, values, timeout, false).await
+    upgrade_with_readiness(target, chart, name, values, timeout, false, false).await
+}
+
+/// Upgrade an application in its provisioned org namespace and wait.
+pub async fn upgrade_application(
+    target: &crate::Target,
+    chart: &std::path::Path,
+    name: &str,
+    values: &std::path::Path,
+    timeout: std::time::Duration,
+) -> anyhow::Result<()> {
+    upgrade_with_readiness(target, chart, name, values, timeout, true, false).await
 }
 
 /// Change explicit values on an existing release without reading them back into the caller.
@@ -109,13 +120,28 @@ pub async fn update_values(
     values: &std::path::Path,
 ) -> anyhow::Result<()> {
     run(&[
-        "--kubeconfig".as_ref(), target.kubeconfig.as_os_str(),
-        "--kube-context".as_ref(), target.context.as_ref(),
-        "upgrade".as_ref(), "--namespace".as_ref(), target.namespace.as_ref(),
-        name.as_ref(), chart.as_os_str(), "--reuse-values".as_ref(),
-        "-f".as_ref(), values.as_os_str(), "--wait".as_ref(),
-        "--timeout".as_ref(), "600s".as_ref(), "--history-max".as_ref(), "50".as_ref(),
-    ]).await.map(drop)
+        "--kubeconfig".as_ref(),
+        target.kubeconfig.as_os_str(),
+        "--kube-context".as_ref(),
+        target.context.as_ref(),
+        "upgrade".as_ref(),
+        "--namespace".as_ref(),
+        target.namespace.as_ref(),
+        name.as_ref(),
+        chart.as_os_str(),
+        "--reuse-values".as_ref(),
+        "-f".as_ref(),
+        values.as_os_str(),
+        // Project CR readiness is checked by its lifecycle owner. The legacy
+        // waiter avoids namespace-wide watches on named project resources.
+        "--wait=legacy".as_ref(),
+        "--timeout".as_ref(),
+        "600s".as_ref(),
+        "--history-max".as_ref(),
+        "50".as_ref(),
+    ])
+    .await
+    .map(drop)
 }
 
 async fn upgrade_with_readiness(
@@ -125,6 +151,7 @@ async fn upgrade_with_readiness(
     values: &std::path::Path,
     timeout: std::time::Duration,
     wait: bool,
+    create_namespace: bool,
 ) -> anyhow::Result<()> {
     let timeout = format!("{}s", timeout.as_secs());
     let mut arguments = vec![
@@ -134,7 +161,6 @@ async fn upgrade_with_readiness(
         target.context.as_ref(),
         "upgrade".as_ref(),
         "--install".as_ref(),
-        "--create-namespace".as_ref(),
         "--namespace".as_ref(),
         target.namespace.as_ref(),
         name.as_ref(),
@@ -148,6 +174,9 @@ async fn upgrade_with_readiness(
     ];
     if wait {
         arguments.push("--wait".as_ref());
+    }
+    if create_namespace {
+        arguments.push("--create-namespace".as_ref());
     }
     run(&arguments).await.map(drop)
 }

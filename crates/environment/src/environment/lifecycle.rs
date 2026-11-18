@@ -37,6 +37,7 @@ pub async fn configure(
                 &document.policy,
             )
             .await?;
+            let applied_document = document.to_yaml()?;
             let projects: Vec<_> = match application {
                 Some(application) => vec![document.into_application(application)?],
                 None => document.into_projects().collect(),
@@ -79,6 +80,7 @@ pub async fn configure(
                     system_owner,
                     &lock,
                     index == 0,
+                    &applied_document,
                 )
                 .await
                 .with_context(|| {
@@ -145,6 +147,7 @@ async fn configure_project(
     system_owner: &str,
     lock: &LifecycleLock,
     first: bool,
+    applied_document: &str,
 ) -> anyhow::Result<()> {
     let triple = &outcome.triple;
     if first {
@@ -207,12 +210,19 @@ async fn configure_project(
     values["databaseConfig"] =
         workload::configuration_values(triple, &outcome.instance, &connections)?;
     let certificate = name::cdc_nats_certificate(triple);
-    values["brokerCertificates"] = json!([wamn_broker::authorization::certificate(
-        &certificate,
-        &certificate,
-        &name::cdc_nats_user(triple),
-    )]);
+    let recovery = name::recovery_nats_user(triple);
+    values["brokerCertificates"] = json!([
+        wamn_broker::authorization::certificate(
+            &certificate,
+            &certificate,
+            &name::cdc_nats_user(&triple.org, &triple.project, &triple.env),
+        ),
+        wamn_broker::authorization::certificate(&recovery, &recovery, &recovery),
+    ]);
+    values["environmentDocument"] = applied_document.into();
     values["cdcReader"] = reader_values(platform, triple, &publication, &capture).await?;
+    let paused = super::capture_gap::is_open(&mut *lock.client().await, triple).await?;
+    values["cdcReader"]["pause"] = paused.into();
     // Wait for the database first because the reader needs the slot created below.
     let release = wamn_provision::environment_names::environment_resource_name(
         &triple.org,
@@ -283,7 +293,9 @@ async fn configure_project(
             )
             .await?;
             resources::ensure_stream(platform, triple).await?;
-            super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;
+            if !paused {
+                super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;
+            }
             let mut connection = lock.client().await;
             let mut tx = provision_project_env::provisioning_transaction(&mut connection).await?;
             document.save(&mut tx).await?;

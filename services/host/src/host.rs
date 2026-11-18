@@ -416,6 +416,7 @@ const SCHEDULER_NATS_BUFFER: usize = 2048;
 async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<async_nats::Client> {
     let mut opts = async_nats::ConnectOptions::new()
         .name(name)
+        .custom_inbox_prefix(wamn_broker::nats::inbox_prefix("wasmcloud-runtime"))
         .max_reconnects(None)
         .client_capacity(SCHEDULER_NATS_BUFFER);
     opts = wamn_broker::nats::tls_options(
