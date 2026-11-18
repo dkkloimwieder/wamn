@@ -86,6 +86,7 @@ Org → environment → project → application. One boundary per level.
 
 - Application developers are the main users of Data change. A component declares in `wamn.k` the models and ops (`insert`, `update`, `delete`) it handles and the role it runs as, and exports a small wamn handler interface that takes the event as JSON.
 - Deploy renders one durable JetStream subscription for each declared (model, op) into the workload config, aimed at the route guest `flow-http`, which exports the stock `wasmcloud:nats/jetstream-handler`. The stock plugin creates the consumers. Only declared models get consumers. `flow-http` checks the owner package and dispatches to the declared component through the operation path, as the `workflow` user with the declared role.
+- One handler for each (owner package, model, op) in an application: deploy refuses two. A developer who wants two reactions puts them in one component. The host accepts `dispatch-data-change` only from `flow-http`.
 - Delivery is at least once, with no run row. The message id lets a handler skip repeats.
 - One NATS account per environment. The environment host group has one stock `wasmcloud-nats` entry, and each workload narrows its grants to its project's stream and subjects.
 - Each CDC reader has its own publish-only user in the environment account. The source stream keeps messages for 7 days, under a byte limit below the account's limit.
@@ -602,6 +603,8 @@ Issues:
 7.8 Data change handlers in application components. Runs after 7.3.
 - `wamn.k` declares model, ops (`insert`, `update`, `delete`) and role for a component, which exports a wamn handler interface taking the event as JSON.
 - Release planning renders one durable `jetstream-subscriptions` entry for each (model, op) into the workload config, targeted at `flow-http`, which exports the stock `jetstream-handler`. `flow-http` checks the owner package and dispatches through the operation path.
+- One entry for each (application, model, op), with queue group `<application>-<model>-<op>`. Release planning refuses two components that declare the same (owner package, model, op).
+- The export is `wamn:handler@0.1.0/data-change` (`handle(event: string) -> result<_, string>`). `wamn:operation` gets `dispatch-data-change(component, event)`, which the host accepts only from `flow-http`.
 - At least once, no run row. Handler calls to wamn host functions run as the `workflow` user with the declared role.
 
 7.7 Event crate merge. Runs last.
@@ -2047,3 +2050,5 @@ Facts:
 - The configure Job uses the environment credential. Each CDC reader has a publish-only user, as F7 states. The reader Deployment comes back, the bootstrap is fixed, and the operator charts move to 2.12.1.
 - App handlers: `flow-http` is the workload's one stock `jetstream-handler`. It checks the owner package and dispatches to the declared component through the operation path, as the `workflow` user with the declared role. Components export a wamn handler interface with JSON.
 - Ops are `insert`, `update` and `delete`, and `wamn.k` names a model of the component's package.
+
+**Ruled (D, 2026-11-17): one Data change handler for each model and op.** The stock `message-handle` does not say which consumer delivered a message, so an application has one subscription for each (model, op), and release planning refuses two components that declare the same (owner package, model, op). A failure re-runs only that handler. The host accepts `dispatch-data-change` only from the route guest, so one component cannot run another's handler under its role.
