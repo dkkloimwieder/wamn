@@ -16,11 +16,15 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     let cluster = "database-owner";
     let database = "recorded-environment-database";
     let capture_secret = wamn_registry::name::project_login_secret(database, wamn_role::CDC_LOGIN);
+    let application = "shop".parse()?;
+    let mut values =
+        operations::values(&document, cluster, database, std::iter::once(&application))?;
+    values["namespace"] = json!(document.org);
     let entry = crate::environment::entry(
         &repository.join("deploy/charts/project"),
         document.org.as_str(),
         "fixture",
-        operations::values(&document, cluster, database, std::iter::empty())?,
+        values,
     )?;
     let objects = wamn_kubernetes::helm::template(&entry)?;
     let mut identities = std::collections::BTreeSet::new();
@@ -41,149 +45,48 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     {
         assert_eq!(account["metadata"]["namespace"], document.org.as_str());
         let name = account["metadata"]["name"].as_str().unwrap();
-        let privileged = name.ends_with("-operation");
-        let capture = wamn_provision::cdc_reader_name(
-            &document.org,
-            &document.project,
-            &document.env,
-        );
-        for binding in objects
+        let values = &entry["values"]["operations"];
+        let binding = objects
             .iter()
-            .filter(|object| object["kind"] == "RoleBinding" && object["metadata"]["name"] == name)
-        {
-            assert_eq!(binding["subjects"][0]["name"], name);
-            assert_eq!(
-                binding["subjects"][0]["namespace"],
-                account["metadata"]["namespace"]
-            );
-            let role = objects
-                .iter()
-                .find(|object| {
-                    object["kind"] == "Role"
-                        && object["metadata"]["name"] == binding["roleRef"]["name"]
-                        && object["metadata"]["namespace"] == binding["metadata"]["namespace"]
-                })
-                .unwrap();
-            assert_eq!(role["metadata"]["namespace"], document.org.as_str());
-            if name != capture {
-                assert!(role["rules"].as_array().unwrap().iter().any(|rule| {
-                    rule["apiGroups"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .any(|group| group == "")
-                        && rule["resources"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|resource| resource == "pods/proxy")
-                        && rule["verbs"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|verb| verb == "get")
-                }));
-            }
-            for rule in role["rules"].as_array().unwrap() {
-                if name == capture {
-                    assert!(
-                        rule["resources"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .all(|resource| resource == "secrets")
-                    );
-                    assert!(
-                        rule["verbs"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .all(|verb| verb == "get")
-                    );
-                    let allowed = [&capture_secret, &format!("{cluster}-ca")];
-                    assert!(
-                        rule["resourceNames"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .all(|resource| allowed
-                                .iter()
-                                .any(|name| resource.as_str() == Some(name.as_str())))
-                    );
-                    assert!(allowed.iter().all(|name| {
-                        rule["resourceNames"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|resource| resource.as_str() == Some(name.as_str()))
-                    }));
-                }
+            .find(|object| object["kind"] == "RoleBinding" && object["metadata"]["name"] == name)
+            .unwrap();
+        assert_eq!(binding["subjects"][0]["name"], name);
+        assert_eq!(
+            binding["subjects"][0]["namespace"],
+            account["metadata"]["namespace"]
+        );
+        let role = objects
+            .iter()
+            .find(|object| {
+                object["kind"] == "Role"
+                    && object["metadata"]["name"] == binding["roleRef"]["name"]
+                    && object["metadata"]["namespace"] == binding["metadata"]["namespace"]
+            })
+            .unwrap();
+        assert_eq!(role["metadata"]["namespace"], document.org.as_str());
 
-                if role["metadata"]["namespace"] == document.org.as_str() {
-                    let resources = rule["resources"].as_array().unwrap();
-                    let verbs = rule["verbs"].as_array().unwrap();
-                    if resources.iter().any(|resource| resource == "secrets") {
-                        assert!(!verbs.iter().any(|verb| verb == "watch"));
-                        if verbs.iter().any(|verb| verb == "patch") {
-                            assert!(privileged, "only the project worker patches Secrets");
-                        }
-                    }
-                }
-                for field in ["resources", "verbs", "apiGroups"] {
-                    assert!(
-                        !rule[field]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|value| value == "*")
-                    );
-                }
-                if rule["apiGroups"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|group| group == "postgresql.cnpg.io")
-                {
-                    assert!(privileged);
-                    let target = if rule["resources"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .any(|value| value == "databases")
-                    {
-                        database
-                    } else {
-                        cluster
-                    };
-                    {
-                        let observed = &(rule["resourceNames"]);
-                        assert_eq!(observed.as_array().expect("array").len(), 1);
-                        assert_eq!(observed[0], serde_json::json!(target));
-                    };
-                    assert!(
-                        !rule["verbs"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|verb| verb == "create" || verb == "delete")
-                    );
-                }
+        let allowed = if name == values["capture"] {
+            json!({ "secrets": [capture_secret, format!("{cluster}-ca")] })
+        } else {
+            assert_eq!(name, format!("{}-operation", values["name"].as_str().unwrap()));
+            json!({ "secrets": values["diffSecrets"], "workloaddeployments": values["diffWorkloads"] })
+        };
+        let mut observed = std::collections::BTreeSet::new();
+        for rule in role["rules"].as_array().unwrap() {
+            assert_eq!(rule["verbs"], json!(["get"]));
+            for resource in rule["resources"].as_array().unwrap() {
+                let resource = resource.as_str().unwrap();
+                let api = match resource {
+                    "secrets" => "",
+                    "workloaddeployments" => "runtime.wasmcloud.dev",
+                    _ => panic!("unexpected {resource} access"),
+                };
+                assert_eq!(rule["apiGroups"], json!([api]));
+                assert!(observed.insert(resource));
+                assert_eq!(rule["resourceNames"], allowed[resource]);
             }
         }
-        assert_eq!(
-            objects.iter().any(|object| object["kind"] == "Role"
-                && object["metadata"]["name"] == name
-                && object["rules"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|rule| rule["apiGroups"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .any(|value| value == "postgresql.cnpg.io"))),
-            privileged
-        );
+        assert_eq!(observed, allowed.as_object().unwrap().keys().map(String::as_str).collect());
     }
     Ok(())
 }
@@ -212,7 +115,7 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
             &repository.join("deploy/charts/environment"),
             coordinates[index].0,
             &accounts[index],
-            json!({"credentialAccess":{"account":accounts[index],"secrets":[secrets[index]]}}),
+            json!({"namespace":coordinates[index].0,"credentialAccess":{"account":accounts[index],"secrets":[secrets[index]]}}),
         )?;
         let objects = wamn_kubernetes::helm::template(&entry)?;
         let binding = objects

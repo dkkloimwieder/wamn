@@ -44,9 +44,9 @@ metadata:
   namespace: {{ $org | quote }}
 rules:
 - apiGroups: [""]
-  # Helm stores release records here and still applies the payload Secrets.
+  # Project provisioning reads and applies payload Secrets. Cleanup deletes them by name.
   resources: [secrets]
-  verbs: [get, list, create, update, patch, delete]
+  verbs: [get, create, patch, delete]
 - apiGroups: [""]
   resources: [configmaps, services, serviceaccounts]
   verbs: [get, list, watch, create, update, patch, delete]

@@ -120,7 +120,8 @@ Only overlays compose with their pinned bases.
 
 One YAML file declares the projects, applications, and connection pins of an environment.
 The registry stores the applied settings and one version per connection name in the environment.
-Helm records deployment and rollback history.
+Helm records deployment and rollback history in `wamn-helm-<org>`. The org worker can list the release Secrets there.
+The charts place org resources explicitly using the namespace supplied in their values.
 The org chart declares the namespace, base RBAC, object and storage quotas, and default-deny network policy.
 The environment chart allows traffic for its host group. The project chart allows traffic for its database and change reader.
 Each application release adds its integration ports to the host group's public egress. The runtime enforces the authorities on each wasm integration.

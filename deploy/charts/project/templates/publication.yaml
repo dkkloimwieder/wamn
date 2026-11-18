@@ -3,7 +3,7 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Publication
 metadata:
   name: {{ .database }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "project.namespace" $ | quote }}
   labels:
     wamn.org: {{ .org | quote }}
     wamn.project: {{ .project | quote }}

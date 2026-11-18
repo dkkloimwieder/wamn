@@ -8,4 +8,7 @@ Set `networkPolicy.apiServer` and `networkPolicy.registry` to lists of CIDR and 
 Include addresses and ports used before and after Service translation where the network plugin requires them.
 Environment and project releases supply the policy rules for their host groups, project databases, and CDC readers.
 
-The operation worker keeps the Helm Secret permissions while releases and payloads share the org namespace.
+Create `wamn-helm-<org>` before installing the org chart, and use it as the Helm release namespace.
+The trusted install entry point in Epic 10 will create it.
+The chart grants the org worker access to Helm release Secrets in that namespace. Keep payload and credential Secrets in their resource namespaces.
+Existing Helm records stay in their original namespaces.

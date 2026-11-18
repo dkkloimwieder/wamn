@@ -11,7 +11,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ (default .Release.Name .Values.name) }}
-  namespace: {{ (default .Release.Namespace .Values.namespace) }}
+  namespace: {{ (required "Set namespace." .Values.namespace) | quote }}
   labels:
     app.kubernetes.io/name: wamn-identity
     app.kubernetes.io/instance: {{ (default .Release.Name .Values.name) }}

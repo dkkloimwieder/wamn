@@ -1,3 +1,5 @@
+namespace: ""
+
 database: null
 publication: null
 cdcReader: null

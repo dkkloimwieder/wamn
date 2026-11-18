@@ -4,7 +4,7 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
   name: {{ .name }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "project.namespace" $ | quote }}
 spec:
   name: {{ .name }}
   owner: {{ required "database.owner is required" .owner }}

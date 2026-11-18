@@ -11,3 +11,7 @@
     "objectStorage" (printf "%s-allow-database-to-object-storage" $name)
     | toJson -}}
 {{- end -}}
+
+{{- define "project.namespace" -}}
+{{- required "Set namespace." .Values.namespace -}}
+{{- end -}}

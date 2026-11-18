@@ -211,7 +211,7 @@ async fn host_values(
     };
     tx.commit().await?;
     if projects.is_empty() {
-        return Ok(json!({"runtime-operator":{"runtime":{"hostGroups":[]}}}));
+        return Ok(json!({"namespace":org,"runtime-operator":{"runtime":{"hostGroups":[]}}}));
     }
 
     let mut group =
@@ -365,6 +365,7 @@ async fn host_values(
     let admin = name::environment_nats_admin(org, env);
     let admin_certificate = wamn_broker::authorization::certificate(&admin, &admin, &admin);
     Ok(json!({
+        "namespace":org,
         "runtime-operator":{"runtime":{"hostGroups":[group],
             "terminationGracePeriodSeconds":policy.drain_bound_seconds,
             "serviceAccount":{"name":account}}},

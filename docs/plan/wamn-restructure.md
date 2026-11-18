@@ -770,6 +770,8 @@ Issues:
 - Epic 10: D6, the host NATS URLs default to `nats.<release namespace>` while the service is `wamn-nats.platform`, and hosts start no HTTP listener. D7, `registry.event_readers` has no writer, so capture-gap recovery refuses on a fresh project.
 - After the restructure: NATS JWT accounts with a resolver, replacing file-based accounts. NATS's own docs treat splitting auth into include files as buying time before moving off centralized configuration.
 - Epic 10 or later: NATS runs as one pod with one-replica streams, so adding an org (a new accounts Secret mount) restarts the broker for 10 to 60 seconds, and core NATS messages in that gap are lost. Three NATS pods with three-replica streams would keep quorum through a rolling restart.
+- Epic 10: the trusted install entry point installs the org chart (namespace, quota, base RBAC, default deny) and creates `wamn-helm-<org>` before it.
+- Epic 10, to verify: database logins by client certificate. Each project chart renders a cert-manager `Certificate` per login, Postgres authenticates by certificate, and hosts mount `tls.crt` and `tls.key`. Release records then hold no passwords, project accounts can run their own Helm Jobs again, and nothing needs password rotation. Check CloudNativePG's support for certificate auth on managed roles and `wamn-postgres` connecting with a client certificate.
 
 # Part 2: Review log
 

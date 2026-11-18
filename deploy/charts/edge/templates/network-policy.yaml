@@ -3,7 +3,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-traefik-to-edge
-  namespace: {{ default .Release.Namespace .Values.namespace }}
+  namespace: {{ required "Set namespace." .Values.namespace | quote }}
 spec:
   podSelector:
     matchLabels:

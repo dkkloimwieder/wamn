@@ -2,7 +2,12 @@
 pub(super) mod plan;
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
-use std::{ffi::OsStr, process::Stdio};
+use std::{borrow::Cow, ffi::OsStr, process::Stdio};
+
+/// The Helm storage namespace for releases owned by an org.
+pub fn org_release_namespace(org_namespace: &str) -> Cow<'_, str> {
+    Cow::Owned(format!("wamn-helm-{org_namespace}"))
+}
 
 pub async fn run(arguments: &[&OsStr]) -> anyhow::Result<Vec<u8>> {
     let output = output(arguments).await?;
@@ -95,43 +100,18 @@ impl Wait {
     }
 }
 
-/// Install or upgrade one Helm owner and leave a failed revision available for inspection.
-pub async fn upgrade(
-    target: &crate::Target,
-    chart: &std::path::Path,
-    name: &str,
-    values: &std::path::Path,
-    timeout: std::time::Duration,
-    wait: Wait,
-) -> anyhow::Result<()> {
-    upgrade_with_readiness(target, chart, name, values, timeout, wait, true).await
-}
-
-/// Submit a release whose workload needs the caller's post-upgrade SQL.
-pub async fn upgrade_without_wait(
-    target: &crate::Target,
-    chart: &std::path::Path,
-    name: &str,
-    values: &std::path::Path,
-    timeout: std::time::Duration,
-) -> anyhow::Result<()> {
-    upgrade_with_readiness(target, chart, name, values, timeout, Wait::None, false).await
-}
-
-/// Upgrade a release in its provisioned org namespace and wait with the watcher.
-pub async fn upgrade_watched(
-    target: &crate::Target,
-    chart: &std::path::Path,
-    name: &str,
-    values: &std::path::Path,
-    timeout: std::time::Duration,
-) -> anyhow::Result<()> {
-    upgrade_with_readiness(target, chart, name, values, timeout, Wait::Watcher, false).await
+/// Prerequisites for the install path of an upgrade.
+#[derive(Clone, Copy, Debug)]
+pub enum Install {
+    CreateNamespace,
+    ExistingNamespace,
+    SkipCrds,
 }
 
 /// Change explicit values on an existing release without reading them back into the caller.
 pub async fn update_values(
     target: &Target,
+    namespace: &str,
     chart: &std::path::Path,
     name: &str,
     values: &std::path::Path,
@@ -143,10 +123,11 @@ pub async fn update_values(
         target.context.as_ref(),
         "upgrade".as_ref(),
         "--namespace".as_ref(),
-        target.namespace.as_ref(),
+        namespace.as_ref(),
         name.as_ref(),
         chart.as_os_str(),
         "--reuse-values".as_ref(),
+        "--server-side=true".as_ref(),
         "-f".as_ref(),
         values.as_os_str(),
         "--timeout".as_ref(),
@@ -158,16 +139,16 @@ pub async fn update_values(
     .map(drop)
 }
 
-async fn upgrade_with_readiness(
-    target: &crate::Target,
+/// Install or upgrade one Helm release and leave failed revisions available for inspection.
+pub async fn upgrade(
+    target: &Target,
+    namespace: &str,
     chart: &std::path::Path,
     name: &str,
     values: &std::path::Path,
-    timeout: std::time::Duration,
     wait: Wait,
-    create_namespace: bool,
+    install: Install,
 ) -> anyhow::Result<()> {
-    let timeout = format!("{}s", timeout.as_secs());
     let mut arguments = vec![
         "--kubeconfig".as_ref(),
         target.kubeconfig.as_os_str(),
@@ -175,20 +156,23 @@ async fn upgrade_with_readiness(
         target.context.as_ref(),
         "upgrade".as_ref(),
         "--install".as_ref(),
+        "--server-side=true".as_ref(),
         "--namespace".as_ref(),
-        target.namespace.as_ref(),
+        namespace.as_ref(),
         name.as_ref(),
         chart.as_os_str(),
         "-f".as_ref(),
         values.as_os_str(),
         "--timeout".as_ref(),
-        timeout.as_ref(),
+        "600s".as_ref(),
         "--history-max".as_ref(),
         "50".as_ref(),
     ];
     arguments.extend(wait.argument());
-    if create_namespace {
-        arguments.push("--create-namespace".as_ref());
+    match install {
+        Install::CreateNamespace => arguments.push("--create-namespace".as_ref()),
+        Install::SkipCrds => arguments.push("--skip-crds".as_ref()),
+        Install::ExistingNamespace => {}
     }
     run(&arguments).await.map(drop)
 }
@@ -207,7 +191,12 @@ use plan::{Recovery, recovery};
 /// # Errors
 ///
 /// When Helm fails.
-pub async fn recover_pending(target: &Target, name: &str, wait: Wait) -> anyhow::Result<()> {
+pub async fn recover_pending(
+    target: &Target,
+    namespace: &str,
+    name: &str,
+    wait: Wait,
+) -> anyhow::Result<()> {
     let filter = format!("^{name}$");
     let listed = run_text(&[
         "list".as_ref(),
@@ -221,7 +210,7 @@ pub async fn recover_pending(target: &Target, name: &str, wait: Wait) -> anyhow:
         "--kube-context".as_ref(),
         target.context.as_ref(),
         "--namespace".as_ref(),
-        target.namespace.as_ref(),
+        namespace.as_ref(),
     ])
     .await?;
     let releases: Vec<serde_json::Value> =
@@ -234,17 +223,18 @@ pub async fn recover_pending(target: &Target, name: &str, wait: Wait) -> anyhow:
         return Ok(());
     };
     match recovery(status) {
-        Some(Recovery::Uninstall) => uninstall(target, name, wait).await,
+        Some(Recovery::Uninstall) => uninstall(target, namespace, name, wait).await,
         Some(Recovery::Rollback) => {
             let mut arguments = vec![
                 "rollback".as_ref(),
                 name.as_ref(),
+                "--server-side=true".as_ref(),
                 "--kubeconfig".as_ref(),
                 target.kubeconfig.as_os_str(),
                 "--kube-context".as_ref(),
                 target.context.as_ref(),
                 "--namespace".as_ref(),
-                target.namespace.as_ref(),
+                namespace.as_ref(),
             ];
             arguments.extend(wait.argument());
             run(&arguments).await.map(drop)
@@ -254,7 +244,12 @@ pub async fn recover_pending(target: &Target, name: &str, wait: Wait) -> anyhow:
 }
 
 /// Uninstall a release with its owner's wait strategy.
-pub async fn uninstall(target: &Target, name: &str, wait: Wait) -> anyhow::Result<()> {
+pub async fn uninstall(
+    target: &Target,
+    namespace: &str,
+    name: &str,
+    wait: Wait,
+) -> anyhow::Result<()> {
     let mut arguments = vec![
         "uninstall".as_ref(),
         name.as_ref(),
@@ -263,7 +258,7 @@ pub async fn uninstall(target: &Target, name: &str, wait: Wait) -> anyhow::Resul
         "--kube-context".as_ref(),
         target.context.as_ref(),
         "--namespace".as_ref(),
-        target.namespace.as_ref(),
+        namespace.as_ref(),
         "--ignore-not-found".as_ref(),
     ];
     arguments.extend(wait.argument());

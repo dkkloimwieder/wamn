@@ -29,15 +29,15 @@ Use a separate release of the project chart. The source Cluster keeps serving it
 The new Cluster uses the source name with `-restore` appended.
 It reads from the source ObjectStore and archives WAL to its own prefix.
 
-Set `project_release` to the live project release in org `acme`.
+Set `project_release` to the live project release for org `acme`, whose history is in `wamn-helm-acme`.
 Export only the source `cluster` values. Review the instances and storage for the restore.
 Set `recovery.targetTime` to the instant to recover.
 
 ```bash
-helm get values "$project_release" --namespace acme --output json |
+helm get values "$project_release" --namespace wamn-helm-acme --output json |
   jq '{cluster: .cluster}' > restore-values.json
-helm install recovery-acme-prod deploy/charts/project --namespace acme \
-  -f restore-values.json --set-string recovery.targetTime=2026-11-18T12:00:00Z
+helm install recovery-acme-prod deploy/charts/project --namespace wamn-helm-acme --server-side=true \
+  -f restore-values.json --set-string namespace=acme --set-string recovery.targetTime=2026-11-18T12:00:00Z
 
 restored_cluster="$(jq -r '.cluster.name + "-restore"' restore-values.json)"
 kubectl -n acme get cluster "$restored_cluster" -o wide
@@ -89,7 +89,7 @@ Change the workload targets to the new cluster, then delete the source cluster.
 If the restore was only an inspection, delete it and its resources.
 
 ```bash
-helm uninstall recovery-acme-prod --namespace acme
+helm uninstall recovery-acme-prod --namespace wamn-helm-acme
 ```
 
 The objects under `s3://wamn-backups/wal/acme-prod-restore` remain after the delete.

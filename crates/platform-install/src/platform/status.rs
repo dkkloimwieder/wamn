@@ -118,7 +118,12 @@ async fn owner_values(target: &Target, namespace: &str, name: &str) -> Result<Op
             }
         }));
     }
-    super::installed::release_values(target, namespace, name)
+    let release_namespace = if namespace == "platform" {
+        std::borrow::Cow::Borrowed(namespace)
+    } else {
+        wamn_kubernetes::helm::org_release_namespace(namespace)
+    };
+    super::installed::release_values(target, &release_namespace, name)
         .await
         .map_err(|_| ())
 }
@@ -175,7 +180,12 @@ async fn target_status(
             values => values,
         }),
     };
-    selected.source = format!("Helm/{namespace}/{name}/selected");
+    let release_namespace = if matches!(selection, UpgradeTarget::Host { .. }) {
+        wamn_kubernetes::helm::org_release_namespace(namespace)
+    } else {
+        std::borrow::Cow::Borrowed(namespace)
+    };
+    selected.source = format!("Helm/{release_namespace}/{name}/selected");
     let (deployment, selector) = match selection {
         UpgradeTarget::Identity => (
             "identity".to_owned(),
@@ -300,7 +310,8 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
     }
     let mut inherited_hosts = Vec::new();
     let mut inherited_readiness = Vec::new();
-    let hosts = helm_json(target, &["list", "-n", document.org.as_str(), "-o", "json"]).await;
+    let org_release_namespace = wamn_kubernetes::helm::org_release_namespace(document.org.as_str());
+    let hosts = helm_json(target, &["list", "-n", &org_release_namespace, "-o", "json"]).await;
     for release in hosts
         .as_ref()
         .ok()
@@ -323,7 +334,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
                     .map(Option::as_ref)
                     .map_err(|error| *error),
             );
-            selected.source = format!("Helm/hosts/{name}/selected");
+            selected.source = format!("Helm/{org_release_namespace}/{name}/selected");
             if installed.is_err() {
                 selected.next = Some("Restore access to the owning Helm release values".into());
             }
@@ -384,7 +395,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
     for (namespace, name) in [
         ("platform", "wamn-infrastructure"),
         ("platform", "wamn"),
-        (document.org.as_str(), org_release.as_str()),
+        (org_release_namespace.as_ref(), org_release.as_str()),
     ] {
         let result = helm_json(
             target,
@@ -402,10 +413,14 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         observations.push(helm_status(namespace, name, result.as_ref().ok()));
     }
     let control_http = format!("{control}-http");
-    for (namespace, owner) in [
-        ("platform", "wamn-infrastructure"),
-        ("platform", "wamn"),
-        (document.org.as_str(), org_release.as_str()),
+    for (namespace, owner, object_namespace) in [
+        ("platform", "wamn-infrastructure", "platform"),
+        ("platform", "wamn", "platform"),
+        (
+            org_release_namespace.as_ref(),
+            org_release.as_str(),
+            document.org.as_str(),
+        ),
     ] {
         let manifest = resources::helm(
             target,
@@ -439,7 +454,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
                     }
                     let namespace = object["metadata"]["namespace"]
                         .as_str()
-                        .unwrap_or(namespace);
+                        .unwrap_or(object_namespace);
                     let name = object["metadata"]["name"]
                         .as_str()
                         .context("installed resource name")?;

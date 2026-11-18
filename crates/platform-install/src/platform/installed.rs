@@ -31,7 +31,6 @@ pub async fn release_values(
         target,
         &[
             "list".as_ref(),
-            "--all".as_ref(),
             "--namespace".as_ref(),
             namespace.as_ref(),
             "--filter".as_ref(),

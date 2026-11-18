@@ -18,3 +18,7 @@ hostgroup: {{ required "hostGroup is required" .Values.hostGroup | quote }}
 {{- $_ := required "platform.roles.ingress.image is required: stamp the platform image set" .Values.platform.roles.ingress.image }}
 {{- $_ := required "platform.workflow.image is required: stamp the platform image set" .Values.platform.workflow.image }}
 {{- end }}
+
+{{- define "application.namespace" -}}
+{{- required "Set namespace." .Values.namespace -}}
+{{- end -}}

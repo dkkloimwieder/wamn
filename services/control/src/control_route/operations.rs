@@ -218,11 +218,15 @@ fn manifest(
     job["metadata"]["annotations"] = json!({TARGET:coordinate,OPERATION:operation.command()});
     job["spec"]["ttlSecondsAfterFinished"] = 3600.into();
     job["spec"]["template"]["spec"]["serviceAccountName"] = match operation {
-        // Reset must suspend and restore the shared host release.
-        Operation::Reset => worker.service_account.clone(),
-        _ => format!("{coordinate}-operation"),
-    }
-    .into();
+        Operation::Diff => format!("{coordinate}-operation").into(),
+        Operation::Deploy
+        | Operation::Rollback
+        | Operation::Stop
+        | Operation::Apply
+        | Operation::Reset
+        | Operation::Recover
+        | Operation::Close => worker.service_account.as_str().into(),
+    };
     job["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
     job["spec"]["template"]["spec"]["volumes"] = json!([
         {"name":"configuration","configMap":{"name":worker.configuration}},

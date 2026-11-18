@@ -1,5 +1,5 @@
 {{- with .Values.cluster }}
-{{- $namespace := $.Release.Namespace }}
+{{- $namespace := include "project.namespace" $ }}
 {{- $database := $.Values.database }}
 {{- $recovery := $.Values.recovery }}
 {{- $name := .name }}

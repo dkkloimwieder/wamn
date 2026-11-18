@@ -1,6 +1,6 @@
 {{- if .Values.controlService }}
 {{- $name := default .Release.Name .Values.name }}
-{{- $namespace := default .Release.Namespace .Values.namespace }}
+{{- $namespace := include "application.namespace" . }}
 {{- $org := required "Set org for the control client certificate." .Values.org }}
 apiVersion: v1
 kind: ConfigMap

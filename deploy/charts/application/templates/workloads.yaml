@@ -7,7 +7,7 @@ apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:
   name: {{ (default $.Release.Name $.Values.name) }}-http
-  namespace: {{ (default $.Release.Namespace $.Values.namespace) }}
+  namespace: {{ include "application.namespace" $ | quote }}
   annotations:
     {{- include "application.annotations" $ | nindent 4 }}
     wamn.package-digest: {{ $.Values.release.manifestDigest | quote }}
@@ -21,7 +21,7 @@ spec:
     spec:
       hostSelector:
         {{- include "application.hostSelector" $ | nindent 8 }}
-      environment: {{ (default $.Release.Namespace $.Values.namespace) }}
+      environment: {{ include "application.namespace" $ | quote }}
       kubernetes:
         service:
           name: {{ (default $.Release.Name $.Values.name) }}-http

@@ -50,9 +50,8 @@ The owner supplies these external cloud inputs.
    Grant access to each account below. Do not grant access to an entire namespace. Remove former namespace grants from existing deployments.
    The control chart renders `hosts/wamn-control-<org>`.
    Environment provisioning creates `hosts/wamn-host-<org>--<env>--<project>` for application and shared hosts.
-   Control operation Jobs run as `platform/<coordinate>-code` or `platform/<coordinate>-sql`.
-   The coordinate is the environment ConfigMap name in `hosts`.
-   `operations.rs` creates both operation accounts from that same coordinate.
+   Helm-running Jobs use `<org>/wamn-operation-<org>`. Schema diff uses `<org>/<coordinate>-operation`.
+   Use the applied project configuration ConfigMap name in the org namespace, with the `-operations` suffix removed, as the coordinate.
 
    Set these values for one configured target before you grant access:
 
@@ -61,7 +60,7 @@ The owner supplies these external cloud inputs.
    ORG=<organization>
    PROJECT=<project>
    ENV=<environment>
-   COORDINATE=<environment-configmap-name>
+   COORDINATE=<project-coordinate>
    POOL="principal://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns"
    ```
 
@@ -69,7 +68,7 @@ The owner supplies these external cloud inputs.
 
    ```bash
    for ACCOUNT in "hosts/wamn-control-$ORG" "hosts/wamn-host-$ORG--$PROJECT--$ENV" \
-     "platform/$COORDINATE-code" "platform/$COORDINATE-sql"
+     "$ORG/wamn-operation-$ORG" "$ORG/$COORDINATE-operation"
    do
      gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
        --member "$POOL/${ACCOUNT%/*}/sa/${ACCOUNT#*/}" --role roles/artifactregistry.reader

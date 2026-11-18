@@ -37,7 +37,7 @@ pub(super) async fn set_paused(
         &platform.target,
         &platform.chart,
         &name,
-        &json!({"cdcReader":{"pause":paused}}),
+        json!({"cdcReader":{"pause":paused}}),
     )
     .await?;
     if !paused {

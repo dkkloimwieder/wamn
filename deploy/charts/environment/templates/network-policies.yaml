@@ -1,6 +1,9 @@
 {{- range (index .Values "runtime-operator").runtime.hostGroups }}
 {{- $name := .name }}
-{{- $namespace := default $.Release.Namespace .namespace }}
+{{- $namespace := include "environment.namespace" $ }}
+{{- if ne (default "" .namespace) $namespace }}
+{{- fail "Set each runtime host group's namespace to the environment namespace." }}
+{{- end }}
 {{- $host := dict "wasmcloud.com/name" "hostgroup" "wasmcloud.com/hostgroup" $name }}
 {{- if and .http .http.enabled }}
 ---

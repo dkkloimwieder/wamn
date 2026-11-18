@@ -1,3 +1,5 @@
+namespace: ""
+
 # Defaults for application workloads and the published platform image set.
 
 platform:

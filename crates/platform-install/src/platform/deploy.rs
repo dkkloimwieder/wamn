@@ -26,13 +26,8 @@ pub async fn update(
 ) -> anyhow::Result<()> {
     if let UpgradeTarget::Host { group, .. } = selection {
         let (name, namespace) = selection.owner(document);
-        let owner = Target {
-            namespace: namespace.into(),
-            ..target.clone()
-        };
-        let installed = super::installed::release_values(&owner, &owner.namespace, &name)
-            .await?
-            .context("host owner is absent")?;
+        let release_namespace = helm::org_release_namespace(namespace);
+        let installed = installed_values(target, &release_namespace, &name).await?;
         let inspected = chart.selection_values(document, selection, installed)?;
         let coordinate = host_target(&inspected, group)?;
         let operator = super::installed::release_values(target, "platform", "wamn")
@@ -47,16 +42,16 @@ pub async fn update(
         )
         .await?;
         let result = lock.protect(async {
-            helm::recover_pending(&owner, &name, helm::Wait::Watcher).await?;
-            let installed = installed_values(&owner, &name).await?;
+            helm::recover_pending(target, &release_namespace, &name, helm::Wait::Watcher).await?;
+            let installed = installed_values(target, &release_namespace, &name).await?;
             anyhow::ensure!(
                 host_target(&installed, group)? == coordinate,
                 "recovered release changed its environment owner"
             );
             let values = chart.selection_values(document, selection, installed)?;
             let entry = serde_json::json!({"chart":owner_chart.directory().join("platform/environment"), "version":owner_chart.version,
-                "name":name, "namespace":namespace, "values":values});
-            resources::upgrade_release(&owner, &entry, directory, helm::Wait::Watcher).await
+                "name":name, "namespace":release_namespace, "values":values});
+            resources::upgrade_release(target, &entry, directory, helm::Wait::Watcher, helm::Install::SkipCrds).await
         }).await;
         lock.release().await;
         return result;
@@ -123,8 +118,8 @@ fn host_target(
     Ok((org, env))
 }
 
-async fn installed_values(target: &Target, name: &str) -> anyhow::Result<Value> {
-    super::installed::release_values(target, &target.namespace, name)
+async fn installed_values(target: &Target, namespace: &str, name: &str) -> anyhow::Result<Value> {
+    super::installed::release_values(target, namespace, name)
         .await?
         .context("installed host owner is absent")
 }

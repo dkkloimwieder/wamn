@@ -1,3 +1,5 @@
+namespace: ""
+
 # TLS terminates at ingress. The Rust web front serves HTTP.
 
 # Serving certificate used by ingress.

@@ -417,6 +417,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     values.insert("routeHost".into(), input.route_host.clone().into());
     values.insert("platformUi".into(), Value::Null);
     values.insert("org".into(), input.org.to_string().into());
+    values.insert("namespace".into(), input.org.as_str().into());
     values.insert("project".into(), input.project.to_string().into());
     values.insert(
         "applications".into(),

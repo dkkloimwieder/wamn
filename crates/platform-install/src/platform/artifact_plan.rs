@@ -124,6 +124,8 @@ impl SelectedChart {
                 image["registry"] = reference.registry().into();
                 image["repository"] = reference.repository().into();
                 selected["image"] = image;
+                selected["namespace"] = document.org.as_str().into();
+                installed["namespace"] = document.org.as_str().into();
             }
         }
         Ok(installed)

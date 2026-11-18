@@ -198,7 +198,7 @@ pub(super) fn resource_entry(
         "identity":{"endpoint":super::identity::issuer(org.as_str()),"client_cert":"/etc/identity-control/tls.crt","client_key":"/etc/identity-control/tls.key","server_ca":"/etc/identity-ca/ca.crt"}});
     Ok(
         json!({"chart":chart.application_chart(),"version":chart.version,"name":name,"namespace":org,
-        "values":{"controlService":true,"org":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},
+        "values":{"controlService":true,"org":org,"namespace":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},
         "control":{"image":chart.image("control")?,"configuration":config,"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::name::control_service_account(org),
             "databaseSecrets":database_secrets},
         "platform":{"chart":chart.reference()}}}),

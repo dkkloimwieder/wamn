@@ -1,6 +1,10 @@
 # Project chart
 
-The chart creates the project's CloudNativePG Cluster, Database, login Secrets, publication, and operation account.
+Set `namespace` to the org namespace. Helm uses server-side apply for project installs and upgrades.
+
+The chart creates the project's CloudNativePG Cluster, Database, login Secrets, publication, and schema diff ServiceAccount.
+That ServiceAccount reads the named system and project database login and CA Secrets. It can read each declared application's workload to resolve the live package digest.
+The org worker runs operations that use Helm.
 CloudNativePG creates the database at bootstrap. The Database resource installs the extensions.
 `env apply` derives the Cluster name and login Secret names from the registered project generation.
 It also sets limits on the five managed logins from the host replica count.

@@ -102,7 +102,7 @@ pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyho
         let release = name::environment_resource_name(&triple.org, &triple.project, &triple.env);
         wamn_platform_install::environment::update_project(
             &platform.target, &platform.chart, &release,
-            &serde_json::json!({"cdcReader":{"pause":true},"publication":{"reclaimPolicy":"delete"}}),
+            serde_json::json!({"cdcReader":{"pause":true},"publication":{"reclaimPolicy":"delete"}}),
         ).await?;
     }
     crate::environment::cdc_reader::wait_reader_stopped(
@@ -124,7 +124,8 @@ pub(super) async fn delete_event_certificates(
     if last {
         let host_release = name::environment_host_name(&triple.org, &triple.env);
         use wamn_kubernetes::helm::{self, Wait};
-        helm::uninstall(&platform.target, &host_release, Wait::Watcher).await?;
+        let namespace = helm::org_release_namespace(&platform.target.namespace);
+        helm::uninstall(&platform.target, &namespace, &host_release, Wait::Watcher).await?;
         delete_secret(
             platform,
             &name::environment_nats_secret(&triple.org, &triple.env),
