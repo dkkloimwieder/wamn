@@ -47,7 +47,7 @@ impl Fixture {
             namespace["metadata"]["annotations"]["wamn.dev/disposable"] == "true",
             "browser fixture requires a disposable platform"
         );
-        let file = PathBuf::from(required("WAMN_DEV_ENV")?).join("environment.k");
+        let file = PathBuf::from(required("WAMN_DEV_ENV")?).join("environment.yaml");
         let environment = EnvironmentDocument::compile(&file)?;
         ensure!(
             environment.org == cluster.org,
@@ -67,7 +67,8 @@ impl Fixture {
         )
         .await?;
         let output = success(product(&["status", "--env"]).arg(&file)).await?;
-        let status = serde_json::from_slice(&output)?;
+        let mut statuses: Value = serde_json::from_slice(&output)?;
+        let status = statuses[0]["status"].take();
         Ok(Self {
             repository,
             root,
@@ -85,8 +86,8 @@ impl Fixture {
         let mut environment = self.environment.clone();
         environment.project = project.to_owned();
         environment.applications.clear();
-        let file = self.root.join("browser-project.k");
-        std::fs::write(&file, environment.to_kcl())?;
+        let file = self.root.join("browser-project.yaml");
+        std::fs::write(&file, environment.to_yaml()?)?;
         success(
             Command::new(env!("CARGO_BIN_EXE_wamn"))
                 .current_dir(&self.repository)

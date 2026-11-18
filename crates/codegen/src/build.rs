@@ -1,17 +1,4 @@
-//! Compile package declarations and described SQL to one output tree.
-//!
-//! Pass one compiles `wamn.k` to its authored form, migrates a fresh
-//! verification database, describes every statement through SQLx,
-//! derives the statement types and relations, and emits the canonical
-//! `wamn.json` (RFC 8785, hashed once). Pass two generates every consumer from
-//! those bytes and writes them to the package's build
-//! output directory. Step 7 compiles the package's components
-//! in xtask. `wamn web build` builds browser files separately.
-//!
-//! The verification database is created on the PostgreSQL server that the
-//! request names and dropped when the build ends. The server keeps the
-//! cluster-wide role `wamn_app` that the build creates
-//! when they are absent.
+//! Compile package declarations and SQL evidence into one output tree.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -22,55 +9,160 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::{Map, Value};
 use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
-use wamn_digest::canonical_json_bytes;
+use wamn_catalog::manifest::{
+    CrudAction, PackageManifest, ResultClass, canonical_operation_identity,
+};
+use wamn_digest::{Digest, bytes_sha256, canonical_json_bytes};
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::authored_object_name;
 
 use crate::AuthoredSql;
 use crate::authoring::{COMPILED_MANIFEST_NAME, compile_authored_manifest};
-use crate::build_record::{
-    BUILD_RECORD_SCHEMA, BuildDependency, BuildOutputs, BuildPackage, BuildRecord,
-};
 use crate::describe::{DescribedStatement, column_type, describe_statements};
-use wamn_catalog::manifest::{CrudAction, PackageManifest, ResultClass, canonical_operation_identity};
+use crate::describe_cache::{self, Evidence};
 use crate::materialize::{expected_files, introspect_with_manifest, write_files};
-use wamn_digest::bytes_sha256;
+use crate::publication::{ATTACHMENTS, COMPONENTS};
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS_SQL: &str =
     include_str!("../../../deploy/sql/record-history-app-grants.sql");
 
-/// One package build.
-#[derive(Debug, Clone)]
-pub struct BuildRequest {
-    pub package_root: PathBuf,
-    pub output_root: PathBuf,
-    database_url: String,
-    /// Allow dev composition with a built base that differs from its authored pin.
-    /// Publication builds must leave this false.
-    pub allow_stale_base_pins: bool,
-    /// Exact development version supplied by the publication owner.
-    pub development_version: Option<wamn_catalog::package_version::PackageVersion>,
+/// Identity of the code and SQL helpers compiled into this generator.
+pub const GENERATOR_ID: &str = include_str!(concat!(env!("OUT_DIR"), "/generator-id"));
+
+/// Source of the database facts used by one build.
+#[derive(Clone, Copy)]
+pub enum DescribeMode<'a> {
+    Cached,
+    Refresh(&'a str),
+    Check(&'a str),
 }
 
-impl BuildRequest {
-    /// Build the package at `package_root` into `output_root`, the directory
-    /// that holds one build output directory per package.
-    ///
-    /// `database_url` names a PostgreSQL server through a superuser URL. The
-    /// build creates and drops its own database there. An overlay reads the
-    /// `build.json` of each base package from `output_root`, so its bases are
-    /// built first.
-    #[must_use]
-    pub fn new(package_root: &Path, output_root: &Path, database_url: &str) -> Self {
+impl<'a> DescribeMode<'a> {
+    /// Select the requested describe operation, requiring a URL for live operations.
+    pub fn from_options(url: Option<&'a str>, refresh: bool, check: bool) -> Result<Self> {
+        if !refresh && !check {
+            return Ok(Self::Cached);
+        }
+        let url = url
+            .filter(|url| !url.is_empty())
+            .context("set --database-url or DATABASE_URL")?;
+        if refresh {
+            Ok(Self::Refresh(url))
+        } else {
+            Ok(Self::Check(url))
+        }
+    }
+}
+
+impl std::fmt::Debug for DescribeMode<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Cached => "Cached",
+            Self::Refresh(_) => "Refresh",
+            Self::Check(_) => "Check",
+        })
+    }
+}
+
+/// One package build.
+#[derive(Debug)]
+pub struct BuildRequest<'a> {
+    pub package_root: PathBuf,
+    pub output_root: PathBuf,
+    pub describe: DescribeMode<'a>,
+}
+
+impl<'a> BuildRequest<'a> {
+    /// Build the package at `package_root` into a directory below `output_root`.
+    pub fn new(package_root: &Path, output_root: &Path, describe: DescribeMode<'a>) -> Self {
         Self {
             package_root: package_root.to_owned(),
             output_root: output_root.to_owned(),
-            database_url: database_url.to_owned(),
-            allow_stale_base_pins: false,
-            development_version: None,
+            describe,
         }
     }
+
+    /// Generate artifacts and refresh the committed evidence from PostgreSQL.
+    pub fn refresh(package_root: &Path, output_root: &Path, database_url: &'a str) -> Self {
+        Self::new(
+            package_root,
+            output_root,
+            DescribeMode::Refresh(database_url),
+        )
+    }
+}
+
+/// The frozen authored document and its source files.
+#[derive(Debug)]
+pub struct PreparedSource {
+    root: PathBuf,
+    snapshot: tempfile::TempDir,
+    paths: Vec<PathBuf>,
+    document: Value,
+    sources: ManifestSources,
+}
+
+impl PreparedSource {
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn package(&self) -> &wamn_catalog::manifest::PackageIdentity {
+        &self.sources.package
+    }
+
+    pub fn bases(
+        &self,
+    ) -> &BTreeMap<
+        wamn_catalog::manifest::source_name::SourceName,
+        wamn_catalog::manifest::BaseDependencyRequirement,
+    > {
+        &self.sources.base_dependencies
+    }
+
+    pub fn components(&self) -> impl Iterator<Item = &str> {
+        self.document["components"]
+            .as_object()
+            .into_iter()
+            .flat_map(|components| components.keys().map(String::as_str))
+    }
+
+    pub fn document(&self) -> &Value {
+        &self.document
+    }
+
+    /// Refuse changes to the files frozen for KCL and code generation.
+    pub fn validate_snapshot(&self) -> Result<()> {
+        let paths = source_paths(&self.root)?;
+        ensure!(
+            paths == self.paths,
+            "package sources changed during build; retry"
+        );
+        for path in paths {
+            ensure!(
+                fs::read(self.root.join(&path))? == fs::read(self.snapshot.path().join(&path))?,
+                "{} changed during build; retry",
+                self.root.join(path).display()
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Freeze the package inputs and compile KCL once before discovery or generation.
+pub fn prepare_source(root: &Path) -> Result<PreparedSource> {
+    let (snapshot, paths) = snapshot_source(root)?;
+    let document = serde_json::from_slice(&compile_authored_manifest(snapshot.path())?)
+        .context("parse the authored manifest")?;
+    let sources = ManifestSources::from_document(&document)?;
+    Ok(PreparedSource {
+        root: root.to_owned(),
+        snapshot,
+        paths,
+        document,
+        sources,
+    })
 }
 
 /// The default output root of the package at `package_root`:
@@ -86,22 +178,28 @@ pub fn package_output(output_root: &Path, package: &wamn_catalog::PackageName) -
     output_root.join(package.as_str())
 }
 
-/// Generate package output before component compilation.
-/// The build record contains no compiled components.
-///
-/// # Errors
-///
-/// When the manifest does not compile, when a base package has no completed
-/// build record, when the verification database cannot be created or migrated, when
-/// a statement does not describe or a declared statement type is wider than
-/// the described one, when generation refuses, or when the output cannot be
-/// written.
-pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
-    let (source, source_paths) = snapshot_source(&request.package_root)?;
-    let package_root = source.path();
-    let mut authored: Value = serde_json::from_slice(&authored_manifest(package_root)?)
-        .context("parse the authored manifest")?;
-    if let Some(version) = &request.development_version {
+/// Generate package output without compiling its components.
+pub async fn generate_package(request: &BuildRequest<'_>) -> Result<PackageManifest> {
+    let source = prepare_source(&request.package_root)?;
+    let bases = crate::inheritance::load_base_manifests(&request.output_root, source.bases())?;
+    let (manifest, _) = generate_prepared(request, &source, &bases, None).await?;
+    Ok(manifest)
+}
+
+/// Generate artifacts from the same authored document that selected the build inputs.
+pub async fn generate_prepared(
+    request: &BuildRequest<'_>,
+    source: &PreparedSource,
+    bases: &[PackageManifest],
+    development: Option<(
+        &wamn_catalog::package_version::PackageVersion,
+        &BTreeMap<wamn_catalog::PackageName, Digest>,
+    )>,
+) -> Result<(PackageManifest, BTreeMap<PathBuf, Digest>)> {
+    let root = source.snapshot.path();
+    let provisional = &source.sources;
+    let mut authored = source.document.clone();
+    if let Some((version, pins)) = development {
         authored["package"]["version"] = version.as_str().into();
         if let Some(dependencies) = authored
             .get_mut("base_dependencies")
@@ -112,92 +210,159 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
                     .as_str()
                     .context("base package id")?
                     .parse()?;
-                let built =
-                    crate::build_record::read(&package_output(&request.output_root, &package))?;
-                let [component] = built.outputs.components.as_slice() else {
-                    bail!("development base {package} requires one built component");
-                };
-                dependency["version"] = serde_json::Value::String(built.package.version.into());
-                dependency["digest"] = component.sha256.to_string().into();
+                let built = bases
+                    .iter()
+                    .find(|base| base.package.id == package)
+                    .with_context(|| format!("base {package} was not built"))?;
+                dependency["version"] = built.package.version.as_str().into();
+                dependency["digest"] = pins[&package].to_string().into();
             }
         }
     }
-    let provisional =
-        ManifestSources::from_document(&authored).context("parse the authored manifest")?;
-    crate::migrations::validate_committed(&request.package_root, package_root).await?;
-    crate::migrations::validate_history(package_root).await?;
-    let dependencies = dependencies(&request.output_root, &provisional)?;
-    let bases = crate::inheritance::load_base_manifests(
-        &request.output_root,
-        &provisional.base_dependencies,
-    )?;
-
-    let database = VerificationDatabase::create(&request.database_url).await?;
-    let built = pass_one_and_two(
-        package_root,
-        &database.url,
-        &provisional,
-        &mut authored,
-        &bases,
-        &request.output_root,
-    )
-    .await;
-    database.drop().await?;
-    let (canonical, mut files) = built?;
-    for path in source_paths {
-        if let std::collections::btree_map::Entry::Vacant(entry) = files.entry(path) {
-            let bytes = fs::read(source.path().join(entry.key()))?;
-            entry.insert(bytes);
-        }
-    }
-
-    let package_output = package_output(&request.output_root, &provisional.package.id);
-    // Generated migrations are durable source inputs, not a rebuildable current recipe.
-    // Never overwrite an earlier version, including during a repeated build.
-    // Development coordinates do not add generated SQL to the authored history.
-    if request.development_version.is_none() {
-        for (relative, bytes) in files.iter().filter(|(path, _)| path.starts_with("history")) {
-            let path = request.package_root.join(relative);
-            fs::create_dir_all(path.parent().context("history migration parent")?)?;
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut file) => std::io::Write::write_all(&mut file, bytes)?,
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    ensure!(
-                        fs::read(&path)? == *bytes,
-                        "generated migration changed: {}",
-                        path.display()
-                    );
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
-    let outputs = write_outputs(&package_output, &canonical, &files)?;
-    let build_record = BuildRecord {
-        schema: BUILD_RECORD_SCHEMA.to_owned(),
-        package: BuildPackage {
-            id: provisional.package.id.clone(),
-            version: provisional.package.version.clone(),
-        },
-        dependencies,
-        generator: crate::build_record::generator()?,
-        outputs,
+    crate::migrations::validate_committed(&source.root, root).await?;
+    crate::migrations::validate_history(root).await?;
+    let sql = provisional.load_sql(root)?;
+    let output = package_output(&request.output_root, &provisional.package.id);
+    let generation = Generation {
+        root,
+        output: &output,
+        sources: &sql,
+        bases,
     };
-    Ok(build_record)
+    let input = describe_cache::inputs(root, &source.document, bases, &request.output_root)?;
+    let generated = match request.describe {
+        DescribeMode::Cached => {
+            let cached = describe_cache::read(&source.root)?;
+            let evidence = describe_cache::decode(&cached, input)?;
+            let manifest = typed_manifest(authored, &evidence.statements)?;
+            generate_from_evidence(&generation, manifest, evidence, None).await?
+        }
+        DescribeMode::Refresh(url) | DescribeMode::Check(url) => {
+            let mut built = generate_live(
+                url,
+                &generation,
+                provisional,
+                &authored,
+                input,
+                &request.output_root,
+            )
+            .await?;
+            if built.appended_history {
+                ensure!(
+                    matches!(request.describe, DescribeMode::Refresh(_)),
+                    "generated history changed; run wamn build --refresh-describe"
+                );
+                // Verify the final migration sequence and record the evidence it produces.
+                let input =
+                    describe_cache::inputs(root, &source.document, bases, &request.output_root)?;
+                built = generate_live(
+                    url,
+                    &generation,
+                    provisional,
+                    &authored,
+                    input,
+                    &request.output_root,
+                )
+                .await?;
+                ensure!(
+                    !built.appended_history,
+                    "generated history did not stabilize"
+                );
+            }
+            let bytes = describe_cache::encode(&built.evidence)?;
+            if matches!(request.describe, DescribeMode::Check(_)) {
+                let cached = describe_cache::read(&source.root)?;
+                ensure!(
+                    bytes == cached,
+                    "describe cache differs from PostgreSQL; run wamn build --refresh-describe"
+                );
+                return Ok((built.manifest, BTreeMap::new()));
+            }
+            source.validate_snapshot()?;
+            persist_history(&source.root, &built.files)?;
+            describe_cache::write(&source.root, &bytes)?;
+            built
+        }
+    };
+    ensure!(
+        !generated.appended_history,
+        "stale describe cache for generated history; run wamn build --refresh-describe"
+    );
+    let Generated {
+        manifest,
+        mut files,
+        ..
+    } = generated;
+    for path in &source.paths {
+        if let std::collections::btree_map::Entry::Vacant(entry) = files.entry(path.clone()) {
+            entry.insert(fs::read(root.join(path))?);
+        }
+    }
+    let canonical = canonical_json_bytes(&serde_json::to_value(&manifest)?);
+    crate::fingerprint::invalidate(&output)?;
+    let outputs = write_outputs(&output, &canonical, &files)?;
+    Ok((manifest, outputs))
+}
+
+fn persist_history(root: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<()> {
+    for (relative, bytes) in files.iter().filter(|(path, _)| path.starts_with("history")) {
+        let path = root.join(relative);
+        match fs::read(&path) {
+            Ok(existing) => {
+                ensure!(
+                    existing == *bytes,
+                    "generated migration changed: {}",
+                    path.display()
+                );
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let parent = path.parent().context("history migration parent")?;
+        fs::create_dir_all(parent)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        std::io::Write::write_all(&mut temporary, bytes)?;
+        temporary.as_file().sync_all()?;
+        match temporary.persist_noclobber(&path) {
+            Ok(_) => {}
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                ensure!(
+                    fs::read(&path)? == *bytes,
+                    "generated migration changed: {}",
+                    path.display()
+                );
+            }
+            Err(error) => return Err(error.into()),
+        }
+        fs::File::open(parent)?.sync_all()?;
+        fs::File::open(root)?.sync_all()?;
+    }
+    Ok(())
 }
 
 /// Freeze the non-Rust inputs before compiling or applying migrations.
 fn snapshot_source(root: &Path) -> Result<(tempfile::TempDir, Vec<PathBuf>)> {
+    let paths = source_paths(root)?;
+    let snapshot = tempfile::tempdir()?;
+    for path in &paths {
+        let destination = snapshot.path().join(path);
+        fs::create_dir_all(
+            destination
+                .parent()
+                .context("source input has no directory")?,
+        )?;
+        fs::copy(root.join(path), destination)?;
+    }
+    Ok((snapshot, paths))
+}
+
+fn source_paths(root: &Path) -> Result<Vec<PathBuf>> {
     ensure!(
         !root.join("wamn.json").exists(),
         "{}: author the package in wamn.k",
         root.display()
     );
-    let snapshot = tempfile::tempdir()?;
     let mut directories = vec![PathBuf::new()];
     let mut paths = Vec::new();
     while let Some(relative) = directories.pop() {
@@ -234,85 +399,169 @@ fn snapshot_source(root: &Path) -> Result<(tempfile::TempDir, Vec<PathBuf>)> {
                     "authored input must be a regular file: {}",
                     entry.path().display()
                 );
-                let destination = snapshot.path().join(&path);
                 paths.push(path);
-                fs::create_dir_all(
-                    destination
-                        .parent()
-                        .context("source input has no directory")?,
-                )?;
-                fs::write(destination, fs::read(entry.path())?)?;
             }
         }
     }
-    Ok((snapshot, paths))
+    paths.sort_unstable();
+    Ok(paths)
 }
 
-/// The two passes against the migrated verification database: the canonical
-/// manifest bytes and the generated files, by path relative to the package's
-/// build output directory.
-async fn pass_one_and_two(
-    package_root: &Path,
-    database_url: &str,
+struct Generated {
+    manifest: PackageManifest,
+    files: BTreeMap<PathBuf, Vec<u8>>,
+    evidence: Evidence,
+    appended_history: bool,
+}
+
+struct Generation<'a> {
+    root: &'a Path,
+    output: &'a Path,
+    sources: &'a [crate::materialize::SourceFile],
+    bases: &'a [PackageManifest],
+}
+
+fn typed_manifest(
+    mut authored: Value,
+    descriptions: &BTreeMap<String, DescribedStatement>,
+) -> Result<PackageManifest> {
+    apply_statement_types(&mut authored, descriptions)?;
+    PackageManifest::parse_authored(&serde_json::to_vec(&authored)?)
+        .context("parse the typed manifest")
+}
+
+async fn generate_live(
+    server: &str,
+    generation: &Generation<'_>,
     provisional: &ManifestSources,
-    authored: &mut Value,
-    bases: &[PackageManifest],
+    authored: &Value,
+    input: Digest,
     output_root: &Path,
-) -> Result<(Vec<u8>, BTreeMap<PathBuf, Vec<u8>>)> {
-    // Pass one.
-    migrate(database_url, package_root, provisional, bases, output_root).await?;
-    let sources = provisional.load_sql(package_root)?;
-    let described = describe_statements(
-        database_url,
-        sources
+) -> Result<Generated> {
+    let Generation {
+        root,
+        sources,
+        bases,
+        ..
+    } = *generation;
+    let database = VerificationDatabase::create(server).await?;
+    let built = async {
+        let url = database.url.as_str();
+        let mut connection = wamn_postgres::connect(url).await?;
+        let postgres: i32 =
+            sqlx::query_scalar("SELECT current_setting('server_version_num')::integer")
+                .fetch_one(&mut connection)
+                .await?;
+        drop(connection);
+        let postgres = u32::try_from(postgres)?;
+        describe_cache::postgres_identity(postgres)?;
+        migrate(url, root, provisional, bases, output_root).await?;
+        let described = describe_statements(
+            url,
+            sources.iter().map(|source| (&source.path, &source.bytes)),
+        )
+        .await?;
+        let sql_digests = sources
             .iter()
-            .map(|source| (&source.path, &source.bytes))
-            .collect::<Vec<_>>(),
-    )
-    .await?;
-    apply_statement_types(authored, &described)?;
-    let typed = serde_json::to_vec(authored).context("serialize the typed manifest")?;
-    let mut manifest =
-        PackageManifest::parse_authored(&typed).context("parse the typed manifest")?;
+            .map(|source| (source.path.clone(), bytes_sha256(&source.bytes)))
+            .collect();
+        let manifest = typed_manifest(authored.clone(), &described)?;
+        let sql = sources
+            .iter()
+            .map(|source| AuthoredSql::new(&source.path, &source.bytes))
+            .collect::<Vec<_>>();
+        let catalog = introspect_with_manifest(url, &manifest, &sql).await?;
+        let columns = ordered_columns(url, &manifest).await?;
+        let evidence = Evidence {
+            inputs: input,
+            postgres,
+            catalog,
+            statements: described,
+            sql: sql_digests,
+            columns,
+        };
+        generate_from_evidence(generation, manifest, evidence, Some(url)).await
+    }
+    .await;
+    let dropped = database.drop().await;
+    let generated = built?;
+    dropped?;
+    Ok(generated)
+}
+
+async fn generate_from_evidence(
+    generation: &Generation<'_>,
+    mut manifest: PackageManifest,
+    mut evidence: Evidence,
+    live: Option<&str>,
+) -> Result<Generated> {
+    let Generation {
+        root,
+        output,
+        sources,
+        bases,
+    } = *generation;
+    for source in sources {
+        ensure!(
+            evidence.sql.get(&source.path) == Some(&bytes_sha256(&source.bytes)),
+            "missing or stale describe entry for {}; run wamn build --refresh-describe",
+            source.path,
+        );
+    }
     let authored_sql = sources
         .iter()
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
         .collect::<Vec<_>>();
-    let catalog = introspect_with_manifest(database_url, &manifest, &authored_sql).await?;
-    // The build refuses correctness only (owner ruling 2026-10-18): a missing
-    // pagination index is a warning.
-    for warning in missing_paged_query_indexes(database_url, &catalog, &manifest).await? {
-        eprintln!("warning: {warning}");
-    }
-    crate::generate::derive_model(&catalog, &mut manifest, &authored_sql, bases)
+    let catalog = &evidence.catalog;
+    crate::generate::derive_model(catalog, &mut manifest, &authored_sql, bases)
         .context("derive the statement relations")?;
     let canonical = canonical_json_bytes(&serde_json::to_value(&manifest)?);
-
-    // Pass two: every consumer from the canonical bytes.
+    for warning in missing_paged_query_indexes(catalog, &manifest, &evidence.columns)? {
+        eprintln!("warning: {warning}");
+    }
     for (name, operation) in &manifest.custom_operations {
         if let Some(source) = &operation.feed_source {
-            for warning in crate::feed::missing_indexes(&catalog, name, source) {
+            for warning in crate::feed::missing_indexes(catalog, name, source) {
                 eprintln!("warning: {warning}");
             }
         }
     }
-    let preliminary = crate::StatementTransactionality::from_paths(BTreeMap::new());
-    let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &preliminary);
+    let mut verdicts = crate::StatementTransactionality::from_paths(BTreeMap::new());
+    let input = crate::GenerationInput::new(catalog, &canonical, &authored_sql, &verdicts);
     let corpus = crate::generate::sql_corpus(&input, &manifest)?;
-    let remaining = corpus
-        .statements
-        .iter()
-        .filter(|(path, _)| !described.contains_key(*path))
-        .collect::<Vec<_>>();
-    let remaining = describe_statements(database_url, remaining).await?;
-    let mut verdicts = preliminary;
-    verdicts.described = described;
-    verdicts.described.extend(remaining);
-    let package_output = package_output(output_root, &manifest.package.id);
-    let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &verdicts)
-        .with_output_paths(&package_output, &package_output);
+    if let Some(url) = live {
+        let remaining = corpus
+            .statements
+            .iter()
+            .filter(|(path, _)| !evidence.statements.contains_key(*path))
+            .collect::<Vec<_>>();
+        let described = describe_statements(url, remaining).await?;
+        for (path, description) in described {
+            let sql = bytes_sha256(&corpus.statements[&path]);
+            evidence.sql.insert(path.clone(), sql);
+            evidence.statements.insert(path, description);
+        }
+    }
+    ensure!(
+        corpus.statements.keys().eq(evidence.statements.keys())
+            && corpus.statements.keys().eq(evidence.sql.keys()),
+        "describe cache has missing or extra statements; run wamn build --refresh-describe"
+    );
+    for (path, sql) in &corpus.statements {
+        ensure!(
+            evidence.sql[path] == bytes_sha256(sql),
+            "stale describe entry for {path}; run wamn build --refresh-describe"
+        );
+    }
+    ensure!(
+        evidence.columns.keys().eq(manifest.models.keys()),
+        "describe cache has missing or extra history column facts; run wamn build --refresh-describe"
+    );
+    verdicts.described = std::mem::take(&mut evidence.statements);
+    let input = crate::GenerationInput::new(catalog, &canonical, &authored_sql, &verdicts)
+        .with_output_paths(output, output);
     let mut package = crate::generate::generate_described(&input, &manifest, &corpus)?;
-    use crate::publication::{ATTACHMENTS, COMPONENTS};
+    evidence.statements = verdicts.described;
     manifest.compiled_operations = package.take_operations();
     let mut generated = expected_files(&package)?;
     let routes = generated
@@ -327,50 +576,30 @@ async fn pass_one_and_two(
         components: BTreeMap::new(),
         base_packages: BTreeMap::new(),
     });
-    let canonical = canonical_json_bytes(&serde_json::to_value(&manifest)?);
     let mut files = generated
         .into_iter()
         .map(|(path, bytes)| (path, bytes.to_vec()))
         .collect::<BTreeMap<_, _>>();
-    let columns = history_columns(database_url, &manifest).await?;
-    let history = crate::history::render(package_root, &manifest, &columns).await?;
-    files.extend(crate::history::migrations(package_root, &history).await?);
-    files.insert(
-        PathBuf::from("wamn.k"),
-        fs::read(package_root.join(crate::AUTHORED_MANIFEST))?,
-    );
-    for source in sources {
-        files.insert(PathBuf::from(source.path), source.bytes);
-    }
-    let migrations = package_root.join("migrations");
-    if migrations.is_dir() {
-        for entry in fs::read_dir(migrations)? {
-            let path = entry?.path();
-            if path.is_file() {
-                files.insert(
-                    PathBuf::from("migrations").join(path.file_name().context("migration name")?),
-                    fs::read(path)?,
-                );
+    let history = crate::history::render(root, &manifest, &evidence.columns).await?;
+    let migrations = crate::history::migrations(root, &history).await?;
+    let mut appended_history = false;
+    for (relative, bytes) in &migrations {
+        let path = root.join(relative);
+        if !path.exists() {
+            appended_history = true;
+            if live.is_some() {
+                fs::create_dir_all(path.parent().context("history directory")?)?;
+                fs::write(path, bytes)?;
             }
         }
     }
-    // Validate the newly generated SQL through the same sequence before publishing it.
-    for (relative, bytes) in files.iter().filter(|(path, _)| path.starts_with("history")) {
-        let path = package_root.join(relative);
-        fs::create_dir_all(path.parent().context("history directory")?)?;
-        if !path.exists() {
-            fs::write(path, bytes)?;
-        }
-    }
-    let mut migrator = crate::migrations::migrator(package_root).await?;
-    migrator.dangerous_set_table_name(format!("_sqlx_verification_{}", bases.len()));
-    let mut connection = wamn_postgres::connect(database_url).await?;
-    register_verification_principal(&mut connection).await?;
-    migrator
-        .run_direct(None, &mut connection, false)
-        .await
-        .context("validate generated history migrations")?;
-    Ok((canonical, files))
+    files.extend(migrations);
+    Ok(Generated {
+        manifest,
+        files,
+        evidence,
+        appended_history,
+    })
 }
 
 async fn register_verification_principal(connection: &mut sqlx::PgConnection) -> Result<()> {
@@ -382,7 +611,7 @@ async fn register_verification_principal(connection: &mut sqlx::PgConnection) ->
     Ok(())
 }
 
-async fn history_columns(
+async fn ordered_columns(
     database_url: &str,
     manifest: &PackageManifest,
 ) -> Result<
@@ -393,9 +622,6 @@ async fn history_columns(
     let result = async {
         let mut columns = BTreeMap::new();
         for (id, model) in &manifest.models {
-            if model.owner != manifest.package.id {
-                continue;
-            }
             let rows = sqlx::query(SELECT_RELATION_COLUMNS_SQL)
                 .bind(&model.schema)
                 .bind(&model.table)
@@ -422,10 +648,13 @@ async fn history_columns(
 /// One warning for each allowed sort of a paged query without its
 /// (field, tie-breaker) index. The catalog includes indexes from every applied
 /// package migration.
-async fn missing_paged_query_indexes(
-    database_url: &str,
+fn missing_paged_query_indexes(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
+    columns: &BTreeMap<
+        wamn_catalog::manifest::source_name::SourceName,
+        Vec<crate::history::RelationColumn>,
+    >,
 ) -> Result<Vec<String>> {
     let mut warnings = Vec::new();
     for (model_name, model) in &manifest.models {
@@ -472,25 +701,12 @@ async fn missing_paged_query_indexes(
             }) {
                 continue;
             }
-            // The normalized IR sorts columns by name. PostgreSQL retains the
-            // definition order that the authored naming rule requires.
-            let client = wamn_postgres::pool(database_url, 4)
-                .await
-                .context("connect to name the missing pagination index")?;
-            let columns = sqlx::query(AssertSqlSafe(("SELECT attribute.attname::text
-                     FROM pg_catalog.pg_attribute AS attribute
-                     JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
-                     JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-                     WHERE namespace.nspname = $1 AND relation.relname = $2
-                       AND attribute.attnum > 0 AND NOT attribute.attisdropped
-                       AND attribute.attname::text = ANY($3::text[])
-                     ORDER BY attribute.attnum").to_owned()).into_sql_str()).bind(&model.schema).bind(&model.table).bind(vec![field, tie_breaker]).fetch_all(&client)
-                .await;
-            client.close().await;
             let columns = columns
-                .context("read the pagination index columns in table-definition order")?
+                .get(model_name)
+                .context("missing ordered columns")?
                 .iter()
-                .map(|row| row.get::<String, _>(0))
+                .filter(|column| column.name == field || column.name == tie_breaker)
+                .map(|column| column.name.clone())
                 .collect::<Vec<_>>();
             let name = authored_object_name(table.name(), &columns, "idx");
             warnings.push(format!(
@@ -504,36 +720,6 @@ async fn missing_paged_query_indexes(
         }
     }
     Ok(warnings)
-}
-
-/// The authored manifest bytes compiled from `wamn.k`.
-fn authored_manifest(package_root: &Path) -> Result<Vec<u8>> {
-    compile_authored_manifest(package_root)
-}
-
-/// The base packages of an overlay, from the build records of their builds.
-fn dependencies(output_root: &Path, manifest: &ManifestSources) -> Result<Vec<BuildDependency>> {
-    manifest
-        .base_dependencies
-        .values()
-        .map(|dependency| {
-            let base = crate::build_record::read(&package_output(output_root, &dependency.package))
-                .with_context(|| format!("build the base package {} first", dependency.package))?;
-            ensure!(
-                base.package.id == dependency.package && base.package.version == dependency.version,
-                "the base build is {} {}, and the package pins {} {}",
-                base.package.id,
-                base.package.version,
-                dependency.package,
-                dependency.version
-            );
-            Ok(BuildDependency {
-                id: base.package.id,
-                version: base.package.version,
-                digest: base.outputs.manifest,
-            })
-        })
-        .collect()
 }
 
 /// Every statement value object of a manifest document: each parameter and row
@@ -900,13 +1086,12 @@ async fn execute_on_server(server_url: &str, sql: &str) -> Result<()> {
 }
 
 /// Write the build output: every generated file, the canonical `wamn.json`,
-/// and the captured authored inputs. The completed record is written by xtask
-/// after component compilation.
+/// and the captured authored inputs.
 fn write_outputs(
     package_output: &Path,
     canonical: &[u8],
     files: &BTreeMap<PathBuf, Vec<u8>>,
-) -> Result<BuildOutputs> {
+) -> Result<BTreeMap<PathBuf, Digest>> {
     let mut outputs = files
         .iter()
         .map(|(path, bytes)| (path.clone(), bytes.as_slice()))
@@ -914,19 +1099,10 @@ fn write_outputs(
     outputs.insert(PathBuf::from(COMPILED_MANIFEST_NAME), canonical);
 
     write_files(package_output, &outputs)?;
-    let mut digests = BTreeMap::new();
-    for (relative, bytes) in &outputs {
-        let key = relative
-            .to_str()
-            .with_context(|| format!("output path is not UTF-8: {}", relative.display()))?
-            .to_owned();
-        digests.insert(key, bytes_sha256(bytes));
-    }
-    Ok(BuildOutputs {
-        manifest: bytes_sha256(canonical),
-        files: digests,
-        components: Vec::new(),
-    })
+    Ok(outputs
+        .into_iter()
+        .map(|(path, bytes)| (path, bytes_sha256(bytes)))
+        .collect())
 }
 
 #[cfg(test)]
@@ -1092,9 +1268,14 @@ mod tests {
 struct ManifestSources {
     package: wamn_catalog::manifest::PackageIdentity,
     #[serde(default)]
-    base_dependencies:
-        BTreeMap<wamn_catalog::manifest::source_name::SourceName, wamn_catalog::manifest::BaseDependencyRequirement>,
-    models: BTreeMap<wamn_catalog::manifest::source_name::SourceName, wamn_catalog::manifest::ModelDeclaration>,
+    base_dependencies: BTreeMap<
+        wamn_catalog::manifest::source_name::SourceName,
+        wamn_catalog::manifest::BaseDependencyRequirement,
+    >,
+    models: BTreeMap<
+        wamn_catalog::manifest::source_name::SourceName,
+        wamn_catalog::manifest::ModelDeclaration,
+    >,
     #[serde(default)]
     custom_operations: BTreeMap<String, OperationSources>,
 }

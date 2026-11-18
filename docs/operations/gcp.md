@@ -477,7 +477,7 @@ Set these inputs:
 - `WAMN_TEST_CLUSTER` as the absolute path to `deploy/gcp/cluster.k`.
 - `WAMN_RELEASE_CHART` and `WAMN_KCL` as absolute paths to the prepared chart and pinned compiler.
 - `WAMN_TEST_OWNER_PASSWORD` as the enrolled owner's password from your secret store.
-- `DATABASE_URL` as a separate disposable PostgreSQL 18 server with permission to create and drop build databases.
+- For a describe refresh or check, set `DATABASE_URL` to a PostgreSQL 18 server with permission to create and drop databases.
 - `WAMN_INGRESS_COMPONENT` as the absolute path to the raw pinned `ingress.wasm`.
 - `WAMN_REGISTRY_AUTH_FILE` as a private credential file with Artifact Registry write access.
   Its `auths` entry must supply `username` and `password` for `us-central1-docker.pkg.dev`.

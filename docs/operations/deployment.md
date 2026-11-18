@@ -18,7 +18,7 @@ Certificate subjects must match the endpoint names that their clients verify.
 
 From the source checkout, prepare the registry and artifacts as [building](building.md#local-platform-artifacts) describes.
 The example uses `localhost:5001`, as `deploy/kind/cluster.k` does.
-The published chart includes the pinned infrastructure, platform, org, and environment charts.
+The published application chart includes the pinned infrastructure, platform, org, environment, and project charts.
 On kind, `wamn platform deploy` reads `WAMN_REGISTRY_AUTH_FILE` to create the org namespace’s `wamn-registry-pull` Secret.
 Set this variable to the platform registry credential file before deployment.
 Deploy the chart reference that the build command prints:
@@ -191,11 +191,13 @@ It prints one line when the state changes and prints the log tail once when the 
 A refused route or failed Job exits nonzero.
 The CLI never retries a refused route through direct access.
 Remote operations need no kubeconfig, target database URL, or local chart.
-The environment file supplies the project and environment names.
-The server reads the canonical document and selects all runtime inputs.
+The environment file names the environment, its projects, and their applications.
+An application command finds the project from the application name.
+Control selects the runtime inputs.
 
 Source publication stays local and returns the top package OCI digest.
-Source builds require `DATABASE_URL` for disposable build databases and the existing registry inputs.
+Source builds use [committed PostgreSQL describe evidence](building.md#wamn-build) and the existing registry inputs.
+To refresh the evidence during a source deploy, pass `--refresh-describe` with `--database-url` or set `DATABASE_URL`.
 Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE` for publication.
 `WAMN_OCI_CA_PATHS` supplies optional registry certificates.
 For an HTTP registry, the existing `WAMN_RELEASE_HOST_GROUP` document supplies `--allow-insecure-registries` in `extraArgs`.
@@ -203,29 +205,57 @@ For an HTTP registry, the existing `WAMN_RELEASE_HOST_GROUP` document supplies `
 
 Application, schema and administration commands require `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
 Control selects the installed database, chart, registry and broker configuration.
-The CLI has no direct database fallback. Source publication still uses a disposable build database.
+The CLI sends database operations to the control service.
 See [Native control](../architecture/control.md) for the service and worker configuration.
 
-`wamn-registry` reads and writes applied configuration in typed project rows and their child tables.
-A NULL project schema mode marks an unconfigured deployment. Configuration resolves an omitted mode from the environment’s disposable setting.
-Application rows hold hostnames, client pins and desired release digests.
-Other rows hold connection aliases and integration versions. The shared environment owns its target and policy.
-Postgres constrains these values. The top package pins the base packages by OCI digest.
-Environment documents contain no release digest or package membership. Old document shapes are refused.
-Set the project `revocation_seconds` to an integer from 0 to 3600. Deploy writes this grant cache lifetime into each application workload.
-The value bounds the lifetime of positive grant answers.
-Zero disables auth caching. Restart hosts after changing a bound.
-`wamn env apply environment.k` submits the configuration to authenticated control.
-The worker upgrades the org, project, and environment charts once each.
-The org chart declares the database logins. The project chart keeps their passwords across upgrades.
-The worker saves the configuration after the database, capture slot, and host are ready.
-A new database receives its initial SQL through an installer bootstrap Job. That worker refuses an existing baseline.
-Later configuration updates use restricted connections and never read a superuser credential.
+The registry stores applied project settings, application hostnames, client pins, and connection aliases.
+The shared environment owns its target, policy, and connection versions.
+The top package pins its base packages by OCI digest.
+Helm records the release history. A WorkloadDeployment exposes the applied package digest and Helm revision.
+
+Use one `environment.yaml` file for each environment. Each application name must be unique in the file.
+The [environment schema](../../crates/environment/environment.schema.json) describes the YAML fields.
+An application connection alias names a connection from the shared `connections` map.
+Set `revocation_seconds` to an integer from 0 to 3600 for the environment.
+Deploy sets this grant cache lifetime on each application workload. Zero disables the cache.
+
+```yaml
+org: acme
+env: dev
+target: cloud
+policy: dev
+revocation_seconds: 60
+connections:
+  orders-api: {version: 2}
+projects:
+  - name: orders
+    applications:
+      shop:
+        hostname: shop.example.com
+        connections:
+          orders: orders-api
+  - name: reporting
+    applications:
+      reports:
+        hostname: reports.example.com
+        connections:
+          orders: orders-api
+```
+
+`wamn env apply environment.yaml` holds one environment lock.
+The worker reserves the selected projects, upgrades the org chart once, and submits one host chart upgrade.
+It upgrades one project chart per project and runs that project's SQL in file order.
+The first project waits up to 120 seconds for the host chart's broker certificate.
+After the last project succeeds, the worker waits for the host rollout and removes unused connection pins on a full apply.
+If a project fails, the worker stops and names the project. Fix the error and run the command again to continue.
+New projects later in the file stay reserved without applied configuration.
+An omitted project schema mode follows the environment's disposable setting.
 Use `--disposable` only when first recording an environment that can be reset.
-Configure uses the environment chart to create the project's PostgreSQL publication. The publication selects the schemas of installed models for change data capture (CDC).
-The Job prepares the replication slot, then issues the shared environment Certificate and the project's reader Certificate.
-After the Certificates report ready, the Job reads the environment Secret. It waits up to 60 seconds for NATS to accept the account.
-The Job creates the project stream before it deploys the CDC reader from the pinned host image.
+The org chart declares the database logins. The project chart keeps their passwords across upgrades.
+The project chart creates the PostgreSQL publication for change data capture (CDC).
+For each project, the worker waits for the database, initializes its SQL when needed, and prepares the replication slot.
+After the certificates report ready, the worker reads the environment Secret and waits up to 60 seconds for NATS to accept the account.
+The worker creates the stream, waits for the CDC reader, and saves the project's applied configuration.
 The shared host group uses the runtime operator chart at version 2.12.1. Its `wasmcloud-nats` entry points to the broker and reads TLS files from `/etc/wasmcloud/host-plugin-secrets/<environment-secret>/`.
 
 Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Add `--data` and confirm the coordinate in a terminal to delete its database.
@@ -239,15 +269,18 @@ The configuration export contains no code selection.
 Use a source package directory for source deployment. Use an application release digest for deployment without source:
 
 ```bash
-wamn deploy apps/sample_app --application sample_app --env environments/dev/environment.k
-wamn deploy --release sha256:<release-digest> --application sample_app --env environments/dev/environment.k
-wamn rollback sample_app --env environments/dev/environment.k
-wamn rollback sample_app --release sha256:<release-digest> --env environments/dev/environment.k
-wamn status --env environments/dev/environment.k
+wamn deploy apps/sample_app --application sample_app --env environments/dev/environment.yaml
+wamn deploy --release sha256:<release-digest> --application sample_app --env environments/dev/environment.yaml
+wamn rollback sample_app --env environments/dev/environment.yaml
+wamn rollback sample_app --release sha256:<release-digest> --env environments/dev/environment.yaml
+wamn status --env environments/dev/environment.yaml
+wamn status sample_app --env environments/dev/environment.yaml
 ```
 
+Status reports each project in the file. An application name selects its project.
+
 Publication needs no destination database.
-Run `wamn env apply environments/dev/environment.k` before applying application SQL and deploying code.
+Run `wamn env apply environments/dev/environment.yaml` before applying application SQL and deploying code.
 Each application owns its Helm history, workloads, Services, and route ConfigMaps.
 The environment chart owns one host for each org and environment. All projects share it.
 Application workloads and file Services select that host. Database credentials and event bindings remain separate for each project.
@@ -280,13 +313,13 @@ An environment name or explicit `reset` mode grants no authority to discard data
 Editing the mode alone executes no SQL and changes no application selection.
 
 ```bash
-wamn publish apps/sample_app --env environments/dev/environment.k
-wamn schema diff sample_app --env environments/dev/environment.k
-wamn schema apply sample_app --env environments/dev/environment.k
-wamn schema apply sample_app --env environments/dev/environment.k --release sha256:<release-digest>
-wamn schema diff apps/sample_app --env environments/dev/environment.k
-wamn schema apply apps/sample_app --env environments/dev/environment.k
-wamn schema reset --env environments/dev/environment.k
+wamn publish apps/sample_app --env environments/dev/environment.yaml
+wamn schema diff sample_app --env environments/dev/environment.yaml
+wamn schema apply sample_app --env environments/dev/environment.yaml
+wamn schema apply sample_app --env environments/dev/environment.yaml --release sha256:<release-digest>
+wamn schema diff apps/sample_app --env environments/dev/environment.yaml
+wamn schema apply apps/sample_app --env environments/dev/environment.yaml
+wamn schema reset --project sample_project --env environments/dev/environment.yaml
 ```
 
 An application name selects its latest successful Helm release. `--release` selects another application release for SQL without selecting its code.
@@ -314,7 +347,8 @@ Earlier committed files remain applied.
 ### Reset target and recovery
 
 Every schema apply in `reset` mode resets application state in the existing project database.
-An explicit schema reset does the same work.
+An explicit schema reset selects the whole project database.
+Type the project name at the terminal prompt. Every application in that project is affected.
 The registry must authorize data loss by recording the environment as disposable.
 Neither operation resets `wamn_system` or another environment.
 
@@ -403,7 +437,8 @@ The command uses project administrator authority and answers `{"ok":true}` or `{
 It writes no connection generation or credential and stops after ten seconds.
 
 An optional integer `version` in the request selects a published version.
-Without it, the host uses the live release's bound version, or the newest published version when nothing is bound.
+Without it, control uses the version pinned in the environment.
+If the connection has no environment pin, control uses the latest published version.
 If you omit `--credential-file`, the host uses the existing credential when one exists.
 Candidate parameters must pass the same rules as a connection write, including immutable fields and live versions.
 
@@ -535,7 +570,7 @@ Read each command's current required arguments with `--help`.
 Run this command after building the package and its bases.
 
 ```bash
-wamn publish apps/wamn_receiving --env environments/dev/environment.k
+wamn publish apps/wamn_receiving --env environments/dev/environment.yaml
 ```
 
 Set `WAMN_PACKAGE_ARTIFACT_BASE` and `WAMN_COMPONENT_ARTIFACT_BASE` to the package and component repositories.
@@ -787,7 +822,7 @@ Ordinary platform reapply also runs no migration.
 System schema apply changes only system SQL objects and migration records.
 It changes no service release, application selection, credential, or Helm release.
 Deploy compatible control code separately with `platform deploy ... --only control`.
-For one environment, select project target and its environment document.
+Select the project target and give the YAML file for the environment.
 Project target requires `--env`, and system target refuses it.
 Control reads the environment's recorded database instance and installed connection projection.
 The SQL Job uses the scope's own CNPG migration login and basic-auth Secret.
@@ -795,13 +830,13 @@ The platform owner roles stay `NOLOGIN`. Migration logins inherit their privileg
 Platform migration execution refuses administrator sessions.
 
 ```bash
-wamn platform schema diff --target project --env environments/dev/environment.k
-wamn platform schema apply --target project --env environments/dev/environment.k
+wamn platform schema diff --target project --env environments/dev/environment.yaml
+wamn platform schema apply --target project --env environments/dev/environment.yaml
 ```
 
-The Job holds the environment's exclusive lifecycle lock for the whole operation.
-It waits for an active reset or application schema operation.
-It changes only WAMN substrate SQL and `platform._sqlx_migrations` in that environment's recorded database.
+The Job holds one exclusive environment lock for the whole operation.
+It visits each project in file order and stops on the first error.
+It changes WAMN substrate SQL and `platform._sqlx_migrations` in each selected project database.
 Application tables, rows, code selections, Helm releases, and other environments stay unchanged.
 The operation runs no environment provisioning or application activation.
 

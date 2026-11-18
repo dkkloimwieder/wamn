@@ -146,7 +146,7 @@ pub fn select_application(
                 selection
                     .connections
                     .values()
-                    .any(|selected| &selected.name == *name)
+                    .any(|selected| selected.as_str() == *name)
             })
             .map(|(name, integration)| (name.clone(), integration.clone()))
             .collect(),

@@ -656,6 +656,7 @@ Issues:
 - One value each for the NATS address, the identity issuer address and the registry address.
 - Delete the `wamn-platform-observer` Role, RoleBinding and ClusterRole with the read-back; today they let every service account in an org namespace read the installation namespace's Secrets.
 - Control gets its own system-database login, a member of `wamn_control`, with the Secret `wamn-control-db` from the org chart. The settings generator writes `database` and `public_origin`, which control requires to start (missing since Epic 1).
+- Env apply order, under the environment lock: reserve the registry rows of every selected project; one org chart upgrade with all their logins; submit the one host chart upgrade; then the project loop (one project chart upgrade and its SQL per project, stopping at the first error); then wait for the host. The first project waits for the broker certificate itself, with a bounded wait. Projects after a failure stay reserved and unconfigured, and a rerun finishes them.
 
 8.5 Build.
 - Codegen's describe cache (`.wamn/describe/`, committed, with a refresh flag and a check that it is current). The build uses a database only when SQL changes. The build is skipped when its inputs are unchanged.
@@ -712,6 +713,7 @@ Issues:
 - Edge device, if the edge needs NATS: use the stock NATS way. A leaf node on the device with its own JetStream domain, one per edge environment. Mirror cloud streams to the edge, and source edge streams into the cloud. The edge then binds the stock `wasmcloud_nats` plugin to the local server, which also fills `ingress`'s NATS imports, and the guest code does not change. Not ruled; the edge design decides.
 - After 3.6, with D's approval: the first kind run deploys through the new install and deploy paths, and covers a Data change handler (the subscription and the dispatch through `ingress`).
 - 3.6: the NATS volume (10 Gi today) must hold the sum of all environment accounts, which is 256 MiB times the number of projects across all environments. Size it at install.
+- 3.6: `cluster.k` checks the GCP project ID, the zone and the bucket names, but no Rust or SQL code does. Add the three checks in Rust.
 - The xtask dependency check fails on `wamn-edge`, which links `oci-client` through wash-runtime. This predates Epic 7. Fix the check's allowance or the dependency.
 - 3.6: RBAC that reaches past its need: `wamn-platform-operations` gives `wamn-operation-<org>` full Secret writes and RBAC `bind` and `escalate` in the platform namespace, and control's org Role has `get` on every Secret in the org namespace. Shrink both to named resources.
 - 3.7: `apps/platform_ui` reads residency and live fields from the old status contract. Regenerate its clients against the new `environment.status` and `application.rollback` contracts.
@@ -2156,3 +2158,5 @@ Facts:
 **Ruled (D, 2026-11-18): Epic 8 settings facts.** The control settings generator derives the three artifact bases and `insecure_registry` from the one registry value, with the shared loopback rule; the environment Jobs read them from control's settings, and their read-back goes. This also fixes control settings that lacked required fields. Org apply builds the `wamn_system` cluster entry from the org ID, and its read-back of the previous org release goes.
 
 **Ruled (D, 2026-11-18): capture-gap recovery and control's login.** Recover and close become operation Jobs that set the project chart's `pause` value, and the values builder keeps the reader paused while a gap is open, so a deploy cannot restart it early; the routes change from synchronous calls to operations. Control gets its own least-privilege system-database login, a member of `wamn_control`, under org row security; `wamn_apply` is not used for control's request path.
+
+**Ruled (D, 2026-11-18): env apply order.** Every selected project's registry row is reserved first, so the org chart is upgraded once with every project's logins. The host chart upgrade is submitted before the project loop and waited on after it; the first project waits for the broker certificate with a bounded wait. A failure leaves later projects reserved and unconfigured, which a rerun completes.

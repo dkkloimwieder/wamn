@@ -1,0 +1,172 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EnvironmentFile",
+  "type": "object",
+  "required": [
+    "env",
+    "org",
+    "policy",
+    "projects",
+    "revocation_seconds",
+    "target"
+  ],
+  "properties": {
+    "connections": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/Integration"
+      }
+    },
+    "env": {
+      "type": "string"
+    },
+    "org": {
+      "type": "string"
+    },
+    "policy": {
+      "type": "string"
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Project"
+      },
+      "minItems": 1
+    },
+    "revocation_seconds": {
+      "type": "integer",
+      "format": "uint32",
+      "maximum": 3600.0,
+      "minimum": 0.0
+    },
+    "target": {
+      "type": "string",
+      "pattern": "\\S"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "ApplicationSelection": {
+      "description": "An application's deployment selection and declared membership.",
+      "type": "object",
+      "required": [
+        "hostname"
+      ],
+      "properties": {
+        "client": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Client"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "connections": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/ConnectionReference"
+          }
+        },
+        "hostname": {
+          "type": "string",
+          "maxLength": 253,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Client": {
+      "description": "A package and its immutable web artifact.",
+      "type": "object",
+      "required": [
+        "package",
+        "web"
+      ],
+      "properties": {
+        "package": {
+          "type": "string"
+        },
+        "web": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ConnectionReference": {
+      "description": "A bare connection name. The version is pinned once for the environment.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+    },
+    "Integration": {
+      "description": "The environment pin for a published integration type version.",
+      "type": "object",
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "Project": {
+      "type": "object",
+      "required": [
+        "applications",
+        "name"
+      ],
+      "properties": {
+        "applications": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/ApplicationSelection"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "schema": {
+          "default": {},
+          "allOf": [
+            {
+              "$ref": "#/definitions/Schema"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Schema": {
+      "description": "Schema behavior; an omitted mode follows the stored disposable designation.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SchemaMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SchemaMode": {
+      "description": "The schema lifecycle mode.",
+      "type": "string",
+      "enum": [
+        "reset",
+        "migrate"
+      ]
+    }
+  }
+}

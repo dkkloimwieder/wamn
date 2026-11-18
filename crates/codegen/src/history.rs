@@ -12,7 +12,8 @@ use wamn_record_history::{LOG_TRIGGER, STAMP_TRIGGER, history_table_name};
 
 const NAME_BYTE_LIMIT: usize = 64;
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RelationColumn {
     pub name: String,
     pub primary_key: bool,

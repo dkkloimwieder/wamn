@@ -15,7 +15,8 @@ use sqlx::{
 };
 
 /// What describe says about one statement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DescribedStatement {
     /// The PostgreSQL type name of each parameter, in `$n` order.
     pub(crate) parameters: Vec<String>,
@@ -24,7 +25,8 @@ pub(crate) struct DescribedStatement {
 }
 
 /// One result column of a described statement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DescribedColumn {
     pub(crate) name: String,
     /// The PostgreSQL type name.

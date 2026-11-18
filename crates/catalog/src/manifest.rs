@@ -1298,7 +1298,7 @@ fn validate_custom_operation(
     }
 
     validate_custom_operation_type(manifest, operation_name, operation)?;
-    validate_custom_operation_input(operation_name, &operation.input)?;
+    validate_custom_operation_input(operation_name, &operation.input, operation.claims())?;
     if let Some(result) = &operation.result {
         // No paging contract exists for a custom operation. Page belongs to
         // the generated query, which tests its cursor, limit and envelope.
@@ -1617,6 +1617,7 @@ fn refuse_command_only_fields(
 fn validate_custom_operation_input(
     operation_name: &LocalOperation,
     input: &CustomOperationInputDeclaration,
+    claim: bool,
 ) -> Result<(), ManifestError> {
     // An input may be empty: a read whose only member was its request
     // identity has nothing left to send.
@@ -1624,7 +1625,7 @@ fn validate_custom_operation_input(
         validate_contract_fields(operation_name, "input", &input.fields)?;
     }
     let envelope_fields = [input.raw_body_maximum.is_some(), input.envelope.is_some()];
-    if envelope_fields.iter().any(|present| *present)
+    if (claim || envelope_fields.iter().any(|present| *present))
         && !envelope_fields.iter().all(|present| *present)
     {
         return Err(ManifestError::new(

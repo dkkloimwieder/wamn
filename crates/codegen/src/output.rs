@@ -1,5 +1,6 @@
 //! Where a package's build output lies.
 
+use anyhow::{Context as _, Result, ensure};
 use std::path::{Path, PathBuf};
 
 /// The directory below a package's parent that holds one build output
@@ -69,6 +70,44 @@ pub(crate) fn is_build_output(directory: &Path) -> bool {
             .parent()
             .and_then(Path::file_name)
             .is_some_and(|name| name == "target")
+}
+
+/// Whether a path belongs to the source tree, excluding generated output and dependencies.
+///
+/// The path can name a new or deleted file or directory.
+#[must_use]
+pub fn is_input_path(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root).is_ok_and(|relative| {
+        relative.components().all(|component| {
+            !["target", "node_modules", "dist"]
+                .iter()
+                .any(|excluded| component.as_os_str() == *excluded)
+        })
+    })
+}
+
+/// Resolve a workspace build directory to its package source root.
+///
+/// # Errors
+///
+/// When the path does not name `<workspace>/target/wamn/<package>`.
+pub fn source_root(output: &Path) -> Result<PathBuf> {
+    ensure!(
+        is_build_output(output),
+        "{} is not a workspace package output under target/wamn",
+        output.display()
+    );
+    let workspace = output
+        .ancestors()
+        .nth(3)
+        .filter(|path| !path.as_os_str().is_empty())
+        .with_context(|| format!("{} has no package workspace parent", output.display()))?;
+    let package = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("{} has no UTF-8 package name", output.display()))?
+        .parse::<wamn_catalog::PackageName>()?;
+    Ok(dependency_root(&workspace.join(package.as_str()), &package))
 }
 
 #[cfg(test)]

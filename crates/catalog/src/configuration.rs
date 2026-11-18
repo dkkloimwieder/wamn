@@ -1,4 +1,4 @@
-//! Typed applied settings and desired releases. Helm owns deployment history.
+//! Typed applied project settings and environment connection pins.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -28,9 +28,6 @@ pub struct EnvironmentConfiguration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationConfiguration {
-    /// Desired release. Deployment documents cannot supply this field.
-    #[serde(skip)]
-    pub release: Option<wamn_digest::Digest>,
     pub hostname: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
@@ -38,65 +35,50 @@ pub struct ApplicationConfiguration {
     pub connections: BTreeMap<String, ConnectionReference>,
 }
 
-/// A connection name and the optional version named by the document.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConnectionReference {
-    pub name: String,
-    pub version: Option<i32>,
+/// A bare connection name. The version is pinned once for the environment.
+#[derive(Debug, Clone, PartialEq, Eq, schemars::JsonSchema)]
+pub struct ConnectionReference(#[schemars(regex(pattern = "^[a-z][a-z0-9_-]{0,62}$"))] String);
+
+impl ConnectionReference {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+pub fn valid_connection_name(name: &str) -> bool {
+    name.len() <= 63
+        && name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
+        })
 }
 
 impl fmt::Display for ConnectionReference {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.name)?;
-        if let Some(version) = self.version {
-            write!(formatter, "@{version}")?;
-        }
-        Ok(())
+        formatter.write_str(&self.0)
     }
 }
 
 impl Serialize for ConnectionReference {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
+        serializer.serialize_str(&self.0)
     }
 }
 
 impl<'de> Deserialize<'de> for ConnectionReference {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error as _;
-        let mut text = String::deserialize(deserializer)?;
-        let (name, version) = match text.split_once('@') {
-            Some((name, version)) => {
-                if version.starts_with('0') || !version.bytes().all(|byte| byte.is_ascii_digit()) {
-                    return Err(D::Error::custom(
-                        "connection version must be a positive integer",
-                    ));
-                }
-                let version = version.parse::<i32>().map_err(D::Error::custom)?;
-                (name, Some(version))
-            }
-            None => (text.as_str(), None),
-        };
-        if name.is_empty()
-            || name.len() > 63
-            || !name.as_bytes()[0].is_ascii_lowercase()
-            || !name.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
-            })
-        {
-            return Err(D::Error::custom("invalid connection name"));
+        let name = String::deserialize(deserializer)?;
+        if !valid_connection_name(&name) {
+            return Err(serde::de::Error::custom("invalid connection name"));
         }
-        let name_length = name.len();
-        text.truncate(name_length);
-        Ok(Self {
-            name: text,
-            version,
-        })
+        Ok(Self(name))
     }
 }
 
 /// Schema behavior; an omitted mode follows the stored disposable designation.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct Schema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -104,7 +86,7 @@ pub struct Schema {
 }
 
 /// The schema lifecycle mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SchemaMode {
     Reset,
@@ -112,21 +94,24 @@ pub enum SchemaMode {
 }
 
 /// A package and its immutable web artifact.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Client {
+    #[schemars(with = "String")]
     pub package: crate::PackageName,
+    #[schemars(with = "String", regex(pattern = "^sha256:[0-9a-f]{64}$"))]
     pub web: wamn_digest::Digest,
 }
 
-/// A published project integration version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The environment pin for a published integration type version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Integration {
+    #[schemars(range(min = 1))]
     pub version: i32,
 }
 
-/// Read applied settings and desired releases. An unconfigured deployment returns none.
+/// Read applied settings and environment connection pins. An unconfigured deployment returns none.
 ///
 /// # Errors
 /// Returns database errors.
@@ -140,12 +125,12 @@ pub async fn read(
          FROM registry.environment_projects p JOIN registry.environments e USING (org,env) \
          JOIN registry.target t ON t.id=e.target_id LEFT JOIN LATERAL ( \
            SELECT 1 AS record_type, application AS name, hostname AS value, \
-             client_package, client_web, release_digest, NULL::text AS alias, NULL::integer AS version \
+             client_package, client_web, NULL::text AS alias, NULL::integer AS version \
            FROM registry.environment_applications WHERE org=p.org AND env=p.env AND project=p.project \
-           UNION ALL SELECT 2, application, connection_name, NULL, NULL, NULL, alias, connection_version \
+           UNION ALL SELECT 2, application, connection_name, NULL, NULL, alias, NULL \
            FROM registry.environment_application_connections WHERE org=p.org AND env=p.env AND project=p.project \
-           UNION ALL SELECT 3, name, NULL, NULL, NULL, NULL, NULL, version \
-           FROM registry.environment_integrations WHERE org=p.org AND env=p.env AND project=p.project \
+           UNION ALL SELECT 3, name, NULL, NULL, NULL, NULL, version \
+           FROM registry.environment_integrations WHERE org=p.org AND env=p.env \
          ) c ON true WHERE p.org=$1 AND p.env=$2 AND p.project=$3 AND p.schema_mode IS NOT NULL \
          ORDER BY c.record_type",
     )
@@ -187,7 +172,6 @@ pub async fn read(
                     ApplicationConfiguration {
                         hostname: row.try_get("value")?,
                         client,
-                        release: row.try_get("release_digest")?,
                         connections: BTreeMap::new(),
                     },
                 );
@@ -201,10 +185,7 @@ pub async fn read(
                     .connections
                     .insert(
                         row.try_get("alias")?,
-                        ConnectionReference {
-                            name: row.try_get("value")?,
-                            version: row.try_get("version")?,
-                        },
+                        ConnectionReference(row.try_get("value")?),
                     );
             }
             Some(3) => {
@@ -254,11 +235,11 @@ pub async fn require_placement(
     Ok(())
 }
 
-/// Replace applied settings atomically, preserving each surviving application's release.
-/// The caller owns the environment lifecycle lock and binds the provisioning actor.
+/// Replace one project's settings atomically and upsert the environment pins.
+/// The caller owns the environment lifecycle lock, checks placement, and binds the provisioning actor.
 ///
 /// # Errors
-/// Returns database errors or refuses a policy that changes established placement.
+/// Returns database errors.
 /// A missing deployment returns false.
 pub async fn write(
     connection: &mut sqlx::PgConnection,
@@ -266,7 +247,6 @@ pub async fn write(
 ) -> Result<bool, sqlx::Error> {
     let mut transaction = connection.begin().await?;
     let c = configuration;
-    require_placement(&mut transaction, &c.org, &c.env, &c.policy).await?;
     let mode = c.schema.mode.map(|mode| match mode {
         SchemaMode::Reset => "reset",
         SchemaMode::Migrate => "migrate",
@@ -294,6 +274,11 @@ pub async fn write(
         .await?;
     sqlx::query("UPDATE registry.environments SET policy_name=$3, target_id=$4::text::uuid WHERE org=$1 AND env=$2")
         .bind(&c.org).bind(&c.env).bind(&c.policy).bind(target).execute(&mut *transaction).await?;
+    for (name, integration) in &c.integrations {
+        sqlx::query("INSERT INTO registry.environment_integrations (org,env,name,version) VALUES ($1,$2,$3,$4) \
+                     ON CONFLICT (org,env,name) DO UPDATE SET version=EXCLUDED.version")
+            .bind(&c.org).bind(&c.env).bind(name).bind(integration.version).execute(&mut *transaction).await?;
+    }
     let applications: Vec<&crate::ApplicationName> = c.applications.keys().collect();
     sqlx::query("DELETE FROM registry.environment_applications WHERE org=$1 AND env=$2 AND project=$3 AND NOT(application=ANY($4))")
         .bind(&c.org).bind(&c.env).bind(&c.project).bind(&applications).execute(&mut *transaction).await?;
@@ -313,25 +298,25 @@ pub async fn write(
         .execute(&mut *transaction).await?;
         for (alias, connection) in &application.connections {
             sqlx::query(
-                "INSERT INTO registry.environment_application_connections (org,env,project,application,alias,connection_name,connection_version) \
-                 VALUES ($1,$2,$3,$4,$5,$6,$7)",
+                "INSERT INTO registry.environment_application_connections (org,env,project,application,alias,connection_name) \
+                 VALUES ($1,$2,$3,$4,$5,$6)",
             )
             .bind(&c.org).bind(&c.env).bind(&c.project).bind(name)
-            .bind(alias).bind(&connection.name).bind(connection.version).execute(&mut *transaction).await?;
+            .bind(alias).bind(connection.as_str()).execute(&mut *transaction).await?;
         }
-    }
-    sqlx::query(
-        "DELETE FROM registry.environment_integrations WHERE org=$1 AND env=$2 AND project=$3",
-    )
-    .bind(&c.org)
-    .bind(&c.env)
-    .bind(&c.project)
-    .execute(&mut *transaction)
-    .await?;
-    for (name, integration) in &c.integrations {
-        sqlx::query("INSERT INTO registry.environment_integrations (org,env,project,name,version) VALUES ($1,$2,$3,$4,$5)")
-            .bind(&c.org).bind(&c.env).bind(&c.project).bind(name).bind(integration.version).execute(&mut *transaction).await?;
     }
     transaction.commit().await?;
     Ok(true)
+}
+
+/// Remove stale pins after all of an environment's project binding writes succeed.
+pub async fn retain_integrations(
+    connection: &mut sqlx::PgConnection,
+    org: &wamn_registry::OrgId,
+    env: &wamn_registry::EnvName,
+    names: &[&str],
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM registry.environment_integrations WHERE org=$1 AND env=$2 AND NOT(name=ANY($3))")
+        .bind(org).bind(env).bind(names).execute(connection).await?;
+    Ok(())
 }

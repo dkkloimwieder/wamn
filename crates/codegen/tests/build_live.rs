@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use sqlx::Row as _;
 use wamn_codegen::build::{BuildRequest, generate_package, package_output};
-use wamn_codegen::build_record;
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires: postgres"]
@@ -37,8 +36,8 @@ async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<
     let second_package = second_workspace.package();
     let first_output = first_workspace.root.join("target/wamn");
     let second_output = second_workspace.root.join("target/wamn");
-    let first_request = BuildRequest::new(&first_package, &first_output, first.url());
-    let second_request = BuildRequest::new(&second_package, &second_output, second.url());
+    let first_request = BuildRequest::refresh(&first_package, &first_output, first.url());
+    let second_request = BuildRequest::refresh(&second_package, &second_output, second.url());
     let unlock = async {
         let waiting = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
@@ -145,7 +144,7 @@ fn copy_source(source: &Path, target: &Path) {
 
 /// Every file below `root`, by its path relative to `root`.
 async fn build(package: &Path, output_root: &Path, database: &str) -> anyhow::Result<Value> {
-    generate_package(&BuildRequest::new(package, output_root, database)).await?;
+    generate_package(&BuildRequest::refresh(package, output_root, database)).await?;
     let path = package_output(
         output_root,
         &wamn_fixture_package::PACKAGE_ID
@@ -253,7 +252,7 @@ const RECEIPT_FEED_VIEW: &str = "SELECT line.id, line.code, line.edit_version,
 async fn authored_feed_build(pool: &sqlx::PgPool, workspace: &Workspace) -> anyhow::Result<()> {
     let database = wamn_test_postgres::url(pool);
     let output_root = workspace.root.join("target/wamn");
-    generate_package(&BuildRequest::new(
+    generate_package(&BuildRequest::refresh(
         &workspace.package(),
         &output_root,
         database.as_str(),
@@ -375,7 +374,7 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
             );
         }
         let output_root = workspace.root.join("target/wamn");
-        generate_package(&BuildRequest::new(
+        generate_package(&BuildRequest::refresh(
             &workspace.package(),
             &output_root,
             database.as_str(),
@@ -416,7 +415,7 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
     )
     .unwrap();
     let output_root = workspace.root.join("target/wamn");
-    generate_package(&BuildRequest::new(
+    generate_package(&BuildRequest::refresh(
         &workspace.package(),
         &output_root,
         database.as_str(),
@@ -450,7 +449,7 @@ async fn projection_view_refuses_a_wrong_declared_type_and_names_the_field(pool:
         "manifest.int32(\"code\"), manifest.int32(\"edit_version\")",
     );
     let database = wamn_test_postgres::url(&pool);
-    let _error = generate_package(&BuildRequest::new(
+    let _error = generate_package(&BuildRequest::refresh(
         &workspace.package(),
         &workspace.root.join("target/wamn"),
         database.as_str(),
@@ -469,7 +468,7 @@ async fn projection_view_does_not_hide_nullable_table_columns(pool: sqlx::PgPool
     fs::write(workspace.package().join("query/widget_list.sql"),
         "SELECT screen.id, widget.note AS code, screen.edit_version, screen.attributes FROM widget_screen AS screen JOIN widget ON widget.id = screen.id ORDER BY screen.id;\n").unwrap();
     let database = wamn_test_postgres::url(&pool);
-    let _error = generate_package(&BuildRequest::new(
+    let _error = generate_package(&BuildRequest::refresh(
         &workspace.package(),
         &workspace.root.join("target/wamn"),
         database.as_str(),
@@ -480,7 +479,7 @@ async fn projection_view_does_not_hide_nullable_table_columns(pool: sqlx::PgPool
 
 /// Owner declarations survive compilation at a caller-selected output root.
 #[sqlx::test(migrations = false)]
-async fn overlay_builds_inherit_owner_fields_from_manifests_with_build_records(pool: sqlx::PgPool) {
+async fn overlay_builds_inherit_owner_fields_from_compiled_manifests(pool: sqlx::PgPool) {
     use wamn_codegen::build::generate_package;
 
     let workspace = Workspace::new("inherited-fields");
@@ -495,19 +494,14 @@ async fn overlay_builds_inherit_owner_fields_from_manifests_with_build_records(p
     .unwrap();
     let database = wamn_test_postgres::url(&pool);
     let output = workspace.root.join("selected-output");
-    let base = generate_package(&BuildRequest::new(
+    generate_package(&BuildRequest::refresh(
         &workspace.package(),
         &output,
         database.as_str(),
     ))
     .await
     .unwrap();
-    fs::write(
-        package_output(&output, &base.package.id).join(build_record::BUILD_RECORD_FILE),
-        base.to_bytes(),
-    )
-    .unwrap();
-    let request = BuildRequest::new(&workspace.overlay(), &output, database.as_str());
+    let request = BuildRequest::refresh(&workspace.overlay(), &output, database.as_str());
     generate_package(&request).await.unwrap();
     let manifest: Value = serde_json::from_slice(
         &fs::read(
@@ -546,7 +540,7 @@ async fn a_statement_takes_exactly_the_parameters_its_accessor_binds(pool: sqlx:
     ] {
         let workspace = Workspace::new(label);
         fs::write(workspace.package().join(path), sql).unwrap();
-        let request = BuildRequest::new(
+        let request = BuildRequest::refresh(
             &workspace.package(),
             &workspace.root.join("output"),
             database.as_str(),
@@ -564,7 +558,7 @@ async fn history_changes_append_immutable_versions_and_execute_during_build(
     let workspace = Workspace::new("history-versions");
     let package = workspace.package();
     let output = workspace.root.join("target/wamn");
-    let request = BuildRequest::new(&package, &output, database.as_str());
+    let request = BuildRequest::refresh(&package, &output, database.as_str());
     generate_package(&request).await?;
     let directory = package_output(
         &output,

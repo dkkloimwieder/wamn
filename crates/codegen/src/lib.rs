@@ -15,8 +15,6 @@
 mod authoring;
 /// `wamn build`: the two-pass package build (docs/operations/building.md#wamn-build).
 pub mod build;
-/// `build.json`, the build record of one package build.
-pub mod build_record;
 mod client_fields;
 pub mod client_ir;
 pub mod client_plan;
@@ -24,6 +22,8 @@ mod client_route;
 /// The TypeScript client emitter. Browser bindings from the same contract IR.
 pub mod client_ts;
 mod describe;
+mod describe_cache;
+pub mod fingerprint;
 /// Catalog facts for authored query feeds.
 pub mod feed;
 mod generate;
@@ -46,7 +46,7 @@ pub use generate::{
     StatementTransactionality, derive_manifest, generate,
 };
 pub use materialize::introspect_package;
-pub use output::{output_root, package_workspace};
+pub use output::{is_input_path, output_root, package_workspace, source_root};
 pub use package_catalog::project_package_catalog;
 
 mod history;

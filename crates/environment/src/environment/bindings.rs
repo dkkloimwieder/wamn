@@ -102,7 +102,7 @@ pub async fn analyse(
             definition
                 .connections
                 .values()
-                .any(|integration| &integration.name == *name)
+                .any(|integration| integration.as_str() == *name)
         })
     }) {
         let connection=sqlx::query("SELECT c.id::text,c.integration_type,g.parameters,c.active_generation,c.target_id::text,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1 AND c.status='active'")
@@ -147,7 +147,7 @@ pub async fn analyse(
         if !wamn_connection::connections::administration::validates(&parameters, &schema) {
             return Err(refuse("connection_parameters_invalid", name));
         }
-        selected.insert(name, (row, connection.get::<Option<String>, _>(5)));
+        selected.insert(name.as_str(), (row, connection.get::<Option<String>, _>(5)));
     }
     let mut bindings = Vec::new();
     for (application, definition) in applications {
@@ -185,15 +185,8 @@ pub async fn analyse(
                 .get(name.as_str())
                 .ok_or_else(|| refuse("connection_unbound", &at))?;
             let (row, authority) = selected
-                .get(&integration.name)
+                .get(integration.as_str())
                 .ok_or_else(|| refuse("integration_version_missing", &at))?;
-            let version = document.integrations[&integration.name].version;
-            if integration
-                .version
-                .is_some_and(|requested| requested != version)
-            {
-                return Err(refuse("integration_version_missing", &at));
-            }
             let integration_type: wamn_registry::integration_code::IntegrationCode = row.get(1);
             let exports: Vec<String> = row.get(9);
             if !exports_satisfy(&exports, std::slice::from_ref(&declaration.interface)) {
@@ -213,7 +206,7 @@ pub async fn analyse(
                     definition: row.get(3),
                     credential_handle: (integration_type.as_str() != "gcs")
                         .then(|| format!("org:{}:{integration}", document.org)),
-                    org_connection_name: Some(integration.name.clone()),
+                    org_connection_name: Some(integration.as_str().to_owned()),
                 })
             } else {
                 None

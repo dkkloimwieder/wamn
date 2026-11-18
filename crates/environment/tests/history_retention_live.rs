@@ -130,7 +130,6 @@ fn write_package(root: &Path) {
     .expect("write the fixture manifest");
     std::fs::write(root.join("migrations/0001_initial.sql"), migration)
         .expect("write the fixture migration");
-    wamn_test_infrastructure::fixture_digest::write_build_record(root);
 }
 
 /// Apply the fixture schema through the package library.
@@ -138,7 +137,7 @@ fn write_package(root: &Path) {
 /// The `apply-package` verb takes only a pushed artifact, so the fixture tree
 /// stands in for one under a digest of its own bytes.
 async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
-    apply_package::apply_package_schema(ApplyPackageRequest {
+    apply_package::apply_package(ApplyPackageRequest {
         migration_database_url: wamn_provision::test_database::package_migration_input(&url)
             .await
             .unwrap(),

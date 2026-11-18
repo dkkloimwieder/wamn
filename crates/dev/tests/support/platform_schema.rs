@@ -248,11 +248,12 @@ pub(super) async fn exercise(
     let file = journey
         .run
         .directory
-        .join("environments/schema-isolation.k");
-    std::fs::write(&file, document.to_kcl())?;
+        .join("environments/schema-isolation.yaml");
+    let environment = document.env.clone();
+    std::fs::write(&file, document.to_yaml()?)?;
     let other = Journey {
         file,
-        environment: &document.env,
+        environment: &environment,
         ..*journey
     };
     for environment in [journey, &other] {

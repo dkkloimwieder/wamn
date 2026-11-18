@@ -118,19 +118,22 @@ pub async fn run_product(
                 PlatformSchemaCommand::Diff(args) => (args, false),
                 PlatformSchemaCommand::Apply(args) => (args, true),
             };
-            let (target, project, env) = match args.target {
-                PlatformSchemaTarget::System => ("system", None, None),
+            let (target, projects, org, env) = match args.target {
+                PlatformSchemaTarget::System => ("system", Vec::new(), None, None),
                 PlatformSchemaTarget::Project => {
                     let file = args.env.context("--env is required for project SQL")?;
                     let document =
-                        wamn_environment::environment::document::EnvironmentDocument::compile(
-                            &file,
-                        )?;
-                    ("project", Some(document.project), Some(document.env))
+                        wamn_environment::environment::document::EnvironmentFile::compile(&file)?;
+                    let projects = document
+                        .projects
+                        .into_iter()
+                        .map(|project| project.name)
+                        .collect();
+                    ("project", projects, Some(document.org), Some(document.env))
                 }
             };
             let control = crate::operation_verbs::ControlHost::from_env()?;
-            interruptible(&mut signals, control.platform(serde_json::json!({"type":"schema","target":target,"project":project,"env":env,"apply":apply}))).await
+            interruptible(&mut signals, control.platform(serde_json::json!({"type":"schema","target":target,"projects":projects,"org":org,"env":env,"apply":apply}))).await
         }
         ProductPlatformCommand::Manage(command) => run(command, output),
     }

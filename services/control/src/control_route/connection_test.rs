@@ -62,11 +62,18 @@ impl ControlRoutes<'_> {
             .env
             .as_ref()
             .expect("connection request requires an environment");
-        let context = {
+        let (context, pin) = {
             let mut writer = self.writer.lock().await;
-            let authorized = self
+            let mut authorized = self
                 .begin_in(&mut writer, attachment, caller, Some(&project))
                 .await?;
+            let pin = administration::required_connection_version(
+                &mut authorized,
+                self.org,
+                env,
+                request["name"].as_str().expect("validated name"),
+            )
+            .await?;
             authorized.commit().await?;
             let urls = self.logins(&[(project.clone(), env.clone())])?;
             let mut client = wamn_postgres::connect(&urls[0]).await?;
@@ -81,7 +88,7 @@ impl ControlRoutes<'_> {
             )
             .await?;
             transaction.rollback().await?;
-            context
+            (context, pin)
         };
         if matches!(context["runtime_type"].as_str(), Some("wasm" | "native")) {
             return Ok(
@@ -100,57 +107,20 @@ impl ControlRoutes<'_> {
         let versions = context["versions"]
             .as_object()
             .ok_or_else(|| invalid("version"))?;
-        let mut selected = request["version"]
+        let requested = request["version"]
             .as_i64()
             .and_then(|version| i32::try_from(version).ok());
-        let published = Value::Object(
-            versions
-                .iter()
-                .map(|(version, value)| (version.clone(), value["parameter_schema"].clone()))
-                .collect(),
-        );
-        {
-            let mut writer = self.writer.lock().await;
-            for schema in administration::required_connection_versions(
-                &mut writer,
-                self.org,
-                &project,
-                env,
-                request["name"].as_str().expect("validated name"),
-                &published,
-            )
-            .await?
-            {
-                administration::validate_version_parameters(&request["parameters"], &schema)?;
-            }
+        if let Some(pin) = pin.filter(|pin| requested.is_some_and(|requested| requested != *pin)) {
+            let pinned = versions
+                .get(&pin.to_string())
+                .ok_or_else(|| invalid("version"))?;
+            administration::validate_version_parameters(
+                &request["parameters"],
+                &pinned["parameter_schema"],
+            )?;
         }
-        if selected.is_none()
-            && let Some(connection) = context["id"].as_str()
-        {
-            let applications =
-                crate::environment_status::applications(self.org, &project, env).await?;
-            let binding = applications
-                .iter()
-                .flat_map(|app| &app.components)
-                .flat_map(|component| &component.connections)
-                .find(|binding| binding.connection_id == connection);
-            if let Some(binding) = binding {
-                selected = versions
-                    .values()
-                    .find(|version| {
-                        if let Some(reference) = &binding.integration {
-                            version["digest"]
-                                .as_str()
-                                .is_some_and(|digest| reference.ends_with(&format!("@{digest}")))
-                        } else {
-                            version["version"].as_i64() == Some(1)
-                        }
-                    })
-                    .and_then(|version| version["version"].as_i64())
-                    .and_then(|version| i32::try_from(version).ok());
-            }
-        }
-        let selected = selected
+        let selected = requested
+            .or(pin)
             .or_else(|| {
                 versions
                     .values()

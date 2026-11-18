@@ -4,7 +4,7 @@
 use sqlx::Row as _;
 
 use anyhow::Context as _;
-use wamn_registry::{Triple, name};
+use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
 use super::Platform;
 use super::document::EnvironmentDocument;
@@ -14,7 +14,15 @@ use wamn_postgres::connect;
 /// Remove one project's runtime access and wait until its credentials are unmounted.
 pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
     let name = name::environment_host_name(&triple.org, &triple.env);
-    let values = host_values(platform, triple, None).await?;
+    let values = host_values(
+        platform,
+        &triple.org,
+        &triple.env,
+        &[],
+        Some(&triple.project),
+        None,
+    )
+    .await?;
     wamn_platform_install::environment::apply(
         &platform.target,
         &platform.chart.join("platform/environment"),
@@ -127,64 +135,125 @@ fn set_nats_plugin(
     Ok(())
 }
 
-/// Publish the registered projects together on the environment's shared host.
-pub(super) async fn host_project(
+/// Submit the shared host with both configured and newly reserved projects.
+pub(super) async fn submit_host(
     platform: &Platform,
-    document: &EnvironmentDocument,
-    connection: &wamn_postgres::ConnectionConfig,
-) -> anyhow::Result<()> {
-    let triple = document.triple();
-    let name = name::environment_host_name(&triple.org, &triple.env);
-    let values = host_values(platform, &triple, Some(connection)).await?;
-    wamn_platform_install::environment::apply(
+    org: &OrgId,
+    env: &EnvName,
+    policy: &EnvName,
+    reserved: &[&str],
+) -> anyhow::Result<String> {
+    let name = name::environment_host_name(org, env);
+    let values = host_values(platform, org, env, reserved, None, Some(policy)).await?;
+    wamn_platform_install::environment::apply_without_wait(
         &platform.target,
         &platform.chart.join("platform/environment"),
         &name,
-        values,
+        &values,
+    )
+    .await?;
+    Ok(name)
+}
+
+pub(super) async fn wait_host_ready(platform: &Platform, host: &str) -> anyhow::Result<()> {
+    kubectl(
+        platform,
+        &platform.target.namespace,
+        &[
+            "rollout",
+            "status",
+            &format!("deployment/hostgroup-{host}"),
+            "--timeout=600s",
+        ],
+        None,
     )
     .await
+    .map(drop)
+    .with_context(|| format!("wait for environment host {host}"))
+}
+
+/// Wait for the shared certificate, including when its object has yet to appear.
+pub(super) async fn wait_broker_certificate(
+    platform: &Platform,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    use std::time::Duration;
+    let name = name::environment_nats_certificate(&triple.org, &triple.env);
+    let target = &platform.target;
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            let certificate = wamn_kubernetes::kubectl::get::<serde_json::Value>(
+                &target.kubeconfig,
+                &target.context,
+                triple.org.as_str(),
+                "certificate",
+                &name,
+            )
+            .await
+            .with_context(|| format!("read broker certificate {name}"))?;
+            if certificate.is_some_and(|certificate| {
+                certificate["status"]["conditions"]
+                    .as_array()
+                    .is_some_and(|conditions| {
+                        conditions.iter().any(|condition| {
+                            condition["type"] == "Ready" && condition["status"] == "True"
+                        })
+                    })
+            }) {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("broker certificate {name} was not ready within 120 seconds"))?
 }
 
 async fn host_values(
     platform: &Platform,
-    triple: &Triple,
-    current: Option<&wamn_postgres::ConnectionConfig>,
+    org: &OrgId,
+    env: &EnvName,
+    reserved: &[&str],
+    excluded: Option<&ProjectId>,
+    requested_policy: Option<&EnvName>,
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::{Value, json};
 
-    let name = name::environment_host_name(&triple.org, &triple.env);
+    let name = name::environment_host_name(org, env);
     let mut system = connect(&platform.system_database_url).await?;
     let mut tx = crate::provision_project_env::provisioning_transaction(&mut system).await?;
-    let projects: Vec<wamn_registry::ProjectId> = sqlx::query_scalar(
+    let projects: Vec<ProjectId> = sqlx::query_scalar(
         "SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2
-         AND project<>$3 AND schema_mode IS NOT NULL ORDER BY project",
+         AND ($3::text IS NULL OR project<>$3)
+         AND (schema_mode IS NOT NULL OR project=ANY($4)) ORDER BY project",
     )
-    .bind(&triple.org)
-    .bind(&triple.env)
-    .bind(&triple.project)
+    .bind(org)
+    .bind(env)
+    .bind(excluded)
+    .bind(reserved)
     .fetch_all(&mut *tx)
     .await?;
-    let policy: wamn_registry::EnvName =
-        sqlx::query_scalar("SELECT policy_name FROM registry.environments WHERE org=$1 AND env=$2")
-            .bind(&triple.org)
-            .bind(&triple.env)
-            .fetch_one(&mut *tx)
-            .await?;
-    let policy = super::analyse::read_policy(&mut tx, &triple.org, &policy).await?;
+    let policy = match requested_policy {
+        Some(policy) => super::analyse::read_policy(&mut tx, org, policy).await?,
+        None => {
+            let policy = wamn_registry::deployment::environment_policy(&mut tx, org, env).await?;
+            super::analyse::read_policy(&mut tx, org, &policy).await?
+        }
+    };
     tx.commit().await?;
-    if projects.is_empty() && current.is_none() {
+    if projects.is_empty() {
         return Ok(json!({"runtime-operator":{"runtime":{"hostGroups":[]}}}));
     }
 
     let mut group =
         serde_json::to_value(super::write::host_group(platform.host_group.as_deref())?)?;
     group["name"] = json!(name);
-    group["namespace"] = json!(triple.org);
-    let env = group["env"]
+    group["namespace"] = json!(org);
+    let variables = group["env"]
         .as_array_mut()
         .context("host environment is not a list")?;
-    env.retain(|entry| entry["name"] != "WAMN_ORG");
-    env.push(json!({"name":"WAMN_ORG","value":triple.org}));
+    variables.retain(|entry| entry["name"] != "WAMN_ORG");
+    variables.push(json!({"name":"WAMN_ORG","value":org}));
     let mut arguments = group["extraArgs"]
         .take()
         .as_array_mut()
@@ -195,7 +264,7 @@ async fn host_values(
             .as_str()
             .is_some_and(|s| s.starts_with("--environment="))
     });
-    arguments.push(format!("--environment={}", triple.env).into());
+    arguments.push(format!("--environment={}", env).into());
     group["extraArgs"] = arguments.into();
     for (field, ca) in [
         (
@@ -268,7 +337,7 @@ async fn host_values(
     let mut add_project =
         |project: &Triple, connection: &wamn_postgres::ConnectionConfig| -> anyhow::Result<()> {
             anyhow::ensure!(
-                connection.credentials.namespace == triple.org,
+                connection.credentials.namespace == org.as_str(),
                 "project login Secrets and host must share an org"
             );
             let mut logins = serde_json::Map::new();
@@ -297,11 +366,8 @@ async fn host_values(
             .into();
             Ok(())
         };
-    if let Some(connection) = current {
-        add_project(triple, connection)?;
-    }
     for project in projects {
-        let project = Triple::new(triple.org.clone(), triple.env.clone(), project);
+        let project = Triple::new(org.clone(), env.clone(), project);
         let connection =
             wamn_platform_install::environment::connection(&platform.system_database_url, &project)
                 .await?;
@@ -317,13 +383,13 @@ async fn host_values(
             .filter_map(Value::as_str)
             .map(str::to_owned),
     );
-    set_nats_plugin(plugins, &triple.org, &triple.env)?;
-    let account = name::environment_service_account(&triple.org, &triple.env);
-    let certificate = name::environment_nats_certificate(&triple.org, &triple.env);
+    set_nats_plugin(plugins, org, env)?;
+    let account = name::environment_service_account(org, env);
+    let certificate = name::environment_nats_certificate(org, env);
     let certificate = wamn_broker::authorization::certificate(
         &certificate,
-        &name::environment_nats_secret(&triple.org, &triple.env),
-        &name::environment_nats_user(&triple.org, &triple.env),
+        &name::environment_nats_secret(org, env),
+        &name::environment_nats_user(org, env),
     );
     Ok(json!({
         "runtime-operator":{"runtime":{"hostGroups":[group],

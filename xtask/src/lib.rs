@@ -43,7 +43,13 @@ enum Task {
         #[arg(required = true)]
         packages: Vec<PathBuf>,
         #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        database_url: Option<String>,
+        /// Recreate the committed SQL describe evidence from PostgreSQL.
+        #[arg(long, requires = "database_url", conflicts_with = "check_describe")]
+        refresh_describe: bool,
+        /// Compare committed SQL describe evidence with PostgreSQL.
+        #[arg(long, requires = "database_url")]
+        check_describe: bool,
     },
     /// Build one component through the shared guest compiler.
     BuildComponent { manifest: PathBuf },
@@ -88,6 +94,11 @@ enum Task {
     RequireTestResult(process::TestArgs),
     /// Run repository formatting, Clippy, and policy checks.
     RepoLint(tasks::RunArgs),
+    /// Generate or check the authored environment JSON Schema.
+    EnvironmentSchema {
+        #[arg(long)]
+        check: bool,
+    },
     /// Check dependency boundaries.
     RepoLintDependencies,
     /// Compile each package without other members' features.
@@ -127,18 +138,23 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::BuildPackage {
             packages,
             database_url,
+            refresh_describe,
+            check_describe,
         } => {
+            let describe = wamn_build::DescribeMode::from_options(
+                database_url.as_deref(),
+                refresh_describe,
+                check_describe,
+            )?;
             for package in packages {
                 let output = wamn_build::default_output_root(&package);
-                let record = wamn_build::build_package(&wamn_build::BuildRequest::new(
-                    &package,
-                    &output,
-                    &database_url,
+                let built = wamn_build::build_package(&wamn_build::BuildRequest::new(
+                    &package, &output, describe,
                 ))
                 .await?;
                 println!(
                     "{} {} {}",
-                    record.package.id, record.package.version, record.outputs.manifest
+                    built.package.id, built.package.version, built.manifest_digest
                 );
             }
             Ok(())
@@ -186,6 +202,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         } => bench_data::app_result(&work, &output, &http, edge, scale),
         Task::RequireTestResult(args) => process::require(&std::env::current_dir()?, &args).await,
         Task::RepoLint(args) => tasks::lint(&root, args.mode).await,
+        Task::EnvironmentSchema { check } => repo_policy::environment_schema(&root, check),
         Task::RepoLintDependencies => tasks::dependencies(&root).await,
         Task::CompilePackagesAlone { manifest } => {
             tasks::packages(&root, manifest.as_deref()).await

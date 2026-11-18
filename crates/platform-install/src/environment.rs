@@ -17,13 +17,23 @@ pub async fn apply_project(
     name: &str,
     values: &Value,
 ) -> anyhow::Result<()> {
+    apply_without_wait(target, &chart.join("platform/project"), name, values).await
+}
+
+/// Submit one release while its workload still needs provisioning work.
+pub async fn apply_without_wait(
+    target: &Target,
+    chart: &Path,
+    name: &str,
+    values: &Value,
+) -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("values.yaml");
     std::fs::write(&path, serde_json::to_vec(values)?)?;
     wamn_kubernetes::helm::recover_pending(target, name).await?;
     wamn_kubernetes::helm::upgrade_without_wait(
         target,
-        &chart.join("platform/project"),
+        chart,
         name,
         &path,
         std::time::Duration::from_secs(600),

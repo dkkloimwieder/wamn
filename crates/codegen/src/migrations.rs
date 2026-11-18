@@ -87,17 +87,16 @@ fn validate_versions(
     Ok(())
 }
 
-/// Compare a frozen build input with the committed source, independent of build output.
-pub(crate) async fn validate_committed(source: &Path, current: &Path) -> anyhow::Result<()> {
+/// Read the Git baseline used to enforce append-only source versions.
+pub fn committed_tree(source: &Path) -> anyhow::Result<Vec<u8>> {
     use std::process::Command;
-    let baseline = tempfile::tempdir()?;
     let head = Command::new("git")
         .arg("-C")
         .arg(source)
         .args(["rev-parse", "--verify", "HEAD"])
         .output()?;
     if !head.status.success() {
-        return validate_append(current, baseline.path()).await;
+        return Ok(Vec::new());
     }
     let tree = Command::new("git")
         .arg("-C")
@@ -108,8 +107,14 @@ pub(crate) async fn validate_committed(source: &Path, current: &Path) -> anyhow:
         tree.status.success(),
         "cannot read committed migration sources"
     );
-    for entry in tree
-        .stdout
+    Ok(tree.stdout)
+}
+
+/// Compare a frozen build input with the committed source, independent of build output.
+pub(crate) async fn validate_committed(source: &Path, current: &Path) -> anyhow::Result<()> {
+    use std::process::Command;
+    let baseline = tempfile::tempdir()?;
+    for entry in committed_tree(source)?
         .split(|byte| *byte == 0)
         .filter(|entry| !entry.is_empty())
     {

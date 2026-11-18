@@ -277,7 +277,8 @@ The operation declares `delete: true` on that relation and names the columns tha
 Generation derives these relation facts from the SQL once.
 Projections and history tables refuse delete access.
 
-The compiler generates SQL once, then SQLx describes every statement before consumer emission.
+The compiler emits SQL and checks it against committed SQLx descriptions before it writes the bindings.
+A live refresh runs SQLx describe against the verification database and writes the evidence.
 This includes authored SQL, each fixed list sort, and feed statements.
 The build checks parameter counts and types, selected column names and types, and compatible nullability.
 PostgreSQL plans determine whether a statement writes or locks rows.
@@ -552,7 +553,7 @@ For example, `B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}` 
 The generated guest accessors call `wamn_postgres_statements::next_number` or `peek_number` with the existing operation transaction.
 These library functions run SQL through that transaction. They have no host numbering import.
 The SQL resolves the sequence through `wamn_authority.current_application()` and the sequence name.
-The host stores the application's name from `environment.k` in `platform.tx_identity.application`.
+The host stores the application's name from `environment.yaml` in `platform.tx_identity.application`.
 The identity function reads that protected row for the open transaction.
 The functions read the stored pattern, so an edited pattern still applies.
 
@@ -589,14 +590,14 @@ They are `SECURITY DEFINER`, and each takes a sequence id.
 The guest resolves that id with SQL using the host-bound application identity.
 
 Env apply creates the `platform.number_sequence` row of each sequence that a package declares.
-The row belongs to the application that the `applications` map of `environment.k` names for the package.
+The row belongs to the application that the `applications` map of `environment.yaml` names for the package.
 Two packages of one application that declare one sequence with one default pattern share one row.
 A row that exists keeps its pattern, so an edited pattern survives every apply.
 Two packages of one application can declare one sequence name only with one default pattern.
 If the patterns differ, env apply refuses before it writes anything, and the refusal names the application, the sequence, and the two packages.
-The `applications` map of `environment.k` decides which packages form one application.
+The `applications` map of `environment.yaml` decides which packages form one application.
 The test reads only the package declarations, so a row with an edited pattern does not refuse.
-`wamn dev --config environment.k` deploys through the same control routes.
+`wamn dev --config environment.yaml` deploys through the same control routes.
 Environment apply creates the number sequence rows.
 
 ### Setting a counter
@@ -994,7 +995,7 @@ Connection disablement preserves these references. A foreign key refuses deletio
 Application roles read file metadata but cannot insert, update, or delete it.
 File rows use the standard stamps and unlimited history.
 
-The package declares its store binding. `environment.k` binds that declaration to an immutable connection name.
+The package declares its store binding. `environment.yaml` binds that declaration to an immutable connection name.
 
 The registry owns application bindings. Release hosts receive no binding map in their target.
 Calls that name a binding require its registry row for the org, project, environment, application, and alias.
@@ -1059,7 +1060,7 @@ The full schema files own the platform schemas and build fresh installations.
 
 - `file` is the only file table. An image is a file with an image media type; `width` and `height` are nullable. `connection_id` names the store. Each row pins its application and the connection generation that stored its bytes. Reads and deletes use that generation's bucket and prefix. The application links `file_id` from its own table (which record, which purpose). No generic attachment-by-(table, id) table.
 
-- Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3` or `gcs`), declared by the package and bound by name in `environment.k` with `mode = write`.
+- Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3` or `gcs`), declared by the package and bound by name in `environment.yaml` with `mode = write`.
 
 - `exposure` is per file: `application` (default; the session holds `file.get` on the owning application, at `/api/<app>/files/<id>`), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a CDN change. Another application never serves the row.
 

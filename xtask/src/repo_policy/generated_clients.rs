@@ -6,6 +6,7 @@
 //! - in a `generated` or `.sqlx` directory under `apps/`: a package's build
 //!   output, which `wamn build` writes to `apps/target/wamn/<package>`.
 //!
+//! Committed PostgreSQL describe evidence under `.wamn/describe/` is a build input.
 //! Hand-written fixtures and golden expectation files under `tests/` stay
 //! tracked: they are inputs and expectations, not build output.
 

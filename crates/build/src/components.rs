@@ -1,16 +1,20 @@
 //! Cargo compilation, byte validation and overlay composition.
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result, bail, ensure};
+use anyhow::{Context as _, Result, ensure};
 use tokio::process::Command;
 
 const COMPILED_MANIFEST_NAME: &str = "wamn.json";
-use crate::{BuildRequest, package_output};
-use wamn_codegen::build_record::{self, BuildComponent, BuildRecord};
+use crate::{BuildMode, PreparedSource, package_output};
+use wamn_catalog::PackageName;
 use wamn_catalog::manifest::PackageManifest;
-use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
-use wamn_digest::bytes_sha256;
+use wamn_catalog::manifest::{
+    ManifestError as GenerateError, ManifestErrorType as GenerateErrorType,
+};
+use wamn_codegen::fingerprint;
+use wamn_digest::{Digest, bytes_sha256};
 
 /// Where the components lie in a package's build output.
 const COMPONENTS: &str = "components";
@@ -48,33 +52,32 @@ struct Built {
 
 /// Compile only package-owned guests. Palette guests belong to the platform build.
 pub(crate) async fn compile_components(
-    request: &BuildRequest,
-    package: &wamn_catalog::PackageName,
-) -> Result<Vec<BuildComponent>> {
-    let output = package_output(&request.output_root, package);
-    let manifest = PackageManifest::from_slice(&fs::read(output.join(COMPILED_MANIFEST_NAME))?)?;
-    let workspace = wamn_codegen::package_workspace(&request.package_root);
+    root: &Path,
+    output: &Path,
+    manifest: &PackageManifest,
+    bases: &[(PathBuf, Digest)],
+    rustflags: &str,
+) -> Result<BTreeMap<PathBuf, Digest>> {
+    let workspace = wamn_codegen::package_workspace(root);
     if !workspace.join("Cargo.toml").is_file() {
         ensure!(
             manifest.components.is_empty(),
             "package components require a Cargo workspace"
         );
-        return Ok(Vec::new());
+        return Ok(BTreeMap::new());
     }
     ensure!(
-        output == wamn_codegen::output_root(&request.package_root),
+        output == wamn_codegen::output_root(root),
         "component include paths require the package workspace output root"
     );
     let repository = workspace.join("..");
-    let rustflags = guest_rustflags(&repository).await?;
-    let bases = base_components(request, &manifest)?;
     let directory = output.join(COMPONENTS);
     fs::create_dir_all(&directory)?;
-    let mut components = Vec::new();
+    let mut components = BTreeMap::new();
     for name in manifest.components.keys() {
         let built = compile_guest(
             &repository,
-            &rustflags,
+            rustflags,
             &Guest {
                 manifest: workspace.join("Cargo.toml"),
                 package: name.as_str().replace('_', "-"),
@@ -87,22 +90,30 @@ pub(crate) async fn compile_components(
             bytes,
             bases
                 .iter()
-                .map(fs::read)
-                .collect::<std::io::Result<Vec<_>>>()?,
+                .map(|(path, digest)| {
+                    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+                    ensure!(
+                        bytes_sha256(&bytes) == *digest,
+                        "{} changed during the overlay build; retry",
+                        path.display()
+                    );
+                    Ok(bytes)
+                })
+                .collect::<Result<Vec<_>>>()?,
         )?;
-        let path = format!("{COMPONENTS}/{name}.wasm");
+        let path = component_path(name.as_str());
         fs::write(output.join(&path), &bytes)?;
-        components.push(BuildComponent {
-            name: name.clone().into(),
-            path,
-            sha256: bytes_sha256(&bytes),
-        });
+        components.insert(path, bytes_sha256(&bytes));
     }
     Ok(components)
 }
 
 /// Derive guest path remapping from rustc and the current checkout.
 pub async fn guest_rustflags(repository: &Path) -> Result<String> {
+    Ok(guest_compiler(repository).await?.0)
+}
+
+pub(crate) async fn guest_compiler(repository: &Path) -> Result<(String, String)> {
     let sysroot = Command::new("rustc")
         .current_dir(repository)
         .args(["--print", "sysroot"])
@@ -127,12 +138,13 @@ pub async fn guest_rustflags(repository: &Path) -> Result<String> {
     let repository = repository.canonicalize()?;
     let sysroot = String::from_utf8(sysroot.stdout)?;
     let inherited = std::env::var("RUSTFLAGS").unwrap_or_default();
-    Ok(format!(
+    let flags = format!(
         "{inherited} --remap-path-prefix={}=/wamn --remap-path-prefix={}=/cargo --remap-path-prefix={}/lib/rustlib/src/rust=/rustc/{commit}",
         repository.display(),
         cargo_home.display(),
         sysroot.trim()
-    ))
+    );
+    Ok((flags, version))
 }
 
 pub async fn build_guest(
@@ -269,94 +281,80 @@ fn require_guest(repository: &Path, name: &str, file: &Path, crate_manifest: &Pa
     Ok(())
 }
 
-/// Resolve built base components and enforce authored pins unless the dev request permits drift.
+/// Relative component artifact path shared by builds and their consumers.
+pub fn component_path(name: &str) -> PathBuf {
+    Path::new(COMPONENTS).join(format!("{name}.wasm"))
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Bases {
+    pub bytes: Vec<(Digest, Digest)>,
+    pub pins: BTreeMap<PackageName, Digest>,
+    pub manifests: Vec<PackageManifest>,
+    pub wasm: Vec<(PathBuf, Digest)>,
+}
+
+/// Resolve the exact base bytes and enforce the published component pins.
 pub(crate) fn base_components(
-    request: &BuildRequest,
-    manifest: &PackageManifest,
-) -> Result<Vec<PathBuf>> {
-    let mut bases = Vec::new();
-    for dependency in manifest.base_dependencies.values() {
-        let base_output = package_output(&request.output_root, &dependency.package);
-        let base_build_record = build_record::read(&base_output).with_context(|| {
-            format!(
-                "read the build of base {}; build it first",
-                dependency.package
-            )
-        })?;
+    output_root: &Path,
+    source: &PreparedSource,
+    mode: BuildMode,
+) -> Result<Bases> {
+    let mut bases = Bases::default();
+    for dependency in source.bases().values() {
+        let output = package_output(output_root, &dependency.package);
+        let marker = fingerprint::read(&output)
+            .with_context(|| format!("build base {} first", dependency.package))?;
+        let (bytes, manifest_digest) =
+            fingerprint::read_artifact(&output, &marker, Path::new(COMPILED_MANIFEST_NAME))?;
+        let manifest = PackageManifest::from_slice(&bytes)?;
         ensure!(
-            base_build_record.package.version == dependency.version,
+            manifest.package.id == dependency.package,
+            "build output names a different base package"
+        );
+        ensure!(
+            mode == BuildMode::Development || manifest.package.version == dependency.version,
             "base {} is built at {}, not {}",
             dependency.package,
-            base_build_record.package.version,
+            manifest.package.version,
             dependency.version
         );
-        let base_manifest = PackageManifest::from_slice(
-            &fs::read(base_output.join(COMPILED_MANIFEST_NAME))
-                .with_context(|| format!("read the wamn.json of base {}", dependency.package))?,
-        )?;
-        let [base_component] = base_manifest.components.keys().collect::<Vec<_>>()[..] else {
-            bail!(
-                "base {} must declare exactly one component",
-                dependency.package
-            );
-        };
-        let (file, digest) = component_file(&base_output, &base_build_record, base_component)?;
-        if digest != dependency.digest && !request.allow_stale_base_pins {
+        let mut components = manifest.components.keys();
+        let component = components
+            .next()
+            .filter(|_| components.next().is_none())
+            .with_context(|| {
+                format!(
+                    "base {} must declare exactly one component",
+                    dependency.package
+                )
+            })?;
+        let path = component_path(component.as_str());
+        let (_, digest) = fingerprint::read_artifact(&output, &marker, &path)?;
+        if digest != dependency.digest && mode == BuildMode::Published {
             return Err(GenerateError::for_object(
                 GenerateErrorType::InvalidComponent,
                 format!(
                     "package {} pins base {} to {}, but its built component digest is {}",
-                    manifest.package.id, dependency.package, dependency.digest, digest
+                    source.package().id,
+                    dependency.package,
+                    dependency.digest,
+                    digest
                 ),
                 dependency.package.as_str(),
             )
             .into());
         }
-        bases.push(file);
+        bases.bytes.push((manifest_digest, digest));
+        bases.pins.insert(dependency.package.clone(), digest);
+        bases.manifests.push(manifest);
+        bases.wasm.push((output.join(path), digest));
     }
     Ok(bases)
 }
 
-/// The file of the component `name` that a base's `build.json` records,
-/// validated against its digest.
-fn component_file(
-    output: &Path,
-    build_record: &BuildRecord,
-    name: &wamn_catalog::manifest::source_name::SourceName,
-) -> Result<(PathBuf, wamn_digest::Digest)> {
-    let entry = build_record
-        .outputs
-        .components
-        .iter()
-        .find(|entry| entry.name.as_str() == name.as_str())
-        .with_context(|| {
-            format!(
-                "the build of {} records no component {name}",
-                build_record.package.id
-            )
-        })?;
-    let path = output.join(&entry.path);
-    let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    let digest = bytes_sha256(&bytes);
-    if digest != entry.sha256 {
-        return Err(GenerateError::for_object(
-            GenerateErrorType::InvalidComponent,
-            format!(
-                "{} differs from its build.json entry; build {} again",
-                path.display(),
-                build_record.package.id
-            ),
-            name.as_str(),
-        )
-        .into());
-    }
-    Ok((path, digest))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
 
     struct Scratch(PathBuf);
@@ -375,94 +373,6 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("create the scratch directory");
         Scratch(root)
-    }
-
-    fn moved_base_pin(name: &str) -> (Scratch, BuildRequest, PackageManifest, PathBuf) {
-        let scratch = scratch(name);
-        let base = scratch.0.join("base");
-        let output_root = scratch.0.join("target/wamn");
-        let output = package_output(&output_root, &"base".parse().unwrap());
-        fs::create_dir_all(&base).unwrap();
-        fs::create_dir_all(output.join(COMPONENTS)).unwrap();
-        let mut manifest = serde_json::json!({
-            "package": {"id": "base", "version": "1.0.0"},
-            "required_platform_policy_contract": {"id": "policy", "state": "satisfied"},
-            "models": {}, "connections": {},
-            "components": {"base": {}}
-        });
-        fs::write(
-            output.join(COMPILED_MANIFEST_NAME),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .unwrap();
-        let bytes = wat::parse_str(
-            r#"(component (instance $base) (export "test:base/op@1.0.0" (instance $base)))"#,
-        )
-        .unwrap();
-        let file = output.join("components/base.wasm");
-        fs::write(&file, &bytes).unwrap();
-        let built = BuildRecord {
-            schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
-            package: build_record::BuildPackage {
-                id: "base".parse().unwrap(),
-                version: "1.0.0".parse().unwrap(),
-            },
-            dependencies: Vec::new(),
-            generator: build_record::generator().unwrap(),
-            outputs: build_record::BuildOutputs {
-                manifest: bytes_sha256(&fs::read(output.join(COMPILED_MANIFEST_NAME)).unwrap()),
-                files: BTreeMap::new(),
-                components: vec![BuildComponent {
-                    name: "base".parse().unwrap(),
-                    path: "components/base.wasm".into(),
-                    sha256: bytes_sha256(&bytes),
-                }],
-            },
-        };
-        fs::write(
-            output.join(build_record::BUILD_RECORD_FILE),
-            built.to_bytes(),
-        )
-        .unwrap();
-        manifest["package"]["id"] = "overlay".into();
-        manifest["components"] = serde_json::json!({"overlay": {}});
-        manifest["base_dependencies"] = serde_json::json!({"base": {
-            "package": "base", "version": "1.0.0", "digest": bytes_sha256(b"old base"),
-            "operations": []
-        }});
-        let manifest =
-            PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap()).unwrap();
-        let request = BuildRequest::new(&scratch.0.join("overlay"), &output_root, "");
-        (scratch, request, manifest, file)
-    }
-
-    #[test]
-    fn a_default_request_refuses_a_moved_base_pin() {
-        let (_scratch, request, manifest, _file) = moved_base_pin("default-pin");
-        let error = base_components(&request, &manifest).unwrap_err();
-        let refusal = error.downcast_ref::<GenerateError>().unwrap();
-        assert_eq!(refusal.error_type(), GenerateErrorType::InvalidComponent);
-        assert_eq!(refusal.object(), Some("base"));
-    }
-
-    #[test]
-    fn a_dev_request_composes_over_the_built_base_after_its_pin_moves() {
-        let (_scratch, mut request, manifest, file) = moved_base_pin("dev-pin");
-        request.allow_stale_base_pins = true;
-        let bases = base_components(&request, &manifest).unwrap();
-        let overlay =
-            wat::parse_str(r#"(component (import "test:base/op@1.0.0" (instance)))"#).unwrap();
-        let composed = crate::composer::compose(
-            overlay,
-            bases.iter().map(|path| fs::read(path).unwrap()).collect(),
-        )
-        .expect("compose over the built base");
-        assert!(!composed.is_empty());
-
-        fs::write(&file, b"changed after the build record").unwrap();
-        let error = base_components(&request, &manifest).unwrap_err();
-        let refusal = error.downcast_ref::<GenerateError>().unwrap();
-        assert_eq!(refusal.error_type(), GenerateErrorType::InvalidComponent);
     }
 
     #[test]

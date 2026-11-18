@@ -115,11 +115,14 @@ Only overlays compose with their pinned bases.
 
 ## Environment lifecycle
 
-The registry owns desired environment configuration. Helm owns deployment attempts and rollback history.
+One YAML file declares the projects, applications, and connection pins of an environment.
+The registry stores the applied settings and one version per connection name in the environment.
+Helm records deployment and rollback history.
 The org chart owns PostgreSQL clusters and their managed roles.
 The project chart owns each project's database, database login Secrets, and change capture resources.
-The environment chart owns one shared host for each org and environment.
-The application chart records the top package digest and the Helm revision on the WorkloadDeployment.
+The environment chart owns the shared host group.
+The application chart sets `wamn.package-digest` and `wamn.release-revision` on the WorkloadDeployment.
+The worker upgrades the org and environment charts once each and upgrades each project chart once in file order.
 Each project keeps its own database authority, connection facts, and loaded release selections.
 A workflow run keeps its workflow version and uses the live application workload.
 Environment apply and delete check for unfinished application runs.

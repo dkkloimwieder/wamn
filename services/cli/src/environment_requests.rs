@@ -49,8 +49,12 @@ pub async fn run(command: Command) -> anyhow::Result<()> {
     let (operation, triple, value) = match command {
         Command::Apply(args) => {
             let document =
-                wamn_environment::environment::document::EnvironmentDocument::compile(&args.file)?;
-            let triple = document.triple();
+                wamn_environment::environment::document::EnvironmentFile::compile(&args.file)?;
+            let project = match &args.application {
+                Some(application) => document.application_project(application)?,
+                None => &document.projects[0].name,
+            };
+            let triple = document.triple(project);
             (
                 "environment.configure",
                 triple,
