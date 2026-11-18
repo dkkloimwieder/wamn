@@ -3,6 +3,7 @@ use anyhow::Context as _;
 use sqlx::Row as _;
 use std::fmt::Write as _;
 use std::time::Duration;
+use wamn_event::reader::ReaderConfig;
 use wamn_provision::{project_env_cdc_secret_name, sql};
 use wamn_registry::Triple;
 
@@ -40,78 +41,6 @@ pub async fn apply_cdc_sql(
     .context("restore the capture slot")
 }
 
-/// Record the CDC reader registration of `triple` in the registry
-/// (idempotent + refreshing: recording it again leaves one row). The caller
-/// records it last, once the role SQL, the CDC SQL, the publication and the
-/// Secret are in place, so a registration names a reader that can start.
-/// The supplied credential holds the event-reader registration grants. The capture declarations
-/// share `cdc_name`, and `schemas` is the set that the publication covers;
-/// the stream and the Secret are named from the coordinate.
-///
-/// # Errors
-///
-/// When the system database refuses the connection or the write.
-pub async fn record_event_reader(
-    system_url: &str,
-    triple: &Triple,
-    schemas: &[wamn_catalog::canonical_name::CanonicalName],
-    cdc_name: &str,
-    secret_namespace: Option<&str>,
-) -> anyhow::Result<()> {
-    let schemas = schemas
-        .iter()
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    let env = &triple.env;
-    let stream = wamn_event_wire::stream_name(&triple.org, &triple.project, env);
-    let secret_name = project_env_cdc_secret_name(&triple.org, &triple.project, env);
-    let mut client = wamn_postgres::connect(system_url)
-        .await
-        .context("system db connect")?;
-
-    let result = async {
-        sqlx::query(sqlx::AssertSqlSafe((wamn_registry::sql::upsert_event_reader_sql()).to_string())).bind(&triple.org).bind(&triple.project).bind(env).bind(cdc_name).bind(cdc_name).bind(&stream).bind(&secret_name).bind(secret_namespace).bind(true).bind(&schemas).execute(&mut client).await.map(|result| result.rows_affected())
-            .context(
-                "upsert registry.event_readers row (is the project-env provisioned? \
-                 enable-cdc-project-env overlays an existing env — run provision-project-env first)",
-            )?;
-        Ok(())
-    }
-    .await;
-    drop(client);
-    result
-}
-
-/// Discard unread changes while the reader and writers are stopped.
-pub async fn discard_backlog(admin_url: &str, slot: &str) -> anyhow::Result<()> {
-    let mut admin = wamn_postgres::connect(admin_url).await?;
-    let boundary: String = sqlx::query_scalar(
-        "SELECT pg_logical_emit_message(false, 'wamn.schema.reset', '', true)::text",
-    )
-    .fetch_one(&mut admin)
-    .await?;
-    let discarded: bool = sqlx::query_scalar(
-        "SELECT end_lsn >= $2::pg_lsn FROM pg_replication_slot_advance($1::name, $2::pg_lsn)",
-    )
-    .bind(slot)
-    .bind(&boundary)
-    .fetch_one(&mut admin)
-    .await?;
-    anyhow::ensure!(
-        discarded,
-        "CDC slot {slot} did not reach the reset boundary"
-    );
-    // Slot advancement becomes durable at the next checkpoint, before broker disposal.
-    sqlx::raw_sql("SET ROLE pg_checkpoint")
-        .execute(&mut admin)
-        .await?;
-    sqlx::raw_sql("CHECKPOINT").execute(&mut admin).await?;
-    sqlx::raw_sql("RESET ROLE").execute(&mut admin).await?;
-    Ok(())
-}
-
 fn cdc_schema_sql_bundle(
     schemas: &[wamn_catalog::canonical_name::CanonicalName],
     cdc_name: &str,
@@ -145,14 +74,14 @@ pub fn reader_configuration(
     triple: &Triple,
     cdc_name: &str,
     nats_url: &str,
-) -> crate::reader::ReaderConfig {
-    crate::reader::ReaderConfig {
+) -> ReaderConfig {
+    ReaderConfig {
         org: triple.org.clone(),
         project: triple.project.clone(),
         env: triple.env.clone(),
         publication: cdc_name.into(),
         slot: cdc_name.into(),
-        stream: wamn_event_wire::stream_name(&triple.org, &triple.project, &triple.env),
+        stream: wamn_event::stream_name(&triple.org, &triple.project, &triple.env),
         cdc_url: "/etc/wamn/cdc/connection.json".into(),
         nats_url: nats_url.into(),
         nats_tls_ca: Some("/etc/wamn/nats/ca.crt".into()),

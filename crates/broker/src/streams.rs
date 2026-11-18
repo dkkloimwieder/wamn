@@ -26,7 +26,7 @@ pub async fn last_published_sequence(
             .await
             .context("connect to the environment event broker")?,
     );
-    let name = wamn_event_wire::stream_name(&target.org, &target.project, &target.env);
+    let name = wamn_event::stream_name(&target.org, &target.project, &target.env);
     let mut stream = broker
         .get_stream(&name)
         .await
@@ -42,7 +42,7 @@ pub async fn last_published_sequence(
 /// Discard only the stopped environment's backlog, retaining its stream declarations.
 /// The caller excludes writers and waits for CDC publishers before this operation.
 pub async fn discard(context: &Context, target: &Triple) -> anyhow::Result<()> {
-    let source = wamn_event_wire::stream_name(&target.org, &target.project, &target.env);
+    let source = wamn_event::stream_name(&target.org, &target.project, &target.env);
     for name in [source] {
         let stream = context
             .get_stream(&name)
@@ -77,23 +77,6 @@ pub async fn provision(
         source_config.name
     );
     prepare_consumers(&source, consumers).await
-}
-
-/// Provision declared application consumers before a host attaches.
-pub async fn prepare_application_consumers(
-    connection: &crate::nats::PlatformNats,
-    target: &Triple,
-    consumers: &[pull::Config],
-) -> anyhow::Result<()> {
-    let context = async_nats::jetstream::new(connection.connect().await?);
-    let stream = context
-        .get_stream(wamn_event_wire::stream_name(
-            &target.org,
-            &target.project,
-            &target.env,
-        ))
-        .await?;
-    prepare_consumers(&stream, consumers).await
 }
 
 async fn prepare_consumers(

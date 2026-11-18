@@ -38,7 +38,7 @@ pub struct ProductionWorkflow {
     pub wiring_hash: wamn_digest::Digest,
     pub execution_principal_id: wamn_identity_protocol::PrincipalId,
     pub execution_role: String,
-    pub causation: Option<wamn_event_wire::Causation>,
+    pub causation: Option<wamn_event::Causation>,
 }
 
 /// The composed outcome of one lease transaction, decided before COMMIT.
@@ -383,7 +383,7 @@ fn decode_selected_lease(row: &Row) -> Result<SelectedLease, ProductionLeaseErro
     let root: Option<String> = row_value(row, 9, "event root")?;
     let depth: Option<i32> = row_value(row, 10, "event depth")?;
     if let (Some(root), Some(depth)) = (root, depth) {
-        workflow.causation = Some(wamn_event_wire::Causation {
+        workflow.causation = Some(wamn_event::Causation {
             run: run_id.clone(),
             root,
             depth: u32::try_from(depth)

@@ -125,7 +125,7 @@ impl ControlRoutes<'_> {
             payload,
             source,
             &applications,
-            wamn_environment::application::service::write_connection_service,
+            wamn_identity::application::service::write_connection_service,
         )
         .await?;
         if operation == "connection.authorize" {
@@ -145,7 +145,7 @@ impl ControlRoutes<'_> {
                 .ok_or_else(|| anyhow::anyhow!("connection delete returned no principal id"))?
                 .parse::<PrincipalId>()
                 .map_err(anyhow::Error::from)?;
-            wamn_environment::application::service::disable(&mut project, &principal)
+            wamn_identity::application::service::disable(&mut project, &principal)
                 .await
                 .map_err(anyhow::Error::from)?;
         }

@@ -12,7 +12,6 @@ test-util = ["wamn-provision/test-util", "dep:wamn-provision", "dep:wamn-broker"
 wamn-envelope.workspace = true
 async-trait.workspace = true
 wasmtime-wasi-http.workspace = true
-wamn-digest = { workspace = true, features = ["sqlx"] }
 tempfile = { workspace = true, optional = true }
 wamn-test-postgres = { workspace = true, optional = true }
 wamn-test-infrastructure = { workspace = true, optional = true }

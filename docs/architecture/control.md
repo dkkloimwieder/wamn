@@ -65,7 +65,7 @@ Each route takes `project` and `env` and uses the matching login in the control 
 The system database supplies the platform domain for service email addresses.
 Service creation refuses with `platform-domain-unset` if the domain is missing.
 Workflow administration also uses server-selected connections and the authenticated principal.
-Capture-gap recovery selects the recorded capture role and the configured event observer. It accepts no database URL from the CLI.
+`wamn-environment` owns capture-gap recovery and reader lifecycle. Recovery selects the recorded capture role and the configured event observer. It accepts no database URL from the CLI.
 Integration publication pushes local build output first. The service verifies the published artifact before it records its version.
 
 `wamn` is the user CLI and runs internal bootstrap steps.

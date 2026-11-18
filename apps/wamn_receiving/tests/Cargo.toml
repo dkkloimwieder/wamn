@@ -43,7 +43,7 @@ wamn-identity-protocol = { workspace = true }
 wamn-provision = { workspace = true, features = ["ops"] }
 wamn-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }
-wamn-event-wire = { workspace = true }
+wamn-event = { workspace = true }
 wamn-test-application = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }

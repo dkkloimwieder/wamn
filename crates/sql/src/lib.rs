@@ -22,8 +22,6 @@ mod operation;
 mod operation_transaction;
 mod pool;
 mod query;
-#[cfg(test)]
-mod query_tests;
 mod resources;
 pub mod result_signing;
 mod session_identity;
@@ -33,7 +31,7 @@ pub mod write_log;
 pub use operation::WorkflowNode;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
 pub use pool::{
-    CheckoutProbe, ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
+    ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
     StaticCredentialProvider, WamnPostgresConfig,
 };
 pub use resources::{PgStatementTransaction, PgTransaction};

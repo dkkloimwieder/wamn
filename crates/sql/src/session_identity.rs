@@ -1,6 +1,5 @@
 //! PostgreSQL identity validation and injection from the shared invocation record.
 
-use sqlx::{Row as _, Statement as _};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -8,10 +7,10 @@ use std::sync::atomic::AtomicU64;
 use anyhow::Context as _;
 use tracing::Instrument as _;
 
-use wamn_event_wire::Causation;
+use wamn_event::Causation;
 use wamn_identity_protocol::AuthorityClass;
 
-use wamn_authority::identity::{ReleaseIdentity, SessionIdentity};
+use wamn_authority::identity::SessionIdentity;
 use wamn_connection::connection::ConnectionInvocation;
 
 use super::pool::{
@@ -295,30 +294,6 @@ impl WamnPostgres {
         )))
     }
 
-    /// Build from the deployment's configuration with the composition root's
-    /// credential bound to its declared project rather than the default key.
-    ///
-    /// A per-project serving host already carries the trusted project identity.
-    /// Registering that host's Secret under `default` makes every named-project
-    /// lookup refuse despite having the exact credential. No other project is
-    /// registered, so an unlisted project still refuses at resolution.
-    pub fn from_env_for_project(
-        project: &wamn_registry::ProjectId,
-        credentials: Option<ClassCredentials>,
-    ) -> anyhow::Result<Self> {
-        let cfg = WamnPostgresConfig::from_env();
-        let mut projects = HashMap::new();
-        if let Some(credentials) = credentials {
-            projects.insert(
-                project.to_owned(),
-                ProjectConfig::from_global(credentials, &cfg),
-            );
-        }
-        Ok(Self::with_provider(Arc::new(
-            StaticCredentialProvider::new(projects, None),
-        )))
-    }
-
     /// Register the project_env_key identity for a component id. The bench harness calls
     /// this directly; the host path feeds it from workload bind.
     pub fn set_project_env_key(
@@ -404,37 +379,10 @@ impl WamnPostgres {
             .flatten()
     }
 
-    /// Register the caller's role for a component id.
-    /// Each transaction records it for the compiled row policies.
-    pub fn set_role(&self, component_id: &str, role: &str) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            role.parse::<wamn_identity_protocol::RoleName>()
-                .is_ok_and(|parsed| parsed.as_str() == role),
-            "invalid caller role {role:?}: a non-empty roles.name is required"
-        );
-        self.scopes.update::<Authority, _>(component_id, |record| {
-            record.identity.role = Some(role.to_string());
-        });
-        Ok(())
-    }
-
     pub(super) fn role_for(&self, component_id: &str) -> Option<String> {
         self.scopes
             .read::<Authority, _>(component_id, |record| record.identity.role.clone())
             .flatten()
-    }
-
-    /// Register the executing principal for a component id.
-    /// Each transaction records it for the record history triggers.
-    pub fn set_user_id(
-        &self,
-        component_id: &str,
-        user_id: &wamn_identity_protocol::PrincipalId,
-    ) -> anyhow::Result<()> {
-        self.scopes.update::<Authority, _>(component_id, |record| {
-            record.identity.user_id = Some(*user_id);
-        });
-        Ok(())
     }
 
     pub(super) fn user_id_for(
@@ -446,19 +394,6 @@ impl WamnPostgres {
             .flatten()
     }
 
-    /// Register the operation for a component id.
-    /// Each transaction records it as the source of each write.
-    pub fn set_operation(
-        &self,
-        component_id: &str,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
-    ) -> anyhow::Result<()> {
-        self.scopes.update::<Authority, _>(component_id, |record| {
-            record.identity.operation = Some(operation.clone());
-        });
-        Ok(())
-    }
-
     pub(super) fn operation_for(
         &self,
         component_id: &str,
@@ -466,14 +401,6 @@ impl WamnPostgres {
         self.scopes
             .read::<Authority, _>(component_id, |record| record.identity.operation.clone())
             .flatten()
-    }
-
-    /// Register the application that runs the component's operation.
-    /// Each transaction records it in the protected caller identity.
-    pub fn set_application(&self, component_id: &str, application: wamn_catalog::ApplicationName) {
-        self.scopes.update::<Authority, _>(component_id, |record| {
-            record.identity.application = Some(application);
-        });
     }
 
     pub(super) fn application_for(
@@ -485,40 +412,6 @@ impl WamnPostgres {
             .flatten()
     }
 
-    /// Register the release this pod carries for a component id. The production
-    /// identity verifies its digest against the admission pin of every run it
-    /// leases. The bench harness and live tests call this directly. Absent leaves the identity
-    /// verifying nothing.
-    ///
-    /// The digest arrives as [`wamn_digest::Digest`], so its shape is already validated.
-    ///
-    /// # Why effect authority needs no equality test against this record
-    ///
-    /// The digest comes from the same loaded object every reader resolves
-    /// against, so a run leased under it runs the manifest the pod loaded —
-    /// structurally, not because anything compares them (owner ruling
-    /// `wamn-0h0g.15.102`, after `wamn-0h0g.15.103` struck the asserted carrier).
-    pub fn set_release_identity(
-        &self,
-        component_id: &str,
-        identity: ReleaseIdentity,
-    ) -> anyhow::Result<()> {
-        self.scopes.update::<Authority, _>(component_id, |record| {
-            record.identity.release = Some(identity);
-        });
-        Ok(())
-    }
-
-    /// Declare (`Some`) or clear (`None`) the causation context of the run a
-    /// component is driving (l5i9.12.2). While set, each write transaction the plugin
-    /// opens for the component carries a `wamn.causation` message. Host-injected
-    /// like the other identity registries — callers set it directly, exactly like
-    /// [`set_project_env_key`](Self::set_project_env_key) / [`set_runner`](Self::set_runner).
-    pub fn set_current_run(&self, component_id: &str, ctx: Option<Causation>) {
-        self.scopes
-            .update::<Authority, _>(component_id, |record| record.causation = ctx);
-    }
-
     pub(super) fn current_run_for(&self, component_id: &str) -> Option<Causation> {
         if self.active_read(component_id) {
             return None;
@@ -526,35 +419,6 @@ impl WamnPostgres {
         self.scopes
             .read::<Authority, _>(component_id, |record| record.causation.clone())
             .flatten()
-    }
-
-    /// Bind the exact invocation facts before entering one pooled component
-    /// (`wamn-0h0g.7.9`), so a postgres effect can name the wiring and node
-    /// position it was raised under.
-    ///
-    /// Test fixtures populate the same authority record that execution readers use.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn bind_invocation(
-        &self,
-        component_id: &str,
-        invocation: ConnectionInvocation,
-    ) -> anyhow::Result<()> {
-        anyhow::ensure!(!component_id.is_empty(), "component id must be present");
-        self.scopes
-            .update::<wamn_connection::invocation::Scope, _>(component_id, |record| {
-                anyhow::ensure!(record.invocation.is_none(), "invocation is already bound");
-                record.invocation = Some(invocation);
-                Ok(())
-            })
-    }
-
-    /// Release the invocation when the instance returns to the pool.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn revoke_invocation(&self, component_id: &str) {
-        self.scopes
-            .update_existing::<wamn_connection::invocation::Scope, _>(component_id, |record| {
-                record.invocation = None
-            });
     }
 
     /// The invocation currently bound to one pooled instance.
@@ -587,21 +451,6 @@ impl WamnPostgres {
             .await?;
         }
         Ok(())
-    }
-
-    /// Bind `identity` as [`bind_session_identity`](Self::bind_session_identity)
-    /// does, without its principal read, for the call inside a request element whose
-    /// transaction a bind of the same identity began (`wamn-uq4r`).
-    ///
-    /// The request element's bind read the principal's user row moments before, in the
-    /// same invocation, so a second read answers nothing new and takes a
-    /// second guest connection. The caller passes the identity of that bind.
-    pub fn bind_request_element_session_identity(
-        &self,
-        component_id: &str,
-        identity: &SessionIdentity,
-    ) -> anyhow::Result<()> {
-        self.write_session_identity(component_id, identity)
     }
 
     fn write_session_identity(
@@ -736,31 +585,6 @@ impl WamnPostgres {
                 Err(principal_read_error("resolve the access token subject", error).into())
             }
         }
-    }
-
-    /// The current WAL position used by weak ETags.
-    ///
-    /// The shared WAL position covers commits from every writer without a counter.
-    /// Unrelated writes can invalidate the tag too. Read it before the query snapshot.
-    pub async fn model_version(
-        &self,
-        project: &wamn_registry::ProjectId,
-    ) -> anyhow::Result<String> {
-        let (mut connection, _policy) = self
-            .checkout_platform(project, AuthorityClass::Platform)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let statement = sqlx::Executor::prepare(
-            &mut *connection,
-            sqlx::SqlSafeStr::into_sql_str("SELECT pg_current_wal_lsn()::text"),
-        )
-        .await
-        .context("prepare the WAL position for model versions")?;
-        let row = sqlx::query(statement.sql().clone())
-            .fetch_one(&mut *connection)
-            .await
-            .context("read the WAL position for model versions")?;
-        Ok(row.try_get(0)?)
     }
 
     /// The grants every role of an active org-issued user gives it in this

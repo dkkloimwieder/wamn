@@ -8,10 +8,9 @@ license.workspace = true
 [dependencies]
 chrono.workspace = true
 jmespath.workspace = true
-wamn-event-wire.workspace = true
+wamn-event.workspace = true
 wamn-run-state.workspace = true
 wamn-envelope.workspace = true
-wamn-environment.workspace = true
 boon.workspace = true
 wamn-blobstore.workspace = true
 wamn-connection.workspace = true
@@ -21,13 +20,11 @@ hyper.workspace = true
 wasmtime-wasi-http.workspace = true
 wamn-http.workspace = true
 uuid.workspace = true
-wamn-postgres.workspace = true
 wamn-broker = { workspace = true }
 mimalloc = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-oci = { workspace = true }
-wamn-provision = { workspace = true }
 wamn-registry = { workspace = true }
+wamn-identity.workspace = true
 wamn-identity-protocol = { workspace = true }
 wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-authentication = { workspace = true }

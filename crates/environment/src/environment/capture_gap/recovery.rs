@@ -3,8 +3,7 @@
 
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
-pub(super) mod plan;
-use plan::pg_lsn;
+use super::plan::pg_lsn;
 
 use anyhow::{Context as _, bail, ensure};
 use async_nats::header::NATS_MESSAGE_ID;
@@ -14,7 +13,7 @@ use chrono::{DateTime, Utc};
 use wamn_provision::{
     cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
 };
-use wamn_event_wire::{SourceEvent, verified_source_event_id};
+use wamn_event::{SourceEvent, verified_source_event_id};
 use wamn_registry::Triple;
 use wamn_registry::sql::{
     close_capture_gap_sql, insert_capture_gap_sql, lock_newest_capture_gap_sql,
@@ -22,7 +21,7 @@ use wamn_registry::sql::{
 };
 
 /// The reason a missing slot records.
-pub const MISSING_SLOT_REASON: &str = "missing";
+const MISSING_SLOT_REASON: &str = "missing";
 
 /// Inputs of one capture gap recovery.
 #[derive(Debug)]
@@ -163,7 +162,7 @@ pub async fn recover_capture_gap(
 
     // Refusals leave a healthy Deployment running. Stop it before the repaired
     // slot can become visible to a restarting reader.
-    crate::lifecycle::stop_reader(
+    super::super::cdc_reader::stop_reader(
         &target.kubeconfig,
         &target.context,
         &target.namespace,
@@ -340,22 +339,3 @@ async fn provisioning_transaction(
     Ok(transaction)
 }
 
-/// Refuse to restart capture while the operator's newest gap remains open.
-pub async fn require_resynchronized(system_url: &str, triple: &Triple) -> anyhow::Result<()> {
-    let mut system = wamn_postgres::connect(system_url).await?;
-    let row = sqlx::query(sqlx::AssertSqlSafe(
-        wamn_registry::sql::select_capture_gap_sql().to_owned(),
-    ))
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .bind(&triple.env)
-    .fetch_optional(&mut system)
-    .await?;
-    if let Some(row) = row {
-        ensure!(
-            row.get::<bool, _>(1),
-            "capture gap is open; resynchronize and close it before restarting the reader"
-        );
-    }
-    Ok(())
-}

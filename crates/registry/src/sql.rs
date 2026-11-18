@@ -129,46 +129,7 @@ pub fn upsert_project_env_with_policy_sql() -> &'static str {
 
 // --- event readers (wamn-l5i9.9, D19 v3) ------------------------------------
 //
-// The `registry.event_readers` row an `enable-cdc-project-env` overlay records:
-// which publication + failover slot a project-env's CDC reader streams from,
-// which JetStream stream it publishes into, and the REFERENCE to its
-// replication-credential Secret (invariant 2 — never the material). Keyed by
-// the (org, project, env) triple, FK'd to the provisioned project-env (the
-// `provisioning.dumps` precedent), so a de-provisioned env drops its
-// registration. The reader service (l5i9.10) reads its row to learn what to
-// stream. Columns drift-guarded against the storage DDL.
-
-/// Upsert a project-env's CDC reader registration (idempotent + refreshing —
-/// re-enabling refreshes the names/stream/Secret reference and re-arms
-/// `enabled`). Params: `$1` org, `$2` project, `$3` env, `$4` publication, `$5`
-/// slot, `$6` stream, `$7` replication_secret_name, `$8`
-/// replication_secret_namespace (nullable), `$9` enabled, `$10` schema, the
-/// application schema that the publication covers.
-pub fn upsert_event_reader_sql() -> &'static str {
-    "INSERT INTO registry.event_readers \
-       (org, project, env, publication, slot, stream, \
-        replication_secret_name, replication_secret_namespace, enabled, schema) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
-     ON CONFLICT (org, project, env) DO UPDATE SET \
-       publication = EXCLUDED.publication, \
-       schema = EXCLUDED.schema, \
-       slot = EXCLUDED.slot, \
-       stream = EXCLUDED.stream, \
-       replication_secret_name = EXCLUDED.replication_secret_name, \
-       replication_secret_namespace = EXCLUDED.replication_secret_namespace, \
-       enabled = EXCLUDED.enabled, \
-       updated_at = now()"
-}
-
-/// Read the newest capture gap of one CDC reader registration (`wamn-59z6`).
-/// Params: `$1` org, `$2` project, `$3` env. Columns: `slot` (the lost slot)
-/// and whether `resync_at` is set. No row: the registration never lost a slot.
-pub fn select_capture_gap_sql() -> &'static str {
-    "SELECT slot, resync_at IS NOT NULL \
-     FROM registry.capture_gap \
-     WHERE org = $1 AND project = $2 AND env = $3 \
-     ORDER BY created_at DESC LIMIT 1"
-}
+// Capture recovery reads the reader registration by org, project, and env.
 
 /// Read what `recover-capture-gap` needs of one CDC reader registration
 /// (`wamn-59z6`). Params: `$1` org, `$2` project, `$3` env. Columns: `slot`,

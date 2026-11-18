@@ -40,10 +40,10 @@ pub async fn materialize_application_principals(
         return Ok(());
     }
     let mut system = connect(&platform.system_database_url).await?;
-    let domain = crate::application::service::platform_domain(&mut system).await?;
+    let domain = wamn_identity::application::service::platform_domain(&mut system).await?;
     let mut project = super::analyse::connect_project(project_url).await?;
     let mut transaction = project.begin().await?;
-    sqlx::query(wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
+    sqlx::query(wamn_identity::application::OPERATION_GRANT_LOCK_SQL)
         .bind(project_env_key)
         .fetch_one(&mut *transaction)
         .await?;
@@ -58,13 +58,13 @@ pub async fn materialize_application_principals(
             project_env_key,
             &package.package.id,
         );
-        crate::application::service::write_service(&mut transaction, &domain, &subject, &subject)
+        wamn_identity::application::service::write_service(&mut transaction, &domain, &subject, &subject)
             .await?;
         let role = format!(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
         );
-        crate::application::create_role(&mut transaction, &role).await?;
+        wamn_identity::application::create_role(&mut transaction, &role).await?;
     }
     write_runtime_grants(&mut transaction, project_env_key, manifest, packages).await?;
     transaction.commit().await?;
@@ -90,7 +90,7 @@ async fn write_runtime_grants(
             project_env_key,
             &package.package.id,
         );
-        let principal = crate::application::service::active_service(transaction, &subject)
+        let principal = wamn_identity::application::service::active_service(transaction, &subject)
             .await?
             .with_context(|| format!("application principal {subject} is absent or inactive; run env initialize"))?;
         let role = format!(
@@ -115,11 +115,11 @@ async fn write_runtime_grants(
             package,
             &dependency_manifests,
         )? {
-            crate::application::mutate_grant(
+            wamn_identity::application::mutate_grant(
                 transaction,
                 project_env_key,
-                crate::application::GrantAuthority::Provisioning,
-                crate::application::GrantChange::Permission {
+                wamn_identity::application::GrantAuthority::Provisioning,
+                wamn_identity::application::GrantChange::Permission {
                     role: &role,
                     reference: &permission,
                     grant: true,
@@ -127,11 +127,11 @@ async fn write_runtime_grants(
             )
             .await?;
         }
-        crate::application::mutate_grant(
+        wamn_identity::application::mutate_grant(
             transaction,
             project_env_key,
-            crate::application::GrantAuthority::Provisioning,
-            crate::application::GrantChange::UserRole {
+            wamn_identity::application::GrantAuthority::Provisioning,
+            wamn_identity::application::GrantChange::UserRole {
                 user_id: &principal,
                 role: &role,
                 grant: true,

@@ -53,7 +53,7 @@ use wamn_provision::control_administration_key;
 use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
 use wamn_identity_client::users::UserClient;
 use wamn_identity_protocol::PrincipalId;
-use wamn_environment::application::{
+use wamn_identity::application::{
     ApplicationTarget, project_authority, require_platform_rows, write_environment_status,
 };
 use wamn_environment::org::{
@@ -124,7 +124,7 @@ impl From<IdentityError> for Refusal {
 }
 
 fn operation_refusal(error: anyhow::Error) -> Refusal {
-    use wamn_environment::application::service::{ServiceError, ServiceErrorType};
+    use wamn_identity::application::service::{ServiceError, ServiceErrorType};
 
     if let Some(service) = error.downcast_ref::<ServiceError>() {
         return match service.type_ {

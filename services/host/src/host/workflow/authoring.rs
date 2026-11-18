@@ -49,7 +49,7 @@ pub(super) fn check<'a>(
         } => {
             if ![package.as_str(), entity.as_str()]
                 .into_iter()
-                .all(wamn_event_wire::valid_subject_token)
+                .all(wamn_event::valid_subject_token)
                 || ops.is_empty()
                 || ops
                     .iter()

@@ -728,7 +728,7 @@ async fn begin(
             identity,
             caller: caller.cloned(),
             registered_operation: admitted.grant.as_ref(),
-            causation: Some(wamn_event_wire::Causation {
+            causation: Some(wamn_event::Causation {
                 run: delivery.clone(),
                 root: delivery.clone(),
                 depth: 0,
@@ -1074,7 +1074,7 @@ struct SiblingAuthority<'a> {
     entry: InvocationEntry,
     operation: Option<&'a CanonicalName>,
     grant: Option<&'a RegisteredOperation>,
-    causation: Option<wamn_event_wire::Causation>,
+    causation: Option<wamn_event::Causation>,
     read: bool,
 }
 
@@ -1133,7 +1133,7 @@ pub struct WorkflowNode<'a> {
     pub operation: &'a CanonicalName,
     pub caller: AuthenticatedCaller,
     pub position: wamn_connection::connection::WiringPosition,
-    pub causation: Option<wamn_event_wire::Causation>,
+    pub causation: Option<wamn_event::Causation>,
 }
 
 impl WamnPostgres {

@@ -305,9 +305,10 @@ The [components page](components.md#shared-label-renderer) describes its composi
 
 ## Events
 
-PostgreSQL change capture publishes the [event contract](../../crates/event-wire/src/lib.rs).
-The wire owner decodes records and verifies their source identity.
-Records carry `"type": "cdc"` or `"type": "derived"` and use underscore field names.
+PostgreSQL change capture publishes the [event contract](../../crates/event/src/lib.rs).
+`wamn-event` decodes records and verifies the source identity of CDC records.
+CDC records carry `"type": "cdc"` and use underscore field names.
+Workflow admission and capture recovery skip legacy derived records.
 Subjects use `evt.<org>.<env>.<project>.<entity>.<op>`.
 Each project has its own source stream. Length-prefixed stream names distinguish the full org, environment, and project coordinates.
 The stream keeps messages for up to seven days and holds up to 256 MiB. It discards the oldest messages first.
@@ -327,10 +328,7 @@ The binding mounts the environment TLS Secret and limits access to the environme
 Each application workload narrows those grants to its own project's stream and subjects.
 The capture-gap observer stays unwired. The NATS HTTP monitor binds to loopback.
 
-Derived events use the host's admitted terminal, logical deduplication input, and bound causation.
-The guest cannot supply `project_env_key`, project, or environment authority.
-Causation depth bounds recursion. Workflow refuses an event above depth 16.
-These delivery rules do not create exactly-once application effects.
+Delivery is at least once for application handlers.
 
 ## Org password login
 

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_nats::jetstream::consumer::{self, AckPolicy, DeliverPolicy, pull};
 use async_nats::jetstream::stream::{self, Compression, RetentionPolicy, StorageType};
-use wamn_event_wire::stream_subjects;
+use wamn_event::stream_subjects;
 use wamn_registry::Triple;
 
 /// One event batch holds at most four MiB.
@@ -17,7 +17,7 @@ pub fn source_stream_config(
     duplicate_window: Duration,
 ) -> stream::Config {
     stream::Config {
-        name: wamn_event_wire::stream_name(&target.org, &target.project, &target.env),
+        name: wamn_event::stream_name(&target.org, &target.project, &target.env),
         subjects: vec![stream_subjects(&target.org, &target.project, &target.env)],
         storage: StorageType::File,
         num_replicas: replicas,
@@ -50,12 +50,12 @@ pub fn application_consumer(
             entity
         ]
         .into_iter()
-        .all(wamn_event_wire::valid_subject_token),
+        .all(wamn_event::valid_subject_token),
         "event coordinates and source must be nonempty broker tokens"
     );
     let durable =
         wamn_catalog::resource_names::application_event_consumer(application, package, entity);
-    let filter = wamn_event_wire::entity_filter(&target.org, &target.project, &target.env, entity);
+    let filter = wamn_event::entity_filter(&target.org, &target.project, &target.env, entity);
     Ok(application_consumer_config(&durable, &filter))
 }
 
@@ -250,7 +250,7 @@ mod tests {
         )
         .unwrap();
         let durable = config.durable_name.as_deref().unwrap();
-        assert!(wamn_event_wire::valid_subject_token(durable));
+        assert!(wamn_event::valid_subject_token(durable));
         crate::streams::validate_inputs(
             &target,
             1,

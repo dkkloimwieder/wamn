@@ -1,7 +1,6 @@
 //! Environment lifecycle and authorized control execution.
 
 pub mod api_service;
-pub mod application;
 pub mod configuration;
 pub mod apply_package;
 pub mod env_policies;
@@ -18,7 +17,6 @@ pub use wamn_platform_install::provision_system;
 pub mod prune_record_history;
 #[cfg(feature = "ops")]
 pub mod prune_run_history;
-pub use wamn_events::replica_identity;
 
 #[cfg(test)]
 mod publish_release_tests;

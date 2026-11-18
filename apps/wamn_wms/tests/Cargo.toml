@@ -18,7 +18,7 @@ wamn-identity-client = { workspace = true }
 wamn-kubernetes = { workspace = true }
 wamn-codegen = { workspace = true }
 # Event identity and subject tokens shared with application consumers.
-wamn-event-wire = { workspace = true }
+wamn-event = { workspace = true }
 anyhow = { workspace = true }
 wamn-oci = { workspace = true }
 serde_json = { workspace = true }

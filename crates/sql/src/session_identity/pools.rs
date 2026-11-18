@@ -1,6 +1,4 @@
-use sqlx::Row as _;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use super::super::pool::Object;
 use sqlx::postgres::PgPoolOptions;
@@ -9,9 +7,9 @@ use tracing::Instrument as _;
 use wamn_identity_protocol::AuthorityClass;
 
 use super::super::pool::{
-    CheckoutProbe, PoolKey, ProjectPool, ResolvedCredential, destroy_connection,
+    PoolKey, ProjectPool, ResolvedCredential, destroy_connection,
 };
-use super::super::{DEFAULT_PROJECT, PgError};
+use super::super::PgError;
 use super::WamnPostgres;
 
 impl WamnPostgres {
@@ -92,44 +90,6 @@ impl WamnPostgres {
         };
         let mut w = self.pools.write().expect("pools lock poisoned");
         Ok(Arc::clone(w.entry(key).or_insert(pp)))
-    }
-
-    /// Connections destroyed instead of repooled since startup.
-    pub fn destroyed_connections(&self) -> u64 {
-        self.destroyed.load(Ordering::Relaxed)
-    }
-
-    /// acquire a raw connection from the default project and report its state
-    /// *before* any identity injection. Condition verification only.
-    pub async fn probe_checkout(
-        &self,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-    ) -> anyhow::Result<CheckoutProbe> {
-        self.probe_checkout_of(&DEFAULT_PROJECT, project_env_key)
-            .await
-    }
-
-    /// acquire a raw connection from a project's (lazily built) pool and
-    /// report its state *before* any identity injection. Condition verification only —
-    /// not reachable from guests and not a platform work path. It deliberately
-    /// observes the guest lifecycle that the conformance acceptance test is proving.
-    pub async fn probe_checkout_of(
-        &self,
-        project: &wamn_registry::ProjectId,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-    ) -> anyhow::Result<CheckoutProbe> {
-        let pp = self
-            .ensure_pool(AuthorityClass::GuestSql, project, Some(project_env_key))
-            .await
-            .map_err(|_| anyhow::anyhow!("no pool for project {project:?}"))?;
-        let mut conn = pp.pool.acquire().await?;
-        let row = sqlx::query("SELECT pg_backend_pid(), pg_current_xact_id_if_assigned()::text")
-            .fetch_one(&mut *conn)
-            .await?;
-        Ok(CheckoutProbe {
-            backend_pid: row.try_get(0)?,
-            xact_id: row.try_get(1)?,
-        })
     }
 
     pub(in super::super) fn destroy(&self, obj: Object) {

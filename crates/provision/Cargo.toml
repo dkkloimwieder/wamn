@@ -36,8 +36,6 @@ postgres-protocol = { workspace = true }
 # Platform transaction identities take their component names and derived ids
 # from the platform model.
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
-# The audit retention role name is a record history platform fixture name.
-wamn-record-history = { workspace = true }
 
 # Targeted login identities use a domain-separated digest.
 hex = { workspace = true }
@@ -45,6 +43,7 @@ sha2 = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+wamn-record-history = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 chrono.workspace = true

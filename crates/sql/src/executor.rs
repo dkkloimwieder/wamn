@@ -179,18 +179,3 @@ impl wamn_connection::database::ProjectDatabase for WamnPostgres {
         .map_err(Into::into)
     }
 }
-
-impl WamnPostgres {
-    /// Check out the application's existing SQL pool without starting a transaction.
-    pub async fn application_connection(
-        &self,
-        project: &wamn_registry::ProjectId,
-        project_env_key: &wamn_registry::ProjectEnvKey,
-    ) -> anyhow::Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
-        let (connection, _) = self
-            .checkout_guest(project, project_env_key)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(connection)
-    }
-}
