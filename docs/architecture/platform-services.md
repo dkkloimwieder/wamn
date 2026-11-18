@@ -89,10 +89,10 @@ The system database supplies each selected Wasm digest and the active connection
 The host refuses a name that the calling component did not declare.
 HTTP method authorization and object-store access enforce a declaration's read mode.
 
-The host resolves private credentials through the environment store.
-Each lookup requires the trusted organization, project, and environment target.
+The host resolves private credentials through one reader shared by its workloads.
+The reader uses the trusted organization, environment, project, and credential UUID.
+It reads the project's Kubernetes Secret by name on a cache miss.
 Credential changes use the current generation without a host restart.
-The existing refresh behavior remains in place.
 
 Guest SQL, queue maintenance, HTTP admission, and event materialization use distinct authority classes.
 Private event binding files remain outside guest configuration, and workload configuration cannot replace them.
@@ -220,12 +220,12 @@ Connection health uses the same assertion request and token response rules.
 Both client credentials types use the shared encrypted token row and locked refresh path described in [execution](execution.md#connection-memory).
 
 The host injects `Authorization: Bearer` into the API request.
-An API 401 removes the cached token and causes one fresh token request and one API retry.
-A second 401 returns to the guest and removes that token from the cache.
-If the fresh token request fails, the guest receives the first API 401.
-For every authentication type, an API 401 or 403 drops the secret and the connection fact, and the host reads both again.
-The host sends once more only when the new fact names another generation or credential, so a repeated send never carries the refused credential.
-A call makes at most one extra send, so an OAuth2 retry after a changed fact is that one send.
+For every authentication type, an API 401 or 403 causes the host to reload the connection fact and refresh the credential.
+If the connection is active, the host sends the request once more with the current credential.
+Concurrent rejections of the same cached value share the refresh.
+For OAuth2, the host also refreshes a rejected token if the generation stays the same.
+If that token refresh fails, the guest receives the first API response.
+A second 401 or 403 returns to the guest and removes the cached OAuth2 token.
 A token failure before any API request returns `credential-unavailable` without the token endpoint's response body.
 The guest receives no credential. The workflow queue owns other retries.
 

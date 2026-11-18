@@ -1,8 +1,17 @@
 //! Connection rows and credential references read only through the project platform login.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
+use moka::sync::Cache;
+use tokio::sync::OnceCell;
+use uuid::Uuid;
+use wamn_kubernetes::kubernetes::KubernetesStore;
+use wamn_registry::ProjectEnvKey;
+
+use crate::connection_memory::bounded;
 
 /// Read one versioned credential through the configured store.
 pub async fn read_secret(
@@ -14,21 +23,170 @@ pub async fn read_secret(
     let backend = if let Some(backend) = store {
         backend
     } else {
-        configured =
-            wamn_kubernetes::kubernetes::KubernetesStore::in_cluster().map_err(|error| {
-                let local = error.type_ == Some(wamn_kubernetes::ErrorType::NoCluster);
-                let error = anyhow::Error::new(error);
-                if local {
-                    let reason = "no credential store in local mode";
-                    tracing::warn!("{reason}");
-                    error.context(reason)
-                } else {
-                    error
-                }
-            })?;
+        configured = in_cluster_store()?;
         &configured
     };
     String::from_utf8(backend.get(reference, version).await?).context("credential is not UTF-8")
+}
+
+fn in_cluster_store() -> anyhow::Result<KubernetesStore> {
+    KubernetesStore::in_cluster().map_err(|error| {
+        let local = error.type_ == Some(wamn_kubernetes::ErrorType::NoCluster);
+        let error = anyhow::Error::new(error);
+        if local {
+            let reason = "no credential store in local mode";
+            tracing::warn!("{reason}");
+            error.context(reason)
+        } else {
+            error
+        }
+    })
+}
+
+/// Credential material omitted from debug output.
+pub struct Secret(String);
+
+impl Secret {
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Secret(..)")
+    }
+}
+
+type Key = (ProjectEnvKey, Uuid);
+type Read = OnceCell<Result<Arc<Secret>, Arc<ReadError>>>;
+
+#[derive(Debug)]
+struct ReadError {
+    key: Key,
+    source: anyhow::Error,
+}
+
+impl fmt::Display for ReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "read credential {} for {}: {}",
+            self.key.1, self.key.0, self.source
+        )
+    }
+}
+
+impl std::error::Error for ReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+/// The host's shared Kubernetes client and bounded cache of credential values.
+pub struct CredentialReader {
+    store: OnceCell<KubernetesStore>,
+    values: Cache<Key, Arc<Secret>>,
+    pending: Mutex<HashMap<Key, Arc<Read>>>,
+}
+
+impl fmt::Debug for CredentialReader {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CredentialReader")
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for CredentialReader {
+    fn default() -> Self {
+        Self {
+            store: OnceCell::new(),
+            values: bounded(),
+            pending: Mutex::default(),
+        }
+    }
+}
+
+impl CredentialReader {
+    async fn read(
+        &self,
+        key: Key,
+        rejected: Option<&Arc<Secret>>,
+        load: impl Future<Output = anyhow::Result<String>>,
+    ) -> anyhow::Result<Arc<Secret>> {
+        if rejected.is_none()
+            && let Some(value) = self.values.get(&key)
+        {
+            return Ok(value);
+        }
+        let read = {
+            let mut pending = self.pending.lock().expect("credential read lock poisoned");
+            if let Some(value) = self.values.get(&key) {
+                if rejected.is_none_or(|old| !Arc::ptr_eq(old, &value)) {
+                    return Ok(value);
+                }
+                self.values.invalidate(&key);
+            }
+            Arc::clone(pending.entry(key.clone()).or_default())
+        };
+        let pending = PendingRead {
+            reader: self,
+            key,
+            read,
+        };
+        pending
+            .read
+            .get_or_init(|| async {
+                load.await
+                    .map(|value| Arc::new(Secret(value)))
+                    .map_err(|source| {
+                        Arc::new(ReadError {
+                            key: pending.key.clone(),
+                            source,
+                        })
+                    })
+            })
+            .await
+            .as_ref()
+            .map(Arc::clone)
+            .map_err(|error| anyhow::Error::new(Arc::clone(error)))
+    }
+}
+
+struct PendingRead<'a> {
+    reader: &'a CredentialReader,
+    key: Key,
+    read: Arc<Read>,
+}
+
+impl Drop for PendingRead<'_> {
+    fn drop(&mut self) {
+        let mut pending = self
+            .reader
+            .pending
+            .lock()
+            .expect("credential read lock poisoned");
+        if !pending
+            .get(&self.key)
+            .is_some_and(|read| Arc::ptr_eq(read, &self.read))
+        {
+            return;
+        }
+        // Publish and detach together so a rejection of the new value starts a new read.
+        match self.read.get() {
+            Some(Ok(value)) => {
+                self.reader
+                    .values
+                    .insert(self.key.clone(), Arc::clone(value));
+            }
+            Some(Err(_)) => {}
+            // The map and this guard hold the last two references after cancellation.
+            None if Arc::strong_count(&self.read) == 2 => {}
+            None => return,
+        }
+        pending.remove(&self.key);
+    }
 }
 
 #[derive(Clone)]
@@ -39,11 +197,20 @@ struct ProjectReader {
 }
 
 /// Connection credentials selected through the project platform pool.
-#[derive(Clone)]
 pub struct ConnectionCredentials {
     org: Option<wamn_registry::OrgId>,
-    store: Option<Arc<dyn wamn_kubernetes::Store>>,
+    secrets: Option<Arc<CredentialReader>>,
     project: Option<ProjectReader>,
+}
+
+impl Clone for ConnectionCredentials {
+    fn clone(&self) -> Self {
+        Self {
+            org: self.org.clone(),
+            secrets: self.secrets.as_ref().map(Arc::clone),
+            project: self.project.clone(),
+        }
+    }
 }
 
 impl std::fmt::Debug for ConnectionCredentials {
@@ -57,10 +224,10 @@ impl std::fmt::Debug for ConnectionCredentials {
 
 impl ConnectionCredentials {
     /// Read connection rows without a system database.
-    pub fn for_org(org: &wamn_registry::OrgId) -> Self {
+    pub fn for_org(org: &wamn_registry::OrgId, secrets: Arc<CredentialReader>) -> Self {
         Self {
             org: Some(org.to_owned()),
-            store: None,
+            secrets: Some(secrets),
             project: None,
         }
     }
@@ -112,17 +279,11 @@ impl ConnectionCredentials {
         self.org.as_ref().context("connection reader has no org")
     }
 
-    /// Supply the environment store, including isolated test fixtures.
-    pub fn with_store(mut self, store: Arc<dyn wamn_kubernetes::Store>) -> Self {
-        self.store = Some(store);
-        self
-    }
-
     /// Keep the explicit unavailable state for hosts without a credential reader.
     pub fn empty() -> Self {
         Self {
             org: None,
-            store: None,
+            secrets: None,
             project: None,
         }
     }
@@ -201,30 +362,41 @@ impl ConnectionCredentials {
         Ok(row)
     }
 
-    /// The secret of one credential of a connection of the environment.
-    pub async fn credential_secret(
+    /// Read the named project Secret only on a cache miss or after rejection.
+    pub(crate) async fn credential_secret(
         &self,
+        key: &ProjectEnvKey,
         project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
-        credential: &uuid::Uuid,
-    ) -> anyhow::Result<Option<String>> {
-        let database = self.project_database(project, environment)?;
-        let mut local = database.read_connection(project).await?;
-        let reference = wamn_registry::connections::credential(local.connection(), credential)
+        credential: Uuid,
+        rejected: Option<&Arc<Secret>>,
+    ) -> anyhow::Result<Arc<Secret>> {
+        let reader = self
+            .secrets
+            .as_ref()
+            .context("credential reader unavailable")?;
+        reader
+            .read((key.to_owned(), credential), rejected, async {
+                let database = self.project_database(project, environment)?;
+                let mut local = database.read_connection(project).await?;
+                let reference =
+                    wamn_registry::connections::credential(local.connection(), &credential)
+                        .await
+                        .context("read credential reference")?;
+                local.commit().await?;
+                let reference = reference.context("credential unavailable")?;
+                let name = wamn_registry::credential_secret_name(self.org()?, project, environment);
+                anyhow::ensure!(
+                    reference.reference == name,
+                    "credential Secret does not match project"
+                );
+                let store = reader
+                    .store
+                    .get_or_try_init(|| async { in_cluster_store() })
+                    .await?;
+                read_secret(&name, &reference.version, Some(store)).await
+            })
             .await
-            .context("read credential reference")?;
-        local.commit().await?;
-        match reference {
-            Some(reference) => Ok(Some(
-                read_secret(
-                    &reference.reference,
-                    &reference.version,
-                    self.store.as_deref(),
-                )
-                .await?,
-            )),
-            None => Ok(None),
-        }
     }
 
     /// The map from integration name to connection id of the environment.

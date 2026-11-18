@@ -891,10 +891,13 @@ The provisioned CNPG clusters accept client connections only over TLS.
 
 ## Kubernetes credentials
 
-Kubernetes Secrets hold connection credentials. Each environment has one Secret with one entry per credential UUID.
-The database stores the Secret name and entry name. It accepts only `k8s` references.
+Each project release has one Kubernetes Secret named `wamn-credential-<org>--<env>--<project>`.
+It holds one entry per credential UUID. The database stores the Secret name and entry name as a `k8s` reference.
 File-backed credential storage and `WAMN_CREDENTIAL_DIR` are removed.
-Deployed hosts read connection credentials through their in-cluster ServiceAccount.
+Deployed hosts use their in-cluster ServiceAccount to read the Secret by name.
+Each host process shares one reader, which caches successful reads by project coordinate and credential UUID.
+Concurrent misses share one API request. An HTTP API response of 401 or 403 refreshes the credential before one retry.
+Environment teardown deletes the Secret for each project release in that environment.
 Local development hosts have no connection credential store.
 A credential read returns `no credential store in local mode` and logs that reason.
 Local startup still provisions the disposable databases and starts identity, control and web services.

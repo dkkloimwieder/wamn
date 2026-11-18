@@ -29,7 +29,7 @@ use bindings::wamn::integration::bound;
 /// Parameters and credential selected for one integration call.
 pub struct Call {
     parameters: String,
-    credential: Option<String>,
+    credential: Option<Arc<crate::connection_credentials::Secret>>,
 }
 
 impl std::fmt::Debug for Call {
@@ -174,17 +174,13 @@ impl bound::Host for ActiveCtx<'_> {
             if let Some(parameters) = parameters.as_object_mut() {
                 parameters.remove("auth");
             }
-            let credential = if answer.generation.auth_type == "custom" {
-                answer
-                    .secret
-                    .as_ref()
-                    .map(|secret| secret.expose().to_owned())
-            } else {
-                None
+            let credential = match answer.fact.credential_id {
+                Some(id) => Some(bound.secret(id, None).await?),
+                None => None,
             };
             Ok::<_, anyhow::Error>(Call {
                 parameters: parameters.to_string(),
-                credential,
+                credential: credential.filter(|_| answer.generation.auth_type == "custom"),
             })
         }
         .await;
@@ -205,7 +201,12 @@ impl bound::HostCall for ActiveCtx<'_> {
         &mut self,
         call: Resource<Call>,
     ) -> wash_runtime::wasmtime::Result<Option<String>> {
-        Ok(self.table.get(&call)?.credential.clone())
+        Ok(self
+            .table
+            .get(&call)?
+            .credential
+            .as_deref()
+            .map(|secret| secret.expose().to_owned()))
     }
     async fn drop(&mut self, call: Resource<Call>) -> wash_runtime::wasmtime::Result<()> {
         self.table.delete(call)?;

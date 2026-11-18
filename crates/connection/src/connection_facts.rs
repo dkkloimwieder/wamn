@@ -5,49 +5,16 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use moka::policy::EvictionPolicy;
-use moka::sync::Cache;
 
-use crate::connection_credentials::{ConnectionCredentials, ConnectionGeneration};
+use crate::connection_credentials::{ConnectionCredentials, ConnectionGeneration, Secret};
 use crate::connection_memory::{ConnectionFact, ConnectionMemory, EnvConnections};
 use crate::database::ProjectDatabase;
 
-/// The number of entries of each bounded map.
-pub const MAP_ENTRIES: u64 = 1024;
-
-/// A bounded map that evicts its least recently used entry.
-pub fn bounded<K, V>() -> Cache<K, V>
-where
-    K: std::hash::Hash + Eq + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-{
-    Cache::builder()
-        .max_capacity(MAP_ENTRIES)
-        .eviction_policy(EvictionPolicy::lru())
-        .build()
-}
-
-/// The secret of one credential. Debug output omits it.
-pub struct Secret(String);
-
-impl Secret {
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Debug for Secret {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("Secret(..)")
-    }
-}
-
-/// One positive cache answer; row, generation and secret expire together.
+/// The active connection facts and their generation.
 #[derive(Debug)]
 pub struct ConnectionAnswer {
     pub fact: ConnectionFact,
     pub generation: Arc<ConnectionGeneration>,
-    pub secret: Option<Arc<Secret>>,
 }
 
 /// A generation row with its runtime type from this workload's declaration.
@@ -83,11 +50,6 @@ pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
         answer: Arc<ConnectionAnswer>,
     );
     fn invalidate(&self, project: &wamn_registry::ProjectEnvKey, id: &uuid::Uuid);
-    fn credential(
-        &self,
-        project: &wamn_registry::ProjectEnvKey,
-        id: &uuid::Uuid,
-    ) -> Option<Arc<Secret>>;
     fn integration(
         self: Arc<Self>,
         workload: &str,
@@ -108,7 +70,7 @@ pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
 pub struct ConnectionFacts {
     oauth_encryption: Option<Arc<wamn_envelope::encryption::Envelope>>,
     memory: Arc<ConnectionMemory>,
-    reader: Arc<ConnectionCredentials>,
+    reader: ConnectionCredentials,
     project_env_key: wamn_registry::ProjectEnvKey,
     project: wamn_registry::ProjectId,
     environment: wamn_registry::EnvName,
@@ -129,11 +91,11 @@ impl ConnectionFacts {
         Self {
             oauth_encryption: None,
             memory,
-            reader: Arc::new(Arc::unwrap_or_clone(reader).with_project_database(
+            reader: Arc::unwrap_or_clone(reader).with_project_database(
                 database,
                 project,
                 environment,
-            )),
+            ),
             project_env_key: project_env_key.to_owned(),
             project: project.to_owned(),
             environment: environment.to_owned(),
@@ -172,14 +134,14 @@ impl ConnectionFacts {
     pub fn project_env_key(&self) -> &wamn_registry::ProjectEnvKey {
         &self.project_env_key
     }
-    pub fn reader(&self) -> Arc<ConnectionCredentials> {
-        Arc::clone(&self.reader)
+    pub fn reader(&self) -> &ConnectionCredentials {
+        &self.reader
     }
     pub fn credential_handle(&self, name: &str, generation: i64) -> anyhow::Result<String> {
         self.reader.connection_handle(name, generation)
     }
 
-    /// Read all mutable call facts under one cache key, without a system read.
+    /// Read connection metadata under one cache key, without a system read.
     pub async fn answer(&self, id: &uuid::Uuid) -> anyhow::Result<Option<Arc<ConnectionAnswer>>> {
         if let Some(answer) = self
             .cache
@@ -200,26 +162,12 @@ impl ConnectionFacts {
             .connection_generation(&self.project, &self.environment, id, fact.active_generation)
             .await?
             .context("connection generation unavailable")?;
-        let secret = if fact.status == crate::connection_memory::ConnectionStatus::Active {
-            match fact.credential_id {
-                Some(credential) => Some(Arc::new(Secret(
-                    self.reader
-                        .credential_secret(&self.project, &self.environment, &credential)
-                        .await?
-                        .context("credential unavailable")?,
-                ))),
-                None => None,
-            }
-        } else {
-            None
-        };
         self.memory
             .oauth_tokens
             .retain_generation(*id, Some(fact.active_generation));
         let answer = Arc::new(ConnectionAnswer {
             fact,
             generation: Arc::new(generation),
-            secret,
         });
         if answer.fact.status == crate::connection_memory::ConnectionStatus::Active
             && let Some(cache) = &self.cache
@@ -231,11 +179,14 @@ impl ConnectionFacts {
     pub async fn connection(&self, id: &uuid::Uuid) -> anyhow::Result<Option<ConnectionFact>> {
         Ok(self.answer(id).await?.map(|answer| answer.fact.clone()))
     }
-    pub async fn read_again(&self, id: &uuid::Uuid) -> anyhow::Result<Option<ConnectionFact>> {
+    pub async fn read_again(
+        &self,
+        id: &uuid::Uuid,
+    ) -> anyhow::Result<Option<Arc<ConnectionAnswer>>> {
         if let Some(cache) = &self.cache {
             cache.invalidate(&self.project_env_key, id);
         }
-        self.connection(id).await
+        self.answer(id).await
     }
     pub async fn env_connections(&self) -> anyhow::Result<EnvConnections> {
         Ok(EnvConnections {
@@ -274,19 +225,20 @@ impl ConnectionFacts {
             });
         Ok(Generation { runtime_type, data })
     }
-    pub async fn secret(&self, id: &uuid::Uuid) -> anyhow::Result<Arc<Secret>> {
-        if let Some(secret) = self
-            .cache
-            .as_ref()
-            .and_then(|cache| cache.credential(&self.project_env_key, id))
-        {
-            return Ok(secret);
-        }
-        Ok(Arc::new(Secret(
-            self.reader
-                .credential_secret(&self.project, &self.environment, id)
-                .await?
-                .context("credential unavailable")?,
-        )))
+    /// Read the credential selected by a connection fact.
+    pub async fn secret(
+        &self,
+        id: uuid::Uuid,
+        rejected: Option<&Arc<Secret>>,
+    ) -> anyhow::Result<Arc<Secret>> {
+        self.reader
+            .credential_secret(
+                &self.project_env_key,
+                &self.project,
+                &self.environment,
+                id,
+                rejected,
+            )
+            .await
     }
 }

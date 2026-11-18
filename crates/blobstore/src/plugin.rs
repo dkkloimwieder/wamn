@@ -47,7 +47,7 @@ impl WamnBlobstore {
     pub fn new(postgres: Arc<WamnPostgres>) -> Self {
         Self {
             postgres,
-            stores: wamn_connection::connection_facts::bounded(),
+            stores: wamn_connection::connection_memory::bounded(),
         }
     }
 
@@ -90,7 +90,7 @@ impl WamnBlobstore {
                 &configuration.parameters,
                 provider(&configuration.integration_type)?,
             )?;
-            let client = self.client(id, &answer, &bound)?;
+            let client = self.client(facts, id, &answer, &bound).await?;
             let container = BoundContainer::new(
                 Arc::clone(&client.store),
                 bound.container,
@@ -156,7 +156,7 @@ impl WamnBlobstore {
                 &generation.parameters,
                 provider(&binding.integration_type)?,
             )?;
-            let client = self.client(id, &answer, &bound)?;
+            let client = self.client(facts, id, &answer, &bound).await?;
             Ok::<_, anyhow::Error>(
                 BoundContainer::new(
                     Arc::clone(&client.store),
@@ -178,22 +178,30 @@ impl WamnBlobstore {
         })
     }
 
-    fn client(
+    async fn client(
         &self,
+        facts: &ConnectionFacts,
         id: uuid::Uuid,
         answer: &ConnectionAnswer,
         bound: &BlobstoreDefinition,
     ) -> anyhow::Result<Arc<StoreClient>> {
+        use anyhow::Context as _;
+
         let key = (id, answer.fact.active_generation);
         if let Some(client) = self.stores.get(&key) {
             return Ok(client);
         }
         let secret = if bound.provider == BlobstoreProvider::S3 {
             Some(
-                answer
-                    .secret
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("storage credential unavailable"))?,
+                facts
+                    .secret(
+                        answer
+                            .fact
+                            .credential_id
+                            .context("storage credential unavailable")?,
+                        None,
+                    )
+                    .await?,
             )
         } else {
             None
@@ -205,7 +213,7 @@ impl WamnBlobstore {
                         let client = build_s3_store(
                             bound.endpoint.as_deref().expect("validated s3 endpoint"),
                             &bound.container,
-                            secret.as_ref().expect("s3 credential loaded").expose(),
+                            secret.as_deref().expect("s3 credential loaded").expose(),
                         )?;
                         StoreClient {
                             store: Arc::<object_store::aws::AmazonS3>::clone(&client),

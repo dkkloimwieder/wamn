@@ -5,6 +5,24 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use moka::policy::EvictionPolicy;
+use moka::sync::Cache;
+
+/// The number of entries of each bounded map.
+const MAP_ENTRIES: u64 = 1024;
+
+/// A bounded map that evicts its least recently used entry.
+pub fn bounded<K, V>() -> Cache<K, V>
+where
+    K: std::hash::Hash + Eq + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
+    Cache::builder()
+        .max_capacity(MAP_ENTRIES)
+        .eviction_policy(EvictionPolicy::lru())
+        .build()
+}
+
 /// The status of the project database's platform.connection row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

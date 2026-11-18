@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::sync::Mutex;
 use std::sync::{Arc, RwLock};
+use wamn_connection::connection_credentials::Secret;
 use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionFacts};
 use wamn_connection::connection_memory::ConnectionStatus;
 use wamn_engine::invocation_scope::InvocationScopes;
@@ -166,8 +167,17 @@ impl ConnectionHttp {
         scope: &str,
         request: &Request,
     ) -> Result<Response, ConnectionError> {
+        let secret = credential(facts, &answer, None).await?;
         let (first, token) = self
-            .attempt(facts, id, &answer, transport, scope, request, None)
+            .attempt(
+                facts,
+                id,
+                &answer,
+                transport,
+                scope,
+                request,
+                (secret.as_deref().map(Secret::expose), None),
+            )
             .await?;
         if !matches!(first.status, 401 | 403) {
             return Ok(first);
@@ -178,22 +188,24 @@ impl ConnectionHttp {
         let fresh = facts
             .read_again(&id)
             .await
-            .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        let oauth = first.status == 401
-            && wamn_connection::oauth_token::is_oauth(&answer.generation.auth_type);
-        let changed = fresh.as_ref().is_some_and(|fact| {
-            (fact.active_generation, fact.credential_id)
-                != (answer.fact.active_generation, answer.fact.credential_id)
-        });
-        if !changed && !oauth {
-            return Ok(first);
-        }
-        let fresh = facts
-            .answer(&id)
-            .await
             .map_err(|_| ConnectionError::CredentialUnavailable)?
             .filter(|answer| answer.fact.status == ConnectionStatus::Active)
             .ok_or(ConnectionError::Unbound)?;
+        let same_credential = fresh.fact.credential_id == answer.fact.credential_id;
+        let refreshed = credential(
+            facts,
+            &fresh,
+            if same_credential {
+                secret.as_ref()
+            } else {
+                None
+            },
+        )
+        .await?;
+        drop(secret);
+        let same_generation =
+            same_credential && fresh.fact.active_generation == answer.fact.active_generation;
+        let rejected_token = token.as_deref().filter(|_| same_generation);
         let result = self
             .attempt(
                 facts,
@@ -202,23 +214,19 @@ impl ConnectionHttp {
                 transport,
                 scope,
                 request,
-                if oauth && !changed {
-                    token.as_deref()
-                } else {
-                    None
-                },
+                (refreshed.as_deref().map(Secret::expose), rejected_token),
             )
             .await;
         match result {
             Ok((response, _)) => {
-                if response.status == 401 {
+                if matches!(response.status, 401 | 403) {
                     facts
                         .oauth_tokens()
                         .remove(&(id, fresh.fact.active_generation));
                 }
                 Ok(response)
             }
-            Err(_) if oauth && !changed => Ok(first),
+            Err(_) if rejected_token.is_some() => Ok(first),
             Err(error) => Err(error),
         }
     }
@@ -230,7 +238,7 @@ impl ConnectionHttp {
         transport: &HttpTransport,
         scope: &str,
         request: &Request,
-        rejected: Option<&str>,
+        (material, rejected): (Option<&str>, Option<&str>),
     ) -> Result<(Response, Option<String>), ConnectionError> {
         let target = wamn_authority::normalize_portable_http_target(&request.path_and_query)
             .map_err(|_| ConnectionError::AuthorityDenied)?;
@@ -250,7 +258,6 @@ impl ConnectionHttp {
         let auth_type = answer.generation.auth_type.as_str();
         let empty = serde_json::json!({});
         let parameters = answer.generation.parameters.get("auth").unwrap_or(&empty);
-        let material = answer.secret.as_ref().map(|secret| secret.expose());
         let (headers, token) = if wamn_connection::oauth_token::is_oauth(auth_type) {
             let principal = self
                 .scopes
@@ -306,7 +313,7 @@ impl ConnectionHttp {
             .ok_or(ConnectionError::CredentialUnavailable)?;
         let available = wamn_connection::oauth_token::get(
             wamn_connection::oauth_token::Request {
-                reader: &facts.reader(),
+                reader: facts.reader(),
                 principal,
                 project: facts.project(),
                 environment: facts.environment(),
@@ -357,6 +364,21 @@ impl ConnectionHttp {
         Ok(available.token)
     }
 }
+async fn credential(
+    facts: &ConnectionFacts,
+    answer: &ConnectionAnswer,
+    rejected: Option<&Arc<Secret>>,
+) -> Result<Option<Arc<Secret>>, ConnectionError> {
+    match answer.fact.credential_id {
+        Some(id) => facts
+            .secret(id, rejected)
+            .await
+            .map(Some)
+            .map_err(|_| ConnectionError::CredentialUnavailable),
+        None => Ok(None),
+    }
+}
+
 async fn execute(
     transport: &HttpTransport,
     decision: wamn_authority::connection_authority::AuthorityDecision,
