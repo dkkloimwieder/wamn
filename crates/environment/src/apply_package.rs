@@ -1,7 +1,6 @@
 //! Initialize or explicitly advance package SQL from verified files.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
 
@@ -30,10 +29,6 @@ pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
 /// Inputs of one exact package application.
 #[derive(Debug)]
 pub struct ApplyPackageRequest {
-    /// Component repository configuration for digest-addressed binary reads.
-    pub component_source:
-        Option<wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
-
     /// Package root containing strict wamn.json and migrations/, with the
     /// digest of the verified artifact it was opened from.
     pub package: PackageRoot,
@@ -75,9 +70,6 @@ pub struct ApplyOutcome {
 /// Package bytes and migration policy prepared before database mutation.
 #[derive(Debug)]
 pub(crate) struct PreparedPackage {
-    pub component_source:
-        Option<wamn_oci::component_artifact::component_artifact_source::ComponentArtifactSourceConfig>,
-    pub root: PathBuf,
     pub directory: PackageDirectory,
     pub manifest: PackageManifest,
     migrations: sqlx::migrate::Migrator,
@@ -92,8 +84,6 @@ pub(crate) async fn prepare_package(root: &PackageRoot) -> anyhow::Result<Prepar
     let migration_root = wamn_publish::package_source::migration_root(&root.path);
     let migrations = wamn_codegen::migrations::migrator(&migration_root).await?;
     Ok(PreparedPackage {
-        component_source: None,
-        root: root.path.clone(),
         directory,
         manifest,
         migrations,
@@ -114,7 +104,7 @@ async fn apply_request(
     request: ApplyPackageRequest,
     advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
-    let mut package = prepare_package(&request.package).await?;
+    let package = prepare_package(&request.package).await?;
     if package.directory.artifact_digest.is_none() {
         return Err(ApplyPackageError::artifact_required(&format!(
             "{}@{}",
@@ -122,9 +112,6 @@ async fn apply_request(
         ))
         .into());
     }
-    package
-        .component_source
-        .clone_from(&request.component_source);
     let mut client = wamn_postgres::connect(&request.database_url)
         .await
         .context("connect to project environment")?;
@@ -223,14 +210,8 @@ async fn apply(
     let mut tx = migration::begin(client, project_env_key).await?;
     let mut changed = false;
     if applied.is_none() {
-        changed |= wamn_publish::connection_requirement::install(
-            &mut tx,
-            &package.root,
-            &package.manifest,
-            package.component_source.as_ref(),
-        )
-        .await?
-            != 0;
+        changed |=
+            wamn_publish::connection_requirement::install(&mut tx, &package.manifest).await? != 0;
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_provision::migration::grants_sql(&login),

@@ -27,15 +27,25 @@ pub(super) fn world_interfaces(bytes: &[u8], exports: bool) -> anyhow::Result<Ve
     Ok(names)
 }
 
-pub fn require_imports(bytes: &[u8], name: &str, interface: &str) -> anyhow::Result<String> {
-    ensure!(
-        wamn_catalog::manifest::valid_connection_name(name),
-        "connection name must match ^[a-z][a-z0-9-]{{0,62}}$: {name}"
-    );
+#[cfg(test)]
+pub(super) fn require_imports(bytes: &[u8], name: &str, interface: &str) -> anyhow::Result<()> {
     let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?
     else {
         anyhow::bail!("connection authority needs a component binary")
     };
+    require_import(&resolve, world, name, interface)
+}
+
+pub(super) fn require_import(
+    resolve: &wit_parser::Resolve,
+    world: wit_parser::WorldId,
+    name: &str,
+    interface: &str,
+) -> anyhow::Result<()> {
+    ensure!(
+        wamn_catalog::manifest::valid_connection_name(name),
+        "connection name must match ^[a-z][a-z0-9-]{{0,62}}$: {name}"
+    );
     let host = wamn_catalog::manifest::host_connection_interface(interface);
     let found = resolve.worlds[world].imports.iter().any(|(key, item)| {
         let wit_parser::WorldItem::Interface { id, .. } = item else {
@@ -48,5 +58,5 @@ pub fn require_imports(bytes: &[u8], name: &str, interface: &str) -> anyhow::Res
         found,
         "declared connection {name} does not import {interface} under its required label"
     );
-    Ok(interface.to_owned())
+    Ok(())
 }

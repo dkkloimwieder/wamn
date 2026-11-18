@@ -1,6 +1,6 @@
 //! Package inputs and the physical relation declarations used by CDC.
 
-use crate::manifest::installation::PackageManifest;
+use crate::manifest::PackageManifest;
 use crate::{PackageCoordinate, canonical_name::CanonicalName};
 use wamn_record_history::history_table_name;
 
@@ -64,21 +64,21 @@ pub fn package_metadata(directory: &PackageDirectory) -> anyhow::Result<PackageM
             let table: CanonicalName = history_table_name(model.table.as_str()).parse()?;
             cdc_excluded_relations.push(CdcExcludedRelation {
                 relation_id: table.clone(),
-                schema: model.schema.clone(),
+                schema: model.schema.clone().into(),
                 table,
             });
         }
         models.push(ManagedModel {
-            model_id,
-            schema: model.schema,
-            table: model.table,
+            model_id: model_id.into(),
+            schema: model.schema.into(),
+            table: model.table.into(),
         });
     }
     cdc_excluded_relations.extend(manifest.internal_relations.into_iter().map(
         |(relation_id, relation)| CdcExcludedRelation {
-            relation_id,
-            schema: relation.schema,
-            table: relation.table,
+            relation_id: relation_id.into(),
+            schema: relation.schema.into(),
+            table: relation.table.into(),
         },
     ));
     Ok(PackageMetadata {

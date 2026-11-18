@@ -312,14 +312,28 @@ async fn pass_one_and_two(
     let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &verdicts)
         .with_output_paths(&package_output, &package_output);
     let mut package = crate::generate::generate_described(&input, &manifest, &corpus)?;
+    use crate::publication::{ATTACHMENTS, COMPONENTS};
     manifest.compiled_operations = package.take_operations();
+    let mut generated = expected_files(&package)?;
+    let routes = generated
+        .remove(Path::new(ATTACHMENTS).strip_prefix("generated")?)
+        .context("generated routes")?;
+    let declarations = generated
+        .remove(Path::new(COMPONENTS).strip_prefix("generated")?)
+        .context("generated components")?;
+    manifest.deploy = Some(wamn_catalog::manifest::deploy::CompiledDeploy {
+        routes: serde_json::from_slice(routes)?,
+        declarations: serde_json::from_slice(declarations)?,
+        components: BTreeMap::new(),
+        base_packages: BTreeMap::new(),
+    });
     let canonical = canonical_json_bytes(&serde_json::to_value(&manifest)?);
-    let mut files = expected_files(&package)?
+    let mut files = generated
         .into_iter()
         .map(|(path, bytes)| (path, bytes.to_vec()))
         .collect::<BTreeMap<_, _>>();
     let columns = history_columns(database_url, &manifest).await?;
-    let history = crate::history::render(package_root, &(&manifest).into(), &columns).await?;
+    let history = crate::history::render(package_root, &manifest, &columns).await?;
     files.extend(crate::history::migrations(package_root, &history).await?);
     files.insert(
         PathBuf::from("wamn.k"),
@@ -372,7 +386,7 @@ async fn history_columns(
     database_url: &str,
     manifest: &PackageManifest,
 ) -> Result<
-    BTreeMap<wamn_catalog::canonical_name::CanonicalName, Vec<crate::history::RelationColumn>>,
+    BTreeMap<wamn_catalog::manifest::source_name::SourceName, Vec<crate::history::RelationColumn>>,
 > {
     use crate::history::{RelationColumn, SELECT_RELATION_COLUMNS_SQL};
     let client = wamn_postgres::pool(database_url, 4).await?;
@@ -388,7 +402,7 @@ async fn history_columns(
                 .fetch_all(&client)
                 .await?;
             columns.insert(
-                id.clone().into(),
+                id.clone(),
                 rows.iter()
                     .map(|row| RelationColumn {
                         name: row.get(0),
@@ -813,12 +827,10 @@ async fn create_history_tables(client: &sqlx::PgPool, manifest: &ManifestSources
         if !exists {
             continue;
         }
-        sqlx::raw_sql(
-            AssertSqlSafe(crate::history::history_table_sql(&model.into())).into_sql_str(),
-        )
-        .execute(client)
-        .await
-        .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
+        sqlx::raw_sql(AssertSqlSafe(crate::history::history_table_sql(model)).into_sql_str())
+            .execute(client)
+            .await
+            .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
     }
     Ok(())
 }

@@ -84,19 +84,19 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
 /// Inputs for publication of existing source build output.
 #[derive(Debug, Args)]
 pub struct PublishArgs {
-    /// Source package whose complete dependency closure has been built.
+    /// Package directory or build directory whose dependency closure has been built.
     package: PathBuf,
     /// Authored document selecting one application.
     #[arg(long)]
     env: PathBuf,
 }
 
-/// Publish existing build output and print the application and release digest.
+/// Publish existing build output and print the top package OCI digest.
 pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
     let document = EnvironmentDocument::compile(&args.env)?;
-    let (application, digest) =
+    let (_, digest) =
         wamn_dev::source_deploy::publish_built_from_env(&document, &args.package).await?;
-    println!("{application} {digest}");
+    println!("{digest}");
     Ok(())
 }
 

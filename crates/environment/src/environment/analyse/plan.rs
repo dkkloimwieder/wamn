@@ -53,18 +53,27 @@ pub(crate) fn newest_successful(history: &[Value]) -> Option<&Value> {
 pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String> {
     let mut refusals = Vec::new();
     if let Some(release) = &authorities.release {
-        for component in &release.manifest.components {
-            let Some(application) = document.application_for_package(&component.package_id) else {
-                continue;
-            };
-            for requirement in &component.descriptor.connections {
+        for package in release.packages.values() {
+            let application = document.application_for_package(&package.package.id);
+            for requirement in package
+                .deploy
+                .iter()
+                .flat_map(|deploy| deploy.components.values())
+                .flat_map(|component| &component.descriptor.connections)
+            {
                 let Some(alias) = requirement.store_alias.name() else {
                     continue;
                 };
-                if let Some(connection) = authorities
-                    .connections
-                    .get(&super::super::bindings::key(application, alias.as_str()))
-                    && !matches!(
+                let Some(application) = application else {
+                    refusals.push(format!(
+                        "connection_unbound: package {} has no application for {alias}",
+                        package.package.id,
+                    ));
+                    continue;
+                };
+                let key = super::super::bindings::key(application, alias.as_str());
+                if let Some(connection) = authorities.connections.get(&key) {
+                    if !matches!(
                         (connection.requirement_type, requirement.requirement_type),
                         (
                             wamn_catalog::RequirementType::Http,
@@ -73,31 +82,12 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                             wamn_catalog::RequirementType::Blobstore,
                             wamn_catalog::ComponentConnectionType::Blobstore
                         )
-                    )
-                {
-                    refusals.push(format!(
-                        "connection {alias} has a different type from its release requirement"
-                    ));
-                }
-            }
-        }
-        for component in &release.manifest.components {
-            let application = document.application_for_package(&component.package_id);
-            for requirement in &component.descriptor.connections {
-                let Some(alias) = requirement.store_alias.name() else {
-                    continue;
-                };
-                let Some(application) = application else {
-                    refusals.push(format!(
-                        "connection_unbound: package {} has no application for {alias}",
-                        component.package_id
-                    ));
-                    continue;
-                };
-                let key = super::super::bindings::key(application, alias.as_str());
-                if !authorities.connections.contains_key(&key)
-                    && !authorities.artifact_bindings.contains(&key)
-                {
+                    ) {
+                        refusals.push(format!(
+                            "connection {alias} has a different type from its release requirement"
+                        ));
+                    }
+                } else if !authorities.artifact_bindings.contains(&key) {
                     refusals.push(format!(
                         "connection_unbound: {key} is required by release {}",
                         release.digest

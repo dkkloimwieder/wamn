@@ -5,9 +5,8 @@
 //! package row. `push-package` pushes an artifact only after every test
 //! passed, so its existence is the proof. This crate pulls an artifact by its
 //! full digest or by its tag `<package_id>-<version>`, tests the manifest and
-//! every layer against their digests, and reads the component descriptor
-//! layers. Publish, wiring authorship and the management condition read component
-//! facts through it, so they read them the same way.
+//! every layer against its digest. The first layer contains the published
+//! package document, including the admitted component facts.
 //!
 //! `wamn-publish` packs and pushes package artifacts with [`Repository`]. A
 //! deployed service may depend on this crate, never on `wamn-publish`.
@@ -22,9 +21,8 @@ pub mod integration;
 pub mod metadata;
 pub mod registry_credentials;
 pub mod registry_pull;
-pub mod registry_source;
+mod registry_source;
 pub mod registry_transport;
-mod repository;
 pub mod tag;
 use tag::OciTag;
 
@@ -38,14 +36,14 @@ use oci_client::errors::{OciDistributionError, OciErrorCode};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
-use wamn_catalog::{ComponentDescriptor, parse_component_artifact_base};
+use wamn_catalog::parse_component_artifact_base;
 use wamn_digest::bytes_sha256;
 
 use crate::package_artifact::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use crate::package_artifact::registry_source::RegistrySource;
 
 /// Artifact type of a package artifact.
-pub const PACKAGE_ARTIFACT_TYPE: &str = "application/vnd.wamn.package.v2";
+pub const PACKAGE_ARTIFACT_TYPE: &str = "application/vnd.wamn.package.v3";
 
 /// Standard OCI timestamp used only by development package coordinates.
 pub const CREATED_ANNOTATION: &str = "org.opencontainers.image.created";
@@ -61,21 +59,21 @@ pub fn is_dev_tag(tag: &OciTag) -> bool {
         })
 }
 
-/// Media type of a component descriptor layer.
-pub const COMPONENT_DESCRIPTOR_MEDIA_TYPE: &str =
-    "application/vnd.wamn.component.descriptor.v1+json";
+/// Environment variable carrying the OCI CA paths accepted by wash.
+pub const OCI_CA_PATHS_ENV: &str = "WASH_OCI_CA_PATHS";
+
+/// Media type of the published package document, the first layer.
+pub const PACKAGE_MANIFEST_MEDIA_TYPE: &str = "application/vnd.wamn.package.manifest.v1+json";
+
+/// Media type of the migrations tar, the second layer.
+pub const PACKAGE_TAR_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.tar";
 
 /// The read and connect bound of one registry request.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Read the PEM CA bundles at `paths`, in order, as extra OCI trust roots.
 ///
-/// The one reader behind the host's component source
-/// (`ComponentArtifactSourceConfig::with_ca_paths` in `wamn-oci`), the
-/// package registry client here and the ctl publishers, which build their own
-/// `oci-client` for the same registry. It reads the files and does not make sure that each bundle is a usable
-/// trust root; the builder above says where that test lives and what
-/// `oci-client` does without it.
+/// The OCI clients share the additional trust roots read from these paths.
 pub fn read_ca_bundles(paths: &[PathBuf]) -> Result<Vec<Vec<u8>>, ComponentArtifactCaError> {
     paths
         .iter()
@@ -239,7 +237,6 @@ pub struct Repository {
     pub auth: RegistryAuth,
     /// `<registry>/<repository>:<tag>` or `<registry>/<repository>@<digest>`.
     pub reference: Reference,
-    source: RegistrySource,
 }
 
 /// Names the reference only: the credential must not reach a log.
@@ -305,7 +302,6 @@ impl Repository {
             client,
             auth,
             reference,
-            source,
         })
     }
 
@@ -371,14 +367,7 @@ impl Repository {
         let Some((bytes, digest)) = self.manifest_before(deadline).await? else {
             return Ok(None);
         };
-        let manifest: OciImageManifest = serde_json::from_slice(&bytes).with_context(|| {
-            format!("parse the manifest of package artifact {}", self.reference)
-        })?;
-        ensure!(
-            manifest.artifact_type.as_deref() == Some(PACKAGE_ARTIFACT_TYPE),
-            "{} is not a {PACKAGE_ARTIFACT_TYPE} package artifact",
-            self.reference
-        );
+        let manifest = self.parse_package_image_manifest(&bytes)?;
         let mut layers = Vec::new();
         for layer in &manifest.layers {
             layers.push(self.pull_layer(layer, deadline).await?);
@@ -386,12 +375,57 @@ impl Repository {
         Ok(Some(PulledPackage {
             digest,
             layers,
-            annotations: manifest
-                .annotations
-                .unwrap_or_default()
-                .into_iter()
-                .collect(),
+            annotations: manifest.annotations.unwrap_or_default(),
         }))
+    }
+
+    /// Read the current tag's migration tar only when it differs from the candidate.
+    /// The caller already fetched and verified the current tag's image manifest.
+    pub async fn predecessor_migrations(
+        &self,
+        bytes: &[u8],
+        candidate: &wamn_digest::Digest,
+    ) -> anyhow::Result<(Option<PackedLayer>, Option<String>)> {
+        let manifest = self.parse_package_image_manifest(bytes).with_context(|| {
+            format!(
+                "cannot replace package tag {}; publish under a new tag",
+                self.reference
+            )
+        })?;
+        let layer = &manifest.layers[1];
+        let migrations = if layer.digest.parse::<wamn_digest::Digest>()? == *candidate {
+            None
+        } else {
+            Some(
+                self.pull_layer(layer, tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT)
+                    .await?,
+            )
+        };
+        Ok((
+            migrations,
+            manifest
+                .annotations
+                .and_then(|mut annotations| annotations.remove(CREATED_ANNOTATION)),
+        ))
+    }
+
+    fn parse_package_image_manifest(&self, bytes: &[u8]) -> anyhow::Result<OciImageManifest> {
+        let manifest: OciImageManifest = serde_json::from_slice(bytes).with_context(|| {
+            format!("parse the manifest of package artifact {}", self.reference)
+        })?;
+        ensure!(
+            manifest.artifact_type.as_deref() == Some(PACKAGE_ARTIFACT_TYPE),
+            "{} is not a {PACKAGE_ARTIFACT_TYPE} package artifact",
+            self.reference
+        );
+        ensure!(
+            matches!(manifest.layers.as_slice(), [package, migrations]
+                if package.media_type == PACKAGE_MANIFEST_MEDIA_TYPE
+                    && migrations.media_type == PACKAGE_TAR_MEDIA_TYPE),
+            "{} must contain wamn.json and a migrations tar, in that order",
+            self.reference
+        );
+        Ok(manifest)
     }
 
     async fn pull_layer(
@@ -449,25 +483,6 @@ pub async fn pull_package(
     })
 }
 
-/// Parse one descriptor layer. Its bytes must be the canonical JSON of the
-/// descriptor it holds.
-///
-/// # Errors
-///
-/// When the bytes are not a canonical component descriptor.
-pub fn parse_descriptor(bytes: &[u8]) -> anyhow::Result<ComponentDescriptor> {
-    let descriptor: ComponentDescriptor =
-        serde_json::from_slice(bytes).context("parse a component descriptor")?;
-    ensure!(
-        wamn_digest::canonical_json_bytes(
-            &serde_json::to_value(&descriptor).context("encode a component descriptor")?
-        ) == bytes,
-        "component descriptor {} is not canonical JSON",
-        descriptor.component
-    );
-    Ok(descriptor)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,28 +519,5 @@ mod tests {
         let found = NoPackageArtifact::find(&error).expect("the refusal is in the chain");
         assert_eq!(found.package_id, "orders".parse().unwrap());
         assert!(NoPackageArtifact::find(&anyhow::anyhow!("other")).is_none());
-    }
-
-    #[test]
-    fn a_descriptor_must_be_canonical() {
-        let descriptor = serde_json::json!({
-            "component": "entity",
-            "interface-version": "0.1",
-            "component-digest": (format!("sha256:{}", "1".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
-            "operations": {},
-            "imports": [],
-            "imports-fingerprint": (format!("sha256:{}", "2".repeat(64))).parse::<wamn_digest::Digest>().unwrap(),
-            "effects": [],
-            "connections": [],
-        });
-        let canonical = wamn_digest::canonical_json_bytes(&descriptor);
-        assert_eq!(
-            parse_descriptor(&canonical)
-                .expect("canonical bytes parse")
-                .component,
-            "entity"
-        );
-        let pretty = serde_json::to_vec_pretty(&descriptor).expect("encode");
-        assert!(parse_descriptor(&pretty).is_err());
     }
 }

@@ -644,7 +644,7 @@ Issues:
 - `wamn rollback [--revision N]` runs `helm rollback` in the worker Job, under the lock, after the enabled-workflow check. The application chart puts the top package digest and `.Release.Revision` on the WorkloadDeployment, and control reads them there.
 
 8.3 Publish and artifacts.
-- Publish does not pull back what it pushed. The append check compares with the previous version only.
+- Publish does not pull back what it pushed. Tags are mutable: a publish under an existing tag with new content runs the append check against the digest the tag points to now, then moves the tag. A new tag has no append check.
 - Components are pushed with stock `push_component` (`application/wasm`). The package artifact has two layers: `wamn.json` and the migrations tar.
 - `wamn_catalog::manifest::installation` goes; its readers use the full package model.
 - The deploy-identity readers of `ServingManifest` go. Afterwards only the edge reads it.
@@ -2146,3 +2146,5 @@ Facts:
 **Ruled (D, 2026-11-17): Epic 8 scope.** Step 3.5 does the deploy charts (`release` → `application`, `environment` split into environment and project, C1); the `platform` chart merge goes to 3.6 with install and settings. The version authority for integrations is the environment file, one version per connection per environment, as Part 1 states. Epic 8 ends with build, clippy and size checks; the first kind run comes after 3.6, with D's approval.
 
 **Ruled (D, 2026-11-18): Epic 8 scout answers.** `serde-saphyr` and a schema generated from the Rust types; the project is found from the application name; one pin per (org, env, connection). Per-request input ConfigMaps owned by the Job. The release is read from WorkloadDeployment annotations (top package digest, Helm revision), and rollback runs `helm rollback` in the worker Job; control gets no Helm or Secret-list access. Codegen's describe cache lives in `.wamn/describe/`, not `.sqlx/`. Residency goes, with approved status and rollback contract changes. One operation account per project. Inside one deploy, SQL runs before code, migrations must work with the previous code, and deploy never resets. `wamn.json` gets a compiled deploy section that pins component and base digests. The append check compares with the latest digest under the same tag; versions are free tags. 8.4 also deletes the platform observer RBAC, which let every org service account read the installation namespace's Secrets.
+
+**Ruled (D, 2026-11-18): package tags are mutable.** Following the version rulings of 2026-10-26 and 2026-11-10, a tag names the latest digest pushed under it. `push_package` no longer refuses a new digest under an existing tag; it runs the append check against the tag's current digest, then moves the tag.

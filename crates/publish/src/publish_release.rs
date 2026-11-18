@@ -1,6 +1,6 @@
 pub(super) mod plan;
 pub use plan::{
-    application_dependency_permissions, composes_integration, parse_package,
+    application_dependency_permissions, composes_integration, deploy_runtime_schema, parse_package,
 };
 use plan::{
     pin_runtime_schemas, project_components, project_routes,
@@ -16,12 +16,10 @@ use wamn_catalog::exposure::{
     HttpRoute as AuthoredHttpRoute, canonical_http_route_template, normalize_http_route,
 };
 use wamn_catalog::{
-    AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageCoordinate,
-    OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
-    ServingComponent, ServingManifest, ServingRelation, ServingRelease, ServingRoute,
+    AdmittedComponent, AttachmentTarget, ComponentConnection, OperationType, PackageCoordinate,
+    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
+    ServingRelation, ServingRelease, ServingRoute,
 };
-
-use crate::package_artifact::{OpenedPackage, PackageRegistry};
 
 mod attachments;
 mod components;
@@ -29,8 +27,8 @@ mod package_sources;
 
 use attachments::{read_package_attachments, resolve_route_methods};
 use components::{resolve_component_dependency_closure, resolve_route_component};
-pub use package_sources::package_route;
 use package_sources::read_package_manifests;
+pub use package_sources::{package_route, route_contracts};
 
 #[cfg(test)]
 use attachments::merge_package_attachment_documents;
@@ -108,13 +106,11 @@ pub enum PublishManifestErrorType {
     ClosureConflict,
     Document,
     DuplicateAttachmentId,
-    ApplicationSelection,
 }
 
 impl PublishManifestErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ApplicationSelection => "application-selection",
             Self::Release => "release",
             Self::PackageManifest => "package-manifest",
             Self::Component => "component",
@@ -197,10 +193,10 @@ pub type RouteContracts = BTreeMap<
 /// a `get`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteContract {
-    type_: OperationType,
+    pub type_: OperationType,
     reads: BTreeSet<ServingRelation>,
     revision: Option<String>,
-    idempotency: Option<String>,
+    pub idempotency: Option<String>,
 }
 
 #[cfg(test)]
@@ -218,10 +214,6 @@ impl From<OperationType> for RouteContract {
 /// Inputs of one application release publication.
 #[derive(Debug)]
 pub struct PublishReleaseRequest {
-    /// Application membership from environment.k.
-    pub applications: wamn_catalog::EnvironmentApplications,
-    /// Selects one declared application; omitted for a one-application release.
-    pub application: Option<wamn_catalog::ApplicationName>,
     /// Organization in the declared environment coordinate.
     pub org: wamn_registry::OrgId,
     pub project: wamn_registry::ProjectId,
@@ -238,41 +230,100 @@ impl PublishReleaseRequest {
     }
 }
 
-pub async fn publish_release(
-    request: PublishReleaseRequest,
-    registry: &PackageRegistry,
-) -> anyhow::Result<wamn_digest::Digest> {
-    Ok(
-        publish_candidate(&request, registry)
-            .await?
-            .digest,
-    )
-}
-
-fn select_application<'a>(
-    applications: &'a wamn_catalog::EnvironmentApplications,
-    application: Option<&wamn_catalog::ApplicationName>,
-) -> Result<
-    (
-        &'a wamn_catalog::ApplicationName,
-        &'a wamn_catalog::ApplicationDefinition,
-    ),
-    PublishManifestError,
-> {
-    let selected = match application {
-        Some(name) => applications.get_key_value(name),
-        None if applications.len() == 1 => applications.first_key_value(),
-        None => None,
-    };
-    selected.ok_or_else(|| {
-        PublishManifestError::new(
-            PublishManifestErrorType::ApplicationSelection,
-            format!(
-                "select one application from environment.k: {:?}; requested {application:?}",
-                applications.keys().collect::<Vec<_>>()
-            ),
-        )
-    })
+/// Build ingress routes from the deployed package closure and its admitted exports.
+pub fn deployment_routes(
+    packages: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
+    contracts: &RouteContracts,
+    application: &wamn_catalog::ApplicationName,
+    digest: &wamn_digest::Digest,
+) -> anyhow::Result<Vec<wamn_catalog::http_routes::RouteDefinition>> {
+    let documents = packages
+        .values()
+        .map(|package| {
+            let deploy = package.deploy.as_ref().with_context(|| {
+                format!(
+                    "package {} has no compiled deploy section",
+                    package.package.id
+                )
+            })?;
+            Ok((
+                PathBuf::from(package.package.id.as_str()),
+                deploy.routes.clone(),
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let attachments = attachments::merge_package_attachment_documents(documents)?;
+    let attachments = attachments::plan::resolve_owned_route_methods(attachments, contracts)?;
+    let workflow_prefix = wamn_catalog::workflow_http_prefix(application);
+    let mut routes = Vec::with_capacity(attachments.len());
+    for (id, attachment) in attachments {
+        if !matches!(
+            attachment.type_,
+            wamn_catalog::AttachmentType::Http | wamn_catalog::AttachmentType::Studio
+        ) {
+            continue;
+        }
+        ensure!(
+            !attachment.definition["route"]["path"]
+                .as_str()
+                .is_some_and(|path| {
+                    path.strip_prefix(&workflow_prefix)
+                        .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
+                }),
+            "attachment {id} uses the application's workflow path {workflow_prefix}"
+        );
+        let AttachmentTarget::Route {
+            component,
+            operation,
+        } = &attachment.target;
+        let export = packages
+            .get(&attachment.package_id)
+            .and_then(|package| package.deploy.as_ref())
+            .and_then(|deploy| deploy.components.get(component))
+            .and_then(|component| component.descriptor.operations.get(operation))
+            .with_context(|| {
+                format!("attachment {id} names an operation that no admitted component exports")
+            })?;
+        let policy = wamn_catalog::parse_attachment_auth_policy(&attachment.auth_policy)
+            .with_context(|| format!("attachment {id} has an invalid auth policy"))?;
+        if policy.has_no_caller() {
+            components::refuse_anonymous_reach(&id, export, operation.as_str())?;
+        }
+        let contract = contracts
+            .get(&(attachment.package_id.clone(), operation.clone()))
+            .with_context(|| format!("attachment {id} names no compiled operation contract"))?;
+        let signs_files = export.output_ports.iter().any(|port| {
+            port.schema
+                .schema
+                .get(wamn_catalog::SIGNED_FILE_READS)
+                .is_some()
+        });
+        ensure!(
+            contract.type_ != OperationType::EventHandler,
+            "attachment {id} names an event handler"
+        );
+        let route = ServingRoute {
+            package_id: attachment.package_id,
+            component: component.clone(),
+            operation: operation.clone(),
+            type_: contract.type_,
+            reads: contract.reads.clone(),
+            revision: contract.revision.clone(),
+            idempotency: contract.idempotency.clone(),
+        };
+        routes.push(
+            wamn_catalog::http_routes::route_definition(
+                &id,
+                &attachment.definition,
+                &attachment.auth_policy,
+                &route,
+                signs_files,
+                digest,
+            )
+            .with_context(|| format!("attachment {id} has an invalid route definition"))?,
+        );
+    }
+    Ok(routes)
 }
 
 /// An unpublished release assembled for an edge bundle.
@@ -290,8 +341,7 @@ pub fn assemble_release(
     admissions: &[crate::component_admission::ComponentAdmission],
     palette: &[crate::palette::PaletteComponent],
 ) -> anyhow::Result<AssembledRelease> {
-    let (attachment_paths, _) = package_files(package_roots);
-    let authored = read_package_attachments(&attachment_paths)?;
+    let authored = read_package_attachments(package_roots)?;
     let (package_manifests, route_contracts) = read_package_manifests(package_roots)?;
     let attachments = resolve_route_methods(&authored, &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
@@ -359,57 +409,6 @@ pub fn assemble_release(
         published,
         components,
     })
-}
-
-async fn publish_candidate(
-    args: &PublishReleaseRequest,
-    registry: &PackageRegistry,
-) -> anyhow::Result<PublishedRelease> {
-    let (application_name, application) =
-        select_application(&args.applications, args.application.as_ref())?;
-    let (coordinates, opened) =
-        package_sources::open_application(registry, application, &args.packages).await?;
-    let release_components = descriptor_components(&args.project_env_key(), &coordinates, &opened)?;
-    let roots = opened
-        .iter()
-        .map(|package| package.root().to_owned())
-        .collect::<Vec<_>>();
-    let (attachment_paths, _) = package_files(&roots);
-    let authored_attachments = read_package_attachments(&attachment_paths)?;
-    let (package_manifests, route_contracts) = read_package_manifests(&roots)?;
-    let attachments = resolve_route_methods(&authored_attachments, &route_contracts)?;
-    let prefix = wamn_catalog::workflow_http_prefix(application_name);
-    for (id, attachment) in &attachments {
-        if attachment.definition["route"]["path"]
-            .as_str()
-            .is_some_and(|path| {
-                path.strip_prefix(&prefix)
-                    .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
-            })
-        {
-            return Err(PublishManifestError::new(
-                PublishManifestErrorType::Document,
-                format!("attachment {id} uses the application's workflow path {prefix}"),
-            )
-            .into());
-        }
-    }
-    let packages = coordinates.into_iter().collect::<BTreeSet<_>>();
-    let request = PublishReleaseManifest {
-        org: &args.org,
-        project: &args.project,
-        environment: &args.environment,
-        packages: &packages,
-        attachments: &attachments,
-        environment_is_disposable: false,
-    };
-    let published = publish_release_with_package_manifests(
-        &request,
-        &release_components,
-        &package_manifests,
-        &route_contracts,
-    )?;
-    Ok(published)
 }
 
 pub fn publish_release_with_package_manifests(
@@ -537,50 +536,6 @@ impl ReleaseComponents {
                 )
             })
     }
-}
-
-/// The attachment documents and the `wamn.json` of the packages at `roots`. A
-/// package with no `publication/attachments.json` authors no attachments, and
-/// its generated attachments are read beside the missing document.
-fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    let attachments = roots
-        .iter()
-        .map(|root| root.join("publication/attachments.json"))
-        .collect();
-    let manifests = roots
-        .iter()
-        .map(|root| wamn_codegen::package_manifest_path(root))
-        .collect();
-    (attachments, manifests)
-}
-
-fn descriptor_components(
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    packages: &[PackageCoordinate],
-    opened: &[OpenedPackage],
-) -> anyhow::Result<ReleaseComponents> {
-    let mut components = ReleaseComponents::default();
-    for (package, opened) in packages.iter().zip(opened) {
-        let target = ComponentPackageCoordinate::new(
-            project_env_key,
-            package.package_id().clone(),
-            package.package_version().clone(),
-        )
-        .context("name the release component target")?;
-        for descriptor in crate::package_artifact::read_descriptors(opened.root())? {
-            let facts = descriptor.into_admitted(target.clone());
-            wamn_catalog::verify_stored_effect_projection(&facts.component).with_context(|| {
-                format!(
-                    "component {:?} of package {}@{} carries an invalid effect projection",
-                    facts.component.component,
-                    package.package_id(),
-                    package.package_version()
-                )
-            })?;
-            components.insert(facts.component, facts.connections)?;
-        }
-    }
-    Ok(components)
 }
 
 /// Bind release behavior and ownership to its verified package manifests.
@@ -1062,82 +1017,6 @@ mod tests {
 
     /// A package directory whose `descriptors/` holds the canonical descriptor
     /// of `fact` with one connection, as an unpacked artifact holds it.
-    fn unpacked_descriptor(label: &str, fact: &AdmittedComponent) -> (PathBuf, Vec<u8>) {
-        let root = std::env::temp_dir().join(format!(
-            "wamn-publish-descriptor-{label}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join(crate::package_artifact::DESCRIPTOR_DIRECTORY)).unwrap();
-        let descriptor = wamn_catalog::ComponentDescriptor::new(
-            fact.clone(),
-            vec![ComponentConnection {
-                store_alias: "labels"
-                    .parse::<wamn_catalog::canonical_name::CanonicalName>()
-                    .unwrap()
-                    .into(),
-                requirement_type: wamn_catalog::ComponentConnectionType::Blobstore,
-                mode: wamn_catalog::ConnectionMode::Write,
-            }],
-        );
-        let bytes = wamn_digest::canonical_json_bytes(&serde_json::to_value(&descriptor).unwrap());
-        std::fs::write(
-            root.join(crate::package_artifact::DESCRIPTOR_DIRECTORY)
-                .join(format!("{}.json", fact.component)),
-            &bytes,
-        )
-        .unwrap();
-        (root, bytes)
-    }
-
-    /// The release component carries the descriptor layer byte for byte, and
-    /// two projects read one component from one artifact.
-    #[tokio::test]
-    async fn a_release_component_carries_its_descriptor_layer_in_every_project_env_key() {
-        let fact = closure_component(
-            "registered-component",
-            Some(&"base:widget/get@1.0.0".parse().unwrap()),
-        );
-        let (root, _) = unpacked_descriptor("layer", &fact);
-        let opened = crate::package_artifact::open_package_source(
-            crate::package_artifact::PackageSource::Directory(root.clone()),
-        )
-        .await
-        .unwrap();
-        let packages =
-            [PackageCoordinate::new("base".parse().unwrap(), "1.0.0".parse().unwrap()).unwrap()];
-        let project = |project_env_key: &wamn_registry::ProjectEnvKey| {
-            let components =
-                descriptor_components(project_env_key, &packages, std::slice::from_ref(&opened))
-                    .unwrap();
-            let fact = &components.facts[&("base".parse().unwrap(), "1.0.0".parse().unwrap())][0];
-            ServingComponent::project(fact, components.connections(fact).unwrap())
-        };
-        let first = project(&"acme--dev--plant".parse().unwrap());
-        let second = project(&"acme--prod--plant".parse().unwrap());
-        assert_eq!(first, second);
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// A descriptor file that is not canonical JSON is not a layer a release
-    /// can carry byte for byte.
-    #[test]
-    fn a_descriptor_that_is_not_canonical_refuses() {
-        let fact = closure_component("registered-component", None);
-        let (root, layer) = unpacked_descriptor("pretty", &fact);
-        let value: serde_json::Value = serde_json::from_slice(&layer).unwrap();
-        std::fs::write(
-            root.join(crate::package_artifact::DESCRIPTOR_DIRECTORY)
-                .join("registered-component.json"),
-            serde_json::to_vec_pretty(&value).unwrap(),
-        )
-        .unwrap();
-        crate::package_artifact::read_descriptors(&root).unwrap_err();
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
     fn dependency_manifest(
         digest: &wamn_digest::Digest,
     ) -> wamn_catalog::manifest::PackageManifest {

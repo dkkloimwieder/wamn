@@ -10,10 +10,6 @@ default = []
 test-util = ["wamn-platform-install/test-util"]
 ops = ["wamn-provision/ops", "wamn-platform-install/ops"]
 
-[[test]]
-name = "netsuite_publication"
-path = "../../apps/netsuite/tests/publication.rs"
-
 [dependencies]
 wamn-sql.workspace = true
 wamn-role.workspace = true

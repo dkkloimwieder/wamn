@@ -231,7 +231,6 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
             })
         };
     let request = |package| ApplyPackageRequest {
-        component_source: None,
         package,
         database_url: database.as_str().to_owned(),
         migration_database_url: migration_input.clone(),

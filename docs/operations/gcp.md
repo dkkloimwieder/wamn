@@ -176,7 +176,7 @@ The teardown keeps these resources for later cloud integration. The owner makes 
   The layout is `<registry>/wamn/{packages,components,releases}`.
   In `wamn-dev`, the registry is `us-central1-docker.pkg.dev/wamn-dev/wamn`.
   The separate `wamn-kind` repository expires tags after seven days for local test artifacts.
-  Both repositories use immutable tags.
+  The repositories were set up with immutable tags. Replacing a package tag requires a registry that permits tag updates.
   The project document declares this repository. [Project document](../../deploy/gcp/project.k)
 - The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
@@ -522,7 +522,7 @@ The case attempts environment deletion and PAT revocation after operation succes
 It removes its temporary publishing checkout and local private files.
 It leaves the platform running for section 3.
 Cluster deletion removes the project row, operation Jobs, and partial resources that product cleanup cannot remove.
-Fixture publication adds immutable packages, components, and releases under the configured registry.
+Fixture publication adds package and component images to the configured registry.
 Section 3 keeps that registry, the uploaded UI, buckets, IAM grants, and other project inputs.
 
 ## 5. Operations

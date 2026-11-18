@@ -1,6 +1,6 @@
 [package]
 name = "wamn-publish"
-description = "Immutable package and release publication."
+description = "Package artifact publication and edge release assembly."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -156,10 +156,8 @@ pub struct ServingComponent {
     /// The application schema selected at publication. Absent releases use the host fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_schema: Option<String>,
-    /// The admitted descriptor of this component. Its canonical bytes are the
-    /// descriptor layer of the package artifact that lists the component, so
-    /// the release is the one owner of component facts (R2): the name, the
-    /// interface version and the digest are read from here.
+    /// The admitted descriptor of this component, including its name,
+    /// interface version and byte digest.
     pub descriptor: ComponentDescriptor,
 }
 
@@ -299,11 +297,11 @@ pub enum AttachmentTarget {
 
 /// One authored attachment targeting a route.
 ///
-/// Publish reads this type from `publication/attachments.json` and converts it
-/// into a [`RouteAttachment`] of the manifest.
+/// Codegen stores these route facts in the package's compiled deploy section.
+/// Edge assembly converts them into a [`RouteAttachment`].
 ///
 /// On the wire the target is flat: `component` and `operation`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "AttachmentWire", into = "AttachmentWire")]
 pub struct ServingAttachment {
     pub type_: AttachmentType,

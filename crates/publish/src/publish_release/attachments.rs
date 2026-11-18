@@ -15,33 +15,36 @@ struct AuthoredRoute {
     path: String,
 }
 
-/// Read final compiler output. Publication already carries inline schemas and hashes.
+/// Read the build's compiled routes for local edge assembly.
 pub(super) fn read_package_attachments(
     paths: &[PathBuf],
 ) -> Result<
     BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
     PublishManifestError,
 > {
-    let mut documents = Vec::new();
-    for path in paths {
-        let root = path
-            .parent()
-            .and_then(std::path::Path::parent)
-            .unwrap_or_else(|| std::path::Path::new(""));
-        let attachments =
-            wamn_codegen::publication::read_package_attachments(root).map_err(|error| {
-                PublishManifestError {
-                    source: Some(error.into()),
-                    ..PublishManifestError::new(
-                        PublishManifestErrorType::Document,
-                        format!("read final attachments for {}", path.display()),
-                    )
-                }
+    let documents = paths
+        .iter()
+        .map(|root| {
+            let path = wamn_codegen::package_manifest_path(root);
+            let read = || -> anyhow::Result<_> {
+                let manifest =
+                    wamn_catalog::manifest::PackageManifest::from_slice(&std::fs::read(&path)?)?;
+                Ok(manifest
+                    .deploy
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("build the package to compile its deploy section")
+                    })?
+                    .routes)
+            };
+            let routes = read().map_err(|error| PublishManifestError {
+                source: Some(error.into()),
+                ..PublishManifestError::new(
+                    PublishManifestErrorType::Document,
+                    format!("read routes from {}", path.display()),
+                )
             })?;
-        documents.push((
-            wamn_codegen::output_root(root).join("publication/attachments.json"),
-            attachments,
-        ));
-    }
+            Ok((path, routes))
+        })
+        .collect::<Result<Vec<_>, PublishManifestError>>()?;
     merge_package_attachment_documents(documents)
 }

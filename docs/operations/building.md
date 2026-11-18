@@ -319,9 +319,16 @@ Generated client copies stay under `src/generated/`.
 
 ## Pushing a package
 
-`wamn schema publish <package root> --env <environment.k>` builds and publishes an application release.
-`wamn deploy <package root> --application <application> --env <environment.k>` also publishes source before it requests deployment.
-The publication owner verifies each component and package artifact.
+Build the package and any bases before publication.
+Run `wamn publish <build directory> --env <environment file>` to publish that build output.
+You can also give the source package directory.
+The command prints the top package OCI digest. An OCI digest is the SHA-256 hash of an image manifest.
+Publication checks the built bytes before pushing.
+A new tag starts a migration history. A replacement keeps every existing migration name and byte, including `history/`.
+New migrations must use higher numbers. Repeating the exact digest leaves the tag alone.
+SQLx checks migration checksums during apply.
+If a tag points to the older artifact format, publish under a new tag.
+
 
 ## Reading a pushed package
 
@@ -342,28 +349,27 @@ They accept these registry flags: `--artifact-base`, `--registry-auth-file`, `--
   --registry-auth-file <auth file>
 ```
 
-**Contract A** (`wamn-vavs4.1`, `crates/publish/src/package_artifact.rs`). A component artifact is the object `push-package` pushes for each component. `push-component` is gone (`wamn-vavs4.7`). Its tag is the 64 hex digits of the component digest. Its image manifest has media type `application/vnd.oci.image.manifest.v1+json`, `schemaVersion` 2 and no `artifactType`. Its config is `application/vnd.wamn.component.config.v1+json`, the canonical JSON `{format-version: "0.1", component-digest, imports, imports-fingerprint}` (`component_artifact_config_bytes`). It has one layer, `application/vnd.wamn.component.v1+wasm`, with the exact wasm bytes. These media types live in `crates/engine/src/component_artifact.rs`.
+A component uses wasmCloud's stock OCI format. Its tag is the 64 hexadecimal digits of its byte digest.
+The image has one `application/wasm` layer. Publication records the image manifest digest in the package's `deploy` section.
 
-A package artifact has the tag `<package_id>-<version>`. Its image manifest has media type `application/vnd.oci.image.manifest.v1+json` and `artifactType` `application/vnd.wamn.package.v2` (a v1 reader requires exactly one layer). Its config is `application/vnd.oci.empty.v1+json` with the bytes `{}`. Its layers are always present, in this order; `title` is the annotation `org.opencontainers.image.title`:
+A package artifact has the tag `<package_id>-<version>` and artifact type `application/vnd.wamn.package.v3`.
+The image manifest uses `application/vnd.oci.image.manifest.v1+json`.
+Its config uses `application/vnd.oci.empty.v1+json` with the bytes `{}`.
+The two layers appear in this order. Each title is an `org.opencontainers.image.title` annotation.
 
 | Layer | Media type | Title | Content |
 |---|---|---|---|
-| 0 | `application/vnd.wamn.package.manifest.v1+json` | `wamn.json` | the exact bytes of the canonical `wamn.json` in `apps/target/wamn/<package>/`, not re-encoded |
+| 0 | `application/vnd.wamn.package.manifest.v1+json` | `wamn.json` | Canonical package document with compiled routes, admitted component facts, image digests and base package OCI digests |
 | 1 | `application/vnd.wamn.package.v1.tar` | `migrations` | `migrations/` and `history/` |
-| 2 | `application/vnd.wamn.package.v1.tar` | `publication` | `generated/publication/`: final attachments and component declarations |
-| 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/required-schema-contract.json`, `generated/sql/`, `generated/routes/` |
-| 4..n | `application/vnd.wamn.component.descriptor.v1+json` | none | one descriptor per package-owned component, sorted by name, with the annotations `wamn.component.name` and `wamn.component.digest` |
 
-The package artifact contains three tar layers and no browser files.
-A web source or output edit leaves the packed package digest unchanged.
-`wamn web build` and `wamn web push` own the separate [web artifact](web-upload.md#build-and-push).
+The tar uses sorted package-relative paths, GNU headers, mode 0644, owner and group IDs 0, and modification time 0.
+A web source or output edit leaves the package digest unchanged. [Web artifacts](web-upload.md#build-and-push)
 
-The `generated/` paths of layers 2 and 3 are logical paths. `wamn build` writes those files below `apps/target/wamn/<package>/` without the `generated/` prefix, and pack reads them from there.
+The OCI manifest records `wamn.package.id` and `wamn.package.version`.
+Dev manifests also carry `org.opencontainers.image.created`. A retry keeps the original timestamp and digest.
+Unpacking places the package document at `generated/wamn.json` and extracts the SQL files at the package root.
+Unpacked dev artifacts keep the timestamp in `artifact-created-at` so that an offline repack reproduces the published digest.
 
-A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type, mode}]}`, which is `AdmittedComponent` without its target plus its declared connection list. All operations of the component share its `connections`. Named Wasm imports use their alias. Host connections also carry their requirement type and mode. The reader supplies the target. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Only dev package manifests carry `org.opencontainers.image.created`, set at first publication. Repeat publication reuses that time and the same manifest. Release coordinates and release manifests carry no timestamp. The manifest is canonical JSON.
-
-`wamn-publish` builds and pushes both package and release artifacts.
-The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. The three tars keep their logical paths. Layer 0 goes to `generated/wamn.json`. Each descriptor goes to `descriptors/<name>.json`. Unpacked dev artifacts keep their original publication timestamp in `artifact-created-at`. Repacking reads that value and reproduces the published digest. Release coordinates need no timestamp. An unpacked artifact packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
 
 ## The edge box binary
 

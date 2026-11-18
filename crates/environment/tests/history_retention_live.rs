@@ -142,7 +142,6 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
         migration_database_url: wamn_provision::test_database::package_migration_input(&url)
             .await
             .unwrap(),
-        component_source: None,
         package: wamn_environment::apply_package::PackageRoot {
             path: package.to_path_buf(),
             artifact_digest: Some(

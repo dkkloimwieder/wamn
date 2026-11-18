@@ -184,9 +184,8 @@ Generation writes these files for each package. A path below is a logical path: 
 2. `wamn-guest::data_access::error` owns the shared refusal type and statement error translation. Each export translates it into its WIT error.
 3. `generated/component/<model>.rs` holds one module for each operation. Its `Action` trait has a default `run` method. The application implements the trait on its component. It can override `run` and call `default_handle` from the override. The export validates input before it calls the override.
 4. `generated/wit/world.wit` holds the world `<package>:generated/generated`, which exports every operation of the package and imports what those operations call.
-5. `generated/publication/attachments.json` holds the final routes, inline input schemas, and computed definition hashes.
-6. `generated/publication/components.json` holds the final component declarations with inline input and result schemas.
-7. `generated/data/sequences.rs` holds `sequences::<name>::next` and `sequences::<name>::peek` for each sequence that the package declares `callable`. The package has no such file without a callable sequence.
+5. The `deploy` section of `generated/wamn.json` holds route policy, input schemas and component declarations.
+6. `generated/data/sequences.rs` holds `sequences::<name>::next` and `sequences::<name>::peek` for each sequence that the package declares `callable`. The package has no such file without a callable sequence.
 
 The shared crate `wamn-guest` holds the keyset cursor, the query page, scalar parsers, and statement error translation.
 The compiled `wamn.json` carries `compiled_operations`, including described statements and their transaction facts.

@@ -149,6 +149,14 @@ impl ComponentAdmission {
         ComponentDescriptor::new(self.component.clone(), self.connections.to_vec())
     }
 
+    /// Move admitted facts and the exact saved bytes into a package publication.
+    pub(crate) fn into_descriptor_and_bytes(self) -> (ComponentDescriptor, Box<[u8]>) {
+        (
+            ComponentDescriptor::new(self.component, self.connections.into_vec()),
+            self.component_bytes,
+        )
+    }
+
     /// Exact package identity carried by the admitted component facts.
     pub fn package_id(&self) -> &wamn_catalog::PackageName {
         &self.component.target.package_id
@@ -180,8 +188,6 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
             .context("parse strict package manifest before component publication")?;
     let component_bytes = std::fs::read(&args.component_bytes)
         .with_context(|| format!("read component bytes {}", args.component_bytes.display()))?;
-    wamn_build::composer::validate_application_member(&component_bytes)
-        .context("refuse application-owned entry authority")?;
     let declaration_bytes = std::fs::read(&args.declaration)
         .with_context(|| format!("read component declaration {}", args.declaration.display()))?;
     let document: serde_json::Value = serde_json::from_slice(&declaration_bytes)
@@ -193,30 +199,45 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         .get(declaration.component.as_str())
         .is_some_and(|component| component.data_change.is_some());
 
+    let admission = admit(
+        &package_manifest,
+        component_bytes,
+        declaration,
+        args.admitted_platform_packages.into_iter().collect(),
+        args.base_digests,
+    )?;
+    ensure_component_package_matches(admission.facts(), &package.coordinate)?;
+    Ok(admission)
+}
+
+pub(crate) fn admit(
+    package_manifest: &wamn_catalog::manifest::PackageManifest,
+    component_bytes: Vec<u8>,
+    declaration: ComponentDeclaration,
+    admitted_platform_packages: BTreeSet<String>,
+    base_digests: BTreeSet<wamn_digest::Digest>,
+) -> anyhow::Result<ComponentAdmission> {
+    wamn_build::composer::validate_application_member(&component_bytes)
+        .context("refuse application-owned entry authority")?;
     let engine = wamn_engine::build_engine(&[]).context("build component admission engine")?;
     let facts = validate_component_admission(
         &engine,
         &component_bytes,
         wamn_engine::component_admission::ComponentAdmissionRequest {
             declaration,
-            admitted_platform_packages: args
-                .admitted_platform_packages
-                .into_iter()
-                .collect::<BTreeSet<_>>(),
-            base_digests: args.base_digests,
+            admitted_platform_packages,
+            base_digests,
         },
     )
     .context("validate exact component bytes")?;
     let mut admitted = facts.component;
-    ensure_component_package_matches(&admitted, &package.coordinate)?;
-    let expected = expected_operation_contracts(&package_manifest)?;
-    let selected =
-        validate_component_operation_assignment(&package_manifest, &admitted, &expected)?;
-    let host_transactions = host_transaction_exports(&package_manifest, &selected)?;
+    let expected = expected_operation_contracts(package_manifest)?;
+    let selected = validate_component_operation_assignment(package_manifest, &admitted, &expected)?;
+    let host_transactions = host_transaction_exports(package_manifest, &selected)?;
     for (name, operation) in &mut admitted.operations {
         operation.host_transaction = host_transactions.contains(name.as_str());
     }
-    bind_signed_file_results(&mut admitted, &package_manifest)
+    bind_signed_file_results(&mut admitted, package_manifest)
         .context("bind package signed file results")?;
     let requirements = facts
         .connections

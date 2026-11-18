@@ -8,7 +8,7 @@ use wamn_record_history::{
     is_log_retention,
 };
 
-pub mod installation;
+pub mod deploy;
 mod manifest_error;
 pub mod source_name;
 
@@ -16,7 +16,7 @@ use self::source_name::SourceName;
 use crate::local_operation::LocalOperation;
 pub use manifest_error::{ManifestError, ManifestErrorType};
 
-pub use crate::manifest::installation::CONTROL_OWNED_RELATION_TABLES;
+pub const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
 
 /// Strict package-owned behavior declaration parsed from `wamn.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +54,9 @@ pub struct PackageManifest {
     /// Build facts. Authored documents cannot state this member.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub compiled_operations: BTreeMap<LocalOperation, crate::OperationDescription>,
+    /// Deployment facts written by the build and completed at publication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deploy: Option<deploy::CompiledDeploy>,
 }
 
 /// An external connection required by a package, without deployment values.
@@ -651,10 +654,13 @@ impl PackageManifest {
     }
 
     fn refuse_derived_members(document: &serde_json::Value) -> Result<(), ManifestError> {
-        if document.get("compiled_operations").is_some() {
+        for name in ["compiled_operations", "deploy"] {
+            if document.get(name).is_none() {
+                continue;
+            }
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidManifest,
-                "compiled_operations is a compiler-owned member",
+                format!("{name} is a compiler-owned member"),
             ));
         }
 
@@ -2452,7 +2458,7 @@ impl PackageManifest {
     }
 }
 
-/// Exact package artifact and local operation set bound to one source alias.
+/// Exact component bytes and local operation set bound to one base alias.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BaseDependencyRequirement {
@@ -2620,7 +2626,44 @@ impl TombstoneColumn {
     }
 }
 
-pub use crate::manifest::installation::{AuditLogDeclaration, RecordHistoryColumn};
+/// Stamp columns and log retention of one relation-owning model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuditLogDeclaration {
+    pub columns: Vec<RecordHistoryColumn>,
+    /// `none`, `unlimited`, or `P<n>D` with a positive whole number of days.
+    pub retention: String,
+}
+
+/// The four reserved record-history column names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordHistoryColumn {
+    CreatedAt,
+    CreatedBy,
+    UpdatedAt,
+    UpdatedBy,
+}
+
+impl RecordHistoryColumn {
+    /// Every reserved name, in trigger argument order.
+    pub const ALL: [Self; 4] = [
+        Self::CreatedAt,
+        Self::CreatedBy,
+        Self::UpdatedAt,
+        Self::UpdatedBy,
+    ];
+
+    /// Reserved column spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CreatedAt => "created_at",
+            Self::CreatedBy => "created_by",
+            Self::UpdatedAt => "updated_at",
+            Self::UpdatedBy => "updated_by",
+        }
+    }
+}
 
 /// Package-owned mechanism state that must never enter the CDC event plane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2981,46 +3024,6 @@ fn validate_count_text(
         ));
     }
     Ok(())
-}
-
-impl From<&PackageManifest> for crate::manifest::installation::PackageManifest {
-    fn from(manifest: &PackageManifest) -> Self {
-        Self {
-            package: crate::manifest::installation::PackageIdentity {
-                id: manifest.package.id.clone(),
-                version: manifest.package.version.clone(),
-            },
-            models: manifest
-                .models
-                .iter()
-                .map(|(name, model)| (name.clone().into(), model.into()))
-                .collect(),
-            internal_relations: manifest
-                .internal_relations
-                .iter()
-                .map(|(name, relation)| {
-                    (
-                        name.clone().into(),
-                        crate::manifest::installation::InternalRelation {
-                            schema: relation.schema.clone().into(),
-                            table: relation.table.clone().into(),
-                        },
-                    )
-                })
-                .collect(),
-        }
-    }
-}
-
-impl From<&ModelDeclaration> for crate::manifest::installation::ModelDeclaration {
-    fn from(model: &ModelDeclaration) -> Self {
-        Self {
-            schema: model.schema.clone().into(),
-            table: model.table.clone().into(),
-            owner: model.owner.clone(),
-            audit_log: model.audit_log.clone(),
-        }
-    }
 }
 
 /// Refuse a read that a table shows when it states no row key, and a `lists`

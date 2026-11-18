@@ -958,7 +958,7 @@ mod tests {
             .collect();
         let source = crate::history::render(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support"),
-            &(&manifest).into(),
+            &manifest,
             &columns,
         )
         .await
