@@ -30,7 +30,7 @@ wamn platform status deploy/kind/cluster.k
 
 Deployment creates or reuses `wamn-local` and connects its registry to the kind network.
 Helm first installs cert-manager, CloudNativePG, and the TLS ingress controller.
-The platform chart then installs certificates, NATS, wasmCloud runtime operator 2.12.1, and the collector.
+The platform chart then installs certificates, NATS, wasmCloud runtime operator 2.12.2, and the collector.
 The NATS file-store limit and volume size use the same value, `nats.config.jetstream.fileStore.pvc.size`. It defaults to `10Gi`.
 The org chart creates PostgreSQL in the org namespace.
 Bootstrap Jobs initialize SQL and credentials before the service components start.
@@ -261,7 +261,7 @@ After the certificates report ready, the worker reads the environment Secret and
 The worker creates the stream and saves the project's applied configuration.
 The project chart mounts the YAML document in later project Jobs.
 The reader stays paused while a capture gap is open.
-The shared host group uses the runtime operator chart at version 2.12.1. Its `wasmcloud-nats` entry points to the broker and reads TLS files from `/etc/wasmcloud/host-plugin-secrets/<environment-secret>/`.
+The shared host group uses the runtime operator chart at version 2.12.2. Its `wasmcloud-nats` entry points to the broker and reads TLS files from `/etc/wasmcloud/host-plugin-secrets/<environment-secret>/`.
 
 Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Add `--data` and confirm the coordinate in a terminal to delete its database.
 Delete stops the reader before it removes the stream, then removes the replication slot and publication.

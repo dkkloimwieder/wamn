@@ -28,7 +28,7 @@ use tokio::process::Command;
 use tokio::time::{Instant, sleep, timeout};
 
 /// The chart's NATS image (charts/runtime-operator/values.yaml, `nats.image`).
-const NATS_IMAGE: &str = "nats:2.12.8-alpine";
+const NATS_IMAGE: &str = "nats:2.12.15-alpine";
 /// A base whose glibc runs the host binary that Cargo built for this test.
 const HOST_IMAGE: &str = "debian:trixie-slim";
 #[path = "support/native_host.rs"]
