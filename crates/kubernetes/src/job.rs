@@ -45,31 +45,6 @@ pub fn mount(job: &mut Value, name: &str, secret: &str, path: &str, keys: &[&str
         .push(json!({"name":name, "mountPath":path, "readOnly":true}));
 }
 
-/// Mount the installed OCI client configuration for the selected credential source.
-pub fn registry(job: &mut Value, metadata: bool) {
-    if !metadata {
-        job["spec"]["template"]["spec"]["imagePullSecrets"] =
-            json!([{"name":wamn_registry::name::REGISTRY_PULL}]);
-    }
-    let source = if metadata {
-        json!({"configMap":{"name":"wamn-registry-helper"}})
-    } else {
-        json!({"secret":{"secretName":wamn_registry::name::REGISTRY_PULL,"defaultMode":256,
-            "items":[{"key":".dockerconfigjson","path":"config.json"}]}})
-    };
-    let mut volume = source;
-    volume["name"] = "registry".into();
-    job["spec"]["template"]["spec"]["volumes"]
-        .as_array_mut()
-        .unwrap()
-        .push(volume);
-    container(job)["volumeMounts"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"name":"registry","mountPath":"/credentials/registry","readOnly":true}));
-    environment(job, &[("DOCKER_CONFIG", "/credentials/registry")]);
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 enum State {

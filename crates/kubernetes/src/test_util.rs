@@ -1,18 +1,17 @@
 //! An in-memory credential fixture. It is never selected by deployed code.
-use crate::{Error, Store, StoreVersion, failure};
+use crate::{CredentialSecret, Error, Store, StoreVersion, failure};
 use std::{collections::BTreeMap, sync::Mutex};
-use wamn_registry::{Triple, credential_secret_name};
 #[derive(Debug, Default)]
 pub struct MemoryStore(Mutex<BTreeMap<(String, String), Vec<u8>>>);
 #[async_trait::async_trait]
 impl Store for MemoryStore {
     async fn put(
         &self,
-        target: &Triple,
+        target: CredentialSecret<'_>,
         id: uuid::Uuid,
         value: &[u8],
     ) -> Result<StoreVersion, Error> {
-        let reference = credential_secret_name(&target.org, &target.project, &target.env);
+        let reference = target.name;
         let version = id.to_string();
         self.0
             .lock()

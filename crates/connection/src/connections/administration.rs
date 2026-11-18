@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sqlx::Connection as _;
 use uuid::Uuid;
 use wamn_identity_protocol::PrincipalId;
-use wamn_kubernetes::{Store, StoreVersion};
+use wamn_kubernetes::{CredentialSecret, Store, StoreVersion};
 
 use super::{ConnectionError, refuse};
 
@@ -594,12 +594,18 @@ async fn store_credential(
     value: &str,
 ) -> Result<Value, ConnectionError> {
     let id = uuid::Uuid::new_v4();
+    let secret = CredentialSecret {
+        name: wamn_registry::credential_secret_name(&target.org, &target.project, &target.env),
+        org: target.org.as_str(),
+        env: target.env.as_str(),
+        project: target.project.as_str(),
+    };
     let StoreVersion {
         store,
         reference,
         version,
     } = store
-        .put(target, id, value.as_bytes())
+        .put(secret, id, value.as_bytes())
         .await
         .map_err(store_error)?;
     let hint: String = value
@@ -798,7 +804,7 @@ mod tests {
     impl Store for RecordingStore {
         async fn put(
             &self,
-            _target: &wamn_registry::Triple,
+            _target: CredentialSecret<'_>,
             id: uuid::Uuid,
             value: &[u8],
         ) -> Result<StoreVersion, wamn_kubernetes::Error> {

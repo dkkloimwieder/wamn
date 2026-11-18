@@ -1,17 +1,36 @@
-//! Execute a project operation from the control-owned Job input.
+//! Configure operation Job credentials and execute project operations.
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use std::path::Path;
 use wamn_environment::environment::{Platform, capture_gap, document::EnvironmentFile, operation};
 use wamn_identity_protocol::PrincipalId;
+use wamn_kubernetes::job;
 use wamn_provision::migrations::MigrationDatabase;
-use wamn_registry::Triple;
+use wamn_registry::{Triple, name::REGISTRY_PULL};
 
 use crate::{
     Configuration,
     control_route::operations::{Operation, Request},
 };
+
+/// Mount the installed OCI client configuration for the selected credential source.
+pub(crate) fn mount_registry(job: &mut Value, metadata: bool) {
+    let spec = &mut job["spec"]["template"]["spec"];
+    let volume = if metadata {
+        json!({"name":"registry","configMap":{"name":"wamn-registry-helper"}})
+    } else {
+        spec["imagePullSecrets"] = json!([{"name":REGISTRY_PULL}]);
+        json!({"name":"registry","secret":{"secretName":REGISTRY_PULL,"defaultMode":256,
+            "items":[{"key":".dockerconfigjson","path":"config.json"}]}})
+    };
+    spec["volumes"].as_array_mut().unwrap().push(volume);
+    job::container(job)["volumeMounts"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"registry","mountPath":"/credentials/registry","readOnly":true}));
+    job::environment(job, &[("DOCKER_CONFIG", "/credentials/registry")]);
+}
 
 pub(crate) async fn execute(
     config: &Configuration,

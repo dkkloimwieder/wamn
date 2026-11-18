@@ -162,7 +162,7 @@ pub(super) async fn wait_host_ready(platform: &Platform, host: &str) -> anyhow::
         &[
             "rollout",
             "status",
-            &format!("deployment/hostgroup-{host}"),
+            &format!("deployment/{}", name::host_deployment_name(host)),
             "--timeout=600s",
         ],
         None,

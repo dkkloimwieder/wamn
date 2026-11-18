@@ -6304,11 +6304,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tokio",
- "url",
  "uuid",
- "wamn-catalog",
- "wamn-digest",
- "wamn-registry",
 ]
 
 [[package]]

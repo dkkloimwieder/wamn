@@ -250,6 +250,6 @@ fn manifest(
             &["ca.crt", "tls.crt", "tls.key"],
         );
     }
-    wamn_kubernetes::job::registry(&mut job, metadata);
+    crate::worker::mount_registry(&mut job, metadata);
     job
 }

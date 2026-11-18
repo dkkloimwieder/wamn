@@ -329,6 +329,11 @@ pub fn environment_host_name(org: &crate::OrgId, env: &crate::EnvName) -> String
     format!("h-{slug}-{}", &hash[..HASH_LEN])
 }
 
+/// The Deployment that the wasmCloud runtime chart creates for a host group.
+pub fn host_deployment_name(host_group: &str) -> String {
+    format!("hostgroup-{host_group}")
+}
+
 /// The ServiceAccount shared by an environment's project resources.
 pub fn environment_service_account(org: &crate::OrgId, env: &crate::EnvName) -> String {
     format!("wamn-host-{}", environment_key(org, env))

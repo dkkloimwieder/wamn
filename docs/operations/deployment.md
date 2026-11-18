@@ -904,7 +904,8 @@ Control reads the same verifier settings from its mounted configuration.
 
 The HTTP interface keeps its `credential-unavailable` result.
 
-`wamn-kubernetes` owns Secret reads and writes. Each update preserves `resourceVersion` and retries concurrent changes.
+Connection administration passes the registry's credential Secret name and the coordinate values to `wamn-kubernetes`.
+`wamn-kubernetes` reads and writes the Secret. Each update preserves `resourceVersion` and retries concurrent changes.
 `wamn-broker` owns the accounts document in `platform/wamn-nats-authorization`.
 The installer helper creates the Secret before Helm when it is absent. Step 3.6 supplies the fresh-install entry point that calls this helper.
 Configure and delete Jobs update the same document.

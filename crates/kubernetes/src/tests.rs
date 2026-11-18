@@ -1,7 +1,7 @@
 //! Credential operations through the shared HTTP interface.
 
 use crate::{
-    Store as _,
+    CredentialSecret, Store as _,
     http_transport::{self, Protocols, Schemes},
     kubernetes::KubernetesStore,
     kubernetes_api::KubernetesApi,
@@ -18,7 +18,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::net::TcpListener;
-use wamn_registry::Triple;
 
 struct Api {
     store: KubernetesStore,
@@ -112,13 +111,14 @@ async fn credentials_retry_conflicts_without_losing_concurrent_values() {
         (200, secret(3, &concurrent)),
     ])
     .await;
-    let target = Triple::new(
-        "acme".parse().unwrap(),
-        "dev".parse().unwrap(),
-        "app".parse().unwrap(),
-    );
+    let target = CredentialSecret {
+        name: "wamn-credential-acme--dev--app".into(),
+        org: "acme",
+        env: "dev",
+        project: "app",
+    };
     let id = uuid::Uuid::new_v4();
-    let stored = fixture.store.put(&target, id, &[3]).await.unwrap();
+    let stored = fixture.store.put(target, id, &[3]).await.unwrap();
     assert_eq!(uuid::Uuid::parse_str(&stored.version).unwrap(), id);
     let requests = fixture.requests.lock().unwrap();
     let write = requests.last().unwrap();
@@ -152,11 +152,12 @@ async fn failed_or_redirected_writes_never_return_a_reference() {
             fixture
                 .store
                 .put(
-                    &Triple::new(
-                        "acme".parse().unwrap(),
-                        "dev".parse().unwrap(),
-                        "app".parse().unwrap()
-                    ),
+                    CredentialSecret {
+                        name: "wamn-credential-acme--dev--app".into(),
+                        org: "acme",
+                        env: "dev",
+                        project: "app",
+                    },
                     uuid::Uuid::new_v4(),
                     &[1]
                 )

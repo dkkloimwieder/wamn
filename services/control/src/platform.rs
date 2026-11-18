@@ -115,7 +115,7 @@ impl Execution {
             {"name":"configuration","mountPath":"/etc/wamn/control","readOnly":true},
             {"name":"work","mountPath":"/work"}
         ]);
-        wamn_kubernetes::job::registry(&mut job, self.registry_token_metadata);
+        crate::worker::mount_registry(&mut job, self.registry_token_metadata);
         wamn_kubernetes::job::submit(&api, &mut job, payload).await
     }
 }
