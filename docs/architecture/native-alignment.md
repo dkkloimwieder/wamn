@@ -7,7 +7,7 @@ This page owns those reasons. Other architecture pages own the behavior itself.
 
 ## Upstream ownership
 
-The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.12.1` source at `8b0e24cb6610642783e3f16f5f1eac45ff2cb5aa`.
+The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.12.2` source at `a8da8ac3472144e63a9a534aa428e32239e0ef88`.
 The resolved Wasmtime family is `48.0.8`.
 `wash-runtime` resolves directly to that upstream revision without a workspace patch.
 Upstream default providers remain disabled.

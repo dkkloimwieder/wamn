@@ -127,7 +127,7 @@ mimalloc = "0.1.52"
 # OCI registry source turns `oci` on in its own manifest.
 # Pin shared crates to the versions in the wasmCloud release lockfile.
 # Conformance enforces one crates.io Wasmtime type universe.
-wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", tag = "v2.12.1", default-features = false }
+wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", tag = "v2.12.2", default-features = false }
 # Native hosts must share one Wasmtime type universe.
 # parallel-compilation is a wasmtime DEFAULT that default-features=false drops.
 # Without it Cranelift compiles every component on one core: receiving took
