@@ -1,7 +1,4 @@
 org: ""
-clusters: []
-managedRoles: {}
-loginSecrets: []
 quota:
   count/pods: 200
   count/jobs.batch: 50
@@ -15,7 +12,3 @@ quota:
 networkPolicy:
   apiServer: []
   registry: []
-backup:
-  endpoint: http://minio.wamn-system.svc:9000
-  bucket: wamn-backups
-  secret: wamn-object-store

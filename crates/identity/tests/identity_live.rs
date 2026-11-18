@@ -45,8 +45,8 @@ async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
         .expect("map the native fixture login");
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
-             VALUES ('demo', 'pooled', 'wamn-pg'); \
+        ("INSERT INTO registry.orgs (id) \
+             VALUES ('demo'); \
              INSERT INTO registry.projects (org, id) VALUES ('demo', 'widgets');")
             .to_string(),
     ))
@@ -258,14 +258,13 @@ async fn project_environment_membership_round_trip(
     user: &Principal,
 ) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
-             VALUES ('other', 'pooled', 'wamn-pg'); \
+        ("INSERT INTO registry.orgs (id) \
+             VALUES ('other'); \
              INSERT INTO registry.projects (org, id) \
              VALUES ('demo', 'inventory'), ('other', 'widgets'); \
              INSERT INTO registry.env_policies \
-               (org, name, recovery_domain, promotion_rank, instances, \
-                storage, cpu, memory, image) \
-             SELECT id, env, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:17' \
+               (org, name) \
+             SELECT id, env \
              FROM registry.orgs CROSS JOIN (VALUES ('dev'), ('prod')) AS envs(env); \
              INSERT INTO registry.environments (org, env, policy_name) \
              SELECT org, name, name FROM registry.env_policies; \

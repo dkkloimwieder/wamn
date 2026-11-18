@@ -17,7 +17,6 @@ pub async fn reset_database(
     let database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut client)
         .await?;
-    let login = wamn_provision::migration::login(&database);
     let mut tx = client.begin().await?;
     sqlx::raw_sql(crate::apply_package::LOCK_SQL)
         .execute(&mut *tx)
@@ -30,9 +29,12 @@ pub async fn reset_database(
     .execute(&mut *tx)
     .await?;
     let mut migration = wamn_postgres::connect(migration_url).await?;
-    let migration_login = wamn_provision::migration::require_login(&mut migration).await?;
+    let login = wamn_provision::migration::require_login(&mut migration).await?;
+    let migration_database: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(&mut migration)
+        .await?;
     ensure!(
-        migration_login == login,
+        migration_database == database,
         "migration and owner connections name different databases"
     );
     let schemas: Vec<String> = sqlx::query_scalar(

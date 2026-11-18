@@ -22,17 +22,17 @@ pub fn embedded(target: MigrationDatabase) -> &'static Migrator {
 
 impl MigrationDatabase {
     /// Owner of the selected database.
-    pub fn owner_role(self, database: &str) -> String {
+    pub fn owner_role(self) -> String {
         match self {
             Self::System => wamn_role::SYSTEM_ROLE.to_owned(),
-            Self::Project => crate::migration::login(database).to_string(),
+            Self::Project => crate::migration::login().to_string(),
         }
     }
 
     /// One bounded migration login for this database and platform scope.
     pub fn login(self, database: &str) -> wamn_identity_protocol::LoginName {
         match self {
-            Self::Project => crate::migration::login(database),
+            Self::Project => crate::migration::login(),
             Self::System => {
                 let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([
                     "platform-migration",
@@ -50,7 +50,10 @@ impl MigrationDatabase {
     /// One native basic-auth Secret for the managed login.
     pub fn managed_role(self, database: &str) -> crate::connection::ManagedRole {
         let login = self.login(database);
-        let secret = login.as_str().replace('_', "-");
+        let secret = match self {
+            Self::Project => wamn_registry::name::project_login_secret(database, login.as_str()),
+            Self::System => login.as_str().replace('_', "-"),
+        };
         crate::connection::managed_role(
             login,
             if self == Self::System {

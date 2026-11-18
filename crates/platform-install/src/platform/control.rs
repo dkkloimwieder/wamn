@@ -140,14 +140,14 @@ pub(super) fn resource_entry(
     let org = &document.org;
     let name = wamn_registry::name::control_resource(org);
     let configuration = format!("{name}-configuration");
-    let database = "wamn_system";
+    let database = super::installation::SYSTEM_DATABASE;
     let control_login = crate::roles::control(org, database);
     let migration = wamn_provision::migrations::MigrationDatabase::System.managed_role(database);
     let connection = |username, secret| {
         crate::credentials::configuration(
             org.as_str(),
-            "wamn-pg",
-            format!("wamn-pg-rw.{org}.svc.cluster.local"),
+            super::installation::SYSTEM_CLUSTER,
+            super::installation::system_database_host(),
             5432,
             database.into(),
             username,

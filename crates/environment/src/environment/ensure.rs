@@ -4,11 +4,11 @@
 use sqlx::Row as _;
 
 use anyhow::Context as _;
+use wamn_broker::authorization::{INGRESS_BINDING, WORKFLOW_BINDING};
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
 use super::Platform;
 use super::document::EnvironmentDocument;
-use crate::provision_project_env::read_project_env_instance;
 use wamn_postgres::connect;
 
 /// Remove one project's runtime access and wait until its credentials are unmounted.
@@ -34,7 +34,7 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     let connection =
         wamn_platform_install::environment::connection(&platform.system_database_url, triple)
             .await?;
-    let retired = crate::provision_project_env::workload::connections(triple, &connection)?;
+    let retired = crate::provision_project_env::workload::connections(&connection)?;
     tokio::time::timeout(std::time::Duration::from_secs(120), async {
         loop {
             let pods = super::analyse::read_pods(platform, &name).await?;
@@ -112,6 +112,7 @@ fn set_nats_plugin(
         .join(",");
     let secret = name::environment_nats_secret(org, env);
     let directory = format!("/etc/wasmcloud/host-plugin-secrets/{secret}");
+    let inbox = wamn_broker::nats::inbox_prefix(&name::environment_nats_user(org, env));
     let entry = serde_json::json!({
         "id": "wasmcloud-nats",
         "workloadConfig": "deny",
@@ -123,6 +124,10 @@ fn set_nats_plugin(
             "tls-key": format!("{directory}/tls.key"),
             "stream-allow": streams,
             "subject-allow": name::environment_event_subjects(org, env),
+        },
+        "bindings": {
+            (WORKFLOW_BINDING): {"config": {"inbox-prefix": format!("{inbox}.{WORKFLOW_BINDING}")}},
+            (INGRESS_BINDING): {"config": {"inbox-prefix": format!("{inbox}.{INGRESS_BINDING}")}},
         },
     });
     if let Some(plugin) = plugins
@@ -143,25 +148,24 @@ pub(super) async fn prepare_host_upgrade<'a>(
     env: &EnvName,
     policy: &EnvName,
     reserved: &[&str],
-) -> anyhow::Result<impl Future<Output = anyhow::Result<()>> + use<'a>> {
+) -> anyhow::Result<(u32, impl Future<Output = anyhow::Result<()>> + use<'a>)> {
     let name = name::environment_host_name(org, env);
     let values = host_values(platform, org, env, reserved, None, Some(policy)).await?;
-    wamn_platform_install::environment::prepare_host_upgrade(
+    let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
+    // The runtime operator defaults the group to one replica.
+    let replicas = if group["replicas"].is_null() {
+        1
+    } else {
+        u32::try_from(group["replicas"].as_u64().context("invalid host replica count")?)?
+    };
+    let upgrade = wamn_platform_install::environment::prepare_host_upgrade(
         &platform.target,
         &platform.chart,
         name,
         &values,
     )
-    .await
-}
-
-/// Wait for the shared certificate, including when its object has yet to appear.
-pub(super) async fn wait_broker_certificate(
-    platform: &Platform,
-    triple: &Triple,
-) -> anyhow::Result<()> {
-    let name = name::environment_nats_certificate(&triple.org, &triple.env);
-    wait_certificate(platform, &name).await
+    .await?;
+    Ok((replicas, upgrade))
 }
 
 pub(super) async fn wait_certificate(platform: &Platform, name: &str) -> anyhow::Result<()> {
@@ -308,7 +312,7 @@ async fn host_values(
             );
             let mut logins = serde_json::Map::new();
             for (family, config) in
-                crate::provision_project_env::workload::connections(project, connection)?
+                crate::provision_project_env::workload::connections(connection)?
             {
                 let plugin_role = match family {
                     wamn_provision::WorkloadRoleFamily::App => "guest-sql",
@@ -337,14 +341,7 @@ async fn host_values(
         let connection =
             wamn_platform_install::environment::connection(&platform.system_database_url, &project)
                 .await?;
-        clusters.insert(
-            connection
-                .server_ca
-                .name
-                .strip_suffix("-ca")
-                .context("project cluster CA")?
-                .to_owned(),
-        );
+        clusters.insert(name::project_cluster(&connection.database));
         add_project(&project, &connection)?;
     }
     postgres["workloadConfig"] = "deny".into();
@@ -365,12 +362,15 @@ async fn host_values(
         &name::environment_nats_secret(org, env),
         &name::environment_nats_user(org, env),
     );
+    let admin = name::environment_nats_admin(org, env);
+    let admin_certificate = wamn_broker::authorization::certificate(&admin, &admin, &admin);
     Ok(json!({
         "runtime-operator":{"runtime":{"hostGroups":[group],
             "terminationGracePeriodSeconds":policy.drain_bound_seconds,
             "serviceAccount":{"name":account}}},
         "credentialAccess":{"account":account,"secrets":secrets},
         "brokerCertificates":[certificate],
+        "brokerAdminCertificate":admin_certificate,
         "networkPolicy":{"projectClusters":clusters},
     }))
 }
@@ -397,13 +397,12 @@ pub(super) async fn ensure_stream(platform: &Platform, triple: &Triple) -> anyho
         .events
         .as_ref()
         .context("event stream policy is absent")?;
-    let broker = wamn_broker::authorization::environment_context(
+    let broker = wamn_broker::authorization::issued_admin_context(
         &platform.target,
         triple,
         wamn_platform_install::platform::identity::NATS_URL,
     )
-    .await?
-    .context("environment broker credential is absent")?;
+    .await?;
     wamn_broker::streams::provision(
         &broker,
         triple,
@@ -436,30 +435,26 @@ pub async fn cdc_in_place(
         .get(0))
 }
 
-/// The URL of the environment's project database: the system URL's login on
-/// the database the registry row names.
+/// The migration credential of the project's registered database generation.
 pub(super) async fn project_url(platform: &Platform, triple: &Triple) -> anyhow::Result<String> {
-    if wamn_postgres::configuration(&platform.system_database_url)?
-        .trim_start()
-        .starts_with('{')
-    {
-        return wamn_platform_install::environment::connection(
-            &platform.system_database_url,
-            triple,
-        )
+    wamn_platform_install::environment::connection(&platform.system_database_url, triple)
         .await?
-        .to_json();
-    }
-    let instance = read_project_env_instance(&platform.system_database_url, triple).await?;
-    wamn_postgres::database_configuration(
-        &platform.system_database_url,
-        &wamn_provision::project_env_database_name(
-            &triple.org,
-            &triple.project,
-            &triple.env,
-            &instance,
-        ),
+        .to_json()
+}
+
+pub(super) async fn postgres_settings(platform: &Platform) -> anyhow::Result<serde_json::Value> {
+    let configuration: serde_json::Value = wamn_kubernetes::kubectl::get(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        &platform.target.namespace,
+        "configmap",
+        "wamn-platform",
     )
+    .await?
+    .context("installation configuration is absent")?;
+    let postgres = configuration["data"]["postgres.json"].as_str()
+        .context("installation PostgreSQL settings are absent")?;
+    serde_json::from_str(postgres).context("decode installation PostgreSQL settings")
 }
 
 /// Run `kubectl` against the platform's cluster in `namespace`.

@@ -25,7 +25,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [{{ .capture | quote }}, {{ printf "%s-ca" .cluster | quote }}]
+    resourceNames: [{{ .captureSecret | quote }}, {{ printf "%s-ca" .cluster | quote }}]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -91,17 +91,32 @@ rules:
   - apiGroups: [runtime.wasmcloud.dev]
     resources: [workloaddeployments]
     verbs: [get, list, watch, create, update, patch, delete]
-  {{- if or $.Values.credentials $.Values.loginSecrets }}
+  {{- $logins := get (default dict $.Values.cluster) "roles" }}
+  {{- if or $.Values.credentials $logins }}
   - apiGroups: [""]
     resources: [secrets]
     resourceNames:
       {{- with $.Values.credentials }}
       - {{ .name | quote }}
       {{- end }}
-      {{- range $.Values.loginSecrets }}
-      - {{ .name | quote }}
+      {{- range $logins }}
+      - {{ .passwordSecret.name | quote }}
       {{- end }}
     verbs: [patch]
+  {{- end }}
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    resourceNames: [{{ $operation.cluster | quote }}]
+    verbs: [get, patch]
+  {{- if and $.Values.cluster $.Values.cluster.backup }}
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [scheduledbackups]
+    resourceNames: [{{ printf "%s-backup" $operation.cluster | quote }}]
+    verbs: [get, patch]
+  - apiGroups: [barmancloud.cnpg.io]
+    resources: [objectstores]
+    resourceNames: [{{ printf "%s-store" $operation.cluster | quote }}]
+    verbs: [get, patch]
   {{- end }}
   - apiGroups: [postgresql.cnpg.io]
     resources: [databases]

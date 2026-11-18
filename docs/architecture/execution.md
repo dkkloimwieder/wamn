@@ -511,7 +511,7 @@ The accessors in `wamn_authority` read only its caller row. A guest cannot repla
 
 Deploy resolves handler declarations from the verified package manifests. It adds their owner packages, entities, operations, and roles to `wamn.application`. Deploy refuses two handlers for the same owner package, model, and operation in an application.
 
-The application workload uses its unnamed NATS binding for JetStream. Deploy adds one durable subscription per entity and operation, with the queue group `<application>-<entity>-<op>`. The stock plugin sends messages to `ingress`. It matches the event's package, entity, and operation before it asks the host to call the handler.
+The workload uses the `ingress` NATS binding for Data change subscriptions. Deploy adds one durable subscription per entity and operation, with the queue group `<application>-<entity>-<op>`. The stock plugin sends messages to `ingress`. It matches the event's package, entity, and operation before it asks the host to call the handler.
 
 Only the workload's `ingress` can call `dispatch-data-change`. The host reads the declared role's grants and supplies the same SQL and connection scope it uses for workflow nodes. A successful call acknowledges the message after any host transaction commits. An error leaves the message for redelivery. Delivery is at least once and creates no workflow run row.
 
@@ -522,6 +522,7 @@ Edge uses the same `ingress.wasm`. It supplies the otherwise unbound NATS import
 A workflow is an authored graph that belongs to one application.
 Its entry is Request, Schedule or Data change.
 The workflow service reads format 0.2 graphs and calls each sibling and export named in the graph through `wamn:workflow/node.call`.
+Its labeled JetStream import selects the `workflow` NATS binding.
 The host checks that pair against `wamn.application` on the `ingress` sibling and dispatches to that component.
 The same lookup applies to palette nodes.
 Each entry passes the stored input unchanged, including when an admin runs the workflow.
@@ -714,25 +715,20 @@ The shared browser runtime signs in directly to the deployment's org and renews 
 
 ### Connection memory
 
-The host answers the connection facts of a call from its memory, so a repeated call reads Postgres and the credential store only on a miss.
-The [memory](../../crates/connection/src/connection_memory.rs) describes the connection facts and their cache keys.
-Connection facts keep their own 60-second expiry.
-The [shared replica](../../crates/authority/src/kv_memory.rs) holds these rules for both memories.
-The key `<project_env_key>.connection.<connection id>` holds the active generation, effective status, credential id, and service principal id.
-It also holds exclusivity, target id, resource key, and target type.
-The effective status is active only when the integration and the connection are both active.
-The key `<project_env_key>.release.<manifest digest hex>` holds the map of a release from (component digest, package, name) to (connection, version).
-The key carries the hex part of the digest only, because a key token holds no `:`.
-The key `<project_env_key>.connections` holds the map of the environment from integration name to connection id.
-Each host watches the keys of its `project_env_key`, and the control host watches every key.
+The host caches active connection facts and generation data for the project's grant cache lifetime.
+The connection ID and project coordinate identify the facts, which include status, generation, credential UUID, and service principal.
+The host reads these facts from the project database when they are absent or expired.
 
-Immutable rows stay in the host under their own ids and never enter the bucket.
-These rows are the parameters of a generation, the artifact and exports of a version, and the secret of a credential.
-A secret never leaves the host.
-A rotation makes a new credential id, so the delete of the connection key is enough to reach the new secret.
+One credential reader serves the whole host process.
+It keeps a bounded cache of successful reads by project coordinate and credential UUID.
+On a miss, it reads the project Secret by name through the Kubernetes API.
+Concurrent misses for the same credential share one request.
+Credential rotation writes a new UUID, which the host sees when it reloads the current connection fact.
+An HTTP API response of 401 or 403 tells the host to reload that fact and refresh the credential before one retry.
+
 Inbound signature authentication resolves the credential name through the environment map.
-The active connection fact supplies the credential id and service principal.
-The host resolves the secret under that credential id.
+The active connection fact supplies the credential UUID and service principal.
+The signature check uses the same credential reader.
 
 The [engine](../../crates/engine/src/integration.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
 The [connections dispatch](../../crates/connection/src/integrations.rs) links an instance per (connection id, generation, credential id) from that compiled component.
@@ -835,9 +831,10 @@ A stale generation cannot write a token.
 
 The host keeps decrypted access tokens under the connection id and generation until the refresh margin.
 A connection key deletion drops those entries.
-An OAuth 401 follows the same lock path and permits one fresh token and one retry.
+An OAuth API response of 401 or 403 follows the same lock path and permits one fresh token and one retry.
 Concurrent refusals reuse a token that another host already refreshed.
-A failed refresh returns `credential-unavailable` without another API request.
+If a token request fails before an API call, the host returns `credential-unavailable`.
+If a token refresh fails during a retry for the same generation and credential, the host returns the first API response.
 
 The ciphertext encodes a JSON object with `access_token` and `refresh_token` members.
 A missing member value is JSON null.

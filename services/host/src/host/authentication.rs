@@ -3,9 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant, SystemTime};
-use wamn_connection::connection_facts::{
-    ConnectionAnswer, ConnectionCache, ConnectionFacts, Secret,
-};
+use wamn_connection::connection_credentials::{ConnectionCredentials, CredentialReader};
+use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionCache, ConnectionFacts};
 
 use anyhow::Context as _;
 use moka::sync::Cache;
@@ -61,6 +60,7 @@ pub(super) struct Authorization {
     applications: RwLock<HashMap<String, Weak<ApplicationConfig>>>,
     lifetimes: RwLock<HashMap<ProjectEnvKey, (ProjectId, Duration)>>,
     answers: Cache<Key, Answer>,
+    credentials: Arc<CredentialReader>,
 }
 
 impl Authorization {
@@ -70,6 +70,7 @@ impl Authorization {
             envelope: None,
             lifetimes: RwLock::default(),
             applications: RwLock::default(),
+            credentials: Arc::default(),
             answers: Cache::builder()
                 .max_capacity(MAX_AUTHORIZATION_ENTRIES)
                 .expire_after(Expiry)
@@ -284,20 +285,6 @@ impl ConnectionCache for Authorization {
             self.answers.invalidate(&key);
         }
     }
-    fn credential(&self, project: &ProjectEnvKey, id: &uuid::Uuid) -> Option<Arc<Secret>> {
-        self.answers.iter().find_map(|(key, _)| {
-            if key.project_env_key != *project {
-                return None;
-            }
-            let Fact::Connection(connection) = key.fact else {
-                return None;
-            };
-            let answer = self.get(project, &connection)?;
-            (answer.fact.credential_id == Some(*id))
-                .then(|| answer.secret.as_ref().map(Arc::clone))
-                .flatten()
-        })
-    }
     fn integration(
         self: Arc<Self>,
         workload: &str,
@@ -353,11 +340,10 @@ impl ConnectionCache for Authorization {
         Ok(Arc::new(
             ConnectionFacts::new(
                 Arc::default(),
-                Arc::new(
-                    wamn_connection::connection_credentials::ConnectionCredentials::for_org(
-                        &application.org,
-                    ),
-                ),
+                Arc::new(ConnectionCredentials::for_org(
+                    &application.org,
+                    Arc::clone(&self.credentials),
+                )),
                 &postgres,
                 &key,
                 &application.project,

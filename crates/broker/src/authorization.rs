@@ -1,26 +1,31 @@
 //! NATS accounts and client certificates for the shared broker.
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, path::Path, time::Duration};
 
 use anyhow::Context as _;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wamn_kubernetes::{Target, kubectl, secret::Secret};
-use wamn_registry::{Triple, name};
+use wamn_registry::{EnvName, OrgId, Triple, name};
 
 use crate::events::SOURCE_STREAM_MAX_BYTES;
 
 const NAMESPACE: &str = "platform";
-const AUTHORIZATION: &str = "wamn-nats-authorization";
-const FILE: &str = "authorization.conf";
-const ACCOUNTS_PREFIX: &str = "accounts: ";
-const PLATFORM: &str = "PLATFORM";
+const FILE: &str = "accounts.conf";
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+/// The mount for the broker administration credential in the delete Job.
+pub const ADMIN_CREDENTIAL_DIR: &str = "/etc/wamn/nats-admin";
+
+/// Host-owned NATS binding for the workflow service.
+pub const WORKFLOW_BINDING: &str = "workflow";
+
+/// Host-owned NATS binding for the ingress component.
+pub const INGRESS_BINDING: &str = "ingress";
+
+#[derive(Debug, Serialize, Deserialize)]
 struct Account {
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    jetstream: Option<JetStreamLimits>,
+    jetstream: JetStreamLimits,
     users: Vec<User>,
 }
 
@@ -47,16 +52,12 @@ struct Permissions {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Subjects {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     allow: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    deny: Vec<String>,
 }
 
 fn scoped_user(user: &str, publish: &[&str], subscribe: &[&str]) -> User {
     let subjects = |allow: &[&str]| Subjects {
         allow: allow.iter().map(|subject| (*subject).into()).collect(),
-        deny: if allow.is_empty() { vec![">".into()] } else { Vec::new() },
     };
     User {
         user: user.into(),
@@ -67,27 +68,20 @@ fn scoped_user(user: &str, publish: &[&str], subscribe: &[&str]) -> User {
     }
 }
 
-fn platform_users() -> Vec<User> {
-    let operator = "wasmcloud-operator";
-    let runtime = "wasmcloud-runtime";
-    let data = "wasmcloud-data";
-    let operator_inbox = inbox_subject(operator);
-    let runtime_inbox = inbox_subject(runtime);
-    let control = [
-        "runtime.host.>",
-        "runtime.operator.>",
-        &operator_inbox,
-        &runtime_inbox,
-    ];
-    vec![
-        scoped_user(
-            operator,
-            &control,
-            &[control[0], control[1], &operator_inbox],
-        ),
-        scoped_user(runtime, &control, &[control[0], control[1], &runtime_inbox]),
-        scoped_user(data, &[], &[&inbox_subject(data)]),
-    ]
+fn workload_user(org: &OrgId, env: &EnvName) -> User {
+    let user = name::environment_nats_user(org, env);
+    scoped_user(
+        &user,
+        &[
+            "$JS.API.STREAM.INFO.*",
+            "$JS.API.CONSUMER.INFO.>",
+            "$JS.API.CONSUMER.CREATE.>",
+            "$JS.API.CONSUMER.DELETE.>",
+            "$JS.API.CONSUMER.MSG.NEXT.>",
+            "$JS.ACK.>",
+        ],
+        &[&inbox_subject(&user), "_nats_push.>"],
+    )
 }
 
 fn inbox_subject(user: &str) -> String {
@@ -104,40 +98,31 @@ fn update_file_limit(account: &mut Account) -> usize {
         .filter(|user| user.user.starts_with("wamn-cdc-"))
         .count();
     if project_count > 0 {
-        let max_file = u64::from(SOURCE_STREAM_MAX_BYTES) * project_count as u64;
-        account
-            .jetstream
-            .get_or_insert(JetStreamLimits {
-                max_mem: 0,
-                max_file,
-                max_streams: -1,
-                max_consumers: -1,
-            })
-            .max_file = max_file;
+        account.jetstream.max_file = u64::from(SOURCE_STREAM_MAX_BYTES) * project_count as u64;
     }
     project_count
 }
 
-/// Seed the shared broker Secret before Helm. Preserve the installed environment accounts.
-pub async fn bootstrap(target: &Target) -> anyhow::Result<()> {
-    update(target, |accounts| {
-        accounts.entry(PLATFORM.into()).or_default().users = platform_users();
-    })
-    .await
-}
-
-/// Grant the environment host full rights and restrict each project credential.
+/// Provision the environment's host and admin users and the project's scoped users.
 pub async fn provision_project(target: &Target, coordinate: &Triple) -> anyhow::Result<()> {
-    update(target, |accounts| {
-        let (org, project, env) = (&coordinate.org, &coordinate.project, &coordinate.env);
+    let (org, project, env) = (&coordinate.org, &coordinate.project, &coordinate.env);
+    update(target, org, |accounts| {
         let account = accounts
             .entry(name::environment_nats_account(org, env))
             .or_insert_with(|| Account {
-                jetstream: None,
-                users: vec![User {
-                    user: name::environment_nats_user(org, env),
-                    permissions: None,
-                }],
+                jetstream: JetStreamLimits {
+                    max_mem: 0,
+                    max_file: 0,
+                    max_streams: -1,
+                    max_consumers: -1,
+                },
+                users: vec![
+                    workload_user(org, env),
+                    User {
+                        user: name::environment_nats_admin(org, env),
+                        permissions: None,
+                    },
+                ],
             });
         let user = name::cdc_nats_user(org, project, env);
         let events = name::stream_subjects(org, project, env);
@@ -171,7 +156,7 @@ pub async fn remove_project(target: &Target, coordinate: &Triple) -> anyhow::Res
     let reader = name::cdc_nats_user(&coordinate.org, &coordinate.project, &coordinate.env);
     let recovery = name::recovery_nats_user(coordinate);
     let mut last = false;
-    update(target, |accounts| {
+    update(target, &coordinate.org, |accounts| {
         last = accounts.get_mut(&account).is_none_or(|entry| {
             entry
                 .users
@@ -186,55 +171,75 @@ pub async fn remove_project(target: &Target, coordinate: &Triple) -> anyhow::Res
     Ok(last)
 }
 
-async fn update(target: &Target, mut edit: impl FnMut(&mut Accounts)) -> anyhow::Result<()> {
+async fn update(
+    target: &Target,
+    org: &OrgId,
+    mut edit: impl FnMut(&mut Accounts),
+) -> anyhow::Result<()> {
+    let name = name::org_nats_accounts_secret(org);
     wamn_kubernetes::secret::update(
         &target.kubeconfig,
         &target.context,
         NAMESPACE,
-        AUTHORIZATION,
+        &name,
         |secret| {
-            let mut accounts = if secret.metadata.resource_version.is_some() {
-                read_accounts(secret)?
-            } else {
-                let mut accounts = Accounts::new();
-                accounts.insert(
-                    PLATFORM.into(),
-                    Account {
-                        users: platform_users(),
-                        jetstream: None,
-                    },
-                );
-                accounts
-            };
+            let mut accounts = read_accounts(secret)?;
             edit(&mut accounts);
-            let document = serde_json::to_string(&accounts).context("encode broker accounts")?;
-            secret.data.insert(
-                FILE.into(),
-                STANDARD.encode(format!("{ACCOUNTS_PREFIX}{document}\n")),
-            );
+            require_org_accounts(org, &accounts)?;
+            let document = serde_json::to_vec(&accounts).context("encode broker accounts")?;
+            secret.data.insert(FILE.into(), STANDARD.encode(document));
             Ok(())
         },
     )
     .await
 }
 
-async fn authorization_secret(target: &Target) -> anyhow::Result<Option<Secret>> {
-    kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        NAMESPACE,
-        "secret",
-        AUTHORIZATION,
-    )
-    .await
+fn read_accounts(secret: &Secret) -> anyhow::Result<Accounts> {
+    let data = secret
+        .data
+        .get(FILE)
+        .context("broker Secret has no accounts.conf")?;
+    let bytes = STANDARD
+        .decode(data)
+        .context("decode broker accounts data")?;
+    if bytes.is_empty() {
+        return Ok(Accounts::new());
+    }
+    serde_json::from_slice(&bytes).context("decode broker accounts")
 }
 
-fn read_accounts(secret: &Secret) -> anyhow::Result<Accounts> {
-    let data = secret.data.get(FILE).context("broker Secret has no authorization.conf")?;
-    let bytes = STANDARD.decode(data).context("decode broker authorization data")?;
-    let text = std::str::from_utf8(&bytes).context("broker authorization is not UTF-8")?;
-    let payload = text.strip_prefix(ACCOUNTS_PREFIX).context("broker Secret has no accounts document")?;
-    serde_json::from_str(payload).context("decode broker accounts")
+#[derive(Debug)]
+struct ForeignAccount {
+    org: OrgId,
+    account: String,
+}
+
+impl std::fmt::Display for ForeignAccount {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "invalid broker account {:?} for org {}",
+            self.account, self.org
+        )
+    }
+}
+
+impl std::error::Error for ForeignAccount {}
+
+fn require_org_accounts(org: &OrgId, accounts: &Accounts) -> Result<(), ForeignAccount> {
+    let prefix = format!("ENV_{org}_");
+    for account in accounts.keys() {
+        if account
+            .strip_prefix(&prefix)
+            .is_none_or(|env| env.parse::<EnvName>().is_err())
+        {
+            return Err(ForeignAccount {
+                org: org.clone(),
+                account: account.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Check whether a project can still have a source stream. On an interrupted delete,
@@ -243,15 +248,21 @@ pub async fn environment_account_exists(
     target: &Target,
     coordinate: &Triple,
 ) -> anyhow::Result<bool> {
-    let Some(secret) = authorization_secret(target).await? else {
+    let org = &coordinate.org;
+    let Some(secret) = kubectl::get::<Secret>(
+        &target.kubeconfig,
+        &target.context,
+        NAMESPACE,
+        "secret",
+        &name::org_nats_accounts_secret(org),
+    )
+    .await?
+    else {
         return Ok(false);
     };
-    Ok(
-        read_accounts(&secret)?.contains_key(&name::environment_nats_account(
-            &coordinate.org,
-            &coordinate.env,
-        )),
-    )
+    let accounts = read_accounts(&secret)?;
+    require_org_accounts(org, &accounts)?;
+    Ok(accounts.contains_key(&name::environment_nats_account(org, &coordinate.env)))
 }
 
 /// Parameters of the Helm-owned client Certificate mapped into its account by DNS SAN.
@@ -268,31 +279,45 @@ pub fn certificate(name: &str, secret: &str, user: &str) -> Value {
     })
 }
 
-/// Open the account from the issued Secret. Allow the server up to 60 seconds to reload it.
-pub async fn environment_context(
+/// Open the account from the issued admin Secret after its Certificate is ready.
+pub async fn issued_admin_context(
     target: &Target,
     coordinate: &Triple,
     server: &str,
-) -> anyhow::Result<Option<async_nats::jetstream::Context>> {
-    let secret_name = name::environment_nats_secret(&coordinate.org, &coordinate.env);
-    let Some(secret) = kubectl::get::<Secret>(
-        &target.kubeconfig, &target.context, coordinate.org.as_str(), "secret", &secret_name,
-    ).await? else {
-        return Ok(None);
-    };
-    let directory = tempfile::tempdir().context("create directory for the environment broker credential")?;
+) -> anyhow::Result<async_nats::jetstream::Context> {
+    let secret_name = name::environment_nats_admin(&coordinate.org, &coordinate.env);
+    let secret = kubectl::get::<Secret>(
+        &target.kubeconfig,
+        &target.context,
+        coordinate.org.as_str(),
+        "secret",
+        &secret_name,
+    )
+    .await?
+    .with_context(|| format!("environment broker Secret {secret_name} is absent"))?;
+    let directory =
+        tempfile::tempdir().context("create directory for the environment broker credential")?;
     for key in ["ca.crt", "tls.crt", "tls.key"] {
         let value = secret.data.get(key).with_context(|| format!("Secret {secret_name} lacks {key}"))?;
         std::fs::write(directory.path().join(key), STANDARD.decode(value)?)?;
     }
+    admin_context(coordinate, server, directory.path()).await
+}
+
+/// Open the account from admin credential files. Give NATS up to 60 seconds to reload.
+pub async fn admin_context(
+    coordinate: &Triple,
+    server: &str,
+    directory: &Path,
+) -> anyhow::Result<async_nats::jetstream::Context> {
     let connection = crate::nats::PlatformNats {
         nats_url: server.into(),
-        nats_tls_ca: directory.path().join("ca.crt"),
-        nats_tls_cert: directory.path().join("tls.crt"),
-        nats_tls_key: directory.path().join("tls.key"),
+        nats_tls_ca: directory.join("ca.crt"),
+        nats_tls_cert: directory.join("tls.crt"),
+        nats_tls_key: directory.join("tls.key"),
         nats_tls_server_name: None,
     };
-    let broker = tokio::time::timeout(Duration::from_secs(60), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let result = async {
                 let broker = async_nats::jetstream::new(connection.connect().await?);
@@ -305,33 +330,7 @@ pub async fn environment_context(
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
-    }).await.with_context(|| format!("wait for the JetStream account of {coordinate}"))?;
-    Ok(Some(broker))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn platform_certificate_users_keep_scheduler_permissions_targeted() {
-        let users = platform_users();
-        for name in ["wasmcloud-operator", "wasmcloud-runtime"] {
-            let user = users.iter().find(|user| user.user == name).unwrap();
-            let permissions = user.permissions.as_ref().unwrap();
-            assert_eq!(
-                permissions.publish.allow,
-                [
-                    "runtime.host.>",
-                    "runtime.operator.>",
-                    "_INBOX_wasmcloud-operator.>",
-                    "_INBOX_wasmcloud-runtime.>"
-                ]
-            );
-            assert_eq!(
-                permissions.subscribe.allow,
-                ["runtime.host.>", "runtime.operator.>", &inbox_subject(name)]
-            );
-        }
-    }
+    })
+    .await
+    .with_context(|| format!("wait for the JetStream account of {coordinate}"))
 }

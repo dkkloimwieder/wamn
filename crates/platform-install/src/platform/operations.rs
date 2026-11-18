@@ -13,11 +13,12 @@ pub fn values<'a>(
         &triple.project,
         &triple.env,
     )?;
-    let capture = wamn_provision::project_env_cdc_secret_name(
+    let capture = wamn_provision::cdc_reader_name(
         &triple.org,
         &triple.project,
         &triple.env,
     );
+    let capture_secret = wamn_registry::name::project_login_secret(database, wamn_role::CDC_LOGIN);
     let application_releases: Vec<_> = applications
         .map(|application| {
             wamn_catalog::resource_names::application_release_name(
@@ -30,7 +31,8 @@ pub fn values<'a>(
         .collect();
     Ok(json!({
         "operations":{
-            "name":name,"cluster":cluster,"database":database,"capture":capture,
+            "name":name,"cluster":cluster,"database":database,
+            "capture":capture,"captureSecret":capture_secret,
             "hostGroup":wamn_registry::name::environment_host_name(&triple.org, &triple.env),
             "controlDeployment":wamn_registry::name::control_resource(&triple.org),
             "applicationReleases":application_releases,

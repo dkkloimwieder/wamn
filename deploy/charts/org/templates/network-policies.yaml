@@ -81,12 +81,6 @@ spec:
         - namespaceSelector: {{ $platform | toJson }}
           podSelector:
             matchLabels: {cnpg.io/cluster: wamn-pg}
-        {{- if eq $name "identity" }}
-        - podSelector:
-            matchLabels: {cnpg.io/cluster: wamn-pg}
-        {{- else }}
-        - podSelector: {{ $postgres | toJson }}
-        {{- end }}
       ports: [{port: 5432, protocol: TCP}]
 {{- end }}
 {{- range $name, $labels := dict "control" $control "worker" $worker }}

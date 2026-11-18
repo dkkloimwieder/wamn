@@ -3,44 +3,21 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_postgres::ConnectionConfig;
-use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
+use wamn_provision::{WorkloadRoleFamily, sql};
 use wamn_registry::Triple;
 
 pub(crate) fn connections(
-    triple: &Triple,
     owner: &ConnectionConfig,
 ) -> anyhow::Result<Vec<(WorkloadRoleFamily, ConnectionConfig)>> {
-    let key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
-    let database = owner.database.as_str();
-    WorkloadRoleFamily::project_env_families()
+    WorkloadRoleFamily::ALL
+        .into_iter()
         .map(|family| {
-            let (username, secret) = match family {
-                WorkloadRoleFamily::Migration => {
-                    return Ok((family, owner.clone()));
-                }
-                WorkloadRoleFamily::Platform => {
-                    let role = wamn_provision::workload_role::platform_managed_role(database);
-                    (role.name, role.password_secret.name)
-                }
-                _ => (
-                    workload_login(
-                        family,
-                        WorkloadRoleIdentity::ProjectEnvKey {
-                            project_env_key: &key,
-                            database,
-                        },
-                    )?,
-                    wamn_provision::workload_secret_name(
-                        family,
-                        &triple.org,
-                        &triple.project,
-                        &triple.env,
-                    ),
-                ),
-            };
             let mut connection = owner.clone();
-            connection.username = username;
-            connection.credentials.name = secret;
+            connection.username = family.login_name().parse()?;
+            connection.credentials.name = wamn_registry::name::project_login_secret(
+                &connection.database,
+                connection.username.as_str(),
+            );
             Ok((family, connection))
         })
         .collect()
@@ -86,11 +63,6 @@ pub(crate) async fn grant(
     connections: &[(WorkloadRoleFamily, ConnectionConfig)],
 ) -> anyhow::Result<()> {
     for (family, connection) in connections {
-        let surface = sql::stable_surface_sql(*family)
-            .unwrap_or_else(|| sql::ensure_workload_acl_role_sql(*family));
-        sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
-            .execute(&mut *project)
-            .await?;
         wamn_platform_install::credentials::wait_role(project, &connection.username).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
             *family,

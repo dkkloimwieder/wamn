@@ -33,7 +33,9 @@ Helm first installs cert-manager, CloudNativePG, and the TLS ingress controller.
 The platform chart then installs certificates, NATS, wasmCloud runtime operator 2.12.2, and the collector.
 The NATS file-store limit and volume size use the same value, `nats.config.jetstream.fileStore.pvc.size`. It defaults to `10Gi`.
 The org chart declares the org namespace, quota, base RBAC and default-deny policy.
-It also declares the current org PostgreSQL clusters.
+The installation chart creates the system PostgreSQL Cluster in namespace `platform`.
+It renders each system login Secret in `platform` and in the org with the same password.
+The org copy of the system CA contains only its public certificate.
 Bootstrap Jobs initialize SQL and credentials before the service components start.
 Identity, control, and the edge belong to the platform Helm release.
 Identity runs two replicas. Its chart requires the same envelope provider and wrapping key as the OAuth hosts.
@@ -225,6 +227,11 @@ env: dev
 target: cloud
 policy: dev
 revocation_seconds: 60
+database:
+  instances: 1
+  storage: 2Gi
+  cpu: 200m
+  memory: 256Mi
 connections:
   orders-api: {version: 2}
 projects:
@@ -243,7 +250,7 @@ projects:
 ```
 
 `wamn env apply environment.yaml` holds one environment lock.
-The worker reserves the selected projects, upgrades the org chart once, and starts one environment chart upgrade with `--wait=watcher`.
+The worker reserves the selected projects. It starts one environment chart upgrade with `--wait=watcher` before it configures the projects.
 It upgrades one project chart per project and runs that project's SQL in file order.
 The first project waits up to 120 seconds for the host chart's broker certificate.
 After the last project succeeds, the worker checks the environment chart's Helm result and removes unused connection pins on a full apply.
@@ -251,12 +258,14 @@ If a project fails, the worker stops and names the project. Fix the error and ru
 New projects later in the file stay reserved without applied configuration.
 An omitted project schema mode follows the environment's disposable setting.
 Use `--disposable` only when first recording an environment that can be reset.
-The org chart declares the database logins. The project chart keeps their passwords across upgrades.
-The org and project upgrades omit the Helm wait flag.
+The project chart declares one PostgreSQL Cluster and five managed logins per project.
+The environment YAML sets the database size for all projects. The installation values pin the PostgreSQL image.
+Project upgrades keep the login passwords and omit the Helm wait flag.
+See [Backup and recovery](backup-and-recovery.md) for backup settings.
 The worker reads each required PostgreSQL cluster, Database, certificate, and reader Deployment by name.
 The project chart creates the PostgreSQL publication for change data capture (CDC).
 For each project, the worker waits for the database to be applied and allows up to 120 seconds for it to accept a SQL connection.
-The worker initializes SQL when needed. It checks the publication in SQL before it creates the replication slot.
+CloudNativePG creates the database with `wamn_migration` as owner. The worker installs the project schema before restoring platform migrations. It checks the publication in SQL before it creates the replication slot.
 The CDC reader waits up to 120 seconds for its slot before it starts replication.
 After the certificates report ready, the worker reads the environment Secret and waits up to 60 seconds for NATS to accept the account.
 The worker creates the stream and saves the project's applied configuration.
@@ -264,7 +273,7 @@ The project chart mounts the YAML document in later project Jobs.
 The reader stays paused while a capture gap is open.
 The shared host group uses the runtime operator chart at version 2.12.2. Its `wasmcloud-nats` entry points to the broker and reads TLS files from `/etc/wasmcloud/host-plugin-secrets/<environment-secret>/`.
 
-Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Add `--data` and confirm the coordinate in a terminal to delete its database.
+Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Helm keeps the Cluster and ObjectStore by default. Add `--data` and confirm the coordinate to remove both resources.
 Delete stops the reader before it removes the stream, then removes the replication slot and publication.
 The last project removes the environment account and shared Certificate after deleting its stream.
 These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
@@ -617,7 +626,7 @@ Deployment needs no source checkout, pnpm installation, or local UI output.
 Kind keeps an empty web bucket and selects no platform UI.
 
 The control root is `https://control.wamn.dev`.
-The org chart runs `wamn-control --config /etc/wamn/control/config.json platform` in the org namespace.
+The installation chart runs `wamn-control --config /etc/wamn/control/config.json platform` in the org namespace.
 The native service has no route guest or application release.
 The control Service selects that Deployment.
 Local platform deployment installs control without a UI upload. GCP integration for public control access remains unfinished.
@@ -899,14 +908,16 @@ The rule excludes fixed private and special-use ranges. The runtime still checks
 
 ## Kubernetes credentials
 
-The project chart creates an empty `wamn-credential-<org>--<env>--<project>` Secret with room for one entry per credential UUID.
+The project chart creates an empty `wamn-credential-<org>--<env>--<project>` Secret with one key per credential UUID.
 Control reads and patches that Secret by name. Each merge patch updates one credential key and the labels control owns.
 Use Helm server-side apply for the project chart so the Secret keeps its credential keys on upgrade.
-Helm retains the Secret during uninstall. Environment deletion removes it explicitly.
-
-The database stores the Secret name and entry name. It accepts only `k8s` references.
+Helm retains the Secret during uninstall.
+The database stores the Secret name and entry name as a `k8s` reference.
 File-backed credential storage and `WAMN_CREDENTIAL_DIR` are removed.
-Deployed hosts read connection credentials through their in-cluster ServiceAccount.
+Deployed hosts use their in-cluster ServiceAccount to read the Secret by name.
+Each host process shares one reader, which caches successful reads by project coordinate and credential UUID.
+Concurrent misses share one API request. An HTTP API response of 401 or 403 refreshes the credential before one retry.
+Environment teardown deletes the Secret for each project release in that environment.
 Local development hosts have no connection credential store.
 A credential read returns `no credential store in local mode` and logs that reason.
 Local startup still provisions the disposable databases and starts identity, control and web services.
@@ -924,16 +935,23 @@ The HTTP interface keeps its `credential-unavailable` result.
 
 Connection administration passes the registry's credential Secret name and the coordinate values to `wamn-kubernetes`.
 Separate credential keys can change independently. The project chart must create the Secret before control writes credentials.
-`wamn-broker` owns the accounts document in `platform/wamn-nats-authorization`.
-The installer helper creates the Secret before Helm when it is absent. Step 3.6 supplies the fresh-install entry point that calls this helper.
-Configure and delete Jobs update the same document.
+
+The trusted installer sets `global.natsAccountOrgs` in the installation chart.
+Helm creates each `platform/wamn-nats-accounts-<org>` Secret before it adds that org's include and mount.
+On removal, Helm updates the includes and mounts before it deletes the Secret.
+Adding or removing an org restarts the single NATS pod.
+
+The base NATS configuration defines the `PLATFORM` account and includes one `accounts.conf` per org in the same accounts block.
+The reloader watches the files for changes.
+Kubernetes RBAC grants each org worker access to its named Secret.
+The broker writer accepts only `ENV_<org>_<env>` account names for that org.
 
 ### Transaction identity retention
 
 The control service removes expired transaction identities every minute in a separate task.
 Cleanup runs do not overlap. Each database operation has a five-second limit.
 Shutdown cancels the task before the service drains HTTP connections.
-It connects to each configured project through its platform SQL credential and acts as `wamn_db_owner`.
+It connects to each configured project as `wamn_platform_login`.
 It also cleans the control database as `wamn_system`.
 It deletes rows with `xid < pg_snapshot_xmin(pg_current_snapshot())`.
 The UNLOGGED table `platform.tx_identity` stays outside CDC publications. A crash discards its rows.

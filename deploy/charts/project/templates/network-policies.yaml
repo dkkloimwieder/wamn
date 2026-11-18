@@ -2,6 +2,8 @@
 {{- $policy := include "project.networkPolicyNames" $ | fromJson }}
 {{- $cluster := dict "cnpg.io/cluster" .cluster }}
 {{- $reader := dict "app.kubernetes.io/name" "wamn-cdc-reader" "app.kubernetes.io/instance" (get (default dict $.Values.cdcReader) "key") }}
+{{- $control := dict "app.kubernetes.io/name" (required "Set operations.controlDeployment." .controlDeployment) }}
+{{- $worker := dict "app.kubernetes.io/component" "wamn-worker" }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: {{ $policy.databaseClients }}, namespace: {{ $.Release.Namespace }}}
@@ -16,14 +18,29 @@ spec:
         - podSelector:
             matchLabels: {wasmcloud.com/name: hostgroup, wasmcloud.com/hostgroup: {{ required "Set operations.hostGroup." .hostGroup | quote }}}
         - podSelector:
-            matchLabels: {app.kubernetes.io/name: {{ required "Set operations.controlDeployment." .controlDeployment | quote }}}
+            matchLabels: {{ $control | toJson }}
         - podSelector:
-            matchLabels: {app.kubernetes.io/component: wamn-worker}
+            matchLabels: {{ $worker | toJson }}
         {{- if $.Values.cdcReader }}
         - podSelector:
             matchLabels: {{ $reader | toJson }}
         {{- end }}
       ports: [{port: 5432, protocol: TCP}]
+{{- range $name, $labels := dict $policy.controlToDatabase $control $policy.workerToDatabase $worker }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $name }}, namespace: {{ $.Release.Namespace }}}
+spec:
+  podSelector:
+    matchLabels: {{ $labels | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{ $cluster | toJson }}
+      ports: [{port: 5432, protocol: TCP}]
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

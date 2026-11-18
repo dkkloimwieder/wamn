@@ -9,6 +9,7 @@ use sqlx::PgPool;
 pub(super) type Object = sqlx::pool::PoolConnection<sqlx::Postgres>;
 
 use wamn_identity_protocol::AuthorityClass;
+#[cfg(test)]
 use wamn_registry::app_identity_hash;
 
 use super::DEFAULT_PROJECT;
@@ -306,14 +307,8 @@ impl CredentialProvider for StaticCredentialProvider {
     /// was. The class remains part of the POOL KEY as well: two authorities must
     /// never share a pooled session even when they resolve to the same URL.
     ///
-    /// FOR GUEST SQL THE PROJECT BINDING IS VERIFIED, NOT CONFIGURED. The
-    /// credential's login role carries the project key as its identity digest, and
-    /// the same key is what every governed predicate computes — so the binding
-    /// is validated from the credential itself rather than declared beside it,
-    /// and a credential minted for another project is REFUSED instead of
-    /// silently borrowed. Selection happens FIRST and the test runs on the
-    /// selected credential, so it fires on exactly the credential that would be
-    /// handed back — never on a different class's login.
+    /// Guest SQL credentials must match the selected login class and the
+    /// endpoint of the requested project database generation.
     fn resolve(
         &self,
         project: &wamn_registry::ProjectId,
@@ -330,17 +325,24 @@ impl CredentialProvider for StaticCredentialProvider {
             )
         })?;
         if matches!(class, AuthorityClass::GuestSql | AuthorityClass::DynamicSql) {
-            let project_env_key = project_env_key.context(
-                "guest-SQL resolution requires the project: after wamn-0h0g.22.6 the \
-                 credential IS the project authority",
-            )?;
-            let (role, database) = wamn_postgres::identity(&resolved.database_url)?;
-            let key = app_identity_hash(project_env_key, &database);
+            let key = project_env_key.context("guest SQL requires a project coordinate")?;
+            let triple = key.triple();
+            let expected = if class == AuthorityClass::GuestSql {
+                wamn_role::APP_LOGIN
+            } else {
+                wamn_role::QUERY_LOGIN
+            };
+            let options: sqlx::postgres::PgConnectOptions =
+                wamn_postgres::configuration(&resolved.database_url)?.parse()?;
+            let database = options.get_database().context("project database is absent")?;
             anyhow::ensure!(
-                role == wamn_registry::name::credential_login(class.acl_role(), &key),
-                "the credential for project {project:?} authenticates as {role:?}, which \
-                 does not carry the project key for the requested project; refusing rather \
-                 than reading another project's rows"
+                &triple.project == project
+                    && options.get_username() == expected
+                    && wamn_registry::name::project_database_key(database).as_ref() == Some(key)
+                    && options.get_host() == wamn_registry::name::project_database_host(database, &triple.org)
+                    && options.get_port() == 5432
+                    && options.get_socket().is_none(),
+                "the {class} credential does not match project {key} and its database endpoint"
             );
         }
         Ok(Some(resolved))

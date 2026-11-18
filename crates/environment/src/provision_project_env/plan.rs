@@ -1,14 +1,8 @@
-use super::escape_identifier;
+use postgres_protocol::escape::escape_identifier;
 use wamn_role::APP_ROLE;
 
-/// Create the passwordless privilege roles before CNPG creates the database.
-pub fn role_sql() -> String {
-    role_posture_sql()
-}
-
-/// Role creation and hardening half of [`role_sql`].
 pub fn role_posture_sql() -> String {
-    include_str!("../../../../deploy/sql/project-roles.sql").to_owned()
+    wamn_provision::sql::ensure_project_roles_sql().to_owned()
 }
 
 /// Keep database CONNECT privileges on individual logins. Shared ACL roles cannot connect.

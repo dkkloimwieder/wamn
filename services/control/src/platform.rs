@@ -88,10 +88,15 @@ impl Execution {
             return wamn_kubernetes::job::observe(&api, &request.job, &coordinate, &[worker_type])
                 .await;
         }
-        ensure!(
-            !matches!(serde_json::from_str::<Request>(payload)?, Request::ProjectOperation { .. }),
-            "project operations require project route authorization"
-        );
+        let admin = match serde_json::from_str::<Request>(payload)? {
+            Request::ProjectOperation { .. } => {
+                anyhow::bail!("project operations require project route authorization")
+            }
+            Request::Environment { operation, env, .. } if operation == "environment.delete" => {
+                Some(wamn_registry::name::environment_nats_admin(&self.org, &env))
+            }
+            _ => None,
+        };
         let name = format!("op-{}", uuid::Uuid::new_v4());
         let worker = &self.worker;
         let mut job = wamn_kubernetes::job::manifest(
@@ -115,6 +120,21 @@ impl Execution {
             {"name":"configuration","mountPath":"/etc/wamn/control","readOnly":true},
             {"name":"work","mountPath":"/work"}
         ]);
+        if let Some(admin) = admin {
+            wamn_kubernetes::job::mount(
+                &mut job,
+                "nats-admin",
+                &admin,
+                wamn_broker::authorization::ADMIN_CREDENTIAL_DIR,
+                &["ca.crt", "tls.crt", "tls.key"],
+            );
+            // Delete can resume after the account and its credential are gone.
+            let volume = job["spec"]["template"]["spec"]["volumes"]
+                .as_array_mut()
+                .and_then(|volumes| volumes.last_mut())
+                .expect("mount appends a volume");
+            volume["secret"]["optional"] = true.into();
+        }
         crate::worker::mount_registry(&mut job, self.registry_token_metadata);
         wamn_kubernetes::job::submit(&api, &mut job, payload).await
     }

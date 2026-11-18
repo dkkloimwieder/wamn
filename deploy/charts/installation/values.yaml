@@ -1,6 +1,8 @@
 org: ''
 registry: ''
 registryEndpoint: null
+global:
+  natsAccountOrgs: []
 runtime-operator:
   global:
     certificates:
@@ -32,7 +34,36 @@ nats:
         maxSize: 256MB
     merge:
       max_payload: 1048576
-      authorization$include: ../nats-authorization/authorization.conf
+      accounts:
+        includes:
+          $tplYamlSpread: |
+            {{- range .Values.global.natsAccountOrgs }}
+            {{ . }}$include: ../nats-accounts-{{ . }}/accounts.conf
+            {{- end }}
+        PLATFORM:
+          users:
+          - user: wasmcloud-operator
+            permissions:
+              publish:
+                allow: &schedulerPublish
+                - runtime.host.>
+                - runtime.operator.>
+                - _INBOX_wasmcloud-operator.>
+                - _INBOX_wasmcloud-runtime.>
+              subscribe:
+                allow: [runtime.host.>, runtime.operator.>, _INBOX_wasmcloud-operator.>]
+          - user: wasmcloud-runtime
+            permissions:
+              publish:
+                allow: *schedulerPublish
+              subscribe:
+                allow: [runtime.host.>, runtime.operator.>, _INBOX_wasmcloud-runtime.>]
+          - user: wasmcloud-data
+            permissions:
+              publish:
+                deny: ['>']
+              subscribe:
+                allow: [_INBOX_wasmcloud-data.>]
     nats:
       tls:
         enabled: true
@@ -47,20 +78,29 @@ nats:
       value: 127.0.0.1:8222
   podTemplate:
     patch:
-    - op: add
-      path: /spec/volumes/-
-      value:
-        name: authorization
-        secret:
-          secretName: wamn-nats-authorization
+    - $tplYamlSpread: |
+        {{- range .Values.global.natsAccountOrgs }}
+        - op: add
+          path: /spec/volumes/-
+          value:
+            name: nats-accounts-{{ . }}
+            secret:
+              secretName: wamn-nats-accounts-{{ . }}
+              items:
+              - key: accounts.conf
+                path: accounts.conf
+        {{- end }}
   container:
     patch:
-    - op: add
-      path: /volumeMounts/-
-      value:
-        name: authorization
-        mountPath: /etc/nats-authorization
-        readOnly: true
+    - $tplYamlSpread: |
+        {{- range .Values.global.natsAccountOrgs }}
+        - op: add
+          path: /volumeMounts/-
+          value:
+            name: nats-accounts-{{ . }}
+            mountPath: /etc/nats-accounts-{{ . }}
+            readOnly: true
+        {{- end }}
     startupProbe:
       httpGet: null
       exec:
@@ -95,7 +135,7 @@ nats:
         - /dev/null
         - http://127.0.0.1:8222/healthz
     image:
-      tag: 2.10-alpine
+      tag: 2.12.15-alpine
     resources:
       requests:
         cpu: 200m
@@ -154,3 +194,11 @@ platform:
   chart: ''
 edgeDnsNames: []
 hostEnvironment: {}
+postgres:
+  image: ghcr.io/cloudnative-pg/postgresql:18.7
+  backup:
+    endpoint: null
+    bucket: null
+    secret: null
+systemDatabase:
+  roles: []

@@ -4,7 +4,9 @@ cdcReader: null
 operations: null
 environmentDocument: null
 brokerCertificates: []
-loginSecrets: []
+cluster: null
+recovery: null
+deleteData: false
 databaseConfig: null
 credentials: null
 networkPolicy:

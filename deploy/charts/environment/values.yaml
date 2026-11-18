@@ -1,6 +1,7 @@
 credentialAccess: null
 
 brokerCertificates: []
+brokerAdminCertificate: null
 
 networkPolicy:
   projectClusters: []

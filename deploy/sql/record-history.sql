@@ -2,7 +2,7 @@
 -- function, and the log trigger function.
 --
 -- This file carries no transaction of its own. CATALOG_SCHEMA_SQL composes it
--- inside the catalog bootstrap transaction. Other appliers wrap it in theirs.
+-- into the catalog bootstrap. Each applier owns its transaction.
 --
 -- wamn_history.stamp_row() is a BEFORE INSERT OR UPDATE row trigger function.
 -- Its trigger arguments name the selected stamp columns, a subset of

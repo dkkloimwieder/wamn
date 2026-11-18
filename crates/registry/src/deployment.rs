@@ -4,22 +4,6 @@ use sqlx::PgConnection;
 
 use crate::{Triple, instance_suffix::InstanceSuffix, sql};
 
-/// Physical placement recorded for one project deployment.
-#[derive(Debug)]
-pub struct DatabasePlacement {
-    pub instance_suffix: InstanceSuffix,
-    pub placement_type: String,
-    pub pool_cluster: Option<String>,
-    pub policy_name: crate::EnvName,
-}
-
-/// An organization's database placement.
-#[derive(Debug)]
-pub struct OrgPlacement {
-    pub placement_type: String,
-    pub pool_cluster: Option<String>,
-}
-
 /// Values recorded when provisioning a project deployment.
 #[derive(Debug)]
 pub struct Registration<'a> {
@@ -30,47 +14,6 @@ pub struct Registration<'a> {
     pub disposable: Option<bool>,
     pub policy: &'a crate::EnvName,
     pub target_id: &'a str,
-}
-
-/// Read the physical database placement of a provisioned project.
-///
-/// # Errors
-/// Returns database errors.
-pub async fn database_placement(
-    connection: &mut PgConnection,
-    triple: &Triple,
-) -> Result<DatabasePlacement, sqlx::Error> {
-    let (instance_suffix, placement_type, pool_cluster, policy_name) = sqlx::query_as(
-        "SELECT ep.instance_suffix, o.placement_type, o.pool_cluster, e.policy_name FROM registry.environment_projects ep JOIN registry.orgs o ON o.id=ep.org JOIN registry.environments e USING(org,env) WHERE ep.org=$1 AND ep.project=$2 AND ep.env=$3",
-    )
-    .bind(&triple.org).bind(&triple.project).bind(&triple.env)
-    .fetch_one(connection).await?;
-    Ok(DatabasePlacement {
-        instance_suffix,
-        placement_type,
-        pool_cluster,
-        policy_name,
-    })
-}
-
-/// Read an organization's placement, if it is registered.
-///
-/// # Errors
-/// Returns database errors.
-pub async fn org_placement(
-    connection: &mut PgConnection,
-    org: &crate::OrgId,
-) -> Result<Option<OrgPlacement>, sqlx::Error> {
-    Ok(
-        sqlx::query_as::<_, (String, Option<String>)>(sql::select_org_placement_sql())
-            .bind(org)
-            .fetch_optional(connection)
-            .await?
-            .map(|(placement_type, pool_cluster)| OrgPlacement {
-                placement_type,
-                pool_cluster,
-            }),
-    )
 }
 
 /// Read the stored instance suffix, if the project deployment exists.

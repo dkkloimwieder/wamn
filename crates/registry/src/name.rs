@@ -22,9 +22,19 @@ pub fn environment_nats_account(org: &crate::OrgId, env: &crate::EnvName) -> Str
     format!("ENV_{org}_{env}")
 }
 
-/// The full-access certificate user inside an environment account.
+/// The certificate user for the hosts in an environment account.
 pub fn environment_nats_user(org: &crate::OrgId, env: &crate::EnvName) -> String {
     format!("wamn-env-{}", environment_key(org, env))
+}
+
+/// The certificate user and Secret name for environment stream administration.
+pub fn environment_nats_admin(org: &crate::OrgId, env: &crate::EnvName) -> String {
+    format!("wamn-nats-admin-{}", environment_key(org, env))
+}
+
+/// The platform Secret that contains one org's broker accounts.
+pub fn org_nats_accounts_secret(org: &crate::OrgId) -> String {
+    format!("wamn-nats-accounts-{org}")
 }
 
 /// The ServiceAccount of the org control service.
@@ -45,9 +55,6 @@ pub fn credential_secret_name(
 ) -> String {
     format!("wamn-credential-{}", project_env_key(org, project, env))
 }
-
-/// Name budget or prefix.
-pub const GUEST_SECRET_PREFIX: &str = "wamn-guest-";
 
 /// Name budget or prefix.
 pub const DB_PREFIX: &str = "wamn-db-";
@@ -98,6 +105,31 @@ pub fn project_env_database_name(
         "{}{INSTANCE_SUFFIX_SEPARATOR}{instance}",
         project_env_database_stem(org, project, env)
     )
+}
+
+/// The project's CloudNativePG Cluster. The database name encodes its
+/// coordinate and generation. Keep space for the recovery suffix.
+pub fn project_cluster(database: &str) -> String {
+    format!("wamn-pg-{}", &hex::encode(sha256(database.as_bytes()))[..32])
+}
+
+/// The project primary service in its organization.
+pub fn project_database_host(database: &str, org: &crate::OrgId) -> String {
+    format!("{}-rw.{org}.svc.cluster.local", project_cluster(database))
+}
+
+/// A login Secret for this coordinate, generation, and role. Its 43 bytes
+/// fit the runtime operator's volume name with the host-plugin-secret- prefix.
+pub fn project_login_secret(database: &str, login: &str) -> String {
+    let identity = format!("{database}/{login}");
+    format!("wamn-login-{}", &hex::encode(sha256(identity.as_bytes()))[..32])
+}
+
+/// Read a project coordinate only from a valid, generation-qualified database name.
+pub fn project_database_key(database: &str) -> Option<crate::ProjectEnvKey> {
+    let (key, generation) = database.strip_prefix(DB_PREFIX)?.rsplit_once("--")?;
+    generation.parse::<InstanceSuffix>().ok()?;
+    key.parse().ok()
 }
 
 pub fn project_env_database_stem(
@@ -171,12 +203,8 @@ pub fn project_env_namespace_stem(
     format!("{NAMESPACE_PREFIX}{org}--{env}--{project}")
 }
 
-/// The per-project-env CDC credential Secret name:
-/// `wamn-cdc-<org>--<env>--<project>` (wamn-l5i9.9). Distinct from the
-/// `wamn-db-…` query-credential Secret — the replication credential is a
-/// separate, higher-privilege tier (R8b), so a leaked query credential never
-/// implies the WAL and vice versa.
-pub fn project_env_cdc_secret_name(
+/// The CDC reader Deployment and ServiceAccount name.
+pub fn cdc_reader_name(
     org: &crate::OrgId,
     project: &crate::ProjectId,
     env: &crate::EnvName,
@@ -185,7 +213,7 @@ pub fn project_env_cdc_secret_name(
 }
 
 /// The shared name of the per-project-env CDC Postgres objects — publication,
-/// failover replication slot, and replication role:
+/// and failover replication slot:
 /// `wamn_cdc_<org>__<env>__<project>__<instance>`, slug hyphens mapped to `_`
 /// and `__` as the separator (a slot name admits only `[a-z0-9_]`). Since slugs cannot
 /// contain `_`, the mapping keeps distinct triples distinct except for the same
@@ -216,23 +244,6 @@ pub fn cdc_object_name_stem(
     )
 }
 
-/// A workload credential Secret for one project deployment.
-pub fn workload_secret_name(
-    prefix: &str,
-    org: &crate::OrgId,
-    project: &crate::ProjectId,
-    env: &crate::EnvName,
-) -> String {
-    format!("{prefix}{}", project_env_key(org, project, env))
-}
-/// A workload credential Secret shared by an org.
-pub fn org_workload_secret_name(prefix: &str, org: &crate::OrgId) -> String {
-    format!("{prefix}{org}")
-}
-/// A credential family's resource prefix.
-pub fn workload_secret_prefix(stem: &str) -> String {
-    format!("wamn-{stem}-")
-}
 /// The Certificate shared by the projects of an environment.
 pub fn environment_nats_certificate(org: &crate::OrgId, env: &crate::EnvName) -> String {
     format!("wamn-nats-{}", environment_key(org, env))
@@ -359,11 +370,6 @@ pub fn stream_name(org: &crate::OrgId, project: &crate::ProjectId, env: &crate::
 /// The coordinate label in a host status response.
 pub fn host_status(org: &crate::OrgId, project: &crate::ProjectId, env: &crate::EnvName) -> String {
     format!("{org}/{env}/{project}")
-}
-
-/// The database cluster of a dedicated org and recovery owner.
-pub fn cluster(org: &crate::OrgId, owner: &crate::EnvName) -> String {
-    format!("{org}-{owner}")
 }
 
 /// A resource derived from an existing resource and a role or purpose.

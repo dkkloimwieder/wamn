@@ -8,7 +8,6 @@ pub mod apply;
 pub mod audit_retention;
 pub mod connection;
 pub mod environment_names;
-pub mod env_policies;
 mod error;
 pub mod identity_role;
 pub mod migration;
@@ -26,20 +25,19 @@ pub mod workload_role;
 
 pub use error::ProvisionError;
 pub use name::{
-    CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, GUEST_SECRET_PREFIX, INSTANCE_SUFFIX_LEN,
+    CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, INSTANCE_SUFFIX_LEN,
     MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN,
     NAMESPACE_PREFIX, cdc_object_name, control_administration_key,
-    control_administration_secret_name, project_env_cdc_secret_name,
-    project_env_database_name, project_env_guest_secret_name, project_env_key,
+    control_administration_secret_name, cdc_reader_name,
+    project_env_database_name, project_env_key,
     project_env_namespace, project_env_secret_name, validate_project_env, validate_project_env_cdc,
-    workload_secret_name,
 };
 pub use transaction_identity::bind_platform_principal_sql;
 /// The platform component list, for callers that bind a component as the actor.
 pub use wamn_identity_protocol::PlatformComponent;
 pub use workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityError, WorkloadRoleIdentityType,
-    workload_login, workload_role_identity_hash,
+    workload_login,
 };
 
 /// Core control-database schema, applied first by a fresh bootstrap.
@@ -70,9 +68,3 @@ pub const APP_SCHEMA_SQL: &str = concat!(
     include_str!("../../../deploy/sql/app-schema.sql"),
     include_str!("../../../deploy/sql/definer-privileges.sql"),
 );
-
-mod placement;
-pub use placement::{
-    ClusterRef, DEFAULT_PG_IMAGE, EnvPolicy, Org, OrgEnvPolicy, Placement, RecoveryDomain,
-    cluster_of,
-};

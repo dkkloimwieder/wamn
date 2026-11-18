@@ -1,6 +1,7 @@
 use super::{Mapping, Value, ensure};
 use anyhow::Context as _;
 use std::collections::{BTreeMap, BTreeSet};
+use wamn_broker::authorization::{INGRESS_BINDING, WORKFLOW_BINDING};
 use wamn_catalog::{
     ComponentDescriptor, PackageName,
     canonical_name::CanonicalName,
@@ -305,14 +306,26 @@ pub fn roles(
     let descriptors =
         published_components(package_manifests).map(|(_, component)| &component.descriptor);
     let mut host_interfaces = host_interfaces(descriptors, !integrations.is_empty())?;
+    let subjects = wamn_registry::name::stream_subjects(org, project, env);
+    host_interfaces.push(serde_json::json!({
+        "namespace": "wasmcloud",
+        "package": "nats",
+        "version": "0.1.3",
+        "name": WORKFLOW_BINDING,
+        "interfaces": ["jetstream"],
+        "config": {"stream-allow": stream, "subject-allow": subjects},
+    }));
     if !subscriptions.is_empty() {
         host_interfaces.push(serde_json::json!({
             "namespace": "wasmcloud",
             "package": "nats",
             "version": "0.1.3",
+            "name": INGRESS_BINDING,
             "interfaces": ["jetstream-handler"],
             "config": {
                 "component": "ingress",
+                "stream-allow": stream,
+                "subject-allow": subjects,
                 "jetstream-subscriptions": subscriptions.into_iter().collect::<Vec<_>>().join(","),
             },
         }));
@@ -420,21 +433,14 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
                 .collect::<Vec<_>>(),
         )?,
     );
-    let event_access = serde_json::json!({
-        "namespace":"wasmcloud",
-        "package":"nats",
-        "version":"0.1.3",
-        "interfaces":["jetstream"],
-        "config": {
-            "stream-allow":wamn_registry::name::stream_name(&input.org, &input.project, &input.env),
-            "subject-allow":wamn_registry::name::stream_subjects(&input.org, &input.project, &input.env),
-        }
-    });
     values.insert(
         "hostInterfaces".into(),
         serde_yaml::to_value(
-            input.roles.iter().flat_map(|role| &role.host_interfaces)
-                .chain(std::iter::once(&event_access)).collect::<Vec<_>>(),
+            input
+                .roles
+                .iter()
+                .flat_map(|role| &role.host_interfaces)
+                .collect::<Vec<_>>(),
         )?,
     );
     values.insert(

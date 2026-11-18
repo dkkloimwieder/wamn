@@ -89,10 +89,10 @@ The system database supplies each selected Wasm digest and the active connection
 The host refuses a name that the calling component did not declare.
 HTTP method authorization and object-store access enforce a declaration's read mode.
 
-The host resolves private credentials through the environment store.
-Each lookup requires the trusted organization, project, and environment target.
+The host resolves private credentials through one reader shared by its workloads.
+The reader uses the trusted organization, environment, project, and credential UUID.
+It reads the project's Kubernetes Secret by name on a cache miss.
 Credential changes use the current generation without a host restart.
-The existing refresh behavior remains in place.
 
 Guest SQL, queue maintenance, HTTP admission, and event materialization use distinct authority classes.
 Private event binding files remain outside guest configuration, and workload configuration cannot replace them.
@@ -220,12 +220,12 @@ Connection health uses the same assertion request and token response rules.
 Both client credentials types use the shared encrypted token row and locked refresh path described in [execution](execution.md#connection-memory).
 
 The host injects `Authorization: Bearer` into the API request.
-An API 401 removes the cached token and causes one fresh token request and one API retry.
-A second 401 returns to the guest and removes that token from the cache.
-If the fresh token request fails, the guest receives the first API 401.
-For every authentication type, an API 401 or 403 drops the secret and the connection fact, and the host reads both again.
-The host sends once more only when the new fact names another generation or credential, so a repeated send never carries the refused credential.
-A call makes at most one extra send, so an OAuth2 retry after a changed fact is that one send.
+For every authentication type, an API 401 or 403 causes the host to reload the connection fact and refresh the credential.
+If the connection is active, the host sends the request once more with the current credential.
+Concurrent rejections of the same cached value share the refresh.
+For OAuth2, the host also refreshes a rejected token if the generation stays the same.
+If that token refresh fails, the guest receives the first API response.
+A second 401 or 403 returns to the guest and removes the cached OAuth2 token.
 A token failure before any API request returns `credential-unavailable` without the token endpoint's response body.
 The guest receives no credential. The workflow queue owns other retries.
 
@@ -320,16 +320,17 @@ Its JetStream file storage limit is 256 MiB times the number of projects in the 
 It has zero memory storage and unlimited stream and consumer counts.
 The account contains all the environment's project streams. Accounts exchange no imports or exports.
 
-The `wamn-env-<org>--<env>` user has full rights in its environment account.
-The configure and delete Jobs use that account to manage streams. The host uses it to manage workflow consumers.
+The `wamn-nats-admin-<org>--<env>` user has full rights in its environment account.
+Configure reads its Secret by name after the Certificate is ready. Delete mounts the same Secret.
+Hosts use the restricted `wamn-env-<org>--<env>` user to read stream information, manage consumers, and acknowledge messages.
 Each project gives its CDC reader a separate `wamn-cdc-<key>` user in the same account.
 The reader can publish only to its project's event subjects and stream-info API.
 The recovery worker has a separate `wamn-recovery-<key>` user. It can request stream info and read messages from its project's stream.
-Each restricted user receives replies only on `_INBOX_<user>.>`. The environment user keeps full rights within its account.
+Each restricted user receives replies only on `_INBOX_<user>.>`.
 
-The host group declares one unnamed stock `wasmcloud-nats` binding with `workloadConfig: deny`.
-The binding mounts the environment TLS Secret and limits access to the environment's project streams and subjects.
-Each application workload narrows those grants to its own project's stream and subjects.
+The host group mounts the workload TLS Secret and declares the `workflow` and `ingress` bindings with `workloadConfig: deny`.
+Each binding uses a separate child inbox and narrows access to the application's project stream and subjects.
+The host's native workflow client uses a third child inbox on the same credential.
 The NATS HTTP monitor binds to loopback.
 
 Delivery is at least once for application handlers.

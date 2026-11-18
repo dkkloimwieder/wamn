@@ -2,31 +2,27 @@
 
 use anyhow::ensure;
 
-/// Derive the single owner login from its project database.
-pub fn login(database: &str) -> wamn_identity_protocol::LoginName {
-    wamn_registry::name::credential_login(
-        wamn_role::MIGRATION_ROLE,
-        &crate::workload_role::database_identity_hash(wamn_role::MIGRATION_ROLE, database),
-    )
+/// The fixed owner login in a project Cluster.
+pub fn login() -> wamn_identity_protocol::LoginName {
+    wamn_role::MIGRATION_ROLE.parse().expect("fixed project owner")
 }
 
 /// Check the authenticated session before any package-controlled SQL runs.
 pub async fn require_login(
     connection: &mut sqlx::PgConnection,
 ) -> anyhow::Result<wamn_identity_protocol::LoginName> {
-    let (session, current, database, restricted): (
+    let (session, current, restricted): (
         wamn_identity_protocol::LoginName,
         wamn_identity_protocol::LoginName,
-        String,
         bool,
     ) = sqlx::query_as(
-        "SELECT session_user::text, current_user::text, current_database()::text, \
+        "SELECT session_user::text, current_user::text, \
          NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) \
          FROM pg_roles WHERE rolname = session_user",
     )
     .fetch_one(&mut *connection)
     .await?;
-    let expected = login(&database);
+    let expected = login();
     ensure!(
         session == expected && current == session && restricted,
         "package SQL requires the direct restricted migration login"

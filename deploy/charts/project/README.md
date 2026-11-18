@@ -1,6 +1,13 @@
 # Project chart
 
-The chart creates the project database, publication, login Secrets, and the project operation account.
+The chart creates the project's CloudNativePG Cluster, Database, login Secrets, publication, and operation account.
+CloudNativePG creates the database at bootstrap. The Database resource installs the extensions.
+`env apply` derives the Cluster name and login Secret names from the registered project generation.
+It also sets limits on the five managed logins from the host replica count.
+The environment file provides sizing. The installation values provide the image and object-storage connection.
+If backups are configured, Helm creates an ObjectStore and ScheduledBackup for the project generation.
+Helm keeps the live Cluster and ObjectStore unless `env delete --data` removes them.
+To restore into a separate release, see [Backup and recovery](../../../docs/operations/backup-and-recovery.md).
 It saves the applied environment YAML in the project's operations ConfigMap. Later Jobs mount this file.
 
 The `credentials` values name the empty Secret for the project release and the control ServiceAccount that can read and patch it.

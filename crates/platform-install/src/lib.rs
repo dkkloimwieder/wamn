@@ -8,7 +8,6 @@ pub mod provision_system;
 pub mod transaction;
 
 pub mod environment;
-pub mod org;
 pub mod roles;
 
 #[cfg(test)]

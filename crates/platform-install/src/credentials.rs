@@ -1,6 +1,4 @@
 //! Native CNPG credentials and public connection configuration.
-use anyhow::Context as _;
-use sqlx::Connection as _;
 use std::time::Duration;
 use wamn_postgres::{ConnectionConfig, SecretRef};
 pub fn configuration(
@@ -62,27 +60,5 @@ pub(crate) async fn connect_with_retry(
             Err(error) => on_error(error)?,
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-}
-
-/// Serialize org chart writes and cancel Helm if the registry session is lost.
-pub(crate) async fn with_chart_lock<T>(
-    registry_input: &str,
-    namespace: &wamn_registry::OrgId,
-    work: impl std::future::Future<Output = anyhow::Result<T>>,
-) -> anyhow::Result<T> {
-    let mut connection = wamn_postgres::connect(registry_input).await?;
-    sqlx::query("SELECT pg_advisory_lock(hashtextextended('wamn.org-chart/' || $1, 0))")
-        .bind(namespace)
-        .execute(&mut connection)
-        .await?;
-    tokio::pin!(work);
-    // The existing lifecycle operations use a one-second heartbeat as well.
-    let mut heartbeat = tokio::time::interval(Duration::from_secs(1));
-    loop {
-        tokio::select! {
-            result = &mut work => { connection.ping().await.context("org chart lock session was lost")?; return result; },
-            _ = heartbeat.tick() => connection.ping().await.context("org chart lock session was lost")?,
-        }
     }
 }

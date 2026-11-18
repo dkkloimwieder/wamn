@@ -144,7 +144,7 @@ impl PlatformRouteAuthenticator {
             .ok_or_else(signature_unauthorized)?;
         let credential = fact.credential_id.ok_or_else(signature_unauthorized)?;
         let secret = facts
-            .secret(&credential)
+            .secret(credential, None)
             .await
             .map_err(|_| signature_unauthorized())?;
         let secret: SignatureSecret =

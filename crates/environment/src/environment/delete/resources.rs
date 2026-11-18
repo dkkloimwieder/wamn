@@ -29,7 +29,7 @@ pub(super) async fn require_ownership(
 ) -> anyhow::Result<()> {
     let namespace = &platform.target.namespace;
     let reader =
-        wamn_provision::project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+        wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
     if let Some(object) = get(platform, namespace, "deployment", &reader).await? {
         anyhow::ensure!(
             object["metadata"]["annotations"]["wamn.environment"].as_str()
@@ -39,7 +39,7 @@ pub(super) async fn require_ownership(
     }
     if let Some(object) = get(
         platform,
-        &platform.database_namespace,
+        &platform.target.namespace,
         "publication",
         database,
     )
@@ -57,28 +57,35 @@ pub(super) async fn require_ownership(
     let (org, env) = (&triple.org, &triple.env);
     let cdc = name::cdc_nats_certificate(triple);
     let recovery = name::recovery_nats_user(triple);
-    for (certificate, secret, user) in [
+    let admin = name::environment_nats_admin(org, env);
+    let workload = name::environment_nats_certificate(org, env);
+    for (certificate, user) in [
         (
-            name::environment_nats_certificate(org, env),
-            name::environment_nats_secret(org, env),
-            name::environment_nats_user(org, env),
+            workload.as_str(),
+            name::environment_nats_user(org, env).as_str(),
         ),
-        (cdc.clone(), cdc, name::cdc_nats_user(org, &triple.project, env)),
-        (recovery.clone(), recovery.clone(), recovery),
+        (admin.as_str(), admin.as_str()),
+        (
+            cdc.as_str(),
+            name::cdc_nats_user(org, &triple.project, env).as_str(),
+        ),
+        (recovery.as_str(), recovery.as_str()),
     ] {
-        if let Some(object) = get(platform, namespace, "certificate", &certificate).await? {
+        if let Some(object) = get(platform, namespace, "certificate", certificate).await? {
             anyhow::ensure!(
-                object["spec"]["secretName"] == secret
+                object["spec"]["secretName"] == certificate
                     && object["spec"]["commonName"] == user
                     && object["spec"]["dnsNames"] == serde_json::json!([user]),
                 "refused: Certificate {certificate} does not belong to {triple}"
             );
         }
-        if let Some(object) = get(platform, namespace, "secret", &secret).await? {
+        if certificate != admin
+            && let Some(object) = get(platform, namespace, "secret", certificate).await?
+        {
             anyhow::ensure!(
                 object["metadata"]["annotations"]["cert-manager.io/certificate-name"]
                     == certificate,
-                "refused: Secret {secret} does not belong to Certificate {certificate}"
+                "refused: Secret {certificate} does not belong to its Certificate"
             );
         }
     }
@@ -87,7 +94,7 @@ pub(super) async fn require_ownership(
 
 pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
     let cdc =
-        wamn_provision::project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+        wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
     if get(platform, &platform.target.namespace, "deployment", &cdc)
         .await?
         .is_some()
@@ -121,6 +128,11 @@ pub(super) async fn delete_event_certificates(
         delete_secret(
             platform,
             &name::environment_nats_secret(&triple.org, &triple.env),
+        )
+        .await?;
+        delete_secret(
+            platform,
+            &name::environment_nats_admin(&triple.org, &triple.env),
         )
         .await?;
     }

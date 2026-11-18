@@ -15,6 +15,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let cluster = "database-owner";
     let database = "recorded-environment-database";
+    let capture_secret = wamn_registry::name::project_login_secret(database, wamn_role::CDC_LOGIN);
     let entry = crate::environment::entry(
         &repository.join("deploy/charts/project"),
         document.org.as_str(),
@@ -41,7 +42,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         assert_eq!(account["metadata"]["namespace"], document.org.as_str());
         let name = account["metadata"]["name"].as_str().unwrap();
         let privileged = name.ends_with("-operation");
-        let capture = wamn_provision::project_env_cdc_secret_name(
+        let capture = wamn_provision::cdc_reader_name(
             &document.org,
             &document.project,
             &document.env,
@@ -99,7 +100,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                             .iter()
                             .all(|verb| verb == "get")
                     );
-                    let allowed = [&capture, &format!("{cluster}-ca")];
+                    let allowed = [&capture_secret, &format!("{cluster}-ca")];
                     assert!(
                         rule["resourceNames"]
                             .as_array()

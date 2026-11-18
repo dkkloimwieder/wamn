@@ -4,9 +4,7 @@ use super::{
     document::{EnvironmentDocument, EnvironmentFile},
     ensure as resources,
 };
-use crate::provision_project_env::{
-    self, ProvisionProjectEnvOutcome, ProvisionProjectEnvRequest, workload,
-};
+use crate::provision_project_env::{self, registry, workload};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -31,14 +29,9 @@ pub async fn configure(
     .await?;
     let result = lock
         .protect(async {
-            wamn_catalog::configuration::require_placement(
-                &mut *lock.client().await,
-                &document.org,
-                &document.env,
-                &document.policy,
-            )
-            .await?;
             let applied_document = document.to_yaml()?;
+            let sizing = serde_json::to_value(&document.database)?;
+            let settings = resources::postgres_settings(&platform).await?;
             let projects: Vec<_> = match application {
                 Some(application) => vec![document.into_application(application)?],
                 None => document.into_projects().collect(),
@@ -58,13 +51,11 @@ pub async fn configure(
                     })?;
                 reserved.push(outcome);
             }
-            installer::org::apply(&platform.target, &platform.chart, system_owner, &first.org)
-                .await?;
             let project_names: Vec<_> = projects
                 .iter()
                 .map(|project| project.project.as_str())
                 .collect();
-            let host = resources::prepare_host_upgrade(
+            let (replicas, host) = resources::prepare_host_upgrade(
                 &platform,
                 &first.org,
                 &first.env,
@@ -73,12 +64,22 @@ pub async fn configure(
             )
             .await?;
             let configure_projects = async {
-                for (index, (project, outcome)) in projects.iter().zip(reserved).enumerate() {
+                for (index, (project, instance)) in projects.iter().zip(reserved).enumerate() {
+                    let connection =
+                        installer::environment::connection_for(&project.triple(), &instance);
+                    let database = installer::environment::database_values(
+                        &connection,
+                        replicas,
+                        sizing.clone(),
+                        &settings,
+                    )?;
                     configure_project(
                         &platform,
                         project,
                         application,
-                        outcome,
+                        &instance,
+                        &connection,
+                        database,
                         system_owner,
                         &lock,
                         index == 0,
@@ -124,25 +125,18 @@ async fn reserve_project(
     document: &EnvironmentDocument,
     disposable: Option<bool>,
     system_owner: &str,
-) -> anyhow::Result<ProvisionProjectEnvOutcome> {
-    provision_project_env::provision_project_env(&ProvisionProjectEnvRequest {
-        org: document.org.clone(),
-        project: document.project.clone(),
-        env: document.env.clone(),
-        policy: Some(document.policy.clone()),
-        target: document.target.clone(),
+) -> anyhow::Result<wamn_registry::instance_suffix::InstanceSuffix> {
+    wamn_provision::validate_project_env_cdc(&document.org, &document.project, &document.env)?;
+    registry::record_project_env(
+        system_owner,
+        &document.triple(),
+        Some(&document.policy),
+        &document.target,
+        &name::project_env_secret_name(&document.org, &document.project, &document.env),
+        Some(document.org.as_str()),
+        &registry::mint_instance_suffix()?,
         disposable,
-        system_database_url: Some(system_owner.into()),
-        cluster: None,
-        connection_limit: None,
-        cluster_namespace: document.org.to_string(),
-        namespace: document.org.to_string(),
-        secret_namespace: Some(document.org.to_string()),
-        emit_database: None,
-        emit_role_sql: None,
-        emit_privilege_sql: None,
-        emit_secret: None,
-    })
+    )
     .await
 }
 
@@ -150,22 +144,24 @@ async fn configure_project(
     platform: &Platform,
     document: &EnvironmentDocument,
     application: Option<&wamn_catalog::ApplicationName>,
-    outcome: ProvisionProjectEnvOutcome,
+    instance: &wamn_registry::instance_suffix::InstanceSuffix,
+    connection: &wamn_postgres::ConnectionConfig,
+    mut values: Value,
     system_owner: &str,
     lock: &LifecycleLock,
     first: bool,
     applied_document: &str,
 ) -> anyhow::Result<()> {
-    let triple = &outcome.triple;
+    let triple = &document.triple();
     if first {
-        resources::wait_broker_certificate(platform, triple).await?;
+        let admin = name::environment_nats_admin(&triple.org, &triple.env);
+        resources::wait_certificate(platform, &admin).await?;
     }
     let unconfigured = super::document::read_configuration(&mut *lock.client().await, triple)
         .await?
         .is_none();
-    let connection = installer::environment::connection(system_owner, triple).await?;
-    let owner = wamn_provision::migrations::MigrationDatabase::Project
-        .configuration(&connection.to_json()?)?;
+    let owner = connection.to_json()?;
+    let cluster = name::project_cluster(&connection.database);
     let schemas = if unconfigured {
         Vec::new()
     } else {
@@ -179,23 +175,18 @@ async fn configure_project(
         );
         resources::publication_schemas(platform, document).await?
     };
-    let capture = installer::environment::capture_connection(system_owner, triple).await?;
-    let publication = wamn_provision::cdc_object_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-        &outcome.instance,
-    );
-    let connections = workload::connections(triple, &connection)?;
+    let capture = installer::environment::capture_configuration(connection.clone())?;
+    let publication =
+        wamn_provision::cdc_object_name(&triple.org, &triple.project, &triple.env, instance);
+    let connections = workload::connections(connection)?;
 
     wamn_broker::authorization::provision_project(&platform.target, triple).await?;
 
-    let mut values = outcome.database_values;
     installer::platform::resources::merge(
         &mut values,
         installer::platform::operations::values(
             triple,
-            &outcome.cluster,
+            &cluster,
             &connection.database,
             document.applications.keys(),
         )?,
@@ -204,24 +195,13 @@ async fn configure_project(
         &mut values,
         installer::environment::publication_values(
             triple,
-            &outcome.instance,
-            &outcome.cluster,
+            instance,
+            &cluster,
             &publication,
             &schemas,
         ),
     );
-    let capture_config: wamn_postgres::ConnectionConfig = serde_json::from_str(&capture)?;
-    values["loginSecrets"] = connections
-        .iter()
-        .map(|(_, connection)| connection)
-        .chain(std::iter::once(&capture_config))
-        .map(
-            |connection| json!({"name":connection.credentials.name,"username":connection.username}),
-        )
-        .collect::<Vec<_>>()
-        .into();
-    values["databaseConfig"] =
-        workload::configuration_values(triple, &outcome.instance, &connections)?;
+    values["databaseConfig"] = workload::configuration_values(triple, instance, &connections)?;
     let certificate = name::cdc_nats_certificate(triple);
     let recovery = name::recovery_nats_user(triple);
     values["brokerCertificates"] = json!([
@@ -247,7 +227,7 @@ async fn configure_project(
     wamn_kubernetes::kubectl::wait_ready(
         &platform.target,
         "cluster.postgresql.cnpg.io",
-        &outcome.cluster,
+        &cluster,
         Duration::from_secs(120),
     )
     .await?;
@@ -270,6 +250,8 @@ async fn configure_project(
             .await?;
             drop(client);
             if unconfigured {
+                installer::platform_migrations::install_project(&mut *project_lock.client().await)
+                    .await?;
                 crate::platform_migrations::restore_project(
                     &owner,
                     &crate::platform_migrations::embedded_sources(
@@ -331,7 +313,7 @@ async fn reader_values(
         installer::platform::identity::NATS_URL,
     );
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
-    let capture_name = wamn_provision::project_env_cdc_secret_name(org, project, env);
+    let capture_name = wamn_provision::cdc_reader_name(org, project, env);
     Ok(json!({
         "name":capture_name,
         "key": name::project_env_key(org, project, env),

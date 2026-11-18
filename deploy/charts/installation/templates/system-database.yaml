@@ -1,0 +1,122 @@
+{{- $namespace := "platform" }}
+{{- $org := required "Set org." .Values.org }}
+{{- $system := .Values.systemDatabase }}
+{{- $cluster := required "Set systemDatabase.cluster." $system.cluster }}
+{{- $database := required "Set systemDatabase.name." $system.name }}
+{{- $roles := $system.roles }}
+{{- if empty $roles }}
+{{- fail "Set systemDatabase.roles." }}
+{{- end }}
+{{- $caName := printf "%s-ca" $cluster }}
+{{- $ca := lookup "v1" "Secret" $namespace $caName }}
+{{- $crt := "" }}
+{{- $key := "" }}
+{{- if $ca }}
+{{- $crt = required "System database CA requires ca.crt" (index $ca.data "ca.crt") }}
+{{- $key = required "System database CA requires ca.key" (index $ca.data "ca.key") }}
+{{- else }}
+{{- $new := genCA "WAMN system PostgreSQL" 3650 }}
+{{- $crt = $new.Cert | b64enc }}
+{{- $key = $new.Key | b64enc }}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $caName }}
+  namespace: {{ $namespace }}
+data:
+  ca.crt: {{ $crt | quote }}
+  ca.key: {{ $key | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $caName }}
+  namespace: {{ $org }}
+data:
+  ca.crt: {{ $crt | quote }}
+{{- $groups := dict }}
+{{- range $roles }}
+{{- range .inRoles }}
+{{- if ne . $database }}
+{{- $_ := set $groups . (dict "name" . "login" false "inherit" false) }}
+{{- end }}
+{{- end }}
+{{- $name := .passwordSecret.name }}
+{{- $old := lookup "v1" "Secret" $namespace $name }}
+{{- $username := .name | b64enc }}
+{{- $password := "" }}
+{{- if $old }}
+{{- if or (ne $old.type "kubernetes.io/basic-auth") (ne $old.data.username $username) (not $old.data.password) }}
+{{- fail (printf "Invalid basic-auth Secret %s in %s" $name $namespace) }}
+{{- end }}
+{{- $password = $old.data.password }}
+{{- else }}
+{{- $password = randAlphaNum 48 | b64enc }}
+{{- end }}
+{{- range list $namespace $org }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ . }}
+  labels:
+    cnpg.io/reload: "true"
+type: kubernetes.io/basic-auth
+data:
+  username: {{ $username | quote }}
+  password: {{ $password | quote }}
+{{- end }}
+{{- if eq $name "wamn-identity-db" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-configuration
+  namespace: {{ $org }}
+data:
+  connection.json: {{ dict "host" $system.host "port" 5432 "database" $database "username" .name "credentials" (dict "namespace" $org "name" $name) "server_ca" (dict "namespace" $org "name" $caName) | toJson | quote }}
+{{- end }}
+{{- end }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $cluster }}
+  namespace: {{ $namespace }}
+spec:
+  instances: 1
+  enablePDB: false
+  imageName: {{ .Values.postgres.image | quote }}
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: true
+  certificates:
+    serverCASecret: {{ $caName }}
+    clientCASecret: {{ $caName }}
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+  storage:
+    size: 10Gi
+  managed:
+    {{- $ordered := list }}
+    {{- range keys $groups | sortAlpha }}
+    {{- $ordered = append $ordered (index $groups .) }}
+    {{- end }}
+    roles: {{ concat $ordered $roles | toJson }}
+  postgresql:
+    pg_hba: [hostssl all all all scram-sha-256]
+    parameters:
+      max_slot_wal_keep_size: "4GB"
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: top
+      auto_explain.log_min_duration: "-1"
+  bootstrap:
+    initdb:
+      database: {{ $database }}
+      owner: {{ $database }}
+      postInitSQL:
+        - {{ printf "ALTER ROLE %s NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS" (quote $database) | quote }}
