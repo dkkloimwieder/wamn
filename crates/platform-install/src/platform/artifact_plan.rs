@@ -39,6 +39,11 @@ impl SelectedChart {
         &self.directory
     }
 
+    /// The chart to install for an application, without the bundled platform charts.
+    pub fn application_chart(&self) -> PathBuf {
+        self.directory.join("platform/application")
+    }
+
     /// Borrow the host, a top-level platform image, or a role image by name.
     ///
     /// # Errors
@@ -142,7 +147,7 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
             .split('/')
             .next()
             .unwrap_or_default();
-        let loopback = authority.starts_with("localhost:") || authority.starts_with("127.0.0.1:");
+        let loopback = wamn_registry::registry_is_loopback(authority);
         let pull_reference = if loopback && std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
             format!(
                 "oci://{}/{}",
@@ -207,6 +212,8 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
         "edge",
         "org",
         "environment",
+        "project",
+        "application",
     ] {
         require_file(&directory.join("platform").join(name).join("Chart.yaml"))?;
     }
@@ -313,6 +320,14 @@ fn validate_platform_images(value: &Value) -> anyhow::Result<()> {
 pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
     let platform = chart.join("platform");
     std::fs::create_dir_all(&platform)?;
+    // Helm stores every chart file in the release record, including unrendered assets.
+    // Install the stamped application chart from this leaf to keep the bundle out of that record.
+    let application = platform.join("application");
+    std::fs::create_dir(&application)?;
+    for name in ["Chart.yaml", "values.yaml"] {
+        std::fs::copy(chart.join(name), application.join(name))?;
+    }
+    copy_package_output(&chart.join("templates"), &application.join("templates"))?;
     for (name, source) in [
         ("infra", "deploy/charts/infrastructure"),
         ("installation", "deploy/charts/installation"),
@@ -320,6 +335,7 @@ pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
         ("edge", "deploy/charts/edge"),
         ("org", "deploy/charts/org"),
         ("environment", "deploy/charts/environment"),
+        ("project", "deploy/charts/project"),
     ] {
         copy_package_output(&repository.join(source), &platform.join(name))?;
     }
@@ -337,7 +353,17 @@ pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
     });
     std::fs::write(path, serde_yaml::to_string(&values)?)?;
 
-    for source in ["identity", "edge", "release"] {
+    for name in ["installation", "environment"] {
+        let path = platform.join(name).join("values.yaml");
+        let mut values = read_yaml(&path)?;
+        values["global"]["nats"] = serde_json::json!({
+            "schedulerUrl":super::identity::NATS_URL,
+            "dataUrl":super::identity::NATS_URL,
+        });
+        std::fs::write(path, serde_yaml::to_string(&values)?)?;
+    }
+
+    for source in ["identity", "edge", "application"] {
         let output = std::process::Command::new("helm")
             .arg("package")
             .arg(repository.join("deploy/charts").join(source))

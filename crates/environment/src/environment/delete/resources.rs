@@ -1,6 +1,5 @@
 //! Ownership tests and deletion of resources installed outside Helm.
 
-use anyhow::Context as _;
 use serde_json::Value;
 use wamn_registry::{Triple, name};
 
@@ -29,11 +28,8 @@ pub(super) async fn require_ownership(
     database: &str,
 ) -> anyhow::Result<()> {
     let namespace = &platform.target.namespace;
-    let reader = wamn_provision::project_env_cdc_secret_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-    );
+    let reader =
+        wamn_provision::project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
     if let Some(object) = get(platform, namespace, "deployment", &reader).await? {
         anyhow::ensure!(
             object["metadata"]["annotations"]["wamn.environment"].as_str()
@@ -61,8 +57,11 @@ pub(super) async fn require_ownership(
     let (org, env) = (&triple.org, &triple.env);
     let cdc = name::cdc_nats_certificate(triple);
     for (certificate, secret, user) in [
-        (name::environment_nats_certificate(org, env), name::environment_nats_secret(org, env),
-            name::environment_nats_user(org, env)),
+        (
+            name::environment_nats_certificate(org, env),
+            name::environment_nats_secret(org, env),
+            name::environment_nats_user(org, env),
+        ),
         (cdc.clone(), cdc, name::cdc_nats_user(triple)),
     ] {
         if let Some(object) = get(platform, namespace, "certificate", &certificate).await? {
@@ -75,7 +74,8 @@ pub(super) async fn require_ownership(
         }
         if let Some(object) = get(platform, namespace, "secret", &secret).await? {
             anyhow::ensure!(
-                object["metadata"]["annotations"]["cert-manager.io/certificate-name"] == certificate,
+                object["metadata"]["annotations"]["cert-manager.io/certificate-name"]
+                    == certificate,
                 "refused: Secret {secret} does not belong to Certificate {certificate}"
             );
         }
@@ -84,12 +84,18 @@ pub(super) async fn require_ownership(
 }
 
 pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
-    reconcile_project(
-        platform,
-        triple,
-        serde_json::json!({"cdcReader": null, "operations": null}),
-    )
-    .await?;
+    let cdc =
+        wamn_provision::project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+    if get(platform, &platform.target.namespace, "deployment", &cdc)
+        .await?
+        .is_some()
+    {
+        let release = name::environment_resource_name(&triple.org, &triple.project, &triple.env);
+        wamn_platform_install::environment::update_project(
+            &platform.target, &platform.chart, &release,
+            &serde_json::json!({"cdcReader":{"paused":true},"publication":{"reclaimPolicy":"delete"}}),
+        ).await?;
+    }
     crate::environment::cdc_reader::wait_reader_stopped(
         &platform.target.kubeconfig,
         &platform.target.context,
@@ -99,77 +105,31 @@ pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyho
     .await
 }
 
-pub(super) async fn delete_publication(platform: &Platform, database: &str) -> anyhow::Result<()> {
-    let namespace = &platform.database_namespace;
-    if get(platform, namespace, "publication", database)
-        .await?
-        .is_some()
-    {
-        kubectl(
-            platform,
-            namespace,
-            &[
-                "patch",
-                "publication",
-                database,
-                "--type",
-                "merge",
-                "-p",
-                r#"{"spec":{"publicationReclaimPolicy":"delete"}}"#,
-            ],
-            None,
-        )
-        .await?;
-        kubectl(
-            platform,
-            namespace,
-            &[
-                "delete",
-                "publication",
-                database,
-                "--ignore-not-found",
-                "--wait=true",
-                "--timeout=120s",
-            ],
-            None,
-        )
-        .await
-        .context("delete the environment Publication CR")?;
-    }
-    Ok(())
-}
-
 pub(super) async fn delete_event_certificates(
     platform: &Platform,
     triple: &Triple,
     last: bool,
 ) -> anyhow::Result<()> {
-    reconcile_project(platform, triple, serde_json::json!({"brokerCertificates": []})).await?;
     delete_secret(platform, &name::cdc_nats_certificate(triple)).await?;
     if last {
         let host_release = name::environment_host_name(&triple.org, &triple.env);
         wamn_kubernetes::helm::uninstall(&platform.target, &host_release).await?;
-        delete_secret(platform, &name::environment_nats_secret(&triple.org, &triple.env)).await?;
-    }
-    Ok(())
-}
-
-async fn reconcile_project(platform: &Platform, triple: &Triple, overlay: Value) -> anyhow::Result<()> {
-    let release = wamn_provision::environment_names::environment_resource_name(&triple.org, &triple.project, &triple.env)?;
-    if crate::platform::resources::release_values(
-        &platform.target, &platform.target.namespace, &release,
-    ).await?.is_some() {
-        wamn_platform_install::environment::apply(
-            &platform.target, &platform.chart.join("platform/environment"), &release, overlay,
-        ).await?;
+        delete_secret(
+            platform,
+            &name::environment_nats_secret(&triple.org, &triple.env),
+        )
+        .await?;
     }
     Ok(())
 }
 
 async fn delete_secret(platform: &Platform, secret: &str) -> anyhow::Result<()> {
     kubectl(
-        platform, &platform.target.namespace,
+        platform,
+        &platform.target.namespace,
         &["delete", "secret", secret, "--ignore-not-found"],
         None,
-    ).await.map(drop)
+    )
+    .await
+    .map(drop)
 }

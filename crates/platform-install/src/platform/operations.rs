@@ -1,4 +1,4 @@
-//! Environment worker accounts are owned by the environment chart.
+//! Environment worker accounts are owned by the project chart.
 use serde_json::{Value, json};
 use wamn_registry::Triple;
 

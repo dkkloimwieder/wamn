@@ -13,6 +13,17 @@ use wamn_registry::Triple;
 
 pub type Declarations = BTreeMap<String, Vec<ManagedRole>>;
 
+pub(crate) fn control(org: &wamn_registry::OrgId, database: &str) -> ManagedRole {
+    managed_role(
+        wamn_registry::name::credential_login(
+            wamn_role::CONTROL_ROLE,
+            &wamn_registry::control_identity_hash(org, database),
+        ),
+        wamn_role::CONTROL_ROLE,
+        "wamn-control-db".into(),
+    )
+}
+
 /// Fixed bootstrap credentials precede every org and project row.
 pub fn platform(
     namespace: &wamn_registry::OrgId,
@@ -28,6 +39,7 @@ pub fn platform(
                 "wamn-apply".into(),
             ),
             MigrationDatabase::System.managed_role(database),
+            control(namespace, database),
             managed_role(
                 wamn_provision::identity_role::identity_issuer_login(
                     &crate::platform::identity::issuer(namespace.as_str()),
@@ -67,16 +79,6 @@ pub async fn registered(
     )))
     .execute(&mut *snapshot).await?;
     sqlx::query("SET TRANSACTION READ ONLY").execute(&mut *snapshot).await?;
-    let environments: Vec<wamn_registry::EnvName> =
-        sqlx::query_scalar("SELECT env FROM registry.environments WHERE org=$1")
-            .bind(namespace)
-            .fetch_all(&mut *snapshot)
-            .await?;
-    for environment in environments {
-        declarations.entry(cluster.into()).or_default().push(
-            wamn_provision::system_reader::managed_role(namespace, &environment, database),
-        );
-    }
     let projects: Vec<ProjectFact> = sqlx::query_as(wamn_registry::sql::INSTALL_PROJECTS)
         .bind(namespace)
         .fetch_all(&mut *snapshot)

@@ -17,8 +17,8 @@ dependencies:
 - name: wamn-edge
   repository: file://../edge
   version: 0.1.0
-- name: release
-  repository: file://../release
+- name: application
+  repository: file://../application
   version: 0.1.143
-digest: sha256:adf899b39fae4bbdabe668ba9c9b89a1839c579887e1fc4ddd8572bb597c3e7a
-generated: "2026-11-17T21:18:52.646156052-05:00"
+digest: sha256:df34065ed0076527713c34341bc68f4816efc4229d4ef6dc91e666c664a5670e
+generated: "2026-11-18T07:45:46.398334717-05:00"

@@ -1,7 +1,7 @@
 //! The `release` chart of one application
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
-//! An application is one Helm release of `deploy/charts/release`: the pinned
+//! An application is one Helm release of `deploy/charts/application`: the pinned
 //! workload and route resources. The environment chart owns the host.
 //! This module derives the release name, renders the install values, stamps the
 //! platform image set into the chart's defaults,

@@ -339,14 +339,7 @@ fn manifest(
     // Reset changes the shared host chart under the existing lifecycle authority.
     job["spec"]["template"]["spec"]["serviceAccountName"] = match operation {
         Operation::Reset => format!("wamn-operation-{org}"),
-        _ => format!(
-            "{coordinate}-{}",
-            if operation.privileged() {
-                "sql"
-            } else {
-                "code"
-            }
-        ),
+        _ => format!("{coordinate}-operation"),
     }
     .into();
     job["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
@@ -391,8 +384,8 @@ mod tests {
         .unwrap();
         for (operation, account) in [
             (Operation::Reset, "wamn-operation-acme".to_owned()),
-            (Operation::Apply, format!("{coordinate}-sql")),
-            (Operation::Diff, format!("{coordinate}-code")),
+            (Operation::Apply, format!("{coordinate}-operation")),
+            (Operation::Diff, format!("{coordinate}-operation")),
         ] {
             let job = manifest(
                 operation,

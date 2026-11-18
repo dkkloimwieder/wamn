@@ -16,7 +16,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     let cluster = "database-owner";
     let database = "recorded-environment-database";
     let entry = crate::environment::entry(
-        &repository.join("deploy/charts/environment"),
+        &repository.join("deploy/charts/project"),
         document.org.as_str(),
         "fixture",
         operations::values(&document, cluster, database)?,
@@ -40,7 +40,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     {
         assert_eq!(account["metadata"]["namespace"], document.org.as_str());
         let name = account["metadata"]["name"].as_str().unwrap();
-        let privileged = name.ends_with("-sql");
+        let privileged = name.ends_with("-operation");
         let capture = wamn_provision::project_env_cdc_secret_name(
             &document.org,
             &document.project,
@@ -124,7 +124,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                     if resources.iter().any(|resource| resource == "secrets") {
                         assert!(!verbs.iter().any(|verb| verb == "watch"));
                         if verbs.iter().any(|verb| verb == "patch") {
-                            assert!(privileged, "only SQL credential handoff patches Secrets");
+                            assert!(privileged, "only the project worker patches Secrets");
                         }
                     }
                 }

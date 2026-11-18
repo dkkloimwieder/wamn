@@ -9,7 +9,7 @@ use std::path::Path;
 fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let chart = wamn_fixture_package::repository_root().join("deploy/charts/release");
+    let chart = wamn_fixture_package::repository_root().join("deploy/charts/application");
     let metadata: Value =
         serde_yaml::from_slice(&fs::read(chart.join("Chart.yaml")).unwrap()).unwrap();
     let objects = wamn_kubernetes::helm::template(&serde_json::json!({

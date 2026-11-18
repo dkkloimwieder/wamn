@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_kubernetes::Target;
 
@@ -22,46 +22,6 @@ pub fn chart_input(chart: &Path, image: &str, document: &ClusterDocument) -> any
             "web":{"image":image, "bucket":if bucket.is_empty() { String::new() } else { format!("gs://{bucket}") }},
         }
     }))
-}
-
-/// Refuse application deployment when the platform edge has no ready endpoint.
-pub async fn require_running(target: &Target) -> anyhow::Result<()> {
-    let slices: Value = serde_json::from_str(
-        &kubectl::kubectl(
-            &target.kubeconfig,
-            &target.context,
-            "hosts",
-            &[
-                "get",
-                "endpointslices",
-                "--selector=kubernetes.io/service-name=wamn-edge",
-                "-o",
-                "json",
-            ],
-            None,
-        )
-        .await?,
-    )?;
-    ensure!(
-        slices["items"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|slice| {
-                slice["endpoints"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .any(|endpoint| {
-                        endpoint["conditions"]["ready"] == true
-                            && endpoint["addresses"]
-                                .as_array()
-                                .is_some_and(|addresses| !addresses.is_empty())
-                    })
-            }),
-        "platform edge has no ready endpoint; run wamn platform deploy"
-    );
-    Ok(())
 }
 
 /// Hostname conflicts are warnings. The edge selects the lowest route ConfigMap name.

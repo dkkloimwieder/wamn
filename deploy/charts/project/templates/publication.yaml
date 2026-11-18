@@ -19,5 +19,5 @@ spec:
     {{- end }}
   parameters:
     publish: {{ .publish | quote }}
-  publicationReclaimPolicy: retain
+  publicationReclaimPolicy: {{ default "retain" .reclaimPolicy }}
 {{- end }}

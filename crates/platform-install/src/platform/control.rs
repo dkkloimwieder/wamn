@@ -140,13 +140,15 @@ pub(super) fn resource_entry(
     let org = &document.org;
     let name = wamn_registry::name::control_resource(org);
     let configuration = format!("{name}-configuration");
+    let database = "wamn_system";
+    let control_login = crate::roles::control(org, database);
     let connection = |username, secret| {
         crate::credentials::configuration(
             org.as_str(),
             "wamn-pg",
             format!("wamn-pg-rw.{org}.svc.cluster.local"),
             5432,
-            "wamn_system".into(),
+            database.into(),
             username,
             secret,
         )
@@ -157,7 +159,19 @@ pub(super) fn resource_entry(
         .and_then(Value::as_str)
         .map(str::parse::<wamn_digest::Digest>)
         .transpose()?;
+    let insecure_registry = wamn_registry::registry_is_loopback(&document.registry);
+    let registry = match document.registry.split_once('/') {
+        Some((super::resources::LOCAL_REGISTRY, path)) => {
+            std::borrow::Cow::Owned(format!("{}/{path}", super::resources::POD_REGISTRY))
+        }
+        _ if document.registry == super::resources::LOCAL_REGISTRY => {
+            super::resources::POD_REGISTRY.into()
+        }
+        _ => document.registry.as_str().into(),
+    };
     let config = json!({"org":org,"http_addr":"0.0.0.0:80",
+        "public_origin":format!("https://{}", document.route_hosts.control),
+        "database":connection(control_login.name, control_login.password_secret.name),
         "apply_database":connection("wamn_apply".parse::<wamn_identity_protocol::LoginName>()?,"wamn-apply".into()),
         "session_issuer":super::identity::issuer(org.as_str()),
         "session_jwks_url":format!("{}/.well-known/jwks.json", super::identity::issuer(org.as_str())),
@@ -166,11 +180,15 @@ pub(super) fn resource_entry(
         "session_jwks_ca":"/etc/identity-ca/ca.crt",
         "administration_dir":"/etc/wamn/control-administration","worker":{"image":chart.image("control")?,"configuration":configuration,"service_account":wamn_registry::name::operation(org)},
         "chart":chart.reference(),
+        "package_artifact_base":format!("{registry}/wamn/packages"),
+        "component_artifact_base":format!("{registry}/wamn/components"),
+        "integration_artifact_base":format!("{registry}/wamn/integrations"),
+        "insecure_registry":insecure_registry,
         "registry_auth_file":"/credentials/registry/config.json",
         "events":{"stream_replicas":1,"dup_window_secs":120},
         "event_observer":null,"identity":{"endpoint":super::identity::issuer(org.as_str()),"client_cert":"/etc/identity-control/tls.crt","client_key":"/etc/identity-control/tls.key","server_ca":"/etc/identity-ca/ca.crt"}});
     Ok(
-        json!({"chart":chart.directory(),"version":chart.version,"name":name,"namespace":org,
+        json!({"chart":chart.application_chart(),"version":chart.version,"name":name,"namespace":org,
         "values":{"controlService":true,"org":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},
         "control":{"image":chart.image("control")?,"configuration":config,"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::name::control_service_account(org)},
         "platform":{"chart":chart.reference()}}}),

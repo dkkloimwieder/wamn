@@ -16,7 +16,7 @@ pub struct PgArgs {}
 
 pub async fn tier(root: &Path, _args: &TierArgs) -> anyhow::Result<()> {
     let version =
-        wamn_platform_install::release_chart::chart_version(&root.join("deploy/charts/release"))?;
+        wamn_platform_install::release_chart::chart_version(&root.join("deploy/charts/application"))?;
     let work = tempfile::Builder::new()
         .prefix("wamn-cloud-bench-")
         .tempdir()?
@@ -147,7 +147,7 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
         .keep();
     println!("Run directory: {}", work.display());
     let version =
-        wamn_platform_install::release_chart::chart_version(&root.join("deploy/charts/release"))?;
+        wamn_platform_install::release_chart::chart_version(&root.join("deploy/charts/application"))?;
     let output = std::env::var_os("OUTPUT").map_or_else(
         || work.join(format!("gcp-pg-{version}.json")),
         PathBuf::from,

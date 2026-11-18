@@ -1,4 +1,4 @@
-//! Renders `deploy/charts/release` with `helm template` and tests what an
+//! Renders `deploy/charts/application` with `helm template` and tests what an
 //! environment's Helm release holds
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
@@ -43,7 +43,7 @@ fn an_unstamped_chart_does_not_render() {
     let chart = scratch.0.join("chart");
     let status = Command::new("cp")
         .args(["-r"])
-        .arg(repository_root().join("deploy/charts/release"))
+        .arg(repository_root().join("deploy/charts/application"))
         .arg(&chart)
         .status()
         .expect("copy the chart");

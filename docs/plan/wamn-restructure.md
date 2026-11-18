@@ -655,6 +655,7 @@ Issues:
 - No `helm template` pre-check and no `helm get values` read-back.
 - One value each for the NATS address, the identity issuer address and the registry address.
 - Delete the `wamn-platform-observer` Role, RoleBinding and ClusterRole with the read-back; today they let every service account in an org namespace read the installation namespace's Secrets.
+- Control gets its own system-database login, a member of `wamn_control`, with the Secret `wamn-control-db` from the org chart. The settings generator writes `database` and `public_origin`, which control requires to start (missing since Epic 1).
 
 8.5 Build.
 - Codegen's describe cache (`.wamn/describe/`, committed, with a refresh flag and a check that it is current). The build uses a database only when SQL changes. The build is skipped when its inputs are unchanged.
@@ -715,6 +716,7 @@ Issues:
 - 3.6: RBAC that reaches past its need: `wamn-platform-operations` gives `wamn-operation-<org>` full Secret writes and RBAC `bind` and `escalate` in the platform namespace, and control's org Role has `get` on every Secret in the org namespace. Shrink both to named resources.
 - 3.7: `apps/platform_ui` reads residency and live fields from the old status contract. Regenerate its clients against the new `environment.status` and `application.rollback` contracts.
 - Recorded exceptions to C1 until 3.6: operation Jobs and their per-request input ConfigMaps, `wamn-credential-*` (written by connection administration at run time), and `wamn-nats-authorization`.
+- 3.6: `platform update` still reads installation and host values back with `helm get values` (`platform/deploy.rs`), because no other source holds them. The `platform` chart replaces it.
 
 # Part 2: Review log
 
@@ -2148,3 +2150,9 @@ Facts:
 **Ruled (D, 2026-11-18): Epic 8 scout answers.** `serde-saphyr` and a schema generated from the Rust types; the project is found from the application name; one pin per (org, env, connection). Per-request input ConfigMaps owned by the Job. The release is read from WorkloadDeployment annotations (top package digest, Helm revision), and rollback runs `helm rollback` in the worker Job; control gets no Helm or Secret-list access. Codegen's describe cache lives in `.wamn/describe/`, not `.sqlx/`. Residency goes, with approved status and rollback contract changes. One operation account per project. Inside one deploy, SQL runs before code, migrations must work with the previous code, and deploy never resets. `wamn.json` gets a compiled deploy section that pins component and base digests. The append check compares with the latest digest under the same tag; versions are free tags. 8.4 also deletes the platform observer RBAC, which let every org service account read the installation namespace's Secrets.
 
 **Ruled (D, 2026-11-18): package tags are mutable.** Following the version rulings of 2026-10-26 and 2026-11-10, a tag names the latest digest pushed under it. `push_package` no longer refuses a new digest under an existing tag; it runs the append check against the tag's current digest, then moves the tag.
+
+**Ruled (D, 2026-11-18): Epic 8 read-back, CSRF key and project selection.** `platform update` keeps its `helm get values` read-back until the 3.6 `platform` chart; every other read-back and the `helm template` pre-check go, and the environment Jobs take platform facts from control's settings file. The edge chart renders `wamn-web-csrf` with `lookup`, and the Rust writer goes. `status` covers every project unless an application narrows it; `platform schema --target project` covers every project in file order; `schema reset` requires `--project`, because it clears the whole project database.
+
+**Ruled (D, 2026-11-18): Epic 8 settings facts.** The control settings generator derives the three artifact bases and `insecure_registry` from the one registry value, with the shared loopback rule; the environment Jobs read them from control's settings, and their read-back goes. This also fixes control settings that lacked required fields. Org apply builds the `wamn_system` cluster entry from the org ID, and its read-back of the previous org release goes.
+
+**Ruled (D, 2026-11-18): capture-gap recovery and control's login.** Recover and close become operation Jobs that set the project chart's `pause` value, and the values builder keeps the reader paused while a gap is open, so a deploy cannot restart it early; the routes change from synchronous calls to operations. Control gets its own least-privilege system-database login, a member of `wamn_control`, under org row security; `wamn_apply` is not used for control's request path.

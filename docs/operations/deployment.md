@@ -24,7 +24,7 @@ Set this variable to the platform registry credential file before deployment.
 Deploy the chart reference that the build command prints:
 
 ```bash
-wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/release@sha256:<digest>
+wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/application@sha256:<digest>
 wamn platform status deploy/kind/cluster.k
 ```
 
@@ -66,7 +66,7 @@ Unselected UI, external mail, or telemetry does not prevent platform readiness.
 If bootstrap stops before control exists, repeat it with the same document and chart:
 
 ```bash
-wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/release@sha256:<digest>
+wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/application@sha256:<digest>
 ```
 
 Kubernetes and its operators own running resources. Helm owns release revisions.
@@ -129,7 +129,7 @@ kind delete cluster --name wamn-local
 To rebuild a disposable local platform, delete `wamn-local` with the command above.
 This removes its system database, every project database, and all cluster-local application state.
 Keep the shared registry and prepare current artifacts through [building](building.md#local-platform-artifacts).
-Run `wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/release@sha256:<digest>` again.
+Run `wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/application@sha256:<digest>` again.
 The new platform starts with zero applications. Redeploy each required application through `wamn deploy`.
 This procedure does not upgrade a persistent system database.
 
@@ -216,7 +216,9 @@ Set the project `revocation_seconds` to an integer from 0 to 3600. Deploy writes
 The value bounds the lifetime of positive grant answers.
 Zero disables auth caching. Restart hosts after changing a bound.
 `wamn env apply environment.k` submits the configuration to authenticated control.
-The installer reconciles the database and role declarations. The environment library saves the configuration after provisioning succeeds.
+The worker upgrades the org, project, and environment charts once each.
+The org chart declares the database logins. The project chart keeps their passwords across upgrades.
+The worker saves the configuration after the database, capture slot, and host are ready.
 A new database receives its initial SQL through an installer bootstrap Job. That worker refuses an existing baseline.
 Later configuration updates use restricted connections and never read a superuser credential.
 Use `--disposable` only when first recording an environment that can be reset.

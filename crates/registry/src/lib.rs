@@ -27,4 +27,12 @@ pub use env_name::{EnvName, ParseEnvNameError};
 pub use project_env_key::{ParseProjectEnvKeyError, ProjectEnvKey};
 
 mod project_identity;
-pub use project_identity::app_identity_hash;
+pub use project_identity::{app_identity_hash, control_identity_hash};
+
+/// Whether native tools can use HTTP for this registry endpoint.
+pub fn registry_is_loopback(registry: &str) -> bool {
+    matches!(
+        registry.split([':', '/']).next(),
+        Some("localhost" | "127.0.0.1")
+    ) || registry.starts_with("[::1]")
+}
