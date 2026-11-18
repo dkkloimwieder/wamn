@@ -29,12 +29,16 @@ pub use wamn_catalog::configuration::{
 };
 
 /// An application's deployment selection and declared membership.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationSelection {
     /// Desired release, read from the registry or supplied by the deploy request.
     #[serde(skip)]
     pub current: DeclaredRelease,
+    #[schemars(
+        length(min = 1, max = 253),
+        regex(pattern = "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
+    )]
     pub hostname: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
@@ -144,40 +148,8 @@ impl EnvironmentDocument {
     pub(super) fn require_valid(&self) -> anyhow::Result<()> {
         wamn_provision::validate_project_env(&self.org, &self.project, &self.env)
             .context("the environment coordinate is not valid")?;
-        ensure!(
-            self.revocation_seconds.is_none_or(|seconds| seconds <= 3600),
-            "revocation_seconds must be between 0 and 3600"
-        );
-        for (name, application) in &self.applications {
-            let hostname = &application.hostname;
-            ensure!(
-                !hostname.is_empty()
-                    && hostname.len() <= 253
-                    && hostname.bytes().all(|byte| byte.is_ascii_lowercase()
-                        || byte.is_ascii_digit()
-                        || byte == b'.'
-                        || byte == b'-')
-                    && !hostname.starts_with(['.', '-'])
-                    && !hostname.ends_with(['.', '-']),
-                "application {name}: hostname {hostname:?} is not a lowercase DNS name"
-            );
-        }
-        ensure!(!self.target.trim().is_empty(), "target is empty");
-        for (application, definition) in &self.applications {
-            for alias in definition.connections.keys() {
-                ensure!(
-                    !alias.is_empty(),
-                    "application {application} has an empty connection alias"
-                );
-            }
-        }
-        for (name, integration) in &self.integrations {
-            ensure!(
-                !name.is_empty() && integration.version > 0,
-                "integration {name} requires a positive version"
-            );
-        }
-        Ok(())
+        require_settings(&self.target, self.revocation_seconds, &self.integrations)?;
+        require_applications(&self.applications, &self.integrations)
     }
 
     /// Find the sole application that owns a package.
@@ -218,76 +190,55 @@ impl EnvironmentDocument {
     pub fn triple(&self) -> Triple {
         Triple::new(self.org.clone(), self.env.clone(), self.project.clone())
     }
+}
 
-    /// The canonical bytes: RFC 8785 JSON.
-    ///
-    /// # Errors
-    ///
-    /// Never for a valid document.
-    pub fn canonical_json(&self) -> anyhow::Result<Vec<u8>> {
-        let value = serde_json::to_value(self).context("encode the environment")?;
-        Ok(wamn_digest::canonical_json_bytes(&value))
+/// Validate fields shared across the environment.
+pub(super) fn require_settings(
+    target: &str,
+    revocation_seconds: Option<u32>,
+    integrations: &BTreeMap<String, Integration>,
+) -> anyhow::Result<()> {
+    ensure!(!target.trim().is_empty(), "target is empty");
+    ensure!(
+        revocation_seconds.is_none_or(|seconds| seconds <= 3600),
+        "revocation_seconds must be between 0 and 3600"
+    );
+    for (name, integration) in integrations {
+        ensure!(
+            wamn_catalog::configuration::valid_connection_name(name) && integration.version > 0,
+            "integration {name} requires a valid connection name and positive version"
+        );
     }
+    Ok(())
+}
 
-    /// The document as an `environment.k` file that compiles to this document.
-    pub fn to_kcl(&self) -> String {
-        use std::fmt::Write as _;
-        let quote = |text: &str| serde_json::to_string(text).expect("a string encodes");
-        let mut lines = vec!["import environment".to_owned(), String::new()];
-        lines.push("environment.Environment {".to_owned());
-        for (key, value) in [
-            ("org", self.org.as_str()),
-            ("project", self.project.as_str()),
-            ("env", self.env.as_str()),
-            ("target", self.target.as_str()),
-            ("policy", self.policy.as_str()),
-        ] {
-            lines.push(format!("    {key} = {}", quote(value)));
+pub(super) fn require_applications(
+    applications: &BTreeMap<wamn_catalog::ApplicationName, ApplicationSelection>,
+    integrations: &BTreeMap<String, Integration>,
+) -> anyhow::Result<()> {
+    for (name, application) in applications {
+        let hostname = &application.hostname;
+        ensure!(
+            !hostname.is_empty()
+                && hostname.len() <= 253
+                && hostname.bytes().all(|byte| byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || byte == b'.'
+                    || byte == b'-')
+                && !hostname.starts_with(['.', '-'])
+                && !hostname.ends_with(['.', '-']),
+            "application {name}: hostname {hostname:?} is not a lowercase DNS name"
+        );
+        for (alias, connection) in &application.connections {
+            ensure!(
+                !alias.is_empty(),
+                "application {name} has an empty connection alias"
+            );
+            ensure!(
+                integrations.contains_key(connection.as_str()),
+                "application {name} connection {alias} has no environment pin for {connection}"
+            );
         }
-        if let Some(seconds) = self.revocation_seconds {
-            lines.push(format!("    revocation_seconds = {seconds}"));
-        }
-        if let Some(mode) = self.schema.mode {
-            let mode = serde_json::to_string(&mode).expect("a schema mode encodes");
-            lines.push(format!("    schema = {{mode = {mode}}}"));
-        }
-        lines.push("    integrations = {".to_owned());
-        for (name, integration) in &self.integrations {
-            lines.push(format!(
-                "        {} = {{version = {}}}",
-                quote(name),
-                integration.version
-            ));
-        }
-        lines.push("    }".to_owned());
-        lines.push("    applications = {".to_owned());
-        for (name, application) in &self.applications {
-            let bindings = application
-                .connections
-                .iter()
-                .map(|(alias, name)| format!("{} = {}", quote(alias), quote(&name.to_string())))
-                .collect::<Vec<_>>()
-                .join(", ");
-            lines.push(format!(
-                "        {} = {{\n            hostname = {}\n            connections = {{{bindings}}}",
-                quote(name.as_str()),
-                quote(&application.hostname)
-            ));
-            if let Some(client) = &application.client {
-                lines.push(format!(
-                    "            client = {{package = {}, web = {}}}",
-                    quote(client.package.as_str()),
-                    quote(&client.web.to_string())
-                ));
-            }
-            lines.push("        }".to_owned());
-        }
-        lines.push("    }".to_owned());
-        lines.push("}".to_owned());
-        let mut out = String::new();
-        for line in lines {
-            writeln!(out, "{line}").expect("writing to a String succeeds");
-        }
-        out
     }
+    Ok(())
 }

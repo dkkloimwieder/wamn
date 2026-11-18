@@ -655,7 +655,7 @@ The focused connection and caller test above uses this product path.
 The CLI browser targets `platform_ui_live` and `receiving_ui_live` also use this path.
 They call `wamn env apply` and `wamn dev` against an installed disposable platform.
 Supply `WAMN_TEST_CLUSTER`, `WAMN_DEV_ENV`, `WAMN_TIMINGS_ROOT`, and the existing `WAMN_BROWSER_*` sign-in inputs listed in each test.
-The environment directory contains `environment.k` for one application.
+The environment directory contains `environment.yaml` for one application.
 The platform browser reads invitation mail from the installed identity service's outbox.
 Receiving browser assertions still require the fixed business dataset. The product has no import route for that dataset.
 

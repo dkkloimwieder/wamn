@@ -32,8 +32,9 @@ It also checks the org control login and the fixed apply login.
 | `oauth_encryption` | Optional envelope encryption configuration |
 
 Application operations use the shared Kubernetes Job runner.
-The service supplies the authenticated actor and reads typed environment configuration through `wamn-registry`.
-The registry owns desired release selections. Helm owns deployment and rollback history.
+The service supplies the authenticated actor and reads the applied environment settings under that actor’s authority.
+The registry stores applied environment settings. Helm records deployment and rollback history.
+Control reads the current package digest and revision from the application WorkloadDeployment.
 Workers receive coordinates and release identities. A request cannot select an image, command, credential, namespace, or chart path.
 The worker calls `environment::operation::execute` once. It runs SQL in the same Job.
 `release.retain` calls the environment retention owner under its existing lock.

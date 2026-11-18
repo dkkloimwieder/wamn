@@ -495,7 +495,7 @@ A host queue lease, reap, renew, or complete transaction binds the `wamn:executo
 An absent operation stores NULL. Each transaction has its own identity row.
 The [record history log](data-access.md#history-tables-and-the-log-trigger) records the operation in each entry.
 
-The same row stores the operation's application name from `environment.k` in `application`.
+The same row stores the operation's application name from `environment.yaml` in `application`.
 A base operation uses the map application that holds its declaring package.
 A component outside the composed entry uses the same map.
 The `number_counter.set` route binds the requested application after it finds the name in that map.

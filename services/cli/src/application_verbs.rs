@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use clap::Args;
 use serde_json::json;
 use std::path::PathBuf;
-use wamn_environment::environment;
+use wamn_environment::environment::{self, document::EnvironmentFile};
 
 use crate::operation_verbs::ControlHost;
 
@@ -37,6 +37,8 @@ pub struct RollbackArgs {
 
 #[derive(Debug, Args)]
 pub struct StatusArgs {
+    /// Restrict status to this application's project.
+    pub application: Option<wamn_catalog::ApplicationName>,
     /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
@@ -52,10 +54,12 @@ pub(crate) async fn develop(args: DeployArgs) -> anyhow::Result<()> {
 
 async fn deploy_source(args: DeployArgs, development: bool) -> anyhow::Result<()> {
     let host = ControlHost::from_env()?;
+    let file = EnvironmentFile::compile(&args.env)?;
+    let triple = file.triple(file.application_project(&args.application)?);
     let digest = match args.package {
         Some(package) => {
             let document = environment::analyse::select_application(
-                &environment::document::EnvironmentDocument::compile(&args.env)?,
+                &file.into_project(&triple.project)?,
                 Some(&args.application),
             )?;
             let published = if development {
@@ -78,30 +82,48 @@ async fn deploy_source(args: DeployArgs, development: bool) -> anyhow::Result<()
     };
     host.run(
         "application.deploy",
-        &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
+        &triple,
         json!({"release":digest,"application":args.application}),
     )
     .await
 }
 
 pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
+    let document = EnvironmentFile::compile(&args.env)?;
+    let triple = document.triple(document.application_project(&args.application)?);
     ControlHost::from_env()?
         .run(
             "application.rollback",
-            &environment::document::EnvironmentDocument::compile(&args.env)?.triple(),
+            &triple,
             json!({"application":args.application,"release":args.release}),
         )
         .await
 }
 
 pub async fn status(args: StatusArgs) -> anyhow::Result<()> {
-    let target = environment::document::EnvironmentDocument::compile(&args.env)?.triple();
-    let status = ControlHost::from_env()?
-        .call(
-            "environment.status",
-            &json!({"project":target.project,"env":target.env}),
-        )
-        .await?;
-    println!("{}", serde_json::to_string_pretty(&status)?);
+    let document = EnvironmentFile::compile(&args.env)?;
+    let projects: Vec<_> = match args.application {
+        Some(application) => vec![document.application_project(&application)?],
+        None => document
+            .projects
+            .iter()
+            .map(|project| &project.name)
+            .collect(),
+    };
+    let host = ControlHost::from_env()?;
+    let mut statuses = Vec::with_capacity(projects.len());
+    let mut failed = false;
+    for project in projects {
+        let selection = json!({"project":project,"env":document.env});
+        match host.call("environment.status", &selection).await {
+            Ok(status) => statuses.push(json!({"project":project,"status":status})),
+            Err(error) => {
+                failed = true;
+                statuses.push(json!({"project":project,"error":format!("{error:#}")}));
+            }
+        }
+    }
+    println!("{}", serde_json::to_string_pretty(&statuses)?);
+    anyhow::ensure!(!failed, "could not read status for every selected project");
     Ok(())
 }

@@ -216,8 +216,9 @@ Package builds install it when it is absent.
 Set `WAMN_KCL` to use another binary of the pinned version.
 `wamn_codegen::kcl::binary` selects that override first, then the pinned installation, then `kcl` on `PATH`.
 The compiler runs KCL and never installs tools.
-Platform document schemas live with their document types in `crates/environment/kcl/`.
-The OpenTofu renderer reads `ProjectDocument` in that same crate.
+The environment JSON Schema lives in `crates/environment/environment.schema.json`.
+Run `cargo xtask environment-schema` after editing the Rust types.
+Run `cargo xtask environment-schema --check` to check the committed schema.
 The catalog owns the authored model in `crates/catalog/src/manifest.rs`. The code generator checks document rules once and derives inherited model fields once. Catalog readers decode compiled facts without repeating document checks.
 
 The schema module that `wamn.k` imports as `manifest` is [`crates/codegen/kcl/manifest`](../../crates/codegen/kcl/manifest/manifest.k).

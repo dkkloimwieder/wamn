@@ -6,7 +6,7 @@ use anyhow::Context as _;
 use clap::Args;
 use tokio::signal::unix::{SignalKind, signal};
 use wamn_dev::dev::watch::{FilesystemInvalidationSource, GitSource};
-use wamn_environment::environment::document::EnvironmentDocument;
+use wamn_environment::environment::document::{EnvironmentDocument, EnvironmentFile};
 
 /// Inputs for development against an installed platform.
 #[derive(Debug, Args)]
@@ -26,7 +26,7 @@ pub struct DevCommandArgs {
 /// A deployed release stays available after this command exits.
 pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     crate::operation_verbs::ControlHost::from_env()?;
-    let document = EnvironmentDocument::compile(&args.config)?;
+    let document = source_project(&args.config)?;
     let (_, roots) = wamn_dev::source_deploy::sources(&document, &args.overlay_root)?;
     let source = if args.watch {
         let git = GitSource::discover(&args.overlay_root).await?;
@@ -51,7 +51,7 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     });
     let result = wamn_dev::dev::run(source, receiver, async |source| {
         let result = async {
-            let document = EnvironmentDocument::compile(&args.config)?;
+            let document = source_project(&args.config)?;
             let (application, roots) =
                 wamn_dev::source_deploy::sources(&document, &args.overlay_root)?;
             if let Some(source) = source {
@@ -93,11 +93,17 @@ pub struct PublishArgs {
 
 /// Publish existing build output and print the top package OCI digest.
 pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
-    let document = EnvironmentDocument::compile(&args.env)?;
+    let document = source_project(&args.env)?;
     let (_, digest) =
         wamn_dev::source_deploy::publish_built_from_env(&document, &args.package).await?;
     println!("{digest}");
     Ok(())
+}
+
+fn source_project(file: &std::path::Path) -> anyhow::Result<EnvironmentDocument> {
+    let document = EnvironmentFile::compile(file)?;
+    let application = document.only_application()?.clone();
+    document.into_application(&application)
 }
 
 fn watch_inputs(

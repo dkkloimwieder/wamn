@@ -65,14 +65,13 @@ fn exchange(listener: &TcpListener, status: u16, answer: Value) -> anyhow::Resul
 fn command(root: &Path, url: &str, arguments: &[&str]) -> anyhow::Result<Command> {
     // A declared application stays a published selection even when its name is a directory.
     std::fs::create_dir_all(root.join("a"))?;
-    let file = root.join("environment.json");
-    std::fs::write(
-        &file,
-        serde_json::to_vec(&json!({
-            "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
-            "applications":{"a":{ "hostname":"a.invalid"}}
-        }))?,
-    )?;
+    let file = root.join("environment.yaml");
+    let document: wamn_environment::environment::document::EnvironmentFile =
+        serde_json::from_value(json!({
+            "org":"acme", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
+            "projects":[{"name":"apps","applications":{"a":{ "hostname":"a.invalid"}}}]
+        }))?;
+    std::fs::write(&file, document.to_yaml()?)?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
     command
         .current_dir(root)

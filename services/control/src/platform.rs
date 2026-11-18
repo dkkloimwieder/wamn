@@ -3,8 +3,10 @@
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use wamn_provision::migrations::MigrationDatabase;
+use wamn_catalog::lifecycle_lock::LifecycleLock;
+use wamn_environment::environment::document::{EnvironmentDocument, EnvironmentFile};
 use wamn_identity_protocol::PrincipalId;
+use wamn_provision::migrations::MigrationDatabase;
 
 use crate::{Configuration, execution::Execution};
 
@@ -27,7 +29,9 @@ enum Request {
     },
     Schema {
         target: String,
-        project: Option<wamn_registry::ProjectId>,
+        #[serde(default)]
+        projects: Vec<wamn_registry::ProjectId>,
+        org: Option<wamn_registry::OrgId>,
         env: Option<wamn_registry::EnvName>,
         apply: bool,
     },
@@ -111,42 +115,23 @@ impl Execution {
             {"name":"work","mountPath":"/work"},
             {"name":"administration","mountPath":self.administration,"readOnly":true}
         ]);
-        let owner = if let Request::Schema {
-            target,
-            project,
-            env,
-            ..
-        } = &request
-            && target == "project"
-        {
-            let project = project.as_ref().context("project is absent")?;
-            let env = env.as_ref().context("environment is absent")?;
-            let triple = wamn_registry::Triple::new(self.org.clone(), env.clone(), project.clone());
-            let instance = wamn_environment::provision_project_env::read_project_env_instance(
-                &self.platform.system_database_url,
-                &triple,
-            )
-            .await?;
-            let database = wamn_provision::project_env_database_name(
-                &self.org, project, env, &instance,
-            );
-            MigrationDatabase::Project.managed_role(&database)
-        } else {
-            MigrationDatabase::System.managed_role(&self.platform_database.database)
-        };
-        for (volume, secret, path) in [
-            (
-                "apply",
-                self.platform_database.credentials.name.as_str(),
-                "/credentials/apply",
-            ),
-            (
+        wamn_kubernetes::job::mount(
+            &mut job,
+            "apply",
+            self.platform_database.credentials.name.as_str(),
+            "/credentials/apply",
+            &["username", "password"],
+        );
+        // The project SQL path reads the named login through its existing API access.
+        if !matches!(&request, Request::Schema { target, .. } if target == "project") {
+            let owner = MigrationDatabase::System.managed_role(&self.platform_database.database);
+            wamn_kubernetes::job::mount(
+                &mut job,
                 "owner",
-                owner.password_secret.name.as_str(),
+                &owner.password_secret.name,
                 "/credentials/owner",
-            ),
-        ] {
-            wamn_kubernetes::job::mount(&mut job, volume, secret, path, &["username", "password"]);
+                &["username", "password"],
+            );
         }
         wamn_kubernetes::job::mount(
             &mut job,
@@ -201,16 +186,22 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                 operation == "environment.configure",
                 "unknown environment lifecycle operation"
             );
-            let document = wamn_environment::environment::document::EnvironmentDocument::from_json(
-                &serde_json::to_vec(&document.context("environment document is absent")?)?,
-            )?;
+            let document: EnvironmentFile =
+                serde_json::from_value(document.context("environment document is absent")?)?;
+            document.require_valid()?;
+            let selected = match &application {
+                Some(application) => document.application_project(application)?,
+                None => &document.projects[0].name,
+            };
             ensure!(
-                document.triple() == triple,
+                &triple.project == selected
+                    && triple.org == document.org
+                    && triple.env == document.env,
                 "environment document differs from its authorized coordinate"
             );
             wamn_environment::environment::lifecycle::configure(
                 &platform,
-                &document,
+                document,
                 application.as_ref(),
                 disposable,
                 &system,
@@ -244,13 +235,14 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
         }
         Request::Schema {
             target,
-            project,
+            projects,
+            org,
             env,
             apply,
         } => {
             if target == "system" {
                 ensure!(
-                    project.is_none() && env.is_none(),
+                    projects.is_empty() && org.is_none() && env.is_none(),
                     "system SQL has no project target"
                 );
                 let url =
@@ -268,54 +260,86 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                 .await?;
             } else {
                 ensure!(target == "project", "unknown platform SQL target");
-                let project = project.context("project is absent")?;
                 let env = env.context("environment is absent")?;
-                let triple =
-                    wamn_registry::Triple::new(config.org.clone(), env.clone(), project.clone());
-                let document = wamn_environment::environment::document::EnvironmentDocument::read(
-                    &platform, &triple,
-                )
-                .await?;
-                let instance = wamn_environment::provision_project_env::read_project_env_instance(
-                    &platform.system_database_url,
-                    &triple,
-                )
-                .await?;
-                let database = wamn_provision::project_env_database_name(
-                    &config.org,
-                    &project,
-                    &env,
-                    &instance,
-                );
-                let key = wamn_provision::control_administration_key(&project, &env);
-                let input = std::fs::read_to_string(config.administration_dir.join(key))?;
                 ensure!(
-                    wamn_postgres::identity(&input)?.1 == database,
-                    "project SQL connection differs from the registry database"
+                    org.as_ref() == Some(&config.org),
+                    "environment belongs to another org"
                 );
-                let migration = MigrationDatabase::Project.configuration(&input)?;
-                let expected = wamn_environment::environment::sql::ExpectedDatabase::read(
-                    &platform, &document,
+                let first = projects.first().context("environment has no projects")?;
+                let coordinate =
+                    wamn_registry::Triple::new(config.org.clone(), env.clone(), first.clone());
+                let lock = LifecycleLock::acquire_wait(
+                    wamn_postgres::connect(&platform.system_database_url).await?,
+                    &coordinate,
                 )
                 .await?;
-                wamn_environment::environment::sql::project_schema(
-                    &platform,
-                    &document,
-                    wamn_environment::environment::sql::ProjectSchemaRequest {
-                        expected: &expected,
-                        migration_database_url: &migration,
-                        sources: &wamn_environment::platform_migrations::embedded_sources(
+                let result = lock
+                    .protect(async {
+                        let sources = wamn_environment::platform_migrations::embedded_sources(
                             MigrationDatabase::Project,
-                        ),
-                        apply,
-                    },
-                    &mut output,
-                )
-                .await?;
+                        );
+                        for project in projects {
+                            let triple = wamn_registry::Triple::new(
+                                config.org.clone(),
+                                env.clone(),
+                                project,
+                            );
+                            project_schema(
+                                config,
+                                &platform,
+                                &lock,
+                                &triple,
+                                &sources,
+                                apply,
+                                &mut output,
+                            )
+                            .await
+                            .with_context(|| format!("platform SQL for {}", triple.project))?;
+                        }
+                        Ok(())
+                    })
+                    .await;
+                lock.release().await;
+                result?;
             }
             Ok(json!({"log":String::from_utf8(output)?}))
         }
     }
+}
+
+async fn project_schema(
+    config: &Configuration,
+    platform: &wamn_environment::environment::Platform,
+    lock: &LifecycleLock,
+    triple: &wamn_registry::Triple,
+    sources: &[sqlx::migrate::Migration],
+    apply: bool,
+    output: &mut Vec<u8>,
+) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    EnvironmentDocument::read(platform, triple).await?;
+    let instance = wamn_registry::deployment::instance_suffix(&mut *lock.client().await, triple)
+        .await?
+        .context("project deployment is absent")?;
+    let database = wamn_provision::project_env_database_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+        &instance,
+    );
+    let key = wamn_provision::control_administration_key(&triple.project, &triple.env);
+    let input = std::fs::read_to_string(config.administration_dir.join(key))?;
+    ensure!(
+        wamn_postgres::identity(&input)?.1 == database,
+        "project SQL connection differs from the registry database"
+    );
+    let migration = MigrationDatabase::Project.configuration(&input)?;
+    writeln!(output, "Project {}", triple.project)?;
+    wamn_environment::environment::sql::project_schema(
+        lock, triple, &migration, sources, apply, output,
+    )
+    .await
 }
 
 impl Execution {
