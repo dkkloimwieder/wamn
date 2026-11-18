@@ -15,8 +15,9 @@ use crate::delivery::{self, NANOS_PER_SECOND};
 const UTC_MINUTE: i64 = 60;
 const MINUTE_NS: u64 = 60 * NANOS_PER_SECOND;
 const RECOVERY_INTERVAL: u64 = 30 * NANOS_PER_SECOND;
-const CONSUMER_REFRESH: u64 = NANOS_PER_SECOND;
-const FETCH_TIMEOUT_MS: u32 = 1_000;
+const CONSUMER_REFRESH: u64 = 30 * NANOS_PER_SECOND;
+const CONSUMER_REOPEN_DELAY: u64 = NANOS_PER_SECOND;
+const FETCH_TIMEOUT_MS: u32 = 30_000;
 // The host's pull message handle retains its progress acker after settlement.
 const PROGRESS_INTERVAL: u64 = 10 * NANOS_PER_SECOND;
 
@@ -137,7 +138,7 @@ async fn pull(worker: Rc<Worker>) {
             }
             Err(error) => eprintln!("open data-change workflow consumer: {error:?}"),
         }
-        clock::wait_for(CONSUMER_REFRESH).await;
+        clock::wait_for(CONSUMER_REOPEN_DELAY).await;
     }
 }
 
