@@ -28,7 +28,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: pgbench
-          image: ghcr.io/cloudnative-pg/postgresql:18
+          image: ghcr.io/cloudnative-pg/postgresql:18.7
           command: ["sleep", "7200"]
           env:
             - name: PGPASSWORD

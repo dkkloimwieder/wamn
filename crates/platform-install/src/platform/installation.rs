@@ -61,7 +61,7 @@ pub fn organization_values(org: &wamn_registry::OrgId) -> Value {
     json!({"org":org,"clusters":[{
         "name":"wamn-pg","database":"wamn_system","owner":wamn_role::SYSTEM_ROLE,"enablePDB":false,
         "parameters":{"max_slot_wal_keep_size":"4GB","pg_stat_statements.max":"10000","pg_stat_statements.track":"top","auto_explain.log_min_duration":"-1"},
-        "policy":{"name":"system","instances":1,"image":"ghcr.io/cloudnative-pg/postgresql:18","cpu":"200m","memory":"256Mi","storage":"10Gi","hibernation":"never","backup-cadence":"","wal-retention":""}
+        "policy":{"name":"system","instances":1,"image":"ghcr.io/cloudnative-pg/postgresql:18.7","cpu":"200m","memory":"256Mi","storage":"10Gi","hibernation":"never","backup-cadence":"","wal-retention":""}
     }]})
 }
 

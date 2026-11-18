@@ -5,7 +5,7 @@ use wamn_registry::{EnvName, OrgId};
 
 /// The CNPG image every provisioned cluster runs (the default seeded into
 /// [`EnvPolicy::dev`] / [`EnvPolicy::prod`]; a per-env `image` knob can override).
-pub const DEFAULT_PG_IMAGE: &str = "ghcr.io/cloudnative-pg/postgresql:18";
+pub const DEFAULT_PG_IMAGE: &str = "ghcr.io/cloudnative-pg/postgresql:18.7";
 
 /// Where an env's data physically lives, relative to other envs — the
 /// recovery-domain knob that (with [`Placement`]) drives [`cluster_of`]. `own` =
