@@ -154,6 +154,8 @@ pub(super) fn resource_entry(
             secret,
         )
     };
+    let control_database = connection(control_login.name, control_login.password_secret.name);
+    let apply_database = connection("wamn_apply".parse()?, "wamn-apply".into());
     let platform_ui = chart
         .values()
         .get("platformUi")
@@ -172,8 +174,8 @@ pub(super) fn resource_entry(
     };
     let config = json!({"org":org,"http_addr":"0.0.0.0:80",
         "public_origin":format!("https://{}", document.route_hosts.control),
-        "database":connection(control_login.name, control_login.password_secret.name),
-        "apply_database":connection("wamn_apply".parse::<wamn_identity_protocol::LoginName>()?,"wamn-apply".into()),
+        "database":control_database,
+        "apply_database":apply_database,
         "session_issuer":super::identity::issuer(org.as_str()),
         "session_jwks_url":format!("{}/.well-known/jwks.json", super::identity::issuer(org.as_str())),
         "session_audience":wamn_registry::name::org_audience(org),

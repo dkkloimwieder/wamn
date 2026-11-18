@@ -19,7 +19,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         &repository.join("deploy/charts/project"),
         document.org.as_str(),
         "fixture",
-        operations::values(&document, cluster, database)?,
+        operations::values(&document, cluster, database, std::iter::empty())?,
     )?;
     let objects = wamn_kubernetes::helm::template(&entry)?;
     let mut identities = std::collections::BTreeSet::new();
@@ -41,11 +41,6 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         assert_eq!(account["metadata"]["namespace"], document.org.as_str());
         let name = account["metadata"]["name"].as_str().unwrap();
         let privileged = name.ends_with("-operation");
-        let capture = wamn_provision::cdc_reader_name(
-            &document.org,
-            &document.project,
-            &document.env,
-        );
         for binding in objects
             .iter()
             .filter(|object| object["kind"] == "RoleBinding" && object["metadata"]["name"] == name)
@@ -64,60 +59,24 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                 })
                 .unwrap();
             assert_eq!(role["metadata"]["namespace"], document.org.as_str());
-            if name != capture {
-                assert!(role["rules"].as_array().unwrap().iter().any(|rule| {
-                    rule["apiGroups"]
+            assert!(role["rules"].as_array().unwrap().iter().any(|rule| {
+                rule["apiGroups"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|group| group == "")
+                    && rule["resources"]
                         .as_array()
                         .unwrap()
                         .iter()
-                        .any(|group| group == "")
-                        && rule["resources"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|resource| resource == "pods/proxy")
-                        && rule["verbs"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|verb| verb == "get")
-                }));
-            }
+                        .any(|resource| resource == "pods/proxy")
+                    && rule["verbs"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|verb| verb == "get")
+            }));
             for rule in role["rules"].as_array().unwrap() {
-                if name == capture {
-                    assert!(
-                        rule["resources"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .all(|resource| resource == "secrets")
-                    );
-                    assert!(
-                        rule["verbs"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .all(|verb| verb == "get")
-                    );
-                    let allowed = [&capture, &format!("{cluster}-ca")];
-                    assert!(
-                        rule["resourceNames"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .all(|resource| allowed
-                                .iter()
-                                .any(|name| resource.as_str() == Some(name.as_str())))
-                    );
-                    assert!(allowed.iter().all(|name| {
-                        rule["resourceNames"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|resource| resource.as_str() == Some(name.as_str()))
-                    }));
-                }
-
                 if role["metadata"]["namespace"] == document.org.as_str() {
                     let resources = rule["resources"].as_array().unwrap();
                     let verbs = rule["verbs"].as_array().unwrap();

@@ -97,20 +97,9 @@ async fn api(replies: Vec<(u16, Value)>) -> Api {
     }
 }
 
-fn secret(version: u64, other: &[u8]) -> Value {
-    json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"wamn-credential-acme--dev--app","resourceVersion":version.to_string()},"data":{"other":STANDARD.encode(other)}})
-}
-
 #[tokio::test]
-async fn credentials_retry_conflicts_without_losing_concurrent_values() {
-    let concurrent = vec![2; 1024 * 1024 - 1];
-    let fixture = api(vec![
-        (200, secret(1, &[1])),
-        (409, json!({})),
-        (200, secret(2, &concurrent)),
-        (200, secret(3, &concurrent)),
-    ])
-    .await;
+async fn credentials_use_a_key_scoped_patch() {
+    let fixture = api(vec![(200, json!({}))]).await;
     let target = CredentialSecret {
         name: "wamn-credential-acme--dev--app".into(),
         org: "acme",
@@ -122,20 +111,13 @@ async fn credentials_retry_conflicts_without_losing_concurrent_values() {
     assert_eq!(uuid::Uuid::parse_str(&stored.version).unwrap(), id);
     let requests = fixture.requests.lock().unwrap();
     let write = requests.last().unwrap();
-    assert_eq!(
-        write["metadata"]["resourceVersion"]
-            .as_str()
-            .unwrap()
-            .parse::<u64>()
-            .unwrap(),
-        2
+    assert!(write["metadata"].get("resourceVersion").is_none());
+    assert!(
+        write["metadata"]["labels"]
+            .get("app.kubernetes.io/managed-by")
+            .is_none()
     );
-    assert_eq!(
-        STANDARD
-            .decode(write["data"]["other"].as_str().unwrap())
-            .unwrap(),
-        concurrent
-    );
+    assert_eq!(write["data"].as_object().unwrap().len(), 1);
     assert_eq!(
         STANDARD
             .decode(write["data"][id.to_string()].as_str().unwrap())
@@ -146,8 +128,8 @@ async fn credentials_retry_conflicts_without_losing_concurrent_values() {
 
 #[tokio::test]
 async fn failed_or_redirected_writes_never_return_a_reference() {
-    for status in [302, 403, 500] {
-        let fixture = api(vec![(404, json!({})), (status, json!({}))]).await;
+    for status in [302, 403, 404, 409, 500] {
+        let fixture = api(vec![(status, json!({}))]).await;
         assert!(
             fixture
                 .store

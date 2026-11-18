@@ -7,9 +7,16 @@ Status reports N after that rollback. Use the same number with `wamn rollback --
 
 Without an explicit revision, the worker selects the newest earlier revision whose manifest contains its own revision number.
 It checks enabled workflows before it runs Helm rollback.
-Application upgrades and rollbacks use `--wait=watcher`. The project operation Role already grants `list` and `watch` on this chart's ConfigMaps, Services, and WorkloadDeployments.
+Application upgrades and rollbacks use `--wait=watcher`. The project operation Role grants `list` and `watch` on the chart resources it observes.
+
+The control deployment's operation Role lets it create the ConfigMap that carries each Job's input.
 
 Deploy uses the `workflow` NATS binding for the workflow service. It adds the `ingress` binding when the application declares Data change handlers.
 
 When `controlService` is enabled, the control pod projects the system control login and `control.systemMigrationSecret` under `/etc/wamn/db/<login-secret>/`. Each directory contains `username`, `password` and the system CA's `ca.crt`.
 The existing control administration directory supplies the public configuration and credential files for project connections.
+
+Each release with wasm integration authorities adds one egress policy for its environment's host group.
+The deploy resolves each authority to its explicit TCP port or the default socket port for its scheme.
+Policies add up across releases and Helm removes a release's policy on uninstall.
+The public IPv4 rule excludes fixed private and special-use ranges. wash-runtime enforces each integration's `allowedHosts`.

@@ -1,0 +1,81 @@
+{{- range (index .Values "runtime-operator").runtime.hostGroups }}
+{{- $name := .name }}
+{{- $namespace := default $.Release.Namespace .namespace }}
+{{- $host := dict "wasmcloud.com/name" "hostgroup" "wasmcloud.com/hostgroup" $name }}
+{{- if and .http .http.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $name }}-allow-edge-to-host, namespace: {{ $namespace | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $host | toJson }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: hosts}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: wamn-edge}
+      ports: [{port: {{ .http.port | int }}, protocol: TCP}]
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $name }}-allow-host-to-nats, namespace: {{ $namespace | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $host | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: platform}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: nats, app.kubernetes.io/instance: wamn}
+      ports: [{port: 4222, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $name }}-allow-host-to-identity, namespace: {{ $namespace | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $host | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: wamn-identity}
+      ports: [{port: 8443, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $name }}-allow-host-to-trace-collector, namespace: {{ $namespace | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $host | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: platform}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: opentelemetry-collector, app.kubernetes.io/instance: wamn}
+      ports: [{port: 4317, protocol: TCP}]
+{{- with $.Values.networkPolicy.projectClusters }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $name }}-allow-host-to-project-databases, namespace: {{ $namespace | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $host | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchExpressions:
+              - {key: cnpg.io/cluster, operator: In, values: {{ . | toJson }}}
+      ports: [{port: 5432, protocol: TCP}]
+{{- end }}
+{{- end }}

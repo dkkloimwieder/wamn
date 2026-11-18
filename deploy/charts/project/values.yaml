@@ -8,3 +8,6 @@ cluster: null
 recovery: null
 deleteData: false
 databaseConfig: null
+credentials: null
+networkPolicy:
+  objectStorage: []

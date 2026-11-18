@@ -121,6 +121,9 @@ Only overlays compose with their pinned bases.
 One YAML file declares the projects, applications, and connection pins of an environment.
 The registry stores the applied settings and one version per connection name in the environment.
 Helm records deployment and rollback history.
+The org chart declares the namespace, base RBAC, object and storage quotas, and default-deny network policy.
+The environment chart allows traffic for its host group. The project chart allows traffic for its database and change reader.
+Each application release adds its integration ports to the host group's public egress. The runtime enforces the authorities on each wasm integration.
 The installation chart owns the system PostgreSQL Cluster in namespace `platform`.
 The project chart owns each project's PostgreSQL Cluster, database, managed logins, backups, and change capture resources.
 The environment chart owns the shared host group.
@@ -133,7 +136,7 @@ Environment apply and delete check for unfinished application runs.
 The control service authenticates each request and selects the operation worker, chart, credentials, and target.
 Workers apply package migrations through SQLx while logged in as the restricted migration role.
 Trusted catalog writes use a separate connection.
-Credential Secrets and bootstrap SQL Jobs stay outside Helm values.
+The project chart creates each credential store Secret. Control writes individual credential keys through the Kubernetes API, so credential values stay outside Helm values.
 [Native control](control.md) defines the request boundary.
 [Deployment](../operations/deployment.md) defines lifecycle ordering, rollback, reset, and deletion.
 

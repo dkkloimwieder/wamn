@@ -1,0 +1,41 @@
+{{- if and (not .Values.controlService) .Values.roles }}
+{{- $ports := list }}
+{{- range .Values.components }}
+{{- if .authority }}
+{{- $ports = append $ports (required "An integration authority must have a resolved egressPort." .egressPort | int) }}
+{{- end }}
+{{- end }}
+{{- if $ports }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-allow-public-integration-ports" .Release.Name }}
+  namespace: {{ default .Release.Namespace .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      wasmcloud.com/name: hostgroup
+      wasmcloud.com/hostgroup: {{ required "hostGroup is required" .Values.hostGroup | quote }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+      ports:
+        {{- range uniq $ports }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+{{- end }}
+{{- end }}

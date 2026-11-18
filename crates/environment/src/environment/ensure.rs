@@ -286,6 +286,7 @@ async fn host_values(
         .as_object_mut()
         .expect("postgres plugin is an object")
         .remove("secretFrom");
+    let mut clusters = std::collections::BTreeSet::new();
     postgres["config"] = json!({});
     let mut add_project = |project: &Triple,
                            connection: &wamn_postgres::ConnectionConfig|
@@ -332,6 +333,7 @@ async fn host_values(
         let connection =
             wamn_platform_install::environment::connection(&platform.system_database_url, &project)
                 .await?;
+        clusters.insert(name::project_cluster(&connection.database));
         add_project(&project, &connection)?;
     }
     postgres["workloadConfig"] = "deny".into();
@@ -370,6 +372,7 @@ async fn host_values(
         "credentialAccess":{"account":account,"secrets":secrets},
         "brokerCertificates":[certificate],
         "brokerAdminCertificate":admin_certificate,
+        "networkPolicy":{"projectClusters":clusters},
     }))
 }
 

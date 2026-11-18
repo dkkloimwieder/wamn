@@ -12,6 +12,11 @@ It saves the applied environment YAML in the project's operations ConfigMap. Lat
 The CDC reader projects its replication login from `operations.captureSecret` and the `ca.crt` key from the project's CA Secret under `/etc/wamn/db/<login-secret>/`.
 Operation Jobs fetch their named database Secrets and stage the same files in their own volume.
 
+The `credentials` values name the empty Secret for the project release and the control ServiceAccount that can read and patch it.
+Control writes data keys after install. Helm uses server-side apply and keeps the Secret on uninstall.
+The project NetworkPolicies allow its host group, control, the worker Jobs, and its CDC reader to reach the project database.
+Set `networkPolicy.objectStorage` to the CIDR and TCP port pairs that the database and backup process use.
+
 Project upgrades omit the Helm wait flag. The worker reads the Database, certificates, and CDC reader Deployment by name.
 The worker checks the publication in SQL before it creates the replication slot. The reader waits up to 120 seconds for its slot before it starts replication.
 
