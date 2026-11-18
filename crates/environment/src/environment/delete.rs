@@ -30,7 +30,7 @@ use wamn_registry::{Triple, name};
 
 use super::Platform;
 use super::analyse::application_releases;
-use super::ensure::{kubectl, project_url};
+use super::ensure::kubectl;
 use wamn_broker::authorization::{ADMIN_CREDENTIAL_DIR, admin_context, environment_account_exists};
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_kubernetes::helm;
@@ -115,8 +115,11 @@ async fn delete_locked(
     )
     .await?
     .is_empty();
-    let project_lock = if cr_present {
-        let url = project_url(platform, triple).await?;
+    let project_connection =
+        cr_present.then(|| wamn_platform_install::environment::connection_for(triple, &instance));
+    let project_lock = if let Some(connection) = &project_connection {
+        platform.prepare_database(connection).await?;
+        let url = connection.to_json()?;
         match super::analyse::connect_project(&url).await {
             Ok(client) => Some(LifecycleLock::acquire(client, triple).await?),
             Err(error)
@@ -241,9 +244,7 @@ async fn delete_locked(
 
 
         // Slot administration belongs to the capture login on the recorded cluster.
-        if cr_present {
-            let project_connection =
-                wamn_platform_install::environment::connection(admin_url, triple).await?;
+        if let Some(project_connection) = project_connection {
             let mut observer = connect(&wamn_postgres::database_configuration(
                 &project_connection.to_json()?,
                 "postgres",
@@ -260,9 +261,9 @@ async fn delete_locked(
                     bail!("replication slot is active");
                 }
                 let capture =
-                    wamn_platform_install::environment::capture_connection(admin_url, triple)
-                        .await?;
-                let mut capture = connect(&capture).await?;
+                    wamn_platform_install::environment::capture_configuration(project_connection)?;
+                platform.prepare_database(&capture).await?;
+                let mut capture = connect(&capture.to_json()?).await?;
                 sqlx::raw_sql(sqlx::AssertSqlSafe(drop_replication_slot_sql(&slot)))
                     .execute(&mut capture)
                     .await?;

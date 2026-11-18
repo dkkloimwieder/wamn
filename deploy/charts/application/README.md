@@ -12,9 +12,11 @@ It checks enabled workflows before it runs Helm rollback.
 Application upgrades and rollbacks use `--wait=watcher`. The org worker Role grants `list` and `watch` on the non-Secret resources the watcher observes.
 
 The control deployment's operation Role lets it create the ConfigMap that carries each Job's input.
-The chart can grant named reads for the control database credentials during the transition to mounted database credentials.
 
 Deploy uses the `workflow` NATS binding for the workflow service. It adds the `ingress` binding when the application declares Data change handlers.
+
+When `controlService` is enabled, the control pod projects the system control login and `control.systemMigrationSecret` under `/etc/wamn/db/<login-secret>/`. Each directory contains `username`, `password` and the system CA's `ca.crt`.
+The existing control administration directory supplies the public configuration and credential files for project connections.
 
 Each release with wasm integration authorities adds one egress policy for its environment's host group.
 The deploy resolves each authority to its explicit TCP port or the default socket port for its scheme.

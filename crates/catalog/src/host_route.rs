@@ -354,7 +354,7 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Control,
-        operation: "platform.update",
+        operation: "platform.schema",
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ControlExecution,

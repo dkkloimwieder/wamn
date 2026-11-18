@@ -186,22 +186,14 @@ pub fn connection_for(
     )
 }
 
-/// A capture login owns slot administration independently of schema ownership.
-pub async fn capture_connection(
-    registry: &str,
-    triple: &wamn_registry::Triple,
-) -> anyhow::Result<String> {
-    capture_configuration(connection(registry, triple).await?)
-}
-
 /// Derive the project capture credential from the same endpoint as its owner.
 pub fn capture_configuration(
     mut config: wamn_postgres::ConnectionConfig,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<wamn_postgres::ConnectionConfig> {
     config.username = wamn_role::CDC_LOGIN.parse()?;
     config.credentials.name =
         wamn_registry::name::project_login_secret(&config.database, config.username.as_str());
-    config.to_json()
+    Ok(config)
 }
 
 /// Project sizing and role values for the chart.

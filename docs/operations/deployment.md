@@ -1,6 +1,7 @@
 # Deployment
 
-`wamn platform deploy` installs the platform in a local kind cluster from a published chart digest.
+`wamn platform deploy --only` returns in Epic 10 with the `platform` chart.
+Use an existing platform for environment, application, and SQL operations in Epic 9.
 A chart is a Helm package of Kubernetes resources.
 Deployment consumes pinned artifacts, whose digests identify exact bytes.
 It does not compile source, build JavaScript, publish packages, or select application releases.
@@ -17,20 +18,11 @@ Keep registry, database, and broker credentials outside committed files.
 Certificate subjects must match the endpoint names that their clients verify.
 
 From the source checkout, prepare the registry and artifacts as [building](building.md#local-platform-artifacts) describes.
-The example uses `localhost:5001`, as `deploy/kind/cluster.k` does.
-The published application chart includes the pinned infrastructure, platform, org, environment, and project charts.
-On kind, `wamn platform deploy` reads `WAMN_REGISTRY_AUTH_FILE` to create the org namespace’s `wamn-registry-pull` Secret.
-Set this variable to the platform registry credential file before deployment.
-Deploy the chart reference that the build command prints:
-
-```bash
-wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/application@sha256:<digest>
-wamn platform status deploy/kind/cluster.k
-```
-
-Deployment creates or reuses `wamn-local` and connects its registry to the kind network.
+`deploy/kind/cluster.k` uses the local registry at `localhost:5001`.
+The published application chart includes the pinned infrastructure, installation, org, environment, and project charts.
+On an existing kind platform, the org namespace holds the `wamn-registry-pull` Secret.
 Helm first installs cert-manager, CloudNativePG, and the TLS ingress controller.
-The platform chart then installs certificates, NATS, wasmCloud runtime operator 2.12.2, and the collector.
+The installation chart supplies certificates, NATS, wasmCloud runtime operator 2.12.2, and the collector.
 The NATS file-store limit and volume size use the same value, `nats.config.jetstream.fileStore.pvc.size`. It defaults to `10Gi`.
 The org chart declares the org namespace, quota, base RBAC and default-deny policy.
 The installation chart creates the system PostgreSQL Cluster in namespace `platform`.
@@ -42,23 +34,10 @@ Identity runs two replicas. Its chart requires the same envelope provider and wr
 Supply `oauthEncryption` and, for a local provider, the existing `oauthSecret` in the identity values.
 The [identity chart](../../deploy/charts/identity/README.md) defines these inputs and the trusted proxy count.
 Without a recorded org control release, deployment initializes `wamn_system`, the organization, identity, and control.
-Once control exists, authenticated platform updates select an existing owner with `--only`.
-For control and identity, the worker submits the installation chart and waits up to 600 seconds for the selected Deployment to roll out.
-Reapply does not refresh credentials.
-It does not rewrite the registry pull Secret, the Resend key Secret, the control operator Secret, or the identity signing keys.
-The command returns success only when every required component is ready.
-An error preserves a nonzero exit and prints the status that remains observable.
+The org worker runs platform SQL Jobs and has named access to its NATS accounts Secret in `platform`.
 
-Deployment also works outside the source checkout.
-Copy the cluster document to the deployment host.
-The host fetches the published chart by digest.
 The GCP collector exports traces and logs to the declared telemetry bucket with a persistent queue.
 Its chart uses the existing collector workload identity. Local clusters use debug export.
-If the checkout is absent, set the existing `WAMN_KCL` variable to the pinned compiler path.
-[Building](building.md#package-manifests) describes that compiler.
-Supply the document path and the chart reference, with the required tools available.
-The deployment host must reach the selected registry and its pinned artifacts.
-A loopback registry refers to that host, so its artifacts must exist there before deployment.
 
 Helm records the chart reference for later operations.
 Status reads that reference and reports selected artifacts separately from running images.
@@ -66,12 +45,6 @@ It reads Helm, Kubernetes, certificate, service, and system database state.
 Its categories are `ready`, `incomplete`, `failed`, and `unknown`.
 A failed query reports `unknown`. Status never creates a missing cluster.
 Unselected UI, external mail, or telemetry does not prevent platform readiness.
-
-If bootstrap stops before control exists, repeat it with the same document and chart:
-
-```bash
-wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/application@sha256:<digest>
-```
 
 Kubernetes and its operators own running resources. Helm owns release revisions.
 WAMN stores no generic installation-completion ConfigMaps and has no numbered resume steps.
@@ -87,7 +60,6 @@ When identity uses local mail, it writes invitations inside the identity pod.
 An administrator sends invitations through the `user.invite` control route.
 The local outbox is temporary pod storage. Keep invitation codes and passwords out of logs.
 
-Deployment also prints the port-forward command and required HTTP `Host` value.
 A port-forward connects a local port to a pod.
 The control Service has no selector, because the wasmCloud operator manages its endpoints.
 Forward `deployment/hostgroup-c-<org>` in the org namespace.
@@ -130,17 +102,9 @@ Keep the shared registry container and its volume for later builds.
 kind delete cluster --name wamn-local
 ```
 
-To rebuild a disposable local platform, delete `wamn-local` with the command above.
-This removes its system database, every project database, and all cluster-local application state.
-Keep the shared registry and prepare current artifacts through [building](building.md#local-platform-artifacts).
-Run `wamn platform deploy deploy/kind/cluster.k --chart oci://localhost:5001/wamn/charts/application@sha256:<digest>` again.
-The new platform starts with zero applications. Redeploy each required application through `wamn deploy`.
-This procedure does not upgrade a persistent system database.
-
-Successful deployment removes its private work directory unless a new kind cluster mounts its registry files.
-Keep that mounted directory while the cluster exists. Reapply updates the original registry mount.
-Failed deployments without `--only` retain their named work directory for diagnostics.
-Remove only the retained files and directory that this run created after they are no longer needed.
+Rebuilding a disposable platform requires the Epic 10 installation path.
+A new platform starts with zero applications. Redeploy each required application through `wamn deploy`.
+Keep a kind cluster's mounted registry directory until you delete the cluster.
 
 ## Application and schema operations
 
@@ -173,16 +137,14 @@ Kubernetes removes completed Jobs after one hour.
 There is no operation history database.
 
 The server selects the image, command, namespace, actor, chart, and credential references.
-Deploy, rollback, and diff use the apply and registry credentials.
-Apply and reset also receive the project platform-migration, package-migration, and capture credentials.
+Operation workers stage the system migration login and CA in the Job's in-memory volume. They stage project logins and the project CA as needed.
 Reset advances replication through the capture login and removes package objects through their migration login.
 SQL steps run inside the authorized operation Job with their owning role credentials.
 The control image runs workers and reads the installed chart reference.
 The installed control configuration names the pinned worker image and its configuration.
 Deploy, rollback, stop, schema apply, reset, and capture-gap recovery and close all use the org worker ServiceAccount because they run Helm.
-Schema diff uses the project operation ServiceAccount to read named migration credentials, database CAs, and declared application workloads.
-Configure creates the CDC reader's ServiceAccount and Role from `operations.capture` before it deploys the reader.
-This account can read only the project's replication credential and database CA. Delete removes it with the reader.
+Schema diff alone uses the project operation ServiceAccount. It can read declared application workloads and stage named migration credentials and database CAs in the Job's database volume.
+Configure creates the CDC reader's ServiceAccount from `operations.capture`. The Deployment mounts the replication login and the project's database CA certificate. Delete removes the account with the reader.
 
 
 Set `WAMN_CONTROL_URL` to the deployed control host and `WAMN_TOKEN` to your password session token.
@@ -802,7 +764,7 @@ Use the environment's identity Deployment and require its readiness before issui
 
 Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` for platform SQL operations.
 Control selects its installed chart and pinned worker image.
-System target reads its managed migration login's basic-auth Secret in the org namespace.
+The system worker reads the named migration login and CA Secrets in the org namespace and stages the database files before connecting.
 Both targets execute SQL in a bounded Job in that namespace.
 
 ```bash
@@ -826,7 +788,7 @@ Ordinary platform reapply also runs no migration.
 
 System schema apply changes only system SQL objects and migration records.
 It changes no service release, application selection, credential, or Helm release.
-Deploy compatible control code separately with `platform deploy ... --only control`.
+Use a platform with a compatible control worker image before you apply SQL.
 Select the project target and give the YAML file for the environment.
 Project target requires `--env`, and system target refuses it.
 Control reads the environment's recorded database instance and installed connection projection.
@@ -895,13 +857,16 @@ Run `wamn provision-system --platform-domain DOMAIN` in the org namespace.
 For explicit PostgreSQL access, also pass the system migration login's connection through `--migration-database-url`.
 It declares the restricted apply login through CloudNativePG and publishes its connection data in the `wamn-apply` ConfigMap.
 The installer supplies that public apply connection object in the native control configuration.
-The other apply phases use the restricted credential. The SQLx constructor reads its native basic-auth Secret and cluster CA.
+The other apply phases use the restricted credential from the worker's database volume.
 
 ## PostgreSQL client TLS
 
 Runtime pools, OAuth transactions, and resource leases use SQLx with verified TLS.
 Component configuration names the database host, port, database, login, basic-auth Secret, and CNPG CA Secret.
-Both Secrets and the consumer belong to the org namespace.
+Both Secrets and the consumer belong to the org namespace. Hosts, CDC readers, identity and control use read-only database mounts.
+Operation workers copy the selected Secret keys to a memory-backed volume as the database names become known.
+The database client reads `username`, `password` and `ca.crt` from `/etc/wamn/db/<login-secret>/`. It makes sure that the username matches the configured login.
+The control administration directory supplies the same files for project connections.
 Explicit operator connection strings must name a readable CA file through `sslrootcert`.
 The database hostname must match the server certificate.
 The provisioned CNPG clusters accept client connections only over TLS.
@@ -932,7 +897,7 @@ Those processes use explicit operator connection URLs with verified TLS.
 They do not supply a local connection credential store.
 Identity login uses the org audience `urn:wamn:org:<org>`.
 The identity chart no longer accepts session target ConfigMaps or project database reader credentials.
-The chart retains access to the identity database credential and its CA.
+The identity Deployment mounts the system login and CA certificate.
 
 The installation writes `WAMN_SESSION_ISSUER`, `WAMN_SESSION_JWKS_URL`, `WAMN_SESSION_AUDIENCE`, `WAMN_SESSION_ALGORITHMS`, and `WAMN_SESSION_JWKS_CA` into the org's `wamn-host-settings` ConfigMap.
 Environment hosts read these defaults and mount the org's `identity-ca` ConfigMap at `/etc/identity-ca`.

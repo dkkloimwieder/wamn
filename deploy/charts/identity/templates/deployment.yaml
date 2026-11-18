@@ -1,5 +1,5 @@
 {{- $issuer := required "Set issuer to the configured HTTPS identity authority URL." .Values.issuer -}}
-{{- $databaseSecret := required "Set databaseSecret to the identity connection ConfigMap name." .Values.databaseSecret -}}
+{{- $databaseSecret := required "Set databaseSecret to the identity login Secret name." .Values.databaseSecret -}}
 {{- $tlsSecret := required "Set tlsSecret to the existing serving certificate Secret name." .Values.tlsSecret -}}
 {{- if not (hasPrefix "https://" $issuer) -}}
 {{- fail "issuer must use HTTPS." -}}
@@ -28,7 +28,7 @@ spec:
         app.kubernetes.io/instance: {{ (default .Release.Name .Values.name) }}
     spec:
       serviceAccountName: {{ (default .Release.Name .Values.name) }}
-      automountServiceAccountToken: true
+      automountServiceAccountToken: false
       containers:
         - name: identity
           image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
@@ -105,6 +105,7 @@ spec:
               path: /healthz
               port: https
           volumeMounts:
+            - {name: database, mountPath: /etc/wamn/db, readOnly: true}
             {{- if eq .Values.oauthEncryption.provider "local" }}
             - name: oauth-key
               mountPath: /etc/wamn/oauth
@@ -130,6 +131,19 @@ spec:
           resources:
 {{ toYaml .Values.resources | indent 12 }}
       volumes:
+        - name: database
+          projected:
+            defaultMode: 0400
+            sources:
+              - secret:
+                  name: {{ $databaseSecret | quote }}
+                  items:
+                    - {key: username, path: {{ printf "%s/username" $databaseSecret | quote }}}
+                    - {key: password, path: {{ printf "%s/password" $databaseSecret | quote }}}
+              - secret:
+                  name: wamn-pg-ca
+                  items:
+                    - {key: ca.crt, path: {{ printf "%s/ca.crt" $databaseSecret | quote }}}
         {{- if eq .Values.oauthEncryption.provider "local" }}
         - name: oauth-key
           secret:

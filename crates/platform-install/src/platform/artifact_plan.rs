@@ -5,8 +5,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 
-use super::document::{ClusterDocument, UpgradeTarget};
-
 /// A prepared platform chart validated before provider setup.
 #[derive(Debug)]
 pub struct SelectedChart {
@@ -39,11 +37,6 @@ impl SelectedChart {
         &self.directory
     }
 
-    /// The chart to install for an application, without the bundled platform charts.
-    pub fn application_chart(&self) -> PathBuf {
-        self.directory.join("platform/application")
-    }
-
     /// Borrow the host, a top-level platform image, or a role image by name.
     ///
     /// # Errors
@@ -64,71 +57,6 @@ impl SelectedChart {
                     self.directory.display()
                 )
             })
-    }
-
-    /// Prepare the selection in its owning release's values without applying resources.
-    /// Service owners consume their selected chart on reapply. Host owners preserve
-    /// the group image override instead of replacing the application chart or components.
-    ///
-    /// # Errors
-    /// Returns an error for malformed values or an absent or ambiguous host group.
-    pub fn selection_values(
-        &self,
-        document: &ClusterDocument,
-        target: &UpgradeTarget,
-        mut installed: Value,
-    ) -> anyhow::Result<Value> {
-        ensure!(
-            installed.is_object(),
-            "installed Helm values must be an object"
-        );
-        match target {
-            UpgradeTarget::Control | UpgradeTarget::Identity => {
-                let platform = installed
-                    .as_object_mut()
-                    .expect("validated object")
-                    .entry("platform")
-                    .or_insert_with(|| serde_json::json!({}));
-                ensure!(
-                    platform.is_object(),
-                    "installed platform values must be an object"
-                );
-                platform["chart"] = serde_json::to_value(self.reference())?;
-            }
-            UpgradeTarget::Host { release, group } => {
-                ensure!(
-                    release != &wamn_registry::name::control_resource(&document.org),
-                    "select the control service with --only control"
-                );
-                let groups = installed
-                    .pointer_mut("/runtime-operator/runtime/hostGroups")
-                    .and_then(Value::as_array_mut)
-                    .context("installed release has no host groups")?;
-                let mut matching = groups.iter_mut().filter(|entry| entry["name"] == *group);
-                let selected = matching.next().context("selected host group is absent")?;
-                ensure!(
-                    matching.next().is_none(),
-                    "selected host group is ambiguous"
-                );
-                ensure!(
-                    selected
-                        .get("namespace")
-                        .is_none_or(|namespace| namespace == document.org.as_str()),
-                    "selected host group must be in its org namespace"
-                );
-                let reference: oci_client::Reference = self.host.parse()?;
-                let mut image = serde_json::json!({
-                    "tag": format!("{}@{}", reference.tag().context("host has no tag")?, reference.digest().context("host has no digest")?),
-                    "pull_policy": "IfNotPresent"
-                });
-                image["registry"] = reference.registry().into();
-                image["repository"] = reference.repository().into();
-                selected["image"] = image;
-                selected["namespace"] = document.org.as_str().into();
-                installed["namespace"] = document.org.as_str().into();
-            }
-        }
-        Ok(installed)
     }
 }
 
@@ -243,26 +171,6 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
         version,
         values,
         host,
-    })
-}
-
-pub(super) fn platform_chart(
-    operator: Option<&Value>,
-    supplied: Option<&Path>,
-) -> anyhow::Result<SelectedChart> {
-    let Some(operator) = operator else {
-        return select(supplied.context(
-            "--chart is required for a fresh installation without release platform/wamn. No resources changed.",
-        )?);
-    };
-    let path = operator["platform"]["chart"]
-        .as_str()
-        .filter(|path| !path.is_empty())
-        .context("platform/wamn has no platform.chart default. No resources changed.")?;
-    select(Path::new(path)).with_context(|| {
-        format!(
-            "recorded chart {path} for owner release platform/wamn is unavailable or invalid. Restore the prepared chart at that path. No resources changed."
-        )
     })
 }
 

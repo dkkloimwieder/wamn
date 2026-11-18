@@ -15,7 +15,12 @@ fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
     let objects = wamn_kubernetes::helm::template(&serde_json::json!({
         "chart": chart, "version": metadata["version"], "name": "wamn-control", "namespace": "platform",
         "values": {"controlService": true, "org": "acme", "namespace": "platform", "control": {
-            "image": "wamn-control:dev", "configuration": {}, "account": "control",
+            "image": "wamn-control:dev", "account": "control",
+            "configuration": {"database": {
+                "credentials": {"name": "wamn-control-db"},
+                "server_ca": {"name": "wamn-pg-ca"}
+            }},
+            "systemMigrationSecret": "wamn-platform-sql-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "administration": "control-administration", "natsSecret": "control-nats",
             "operatorSecret": "control-operator", "registrySecret": "registry-pull",
             "oauthSecret": "wamn-oauth"

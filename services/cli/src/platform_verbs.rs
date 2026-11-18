@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_platform_install::platform::document::{ClusterDocument, UpgradeTarget};
+use wamn_platform_install::platform::document::ClusterDocument;
 
 /// Management verbs also available through the low-level control tool.
 #[derive(Debug, Subcommand)]
@@ -17,8 +17,6 @@ pub enum PlatformCommand {
 /// Platform verbs exposed by the product command.
 #[derive(Debug, Subcommand)]
 pub enum ProductPlatformCommand {
-    /// Deploy platform resources from a prepared chart.
-    Deploy(DeployArgs),
     /// Inspect or apply platform SQL through control.
     #[command(subcommand)]
     Schema(PlatformSchemaCommand),
@@ -88,18 +86,6 @@ impl Args for PlatformSchemaArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct DeployArgs {
-    /// The cluster.k document.
-    pub file: PathBuf,
-    /// The prepared chart directory for initial installation.
-    #[arg(long)]
-    pub chart: Option<PathBuf>,
-    /// Select control, identity, or host:<release>/<group> for an existing platform.
-    #[arg(long, value_name = "TARGET")]
-    pub only: Option<UpgradeTarget>,
-}
-
-#[derive(Debug, Args)]
 pub struct ShowArgs {
     /// The cluster.k document.
     pub file: PathBuf,
@@ -111,8 +97,6 @@ pub async fn run_product(
 ) -> anyhow::Result<()> {
     let mut signals = signals()?;
     match command {
-        ProductPlatformCommand::Deploy(args) => deploy(&args, &mut signals, output).await,
-
         ProductPlatformCommand::Schema(command) => {
             let (args, apply) = match command {
                 PlatformSchemaCommand::Diff(args) => (args, false),
@@ -133,35 +117,20 @@ pub async fn run_product(
                 }
             };
             let control = crate::operation_verbs::ControlHost::from_env()?;
-            interruptible(&mut signals, control.platform(serde_json::json!({"type":"schema","target":target,"projects":projects,"org":org,"env":env,"apply":apply}))).await
+            interruptible(
+                &mut signals,
+                control.platform_schema(serde_json::json!({
+                    "target": target,
+                    "projects": projects,
+                    "org": org,
+                    "env": env,
+                    "apply": apply,
+                })),
+            )
+            .await
         }
         ProductPlatformCommand::Manage(command) => run(command, output),
     }
-}
-
-async fn deploy(
-    args: &DeployArgs,
-    signals: &mut Signals,
-    mut output: impl Write,
-) -> anyhow::Result<()> {
-    let file = args
-        .file
-        .canonicalize()
-        .with_context(|| format!("resolve cluster {}", args.file.display()))?;
-    let document = ClusterDocument::compile(&file)?;
-    writeln!(output, "cluster: {}", file.display())?;
-
-    anyhow::ensure!(
-        args.chart.is_none(),
-        "control selects the prepared chart; --chart is only for bootstrap"
-    );
-    let selection = args
-        .only
-        .as_ref()
-        .context("after bootstrap, select the existing Helm owner with --only")?;
-    let control = crate::operation_verbs::ControlHost::from_env()?;
-    interruptible(signals, control.platform(serde_json::json!({"type":"update","document":document,"selection":match selection { UpgradeTarget::Control => "control".to_owned(), UpgradeTarget::Identity => "identity".to_owned(), UpgradeTarget::Host { release, group } => format!("host:{release}/{group}") }}))).await
-
 }
 
 struct Signals {

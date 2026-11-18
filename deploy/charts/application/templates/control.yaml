@@ -2,6 +2,10 @@
 {{- $name := default .Release.Name .Values.name }}
 {{- $namespace := include "application.namespace" . }}
 {{- $org := required "Set org for the control client certificate." .Values.org }}
+{{- $database := .Values.control.configuration.database }}
+{{- $login := required "Set control.configuration.database.credentials.name." $database.credentials.name }}
+{{- $migration := required "Set control.systemMigrationSecret." .Values.control.systemMigrationSecret }}
+{{- $ca := required "Set control.configuration.database.server_ca.name." $database.server_ca.name }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -46,6 +50,7 @@ spec:
           volumeMounts:
             - {name: configuration, mountPath: /etc/wamn/control, readOnly: true}
             - {name: work, mountPath: /work}
+            - {name: database, mountPath: /etc/wamn/db, readOnly: true}
             - {name: administration, mountPath: /etc/wamn/control-administration, readOnly: true}
             - {name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}
             - {name: identity-control, mountPath: /etc/identity-control, readOnly: true}
@@ -57,6 +62,23 @@ spec:
         - name: configuration
           configMap: {name: {{ $name }}-configuration}
         - {name: work, emptyDir: {}}
+        - name: database
+          projected:
+            defaultMode: 0400
+            sources:
+              {{- range list $login $migration }}
+              - secret:
+                  name: {{ . | quote }}
+                  items:
+                    - {key: username, path: {{ printf "%s/username" . | quote }}}
+                    - {key: password, path: {{ printf "%s/password" . | quote }}}
+              {{- end }}
+              - secret:
+                  name: {{ $ca | quote }}
+                  items:
+                    {{- range list $login $migration }}
+                    - {key: ca.crt, path: {{ printf "%s/ca.crt" . | quote }}}
+                    {{- end }}
         - name: administration
           configMap: {name: {{ .Values.control.administration }}}
         - {name: identity-ca, configMap: {name: identity-ca}}

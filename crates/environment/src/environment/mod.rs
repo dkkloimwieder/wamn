@@ -29,6 +29,8 @@ use wamn_kubernetes::Target;
 pub struct Platform {
     /// The system database URL selected for this verb.
     pub system_database_url: String,
+    /// The operation worker's writer for database credentials.
+    pub database_files: Option<wamn_platform_install::credentials::DatabaseFiles>,
     /// The cluster, its context and the operator release's namespace (R6).
     pub target: Target,
     /// A stamped release chart directory.
@@ -57,6 +59,17 @@ pub struct Platform {
 }
 
 impl Platform {
+    /// Stage this database's credentials when running in an operation Job.
+    pub async fn prepare_database(
+        &self,
+        config: &wamn_postgres::ConnectionConfig,
+    ) -> anyhow::Result<()> {
+        if let Some(files) = &self.database_files {
+            files.materialize(config).await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn registry(
         &self,
         base: &str,

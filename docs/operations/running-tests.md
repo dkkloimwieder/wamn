@@ -683,7 +683,6 @@ Select each test by its exact name in the `platform_apply_kind` Cargo target:
 | --- | --- | --- |
 | `control_operations_kind` | Authenticated Job credentials, cross-project denial without a Job, two-application selection isolation, rollback, schema mutation and artifact worker | Creates one fresh kind cluster; bounded to 45 minutes |
 | `application_recovery_kind` | Interrupted explicit provisioning and code installation, replacement recovery, canonical reapply, retained data, and application isolation | Attaches to an existing disposable kind platform |
-| `platform_upgrade_kind` | Independent control and identity updates, one application host update, code reapply, earlier runtime selection, and retained data | Attaches to an existing disposable kind platform |
 | `platform_schema_kind` | One system file and one selected project file through SQL Jobs, unchanged application rows and releases, and second-environment isolation | Attaches to an existing disposable kind platform |
 | `same_name_reset_kind` | Two initial application releases, data, published schema-change reset, interrupted same-name CNPG reset, reconnection, durable refusal, and environment isolation | Attaches to an existing disposable kind platform |
 | `platform_apply_kind` | Normal and interrupted platform installation, retry, status, repair, and owner sign-in | Creates two fresh kind clusters |
@@ -696,7 +695,7 @@ The reset body installs no earlier code versions.
 Artifact preparation uses the product build and publication operation before the focused bodies run.
 These tests can run in any order on the same platform.
 The recovery body provisions the environment with `environment::apply` and initializes SQL with `schema apply` before code deployment.
-The reset, platform runtime, and platform SQL bodies use those same explicit commands.
+The reset and platform SQL bodies use those same explicit commands.
 Code reapply reads the canonical selection through `status`.
 Platform recovery publishes no applications.
 
@@ -747,21 +746,11 @@ They obtain the same password from the caller's `WAMN_TEST_OWNER_PASSWORD` and s
 Tests never print or persist this password and create no saved-step file.
 Each fresh-platform installation generates one password in memory and reuses it after repair.
 
-Install once with the product command from a shell with the prepared chart and publication inputs:
-
-```bash
-export PATH="$CARGO_TARGET_DIR/debug:$PATH"
-export WAMN_KCL="$(cargo xtask install-kcl)"
-export WAMN_RELEASE_CHART=/var/tmp/wamn-platform-chart
-cargo build --locked --offline -p wamn-cli --bin wamn
-mkdir -p /var/tmp/wamn-kind-dep3
-sed 's/cluster_name = "wamn-local"/cluster_name = "wamn-test-dep3"/' \
-  deploy/kind/cluster.k > /var/tmp/wamn-kind-dep3/cluster.k
-wamn platform deploy /var/tmp/wamn-kind-dep3/cluster.k --chart "$WAMN_RELEASE_CHART"
-kind export kubeconfig --name wamn-test-dep3 --kubeconfig /var/tmp/wamn-kind-dep3/kubeconfig
-kubectl --kubeconfig /var/tmp/wamn-kind-dep3/kubeconfig --context kind-wamn-test-dep3 \
-  annotate namespace platform wamn.dev/disposable=true
-```
+Use an existing disposable kind platform for the focused cases in Epic 9.
+`wamn platform deploy --only` returns with the Epic 10 `platform` chart.
+Set `PATH` to include the `debug` directory under `CARGO_TARGET_DIR`.
+Use the platform's cluster document and kubeconfig.
+After the owner approves the fixture, annotate its `platform` namespace with `wamn.dev/disposable=true`.
 
 The namespace annotation records consent to use this platform as disposable.
 Focused tests refuse an absent or false annotation before any platform mutation.
@@ -788,7 +777,7 @@ WAMN_TEST_CLUSTER=/var/tmp/wamn-kind-dep3/cluster.k \
 ```
 
 Select `same_name_reset_kind` in the same command for reset and CDC tests.
-Run normal and interrupted platform installation with the prepared chart selected by `WAMN_RELEASE_CHART`:
+When the Epic 10 installation path is available, select the prepared chart with `WAMN_RELEASE_CHART` for the normal and interrupted installation case:
 
 ```bash
 cargo test --locked --offline -p wamn-dev --test platform_apply_kind platform_apply_kind -- --ignored --exact --nocapture
@@ -853,68 +842,6 @@ It reads each database catalog directly and requires one new table with one row 
 The existing journey deploys one application release into two environments and deletes both environments after success.
 The case needs explicit owner approval to run.
 Approval must cover setup, both SQL applies, and cleanup on the disposable platform.
-
-#### Focused platform upgrade preparation
-
-DEP4-06 prepares `platform_upgrade_kind` in `crates/dev/tests/platform_apply_kind.rs`.
-Its body lives in `support/platform_upgrade.rs` beside the existing application journey.
-The test compiles separately from execution.
-The test stays ignored until its externally prepared cluster, second chart, and owner password are supplied.
-The setup, cleanup, and upgrade operations still need separate owner approval for cluster execution.
-Allow 20 to 30 minutes, including application preparation and service restoration.
-This duration is an estimate, not a measured result.
-
-Use the disposable platform and publication inputs described above.
-Keep its installed chart directory available.
-Set the existing `WAMN_RELEASE_CHART` variable to a second prepared chart.
-That chart must select distinct immutable HTTP, identity, and host images.
-Publish those images before the run.
-The test builds no container image and never replaces the installed default chart.
-
-The existing application journey prepares two immutable application releases before the upgrade body.
-It creates a unique project through the control route.
-It deploys beta and alpha through `wamn deploy --release`.
-It creates counter and widget rows through each application's routes.
-The upgrade body uses only the prepared charts and published release digests.
-It runs no reset, migration, recovery matrix, or aggregate acceptance case.
-
-Make sure that setup works independently before you approve the upgrade body.
-Run `wamn platform status "$WAMN_TEST_CLUSTER"` against the disposable platform.
-Make sure that the platform services report ready.
-Use `helm get values` to make sure that every recorded chart remains readable.
-Use the existing `wamn schema publish` producer to prepare the two scratch application releases.
-Deploy each published digest into a fresh environment with `wamn deploy --release DIGEST --env FILE`.
-Use `wamn status --env FILE` to observe distinct ready application releases.
-Create and read one counter and widget through each application's routes.
-Retain their identifiers for the cleanup observation.
-These operations show that setup works without a platform upgrade.
-
-Make sure that cleanup works on that environment before you approve the upgrade body.
-Remove the environment through its product lifecycle owner.
-Enter only the disposable environment's coordinate at its confirmation prompt.
-Observe that its database, roles, and Helm releases disappear.
-Make sure that the shared CNPG Cluster stays ready.
-Make sure that the other platform resources remain ready.
-The existing journey supplies the same terminal confirmation through `script`.
-The upgrade body restores its original control and identity charts before environment deletion.
-The test removes its scratch checkout and private directory after success.
-Failures retain resources, private inputs, and logs for diagnosis.
-The test never deletes the attached platform.
-Project deletion remains unsupported by the product.
-
-After setup and cleanup pass, obtain approval for this exact command:
-
-```bash
-CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-target/dep4 \
-  cargo test --locked --offline -p wamn-dev --test platform_apply_kind platform_upgrade_kind -- --ignored --exact --nocapture
-```
-
-Supply `WAMN_TEST_CLUSTER`, `WAMN_TEST_OWNER_PASSWORD`, `WAMN_KCL`, and the publication inputs from the preceding instructions.
-Supply the second chart through `WAMN_RELEASE_CHART`.
-The case observes running image digests, Helm revisions, pods, credentials, signing rows, scheman identity, and application data.
-It leaves setup, cleanup, readiness, and data retention unverified until their approved cluster runs pass.
-Automatic rollback after a failed rollout stays unverified even after this case passes.
-This case explicitly reselects an earlier image and does not induce a rollout failure.
 
 ### Removed application cluster coverage
 

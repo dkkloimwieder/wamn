@@ -1,13 +1,18 @@
 //! Verified PostgreSQL connections from explicit component configuration.
 
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context as _;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 
-/// A Secret in the organization's namespace.
+/// Root of the database credential mounts in deployed processes.
+pub const DATABASE_DIR: &str = "/etc/wamn/db";
+
+/// A named credential source in the organization's namespace.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SecretRef {
@@ -15,7 +20,7 @@ pub struct SecretRef {
     pub name: String,
 }
 
-/// Public connection data. Passwords remain in one basic-auth Secret per role.
+/// Public connection data. Login and CA bytes come from mounted files.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionConfig {
@@ -28,6 +33,29 @@ pub struct ConnectionConfig {
 }
 
 impl ConnectionConfig {
+    /// Read public connection configuration from a file.
+    pub async fn read(path: &Path) -> anyhow::Result<Self> {
+        let contents = tokio::fs::read(path)
+            .await
+            .with_context(|| format!("read database configuration {}", path.display()))?;
+        Ok(serde_json::from_slice(&contents)
+            .with_context(|| format!("decode database configuration {}", path.display()))?)
+    }
+
+    /// Open options using the named credential directory below the supplied mount root.
+    pub async fn mounted_options(&self, root: &Path) -> anyhow::Result<PgConnectOptions> {
+        let directory = credential_directory(root, &self.credentials.name)?;
+        let password = read_password(&directory, &self.username).await?;
+        Ok(PgConnectOptions::new()
+            .host(&self.host)
+            .port(self.port)
+            .database(&self.database)
+            .username(self.username.as_str())
+            .password(&password)
+            .ssl_root_cert(directory.join("ca.crt"))
+            .ssl_mode(PgSslMode::VerifyFull))
+    }
+
     /// Encode configuration without including password or CA bytes.
     pub fn to_json(&self) -> anyhow::Result<String> {
         Ok(serde_json::to_string(self)?)
@@ -58,33 +86,90 @@ pub fn identity(input: &str) -> anyhow::Result<(wamn_identity_protocol::LoginNam
     }
 }
 
-fn secret_path(reference: &SecretRef) -> anyhow::Result<String> {
-    for value in [&reference.namespace, &reference.name] {
-        anyhow::ensure!(
-            !value.is_empty()
-                && value
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-            "invalid database Secret reference"
-        );
+/// Resolve one named login directory below the supplied mount root.
+pub fn credential_directory(root: &Path, name: &str) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+        "invalid database credential name"
+    );
+    Ok(root.join(name))
+}
+
+/// Read a mounted password after checking the login name.
+pub async fn read_password(
+    directory: &Path,
+    expected: &wamn_identity_protocol::LoginName,
+) -> anyhow::Result<String> {
+    let username: wamn_identity_protocol::LoginName =
+        read_text(&directory.join("username")).await?.parse()?;
+    if &username != expected {
+        return Err(CredentialMismatch {
+            directory: directory.to_owned(),
+        }
+        .into());
     }
-    Ok(format!(
-        "/api/v1/namespaces/{}/secrets/{}",
-        reference.namespace, reference.name
-    ))
+    Ok(read_text(&directory.join("password")).await?)
 }
 
-fn data(secret: &serde_json::Value, key: &str) -> anyhow::Result<Vec<u8>> {
-    Ok(STANDARD.decode(
-        secret["data"][key]
-            .as_str()
-            .context("database Secret entry is absent")?,
-    )?)
+async fn read_text(path: &Path) -> Result<String, CredentialReadError> {
+    tokio::fs::read_to_string(path)
+        .await
+        .map_err(|source| CredentialReadError {
+            path: path.to_owned(),
+            source,
+        })
 }
 
-/// The one constructor for every pool and dedicated SQL connection.
-/// Components read native CNPG Secrets through their in-cluster service account.
-/// Operator commands use an explicit PostgreSQL connection string.
+#[derive(Debug)]
+struct CredentialReadError {
+    path: PathBuf,
+    source: std::io::Error,
+}
+
+impl std::fmt::Display for CredentialReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "read database credential {}", self.path.display())
+    }
+}
+
+impl std::error::Error for CredentialReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+#[derive(Debug)]
+struct CredentialMismatch {
+    directory: PathBuf,
+}
+
+impl std::fmt::Display for CredentialMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "database credential {} names another login",
+            self.directory.display()
+        )
+    }
+}
+
+impl std::error::Error for CredentialMismatch {}
+
+/// Read a public connection file and the login directory next to it.
+pub async fn mounted_options(path: &Path) -> anyhow::Result<PgConnectOptions> {
+    let root = path
+        .parent()
+        .context("database configuration has no parent directory")?;
+    ConnectionConfig::read(path)
+        .await?
+        .mounted_options(root)
+        .await
+}
+
+/// Resolve verified options from mounted files or explicit operator input.
 pub async fn connect_options<'a>(
     input: impl Into<ConnectionInput<'a>>,
 ) -> anyhow::Result<PgConnectOptions> {
@@ -100,36 +185,7 @@ pub async fn connect_options<'a>(
     let input = configuration(input)?;
     let options = if input.trim_start().starts_with('{') {
         let config: ConnectionConfig = serde_json::from_str(&input)?;
-        anyhow::ensure!(
-            std::env::var_os("KUBERNETES_SERVICE_HOST").is_some(),
-            "no credential store in local mode"
-        );
-        let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
-        anyhow::ensure!(
-            config.credentials.namespace == api.namespace
-                && config.server_ca.namespace == api.namespace,
-            "database credentials, CA and consumer must share the org namespace"
-        );
-        let secret = api.get(secret_path(&config.credentials)?).await?;
-        anyhow::ensure!(
-            secret["type"] == "kubernetes.io/basic-auth",
-            "database credential is not a basic-auth Secret"
-        );
-        let username: wamn_identity_protocol::LoginName =
-            String::from_utf8(data(&secret, "username")?)?.parse()?;
-        let password = String::from_utf8(data(&secret, "password")?)?;
-        anyhow::ensure!(
-            username == config.username,
-            "database Secret names another login"
-        );
-        let ca = api.get(secret_path(&config.server_ca)?).await?;
-        PgConnectOptions::new()
-            .host(&config.host)
-            .port(config.port)
-            .database(&config.database)
-            .username(username.as_str())
-            .password(&password)
-            .ssl_root_cert_from_pem(data(&ca, "ca.crt")?)
+        config.mounted_options(Path::new(DATABASE_DIR)).await?
     } else {
         let explicit = url::Url::parse(&input)?;
         // SQLx supplies a default login when the URL omits it.

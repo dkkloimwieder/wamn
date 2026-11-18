@@ -206,8 +206,8 @@ The transaction inserts the caller and sealed operation id into `platform.tx_ide
 Membership and administration writes use [`wamn_identity::org`](../../crates/identity/src/org.rs), which platform installation also calls.
 [`wamn_environment::org`](../../crates/environment/src/org.rs) owns project creation, environment enumeration, and environment status writes.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
-A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
-Native control reads that login from the installed public connection projection, one file per `<project>--<env>`, at each write. Its component configuration selects `administration_dir`; passwords stay in the owning role Secrets.
+A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the project's administration login.
+Native control reads a public connection file per `<env>--<project>` at each write. The file and the login Secret subdirectory containing `username`, `password` and `ca.crt` share the root set by `administration_dir`.
 Every authority mutation commits its system rows before application projection.
 Projection locks `identity.org_memberships` for the principal and org, then reads current authority.
 It commits the application write before releasing that system lock.

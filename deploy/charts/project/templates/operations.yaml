@@ -10,37 +10,11 @@ data:
   environment.yaml: |-
     {{- required "A project operation needs the applied environment document." $.Values.environmentDocument | nindent 4 }}
 ---
-# Each CDC process reads only its project's replication credential and database CA.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ .capture }}
   namespace: {{ include "project.namespace" $ | quote }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ .capture }}
-  namespace: {{ include "project.namespace" $ | quote }}
-rules:
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [{{ .captureSecret | quote }}, {{ printf "%s-ca" .cluster | quote }}]
-    verbs: [get]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ .capture }}
-  namespace: {{ include "project.namespace" $ | quote }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ .capture }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ .capture }}
-    namespace: {{ include "project.namespace" $ | quote }}
 {{- $name := printf "%s-operation" $operation.name }}
 {{- if not $operation.diffSecrets }}
 {{- fail "Set operations.diffSecrets to the database Secret names for schema diff." }}

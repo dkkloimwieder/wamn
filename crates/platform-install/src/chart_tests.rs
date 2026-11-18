@@ -15,7 +15,6 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let cluster = "database-owner";
     let database = "recorded-environment-database";
-    let capture_secret = wamn_registry::name::project_login_secret(database, wamn_role::CDC_LOGIN);
     let application = "shop".parse()?;
     let mut values =
         operations::values(&document, cluster, database, std::iter::once(&application))?;
@@ -27,6 +26,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         values,
     )?;
     let objects = wamn_kubernetes::helm::template(&entry)?;
+    let values = &entry["values"]["operations"];
     let mut identities = std::collections::BTreeSet::new();
     for object in &objects {
         assert!(
@@ -45,11 +45,17 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     {
         assert_eq!(account["metadata"]["namespace"], document.org.as_str());
         let name = account["metadata"]["name"].as_str().unwrap();
-        let values = &entry["values"]["operations"];
         let binding = objects
             .iter()
-            .find(|object| object["kind"] == "RoleBinding" && object["metadata"]["name"] == name)
-            .unwrap();
+            .find(|object| object["kind"] == "RoleBinding" && object["metadata"]["name"] == name);
+        if name == values["capture"] {
+            assert!(binding.is_none());
+            assert!(!objects.iter().any(|object| {
+                object["kind"] == "Role" && object["metadata"]["name"] == name
+            }));
+            continue;
+        }
+        let binding = binding.unwrap();
         assert_eq!(binding["subjects"][0]["name"], name);
         assert_eq!(
             binding["subjects"][0]["namespace"],
@@ -65,12 +71,9 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
             .unwrap();
         assert_eq!(role["metadata"]["namespace"], document.org.as_str());
 
-        let allowed = if name == values["capture"] {
-            json!({ "secrets": [capture_secret, format!("{cluster}-ca")] })
-        } else {
-            assert_eq!(name, format!("{}-operation", values["name"].as_str().unwrap()));
-            json!({ "secrets": values["diffSecrets"], "workloaddeployments": values["diffWorkloads"] })
-        };
+        assert_eq!(name, format!("{}-operation", values["name"].as_str().unwrap()));
+        let allowed =
+            json!({ "secrets": values["diffSecrets"], "workloaddeployments": values["diffWorkloads"] });
         let mut observed = std::collections::BTreeSet::new();
         for rule in role["rules"].as_array().unwrap() {
             assert_eq!(rule["verbs"], json!(["get"]));

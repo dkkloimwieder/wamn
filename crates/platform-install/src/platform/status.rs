@@ -70,62 +70,59 @@ pub struct TargetStatus {
     pub observations: Vec<Observation>,
 }
 
-/// Read only the affected target, including after an unsuccessful upgrade.
-///
-/// No service endpoint or ready workload is required for inspection.
-pub async fn read_target(
-    document: &ClusterDocument,
-    target: &Target,
-    selection: &UpgradeTarget,
-) -> TargetStatus {
-    let (name, namespace) = selection.owner(document);
-    let values = owner_values(target, namespace, &name).await;
-    let default = if !matches!(selection, UpgradeTarget::Host { .. })
-        && values
-            .as_ref()
-            .ok()
-            .and_then(Option::as_ref)
-            .is_some_and(|v| v.pointer("/platform/chart").is_none())
-    {
-        owner_values(target, "platform", "wamn").await
-    } else {
-        Ok(None)
-    };
-    target_status(
-        document,
-        target,
-        selection,
-        values.as_ref().map(Option::as_ref).map_err(|error| *error),
-        default.as_ref().map(Option::as_ref).map_err(|error| *error),
-    )
-    .await
-}
-
 async fn owner_values(target: &Target, namespace: &str, name: &str) -> Result<Option<Value>, ()> {
     if name == "identity"
         || namespace
             .parse::<wamn_registry::OrgId>()
             .is_ok_and(|org| name == wamn_registry::name::control_resource(&org))
     {
-        let installed = super::installed::InstalledPlatform::read(target)
+        let installed = release_values(target, "platform", "wamn")
             .await
             .map_err(|_| ())?;
-        return Ok(installed.map(|installed| {
-            if name == "identity" {
-                installed.values["identity"].clone()
-            } else {
-                installed.values["control"].clone()
-            }
-        }));
+        let field = if name == "identity" {
+            "identity"
+        } else {
+            "control"
+        };
+        return Ok(installed.map(|mut values| values[field].take()));
     }
     let release_namespace = if namespace == "platform" {
         std::borrow::Cow::Borrowed(namespace)
     } else {
         wamn_kubernetes::helm::org_release_namespace(namespace)
     };
-    super::installed::release_values(target, &release_namespace, name)
-        .await
-        .map_err(|_| ())
+    release_values(target, &release_namespace, name).await.map_err(|_| ())
+}
+
+async fn release_values(target: &Target, namespace: &str, name: &str) -> anyhow::Result<Option<Value>> {
+    let filter = format!("^{name}$");
+    let listed = resources::helm(
+        target,
+        &["list", "--namespace", namespace, "--filter", &filter, "-o", "json"]
+            .map(std::ffi::OsStr::new),
+    )
+    .await?;
+    let releases: Vec<Value> = serde_json::from_slice(&listed).context("decode Helm releases")?;
+    if !releases.iter().any(|release| release["name"] == name) {
+        return Ok(None);
+    }
+    let bytes = resources::helm(
+        target,
+        &["get", "values", name, "--namespace", namespace, "-o", "json"].map(std::ffi::OsStr::new),
+    )
+    .await?;
+    let values: Value = serde_json::from_slice(&bytes).context("decode Helm values")?;
+    anyhow::ensure!(values.is_object(), "installed Helm values must be an object");
+    Ok(Some(values))
+}
+
+fn host_image<'a>(installed: Option<&'a Value>, name: &str) -> Option<&'a Value> {
+    installed?
+        .pointer("/runtime-operator/runtime/hostGroups")?
+        .as_array()?
+        .iter()
+        .find(|group| group["name"] == name)?
+        .get("image")
 }
 
 async fn target_status(
@@ -151,12 +148,12 @@ async fn target_status(
                     Category::Unknown
                 },
                 if matches!(values, Ok(None)) {
-                    "Rerun platform deploy"
+                    "Restore the missing Helm release"
                 } else {
                     "Restore access to the owning Helm release values"
                 },
             );
-            if let Some(image) = super::installed::host_image(values.ok().flatten(), group) {
+            if let Some(image) = host_image(values.ok().flatten(), group) {
                 let registry = image["registry"].as_str().unwrap_or_default();
                 if let (Some(repository), Some(tag)) =
                     (image["repository"].as_str(), image["tag"].as_str())
@@ -306,7 +303,25 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
     let selected = selected_chart(values.as_ref().map(Option::as_ref).map_err(|error| *error));
     let mut targets = Vec::new();
     for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
-        targets.push(read_target(document, target, &selection).await);
+        let (name, namespace) = selection.owner(document);
+        let values = owner_values(target, namespace, &name).await;
+        let values = values.as_ref().map(Option::as_ref).map_err(|error| *error);
+        let default =
+            if matches!(values, Ok(Some(value)) if value.pointer("/platform/chart").is_none()) {
+                owner_values(target, "platform", "wamn").await
+            } else {
+                Ok(None)
+            };
+        targets.push(
+            target_status(
+                document,
+                target,
+                &selection,
+                values,
+                default.as_ref().map(Option::as_ref).map_err(|error| *error),
+            )
+            .await,
+        );
     }
     let mut inherited_hosts = Vec::new();
     let mut inherited_readiness = Vec::new();
@@ -633,7 +648,7 @@ fn selected_chart(values: Result<Option<&Value>, ()>) -> Observation {
     );
     if matches!(values, Ok(None)) {
         result.category = Category::Incomplete;
-        result.next = Some("Rerun platform deploy".into());
+        result.next = Some("Restore the missing Helm release".into());
         return result;
     }
     let Some(path) = values
@@ -676,7 +691,7 @@ fn helm_status(namespace: &str, name: &str, response: Option<&Value>) -> Observa
         &format!("Helm/{namespace}/{name}"),
         category,
         &format!(
-            "Read helm status {name} -n {namespace} and repair the reported release failure; rerun platform deploy"
+            "Read helm status {name} -n {namespace} and repair the reported release failure"
         ),
     );
     if let Some(state) = state {
@@ -717,7 +732,7 @@ fn resource(source: &str, response: Result<Option<&Value>, ()>) -> Observation {
         source,
         category,
         &format!(
-            "Inspect {source} conditions and events; repair the owning resource and rerun platform deploy"
+            "Inspect {source} conditions and events, then repair the owning resource"
         ),
     );
     if let Ok(Some(object)) = response {
@@ -1042,7 +1057,7 @@ async fn probe(
         return Ok(observation(
             &format!("{namespace}/Service/{service}"),
             Category::Incomplete,
-            "Rerun platform deploy to create this service",
+            "Restore the missing service",
         ));
     }
     let forward = wamn_kubernetes::forward::port_forward(

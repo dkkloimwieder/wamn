@@ -6,7 +6,6 @@ use std::path::Path;
 use wamn_environment::environment::{Platform, capture_gap, document::EnvironmentFile, operation};
 use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::job;
-use wamn_provision::migrations::MigrationDatabase;
 use wamn_registry::{Triple, name::REGISTRY_PULL};
 
 use crate::{
@@ -32,9 +31,21 @@ pub(crate) fn mount_registry(job: &mut Value, metadata: bool) {
     job::environment(job, &[("DOCKER_CONFIG", "/credentials/registry")]);
 }
 
+/// Mount the worker's credential staging directory.
+pub(crate) fn mount_database_files(job: &mut Value) {
+    job["spec"]["template"]["spec"]["volumes"]
+        .as_array_mut()
+        .expect("worker volumes")
+        .push(json!({"name":"database-files","emptyDir":{"medium":"Memory"}}));
+    job::container(job)["volumeMounts"]
+        .as_array_mut()
+        .expect("worker volume mounts")
+        .push(json!({"name":"database-files","mountPath":wamn_postgres::DATABASE_DIR}));
+}
+
 pub(crate) async fn execute(
     config: &Configuration,
-    mut platform: Platform,
+    platform: Platform,
     kind: Operation,
     request: Request,
     actor: &PrincipalId,
@@ -46,19 +57,23 @@ pub(crate) async fn execute(
     );
     let triple = Triple::new(file.org.clone(), request.env, request.project);
     let chart = wamn_platform_install::platform::artifact_plan::select(&platform.chart)?;
-    chart.directory().clone_into(&mut platform.chart);
-    platform.system_database_url =
-        MigrationDatabase::System.configuration(&config.apply_database.to_json()?)?;
+    let platform = Platform {
+        chart: chart.directory().to_owned(),
+        ..platform
+    };
     match kind {
         Operation::Recover => {
+            let owner = wamn_platform_install::environment::connection(
+                &platform.system_database_url,
+                &triple,
+            )
+            .await?;
+            let capture = wamn_platform_install::environment::capture_configuration(owner)?;
+            platform.prepare_database(&capture).await?;
             let recovered = capture_gap::recover(
                 &platform,
                 &capture_gap::RecoverCaptureGapRequest {
-                    admin_database_url: wamn_platform_install::environment::capture_connection(
-                        &platform.system_database_url,
-                        &triple,
-                    )
-                    .await?,
+                    admin_database_url: capture.to_json()?,
                     org: triple.org,
                     project: triple.project,
                     env: triple.env,

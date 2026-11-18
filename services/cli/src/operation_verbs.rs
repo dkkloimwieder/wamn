@@ -50,8 +50,8 @@ impl ControlHost {
         self.run_value(operation, value, "operation.status").await
     }
 
-    pub(crate) async fn platform(&self, value: Value) -> anyhow::Result<()> {
-        self.run_value("platform.update", value, "platform.operation_status")
+    pub(crate) async fn platform_schema(&self, value: Value) -> anyhow::Result<()> {
+        self.run_value("platform.schema", value, "platform.operation_status")
             .await
     }
 
