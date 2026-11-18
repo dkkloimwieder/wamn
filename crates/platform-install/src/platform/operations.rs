@@ -8,10 +8,11 @@ pub fn values(triple: &Triple, cluster: &str, database: &str) -> anyhow::Result<
         &triple.project,
         &triple.env,
     )?;
-    let capture = wamn_provision::project_env_cdc_secret_name(
+    let capture = wamn_provision::cdc_reader_name(
         &triple.org,
         &triple.project,
         &triple.env,
     );
-    Ok(json!({"operations":{"name":name,"cluster":cluster,"database":database,"capture":capture}}))
+    let capture_secret = wamn_registry::name::project_login_secret(database, wamn_role::CDC_LOGIN);
+    Ok(json!({"operations":{"name":name,"cluster":cluster,"database":database,"capture":capture,"captureSecret":capture_secret}}))
 }

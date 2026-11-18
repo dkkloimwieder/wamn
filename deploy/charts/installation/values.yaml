@@ -194,3 +194,11 @@ platform:
   chart: ''
 edgeDnsNames: []
 hostEnvironment: {}
+postgres:
+  image: ghcr.io/cloudnative-pg/postgresql:18.7
+  backup:
+    endpoint: null
+    bucket: null
+    secret: null
+systemDatabase:
+  roles: []

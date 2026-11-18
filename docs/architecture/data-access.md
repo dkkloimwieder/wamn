@@ -50,13 +50,11 @@ The platform alone installs its declared extension list, `btree_gist` and `pg_st
 Generated history migrations install record history triggers and tables.
 The catalog reader skips them by name, as [record history](#record-history) describes.
 
-Provisioning gives each project database one restricted package migration login.
-The platform owner owns application schemas. The migration login owns their relations and generated history functions.
-The `NOLOGIN` database owner, `wamn_db_owner`, retains platform objects.
-A separate managed platform migration login inherits its privileges.
-Initialization takes resolved platform and package migration connections.
-CNPG provisioning resolves its managed credential before initialization.
-Explicit Postgres callers supply each migration login's own credential.
+Each project has its own CloudNativePG Cluster.
+CloudNativePG creates the project database with `wamn_migration` as owner and installs extensions from the Database resource.
+The worker connects as `wamn_migration` to install the platform schema before it applies migrations.
+The other logins are `wamn_app_login`, `wamn_query_login`, `wamn_platform_login`, and `wamn_cdc`.
+The runtime logins inherit the existing group roles.
 Project role provisioning sets default privileges on the package migration login.
 Its new tables grant SELECT, INSERT, UPDATE and DELETE to `wamn_app` and SELECT to `wamn_query`.
 Its new sequences grant USAGE, SELECT and UPDATE to `wamn_app`.

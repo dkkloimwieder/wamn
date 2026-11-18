@@ -57,10 +57,7 @@ pub async fn apply_target(
         ),
     };
     let login = database.require_login(client).await?;
-    let database_name: String = sqlx::query_scalar("SELECT current_database()::text")
-        .fetch_one(&mut *client)
-        .await?;
-    let owner = postgres_protocol::escape::escape_identifier(&database.owner_role(&database_name));
+    let owner = postgres_protocol::escape::escape_identifier(&database.owner_role());
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(&login)
         .bind(wamn_provision::PlatformComponent::ApplyPackage.principal_id())
@@ -87,57 +84,31 @@ pub async fn apply_target(
     result
 }
 
-/// Install an empty project's platform schemas without repairing an existing installation.
+/// Bootstrap the project schemas in one transaction as the database owner.
 pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<bool> {
-    let present: bool = sqlx::query_scalar("SELECT to_regclass('platform.\"user\"') IS NOT NULL")
-        .fetch_one(&mut *client)
+    use sqlx::Connection as _;
+
+    MigrationDatabase::Project.require_login(client).await?;
+    let mut tx = client.begin().await?;
+    let present: bool = sqlx::query_scalar(r#"SELECT to_regclass('platform."user"') IS NOT NULL"#)
+        .fetch_one(&mut *tx)
         .await?;
-    if present {
-        return Ok(false);
-    }
-    sqlx::raw_sql(include_str!("../../../deploy/sql/project-roles.sql"))
-        .execute(&mut *client)
-        .await?;
-    let database: String = sqlx::query_scalar("SELECT current_database()::text")
-        .fetch_one(&mut *client)
-        .await?;
-    let owner = wamn_provision::migration::login(&database);
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "ALTER DATABASE {} OWNER TO {}; SET ROLE {}",
-        postgres_protocol::escape::escape_identifier(&database),
-        postgres_protocol::escape::escape_identifier(owner.as_str()),
-        postgres_protocol::escape::escape_identifier(owner.as_str()),
-    )))
-    .execute(&mut *client)
-    .await?;
-    let result = async {
-        sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
-            .execute(&mut *client)
-            .await?;
-        sqlx::raw_sql(wamn_provision::APP_SCHEMA_SQL)
-            .execute(&mut *client)
-            .await?;
-        sqlx::raw_sql(include_str!("../../../deploy/sql/run-state.sql"))
-            .execute(&mut *client)
-            .await?;
-        sqlx::raw_sql(include_str!("../../../deploy/sql/run-queue.sql"))
-            .execute(&mut *client)
-            .await?;
+    if !present {
+        for sql in [
+            wamn_catalog::CATALOG_SCHEMA_SQL,
+            wamn_provision::APP_SCHEMA_SQL,
+            include_str!("../../../deploy/sql/run-state.sql"),
+            include_str!("../../../deploy/sql/run-queue.sql"),
+        ] {
+            sqlx::raw_sql(sql).execute(&mut *tx).await?;
+        }
         for surface in [
             wamn_provision::sql::grant_dynamic_sql_surface_sql(),
             wamn_provision::sql::grant_platform_surface_sql(),
         ] {
-            sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
-                .execute(&mut *client)
-                .await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(surface)).execute(&mut *tx).await?;
         }
-        anyhow::Ok(())
     }
-    .await;
-    if result.is_err() {
-        sqlx::raw_sql("ROLLBACK").execute(&mut *client).await?;
-    }
-    sqlx::raw_sql("RESET ROLE").execute(&mut *client).await?;
-    result?;
-    Ok(true)
+    tx.commit().await?;
+    Ok(!present)
 }

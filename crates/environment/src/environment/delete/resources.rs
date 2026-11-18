@@ -29,7 +29,7 @@ pub(super) async fn require_ownership(
 ) -> anyhow::Result<()> {
     let namespace = &platform.target.namespace;
     let reader =
-        wamn_provision::project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+        wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
     if let Some(object) = get(platform, namespace, "deployment", &reader).await? {
         anyhow::ensure!(
             object["metadata"]["annotations"]["wamn.environment"].as_str()
@@ -39,7 +39,7 @@ pub(super) async fn require_ownership(
     }
     if let Some(object) = get(
         platform,
-        &platform.database_namespace,
+        &platform.target.namespace,
         "publication",
         database,
     )
@@ -94,7 +94,7 @@ pub(super) async fn require_ownership(
 
 pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
     let cdc =
-        wamn_provision::project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+        wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
     if get(platform, &platform.target.namespace, "deployment", &cdc)
         .await?
         .is_some()

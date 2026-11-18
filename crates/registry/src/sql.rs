@@ -6,83 +6,6 @@
 //! `provision-org` subcommand) holds the `wamn_system` connection and executes
 //! the statement as the registry owner.
 
-/// Upsert an org's placement row into `registry.orgs` (idempotent + additive —
-/// re-running `provision-org` refreshes placement, never dropping). Params: `$1`
-/// id, `$2` placement_type (`pooled` / `dedicated`), `$3` pool_cluster (nullable
-/// `text` — the shared pool for a pooled org, `NULL` for a dedicated org whose
-/// clusters are derived, D18 the provisioning placement rule).
-///
-/// The placement-type CHECK and the `pooled ⟺ pool_cluster` structural CHECK are
-/// enforced by the schema, not re-validated here — a bad row is rejected by the DB.
-pub fn upsert_org_sql() -> &'static str {
-    "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
-     VALUES ($1, $2, $3) \
-     ON CONFLICT (id) DO UPDATE SET \
-       placement_type = EXCLUDED.placement_type, \
-       pool_cluster = EXCLUDED.pool_cluster"
-}
-
-/// Select an org's placement (`placement_type`, `pool_cluster`) by id, so
-/// `provision-project-env` (wamn-q3n.7) can derive the target cluster per-env via
-/// the provisioning placement rule (placement + the env policy) — without
-/// requiring a project database to exist. Param: `$1` org id.
-pub fn select_org_placement_sql() -> &'static str {
-    "SELECT placement_type, pool_cluster FROM registry.orgs WHERE id = $1"
-}
-
-// --- env policies (wamn-8df.3; org-targeted by wamn-8df.4) --------------------
-//
-// The per-org [`EnvPolicy`](crate::EnvPolicy) rows (D18): sizing / HA / backup /
-// recovery-domain per (org, env slug). `recovery_domain` is `jsonb`; the reads
-// cast it to `text` so the driver serde-parses it back into `RecoveryDomain`.
-// Stamped from a [`Template`](crate::Template) at provision-org time (no
-// platform-global seed); columns drift-guarded against the storage DDL. The
-// org's full set is what `provision-org` sizes clusters from and what
-// `provision-project-env` derives the cluster owner from.
-
-/// The `registry.env_policies` policy-value column list, in the order both reads
-/// return and a row-mapper reads by index (`org` is the caller's key, not
-/// returned). `recovery_domain` is cast to `text` for serde.
-const ENV_POLICY_COLUMNS: &str = "name, recovery_domain::text, promotion_rank, instances, \
-     storage, cpu, memory, image, backup_cadence, wal_retention, hibernation";
-
-/// Select one org's whole env-policy set, ordered by `promotion_rank` (so
-/// `provision-org` sees `dev` before `prod`). Param: `$1` org id. Columns:
-/// `ENV_POLICY_COLUMNS`.
-pub fn select_env_policies_sql() -> String {
-    format!(
-        "SELECT {ENV_POLICY_COLUMNS} FROM registry.env_policies \
-         WHERE org = $1 ORDER BY promotion_rank"
-    )
-}
-
-/// Select one env policy from an org's set — `provision-project-env` reads it to
-/// derive the project-env's cluster owner (and confirm the env resolves to one of
-/// the org's policies). Params: `$1` org id, `$2` policy name (the env slug).
-/// Columns: `ENV_POLICY_COLUMNS`.
-pub fn select_env_policy_sql() -> String {
-    format!(
-        "SELECT {ENV_POLICY_COLUMNS} FROM registry.env_policies \
-         WHERE org = $1 AND name = $2"
-    )
-}
-
-/// Stamp one template policy row into an org's set — **insert-if-absent**
-/// (`ON CONFLICT (org, name) DO NOTHING`), the wamn-8df.4 instantiate-and-own
-/// semantics: re-running `provision-org` keeps an org's per-env customizations
-/// and only adds envs the org is missing; it never clobbers a customized row
-/// back to template values. Params: `$1` org, `$2` name, `$3` recovery_domain
-/// (JSON text, cast `::text::jsonb`), `$4` promotion_rank, `$5` instances, `$6`
-/// storage, `$7` cpu, `$8` memory, `$9` image, `$10` backup_cadence, `$11`
-/// wal_retention, `$12` hibernation.
-pub fn stamp_env_policy_sql() -> &'static str {
-    "INSERT INTO registry.env_policies \
-       (org, name, recovery_domain, promotion_rank, instances, \
-        storage, cpu, memory, image, backup_cadence, wal_retention, hibernation) \
-     VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
-     ON CONFLICT (org, name) DO NOTHING"
-}
-
 /// Upsert a project row into `registry.projects` (idempotent). Params: `$1` org,
 /// `$2` id. `ON CONFLICT (org, id) DO NOTHING` — a project carries no mutable
 /// placement of its own (placement is per-env), so re-provisioning is a no-op.
@@ -242,7 +165,7 @@ pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_IN_ORG_SQL: &str =
     "SELECT EXISTS (SELECT 1 FROM registry.projects WHERE org = $1 AND id = $2)";
 
 /// crates/dev/src/pat_secrets_tests.rs::auth_drops_mint_pat_records_the_committed_project_role_drop registry statement.
-pub const CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMMITTED_PROJECT_ROLE_DROP: &str = "INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('org', 'pooled', 'test'); INSERT INTO registry.projects (org, id) VALUES ('org', 'project')";
+pub const CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMMITTED_PROJECT_ROLE_DROP: &str = "INSERT INTO registry.orgs (id) VALUES ('org'); INSERT INTO registry.projects (org, id) VALUES ('org', 'project')";
 
 /// crates/dev/src/dev/target_database.rs::recorded_disposable registry statement.
 pub const CONTROL_DEV_SRC_DEV_TARGET_DATABASE_RECORDED_DISPOSABLE: &str = "SELECT disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org=$1 AND project=$2 AND env=$3";
@@ -303,10 +226,3 @@ pub const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.environ
 
 /// Registered orgs whose resources belong to the supplied namespace.
 pub const INSTALL_ORGS: &str = "SELECT id FROM registry.orgs WHERE id=$1 ORDER BY id";
-
-/// Project coordinates, physical instance, org placement, pool, and policy name.
-pub const INSTALL_PROJECTS: &str = "SELECT ep.org, ep.project, ep.env, ep.instance_suffix, \
-    o.placement_type, o.pool_cluster, e.policy_name \
-    FROM registry.environment_projects ep JOIN registry.orgs o ON o.id=ep.org \
-    JOIN registry.environments e ON e.org=ep.org AND e.env=ep.env \
-    WHERE ep.org=$1 ORDER BY ep.project, ep.env";

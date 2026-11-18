@@ -13,16 +13,11 @@
 //! Delete the applied configuration with the environment row
 //! last and commit. Disable connection principals in a retained database.
 //!
-//! The CR keeps `databaseReclaimPolicy: retain`, so the database and its data
-//! stay on the cluster, with the roles that own them, for manual recovery.
-//! With `--data` the verb first patches the policy to `delete`, CloudNativePG
-//! drops the database before the CR is gone, and then the roles go.
+//! Helm preserves the Cluster and ObjectStore unless deletion includes data.
 
 use sqlx::{Connection as _, Row as _};
-pub(super) mod plan;
 mod resources;
 mod rows;
-pub use plan::{instance_families, instance_roles};
 pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
@@ -102,13 +97,12 @@ async fn delete_locked(
     };
     let instance: wamn_registry::instance_suffix::InstanceSuffix = row.get(0);
     let database = project_env_database_name(org, project, env, &instance);
-    let project_env_key = wamn_provision::project_env_key(org, project, env);
 
     resources::require_ownership(platform, triple, &database).await?;
     let applications = application_releases(platform, triple).await?;
     let cr_present = !kubectl(
         platform,
-        &platform.database_namespace,
+        &platform.target.namespace,
         &[
             "get",
             "database",
@@ -312,24 +306,15 @@ async fn delete_locked(
         wamn_platform_install::environment::remove_database(
             &platform.target,
             &platform.chart,
-            admin_url,
             triple,
             data,
         )
         .await?;
-        lines.push("removed the chart-owned database resource".into());
+        lines.push("uninstalled the project release".into());
     }
 
     let last = wamn_broker::authorization::remove_project(&platform.target, triple).await?;
     resources::delete_event_certificates(platform, triple, last).await?;
-    if data {
-        let roles = instance_roles(triple, &instance, &project_env_key)?;
-        wamn_platform_install::org::remove_roles(
-            &platform.target, &platform.chart, admin_url, org, &roles,
-        ).await?;
-        lines.push(format!("retired {} roles (or they were gone)", roles.len()));
-    }
-
     // Keep the registry inputs until the credential store and its account are gone.
     let secret = wamn_registry::credential_secret_name(org, project, env);
     let deleted = kubectl(

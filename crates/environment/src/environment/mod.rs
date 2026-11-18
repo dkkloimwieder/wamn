@@ -44,13 +44,6 @@ pub struct Platform {
     /// release names a package the environment does not have yet, or the
     /// document pins a web artifact.
     pub package_artifact_base: Option<String>,
-    /// The namespace of the CloudNativePG `Cluster`, which the environment's
-    /// `Database` CR shares.
-    pub database_namespace: String,
-    /// The host and port every credential URL names. Absent host: the target
-    /// Service `<cluster>-rw.<database_namespace>.svc.cluster.local`.
-    pub database_host: Option<String>,
-    pub database_port: u16,
     /// A YAML mapping: the platform's part of the host group body (replicas,
     /// resources, registry mounts). The verb adds the environment's
     /// credential Secret references.

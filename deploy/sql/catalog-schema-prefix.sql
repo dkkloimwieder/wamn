@@ -6,10 +6,8 @@
 -- compose exact package coordinates. No catalog-document, schema-model, or
 -- generated semantic-table registry survives this schema.
 --
--- STANDALONE TRANSACTIONAL ARTIFACT. This file is not included by
+-- STANDALONE ARTIFACT. This file is not included by
 -- postgres-init.sql; the project-environment provisioner applies it whole.
-
-BEGIN;
 
 CREATE SCHEMA catalog AUTHORIZATION CURRENT_USER;
 

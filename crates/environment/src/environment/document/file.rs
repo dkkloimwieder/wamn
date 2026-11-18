@@ -26,10 +26,37 @@ pub struct EnvironmentFile {
     pub policy: EnvName,
     #[schemars(range(max = 3600))]
     pub revocation_seconds: u32,
+    pub database: Database,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub connections: BTreeMap<String, Integration>,
     #[schemars(length(min = 1))]
     pub projects: Vec<Project>,
+}
+
+/// Database sizing for every project in this environment.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Database {
+    #[schemars(range(min = 1))]
+    pub instances: u32,
+    #[schemars(regex(pattern = r"\S"))]
+    pub storage: String,
+    #[schemars(regex(pattern = r"\S"))]
+    pub cpu: String,
+    #[schemars(regex(pattern = r"\S"))]
+    pub memory: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<Backup>,
+}
+
+/// Base backup schedule and recovery window.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Backup {
+    #[schemars(regex(pattern = r"\S"))]
+    pub cadence: String,
+    #[schemars(regex(pattern = r"^[1-9][0-9]*[dwm]$"))]
+    pub retention: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -66,6 +93,32 @@ impl EnvironmentFile {
             Some(self.revocation_seconds),
             &self.connections,
         )?;
+        let db = &self.database;
+        ensure!(
+            db.instances > 0
+                && [&db.storage, &db.cpu, &db.memory]
+                    .into_iter()
+                    .all(|quantity| !quantity.trim().is_empty()),
+            "database requires instances, storage, cpu, and memory"
+        );
+        if let Some(backup) = &db.backup {
+            let valid_retention =
+                backup
+                    .retention
+                    .as_bytes()
+                    .split_last()
+                    .is_some_and(|(unit, number)| {
+                        matches!(unit, b'd' | b'w' | b'm')
+                            && number
+                                .first()
+                                .is_some_and(|first| matches!(first, b'1'..=b'9'))
+                            && number.iter().all(u8::is_ascii_digit)
+                    });
+            ensure!(
+                !backup.cadence.trim().is_empty() && valid_retention,
+                "database backup requires a cadence and a positive retention in days, weeks, or months"
+            );
+        }
         let mut projects = BTreeSet::new();
         let mut applications = BTreeSet::new();
         for project in &self.projects {

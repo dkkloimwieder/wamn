@@ -6,7 +6,15 @@ pub const APP_ROLE: &str = "wamn_app";
 pub const QUERY_ROLE: &str = "wamn_query";
 /// Host platform work and retention.
 pub const PLATFORM_ROLE: &str = "wamn_platform";
-/// Prefix of each project database's owner login.
+/// Application login in a project database.
+pub const APP_LOGIN: &str = "wamn_app_login";
+/// Read-only login in a project database.
+pub const QUERY_LOGIN: &str = "wamn_query_login";
+/// Platform login in a project database.
+pub const PLATFORM_LOGIN: &str = "wamn_platform_login";
+/// Replication login in a project database.
+pub const CDC_LOGIN: &str = "wamn_cdc";
+/// Project database owner login.
 pub const MIGRATION_ROLE: &str = "wamn_migration";
 /// System database owner.
 pub const SYSTEM_ROLE: &str = "wamn_system";

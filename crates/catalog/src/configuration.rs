@@ -202,39 +202,6 @@ pub async fn read(
     Ok(Some(configuration))
 }
 
-/// Refuse a policy that would move an established environment to another cluster.
-/// Call before provisioning effects while holding the environment lifecycle lock.
-///
-/// # Errors
-/// Returns database errors or an invalid argument when the policy changes placement.
-pub async fn require_placement(
-    connection: &mut sqlx::PgConnection,
-    org: &wamn_registry::OrgId,
-    env: &wamn_registry::EnvName,
-    policy: &wamn_registry::EnvName,
-) -> Result<(), sqlx::Error> {
-    let preserved: Option<bool> = sqlx::query_scalar(
-        "SELECT requested.name IS NOT NULL AND (o.placement_type='pooled' OR \
-         COALESCE(established.recovery_domain->>'shared-with',established.name) = \
-         COALESCE(requested.recovery_domain->>'shared-with',requested.name)) \
-         FROM registry.environments e JOIN registry.orgs o ON o.id=e.org \
-         JOIN registry.env_policies established ON established.org=e.org AND established.name=e.policy_name \
-         LEFT JOIN registry.env_policies requested ON requested.org=e.org AND requested.name=$3 \
-         WHERE e.org=$1 AND e.env=$2 FOR UPDATE OF e",
-    )
-    .bind(org)
-    .bind(env)
-    .bind(policy)
-    .fetch_optional(connection)
-    .await?;
-    if preserved == Some(false) {
-        return Err(sqlx::Error::InvalidArgument(format!(
-            "policy {policy:?} must exist and preserve the database cluster of {org}/{env}"
-        )));
-    }
-    Ok(())
-}
-
 /// Replace one project's settings atomically and upsert the environment pins.
 /// The caller owns the environment lifecycle lock, checks placement, and binds the provisioning actor.
 ///

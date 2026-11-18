@@ -150,7 +150,7 @@ pub(super) async fn installed(
         .context("the environment row is missing after step 4")?;
     system.commit().await?;
     Ok(
-        analyse::read_project(&analyse::project_url(platform, document, &row).await?)
+        analyse::read_project(&analyse::project_url(document, &row)?)
             .await?
             .context("the project database is missing after step 4")?
             .installed,

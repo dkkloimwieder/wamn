@@ -652,7 +652,7 @@ The development loop uses the installed identity and control services.
 [Development loop](development-loop.md) gives the source publication and deployment commands.
 The focused connection and caller test above uses this product path.
 
-The CLI browser targets `platform_ui_live` and `receiving_ui_live` also use this path.
+The CLI browser target `receiving_ui_live` also uses this path.
 They call `wamn env apply` and `wamn dev` against an installed disposable platform.
 Supply `WAMN_TEST_CLUSTER`, `WAMN_DEV_ENV`, `WAMN_TIMINGS_ROOT`, and the existing `WAMN_BROWSER_*` sign-in inputs listed in each test.
 The environment directory contains `environment.yaml` for one application.

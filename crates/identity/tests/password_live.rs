@@ -47,10 +47,10 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations(pool
     let user = new_user(&mut client, "alice").await;
     let other = new_user(&mut client, "bob").await;
     let work = password_work();
-    sqlx::raw_sql("INSERT INTO registry.orgs (id, placement_type) VALUES ('password-test', 'dedicated');
+    sqlx::raw_sql("INSERT INTO registry.orgs (id) VALUES ('password-test');
         INSERT INTO registry.projects (org, id) VALUES ('password-test', 'widgets');
-        INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
-        VALUES ('password-test', 'dev', '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18');
+        INSERT INTO registry.env_policies (org, name)
+        VALUES ('password-test', 'dev');
         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('password-test','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('password-test','widgets','dev','password-test-secret','a1b2c3d4')").execute(&mut client).await.map(drop).unwrap();
     wamn_identity::org::activate_org_membership(
         &mut client,

@@ -90,9 +90,9 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `xtask/build` | Shared package and guest build implementation |
 | `deploy/charts/infrastructure` | Cluster infrastructure chart |
 | `deploy/charts/installation` | Platform services and chart dependencies |
-| `deploy/charts/org` | Org PostgreSQL clusters and backup resources |
+| `deploy/charts/org` | Org resources |
 | `deploy/charts/environment` | Shared host group for each environment |
-| `deploy/charts/project` | Project database, accounts, certificates, and change capture |
+| `deploy/charts/project` | Project PostgreSQL Cluster, backups, accounts, certificates, and change capture |
 | `deploy/charts/application` | Application release and web selection |
 | `deploy/charts/identity` | Identity service deployment |
 | `deploy/charts/edge` | Web front deployment |
@@ -121,11 +121,11 @@ Only overlays compose with their pinned bases.
 One YAML file declares the projects, applications, and connection pins of an environment.
 The registry stores the applied settings and one version per connection name in the environment.
 Helm records deployment and rollback history.
-The org chart owns PostgreSQL clusters and their managed roles.
-The project chart owns each project's database, database login Secrets, and change capture resources.
+The installation chart owns the system PostgreSQL Cluster in namespace `platform`.
+The project chart owns each project's PostgreSQL Cluster, database, managed logins, backups, and change capture resources.
 The environment chart owns the shared host group.
 The application chart sets `wamn.package-digest` and `wamn.release-revision` on the WorkloadDeployment.
-The worker upgrades the org and environment charts once each and upgrades each project chart once in file order.
+The worker starts the environment chart upgrade first. It upgrades each project chart once in file order.
 Each project keeps its own database authority, connection facts, and loaded release selections.
 A workflow run keeps its workflow version and uses the live application workload.
 Environment apply and delete check for unfinished application runs.

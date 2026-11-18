@@ -9,7 +9,6 @@ use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
 use super::Platform;
 use super::document::EnvironmentDocument;
-use crate::provision_project_env::read_project_env_instance;
 use wamn_postgres::connect;
 
 /// Remove one project's runtime access and wait until its credentials are unmounted.
@@ -35,7 +34,7 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     let connection =
         wamn_platform_install::environment::connection(&platform.system_database_url, triple)
             .await?;
-    let retired = crate::provision_project_env::workload::connections(triple, &connection)?;
+    let retired = crate::provision_project_env::workload::connections(&connection)?;
     tokio::time::timeout(std::time::Duration::from_secs(120), async {
         loop {
             let pods = super::analyse::read_pods(platform, &name).await?;
@@ -149,16 +148,24 @@ pub(super) async fn prepare_host_upgrade<'a>(
     env: &EnvName,
     policy: &EnvName,
     reserved: &[&str],
-) -> anyhow::Result<impl Future<Output = anyhow::Result<()>> + use<'a>> {
+) -> anyhow::Result<(u32, impl Future<Output = anyhow::Result<()>> + use<'a>)> {
     let name = name::environment_host_name(org, env);
     let values = host_values(platform, org, env, reserved, None, Some(policy)).await?;
-    wamn_platform_install::environment::prepare_host_upgrade(
+    let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
+    // The runtime operator defaults the group to one replica.
+    let replicas = if group["replicas"].is_null() {
+        1
+    } else {
+        u32::try_from(group["replicas"].as_u64().context("invalid host replica count")?)?
+    };
+    let upgrade = wamn_platform_install::environment::prepare_host_upgrade(
         &platform.target,
         &platform.chart,
         name,
         &values,
     )
-    .await
+    .await?;
+    Ok((replicas, upgrade))
 }
 
 pub(super) async fn wait_certificate(platform: &Platform, name: &str) -> anyhow::Result<()> {
@@ -304,7 +311,7 @@ async fn host_values(
             );
             let mut logins = serde_json::Map::new();
             for (family, config) in
-                crate::provision_project_env::workload::connections(project, connection)?
+                crate::provision_project_env::workload::connections(connection)?
             {
                 let plugin_role = match family {
                     wamn_provision::WorkloadRoleFamily::App => "guest-sql",
@@ -425,30 +432,26 @@ pub async fn cdc_in_place(
         .get(0))
 }
 
-/// The URL of the environment's project database: the system URL's login on
-/// the database the registry row names.
+/// The migration credential of the project's registered database generation.
 pub(super) async fn project_url(platform: &Platform, triple: &Triple) -> anyhow::Result<String> {
-    if wamn_postgres::configuration(&platform.system_database_url)?
-        .trim_start()
-        .starts_with('{')
-    {
-        return wamn_platform_install::environment::connection(
-            &platform.system_database_url,
-            triple,
-        )
+    wamn_platform_install::environment::connection(&platform.system_database_url, triple)
         .await?
-        .to_json();
-    }
-    let instance = read_project_env_instance(&platform.system_database_url, triple).await?;
-    wamn_postgres::database_configuration(
-        &platform.system_database_url,
-        &wamn_provision::project_env_database_name(
-            &triple.org,
-            &triple.project,
-            &triple.env,
-            &instance,
-        ),
+        .to_json()
+}
+
+pub(super) async fn postgres_settings(platform: &Platform) -> anyhow::Result<serde_json::Value> {
+    let configuration: serde_json::Value = wamn_kubernetes::kubectl::get(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        &platform.target.namespace,
+        "configmap",
+        "wamn-platform",
     )
+    .await?
+    .context("installation configuration is absent")?;
+    let postgres = configuration["data"]["postgres.json"].as_str()
+        .context("installation PostgreSQL settings are absent")?;
+    serde_json::from_str(postgres).context("decode installation PostgreSQL settings")
 }
 
 /// Run `kubectl` against the platform's cluster in `namespace`.

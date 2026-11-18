@@ -13,6 +13,8 @@ pub struct ManagedRole {
     pub name: wamn_identity_protocol::LoginName,
     pub ensure: String,
     pub login: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_limit: Option<u32>,
     pub superuser: bool,
     pub createdb: bool,
     pub createrole: bool,
@@ -40,6 +42,7 @@ pub fn managed_role(
         name,
         ensure: "present".into(),
         login: true,
+        connection_limit: None,
         superuser: false,
         createdb: false,
         createrole: false,

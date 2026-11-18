@@ -7,7 +7,7 @@ pub fn set_database_owner_sql(database: &str) -> String {
     format!(
         "ALTER DATABASE {} OWNER TO {}",
         escape_identifier(database),
-        escape_identifier(crate::migration::login(database).as_str()),
+        escape_identifier(crate::migration::login().as_str()),
     )
 }
 

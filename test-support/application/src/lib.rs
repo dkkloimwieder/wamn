@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_environment::environment::document::{DeclaredRelease, EnvironmentDocument};
+use wamn_environment::environment::document::{
+    DeclaredRelease, EnvironmentDocument, EnvironmentFile,
+};
 use wamn_environment::platform::document::ClusterDocument;
 use wamn_oci::package_artifact::http_client::HttpClient;
 use wamn_test_infrastructure::scratch::ScratchRoot;
@@ -23,45 +25,41 @@ impl Application {
     pub async fn prepare(source: &Path) -> anyhow::Result<Self> {
         let scratch = ScratchRoot::create()?;
         let cluster = ClusterDocument::compile(Path::new(&std::env::var("WAMN_TEST_CLUSTER")?))?;
-        let mut document = EnvironmentDocument::compile(
+        let mut authored = EnvironmentFile::compile(
             &PathBuf::from(std::env::var("WAMN_DEV_ENV")?).join("environment.yaml"),
         )?;
         ensure!(
-            document.org == cluster.org,
+            authored.org == cluster.org,
             "fixture org differs from the platform"
         );
+        let [project] = authored.projects.as_mut_slice() else {
+            anyhow::bail!("select one fixture project");
+        };
         ensure!(
-            document.applications.len() == 1,
+            project.applications.len() == 1,
             "select one fixture application"
         );
-        let source_environment = document.env.clone();
-        document.env =
-            format!("route-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]).parse()?;
-        let (name, application) = document
+        let source_environment = std::mem::replace(
+            &mut authored.env,
+            format!("route-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]).parse()?,
+        );
+        let name = project
             .applications
             .first_key_value()
-            .context("application")?;
-        let name = name.to_owned();
-        let hostname = application
+            .context("application")?
+            .0
+            .to_owned();
+        let application = project.applications.get_mut(&name).context("application")?;
+        let (_, domain) = application
             .hostname
             .split_once('.')
-            .context("fixture hostname domain")?
-            .1;
-        let hostname = format!("{}.{hostname}", document.env);
-        document
-            .applications
-            .get_mut(&name)
-            .context("application")?
-            .hostname
-            .clone_from(&hostname);
-        eprintln!("Product fixture environment: {}", document.triple());
-        document
-            .applications
-            .get_mut(&name)
-            .context("application")?
-            .current = DeclaredRelease::None;
+            .context("fixture hostname domain")?;
+        application.hostname = format!("{}.{domain}", authored.env);
+        application.current = DeclaredRelease::None;
         let file = scratch.path().join("environment.yaml");
-        std::fs::write(&file, document.clone().to_yaml()?)?;
+        std::fs::write(&file, authored.to_yaml()?)?;
+        let document = authored.into_projects().next().context("fixture project")?;
+        eprintln!("Product fixture environment: {}", document.triple());
         product(["env", "apply", text(&file)?, "--disposable"]).await?;
         for connection in document.applications[&name].connections.values() {
             let request = scratch.path().join("connection.json");
@@ -112,7 +110,7 @@ impl Application {
                 "{}/api/{name}",
                 std::env::var("WAMN_BROWSER_URL")?.trim_end_matches('/')
             ),
-            host: hostname,
+            host: document.applications[&name].hostname.clone(),
             bearer,
             client: HttpClient::builder()
                 .timeout(std::time::Duration::from_secs(60))

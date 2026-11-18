@@ -3,6 +3,7 @@
   "title": "EnvironmentFile",
   "type": "object",
   "required": [
+    "database",
     "env",
     "org",
     "policy",
@@ -16,6 +17,9 @@
       "additionalProperties": {
         "$ref": "#/definitions/Integration"
       }
+    },
+    "database": {
+      "$ref": "#/definitions/Database"
     },
     "env": {
       "type": "string"
@@ -78,6 +82,25 @@
       },
       "additionalProperties": false
     },
+    "Backup": {
+      "description": "Base backup schedule and recovery window.",
+      "type": "object",
+      "required": [
+        "cadence",
+        "retention"
+      ],
+      "properties": {
+        "cadence": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "retention": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*[dwm]$"
+        }
+      },
+      "additionalProperties": false
+    },
     "Client": {
       "description": "A package and its immutable web artifact.",
       "type": "object",
@@ -100,6 +123,46 @@
       "description": "A bare connection name. The version is pinned once for the environment.",
       "type": "string",
       "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+    },
+    "Database": {
+      "description": "Database sizing for every project in this environment.",
+      "type": "object",
+      "required": [
+        "cpu",
+        "instances",
+        "memory",
+        "storage"
+      ],
+      "properties": {
+        "backup": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Backup"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cpu": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "instances": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 1.0
+        },
+        "memory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "storage": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "additionalProperties": false
     },
     "Integration": {
       "description": "The environment pin for a published integration type version.",

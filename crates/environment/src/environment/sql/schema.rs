@@ -81,7 +81,7 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
         });
     };
     system.commit().await?;
-    let url = analyse::project_url(platform, document, &row).await?;
+    let url = analyse::project_url(document, &row)?;
     let mut state = database_state(
         &url,
         &wamn_registry::project_env_key(&document.org, &document.project, &document.env),

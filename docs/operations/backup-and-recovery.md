@@ -1,50 +1,47 @@
 # Backup and recovery
 
-This page covers the backup of an org Postgres cluster and its recovery.
-Backup and recovery run through CloudNativePG and its Barman Cloud plugin.
-The org Helm chart owns the cluster and its backup resources.
+The project chart owns the PostgreSQL Cluster and its backup resources.
+CloudNativePG uses the Barman Cloud plugin to archive write-ahead logs (WAL).
+WAL records changes between base backups.
 
-## What the platform backs up
+## Configure backups
 
-`provision-org` prepares chart values for one cluster for each recovery domain of an org.
-Each backed cluster carries the Barman Cloud plugin as its WAL archiver.
-The plugin ships every WAL segment to `s3://wamn-backups/wal/<cluster>` in the shared object store.
-A `ScheduledBackup` takes a base backup at the cadence of the env policy.
-Two policy fields size the recovery window.
-`wal_retention` sets how far back a restore can reach.
-`backup_cadence` sets how often a base backup is taken.
+Set `database.backup.cadence` in the environment YAML to a six-field CNPG schedule.
+Set `database.backup.retention` to the recovery window, such as `14d`.
+Each project's ScheduledBackup uses that cadence. Each ObjectStore uses that retention window.
+Omit `database.backup` to leave backups disabled for the environment.
 
-An env policy with an empty `backup_cadence` has no backup at all.
-The shipped `dev` policy is such a policy, and the shipped `prod` policy keeps 14 days.
-An environment with no backup has no WAL stream, so it cannot be recovered.
-
-Each cluster writes under its own prefix, so two recovery domains never share a WAL stream.
+Set `postgres.backup.endpoint`, `postgres.backup.bucket`, and `postgres.backup.secret` in the installation values before enabling backups.
+These values have no defaults. Epic 10 supplies them during installation.
+The named Secret must be present in the project's org namespace with keys `ACCESS_KEY_ID` and `ACCESS_SECRET_KEY`.
+Clusters share the bucket. Each project generation uses its own prefix at `s3://<bucket>/wal/<cluster>`.
 
 ## What recovery restores
 
 CloudNativePG recovery is whole-cluster point-in-time recovery.
 It restores a base backup and then replays WAL up to the point you name.
 The restore always lands in a new cluster, and the source cluster is untouched.
-The new cluster holds every database and every role the source held at that instant.
+The new Cluster recovers the project database and its roles at that instant.
 
 ## Select recovery
 
-The org chart owns recovery configuration and the generated CNPG resources.
-Select the recovery domain and restore time through that chart.
-Recovery creates a new cluster. Its name must differ from the source.
-Review its storage and replica count against the source before deployment.
+Use a separate release of the project chart. The source Cluster keeps serving its existing endpoint.
+The new Cluster uses the source name with `-restore` appended.
+It reads from the source ObjectStore and archives WAL to its own prefix.
 
-Helm owns the restored Cluster, ObjectStore, and ScheduledBackup together.
-
-The restored cluster archives WAL to its own store, under the prefix of its own name.
-It can never write into the stream it was restored from.
-Its `externalClusters` entry names the source store, and that entry is a read path only.
-
-To watch the restore, read the cluster status and the operator logs.
+Set `project_release` to the live project release in org `acme`.
+Export only the source `cluster` values. Review the instances and storage for the restore.
+Set `recovery.targetTime` to the instant to recover.
 
 ```bash
-kubectl -n acme get cluster acme-prod-restore -o wide
-kubectl -n acme logs -l cnpg.io/cluster=acme-prod-restore -c postgres --tail=50
+helm get values "$project_release" --namespace acme --output json |
+  jq '{cluster: .cluster}' > restore-values.json
+helm install recovery-acme-prod deploy/charts/project --namespace acme \
+  -f restore-values.json --set-string recovery.targetTime=2026-11-18T12:00:00Z
+
+restored_cluster="$(jq -r '.cluster.name + "-restore"' restore-values.json)"
+kubectl -n acme get cluster "$restored_cluster" -o wide
+kubectl -n acme logs -l "cnpg.io/cluster=$restored_cluster" -c postgres --tail=50
 ```
 
 ## Connect to the restored cluster
@@ -61,14 +58,14 @@ Nothing points at the restored cluster until you change a target yourself.
 CloudNativePG restores a whole cluster, so there is no command that restores one database.
 To recover one database or one table, restore the cluster and then copy the rows out.
 
-1. Select recovery in the org chart at the instant before the loss.
+1. Install the recovery release at the instant before the loss.
 2. Read the superuser URI from the Secret `<target>-superuser`.
 3. Copy the wanted database or table out of the restored cluster.
 4. Load it into the live database under a new name, then move the rows.
 5. When the copy is complete, delete the restored cluster.
 
 ```bash
-kubectl -n acme get secret acme-prod-restore-superuser -o jsonpath='{.data.uri}' | base64 -d
+kubectl -n acme get secret "${restored_cluster}-superuser" -o jsonpath='{.data.uri}' | base64 -d
 pg_dump "<restored-superuser-uri>" --table=receiving.receipts --data-only --format=custom --file=/tmp/receipts.dump
 pg_restore --dbname="<live-superuser-uri>" --data-only /tmp/receipts.dump
 ```
@@ -82,6 +79,8 @@ Warning: `pg_restore --data-only` into a live table adds rows, it does not repla
 Load into a scratch table first, then write the rows you want with SQL you read before you run it.
 
 ## Keep or discard the restored cluster
+
+Pending owner ruling (Epic 9, restore replacement): env apply regenerates the targets from the registry.
 
 If the restore replaces the source, keep it.
 It already archives to its own store, so its backups continue without more work.
@@ -98,7 +97,5 @@ When you no longer want them, remove them with the object-store client.
 
 ## Limits
 
-- An env policy with an empty `backup_cadence` has no WAL stream and cannot be recovered.
-- A pooled org uses the recovery policy of its shared cluster.
-- The org chart owns the restored size.
-- Recovery restores a whole cluster, and every database in that cluster comes back together.
+A project without backups has no archived WAL for point-in-time recovery.
+Helm deletes recovery Cluster resources when you uninstall the recovery release. Objects in the recovery prefix stay in the bucket.

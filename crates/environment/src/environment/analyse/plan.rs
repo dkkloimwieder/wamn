@@ -1,5 +1,5 @@
 use super::{
-    Authorities, EnvironmentDocument, EnvironmentRow, Platform,
+    Authorities, EnvironmentDocument, EnvironmentRow,
 };
 
 pub(super) fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option<String> {
@@ -12,32 +12,13 @@ pub(super) fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option
 }
 
 
-/// The project database URL: the system URL with the environment's database.
-pub(crate) async fn project_url(
-    platform: &Platform,
+/// Resolve the project endpoint from the generation read during analysis.
+pub(crate) fn project_url(
     document: &EnvironmentDocument,
     row: &EnvironmentRow,
 ) -> anyhow::Result<String> {
-    if wamn_postgres::configuration(&platform.system_database_url)?
-        .trim_start()
-        .starts_with('{')
-    {
-        return wamn_platform_install::environment::connection(
-            &platform.system_database_url,
-            &document.triple(),
-        )
-        .await?
-        .to_json();
-    }
-    wamn_postgres::database_configuration(
-        &platform.system_database_url,
-        &wamn_provision::project_env_database_name(
-            &document.org,
-            &document.project,
-            &document.env,
-            &row.instance_suffix,
-        ),
-    )
+    wamn_platform_install::environment::connection_for(&document.triple(), &row.instance_suffix)
+        .to_json()
 }
 
 pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String> {

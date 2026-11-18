@@ -40,9 +40,29 @@ pub fn values(document: &ClusterDocument, chart: &SelectedChart) -> anyhow::Resu
     Ok(values)
 }
 
+pub(super) const SYSTEM_DATABASE: &str = "wamn_system";
+pub(super) const SYSTEM_CLUSTER: &str = "wamn-pg";
+
+pub(super) fn system_database_host() -> String {
+    format!("{SYSTEM_CLUSTER}-rw.platform.svc.cluster.local")
+}
+
+pub fn system_database_values(org: &wamn_registry::OrgId) -> anyhow::Result<Value> {
+    Ok(json!({
+        "name": SYSTEM_DATABASE,
+        "cluster": SYSTEM_CLUSTER,
+        "host": system_database_host(),
+        "roles": crate::roles::platform(org, SYSTEM_DATABASE)?,
+    }))
+}
+
 pub fn platform_entry(chart: &SelectedChart, mut values: Value) -> anyhow::Result<Value> {
+    let org: wamn_registry::OrgId = values["org"]
+        .as_str()
+        .context("installation org is absent")?
+        .parse()?;
+    values["systemDatabase"] = system_database_values(&org)?;
     if values["global"]["natsAccountOrgs"].is_null() {
-        let org = values["org"].as_str().context("installation org")?;
         values["global"]["natsAccountOrgs"] = json!([org]);
     }
     entry(
@@ -60,50 +80,6 @@ fn entry(chart: &Path, name: &str, values: Value) -> anyhow::Result<Value> {
     Ok(entry)
 }
 
-/// Public system cluster inputs shared by installation and local measurement.
-pub fn organization_values(org: &wamn_registry::OrgId) -> Value {
-    json!({"org":org,"clusters":[{
-        "name":"wamn-pg","database":"wamn_system","owner":wamn_role::SYSTEM_ROLE,"enablePDB":false,
-        "parameters":{"max_slot_wal_keep_size":"4GB","pg_stat_statements.max":"10000","pg_stat_statements.track":"top","auto_explain.log_min_duration":"-1"},
-        "policy":{"name":"system","instances":1,"image":"ghcr.io/cloudnative-pg/postgresql:18.7","cpu":"200m","memory":"256Mi","storage":"10Gi","hibernation":"never","backup-cadence":"","wal-retention":""}
-    }]})
-}
-
-pub fn organization_entry(
-    document: &ClusterDocument,
-    chart: &SelectedChart,
-    installed: Option<Value>,
-) -> anyhow::Result<Value> {
-    let mut values = organization_values(&document.org);
-    values["platform"] = json!({"chart":chart.reference()});
-    if let Some(mut installed) = installed {
-        for cluster in installed["clusters"]
-            .take()
-            .as_array_mut()
-            .into_iter()
-            .flatten()
-        {
-            if cluster["database"] != "wamn_system" {
-                values["clusters"]
-                    .as_array_mut()
-                    .context("org clusters")?
-                    .push(cluster.take());
-            }
-        }
-    }
-    let roles = crate::roles::platform(&document.org, "wamn-pg", "wamn_system")?;
-    values["loginSecrets"] = roles.values().flatten()
-        .map(|role| json!({"name":role.password_secret.name,"username":role.name}))
-        .collect::<Vec<_>>().into();
-    values["managedRoles"] = crate::roles::values(&roles)?;
-    crate::environment::entry(
-        &chart.directory().join("platform/org"),
-        document.org.as_str(),
-        &wamn_registry::name::resource_suffix("org", document.org.as_str()),
-        values,
-    )
-}
-
 pub async fn apply(
     target: &Target,
     chart: &SelectedChart,
@@ -111,7 +87,7 @@ pub async fn apply(
     directory: &Path,
 ) -> anyhow::Result<()> {
     let mut entry = platform_entry(chart, std::mem::take(values))?;
-    let result = resources::apply_release(target, &entry, directory, Wait::Watcher).await;
+    let result = resources::apply_release(target, &entry, directory, Wait::None).await;
     *values = entry["values"].take();
     result
 }

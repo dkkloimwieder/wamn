@@ -4,14 +4,15 @@ use anyhow::Context as _;
 use ring::rand::SecureRandom as _;
 use wamn_registry::instance_suffix::InstanceSuffix;
 
-use super::{
-    INSTANCE_SUFFIX_LEN, Org, Placement, SystemRandom, Triple, cluster_of, read_env_policy,
-};
+use ring::rand::SystemRandom;
+use wamn_registry::Triple;
+
+use wamn_provision::INSTANCE_SUFFIX_LEN;
 
 /// Alphabet of the provision-minted instance suffix: `[a-z0-9]`, 36 symbols, so
 /// eight of them carry ~41 bits. Narrower than an identity slug's on purpose —
 /// the suffix is the LAST bytes of a DNS-1123 label, which must end alphanumeric.
-pub(super) const INSTANCE_SUFFIX_ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+const INSTANCE_SUFFIX_ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
 
 /// Largest multiple of the alphabet size that fits in a byte (252). A draw at or
 /// above it is redrawn rather than folded: a plain `% 36` would over-weight the
@@ -27,7 +28,7 @@ const INSTANCE_SUFFIX_REJECT_AT: usize = 256 - 256 % INSTANCE_SUFFIX_ALPHABET.le
 /// The mint lives HERE and not in `wamn-provision` because that crate is
 /// deliberately pure — no DB, no K8s client, no clock, and no entropy. It takes
 /// the suffix as a parameter and derives names from it.
-pub(super) fn mint_instance_suffix() -> anyhow::Result<InstanceSuffix> {
+pub(crate) fn mint_instance_suffix() -> anyhow::Result<InstanceSuffix> {
     let random = SystemRandom::new();
     let mut suffix = String::with_capacity(INSTANCE_SUFFIX_LEN);
     let mut draw = [0_u8; INSTANCE_SUFFIX_LEN];
@@ -47,71 +48,6 @@ pub(super) fn mint_instance_suffix() -> anyhow::Result<InstanceSuffix> {
         }
     }
     Ok(suffix.try_into()?)
-}
-
-/// Derive the target cluster from the org's placement and the named policy.
-/// The `env` argument names a policy, which can differ from the environment slug.
-/// A pooled org uses its pool. A dedicated org uses the policy's recovery domain
-/// through [`cluster_of`]. The caller supplies a registry reader credential.
-pub async fn resolve_cluster(
-    system_url: &str,
-    org: &wamn_registry::OrgId,
-    env: &wamn_registry::EnvName,
-) -> anyhow::Result<String> {
-    let mut client = wamn_postgres::connect(system_url)
-        .await
-        .context("system db connect")?;
-
-    let result = resolve_cluster_on(&mut client, org, env).await;
-    drop(client);
-    result
-}
-
-/// Resolve placement through the supplied system database connection.
-pub(crate) async fn resolve_cluster_on(
-    client: &mut sqlx::PgConnection,
-    org: &wamn_registry::OrgId,
-    env: &wamn_registry::EnvName,
-) -> anyhow::Result<String> {
-    let mut transaction = wamn_identity::transaction::read_connection(
-        client,
-        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
-    )
-    .await?;
-    let row = wamn_registry::deployment::org_placement(&mut transaction, org)
-        .await
-        .context("read org placement")?
-        .with_context(|| {
-            format!(
-                "org {org:?} is not registered: run provision-org before provisioning a project-env"
-            )
-        })?;
-    let placement_type = row.placement_type;
-    let pool = row.pool_cluster;
-    let placement = match placement_type.as_str() {
-        "pooled" => Placement::Pooled {
-            pool: pool.context("pooled org row is missing its pool_cluster")?,
-        },
-        "dedicated" => Placement::Dedicated,
-        other => anyhow::bail!("unknown placement_type {other:?} for org {org:?}"),
-    };
-    let org_obj = Org {
-        id: org.clone(),
-        placement,
-    };
-    // The env must name a policy in the ORG's own set (8df.4 — its recovery
-    // domain drives the derivation); a pooled org ignores the policy but the env
-    // must still resolve.
-    let policy = read_env_policy(&mut transaction, org, env)
-        .await?
-        .with_context(|| {
-            format!(
-                "env {env:?} names none of org {org:?}'s env policies — provision-org stamps them \
-             from a template; customize/add rows in registry.env_policies"
-            )
-        })?;
-    transaction.commit().await?;
-    Ok(cluster_of(&org_obj, &policy).name)
 }
 
 /// Read one project-env's stored instance suffix from the registry.
@@ -175,7 +111,7 @@ pub async fn read_project_env_policy(
 /// first provision — see [`do_record_project_env`]. The project derives from
 /// the coordinate (`project_env_key`).
 #[expect(clippy::too_many_arguments)]
-pub(super) async fn record_project_env(
+pub(crate) async fn record_project_env(
     system_url: &str,
     triple: &Triple,
     policy: Option<&wamn_registry::EnvName>,
