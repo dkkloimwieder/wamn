@@ -10,7 +10,7 @@ use tokio::time::Instant;
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
-use crate::flow_http_routing::RouteProvider;
+use crate::ingress::RouteProvider;
 use crate::invocation_trace::InvocationTrace;
 
 /// Host-owned authority exposes routing facts without coupling service types.

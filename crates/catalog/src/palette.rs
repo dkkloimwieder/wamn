@@ -92,6 +92,7 @@ mod tests {
     fn sealed_palette_preserves_ports_and_refuses_mutable_or_unsealed_sources() {
         let facts = normalize_component_fact(
             ComponentDeclaration {
+                data_change: false,
                 connections: Vec::new(),
                 target: palette_target(
                     &"platform--palette--platform"

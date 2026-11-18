@@ -5,7 +5,7 @@ pub struct ImageSet {
     /// `<repository>:<tag>@sha256:<hex>`.
     pub host: String,
     /// `<repository>@sha256:<hex>`.
-    pub http: String,
+    pub ingress: String,
     /// `<repository>@sha256:<hex>`.
     pub workflow: String,
 }

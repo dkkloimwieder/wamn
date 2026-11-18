@@ -20,7 +20,7 @@ members = [
     "platform_fixture_overlay/component",
     "wamn_receiving/component",
     "wamn_wms/component",
-    "../guests/http-route",
+    "../guests/ingress",
     "../guests/workflow-service",
     "../guests/blob-put",
     "../guests/jsonata-expression",

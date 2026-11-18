@@ -36,7 +36,7 @@ spec:
           config:
             host: {{ required "routeHost is required for the http role" $.Values.routeHost | quote }}
         - namespace: wamn
-          package: flow-http-routing
+          package: ingress
           version: "0.1.0"
           interfaces: [routing]
         - namespace: wasi
@@ -59,11 +59,11 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       components:
-        - name: flow-http
-          image: {{ required "platform.roles.http.image is required: stamp the platform image set" $.Values.platform.roles.http.image | quote }}
+        - name: ingress
+          image: {{ required "platform.roles.ingress.image is required: stamp the platform image set" $.Values.platform.roles.ingress.image | quote }}
           imagePullPolicy: Always
           poolSize: 0
-          maxConcurrency: {{ $.Values.platform.roles.http.maxConcurrency }}
+          maxConcurrency: {{ $.Values.platform.roles.ingress.maxConcurrency }}
           localResources:
             allowedIpNameLookups: []
             config:

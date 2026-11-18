@@ -67,6 +67,7 @@ fn manifest() -> ServingManifest {
 
 fn fact() -> AdmittedComponent {
     AdmittedComponent {
+        data_change: false,
         target: ComponentPackageCoordinate {
             project_env_key: PROJECT_ENV_KEY.parse().unwrap(),
             package_id: PACKAGE.parse().unwrap(),

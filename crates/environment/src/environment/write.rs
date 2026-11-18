@@ -21,6 +21,10 @@ pub async fn release_values(
     document: &EnvironmentDocument,
     application: &wamn_catalog::ApplicationName,
     manifest: &wamn_catalog::ServingManifest,
+    package_manifests: &std::collections::BTreeMap<
+        wamn_catalog::PackageName,
+        wamn_catalog::manifest::PackageManifest,
+    >,
     manifest_digest: &wamn_digest::Digest,
     bindings: &[super::bindings::Binding],
     integration_repository: &str,
@@ -31,6 +35,7 @@ pub async fn release_values(
         document,
         application,
         manifest,
+        package_manifests,
         manifest_digest,
         bindings,
         integration_repository,

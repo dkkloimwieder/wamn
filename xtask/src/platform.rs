@@ -11,7 +11,7 @@ use wamn_platform_install::release_chart::{self, ImageSet};
 
 const IMAGES: [&str; 5] = ["host", "control", "ctl", "identity", "edge-web"];
 const GUESTS: [(&str, &str, GuestTarget); 2] = [
-    ("http-route", "http", GuestTarget::WasiP2),
+    ("ingress", "ingress", GuestTarget::WasiP2),
     ("workflow-service", "workflow", GuestTarget::WasiP3),
 ];
 
@@ -211,7 +211,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         let reference = format!("{}/wamn/{image}:{version}", args.registry);
         let digest = inspect(&root, &reference).await?;
         let pinned = format!("{}/wamn/{image}@{digest}", args.registry);
-        if args.stamp_only && image == "http" {
+        if args.stamp_only && image == "ingress" {
             let (bytes, _) = wash_runtime::oci::pull_component(
                 &pinned,
                 wash_runtime::oci::OciConfig {
@@ -221,7 +221,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 wash_runtime::oci::OciPullPolicy::Always,
             )
             .await?;
-            std::fs::write(components.path().join("http.wasm"), bytes)?;
+            std::fs::write(components.path().join("ingress.wasm"), bytes)?;
         }
         guests.insert(image, pinned);
     }
@@ -279,7 +279,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         &chart,
         &ImageSet {
             host: images.remove("host").context("host image")?,
-            http: guests.remove("http").context("http image")?,
+            ingress: guests.remove("ingress").context("ingress image")?,
             workflow: guests.remove("workflow").context("workflow image")?,
         },
         &args.out,
@@ -295,8 +295,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     wamn_platform_install::platform::artifact_plan::prepare_payload(&root, &stamped)?;
     println!("{}", stamped.display());
     std::fs::copy(
-        components.path().join("http.wasm"),
-        args.out.join("http_route.wasm"),
+        components.path().join("ingress.wasm"),
+        args.out.join("ingress.wasm"),
     )?;
     for pin in palette_pins.values() {
         let digest = pin["descriptor"]["component-digest"]

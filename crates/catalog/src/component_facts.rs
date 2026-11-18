@@ -269,6 +269,9 @@ pub struct ComponentOperationDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentDeclaration {
+    /// Whether the verified package manifest declares a data change handler.
+    #[serde(skip)]
+    pub data_change: bool,
     pub target: ComponentPackageCoordinate,
     pub component: CanonicalName,
     pub interface_version: CanonicalName,
@@ -361,6 +364,9 @@ pub struct AdmittedComponentOperation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponent {
+    /// The component bytes export the data change handler contract.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub data_change: bool,
     pub target: ComponentPackageCoordinate,
     pub component: CanonicalName,
     pub interface_version: CanonicalName,
@@ -403,6 +409,9 @@ fn imports_fingerprint(imports: &[String]) -> wamn_digest::Digest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentDescriptor {
+    /// The component bytes export the data change handler contract.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub data_change: bool,
     pub component: CanonicalName,
     pub interface_version: CanonicalName,
     pub component_digest: wamn_digest::Digest,
@@ -424,6 +433,7 @@ impl ComponentDescriptor {
             imports: component.imports,
             imports_fingerprint: component.imports_fingerprint,
             effects: component.effects,
+            data_change: component.data_change,
             connections,
         }
     }
@@ -444,6 +454,7 @@ impl ComponentDescriptor {
             imports: Vec::new(),
             imports_fingerprint: imports_fingerprint(&[]),
             effects: Vec::new(),
+            data_change: false,
             connections: Vec::new(),
         }
     }
@@ -460,6 +471,7 @@ impl ComponentDescriptor {
                 imports: self.imports,
                 imports_fingerprint: self.imports_fingerprint,
                 effects: self.effects,
+                data_change: self.data_change,
             },
             connections: self.connections,
         }
@@ -526,7 +538,7 @@ pub fn normalize_component_fact(
     imports: impl IntoIterator<Item = String>,
     effects: Vec<AdmittedComponentEffect>,
 ) -> Result<AdmittedComponentFacts, ComponentFactError> {
-    if declaration.operations.is_empty() {
+    if declaration.operations.is_empty() && !declaration.data_change {
         return Err(ComponentFactError::new(
             ComponentFactErrorType::EmptyOperationSet,
             "component operations must not be empty",
@@ -582,6 +594,7 @@ pub fn normalize_component_fact(
 
     Ok(AdmittedComponentFacts {
         component: AdmittedComponent {
+            data_change: declaration.data_change,
             target: declaration.target,
             component: declaration.component,
             interface_version: declaration.interface_version,
@@ -607,7 +620,7 @@ pub fn normalize_component_fact(
 pub fn verify_stored_effect_projection(
     component: &AdmittedComponent,
 ) -> Result<(), ComponentFactError> {
-    if component.operations.is_empty() {
+    if component.operations.is_empty() && !component.data_change {
         return Err(ComponentFactError::new(
             ComponentFactErrorType::EmptyOperationSet,
             "component operations must not be empty",
@@ -927,6 +940,7 @@ mod tests {
 
     fn declaration() -> ComponentDeclaration {
         ComponentDeclaration {
+            data_change: false,
             connections: Vec::new(),
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a--dev--project".parse().unwrap(),
@@ -1248,6 +1262,7 @@ mod tests {
     /// wrote over them.
     fn migration_defaulted_fact(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
+            data_change: false,
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: "orders".parse().unwrap(),

@@ -375,7 +375,7 @@ async fn until(platform: &Platform, what: &str, done: impl Fn(&Received) -> bool
 /// applies each key once, and the export ran once per frame. A frame that the
 /// platform refuses is stored as refused and sent once.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: input:edge-application, env:WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: input:edge-application, env:WAMN_INGRESS_COMPONENT"]
 async fn a_sample_is_forwarded_once_across_kills() {
     let (directory, digest) = bundle("forward");
     let (mut controller, device) = pseudo_terminal();
@@ -498,7 +498,7 @@ async fn a_sample_is_forwarded_once_across_kills() {
 /// still stores each frame, no second request reaches the platform after the
 /// first backoff would end, and the samples stay pending, never refused.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: input:edge-application, env:WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: input:edge-application, env:WAMN_INGRESS_COMPONENT"]
 async fn a_refused_pat_stops_the_forward_at_the_bound() {
     let (directory, digest) = bundle("forward-credential");
     let (mut controller, device) = pseudo_terminal();
@@ -594,7 +594,7 @@ async fn samples_where(directory: &Path, condition: &str) -> i64 {
 /// and the platform must accept each again. The test prints the frame tag, and
 /// the caller counts the platform rows with that tag: one row per frame.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_EDGE_LIVE_URL, env:WAMN_EDGE_LIVE_TOKEN_FILE, env:WAMN_EDGE_LIVE_CA_FILE, input:edge-application, env:WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: env:WAMN_EDGE_LIVE_URL, env:WAMN_EDGE_LIVE_TOKEN_FILE, env:WAMN_EDGE_LIVE_CA_FILE, input:edge-application, env:WAMN_INGRESS_COMPONENT"]
 async fn samples_reach_a_live_platform_once_across_kills() {
     let live = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
     let url = live("WAMN_EDGE_LIVE_URL");

@@ -1,6 +1,6 @@
 [package]
 workspace = "../../apps"
-name = "http-route"
+name = "ingress"
 version.workspace = true
 edition.workspace = true
 

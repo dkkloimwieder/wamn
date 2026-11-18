@@ -1,6 +1,9 @@
 //! Compiled release facts, immutable catalog identities, and definition hashing.
 
 pub mod application_config;
+
+/// The interface exported by an application data change handler.
+pub const DATA_CHANGE_EXPORT: &str = "wamn:handler/data-change@0.1.0";
 pub mod canonical_name;
 pub mod client_package_name;
 mod component_artifact_reference;

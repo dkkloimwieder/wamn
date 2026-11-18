@@ -113,7 +113,7 @@ FROM root-source AS ctl-deploy
 # ---- ctl image: the one-shot control-plane verbs (SR9) ----------------------
 FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=components /http.wasm /usr/local/share/wamn/http_route.wasm
+COPY --from=components /ingress.wasm /usr/local/share/wamn/ingress.wasm
 COPY --from=components /palette/ /usr/local/share/wamn/
 # Native workers apply manifests with kubectl, pinned by version and its
 # published sha256 (wamn-zua8.3). wamn-iggi moves the pin to the GKE minor.

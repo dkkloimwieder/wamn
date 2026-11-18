@@ -44,7 +44,7 @@ pub struct InvocationSite<'a> {
     pub input_port: Option<&'a str>,
     pub operation: &'a str,
     pub component_digest: &'a wamn_digest::Digest,
-    pub caller: Option<&'a crate::flow_http_routing::AuthenticatedCaller>,
+    pub caller: Option<&'a crate::ingress::AuthenticatedCaller>,
 }
 
 /// Open one `wamn.component.invoke` span, under `remote_parent` when given.
@@ -77,10 +77,10 @@ pub fn invocation_span(
         span.record(
             "wamn.caller_credential_type",
             match caller.credential_type() {
-                crate::flow_http_routing::CredentialType::Pat => "pat",
-                crate::flow_http_routing::CredentialType::Session => "session",
-                crate::flow_http_routing::CredentialType::QueuedService => "queued-service",
-                crate::flow_http_routing::CredentialType::Connection => "connection",
+                crate::ingress::CredentialType::Pat => "pat",
+                crate::ingress::CredentialType::Session => "session",
+                crate::ingress::CredentialType::QueuedService => "queued-service",
+                crate::ingress::CredentialType::Connection => "connection",
             },
         );
     }

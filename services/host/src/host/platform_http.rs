@@ -3,7 +3,7 @@
 use super::files::Files;
 use super::workflow::Workflow;
 use std::sync::Arc;
-use wamn_engine::flow_http_routing::FlowHttpRouting;
+use wamn_engine::ingress::IngressRouting;
 use wash_runtime::engine::workload::ResolvedWorkload;
 use wash_runtime::host::http::{
     HostHandler, IngressRoute, NormalizedPathPrefix, RouteScope, ServiceHttpJob,
@@ -12,7 +12,7 @@ use wash_runtime::host::http::{
 pub(super) struct PlatformHttp {
     ingress: Arc<dyn HostHandler>,
     files: Arc<Files>,
-    routing: Arc<FlowHttpRouting>,
+    routing: Arc<IngressRouting>,
     workflow: Arc<Workflow>,
 }
 
@@ -20,7 +20,7 @@ impl PlatformHttp {
     pub(super) fn new(
         ingress: Arc<dyn HostHandler>,
         files: Arc<Files>,
-        routing: Arc<FlowHttpRouting>,
+        routing: Arc<IngressRouting>,
         workflow: Arc<Workflow>,
     ) -> Self {
         Self {

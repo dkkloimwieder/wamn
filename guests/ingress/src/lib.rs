@@ -4,7 +4,7 @@
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-pub use bindings::wamn::flow_http_routing::routing::{AuthRejection, Header};
+pub use bindings::wamn::ingress::routing::{AuthRejection, Header};
 
 /// Cheap request metadata available before reading the body.
 #[derive(Debug, Clone)]
@@ -115,7 +115,7 @@ pub struct ProviderError;
 
 impl std::fmt::Display for ProviderError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("flow HTTP provider failed")
+        formatter.write_str("ingress route provider failed")
     }
 }
 

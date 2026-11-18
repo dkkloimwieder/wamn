@@ -1,4 +1,4 @@
-package wamn:flow-http-routing@0.1.0;
+package wamn:ingress@0.1.0;
 
 /// Authoritative HTTP definition lookup and selected-policy authentication.
 ///

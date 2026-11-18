@@ -292,7 +292,7 @@ pub async fn contract(root: &Path, mode: Mode) -> anyhow::Result<()> {
         "--locked",
         "--offline",
         "-p",
-        "http-route",
+        "ingress",
         "--test",
         "adversarial",
     ]);

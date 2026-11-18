@@ -7,7 +7,7 @@ use hyper::{Method, Request, Response, StatusCode, header};
 use serde_json::json;
 use tokio::time::Instant;
 use wamn_catalog::canonical_name::CanonicalName;
-use wamn_engine::flow_http_routing::{FlowHttpRouting, Header, RoutePolicy};
+use wamn_engine::ingress::{Header, IngressRouting, RoutePolicy};
 use wasmtime_wasi_http::WasiBody;
 
 use super::{Refusal, RequestCall, Workflow};
@@ -24,7 +24,7 @@ static POLICY: LazyLock<serde_json::Value> = LazyLock::new(|| json!({"modes": ["
 impl Workflow {
     pub(in crate::host) async fn http(
         &self,
-        routing: &FlowHttpRouting,
+        routing: &IngressRouting,
         workload: &str,
         prefix: &str,
         request: Request<WasiBody>,

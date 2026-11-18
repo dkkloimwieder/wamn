@@ -5,10 +5,16 @@ use std::sync::Arc;
 
 use crate::invocation::{AuthorizedInvocation, InvocationRequest};
 use anyhow::Context as _;
+use wamn_catalog::application_config::ApplicationComponent;
 use wamn_catalog::canonical_name::CanonicalName;
+use wamn_catalog::registered_operation::RegisteredOperation;
+use wamn_connection::connection::{
+    ConnectionExecutionClosure, ConnectionInvocation, InvocationEntry,
+};
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
-use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::DeliveryClass;
+use wamn_engine::operation::WamnOperation;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
 
@@ -340,6 +346,39 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
             )
             .await
             .map_err(wash_runtime::wasmtime::Error::from_anyhow)
+    }
+
+    async fn dispatch_data_change(
+        accessor: &Accessor<T, Self>,
+        component: String,
+        event: String,
+    ) -> wash_runtime::wasmtime::Result<Result<(), String>> {
+        let (invoker, postgres, ingress) = accessor.with(|mut access| {
+            let ctx = access.get();
+            let invoker = ctx.try_get_plugin::<WamnOperation>("wamn-operation")?;
+            let postgres = ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)?;
+            let ingress = invoker
+                .is_ingress_caller(&ctx.component_id, &ctx.workload_id)
+                .then(|| Arc::clone(&ctx.component_id));
+            Ok::<_, wash_runtime::wasmtime::Error>((invoker, postgres, ingress))
+        })?;
+        let Some(ingress) = ingress else {
+            return Ok(Err(
+                "data change dispatch requires the workload ingress".into()
+            ));
+        };
+        Ok(
+            match postgres
+                .deliver_data_change(&invoker, &ingress, &component, event)
+                .await
+            {
+                Ok(answer) => answer,
+                Err(error) => {
+                    tracing::warn!(%error, "data change delivery failed");
+                    Err(error.type_.message().into())
+                }
+            },
+        )
     }
 
     async fn sign_result(
@@ -986,6 +1025,106 @@ impl WamnPostgres {
     }
 }
 
+#[derive(Debug)]
+struct DataChangeError<'a> {
+    type_: DataChangeErrorType,
+    sibling: &'a str,
+    source: anyhow::Error,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DataChangeErrorType {
+    Target,
+    Authority,
+    Dispatch,
+    Transaction,
+}
+
+impl DataChangeErrorType {
+    fn message(self) -> &'static str {
+        match self {
+            Self::Target => "data change handler is unavailable",
+            Self::Authority => "data change authority is unavailable",
+            Self::Dispatch => "data change handler did not return a result",
+            Self::Transaction => "data change transaction failed",
+        }
+    }
+}
+
+impl std::fmt::Display for DataChangeError<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} on {}: {:#}",
+            self.type_.message(),
+            self.sibling,
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for DataChangeError<'_> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+struct SiblingAuthority<'a> {
+    caller: AuthenticatedCaller,
+    entry: InvocationEntry,
+    operation: Option<&'a CanonicalName>,
+    grant: Option<&'a RegisteredOperation>,
+    causation: Option<wamn_event_wire::Causation>,
+    read: bool,
+}
+
+impl OperationWorkload {
+    fn component(&self, sibling: &str) -> anyhow::Result<&ApplicationComponent> {
+        self.application
+            .components
+            .iter()
+            .find(|component| component.name == sibling)
+            .context("application sibling is unknown")
+    }
+
+    fn enter_sibling(
+        &self,
+        postgres: &WamnPostgres,
+        ingress: &str,
+        component: &ApplicationComponent,
+        request: SiblingAuthority<'_>,
+    ) -> anyhow::Result<Arc<AuthorizedInvocation>> {
+        let identity = SessionIdentity {
+            schema: component.schema.clone(),
+            user_id: Some(*request.caller.principal_id()),
+            role: request.caller.active_role().map(String::from),
+            operation: request.operation.cloned(),
+            ..self.identity.clone()
+        };
+        AuthorizedInvocation::enter(
+            postgres,
+            InvocationRequest {
+                scope: wamn_engine::operation::next_scope(ingress).into_string(),
+                identity,
+                caller: Some(request.caller),
+                context: self.context.as_ref().map(Arc::clone),
+                registered_operation: request.grant,
+                causation: request.causation,
+                invocation: Some(ConnectionInvocation {
+                    entry: request.entry,
+                    package_id: component.package.clone(),
+                    component_digest: component.digest,
+                    component: component.name.parse()?,
+                    operation: request.operation.cloned(),
+                    closure: ConnectionExecutionClosure::Released,
+                    effects: None,
+                }),
+                read: request.read,
+            },
+        )
+    }
+}
+
 /// The exact component and execution authority of one workflow node.
 #[derive(Debug)]
 pub struct WorkflowNode<'a> {
@@ -1010,6 +1149,114 @@ impl WamnPostgres {
             .map(|workload| Arc::clone(&workload.application))
     }
 
+    fn sibling_workload(&self, ingress: &str) -> anyhow::Result<Arc<OperationWorkload>> {
+        self.operation_workloads
+            .read()
+            .expect("operation workloads lock poisoned")
+            .get(ingress)
+            .map(Arc::clone)
+            .context("ingress has no SQL authority")
+    }
+
+    async fn deliver_data_change<'a>(
+        &self,
+        invoker: &WamnOperation,
+        ingress: &str,
+        sibling: &'a str,
+        event: String,
+    ) -> Result<Result<(), String>, DataChangeError<'a>> {
+        let error = |type_, source| DataChangeError {
+            type_,
+            sibling,
+            source,
+        };
+        let target = |source| error(DataChangeErrorType::Target, source);
+        let authorization = |source| error(DataChangeErrorType::Authority, source);
+        let settlement = |source| error(DataChangeErrorType::Transaction, source);
+        let facts = self.sibling_workload(ingress).map_err(target)?;
+        let component = facts.component(sibling).map_err(target)?;
+        let handler = component
+            .data_change
+            .as_ref()
+            .context("sibling has no data change declaration")
+            .map_err(target)?;
+        let project_key = facts
+            .identity
+            .project_env_key
+            .as_ref()
+            .context("ingress project identity is missing")
+            .map_err(authorization)?;
+        let caller = self
+            .workflow_node_caller(
+                &facts.application.project,
+                project_key,
+                &wamn_identity_protocol::workflow_user_id(),
+                handler.role.as_str(),
+            )
+            .await
+            .map_err(authorization)?
+            .context("data change execution role is unavailable")
+            .map_err(authorization)?;
+        let authority = facts
+            .enter_sibling(
+                self,
+                ingress,
+                component,
+                SiblingAuthority {
+                    caller,
+                    entry: InvocationEntry::DataChange,
+                    operation: None,
+                    grant: None,
+                    causation: None,
+                    read: false,
+                },
+            )
+            .map_err(authorization)?;
+        let transaction = self
+            .sibling_transaction(&authority, handler.host_transaction)
+            .await
+            .map_err(settlement)?;
+        let answer = invoker
+            .dispatch_data_change(
+                ingress,
+                sibling,
+                &self.scopes,
+                Arc::from(authority.id()),
+                event,
+            )
+            .await;
+        if let Some(transaction) = transaction {
+            if matches!(answer, Ok(Ok(()))) {
+                transaction
+                    .commit()
+                    .await
+                    .context("commit data change transaction")
+                    .map_err(settlement)?;
+            } else {
+                transaction
+                    .rollback()
+                    .await
+                    .context("roll back data change transaction")
+                    .map_err(settlement)?;
+            }
+            self.revoke_operation_transaction(authority.id());
+        }
+        answer.map_err(|source| error(DataChangeErrorType::Dispatch, source))
+    }
+
+    async fn sibling_transaction(
+        &self,
+        authority: &AuthorizedInvocation,
+        enabled: bool,
+    ) -> anyhow::Result<Option<OperationTransaction>> {
+        if !enabled {
+            return Ok(None);
+        }
+        let transaction = self.begin_operation_transaction(authority.id()).await?;
+        self.bind_operation_transaction(authority.id(), &transaction)?;
+        Ok(Some(transaction))
+    }
+
     /// Dispatch the exact sibling under the workflow's authority and operation policy.
     pub async fn dispatch_workflow_node<Fut>(
         self: &Arc<Self>,
@@ -1022,23 +1269,9 @@ impl WamnPostgres {
         Fut: Future<Output = anyhow::Result<NodeOutcome>> + Send,
     {
         use wamn_catalog::application_config::ApplicationOperationType;
-        use wamn_connection::connection::{
-            ConnectionExecutionClosure, ConnectionInvocation, InvocationEntry,
-        };
         use wamn_engine::operation::node_types::{ErrorDetail, NodeError};
-        let facts = self
-            .operation_workloads
-            .read()
-            .expect("operation workloads lock poisoned")
-            .get(node.route)
-            .map(Arc::clone)
-            .context("workflow route sibling has no SQL authority")?;
-        let component = facts
-            .application
-            .components
-            .iter()
-            .find(|component| component.name == node.sibling)
-            .context("workflow sibling is unknown")?;
+        let facts = self.sibling_workload(node.route)?;
+        let component = facts.component(node.sibling)?;
         let operation = component
             .operations
             .get(node.operation)
@@ -1048,31 +1281,16 @@ impl WamnPostgres {
             .public
             .then(|| node.operation.as_str().parse())
             .transpose()?;
-        let identity = SessionIdentity {
-            schema: component.schema.clone(),
-            user_id: Some(*node.caller.principal_id()),
-            role: node.caller.active_role().map(String::from),
-            operation: Some(node.operation.clone()),
-            ..facts.identity.clone()
-        };
-        let authority = AuthorizedInvocation::enter(
+        let authority = facts.enter_sibling(
             self,
-            InvocationRequest {
-                scope: wamn_engine::operation::next_scope(node.route).into_string(),
-                identity,
-                caller: Some(node.caller),
-                context: facts.context.as_ref().map(Arc::clone),
-                registered_operation: grant.as_ref(),
+            node.route,
+            component,
+            SiblingAuthority {
+                caller: node.caller,
+                entry: InvocationEntry::Wiring(node.position),
+                operation: Some(node.operation),
+                grant: grant.as_ref(),
                 causation: node.causation,
-                invocation: Some(ConnectionInvocation {
-                    entry: InvocationEntry::Wiring(node.position),
-                    package_id: component.package.clone(),
-                    component_digest: component.digest,
-                    component: component.name.parse()?,
-                    operation: node.operation.clone(),
-                    closure: ConnectionExecutionClosure::Released,
-                    effects: None,
-                }),
                 read: operation.type_ == Some(ApplicationOperationType::Read),
             },
         )?;
@@ -1091,15 +1309,13 @@ impl WamnPostgres {
                     .await?
             }
             _ => {
-                let transaction = if operation.host_transaction
-                    || operation.type_ == Some(ApplicationOperationType::Read)
-                {
-                    let transaction = self.begin_operation_transaction(authority.id()).await?;
-                    self.bind_operation_transaction(authority.id(), &transaction)?;
-                    Some(transaction)
-                } else {
-                    None
-                };
+                let transaction = self
+                    .sibling_transaction(
+                        &authority,
+                        operation.host_transaction
+                            || operation.type_ == Some(ApplicationOperationType::Read),
+                    )
+                    .await?;
                 let outcome = invoke(authority.id(), input).await?;
                 if let Ok(emission) = &outcome {
                     serde_json::from_str::<serde::de::IgnoredAny>(&emission.payload)

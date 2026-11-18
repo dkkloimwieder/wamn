@@ -1,6 +1,6 @@
 //! The generated host side of `wamn:operation/operation@0.1.0`.
 //!
-//! The http-route guest calls this interface for each route that names a
+//! The ingress guest calls this interface for each route that names a
 //! sealed operation. The engine owns the binding, so every host shares one
 //! [`Refusal`](operation::Refusal) and one caller type. Each host implements
 //! [`operation::HostWithStore`] on its own [`HasData`] marker over

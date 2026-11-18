@@ -9,7 +9,7 @@
 //! stored sample on. The
 //! status socket beside the run-state file answers what the edge holds.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
@@ -24,15 +24,17 @@ use wamn_engine::engine::{
     host_memory_budgets,
 };
 use wamn_engine::expected_router::expected_host_router;
-use wamn_engine::flow_http_routing::FlowHttpRouting;
+use wamn_engine::ingress::IngressRouting;
 use wash_runtime::engine::guest_memory::GuestMemoryMode;
+use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::host::http::Ingress;
 use wash_runtime::host::{Host, HostApi as _, HostBuilder};
 use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::types::{
     Component, LocalResources, Workload, WorkloadStartRequest, WorkloadState,
 };
-use wash_runtime::wit::WitInterface;
+use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::application::EdgeApplication;
 use crate::authenticator::EdgeAuthenticator;
@@ -45,7 +47,7 @@ use crate::samples::SampleStore;
 use crate::status::{self, Facts};
 
 /// The workload that runs the route guest.
-const INGRESS_WORKLOAD: &str = "flow-http";
+const INGRESS_WORKLOAD: &str = "ingress";
 
 /// A started edge host.
 #[derive(Debug)]
@@ -208,7 +210,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let application = Arc::new(application);
     let scopes = Arc::new(wamn_engine::invocation_scope::InvocationScopes::default());
     let routing =
-        FlowHttpRouting::new(Arc::clone(&scopes)).with_authenticator(Arc::new(EdgeAuthenticator));
+        IngressRouting::new(Arc::clone(&scopes)).with_authenticator(Arc::new(EdgeAuthenticator));
     let operation = Arc::new(EdgeOperation::new(
         Arc::clone(&release),
         application,
@@ -236,6 +238,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         .with_plugin(Arc::clone(&scopes) as Arc<dyn wash_runtime::plugin::HostPlugin>)?
         .with_plugin(Arc::new(routing))?
         .with_plugin(Arc::clone(&operation) as _)?
+        .with_plugin(Arc::new(NatsTraps))?
         .with_http_handler(ingress)
         .build()
         .context("build the host")?
@@ -311,6 +314,40 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     })
 }
 
+const NATS_IMPORTS: &str = "wasmcloud:nats/types,jetstream@0.1.3";
+
+struct NatsTraps;
+
+#[async_trait::async_trait]
+impl HostPlugin for NatsTraps {
+    fn id(&self) -> &'static str {
+        // wash-runtime binds ordinary plugins in ID order. All edge providers
+        // bind before this plugin, so Wasmtime preserves their definitions.
+        "zz-edge-nats-traps"
+    }
+
+    fn world(&self) -> WitWorld {
+        WitWorld {
+            imports: HashSet::from([WitInterface::from(NATS_IMPORTS)]),
+            exports: HashSet::new(),
+        }
+    }
+
+    async fn on_workload_item_bind<'a>(
+        &self,
+        item: &mut WorkloadItem<'a>,
+        _interfaces: WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        let WorkloadItem::Component(component) = item else {
+            anyhow::bail!("edge NATS imports belong to ingress");
+        };
+        anyhow::ensure!(component.name() == INGRESS_WORKLOAD, "edge NATS imports belong to ingress");
+        let guest = component.component().clone();
+        component.linker()?.define_unknown_imports_as_traps(&guest)?;
+        Ok(())
+    }
+}
+
 /// The composed entry's workload, with its bytes from the bundle.
 fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartRequest {
     let mut handler = WitInterface::from("wasi:http/handler@0.3.0");
@@ -350,8 +387,9 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
             host_interfaces: vec![
                 handler,
                 WitInterface::from("wasi:config/store@0.2.0-rc.1"),
-                WitInterface::from("wamn:flow-http-routing/routing@0.1.0"),
+                WitInterface::from("wamn:ingress/routing@0.1.0"),
                 WitInterface::from("wamn:operation/operation@0.1.0"),
+                WitInterface::from(NATS_IMPORTS),
             ],
             volumes: Vec::new(),
         },

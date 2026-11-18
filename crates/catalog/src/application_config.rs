@@ -32,6 +32,27 @@ pub struct ApplicationComponent {
     /// Absent for a component that declares no SQL.
     pub schema: Option<String>,
     pub operations: BTreeMap<crate::canonical_name::CanonicalName, ApplicationOperation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_change: Option<ApplicationDataChange>,
+}
+
+/// The role, SQL transaction policy and resolved models of a handler.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ApplicationDataChange {
+    pub role: wamn_identity_protocol::RoleName,
+    pub host_transaction: bool,
+    pub models: Vec<DataChangeModel>,
+}
+
+/// The source package and entity that identify one model in a CDC message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct DataChangeModel {
+    pub owner_package: crate::PackageName,
+    pub model: crate::manifest::source_name::SourceName,
+    pub entity: crate::manifest::source_name::SourceName,
+    pub ops: Vec<crate::WiringEventOperation>,
 }
 
 /// The host policy of one component export.

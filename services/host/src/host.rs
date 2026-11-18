@@ -38,7 +38,7 @@ use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
     build_engine_with_host_memory_and_compilation_cache,
 };
-use wamn_engine::flow_http_routing::FlowHttpRouting;
+use wamn_engine::ingress::IngressRouting;
 use wamn_sql::WamnPostgres;
 
 #[expect(
@@ -631,11 +631,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         oci_cache_dir: args.oci_cache_dir.clone(),
         oci_ca_paths: args.oci_ca_paths.clone(),
     };
-    let flow_http = FlowHttpRouting::new(Arc::clone(&postgres.scopes))
+    let ingress_routing = IngressRouting::new(Arc::clone(&postgres.scopes))
         .with_authenticator(authentication as Arc<_>);
-    let status: Arc<dyn wamn_engine::flow_http_routing::EnvironmentStatus> =
+    let status: Arc<dyn wamn_engine::ingress::EnvironmentStatus> =
         Arc::new(EnvironmentStatusReader::new(Arc::clone(&postgres)));
-    let flow_http = Arc::new(flow_http.with_environment_status(status));
+    let ingress_routing = Arc::new(ingress_routing.with_environment_status(status));
     let operations = Arc::new(wamn_engine::operation::WamnOperation::new(
         Arc::clone(&postgres) as Arc<dyn plugin::HostPlugin>,
     ));
@@ -663,7 +663,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // in-memory; a PAT-protected route additionally carries the targeted
         // identity reader and preloads exact grants from the existing
         // callable-HTTP project pool during authentication.
-        Arc::<FlowHttpRouting>::clone(&flow_http),
+        Arc::<IngressRouting>::clone(&ingress_routing),
     ];
 
     plugins.push(Arc::new(
@@ -723,7 +723,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             Arc::new(platform_http::PlatformHttp::new(
                 Arc::clone(&server) as Arc<dyn wash_runtime::host::http::HostHandler>,
                 Arc::clone(&files),
-                Arc::clone(&flow_http),
+                Arc::clone(&ingress_routing),
                 workflow,
             ));
         let connections = server.connection_limit();
@@ -739,7 +739,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let prepared_host = builder.build().context("failed to build native host")?;
     tracing::info!(
-        "wamn-host starting (base plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres, wamn:flow-http-routing)"
+        "wamn-host starting (base plugins: wasi:config, wasi:logging, wasi:otel, wamn:postgres, wamn:ingress)"
     );
     let mut probe_tasks = tokio::task::JoinSet::new();
     if let Some(listener) = probe_listener {

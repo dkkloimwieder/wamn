@@ -12,11 +12,11 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::route_bindings::wamn::flow_http_routing::routing;
+use crate::route_bindings::wamn::ingress::routing;
 /// The request header and the refusal that cross a [`RouteAuthenticator`].
-pub use crate::route_bindings::wamn::flow_http_routing::routing::{AuthRejection, Header};
+pub use crate::route_bindings::wamn::ingress::routing::{AuthRejection, Header};
 
-pub const FLOW_HTTP_ROUTING_ID: &str = "wamn-flow-http-routing";
+pub const INGRESS_ID: &str = "wamn-ingress";
 
 const UNAUTHORIZED_STATUS: u16 = 401;
 const UNAUTHORIZED_CODE: &str = "unauthorized";
@@ -218,18 +218,18 @@ impl std::fmt::Debug for AuthenticationRequest<'_> {
     }
 }
 
-/// Authoritative HTTP route supply for the flow-http adapter.
-pub struct FlowHttpRouting {
+/// Authoritative HTTP route supply for the ingress adapter.
+pub struct IngressRouting {
     scopes: Arc<crate::invocation_scope::InvocationScopes>,
     authenticator: Option<Arc<dyn RouteAuthenticator>>,
     environment: Option<Arc<dyn EnvironmentStatus>>,
 }
-impl std::fmt::Debug for FlowHttpRouting {
+impl std::fmt::Debug for IngressRouting {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FlowHttpRouting").finish_non_exhaustive()
+        f.debug_struct("IngressRouting").finish_non_exhaustive()
     }
 }
-impl FlowHttpRouting {
+impl IngressRouting {
     pub fn new(scopes: Arc<crate::invocation_scope::InvocationScopes>) -> Self {
         Self {
             scopes,
@@ -397,14 +397,14 @@ pub fn authentication_unavailable() -> AuthRejection {
 }
 
 #[async_trait::async_trait]
-impl HostPlugin for FlowHttpRouting {
+impl HostPlugin for IngressRouting {
     fn id(&self) -> &'static str {
-        FLOW_HTTP_ROUTING_ID
+        INGRESS_ID
     }
 
     fn world(&self) -> WitWorld {
         WitWorld {
-            imports: HashSet::from([WitInterface::from("wamn:flow-http-routing/routing@0.1.0")]),
+            imports: HashSet::from([WitInterface::from("wamn:ingress/routing@0.1.0")]),
             exports: HashSet::new(),
         }
     }
@@ -421,7 +421,7 @@ impl HostPlugin for FlowHttpRouting {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        if !interfaces.contains("wamn", "flow-http-routing", &["routing"]) {
+        if !interfaces.contains("wamn", "ingress", &["routing"]) {
             return Ok(());
         }
         if let Some(routes) =
@@ -442,8 +442,8 @@ pub fn add_to_linker(
     routing::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
 
-fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<FlowHttpRouting>> {
-    ctx.try_get_plugin::<FlowHttpRouting>(FLOW_HTTP_ROUTING_ID)
+fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<IngressRouting>> {
+    ctx.try_get_plugin::<IngressRouting>(INGRESS_ID)
 }
 
 impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {

@@ -64,7 +64,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/identity-protocol` | `wamn-identity-protocol`: principal IDs, database login names, roles, credential formats, and public key documents |
 | `crates/guest` | `wamn-guest`: guest cursors, pages, scalar conversion, operation SQL, and document numbering |
 | `crates/record-history` | `wamn-record-history`: reconstruction of a row from its history |
-| `guests/http-route` | HTTP matching and JSON invocation of typed application operations |
+| `guests/ingress` | HTTP matching and JSON invocation of typed application operations |
 | `guests/blob-put` | Palette node that writes one object |
 | `crates/jsonata` | `wamn-jsonata`: expression evaluation for the JSONata guest |
 | `guests/jsonata-expression` | Palette node that evaluates a JSONata expression |

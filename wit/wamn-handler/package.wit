@@ -1,0 +1,5 @@
+package wamn:handler@0.1.0;
+
+interface data-change {
+  handle: async func(event: string) -> result<_, string>;
+}

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::entry_response::{boundary, with_request_id};
 
-use super::bindings::wamn::flow_http_routing::routing::AuthenticatedCaller;
+use super::bindings::wamn::ingress::routing::AuthenticatedCaller;
 use super::bindings::wamn::node::types::{NodeContext, NodeError};
 use super::bindings::wamn::operation::operation;
 use crate::route_data::{EtagType, RouteDefinition};

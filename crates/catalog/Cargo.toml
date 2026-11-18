@@ -21,6 +21,7 @@ test-util = []
 
 [dependencies]
 wamn-role.workspace = true
+wamn-identity-protocol.workspace = true
 wit-parser.workspace = true
 hex.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

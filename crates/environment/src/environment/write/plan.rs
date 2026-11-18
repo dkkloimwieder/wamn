@@ -33,6 +33,10 @@ pub(super) async fn release_values(
     document: &EnvironmentDocument,
     application: &wamn_catalog::ApplicationName,
     manifest: &wamn_catalog::ServingManifest,
+    package_manifests: &std::collections::BTreeMap<
+        wamn_catalog::PackageName,
+        wamn_catalog::manifest::PackageManifest,
+    >,
     manifest_digest: &wamn_digest::Digest,
     bindings: &[super::super::bindings::Binding],
     integration_repository: &str,
@@ -44,6 +48,7 @@ pub(super) async fn release_values(
         .context("deploy requires revocation_seconds from the environment input")?;
     let roles = release_chart::roles(
         manifest,
+        package_manifests,
         &document.org,
         &document.project,
         &document.env,

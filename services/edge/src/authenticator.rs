@@ -1,6 +1,6 @@
 //! Protected edge routes refuse requests pending the edge identity design.
 
-use wamn_engine::flow_http_routing::{
+use wamn_engine::ingress::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, RouteAuthenticator,
     signature_unauthorized, unauthorized,
 };

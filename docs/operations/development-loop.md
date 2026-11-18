@@ -17,7 +17,7 @@ Use the platform's own credential and identity services for connections and sign
 Set `WAMN_CONTROL_URL` to the control service URL and `WAMN_TOKEN` to the caller's token.
 Set `DATABASE_URL` to the PostgreSQL server that the package builder uses for disposable build databases.
 Set the existing publication inputs: `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, `WAMN_RELEASE_ARTIFACT_BASE`, and `WAMN_REGISTRY_AUTH_FILE`.
-`WAMN_FLOW_HTTP_COMPONENT` selects the stamped HTTP route component and its adjacent palette.
+`WAMN_INGRESS_COMPONENT` selects the stamped HTTP route component and its adjacent palette.
 If the registry needs extra trust roots, set `WAMN_OCI_CA_PATHS`.
 The platform and local publication inputs must use the same stamped artifacts.
 

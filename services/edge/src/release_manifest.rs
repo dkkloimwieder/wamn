@@ -115,6 +115,7 @@ pub fn validate_component_in_release(
             && served.descriptor.interface_version == component.interface_version
             && served.descriptor.component_digest == digest
             && served.descriptor.operations == component.operations
+            && served.descriptor.data_change == component.data_change
     });
     anyhow::ensure!(carried, "component-not-in-carried-release");
     Ok(())
@@ -393,6 +394,7 @@ mod tests {
 
     fn carried_fact() -> AdmittedComponent {
         AdmittedComponent {
+            data_change: false,
             target: wamn_catalog::ComponentPackageCoordinate {
                 project_env_key: "t1--dev--project".parse().unwrap(),
                 package_id: "cat".parse().unwrap(),

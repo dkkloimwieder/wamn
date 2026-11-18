@@ -15,6 +15,6 @@ hostgroup: {{ required "hostGroup is required" .Values.hostGroup | quote }}
 
 {{/* Require both application workload guests. */}}
 {{- define "release.requireImageSet" -}}
-{{- $_ := required "platform.roles.http.image is required: stamp the platform image set" .Values.platform.roles.http.image }}
+{{- $_ := required "platform.roles.ingress.image is required: stamp the platform image set" .Values.platform.roles.ingress.image }}
 {{- $_ := required "platform.workflow.image is required: stamp the platform image set" .Values.platform.workflow.image }}
 {{- end }}

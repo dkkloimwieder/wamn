@@ -52,7 +52,7 @@ mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         path: [
             "../../wit/wamn-connection",
-            "../../wit/wamn-flow-http-routing",
+            "../../wit/wamn-ingress",
             "../../wit/wamn-postgres-0.4",
             "../../wit/wamn-node",
         "../../wit/wamn-operation-0.1",
@@ -63,7 +63,7 @@ mod bindings {
         imports: { default: async | trappable | tracing },
         with: {
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
-            "wamn:flow-http-routing/routing.authenticated-caller": wamn_engine::flow_http_routing::AuthenticatedCaller,
+            "wamn:ingress/routing.authenticated-caller": wamn_engine::ingress::AuthenticatedCaller,
             // The engine owns the operation binding and the types its refusal names.
             "wamn:postgres/types": wamn_engine::entry_operation::postgres_types,
             "wamn:operation/operation": wamn_engine::entry_operation::operation,
@@ -77,7 +77,7 @@ mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         path: [
             "../../wit/wamn-connection",
-            "../../wit/wamn-flow-http-routing",
+            "../../wit/wamn-ingress",
             "../../wit/wamn-postgres-0.4",
             "../../wit/wamn-node",
         "../../wit/wamn-operation-0.1",
@@ -91,7 +91,7 @@ mod bindings {
         },
         with: {
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
-            "wamn:flow-http-routing/routing.authenticated-caller": wamn_engine::flow_http_routing::AuthenticatedCaller,
+            "wamn:ingress/routing.authenticated-caller": wamn_engine::ingress::AuthenticatedCaller,
             // The engine owns the operation binding and the types its refusal names.
             "wamn:postgres/types": wamn_engine::entry_operation::postgres_types,
             "wamn:operation/operation": wamn_engine::entry_operation::operation,

@@ -112,6 +112,14 @@ They keep their authentication, CSRF checks, operation grants and body limits.
 Control runs no HTTP guest.
 The composer refuses application imports of `wamn:operation` and application exports of `wasi:http/handler`.
 
+## Application data change handlers
+
+Declare `data_change` on a component in `wamn.k`. Name a role and map each model to its row operations. Use `insert`, `update`, or `delete` in a nonempty list without repeats. The model must appear in the component's package manifest.
+
+The component exports `wamn:handler/data-change@0.1.0` with `handle: async func(event: string) -> result<_, string>`. A component can export only this interface. Publication checks the interface and its signature against the Wasm bytes.
+
+The host runs the handler as the `workflow` user with the declared role. Set `host_transaction = False` inside `data_change` to turn off the default host transaction. When enabled, the host commits the transaction on success and rolls it back on error.
+
 
 ## Guest build identity
 

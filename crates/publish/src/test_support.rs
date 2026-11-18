@@ -31,6 +31,7 @@ pub fn closure_component(
         wamn_catalog::registered_operation::RegisteredOperation::as_str,
     );
     AdmittedComponent {
+        data_change: false,
         target: ComponentPackageCoordinate {
             project_env_key: "org-a--dev--fixture"
                 .parse()

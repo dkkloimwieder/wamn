@@ -85,8 +85,8 @@ Org → environment → project → application. One boundary per level.
 ## Data change in applications
 
 - Application developers are the main users of Data change. A component declares in `wamn.k` the models and ops (`insert`, `update`, `delete`) it handles and the role it runs as, and exports a small wamn handler interface that takes the event as JSON.
-- Deploy renders one durable JetStream subscription for each declared (model, op) into the workload config, aimed at the route guest `flow-http`, which exports the stock `wasmcloud:nats/jetstream-handler`. The stock plugin creates the consumers. Only declared models get consumers. `flow-http` checks the owner package and dispatches to the declared component through the operation path, as the `workflow` user with the declared role.
-- One handler for each (owner package, model, op) in an application: deploy refuses two. A developer who wants two reactions puts them in one component. The host accepts `dispatch-data-change` only from `flow-http`.
+- Deploy renders one durable JetStream subscription for each declared (model, op) into the workload config, aimed at the route guest `ingress`, which exports the stock `wasmcloud:nats/jetstream-handler`. The stock plugin creates the consumers. Only declared models get consumers. `ingress` checks the owner package and dispatches to the declared component through the operation path, as the `workflow` user with the declared role.
+- One handler for each (owner package, model, op) in an application: deploy refuses two. A developer who wants two reactions puts them in one component. The host accepts `dispatch-data-change` only from `ingress`.
 - Delivery is at least once, with no run row. The message id lets a handler skip repeats. A handler has the same host-transaction setting as an operation, on by default: one transaction for each delivery, committed when the handler returns ok and rolled back on an error. Turn it off for handlers that make long external calls.
 - One NATS account per environment. The environment host group has one stock `wasmcloud-nats` entry, and each workload narrows its grants to its project's stream and subjects.
 - Each CDC reader has its own publish-only user in the environment account. The source stream keeps messages for 7 days, under a byte limit below the account's limit.
@@ -310,7 +310,7 @@ Issues:
 - The release chart (`deploy/charts/release/templates`) renders one `WorkloadDeployment` per application. The last version of that template is `workloads.yaml` at commit 6b6d9c22; use it as the starting point. The workload holds:
   - the route guest
   - every application component, by stock OCI reference and digest
-  - host interfaces: `wasi:http` handler with `config.host`, `wamn:flow-http-routing`, `wasi:config`, `wamn:operation`, and the `wamn:postgres` interfaces the components import
+  - host interfaces: `wasi:http` handler with `config.host`, `wamn:ingress`, `wasi:config`, `wamn:operation`, and the `wamn:postgres` interfaces the components import
 - Components are published with stock `push_component` (`application/wasm`). The wamn component media types (`COMPONENT_LAYER_MEDIA_TYPE`, `COMPONENT_CONFIG_MEDIA_TYPE`) and `pull_verified` leave the publish and host paths.
 - The route guest is the platform's one pinned image. If `xtask build-platform` does not publish it, stop and ask.
 - The deploy (`wamn_environment::release_chart` and `environment::write`) writes two config keys on the route guest:
@@ -462,7 +462,7 @@ Issues:
   - `session_operation_permissions`, `session_grants` and roles read from tokens
   - `IssuerKeys` (`authentication/session_keys.rs`), `SessionVerifier` and `VerifiedSession`
   - `session_is_active` and `control_session_is_active`
-- Cookie and CSRF handling leave the host (`engine/flow_http_routing.rs`). The host accepts only `Authorization: Bearer`.
+- Cookie and CSRF handling leave the host (`engine/ingress.rs`). The host accepts only `Authorization: Bearer`.
 - Control keeps its control-eligibility read on the system database.
 - The environment host group defaults carry the verifier settings. The edge refuses protected routes until the edge design is done.
 
@@ -601,10 +601,11 @@ Issues:
 - Delete the workflow readers of `ServingManifest` and `ServingContext` (`workflow/admission.rs`, `workflow/resolution.rs`, `events/transport/admission.rs` and their callers). Afterwards only deploy identity (3.5) and the edge read them.
 
 7.8 Data change handlers in application components. Runs after 7.3.
+- The route guest is renamed `ingress` (component name, `guests/ingress`, WIT `wamn:ingress`), because from 7.8 it receives HTTP and NATS and dispatches both.
 - `wamn.k` declares model, ops (`insert`, `update`, `delete`) and role for a component, which exports a wamn handler interface taking the event as JSON.
-- Release planning renders one durable `jetstream-subscriptions` entry for each (model, op) into the workload config, targeted at `flow-http`, which exports the stock `jetstream-handler`. `flow-http` checks the owner package and dispatches through the operation path.
+- Release planning renders one durable `jetstream-subscriptions` entry for each (model, op) into the workload config, targeted at `ingress`, which exports the stock `jetstream-handler`. `ingress` checks the owner package and dispatches through the operation path.
 - One entry for each (application, model, op), with queue group `<application>-<model>-<op>`. Release planning refuses two components that declare the same (owner package, model, op).
-- The export is `wamn:handler@0.1.0/data-change` (`handle(event: string) -> result<_, string>`). `wamn:operation` gets `dispatch-data-change(component, event)`, which the host accepts only from `flow-http`.
+- The export is `wamn:handler@0.1.0/data-change` (`handle(event: string) -> result<_, string>`). `wamn:operation` gets `dispatch-data-change(component, event)`, which the host accepts only from `ingress`.
 - At least once, no run row. Handler calls to wamn host functions run as the `workflow` user with the declared role.
 - The invocation authority gets a handler case: connections come from the component's own bindings, and no per-operation grant check applies. Each handler has the operation host-transaction setting, on by default; when on, the transaction commits on ok and rolls back on an error.
 
@@ -642,6 +643,7 @@ Issues:
 - Topic entry node: after 3.4. Topics use stock `wasmcloud:nats`: application components publish within their workload's grants, and a Topic workflow pulls from its own consumer like Data change.
 - 3.5: a deploy checks the enabled workflows against the new `wamn.application`, under the environment key on the project database, and refuses when an enabled workflow names a sibling or export the release removes.
 - The capture-gap observer in control is unwired (it defaults to `null`).
+- Edge device: the edge runs the cluster `ingress.wasm` with the `wasmcloud:nats` imports defined as traps. Revisit in the edge design.
 
 # Part 2: Review log
 
@@ -2055,3 +2057,5 @@ Facts:
 **Ruled (D, 2026-11-17): one Data change handler for each model and op.** The stock `message-handle` does not say which consumer delivered a message, so an application has one subscription for each (model, op), and release planning refuses two components that declare the same (owner package, model, op). A failure re-runs only that handler. The host accepts `dispatch-data-change` only from the route guest, so one component cannot run another's handler under its role.
 
 **Ruled (D, 2026-11-17): handler transactions and workflow polling.** A Data change handler has no operation. The invocation authority gets a handler case, and the handler takes the operation host-transaction setting, on by default, with one transaction per delivery tied to the ack. The workflow service refreshes its consumer list every 30 seconds instead of every second, and pulls with a 30-second long wait. One run at a time per consumer stays until something is measured.
+
+**Ruled (D, 2026-11-17): the route guest is `ingress`.** `flow-http`, `guests/http-route` and `wamn:flow-http-routing` become `ingress`, `guests/ingress` and `wamn:ingress`. "Flow" was a leftover name with no meaning in the current design.

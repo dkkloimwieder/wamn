@@ -2,7 +2,7 @@
 //!
 //! Each test binary builds the bundle once. It reads the `edge_device`
 //! component from the package's build output, so run
-//! `wamn build apps/edge_device` first. `WAMN_FLOW_HTTP_COMPONENT` supplies the
+//! `wamn build apps/edge_device` first. `WAMN_INGRESS_COMPONENT` supplies the
 //! prebuilt route guest, which must match its pin. `write_package` admits the
 //! component and writes the bundle.
 
@@ -58,16 +58,16 @@ fn build_bundle() -> PathBuf {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let package = repository.join("apps/edge_device");
     let ingress = PathBuf::from(
-        std::env::var_os("WAMN_FLOW_HTTP_COMPONENT")
-            .expect("set WAMN_FLOW_HTTP_COMPONENT to the pinned route guest"),
+        std::env::var_os("WAMN_INGRESS_COMPONENT")
+            .expect("set WAMN_INGRESS_COMPONENT to the pinned route guest"),
     );
-    let pin = std::fs::read_to_string(repository.join("guests/http-route/http_route.wasm.sha256"))
-        .expect("read the http-route pin");
+    let pin = std::fs::read_to_string(repository.join("guests/ingress/ingress.wasm.sha256"))
+        .expect("read the ingress pin");
     let ingress_digest = bytes_sha256(&std::fs::read(&ingress).expect("read the route guest"));
     assert_eq!(
         Some(ingress_digest.hex().as_str()),
         pin.split_whitespace().next(),
-        "the http-route guest matches its pin"
+        "the ingress guest matches its pin"
     );
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("edge-device-bundle-{}", std::process::id()));

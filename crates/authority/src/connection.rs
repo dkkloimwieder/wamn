@@ -9,7 +9,7 @@ use wamn_catalog::serving_context::ServingContext;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
-        path: ["../../wit/wamn-connection", "../../wit/wamn-flow-http-routing", "../../wit/wamn-postgres-0.4", "../../wit/wamn-node", "../../wit/wamn-operation-0.1", "../../wit/wasmcloud-blobstore", "wit"],
+        path: ["../../wit/wamn-connection", "../../wit/wamn-ingress", "../../wit/wamn-postgres-0.4", "../../wit/wamn-node", "../../wit/wamn-operation-0.1", "../../wit/wasmcloud-blobstore", "wit"],
         world: "wamn:host/connection-http-plugin@0.1.0",
         imports: { default: async | trappable | tracing },
         wasmtime_crate: wash_runtime::wasmtime,
