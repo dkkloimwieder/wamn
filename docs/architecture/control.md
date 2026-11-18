@@ -6,7 +6,7 @@ It has no application release, route guest, runtime operator registration, or ho
 The platform chart deploys the `control` image.
 
 Start the service with `wamn-control --config /etc/wamn/control/config.json platform`.
-The installer owns this JSON file. Database passwords stay in CNPG Secrets.
+The installer owns this JSON file. The control Deployment mounts the system database login files and the database CA certificate.
 Both database fields use `wamn-postgres::ConnectionConfig`.
 The service refuses a database credential outside its org namespace.
 It also checks the org control login and the fixed apply login.
@@ -17,7 +17,7 @@ It also checks the org control login and the fixed apply login.
 | `http_addr`, `public_origin` | Bind address and public control origin |
 | `database`, `apply_database` | Public connection objects for control reads and lifecycle writes |
 | `session_issuer`, `session_jwks_url`, `session_audience`, `session_algorithms`, `session_jwks_ca` | Bearer issuer, key-set address, org audience, EdDSA allowlist, and the CA bundle path |
-| `administration_dir` | Project administration connection files, named by `control_administration_key` |
+| `administration_dir` | Public project connection files named by `control_administration_key` and credential subdirectories named by login Secret |
 | `worker.image` | Pinned `control` image for operation Jobs |
 | `worker.service_account` | Org worker account for existing platform updates and platform SQL |
 | `worker.configuration` | ConfigMap that mounts `config.json` at `/etc/wamn/control` in each Job |
@@ -43,6 +43,7 @@ Job status is visible only through the authorized target and operation annotatio
 The project chart creates the `<coord>-operation` account.
 Environment configuration and operations that change the shared host use the org worker account.
 Workers select managed database logins from the project placement and write their ServiceAccount kubeconfig under `/work`.
+They fetch the named Secrets in the org and write only `username`, `password` and `ca.crt` to a memory-backed volume at `/etc/wamn/db/<login-secret>/`.
 The recovery Job mounts its project recovery certificate. It can read only that project's source stream and receive replies on its own inbox.
 The private `prune-record-history` and `prune-run-history` worker commands serve chart retention tasks.
 They select the record or run retention login from the recorded project connection.
@@ -55,7 +56,7 @@ The response carries the raw token once. The database stores only its hash.
 `service_principal.create` and `service_principal.disable` manage local service rows.
 `pat.issue` and `pat.list` use the given service principal ID.
 `pat.revoke` uses the token prefix and requires an org admin.
-Each route takes `project` and `env` and uses the matching login in the control administration map.
+Each route takes `project` and `env` and uses the matching public connection file in the administration directory. The database client reads the three credential files from the named login subdirectory.
 The system database supplies the platform domain for service email addresses.
 Service creation refuses with `platform-domain-unset` if the domain is missing.
 Workflow administration also uses server-selected connections and the authenticated principal.

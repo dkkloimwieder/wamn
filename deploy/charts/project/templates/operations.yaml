@@ -10,37 +10,11 @@ data:
   environment.yaml: |-
     {{- required "A project operation needs the applied environment document." $.Values.environmentDocument | nindent 4 }}
 ---
-# Each CDC process reads only its project's replication credential and database CA.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ .capture }}
   namespace: {{ $.Release.Namespace }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ .capture }}
-  namespace: {{ $.Release.Namespace }}
-rules:
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [{{ .captureSecret | quote }}, {{ printf "%s-ca" .cluster | quote }}]
-    verbs: [get]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ .capture }}
-  namespace: {{ $.Release.Namespace }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ .capture }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ .capture }}
-    namespace: {{ $.Release.Namespace }}
 {{- $name := printf "%s-operation" $operation.name }}
 ---
 apiVersion: v1
@@ -134,7 +108,6 @@ rules:
     resources: [roles, rolebindings]
     resourceNames:
       - {{ $name | quote }}
-      - {{ $operation.capture | quote }}
       {{- with $.Values.credentials }}
       - {{ .name | quote }}
       {{- end }}

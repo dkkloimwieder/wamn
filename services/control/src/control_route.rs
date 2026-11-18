@@ -69,6 +69,7 @@ use wamn_identity::paging::{ListPage, Order};
 use wamn_identity::{IdentityError, IdentityRefusal};
 use wamn_identity_client::users::UserClient;
 use wamn_identity_protocol::PrincipalId;
+use wamn_postgres::ConnectionInput;
 use wamn_provision::control_administration_key;
 
 /// Why an org route did not answer.
@@ -447,12 +448,13 @@ impl ControlRoutes<'_> {
                     .read(self.org, &request.project, &request.env)
                     .await?;
                 let application = async {
-                    let logins = self
-                        .logins(&[(request.project.clone(), request.env.clone())])
+                    let login = self
+                        .login(&request.project, &request.env)
+                        .await
                         .map_err(|_| {
                             anyhow::anyhow!("no administration login for status counts")
                         })?;
-                    application_counts(&logins[0], caller).await
+                    application_counts(login, caller).await
                 };
                 let memberships = async {
                     let mut transaction =
@@ -710,10 +712,10 @@ impl ControlRoutes<'_> {
         environments: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
         status: EnvironmentStatus,
     ) -> Result<(), Refusal> {
-        let logins = self.logins(environments)?;
+        let logins = self.logins(environments).await?;
         let mut completed: Vec<String> = Vec::new();
-        for ((project, env), url) in environments.iter().zip(logins) {
-            match write_status(&url, attachment, caller, status).await {
+        for ((project, env), login) in environments.iter().zip(logins) {
+            match write_status(login, attachment, caller, status).await {
                 Ok(()) => {}
                 Err(error) => {
                     tracing::warn!(
@@ -731,30 +733,34 @@ impl ControlRoutes<'_> {
         Ok(())
     }
 
-    /// The administration login of each environment, all read before the
-    /// first write.
-    fn logins(
+    async fn login(
         &self,
-        environments: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
-    ) -> Result<Vec<String>, Refusal> {
-        if environments.is_empty() {
-            return Ok(Vec::new());
-        }
+        project: &wamn_registry::ProjectId,
+        env: &wamn_registry::EnvName,
+    ) -> Result<ConnectionInput<'static>, Refusal> {
         let directory = self.administration.ok_or_else(|| {
             Refusal::Failed(anyhow::anyhow!(
                 "the control host has no administration logins"
             ))
         })?;
+        let path = directory.join(control_administration_key(project, env));
+        wamn_postgres::mounted_options(&path)
+            .await
+            .map(ConnectionInput::from)
+            .map_err(|error| {
+                tracing::warn!(%error, path = %path.display(), "no administration login");
+                incomplete(project, env, &[])
+            })
+    }
+
+    /// Read each environment's administration login before the first write.
+    async fn logins(
+        &self,
+        environments: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
+    ) -> Result<Vec<ConnectionInput<'static>>, Refusal> {
         let mut logins = Vec::with_capacity(environments.len());
         for (project, env) in environments {
-            let path = directory.join(control_administration_key(project, env));
-            match std::fs::read_to_string(&path) {
-                Ok(url) => logins.push(url.trim().to_owned()),
-                Err(error) => {
-                    tracing::warn!(%error, path = %path.display(), "no administration login");
-                    return Err(incomplete(project, env, &[]));
-                }
-            }
+            logins.push(self.login(project, env).await?);
         }
         Ok(logins)
     }
@@ -798,13 +804,13 @@ impl ControlRoutes<'_> {
         principal: &PrincipalId,
         environments: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
     ) -> Result<(), Refusal> {
-        let logins = self.logins(environments)?;
+        let logins = self.logins(environments).await?;
         let mut system = writer.begin().await?;
         sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)")
             .bind(caller).bind(&attachment.operation).execute(&mut *system).await?;
         wamn_identity::org::lock_membership(&mut system, principal, self.org).await?;
         let mut completed = Vec::new();
-        for ((project, env), url) in environments.iter().zip(logins) {
+        for ((project, env), login) in environments.iter().zip(logins) {
             let target = ApplicationTarget {
                 org: self.org,
                 project,
@@ -812,7 +818,7 @@ impl ControlRoutes<'_> {
             };
             match write_application(
                 &mut system,
-                &url,
+                login,
                 target,
                 attachment,
                 caller,
@@ -904,10 +910,12 @@ const APPLICATION_COUNTS_SQL: &str = "SELECT \
         WHERE r.user_id = u.id)), \
     (SELECT count(*)::int4 FROM platform.role r)";
 
-async fn application_counts(url: &str, caller: &PrincipalId) -> anyhow::Result<(i32, i32)> {
-    let mut client = wamn_postgres::connect(url).await?;
-    let mut transaction =
-        wamn_identity::transaction::read_connection(&mut client, caller).await?;
+async fn application_counts(
+    login: ConnectionInput<'_>,
+    caller: &PrincipalId,
+) -> anyhow::Result<(i32, i32)> {
+    let mut client = wamn_postgres::connect(login).await?;
+    let mut transaction = wamn_identity::transaction::read_connection(&mut client, caller).await?;
     let row = sqlx::query(APPLICATION_COUNTS_SQL)
         .fetch_one(&mut *transaction)
         .await?;
@@ -961,14 +969,14 @@ async fn status_with_counts(
 /// administration login.
 async fn write_application(
     system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    url: &str,
+    login: ConnectionInput<'_>,
     target: ApplicationTarget<'_>,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     principal: &PrincipalId,
     issuer: &str,
 ) -> anyhow::Result<()> {
-    let mut client = wamn_postgres::connect(url).await?;
+    let mut client = wamn_postgres::connect(login).await?;
 
     let result = async {
         let mut transaction = client.begin().await?;
@@ -985,12 +993,12 @@ async fn write_application(
 /// One environment's status row, in its own transaction on its
 /// administration login.
 async fn write_status(
-    url: &str,
+    login: ConnectionInput<'_>,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     status: EnvironmentStatus,
 ) -> anyhow::Result<()> {
-    let mut client = wamn_postgres::connect(url)
+    let mut client = wamn_postgres::connect(login)
         .await
         .context("connect the administration login")?;
 

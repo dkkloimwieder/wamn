@@ -34,7 +34,6 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     let connection =
         wamn_platform_install::environment::connection(&platform.system_database_url, triple)
             .await?;
-    let retired = crate::provision_project_env::workload::connections(&connection)?;
     tokio::time::timeout(std::time::Duration::from_secs(120), async {
         loop {
             let pods = super::analyse::read_pods(platform, &name).await?;
@@ -51,9 +50,14 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
                         .into_iter()
                         .flatten()
                         .any(|volume| {
-                            retired.iter().any(|(_, connection)| {
-                                volume["secret"]["secretName"] == connection.credentials.name
-                            })
+                            volume["name"] == "project-database"
+                                && volume["projected"]["sources"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .any(|source| {
+                                        source["secret"]["name"] == connection.server_ca.name
+                                    })
                         })
                 });
             if !mounted {
@@ -64,31 +68,6 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     })
     .await
     .context("project still has active runtime resources")?
-}
-
-fn postgres_secrets(config: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
-    let mut secrets = std::collections::BTreeSet::new();
-    for entry in config
-        .as_object()
-        .context("host project config is not a map")?
-        .values()
-    {
-        let entry: serde_json::Value =
-            serde_json::from_str(entry.as_str().context("project config is not JSON text")?)?;
-        for secret in entry["logins"]
-            .as_object()
-            .context("project has no logins")?
-            .values()
-        {
-            secrets.insert(
-                secret
-                    .as_str()
-                    .context("login Secret is not a name")?
-                    .to_owned(),
-            );
-        }
-    }
-    Ok(serde_json::to_value(secrets)?)
 }
 
 /// Set the stream ceiling from the projects that this group serves.
@@ -186,7 +165,7 @@ async fn host_values(
     excluded: Option<&ProjectId>,
     requested_policy: Option<&EnvName>,
 ) -> anyhow::Result<serde_json::Value> {
-    use serde_json::{Value, json};
+    use serde_json::json;
 
     let name = name::environment_host_name(org, env);
     let mut system = connect(&platform.system_database_url).await?;
@@ -302,40 +281,53 @@ async fn host_values(
         .find(|plugin| plugin["id"] == "wamn-postgres")
         .expect("inserted plugin");
     let mut secrets = Vec::new();
+    let mut database_sources = Vec::new();
+    postgres
+        .as_object_mut()
+        .expect("postgres plugin is an object")
+        .remove("secretFrom");
     let mut clusters = std::collections::BTreeSet::new();
     postgres["config"] = json!({});
-    let mut add_project =
-        |project: &Triple, connection: &wamn_postgres::ConnectionConfig| -> anyhow::Result<()> {
-            anyhow::ensure!(
-                connection.credentials.namespace == org.as_str(),
-                "project login Secrets and host must share an org"
-            );
-            let mut logins = serde_json::Map::new();
-            for (family, config) in
-                crate::provision_project_env::workload::connections(connection)?
-            {
-                let plugin_role = match family {
-                    wamn_provision::WorkloadRoleFamily::App => "guest-sql",
-                    wamn_provision::WorkloadRoleFamily::Query => "dynamic-sql",
-                    wamn_provision::WorkloadRoleFamily::Platform => "platform",
-                    wamn_provision::WorkloadRoleFamily::Migration => continue,
-                };
-                logins.insert(plugin_role.into(), config.credentials.name.into());
-            }
-            secrets.push(name::credential_secret_name(
-                &project.org,
-                &project.project,
-                &project.env,
-            ));
-            postgres["config"][project.project.as_str()] = json!({
-                "host":connection.host,"port":connection.port,"database":connection.database,
-                "logins":logins,"guest_pool_max_size":guest_pool_max_size,
-                "wait_timeout_ms":wait_timeout_ms,"statement_timeout_ms":statement_timeout_ms,
-            })
-            .to_string()
-            .into();
-            Ok(())
-        };
+    let mut add_project = |project: &Triple,
+                           connection: &wamn_postgres::ConnectionConfig|
+     -> anyhow::Result<()> {
+        anyhow::ensure!(
+            connection.credentials.namespace == org.as_str(),
+            "project login Secrets and host must share an org"
+        );
+        let mut logins = serde_json::Map::new();
+        let mut ca_items = Vec::new();
+        for (family, config) in crate::provision_project_env::workload::connections(connection)? {
+            let plugin_role = match family {
+                wamn_provision::WorkloadRoleFamily::App => "guest-sql",
+                wamn_provision::WorkloadRoleFamily::Query => "dynamic-sql",
+                wamn_provision::WorkloadRoleFamily::Platform => "platform",
+                wamn_provision::WorkloadRoleFamily::Migration => continue,
+            };
+            let name = config.credentials.name;
+            database_sources.push(json!({"secret":{"name":name,"items":[
+                {"key":"username","path":format!("{name}/username")},
+                {"key":"password","path":format!("{name}/password")}
+            ]}}));
+            ca_items.push(json!({"key":"ca.crt","path":format!("{name}/ca.crt")}));
+            logins.insert(plugin_role.into(), name.into());
+        }
+        database_sources
+            .push(json!({"secret":{"name":connection.server_ca.name,"items":ca_items}}));
+        secrets.push(name::credential_secret_name(
+            &project.org,
+            &project.project,
+            &project.env,
+        ));
+        postgres["config"][project.project.as_str()] = json!({
+            "host":connection.host,"port":connection.port,"database":connection.database,
+            "logins":logins,"guest_pool_max_size":guest_pool_max_size,
+            "wait_timeout_ms":wait_timeout_ms,"statement_timeout_ms":statement_timeout_ms,
+        })
+        .to_string()
+        .into();
+        Ok(())
+    };
     for project in projects {
         let project = Triple::new(org.clone(), env.clone(), project);
         let connection =
@@ -345,16 +337,25 @@ async fn host_values(
         add_project(&project, &connection)?;
     }
     postgres["workloadConfig"] = "deny".into();
-    postgres["secretFrom"] = postgres_secrets(&postgres["config"])?;
-    secrets.extend(
-        postgres["secretFrom"]
-            .as_array()
-            .context("host login Secrets")?
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned),
-    );
     set_nats_plugin(plugins, org, env)?;
+    for (field, entry) in [
+        (
+            "volumes",
+            json!({"name":"project-database","projected":{
+                "defaultMode":256,"sources":database_sources
+            }}),
+        ),
+        (
+            "volumeMounts",
+            json!({"name":"project-database","mountPath":wamn_postgres::DATABASE_DIR,"readOnly":true}),
+        ),
+    ] {
+        let entries = group[field]
+            .as_array_mut()
+            .context("host volume settings must be lists")?;
+        entries.retain(|entry| entry["name"] != "project-database");
+        entries.push(entry);
+    }
     let account = name::environment_service_account(org, env);
     let certificate = name::environment_nats_certificate(org, env);
     let certificate = wamn_broker::authorization::certificate(
@@ -433,13 +434,6 @@ pub async fn cdc_in_place(
         .await
         .context("probe the CDC publication schema")?
         .get(0))
-}
-
-/// The migration credential of the project's registered database generation.
-pub(super) async fn project_url(platform: &Platform, triple: &Triple) -> anyhow::Result<String> {
-    wamn_platform_install::environment::connection(&platform.system_database_url, triple)
-        .await?
-        .to_json()
 }
 
 pub(super) async fn postgres_settings(platform: &Platform) -> anyhow::Result<serde_json::Value> {

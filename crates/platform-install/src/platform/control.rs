@@ -156,12 +156,6 @@ pub(super) fn resource_entry(
     };
     let control_database = connection(control_login.name, control_login.password_secret.name);
     let apply_database = connection("wamn_apply".parse()?, "wamn-apply".into());
-    let database_secrets = [
-        &control_database.credentials.name,
-        &control_database.server_ca.name,
-        &apply_database.credentials.name,
-        &migration.password_secret.name,
-    ];
     let platform_ui = chart
         .values()
         .get("platformUi")
@@ -200,7 +194,7 @@ pub(super) fn resource_entry(
         json!({"chart":chart.application_chart(),"version":chart.version,"name":name,"namespace":org,
         "values":{"controlService":true,"org":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},
         "control":{"image":chart.image("control")?,"configuration":config,"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::name::control_service_account(org),
-            "databaseSecrets":database_secrets},
+            "systemMigrationSecret":migration.password_secret.name},
         "platform":{"chart":chart.reference()}}}),
     )
 }

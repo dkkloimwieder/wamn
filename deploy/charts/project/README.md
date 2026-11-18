@@ -9,6 +9,8 @@ If backups are configured, Helm creates an ObjectStore and ScheduledBackup for t
 Helm keeps the live Cluster and ObjectStore unless `env delete --data` removes them.
 To restore into a separate release, see [Backup and recovery](../../../docs/operations/backup-and-recovery.md).
 It saves the applied environment YAML in the project's operations ConfigMap. Later Jobs mount this file.
+The CDC reader projects its replication login from `operations.captureSecret` and the `ca.crt` key from the project's CA Secret under `/etc/wamn/db/<login-secret>/`.
+Operation Jobs fetch their named database Secrets and stage the same files in their own volume.
 
 The `credentials` values name the empty Secret for the project release and the control ServiceAccount that can read and patch it.
 Control writes data keys after install. Helm uses server-side apply and keeps the Secret on uninstall.

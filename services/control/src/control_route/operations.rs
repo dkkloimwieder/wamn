@@ -246,6 +246,7 @@ fn manifest(
             &["ca.crt", "tls.crt", "tls.key"],
         );
     }
+    crate::worker::mount_database_files(&mut job);
     crate::worker::mount_registry(&mut job, metadata);
     job
 }

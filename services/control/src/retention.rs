@@ -1,20 +1,18 @@
 //! Private worker entry points for the environment chart's retention tasks.
 
 use sqlx::Connection as _;
+use std::path::Path;
+use wamn_postgres::ConnectionInput;
+use wamn_provision::migrations::MigrationDatabase;
 
 async fn prune_identities(
-    input: &str,
-    scope: wamn_provision::migrations::MigrationDatabase,
+    input: ConnectionInput<'_>,
+    scope: MigrationDatabase,
 ) -> anyhow::Result<()> {
-    // Bound credential lookup, connection establishment, role selection and delete.
+    // Bound connection establishment, role selection and delete.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let configuration = if scope == wamn_provision::migrations::MigrationDatabase::Project {
-            wamn_provision::workload_role::platform_configuration(input)?
-        } else {
-            scope.configuration(input)?
-        };
-        let mut connection = wamn_postgres::connect(&configuration).await?;
-        if scope == wamn_provision::migrations::MigrationDatabase::System {
+        let mut connection = wamn_postgres::connect(input).await?;
+        if scope == MigrationDatabase::System {
             scope.require_login(&mut connection).await?;
         }
         let mut transaction = connection.begin().await?;
@@ -26,7 +24,7 @@ async fn prune_identities(
         )
         .execute(&mut *transaction)
         .await?;
-        if scope == wamn_provision::migrations::MigrationDatabase::Project {
+        if scope == MigrationDatabase::Project {
             wamn_connection::credential_cleanup::collect(&mut transaction).await?;
         }
         transaction.commit().await?;
@@ -36,21 +34,26 @@ async fn prune_identities(
 }
 
 /// Remove identities that no running transaction can still use.
-pub(crate) async fn identities(directory: &std::path::Path, system: &str) -> anyhow::Result<()> {
-    use wamn_provision::migrations::MigrationDatabase;
-    if let Err(error) = prune_identities(system, MigrationDatabase::System).await {
+pub(crate) async fn identities(directory: &Path, system: &str) -> anyhow::Result<()> {
+    if let Err(error) = prune_identities(system.into(), MigrationDatabase::System).await {
         tracing::warn!(%error, "system transaction identity retention failed");
     }
     let mut entries = tokio::fs::read_dir(directory).await?;
     while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
         if entry.file_name().to_string_lossy().starts_with('.')
-            || !entry.file_type().await?.is_file()
+            || !tokio::fs::metadata(&path)
+                .await
+                .is_ok_and(|metadata| metadata.is_file())
         {
             continue;
         }
         let result = async {
-            let input = tokio::fs::read_to_string(entry.path()).await?;
-            prune_identities(&input, MigrationDatabase::Project).await
+            let config = wamn_postgres::ConnectionConfig::read(&path).await?;
+            let login = wamn_provision::workload_role::platform_connection(config)?
+                .mounted_options(directory)
+                .await?;
+            prune_identities(login.into(), MigrationDatabase::Project).await
         }
         .await;
         if let Err(error) = result {

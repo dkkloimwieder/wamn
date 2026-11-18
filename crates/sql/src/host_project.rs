@@ -52,13 +52,10 @@ impl WamnPostgres {
                         .any(|entry| entry.as_str() == class),
                     "unknown database authority class"
                 );
-                anyhow::ensure!(
-                    !secret.is_empty()
-                        && secret.bytes().all(|byte| byte.is_ascii_lowercase()
-                            || byte.is_ascii_digit()
-                            || byte == b'-'),
-                    "invalid database Secret name"
-                );
+                wamn_postgres::credential_directory(
+                    std::path::Path::new(wamn_postgres::DATABASE_DIR),
+                    secret,
+                )?;
             }
             projects.insert(project, config);
         }
@@ -88,23 +85,29 @@ impl WamnPostgres {
             let Some(secret) = config.logins.get(class.as_str()) else {
                 continue;
             };
-            let directory = std::path::Path::new("/etc/wasmcloud/host-plugin-secrets").join(secret);
-            let username = tokio::fs::read_to_string(directory.join("username"))
-                .await
-                .context("read database username Secret")?;
-            let password = tokio::fs::read_to_string(directory.join("password"))
-                .await
-                .context("read database password Secret")?;
+            let directory = wamn_postgres::credential_directory(
+                std::path::Path::new(wamn_postgres::DATABASE_DIR),
+                secret,
+            )?;
+            let username: wamn_identity_protocol::LoginName = match class {
+                AuthorityClass::GuestSql => wamn_role::APP_LOGIN,
+                AuthorityClass::DynamicSql => wamn_role::QUERY_LOGIN,
+                AuthorityClass::Platform => wamn_role::PLATFORM_LOGIN,
+            }
+            .parse()?;
+            let password = wamn_postgres::read_password(&directory, &username).await?;
             let mut url = url::Url::parse("postgres://localhost")?;
             url.set_host(Some(&config.host))
                 .map_err(|_| anyhow::anyhow!("invalid project database host"))?;
             url.set_port(Some(config.port))
                 .map_err(|()| anyhow::anyhow!("invalid project database port"))?;
             url.set_path(&config.database);
-            url.set_username(&username)
+            url.set_username(username.as_str())
                 .map_err(|()| anyhow::anyhow!("invalid database username"))?;
             url.set_password(Some(&password))
                 .map_err(|()| anyhow::anyhow!("invalid database password"))?;
+            url.query_pairs_mut()
+                .append_pair("sslrootcert", &directory.join("ca.crt").to_string_lossy());
             urls = urls.with_class(class, String::from(url));
         }
         let base = WamnPostgresConfig::from_env();

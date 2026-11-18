@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 url.workspace = true
-tempfile.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
