@@ -53,7 +53,7 @@ enum Command {
     /// Inspect or apply application SQL independently of serving code.
     #[command(subcommand)]
     Schema(wamn_cli::schema_verbs::SchemaCommand),
-    /// Deploy or inspect platform configuration.
+    /// Inspect platform configuration or manage platform SQL.
     #[command(subcommand)]
     Platform(wamn_cli::platform_verbs::ProductPlatformCommand),
     /// Build packages: generate every output from wamn.k into target/wamn.
@@ -213,8 +213,6 @@ mod tests {
 #[cfg(all(test, target_os = "linux"))]
 mod platform_tests {
     use super::*;
-    use wamn_cli::platform_verbs::ProductPlatformCommand;
-    use wamn_environment::platform::document::UpgradeTarget;
 
     #[test]
     fn platform_schema_refuses_a_system_environment() {
@@ -237,128 +235,5 @@ mod platform_tests {
                     .is_err()
             );
         }
-    }
-
-    #[test]
-    fn platform_deploy_accepts_an_optional_chart_and_explicit_targets() {
-        let cli = Cli::try_parse_from(["wamn", "platform", "deploy", "cluster.k"]).unwrap();
-        let Command::Platform(ProductPlatformCommand::Deploy(args)) = cli.command else {
-            panic!("expected platform deploy");
-        };
-        assert!(args.chart.is_none());
-        let cli = Cli::try_parse_from([
-            "wamn",
-            "platform",
-            "deploy",
-            "cluster.k",
-            "--chart",
-            "/prepared/chart",
-        ])
-        .unwrap();
-        let Command::Platform(wamn_cli::platform_verbs::ProductPlatformCommand::Deploy(args)) =
-            cli.command
-        else {
-            panic!("expected platform deploy");
-        };
-        assert_eq!(args.file, std::path::Path::new("cluster.k"));
-        assert_eq!(
-            args.chart.as_deref(),
-            Some(std::path::Path::new("/prepared/chart"))
-        );
-        assert!(args.only.is_none());
-        for (argument, target) in [
-            ("control", UpgradeTarget::Control),
-            ("identity", UpgradeTarget::Identity),
-            (
-                "host:alpha/alpha",
-                UpgradeTarget::Host {
-                    release: "alpha".into(),
-                    group: "alpha".into(),
-                },
-            ),
-            (
-                "host:shared/events",
-                UpgradeTarget::Host {
-                    release: "shared".into(),
-                    group: "events".into(),
-                },
-            ),
-        ] {
-            let cli = Cli::try_parse_from([
-                "wamn",
-                "platform",
-                "deploy",
-                "cluster.k",
-                "--chart",
-                "/prepared/chart",
-                "--only",
-                argument,
-            ])
-            .unwrap();
-            let Command::Platform(ProductPlatformCommand::Deploy(args)) = cli.command else {
-                panic!("expected platform deploy");
-            };
-            assert_eq!(args.only, Some(target));
-        }
-        for target in [
-            "host",
-            "all",
-            "application:alpha",
-            "control,identity",
-            "host:/alpha",
-            "host:alpha/",
-            "host:alpha/*",
-            "host:alpha/group/extra",
-            "host:Alpha/group",
-        ] {
-            assert!(
-                Cli::try_parse_from([
-                    "wamn",
-                    "platform",
-                    "deploy",
-                    "cluster.k",
-                    "--chart",
-                    "/prepared/chart",
-                    "--only",
-                    target,
-                ])
-                .is_err(),
-                "{target}"
-            );
-        }
-        assert!(Cli::try_parse_from(["wamn", "platform", "apply", "cluster.k"]).is_err());
-    }
-
-    #[tokio::test]
-    async fn platform_missing_document_refuses_before_provider_setup() {
-        let directory = std::env::temp_dir().join(format!(
-            "wamn-platform-missing-inputs-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&directory).unwrap();
-        let missing = directory.join("missing");
-        let cli = Cli::try_parse_from([
-            "wamn".as_ref(),
-            "platform".as_ref(),
-            "deploy".as_ref(),
-            missing.as_os_str(),
-        ])
-        .unwrap();
-        let Command::Platform(command) = cli.command else {
-            panic!("expected platform deploy");
-        };
-        let mut output = Vec::new();
-        let error = wamn_cli::platform_verbs::run_product(command, &mut output)
-            .await
-            .unwrap_err();
-        assert_eq!(
-            error
-                .downcast_ref::<std::io::Error>()
-                .unwrap_or_else(|| panic!("unexpected input refusal: {error:#}"))
-                .kind(),
-            std::io::ErrorKind::NotFound
-        );
-        assert!(output.is_empty());
-        std::fs::remove_dir(directory).unwrap();
     }
 }

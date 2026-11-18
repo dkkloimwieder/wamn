@@ -436,7 +436,8 @@ Loopback registries use HTTP.
 
 [Deployment](deployment.md#local-platform) describes prepared chart deployment, status, access, and cleanup on kind.
 Public ingress, web uploads, telemetry, and production policies still need cloud verification.
-The operations below use the external cloud credentials described above.
+The deployment sequence below requires the Epic 10 `platform` chart and the external cloud credentials described above.
+`wamn platform deploy --only` returns with that chart.
 
 Use the existing infrastructure and platform owners in this order.
 
@@ -447,7 +448,7 @@ Use the existing infrastructure and platform owners in this order.
    Their dependencies include the cluster.
    Save the plan and apply it after approval.
    OpenTofu resource targeting includes each target's dependencies. [OpenTofu plan](https://opentofu.org/docs/cli/commands/plan/)
-2. Run `wamn platform deploy deploy/gcp/cluster.k --chart <prepared-chart>`.
+2. Deploy the platform with the Epic 10 installation path.
    The platform owner deploys cert-manager, the edge certificate, and the edge Helm release.
    GKE creates the NEG from the Service annotation.
 3. Run a full `tofu plan` in the same directory and apply the approved saved plan.
@@ -493,7 +494,7 @@ Run these steps in order:
 
 1. Follow the OpenTofu order above with the existing directory and state prefix.
    Render the project and apply the approved node pool targets first.
-2. Run `wamn platform deploy "$WAMN_TEST_CLUSTER" --chart "$WAMN_RELEASE_CHART"`.
+2. Deploy the platform with the Epic 10 installation path.
    This creates the edge Service and its network endpoint group.
 3. Apply the approved full OpenTofu plan.
    Publish the certificate authorization CNAME and point the route host at the load balancer address.

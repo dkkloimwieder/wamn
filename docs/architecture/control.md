@@ -19,7 +19,7 @@ It also checks the org control login and the fixed apply login.
 | `session_issuer`, `session_jwks_url`, `session_audience`, `session_algorithms`, `session_jwks_ca` | Bearer issuer, key-set address, org audience, EdDSA allowlist, and the CA bundle path |
 | `administration_dir` | Project administration connection files, named by `control_administration_key` |
 | `worker.image` | Pinned `control` image for operation Jobs |
-| `worker.service_account` | Org worker account for existing platform updates and platform SQL |
+| `worker.service_account` | Org worker account for environment lifecycle and platform SQL Jobs |
 | `worker.configuration` | ConfigMap that mounts `config.json` at `/etc/wamn/control` in each Job |
 | `chart` | Installed immutable chart reference |
 | `package_artifact_base`, `component_artifact_base`, `integration_artifact_base` | Installed artifact repositories |
@@ -65,9 +65,10 @@ Integration publication pushes local build output first. The service verifies th
 `wamn` is the user CLI and runs internal bootstrap steps.
 Deploy, rollback, status, schema, workflow, and integration administration use authenticated routes.
 They require control credentials and have no direct database fallback.
-Build, dev and eject stay local. Bootstrap stays local before control exists.
-After bootstrap, `wamn platform deploy --only <owner>` updates an existing Helm owner through a worker Job.
-Platform schema inspection and apply also use the worker. The service selects their chart and SQL image.
+Build, dev and eject stay local.
+`wamn platform deploy --only` returns in Epic 10 with the `platform` chart.
+Platform schema inspection and apply use `platform.schema` to start a SQL Job and `platform.operation_status` to follow it.
+The service selects the worker image.
 Cloud node pool administration belongs to the platform infrastructure tooling.
 
 Environment creation and configuration use `environment.configure`. Deletion uses `environment.delete`.
@@ -75,4 +76,4 @@ Their Jobs call installer-owned role and database interfaces and then the enviro
 The installer runs a separate initial SQL bootstrap only when the baseline is absent and no configuration is recorded.
 Its private worker repeats the baseline refusal before DDL. It cannot update an existing baseline.
 The environment chart removes the initial bootstrap account's access after successful initialization.
-Normal lifecycle and platform updates use configured restricted connections.
+Lifecycle operations and platform SQL use configured restricted connections.

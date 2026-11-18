@@ -58,8 +58,6 @@ pub(crate) async fn upgrade_release(
     .await
 }
 
-pub use super::installed::release_values;
-
 /// Build a namespace prerequisite.
 pub fn namespace_object(namespace: &str) -> Value {
     json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}})

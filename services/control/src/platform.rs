@@ -1,4 +1,4 @@
-//! Platform updates and SQL execute in the same native worker image.
+//! Submit and run platform SQL, environment, and project operation Jobs.
 
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
@@ -28,10 +28,6 @@ enum Request {
         #[serde(default)]
         data: bool,
     },
-    Update {
-        document: Value,
-        selection: String,
-    },
     Schema {
         target: String,
         #[serde(default)]
@@ -43,7 +39,24 @@ enum Request {
 }
 
 impl Execution {
-    pub(crate) async fn platform(
+    pub(crate) async fn platform_schema(
+        &self,
+        operation: &wamn_catalog::canonical_name::CanonicalName,
+        payload: &str,
+    ) -> anyhow::Result<Value> {
+        if operation.as_str() == "platform.operation_status" {
+            return self.operation_job(operation, payload).await;
+        }
+        let mut input: Value = serde_json::from_str(payload)?;
+        let fields = input.as_object_mut().context("expected platform SQL object")?;
+        ensure!(
+            fields.insert("type".into(), "schema".into()).is_none(),
+            "platform SQL request cannot select a worker task"
+        );
+        self.operation_job(operation, &input.to_string()).await
+    }
+
+    async fn operation_job(
         &self,
         operation: &wamn_catalog::canonical_name::CanonicalName,
         payload: &str,
@@ -140,7 +153,7 @@ impl Execution {
     }
 }
 
-/// Run a server-authorized update or platform SQL task inside its Job.
+/// Run a server-authorized lifecycle operation or platform SQL task in its Job.
 pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Value> {
     let request: Request = serde_json::from_str(payload)?;
     let platform = config.platform()?;
@@ -198,30 +211,6 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
             )
             .await?;
             Ok(json!({"configured":true}))
-        }
-        Request::Update {
-            document,
-            selection,
-        } => {
-            let document = wamn_platform_install::platform::document::ClusterDocument::from_json(
-                &serde_json::to_vec(&document)?,
-            )?;
-            ensure!(
-                document.org == config.org,
-                "platform update belongs to another org"
-            );
-            let selection = selection.parse()?;
-            let chart = wamn_platform_install::platform::artifact_plan::select(&config.chart)?;
-            wamn_platform_install::platform::deploy::update(
-                &document,
-                &chart,
-                &platform.target,
-                &selection,
-                std::path::Path::new("/work"),
-                &MigrationDatabase::System.configuration(&config.apply_database.to_json()?)?,
-            )
-            .await?;
-            Ok(json!({"status":"updated"}))
         }
         Request::Schema {
             target,
@@ -317,7 +306,7 @@ impl Execution {
         payload: &str,
     ) -> anyhow::Result<Value> {
         if operation.as_str().ends_with("operation_status") {
-            return self.platform(operation, payload).await;
+            return self.operation_job(operation, payload).await;
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -332,6 +321,6 @@ impl Execution {
         }
         let input: Input = serde_json::from_str(payload)?;
         let payload = json!({"type":"environment","operation":operation,"project":input.project,"env":input.env,"document":input.document,"application":input.application,"disposable":input.disposable,"data":input.data});
-        self.platform(operation, &payload.to_string()).await
+        self.operation_job(operation, &payload.to_string()).await
     }
 }
