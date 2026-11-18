@@ -747,7 +747,7 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- Applied settings and desired release selections belong to the project deployment.
+-- Applied settings belong to the project deployment.
 -- Helm revisions record deployment attempts and supply rollback history.
 CREATE TABLE registry.environment_applications (
     org text NOT NULL,
@@ -765,28 +765,28 @@ CREATE TABLE registry.environment_applications (
     CHECK ((client_package IS NULL) = (client_web IS NULL))
 );
 
+CREATE TABLE registry.environment_integrations (
+    org text NOT NULL,
+    env text NOT NULL,
+    name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9_-]{0,62}$'),
+    version integer NOT NULL CHECK (version > 0),
+    PRIMARY KEY (org, env, name),
+    FOREIGN KEY (org, env)
+        REFERENCES registry.environments (org, env) ON DELETE CASCADE
+);
+
 CREATE TABLE registry.environment_application_connections (
     org text NOT NULL,
     env text NOT NULL,
     project text NOT NULL,
     application text NOT NULL,
     alias text NOT NULL CHECK (alias <> ''),
-    connection_name text NOT NULL CHECK (connection_name ~ '^[a-z][a-z0-9_-]{0,62}$'),
-    connection_version integer CHECK (connection_version > 0),
+    connection_name text NOT NULL,
     PRIMARY KEY (org, env, project, application, alias),
     FOREIGN KEY (org, env, project, application)
-        REFERENCES registry.environment_applications (org, env, project, application) ON DELETE CASCADE
-);
-
-CREATE TABLE registry.environment_integrations (
-    org text NOT NULL,
-    env text NOT NULL,
-    project text NOT NULL,
-    name text NOT NULL CHECK (name <> ''),
-    version integer NOT NULL CHECK (version > 0),
-    PRIMARY KEY (org, env, project, name),
-    FOREIGN KEY (org, env, project)
-        REFERENCES registry.environment_projects (org, env, project) ON DELETE CASCADE
+        REFERENCES registry.environment_applications (org, env, project, application) ON DELETE CASCADE,
+    FOREIGN KEY (org, env, connection_name)
+        REFERENCES registry.environment_integrations (org, env, name)
 );
 
 -- User project access is an explicit grant to one project-environment

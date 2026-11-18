@@ -114,13 +114,21 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         payload: &str,
     ) -> Result<Value, Refusal> {
-        let request: Request = serde_json::from_str(payload).map_err(|_| invalid("value"))?;
+        let mut request: Request = serde_json::from_str(payload).map_err(|_| invalid("value"))?;
         let coordinate = wamn_provision::environment_names::environment_resource_name(
             self.org,
             &request.project,
             &request.env,
         )
         .map_err(anyhow::Error::from)?;
+        let operation = if attachment.route.operation == "operation.status" {
+            None
+        } else {
+            let operation = Operation::parse(attachment.route.operation)
+                .context("unknown operation Job route")?;
+            validate(operation, &request)?;
+            Some(operation)
+        };
         // Repeat authority in the write transaction before contacting Kubernetes.
         let mut writer = self.writer.lock().await;
         let mut transaction = self
@@ -143,6 +151,16 @@ impl ControlRoutes<'_> {
                 detail: json!({"field":"env"}),
             });
         }
+        if operation.is_some() {
+            let environment = wamn_catalog::configuration::read(&mut transaction, &triple)
+                .await?
+                .context("environment has no applied configuration")?;
+            if let Some(application) = &request.application
+                && !environment.applications.contains_key(application)
+            {
+                return Err(invalid("application"));
+            }
+        }
         transaction.commit().await?;
         drop(writer);
 
@@ -157,7 +175,7 @@ impl ControlRoutes<'_> {
         if namespace != self.org {
             return Err(anyhow::anyhow!("operation worker must share the org namespace").into());
         }
-        if attachment.route.operation == "operation.status" {
+        let Some(operation) = operation else {
             if request.application.is_some() || request.release.is_some() {
                 return Err(invalid("value"));
             }
@@ -172,20 +190,19 @@ impl ControlRoutes<'_> {
             )
             .await
             .map_err(super::operation_refusal);
-        }
-        let operation =
-            Operation::parse(attachment.route.operation).context("unknown operation Job route")?;
-        validate(operation, &request)?;
-        let environment = {
-            let mut connection = self.control.acquire().await?;
-            wamn_catalog::configuration::read(&mut connection, &triple)
-                .await?
-                .context("environment has no applied configuration")?
         };
-        if let Some(application) = &request.application
-            && !environment.applications.contains_key(application)
+        if matches!(operation, Operation::Diff | Operation::Apply)
+            && request.release.is_none()
+            && let Some(application) = &request.application
         {
-            return Err(invalid("application"));
+            let release = wamn_environment::environment::document::workload_release(
+                api,
+                &triple,
+                application,
+            )
+            .await?
+            .ok_or_else(|| invalid("release"))?;
+            request.release = Some(release.package_digest);
         }
         let suffix = wamn_registry::deployment::instance_suffix(
             &mut *self.control.acquire().await?,

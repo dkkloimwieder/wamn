@@ -88,6 +88,11 @@ enum Task {
     RequireTestResult(process::TestArgs),
     /// Run repository formatting, Clippy, and policy checks.
     RepoLint(tasks::RunArgs),
+    /// Generate or check the authored environment JSON Schema.
+    EnvironmentSchema {
+        #[arg(long)]
+        check: bool,
+    },
     /// Check dependency boundaries.
     RepoLintDependencies,
     /// Compile each package without other members' features.
@@ -186,6 +191,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         } => bench_data::app_result(&work, &output, &http, edge, scale),
         Task::RequireTestResult(args) => process::require(&std::env::current_dir()?, &args).await,
         Task::RepoLint(args) => tasks::lint(&root, args.mode).await,
+        Task::EnvironmentSchema { check } => repo_policy::environment_schema(&root, check),
         Task::RepoLintDependencies => tasks::dependencies(&root).await,
         Task::CompilePackagesAlone { manifest } => {
             tasks::packages(&root, manifest.as_deref()).await

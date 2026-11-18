@@ -90,11 +90,7 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
         }
     }
     if let Some(name) = request["name"].as_str()
-        && (name.len() > 63
-            || !name.as_bytes()[0].is_ascii_lowercase()
-            || !name.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
-            }))
+        && !wamn_catalog::configuration::valid_connection_name(name)
     {
         return Err(refuse("invalid_input", "name"));
     }
@@ -257,29 +253,26 @@ pub async fn execute(
             &schemas,
             &metadata["auth_schema"],
         )?;
-        let published: Value = versions
-            .iter()
-            .map(|v| (v["version"].to_string(), v["parameter_schema"].clone()))
-            .collect();
-        for schema in required_connection_versions(
-            system,
+        let mut transaction = system.begin().await?;
+        bind_actor(&mut transaction, caller, operation).await?;
+        let version = required_connection_version(
+            &mut transaction,
             org,
-            &request["project"]
-                .as_str()
-                .expect("validated project")
-                .parse()
-                .map_err(|_| refuse("invalid_input", "project"))?,
             &request["env"]
                 .as_str()
                 .expect("validated env")
                 .parse()
                 .map_err(|_| refuse("invalid_input", "env"))?,
             request["name"].as_str().expect("validated name"),
-            &published,
         )
-        .await?
-        {
-            validate_version_parameters(&request["parameters"], &schema)?;
+        .await?;
+        transaction.commit().await?;
+        if let Some(version) = version {
+            let published = versions
+                .iter()
+                .find(|entry| entry["version"] == version)
+                .ok_or_else(|| refuse("invalid_input", "version"))?;
+            validate_version_parameters(&request["parameters"], &published["parameter_schema"])?;
         }
         let external: Option<Uuid> = if let Some(name) = request["external_system"].as_str() {
             Some(
@@ -620,26 +613,21 @@ async fn store_credential(
     Ok(json!({"id":id.to_string(),"store":store,"ref":reference,"version":version,"hint":hint}))
 }
 
-/// Validate edits against the registry's desired connection selections.
-pub async fn required_connection_versions(
+/// Read the environment's version for a named connection.
+pub async fn required_connection_version(
     system: &mut sqlx::PgConnection,
     org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     name: &str,
-    published: &Value,
-) -> Result<Vec<Value>, ConnectionError> {
-    let versions: Vec<i32> = sqlx::query_scalar("SELECT DISTINCT version FROM registry.environment_integrations WHERE org=$1 AND project=$2 AND env=$3 AND name=$4 UNION SELECT DISTINCT connection_version FROM registry.environment_application_connections WHERE org=$1 AND project=$2 AND env=$3 AND connection_name=$4 AND connection_version IS NOT NULL")
-        .bind(org).bind(project).bind(env).bind(name).fetch_all(system).await?;
-    versions
-        .into_iter()
-        .map(|version| {
-            published
-                .get(version.to_string())
-                .cloned()
-                .ok_or_else(|| refuse("invalid_input", "version"))
-        })
-        .collect()
+) -> Result<Option<i32>, ConnectionError> {
+    Ok(sqlx::query_scalar(
+        "SELECT version FROM registry.environment_integrations WHERE org=$1 AND env=$2 AND name=$3",
+    )
+    .bind(org)
+    .bind(env)
+    .bind(name)
+    .fetch_optional(system)
+    .await?)
 }
 
 fn validate_required_fields(parameters: &Value, schema: &Value) -> Result<(), ConnectionError> {

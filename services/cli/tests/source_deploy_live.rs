@@ -86,7 +86,7 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure(
             &json!({"auths": {"registry.invalid": {"username": "fixture", "password": "fixture"}}}),
         )?,
     )?;
-    let file = scratch.path().join("environment.k");
+    let file = scratch.path().join("environment.yaml");
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org": "acme", "project": "source", "env": "dev", "target": "cloud", "policy": "dev","revocation_seconds":60,
         "applications": {
@@ -94,14 +94,13 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure(
             "b": {"hostname": "b.invalid"}
         }
     }))?)?;
-    std::fs::write(&file, document.to_kcl())?;
     let deploy = |root: &Path, schema: bool, development: bool| -> anyhow::Result<()> {
         let application = if root.ends_with("appb") { "b" } else { "a" };
         let selected = wamn_environment::environment::analyse::select_application(
             &document,
             Some(&application.parse().unwrap()),
         )?;
-        std::fs::write(&file, selected.to_kcl())?;
+        std::fs::write(&file, selected.to_yaml()?)?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
         if development {
             command.arg("dev").arg("--overlay-root");

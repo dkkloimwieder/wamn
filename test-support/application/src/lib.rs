@@ -24,7 +24,7 @@ impl Application {
         let scratch = ScratchRoot::create()?;
         let cluster = ClusterDocument::compile(Path::new(&std::env::var("WAMN_TEST_CLUSTER")?))?;
         let mut document = EnvironmentDocument::compile(
-            &PathBuf::from(std::env::var("WAMN_DEV_ENV")?).join("environment.k"),
+            &PathBuf::from(std::env::var("WAMN_DEV_ENV")?).join("environment.yaml"),
         )?;
         ensure!(
             document.org == cluster.org,
@@ -60,8 +60,8 @@ impl Application {
             .get_mut(&name)
             .context("application")?
             .current = DeclaredRelease::None;
-        let file = scratch.path().join("environment.k");
-        std::fs::write(&file, document.to_kcl())?;
+        let file = scratch.path().join("environment.yaml");
+        std::fs::write(&file, document.clone().to_yaml()?)?;
         product(["env", "apply", text(&file)?, "--disposable"]).await?;
         for connection in document.applications[&name].connections.values() {
             let request = scratch.path().join("connection.json");
@@ -153,7 +153,7 @@ impl Application {
     }
 
     pub async fn rebuild(&self, source: &Path) -> anyhow::Result<()> {
-        deploy(&self.scratch.path().join("environment.k"), source).await
+        deploy(&self.scratch.path().join("environment.yaml"), source).await
     }
 
     pub async fn audience(&self) -> anyhow::Result<String> {

@@ -29,6 +29,8 @@ hex = { workspace = true }
 ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+serde-saphyr = "2.0.0"
+schemars.workspace = true
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
 tracing = { workspace = true }

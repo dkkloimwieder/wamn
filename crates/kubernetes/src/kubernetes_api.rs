@@ -206,6 +206,19 @@ impl KubernetesApi {
             .ok_or_else(|| failure("GET", &path, "object is absent"))
     }
 
+    /// Read the named WorkloadDeployment, returning none when it is absent.
+    pub async fn get_workload_deployment(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<Value>, Error> {
+        self.json(
+            Method::GET,
+            &format!("/apis/runtime.wasmcloud.dev/v1alpha1/namespaces/{namespace}/workloaddeployments/{name}"),
+            None,
+        ).await
+    }
+
     /// Submit a server-built Job once.
     pub async fn create_job(&self, namespace: &str, job: &Value) -> Result<Value, Error> {
         let path = format!("/apis/batch/v1/namespaces/{namespace}/jobs");

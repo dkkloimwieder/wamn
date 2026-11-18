@@ -711,6 +711,7 @@ Issues:
 - Edge device, if the edge needs NATS: use the stock NATS way. A leaf node on the device with its own JetStream domain, one per edge environment. Mirror cloud streams to the edge, and source edge streams into the cloud. The edge then binds the stock `wasmcloud_nats` plugin to the local server, which also fills `ingress`'s NATS imports, and the guest code does not change. Not ruled; the edge design decides.
 - After 3.6, with D's approval: the first kind run deploys through the new install and deploy paths, and covers a Data change handler (the subscription and the dispatch through `ingress`).
 - 3.6: the NATS volume (10 Gi today) must hold the sum of all environment accounts, which is 256 MiB times the number of projects across all environments. Size it at install.
+- 3.6: `cluster.k` checks the GCP project ID, the zone and the bucket names, but no Rust or SQL code does. Add the three checks in Rust.
 - The xtask dependency check fails on `wamn-edge`, which links `oci-client` through wash-runtime. This predates Epic 7. Fix the check's allowance or the dependency.
 - 3.6: RBAC that reaches past its need: `wamn-platform-operations` gives `wamn-operation-<org>` full Secret writes and RBAC `bind` and `escalate` in the platform namespace, and control's org Role has `get` on every Secret in the org namespace. Shrink both to named resources.
 - 3.7: `apps/platform_ui` reads residency and live fields from the old status contract. Regenerate its clients against the new `environment.status` and `application.rollback` contracts.

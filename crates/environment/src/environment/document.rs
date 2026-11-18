@@ -1,11 +1,9 @@
-//! The environment document, `environment.k`
-//! (docs/architecture/overview.md#environment-lifecycle).
-//!
-//! The registry owns applied settings and desired release selections.
-//! Runtime hosts receive only the declared packages and connections.
-//! KCL compiles the document to JSON. Its canonical form is RFC 8785 JSON.
+//! Authored YAML environments and their applied project settings.
 
+mod file;
 pub(super) mod plan;
+
+pub use file::{EnvironmentFile, Project, schema_json};
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -26,14 +24,34 @@ pub use plan::DeclaredRelease;
 pub use plan::{Schema, SchemaMode};
 
 impl EnvironmentDocument {
-    /// Read compiled JSON or compile an `environment.k` file.
-    ///
-    /// # Errors
-    ///
-    /// When KCL refuses the file, or when the JSON is not a valid document.
+    /// Read the project from a one-project environment file.
     pub fn compile(file: &Path) -> anyhow::Result<Self> {
-        Self::from_json(&std::fs::read(file)?)
-            .with_context(|| format!("{} is not a valid environment", file.display()))
+        let document = EnvironmentFile::compile(file)?;
+        ensure!(
+            document.projects.len() == 1,
+            "select a project from the environment"
+        );
+        Ok(document.into_projects().next().expect("one project"))
+    }
+
+    /// Write this project as a one-project environment file.
+    pub fn to_yaml(self) -> anyhow::Result<String> {
+        EnvironmentFile {
+            org: self.org,
+            env: self.env,
+            target: self.target,
+            policy: self.policy,
+            revocation_seconds: self
+                .revocation_seconds
+                .context("environment has no revocation_seconds")?,
+            connections: self.integrations,
+            projects: vec![Project {
+                name: self.project,
+                schema: self.schema,
+                applications: self.applications,
+            }],
+        }
+        .to_yaml()
     }
 }
 
@@ -62,12 +80,19 @@ impl EnvironmentDocument {
         Ok(document)
     }
 
-    /// Resolve applied configuration and the manifests of its selected releases.
+    /// Read the applied settings with the package currently selected in Kubernetes.
     pub async fn read_serving(platform: &super::Platform, triple: &Triple) -> anyhow::Result<Self> {
-        let document = Self::read(platform, triple).await?;
+        let mut document = Self::read(platform, triple).await?;
+        if !document.applications.is_empty() {
+            let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
+            for (name, application) in &mut document.applications {
+                if let Some(release) = workload_release(&api, triple, name).await? {
+                    application.current = DeclaredRelease::Digest(release.package_digest);
+                }
+            }
+        }
         Ok(document)
     }
-
 
     pub(super) async fn save(&self, connection: &mut sqlx::PgConnection) -> anyhow::Result<()> {
         ensure!(
@@ -94,10 +119,6 @@ impl EnvironmentDocument {
                     (
                         name.clone(),
                         ApplicationConfiguration {
-                            release: match &application.current {
-                                DeclaredRelease::None => None,
-                                DeclaredRelease::Digest(digest) => Some(*digest),
-                            },
                             hostname: application.hostname.clone(),
                             client: application.client.clone(),
                             connections: application.connections.clone(),
@@ -130,9 +151,7 @@ impl EnvironmentDocument {
                             hostname: application.hostname,
                             client: application.client,
                             connections: application.connections,
-                            current: application
-                                .release
-                                .map_or(DeclaredRelease::None, DeclaredRelease::Digest),
+                            current: DeclaredRelease::None,
                             packages: std::collections::BTreeSet::new(),
                         },
                     )
@@ -141,6 +160,52 @@ impl EnvironmentDocument {
             integrations: configuration.integrations,
         }
     }
+}
+
+/// The release metadata rendered on an application's WorkloadDeployment.
+#[derive(Debug)]
+pub struct WorkloadRelease {
+    pub package_digest: wamn_digest::Digest,
+    pub revision: u32,
+}
+
+/// Observe the current package and Helm revision through the existing workload reader.
+pub async fn workload_release(
+    api: &wamn_kubernetes::kubernetes_api::KubernetesApi,
+    triple: &Triple,
+    application: &wamn_catalog::ApplicationName,
+) -> anyhow::Result<Option<WorkloadRelease>> {
+    let release = wamn_catalog::resource_names::application_release_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+        application,
+    );
+    let Some(workload) = api
+        .get_workload_deployment(triple.org.as_str(), &format!("{release}-http"))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let annotations = &workload["metadata"]["annotations"];
+    let package_digest = annotations["wamn.package-digest"]
+        .as_str()
+        .context("application workload has no package digest")?
+        .parse()
+        .context("invalid application workload package digest")?;
+    let revision = annotations["wamn.release-revision"]
+        .as_str()
+        .context("application workload has no Helm revision")?
+        .parse()
+        .context("invalid application workload Helm revision")?;
+    ensure!(
+        revision > 0,
+        "application workload Helm revision must be positive"
+    );
+    Ok(Some(WorkloadRelease {
+        package_digest,
+        revision,
+    }))
 }
 
 #[cfg(test)]
@@ -155,76 +220,6 @@ mod tests {
                 "connections":{"erp":"shared-erp"},
                 "client":{"package":"wamn_wms","web":format!("sha256:{:064x}",1)}}},
             "integrations":{"shared-erp":{"version":1}}})
-    }
-
-    #[test]
-    fn refuses_obsolete_ownership_and_invalid_configuration() {
-        let parse =
-            |value: Value| EnvironmentDocument::from_json(&serde_json::to_vec(&value).unwrap());
-        assert!(parse(configuration()).is_ok());
-        for version in [1, i32::MAX] {
-            let mut input = configuration();
-            input["revocation_seconds"] = json!(3600);
-            input["applications"]["wms"]["connections"]["erp"] =
-                json!(format!("shared-erp@{version}"));
-            let document = parse(input).unwrap();
-            assert_eq!(
-                document.applications["wms"].connections["erp"].version,
-                Some(version)
-            );
-            let restored =
-                EnvironmentDocument::from_json(&document.canonical_json().unwrap()).unwrap();
-            assert_eq!(
-                restored.applications["wms"].connections["erp"].version,
-                Some(version)
-            );
-        }
-        for (field, value) in [
-            ("release", json!("none")),
-            ("route_host", json!("wms.example")),
-            ("client", json!({})),
-            ("connections", json!({})),
-            ("image", json!("host")),
-            ("target", json!("  ")),
-            ("revocation_seconds", json!(-1)),
-            ("revocation_seconds", json!(3601)),
-        ] {
-            let mut input = configuration();
-            input[field] = value;
-            assert!(parse(input).is_err());
-        }
-        for field in ["target", "applications", "revocation_seconds"] {
-            let mut input = configuration();
-            input.as_object_mut().unwrap().remove(field);
-            assert!(parse(input).is_err());
-        }
-        for (field, value) in [
-            ("packages", json!(["wamn_wms"])),
-            ("current", json!("none")),
-            ("previous", json!(null)),
-            ("hostname", json!("Invalid Host")),
-            ("revocation_seconds", json!(-1)),
-            ("revocation_seconds", json!(3601)),
-            ("mode", json!("http")),
-            ("connections", json!({"erp":"org:other:erp"})),
-            ("connections", json!({"erp":"shared-erp@0"})),
-            ("connections", json!({"erp":"shared-erp@2147483648"})),
-            ("connections", json!({"erp":"shared-erp@01"})),
-            ("connections", json!({"erp":"shared-erp@1@2"})),
-            (
-                "connections",
-                json!({"erp":{"type":"http","definition":{}}}),
-            ),
-        ] {
-            let mut input = configuration();
-            input["applications"]["wms"][field] = value;
-            assert!(parse(input).is_err());
-        }
-        for invalid in ["", "unknown", "RESET"] {
-            let mut input = configuration();
-            input["schema"]["mode"] = invalid.into();
-            assert!(parse(input).is_err());
-        }
     }
 
     #[test]

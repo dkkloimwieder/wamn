@@ -1,156 +1,213 @@
 //! Authenticated environment configuration through installer-owned resources.
-use super::{Platform, document::EnvironmentDocument, ensure as resources};
+use super::{
+    Platform,
+    document::{EnvironmentDocument, EnvironmentFile},
+    ensure as resources,
+};
 use crate::provision_project_env::{self, ProvisionProjectEnvRequest};
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use serde_json::json;
 use wamn_registry::{Triple, name};
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 
 pub async fn configure(
     platform: &Platform,
-    document: &EnvironmentDocument,
+    document: EnvironmentFile,
     application: Option<&wamn_catalog::ApplicationName>,
     disposable: Option<bool>,
     system_owner: &str,
 ) -> anyhow::Result<()> {
-    if let Some(application) = application {
-        ensure!(
-            document.applications.contains_key(application),
-            "application is not declared"
-        );
-    }
     let mut platform = platform.clone();
     super::runtime::resolve_platform(&mut platform, &document.org).await?;
-    let triple = document.triple();
-    let client = wamn_postgres::connect(system_owner).await?;
-    LifecycleLock::hold(client, &triple, async |lock| {
-        wamn_catalog::configuration::require_placement(
-            &mut *lock.client().await,
-            &document.org,
-            &document.env,
-            &document.policy,
-        )
-        .await?;
-        let outcome = provision_project_env::provision_project_env(&ProvisionProjectEnvRequest {
-            org: triple.org.clone(),
-            project: triple.project.clone(),
-            env: triple.env.clone(),
-            policy: Some(document.policy.clone()),
-            target: document.target.clone(),
-            disposable,
-            system_database_url: Some(system_owner.into()),
-            cluster: None,
-            connection_limit: None,
-            cluster_namespace: triple.org.to_string(),
-            namespace: triple.org.to_string(),
-            secret_namespace: Some(triple.org.to_string()),
-            emit_database: Some("-".into()),
-            emit_role_sql: None,
-            emit_privilege_sql: None,
-            emit_secret: None,
-        })
-        .await?;
-        let unconfigured = super::document::read_configuration(&mut *lock.client().await, &triple)
-            .await?
-            .is_none();
-        let connection = wamn_platform_install::environment::provision(
-            &platform.target,
-            &platform.chart,
-            system_owner,
-            &triple,
-            unconfigured,
-        )
-        .await?;
-        let owner = wamn_provision::migrations::MigrationDatabase::Project
-            .configuration(&connection.to_json()?)?;
-        LifecycleLock::hold(
-            wamn_postgres::connect(&owner).await?,
-            &triple,
-            async |project_lock| {
-                let mut client = project_lock.client().await;
-                if !unconfigured {
-                    let unfinished =
-                        super::drain::unfinished(&mut client, &triple.env, application).await?;
-                    ensure!(
-                        unfinished.is_empty(),
-                        "{}",
-                        super::drain::describe(&unfinished)
-                    );
-                }
-                sqlx::raw_sql(sqlx::AssertSqlSafe(provision_project_env::privilege_sql(
-                    &connection.database,
-                )))
-                .execute(&mut *client)
-                .await?;
-                drop(client);
-                if unconfigured {
-                    crate::platform_migrations::restore_project(
-                        &owner,
-                        &crate::platform_migrations::embedded_sources(
-                            wamn_provision::migrations::MigrationDatabase::Project,
-                        ),
-                    )
-                    .await?;
-                }
-                let name = wamn_provision::environment_names::environment_resource_name(
-                    &triple.org,
-                    &triple.project,
-                    &triple.env,
-                )?;
-                let mut values = wamn_platform_install::platform::operations::values(
-                    &triple,
-                    &outcome.cluster,
-                    &connection.database,
-                )?;
-                values["bootstrap"] = serde_json::Value::Null;
-                wamn_platform_install::environment::apply(
-                    &platform.target,
-                    &platform.chart.join("platform/environment"),
-                    &name,
-                    values,
-                )
-                .await?;
-                crate::environment::fill(
-                    system_owner,
-                    &owner,
-                    &platform.identity_issuer,
-                    wamn_identity::application::ApplicationTarget {
-                        org: &triple.org,
-                        project: &triple.project,
-                        env: &triple.env,
-                    },
-                )
-                .await?;
-                crate::provision_project_env::workload::provision(
+    let lock = LifecycleLock::acquire_environment(
+        wamn_postgres::connect(system_owner).await?,
+        &document.org,
+        &document.env,
+    )
+    .await?;
+    let result = lock
+        .protect(async {
+            wamn_catalog::configuration::require_placement(
+                &mut *lock.client().await,
+                &document.org,
+                &document.env,
+                &document.policy,
+            )
+            .await?;
+            if let Some(application) = application {
+                let project = document.into_application(application)?;
+                configure_project(
                     &platform,
-                    document,
-                    &outcome.cluster,
-                    &owner,
+                    &project,
+                    Some(application),
+                    disposable,
                     system_owner,
+                    &lock,
                 )
                 .await?;
-                let capture =
-                    wamn_platform_install::environment::capture_connection(system_owner, &triple)
-                        .await?;
-                let publication = resources::prepare_cdc(
-                    &platform, document, &outcome, &connection.database, &owner, &capture,
-                ).await?;
-                provision_event_certificates(&platform, &triple, &name).await?;
-                resources::ensure_stream(&platform, &triple).await?;
-                deploy_reader(&platform, &triple, &name, &publication, &capture).await?;
-                resources::host_project(&platform, document, &connection).await?;
-                let mut connection = lock.client().await;
-                let mut tx =
-                    provision_project_env::provisioning_transaction(&mut connection).await?;
-                document.save(&mut tx).await?;
-                tx.commit().await?;
-                Ok(())
-            },
-        )
-        .await
+            } else {
+                let count = document.projects.len();
+                for (index, project) in document.into_projects().enumerate() {
+                    configure_project(&platform, &project, None, disposable, system_owner, &lock)
+                        .await
+                        .with_context(|| format!("configure project {}", project.project))?;
+                    if index + 1 == count {
+                        let names: Vec<_> =
+                            project.integrations.keys().map(String::as_str).collect();
+                        let mut connection = lock.client().await;
+                        let mut transaction =
+                            provision_project_env::provisioning_transaction(&mut connection)
+                                .await?;
+                        wamn_catalog::configuration::retain_integrations(
+                            &mut transaction,
+                            &project.org,
+                            &project.env,
+                            &names,
+                        )
+                        .await
+                        .context("remove connection pins after project configuration")?;
+                        transaction.commit().await?;
+                    }
+                }
+            }
+            Ok(())
+        })
+        .await;
+    lock.release().await;
+    result
+}
+
+async fn configure_project(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    application: Option<&wamn_catalog::ApplicationName>,
+    disposable: Option<bool>,
+    system_owner: &str,
+    lock: &LifecycleLock,
+) -> anyhow::Result<()> {
+    let triple = document.triple();
+    let outcome = provision_project_env::provision_project_env(&ProvisionProjectEnvRequest {
+        org: triple.org.clone(),
+        project: triple.project.clone(),
+        env: triple.env.clone(),
+        policy: Some(document.policy.clone()),
+        target: document.target.clone(),
+        disposable,
+        system_database_url: Some(system_owner.into()),
+        cluster: None,
+        connection_limit: None,
+        cluster_namespace: triple.org.to_string(),
+        namespace: triple.org.to_string(),
+        secret_namespace: Some(triple.org.to_string()),
+        emit_database: Some("-".into()),
+        emit_role_sql: None,
+        emit_privilege_sql: None,
+        emit_secret: None,
     })
     .await?;
-    Ok(())
+    let unconfigured = super::document::read_configuration(&mut *lock.client().await, &triple)
+        .await?
+        .is_none();
+    let connection = wamn_platform_install::environment::provision(
+        &platform.target,
+        &platform.chart,
+        system_owner,
+        &triple,
+        unconfigured,
+    )
+    .await?;
+    let owner = wamn_provision::migrations::MigrationDatabase::Project
+        .configuration(&connection.to_json()?)?;
+    LifecycleLock::hold(
+        wamn_postgres::connect(&owner).await?,
+        &triple,
+        async |project_lock| {
+            let mut client = project_lock.client().await;
+            if !unconfigured {
+                let unfinished =
+                    super::drain::unfinished(&mut client, &triple.env, application).await?;
+                ensure!(
+                    unfinished.is_empty(),
+                    "{}",
+                    super::drain::describe(&unfinished)
+                );
+            }
+            sqlx::raw_sql(sqlx::AssertSqlSafe(provision_project_env::privilege_sql(
+                &connection.database,
+            )))
+            .execute(&mut *client)
+            .await?;
+            drop(client);
+            if unconfigured {
+                crate::platform_migrations::restore_project(
+                    &owner,
+                    &crate::platform_migrations::embedded_sources(
+                        wamn_provision::migrations::MigrationDatabase::Project,
+                    ),
+                )
+                .await?;
+            }
+            let name = wamn_provision::environment_names::environment_resource_name(
+                &triple.org,
+                &triple.project,
+                &triple.env,
+            )?;
+            let mut values = wamn_platform_install::platform::operations::values(
+                &triple,
+                &outcome.cluster,
+                &connection.database,
+            )?;
+            values["bootstrap"] = serde_json::Value::Null;
+            wamn_platform_install::environment::apply(
+                &platform.target,
+                &platform.chart.join("platform/environment"),
+                &name,
+                values,
+            )
+            .await?;
+            crate::environment::fill(
+                system_owner,
+                &owner,
+                &platform.identity_issuer,
+                wamn_identity::application::ApplicationTarget {
+                    org: &triple.org,
+                    project: &triple.project,
+                    env: &triple.env,
+                },
+            )
+            .await?;
+            crate::provision_project_env::workload::provision(
+                platform,
+                document,
+                &outcome.cluster,
+                &owner,
+                system_owner,
+            )
+            .await?;
+            let capture =
+                wamn_platform_install::environment::capture_connection(system_owner, &triple)
+                    .await?;
+            let publication = resources::prepare_cdc(
+                platform,
+                document,
+                &outcome,
+                &connection.database,
+                &owner,
+                &capture,
+            )
+            .await?;
+            provision_event_certificates(platform, &triple, &name).await?;
+            resources::ensure_stream(platform, &triple).await?;
+            deploy_reader(platform, &triple, &name, &publication, &capture).await?;
+            resources::host_project(platform, document, &connection).await?;
+            let mut connection = lock.client().await;
+            let mut tx = provision_project_env::provisioning_transaction(&mut connection).await?;
+            document.save(&mut tx).await?;
+            tx.commit().await?;
+            Ok(())
+        },
+    )
+    .await
 }
 
 /// Put the shared Certificate on the host release and the reader Certificate on the project release.

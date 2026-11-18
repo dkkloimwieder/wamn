@@ -8,7 +8,7 @@ The deployed release stays available after the command exits.
 ## Prepare the platform
 
 Use the [deployment procedure](deployment.md) to install a disposable development platform.
-Apply its authored `environment.k` through `wamn env apply`.
+Apply its authored `environment.yaml` through `wamn env apply`.
 Make the registry and control endpoint reachable from the development machine.
 Use the platform's own credential and identity services for connections and sign-in.
 
@@ -27,9 +27,9 @@ Build the bases before the overlay when you prepare their build records.
 [Building](building.md) describes package output and its source records.
 
 ```bash
-"$CARGO_TARGET_DIR/debug/wamn" publish apps/platform_fixture --env environment.k
-"$CARGO_TARGET_DIR/debug/wamn" schema apply platform_fixture --release <published-digest> --env environment.k
-"$CARGO_TARGET_DIR/debug/wamn" dev --config environment.k --overlay-root apps/platform_fixture --watch
+"$CARGO_TARGET_DIR/debug/wamn" publish apps/platform_fixture --env environment.yaml
+"$CARGO_TARGET_DIR/debug/wamn" schema apply platform_fixture --release <published-digest> --env environment.yaml
+"$CARGO_TARGET_DIR/debug/wamn" dev --config environment.yaml --overlay-root apps/platform_fixture --watch
 ```
 
 Without `--watch`, the command builds, publishes, and deploys once.
@@ -63,8 +63,8 @@ Run the three phases separately:
 
 ```bash
 /usr/bin/time -f 'build %e seconds' "$CARGO_TARGET_DIR/debug/wamn" build apps/platform_fixture
-/usr/bin/time -f 'publication %e seconds' "$CARGO_TARGET_DIR/debug/wamn" publish apps/platform_fixture --env environment.k
-/usr/bin/time -f 'deployment %e seconds' "$CARGO_TARGET_DIR/debug/wamn" deploy --application platform_fixture --release <published-digest> --env environment.k
+/usr/bin/time -f 'publication %e seconds' "$CARGO_TARGET_DIR/debug/wamn" publish apps/platform_fixture --env environment.yaml
+/usr/bin/time -f 'deployment %e seconds' "$CARGO_TARGET_DIR/debug/wamn" deploy --application platform_fixture --release <published-digest> --env environment.yaml
 ```
 
 The publish command reads existing build output and prints the top package OCI digest.
