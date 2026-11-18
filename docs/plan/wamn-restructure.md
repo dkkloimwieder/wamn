@@ -28,7 +28,7 @@ Org → environment → project → application. One boundary per level.
 
 - The system database (`registry`, `identity`) has its own cluster in namespace `platform`.
 - Logins per project database: migration (owner), application, read-only (dynamic SQL), platform (all host platform work, retention included), and the CDC replication login. Until 3.6 each login is suffixed per project database and inherits the plain NOLOGIN group role; plain login names come with one cluster per project database. One system database reader per environment. Each login has a connection limit (3.6).
-- One operation service account per environment.
+- One operation service account per project.
 - `project_env_key` is not stored in project databases (no column, no row policy, no `project_key()` functions).
 
 ## Database, identity in SQL, grants
@@ -112,7 +112,7 @@ Org → environment → project → application. One boundary per level.
 - One environment file per environment (YAML with a JSON schema), with its projects and applications inside.
 - Rollback is `helm rollback`. No pull-back after push; append check against the previous version only; one pull per package per operation; one KCL compile per build; one check per fact; no `helm template` pre-check and no `helm get values` read-back; one value each for the NATS, issuer and registry addresses.
 - Components: stock `push_component`. Package artifact: two layers (`wamn.json`, migrations tar).
-- Build: SQLx offline data (`.sqlx`); a database only when SQL changes; skip unchanged builds; `wamn dev` applies new migrations. `build.json` goes (overlay builds hash the base files).
+- Build: codegen's describe cache (`.wamn/describe/`, committed and checked current); a database only when SQL changes; skip unchanged builds; `wamn dev` applies new migrations. `build.json` goes (overlay builds hash the base files).
 
 ## Install and configuration
 
@@ -641,7 +641,7 @@ Issues:
 - A deploy checks the enabled workflows against the new `wamn.application`, under the environment key on the project database, and refuses when an enabled workflow names a sibling or export the release removes.
 - Deploy creates the operation service accounts (`<env>-sql`, `<env>-code`) and the application principals, through charts and SQL.
 - `/_wamn/residency` goes unless the deploy flow needs it.
-- Rollback is `helm rollback`.
+- `wamn rollback [--revision N]` runs `helm rollback` in the worker Job, under the lock, after the enabled-workflow check. The application chart puts the top package digest and `.Release.Revision` on the WorkloadDeployment, and control reads them there.
 
 8.3 Publish and artifacts.
 - Publish does not pull back what it pushed. The append check compares with the previous version only.
@@ -654,9 +654,10 @@ Issues:
 - `release` becomes `application`. `environment` splits into `environment` (host group) and `project` (database, publication, accounts, certificates).
 - No `helm template` pre-check and no `helm get values` read-back.
 - One value each for the NATS address, the identity issuer address and the registry address.
+- Delete the `wamn-platform-observer` Role, RoleBinding and ClusterRole with the read-back; today they let every service account in an org namespace read the installation namespace's Secrets.
 
 8.5 Build.
-- SQLx offline data (`.sqlx`, committed, with a check that it is current). The build uses a database only when SQL changes. The build is skipped when its inputs are unchanged.
+- Codegen's describe cache (`.wamn/describe/`, committed, with a refresh flag and a check that it is current). The build uses a database only when SQL changes. The build is skipped when its inputs are unchanged.
 - `wamn dev` applies new migrations.
 - `build.json` goes. An overlay build reads the base's built wasm and `wamn.json` directly and hashes them.
 - One KCL compile for each build.
@@ -711,6 +712,9 @@ Issues:
 - After 3.6, with D's approval: the first kind run deploys through the new install and deploy paths, and covers a Data change handler (the subscription and the dispatch through `ingress`).
 - 3.6: the NATS volume (10 Gi today) must hold the sum of all environment accounts, which is 256 MiB times the number of projects across all environments. Size it at install.
 - The xtask dependency check fails on `wamn-edge`, which links `oci-client` through wash-runtime. This predates Epic 7. Fix the check's allowance or the dependency.
+- 3.6: RBAC that reaches past its need: `wamn-platform-operations` gives `wamn-operation-<org>` full Secret writes and RBAC `bind` and `escalate` in the platform namespace, and control's org Role has `get` on every Secret in the org namespace. Shrink both to named resources.
+- 3.7: `apps/platform_ui` reads residency and live fields from the old status contract. Regenerate its clients against the new `environment.status` and `application.rollback` contracts.
+- Recorded exceptions to C1 until 3.6: operation Jobs and their per-request input ConfigMaps, `wamn-credential-*` (written by connection administration at run time), and `wamn-nats-authorization`.
 
 # Part 2: Review log
 
@@ -2140,3 +2144,5 @@ Facts:
 **Ruled (D, 2026-11-17): Epic 7 review.** Accepted at `435deffb4`. Fixes before main: the edge keeps trapping every import it does not provide, recorded as a risk until the edge design, and each environment account's file limit is 256 MiB times its project count, rewritten by the configure and delete Jobs. Open items: kind coverage of Data change handlers in 3.5, NATS volume sizing in 3.6, and the edge dependency check.
 
 **Ruled (D, 2026-11-17): Epic 8 scope.** Step 3.5 does the deploy charts (`release` → `application`, `environment` split into environment and project, C1); the `platform` chart merge goes to 3.6 with install and settings. The version authority for integrations is the environment file, one version per connection per environment, as Part 1 states. Epic 8 ends with build, clippy and size checks; the first kind run comes after 3.6, with D's approval.
+
+**Ruled (D, 2026-11-18): Epic 8 scout answers.** `serde-saphyr` and a schema generated from the Rust types; the project is found from the application name; one pin per (org, env, connection). Per-request input ConfigMaps owned by the Job. The release is read from WorkloadDeployment annotations (top package digest, Helm revision), and rollback runs `helm rollback` in the worker Job; control gets no Helm or Secret-list access. Codegen's describe cache lives in `.wamn/describe/`, not `.sqlx/`. Residency goes, with approved status and rollback contract changes. One operation account per project. Inside one deploy, SQL runs before code, migrations must work with the previous code, and deploy never resets. `wamn.json` gets a compiled deploy section that pins component and base digests. The append check compares with the latest digest under the same tag; versions are free tags. 8.4 also deletes the platform observer RBAC, which let every org service account read the installation namespace's Secrets.
