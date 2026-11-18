@@ -612,27 +612,74 @@ Issues:
 7.7 Event crate merge. Runs last.
 - `wamn-events` and `wamn-event-wire` merge into `wamn-event`, and the event transport code that nothing calls is deleted.
 
+## Epic 8: step 3.5, deploy
+
+Rules:
+- Only the work listed here. The `platform` chart (merging `installation`, `identity` and `edge`), install (J) and settings (K) are 3.6.
+- Done means all of these pass:
+  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
+  - The schema-apply check.
+  - `helm template` of every changed chart, with values for the largest application in `apps/` that builds. Each Helm release record stays under 1 MiB. Report the sizes.
+  - A local Postgres container is allowed for these checks only.
+- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
+- No kind or cluster runs, nothing on GCP. The first kind run comes after 3.6, with D's approval.
+- Generated code is regenerated, never edited by hand.
+
+Issues:
+
+8.1 Environment file.
+- The environment file is YAML with a JSON schema (D2). Today `document.rs::compile` reads JSON.
+- The registry binding tables (`registry.environment_application_connections`, `registry.environment_integrations`) follow the file: one version for each connection name, stated once in the environment file. This is the version authority for integrations.
+- Each KCL `check:` rule in `wamn.k` also exists in Rust or SQL.
+- `catalog/configuration.rs::read` stops selecting `release_digest`. The Helm revision is the release; its callers (`control_route/operations.rs`, `environment/document.rs`) read it from Helm.
+
+8.2 Deploy flow.
+- `deploy <dir>` builds once, publishes once, then runs SQL and code as one operation (B1). `publish <build dir>` pushes a finished build and prints the top package digest. `schema apply` and a deploy without `<dir>` take that digest.
+- A1: CLI → control service → one Job. No Job starts a second Job. The environment document reaches the Job as a mounted file, not a command argument. The CLI poll (`operation_verbs.rs::run_value`) gets a limit.
+- One check for each fact (application declared, environment exists, org matches). One pull of each package for each operation.
+- `release_values` gets its caller here, with the bindings as input.
+- A deploy checks the enabled workflows against the new `wamn.application`, under the environment key on the project database, and refuses when an enabled workflow names a sibling or export the release removes.
+- Deploy creates the operation service accounts (`<env>-sql`, `<env>-code`) and the application principals, through charts and SQL.
+- `/_wamn/residency` goes unless the deploy flow needs it.
+- Rollback is `helm rollback`.
+
+8.3 Publish and artifacts.
+- Publish does not pull back what it pushed. The append check compares with the previous version only.
+- Components are pushed with stock `push_component` (`application/wasm`). The package artifact has two layers: `wamn.json` and the migrations tar.
+- `wamn_catalog::manifest::installation` goes; its readers use the full package model.
+- The deploy-identity readers of `ServingManifest` go. Afterwards only the edge reads it.
+
+8.4 Charts.
+- C1: every Kubernetes object comes from a chart, including the Secrets and ConfigMaps that Rust makes with `kubectl` or the Kubernetes API today. Rust runs SQL and NATS calls only. One upgrade for each chart.
+- `release` becomes `application`. `environment` splits into `environment` (host group) and `project` (database, publication, accounts, certificates).
+- No `helm template` pre-check and no `helm get values` read-back.
+- One value each for the NATS address, the identity issuer address and the registry address.
+
+8.5 Build.
+- SQLx offline data (`.sqlx`, committed, with a check that it is current). The build uses a database only when SQL changes. The build is skipped when its inputs are unchanged.
+- `wamn dev` applies new migrations.
+- `build.json` goes. An overlay build reads the base's built wasm and `wamn.json` directly and hashes them.
+- One KCL compile for each build.
+
+8.6 `wamn-kubernetes` dependencies.
+- The name builders leave `wamn-kubernetes`, so it drops `wamn-registry` and `wamn-catalog` (today one type, `ApplicationName`).
+
 ## Open items
 
-- Checks in phase 3: Helm values size for the largest application (3.2); each KCL `check:` rule also in Rust or SQL (3.5); `/_wamn/residency` goes unless 3.5 needs it; 3.5 creates the operation service account and application principals.
+- Checks in phase 3: Helm values size for the largest application (3.2).
 - wasip3: needed by the workflow service. wash-runtime 2.12.1 has `p3` on by default with p3 service tests; Rust 1.100 has `wasm32-wasip3`.
 - Deferred: the edge device after the restructure; the four workflow behaviours.
-- 3.5: `catalog/configuration.rs::read` still selects the dropped column `registry.environment_applications.release_digest`. Its callers (`control_route/operations.rs`, `environment/document.rs`) fail at that read until 3.5 replaces them with the Helm revision.
-- 3.5: publish has no append check since Epic 1 deleted the check over all versions. 3.5 adds the check against the previous version only.
 - 3.8: these tests compile but use SQL on tables Epic 1 dropped (`catalog.releases`, `catalog.wiring_tombstones`): `crates/provision/tests/{deploy_sql_authority,family_denial_matrix,record_history}.rs`, `crates/provision/tests/fixtures/catalog_record_history.sql`, `crates/identity/tests/fixtures/connections.sql`.
 - 3.8: `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs` run the binary `wamn-ctl`, which Epic 1 deleted.
 - 3.8: `docs/operations/running-tests.md` describes test targets that no longer exist.
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
-- 3.5: `wamn_catalog::manifest::installation` is a second, smaller model of the package document. Its readers move to the full model and it is deleted.
 - 3.6: a connection limit for each login, set in the CloudNativePG managed roles.
-- 3.4, 3.5 and Epic 5 each delete their own `ServingManifest` readers. `ServingManifest` goes with the last of them.
+- After 3.5 only the edge reads `ServingManifest`. It goes with the edge design.
 - 3.6: the control service takes the issuer from `session_issuer` and stage takes it from `platform.identity_issuer`. They become the one identity issuer address setting (E6, K).
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
-- 3.5: `registry.environment_application_connections` and `registry.environment_integrations` change with the environment file (one version for each connection name).
 - Native integration types (for example the NetSuite ODBC driver) are native Rust host plugins compiled into the wamn host, as wasmCloud advises for drivers with no WASI binding. Decide this when the first one is built.
-- Version authority for integrations: for each connection in each environment (current), or pinned by the platform release. 3.5.
 - Host component plugins (`host-component-plugins`) suit platform-wide wasm capabilities with fixed bindings. They are not used for connection-bound integrations.
 - Edge device design: how exclusive connections are enforced at the edge (inference: one edge runtime for each site, so a local mutex may be enough).
 - A call limit for each application, if a real case appears: either a per-host semaphore named as per-host, or a Postgres design decided with real numbers.
@@ -641,7 +688,6 @@ Issues:
 - 3.6: the first signing key, the installer source for the identity envelope settings, and the `CN=control-<org>` certificate.
 - 3.7: the TypeScript clients cannot be generated again until codegen is reworked (the `admin_covered` contract changed in Epic 6).
 - Topic entry node: after 3.4. Topics use stock `wasmcloud:nats`: application components publish within their workload's grants, and a Topic workflow pulls from its own consumer like Data change.
-- 3.5: a deploy checks the enabled workflows against the new `wamn.application`, under the environment key on the project database, and refuses when an enabled workflow names a sibling or export the release removes.
 - The capture-gap observer in control is unwired (it defaults to `null`).
 - 3.7b: split `wamn-sql`. `WamnPostgres` has 77 inherent methods mixing pools, auth lookups, per-component scope state, plugin glue and workflow node dispatch, and eight modules form one cycle (crate root, `executor`, `invocation`, `operation`, `operation_transaction`, `resources`, `session_identity`, `write_log`).
   1. `pool`, `host_project` and `types` move into `wamn-postgres`, after it loses `wamn-kubernetes` (P5).
@@ -662,7 +708,7 @@ Issues:
 - With P5: `wamn-kubernetes` drops its `wamn-catalog` dependency. Its only use is the type `wamn_catalog::ApplicationName`, in 3 places.
 - Edge device: the edge runs the cluster `ingress.wasm` and turns every import it does not provide into a trap (`define_unknown_imports_as_traps` in `services/edge/src/serve.rs`). Risk: a capability missing on the edge fails on the first call, not at load. The stock `wasmcloud_nats` plugin cannot fill the NATS imports on the edge, because it needs a `servers` value and connects at bind. The edge design decides between a real NATS server on the edge (see the next item) and an HTTP-only build of `ingress`.
 - Edge device, if the edge needs NATS: use the stock NATS way. A leaf node on the device with its own JetStream domain, one per edge environment. Mirror cloud streams to the edge, and source edge streams into the cloud. The edge then binds the stock `wasmcloud_nats` plugin to the local server, which also fills `ingress`'s NATS imports, and the guest code does not change. Not ruled; the edge design decides.
-- 3.5: the first kind run must cover a Data change handler, both the subscription and the dispatch through `ingress`. No fixture app declares one, so Epic 7 did not exercise them.
+- After 3.6, with D's approval: the first kind run deploys through the new install and deploy paths, and covers a Data change handler (the subscription and the dispatch through `ingress`).
 - 3.6: the NATS volume (10 Gi today) must hold the sum of all environment accounts, which is 256 MiB times the number of projects across all environments. Size it at install.
 - The xtask dependency check fails on `wamn-edge`, which links `oci-client` through wash-runtime. This predates Epic 7. Fix the check's allowance or the dependency.
 
@@ -2092,3 +2138,5 @@ Facts:
 **Ruled (D, 2026-11-17): crate diagram review.** Checked against the code. Not true as stated: host startup using provisioning (only `application_route.rs` did, and 7.7 removes it), and control using `wamn-events`. Overstated: `wamn-kubernetes` → `wamn-catalog` is one type in 3 places. `wamn-http`'s test crates sit behind `test-util` (AA). New: `wamn-broker` mixes runtime NATS helpers with control-plane authorization that writes Kubernetes Secrets, so the host links Kubernetes through it. The 3.7b plane split adds `wamn-broker` and `wamn-http`'s OAuth flow, with the goal that the host and the CDC reader link neither `wamn-kubernetes` nor `wamn-provision`.
 
 **Ruled (D, 2026-11-17): Epic 7 review.** Accepted at `435deffb4`. Fixes before main: the edge keeps trapping every import it does not provide, recorded as a risk until the edge design, and each environment account's file limit is 256 MiB times its project count, rewritten by the configure and delete Jobs. Open items: kind coverage of Data change handlers in 3.5, NATS volume sizing in 3.6, and the edge dependency check.
+
+**Ruled (D, 2026-11-17): Epic 8 scope.** Step 3.5 does the deploy charts (`release` → `application`, `environment` split into environment and project, C1); the `platform` chart merge goes to 3.6 with install and settings. The version authority for integrations is the environment file, one version per connection per environment, as Part 1 states. Epic 8 ends with build, clippy and size checks; the first kind run comes after 3.6, with D's approval.
