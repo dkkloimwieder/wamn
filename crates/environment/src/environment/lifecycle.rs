@@ -114,7 +114,7 @@ pub async fn configure(
                     system_owner,
                     &owner,
                     &platform.identity_issuer,
-                    crate::application::ApplicationTarget {
+                    wamn_identity::application::ApplicationTarget {
                         org: &triple.org,
                         project: &triple.project,
                         env: &triple.env,
@@ -196,7 +196,7 @@ async fn deploy_reader(
 ) -> anyhow::Result<()> {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let image = wamn_platform_install::release_chart::image_set(&platform.chart).await?.host;
-    let config = wamn_events::lifecycle::reader_configuration(
+    let config = super::cdc_reader::reader_configuration(
         triple, publication, wamn_platform_install::platform::identity::NATS_URL,
     );
     let name = wamn_provision::project_env_cdc_secret_name(org, project, env);

@@ -1,9 +1,12 @@
 //! Stop capture for recovery and retry reader restart after resynchronization.
 use wamn_catalog::lifecycle_lock::LifecycleLock;
-pub use wamn_events::capture_gap::{
+pub use recovery::{
     CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
 use wamn_kubernetes::Target;
+
+mod plan;
+mod recovery;
 
 /// Recover a lost slot while stopping its Deployment under the environment lock.
 pub async fn recover(
@@ -25,7 +28,7 @@ pub async fn recover(
                 &triple,
             )
             .await?;
-            wamn_events::capture_gap::recover_capture_gap(args, &instance, target).await
+            recovery::recover_capture_gap(args, &instance, target).await
         },
     )
     .await
@@ -46,8 +49,8 @@ pub async fn close(
         wamn_postgres::connect(&args.system_database_url).await?,
         &triple,
         async |_| {
-            let closed = wamn_events::capture_gap::close_capture_gap(args).await?;
-            wamn_events::lifecycle::start_reader(
+            let closed = recovery::close_capture_gap(args).await?;
+            super::cdc_reader::start_reader(
                 &target.kubeconfig,
                 &target.context,
                 &target.namespace,

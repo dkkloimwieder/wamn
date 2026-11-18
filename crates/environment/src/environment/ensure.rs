@@ -484,6 +484,6 @@ pub(super) async fn prepare_cdc(
         }
         Ok::<_, anyhow::Error>(())
     }).await.with_context(|| format!("wait for publication {publication}"))??;
-    wamn_events::lifecycle::apply_cdc_sql(owner, capture, &schemas, &publication, database).await?;
+    super::cdc_reader::apply_cdc_sql(owner, capture, &schemas, &publication, database).await?;
     Ok(publication)
 }

@@ -1,37 +1,5 @@
 //! Host-attested session identity and connection snapshots.
 
-/// The release a pod carries — the manifest digest derived from the verified
-/// content of its mounted serving manifest
-/// ([`ServingManifest`](wamn_catalog::ServingManifest)).
-///
-/// Admission pins the release digest. The production identity verifies that pin
-/// against the binding pod's digest. The value is host-injected identity,
-/// never guest-supplied.
-///
-/// The field is private, so production code builds the value only from a
-/// loaded release (wamn-p77b).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReleaseIdentity {
-    /// The serving manifest's digest — `runs.manifest_digest`. The
-    /// `sha256:<64 lowercase hex>` shape the run plane's
-    /// `runs_release_record_check` admits is carried by the type, so there is no
-    /// hand-rolled shape test on this path.
-    manifest_digest: wamn_digest::Digest,
-}
-
-impl ReleaseIdentity {
-    /// An identity with no loaded release, for tests whose rows name it.
-    #[cfg(feature = "test-util")]
-    pub fn for_test(manifest_digest: wamn_digest::Digest) -> Self {
-        Self { manifest_digest }
-    }
-
-    /// `runs.manifest_digest`.
-    pub fn manifest_digest(&self) -> &wamn_digest::Digest {
-        &self.manifest_digest
-    }
-}
-
 /// The complete host-injected identity set one component id resolves to.
 ///
 /// Every field is a registry this plugin keys by component id, so this type is
@@ -55,6 +23,4 @@ pub struct SessionIdentity {
     pub user_id: Option<wamn_identity_protocol::PrincipalId>,
     pub operation: Option<wamn_catalog::canonical_name::CanonicalName>,
     pub application: Option<wamn_catalog::ApplicationName>,
-    /// The release digest the binding pod carries.
-    pub release: Option<ReleaseIdentity>,
 }

@@ -90,7 +90,7 @@ pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyho
         serde_json::json!({"cdcReader": null, "operations": null}),
     )
     .await?;
-    wamn_events::lifecycle::wait_reader_stopped(
+    crate::environment::cdc_reader::wait_reader_stopped(
         &platform.target.kubeconfig,
         &platform.target.context,
         &platform.target.namespace,

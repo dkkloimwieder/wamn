@@ -1,5 +1,7 @@
 //! Event records and source identity.
 
+pub mod reader;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -70,16 +72,6 @@ impl DerivedEvent {
             dedup_id: dedup_id.into(),
             causation,
         }
-    }
-
-    /// Read one tagged derived event.
-    pub fn from_slice(bytes: &[u8]) -> Result<Self, serde_json::Error> {
-        let SourceEvent::Derived(event) = SourceEvent::decode(bytes)? else {
-            return Err(<serde_json::Error as serde::de::Error>::custom(
-                "expected derived event",
-            ));
-        };
-        Ok(event)
     }
 }
 

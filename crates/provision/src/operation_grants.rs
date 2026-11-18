@@ -16,13 +16,6 @@ use wamn_catalog::manifest::{
     validate_operation_vocabulary,
 };
 
-/// Serialize the writes of the environment's roles and permission rows.
-///
-/// Package lineage remains independently locked per family. Role and
-/// permission writes additionally share this environment lock.
-pub const OPERATION_GRANT_LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
-     'wamn.operation-grants:' || $1, 0))";
-
 /// Stable refusal when the project database has not installed its base authorization grants.
 pub const PLATFORM_BASE_GRANTS_MISSING: &str = "wamn-operation-grants-platform-base-grants-missing";
 
@@ -34,7 +27,7 @@ pub const OPERATION_GRANT_TRANSACTION_PRELUDE_SQL: &str = "SET LOCAL row_securit
 
 /// Refuse unless the existing application-authorization base grants are installed.
 ///
-/// The effect owner executes this after acquiring [`OPERATION_GRANT_LOCK_SQL`]
+/// The effect owner executes this after acquiring `wamn_identity::application::OPERATION_GRANT_LOCK_SQL`
 /// and applying [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`], and before
 /// [`ENSURE_ADMIN_ROLE_SQL`], all in one transaction.
 pub fn operation_base_grants_requirements_sql() -> String {
@@ -149,7 +142,7 @@ pub fn operation_grant_tokens(
 /// Create the environment's `admin` role when it is absent.
 ///
 /// The caller owns the surrounding transaction: it acquires
-/// [`OPERATION_GRANT_LOCK_SQL`], applies
+/// `wamn_identity::application::OPERATION_GRANT_LOCK_SQL`, applies
 /// [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`] and
 /// [`operation_base_grants_requirements_sql`], then executes this statement. It
 /// changes one row or none.

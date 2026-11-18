@@ -7,14 +7,14 @@
 //! to the caller and `app.operation` to the route's sealed operation id. A
 //! role or permission write first takes the project lock that `wamn` and
 //! release reconciliation take. The writes are the functions of
-//! `wamn_environment::application`, which `wamn` also calls, so no
+//! `wamn_identity::application`, which `wamn` also calls, so no
 //! second writer exists. A grant stores one row, and a caller holds exactly
 //! its rows, so a grant works while two releases serve during a rollout.
 //!
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_identity_protocol::PrincipalId;
-use wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
+use wamn_identity::application::OPERATION_GRANT_LOCK_SQL;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -23,7 +23,7 @@ use wamn_catalog::application_config::ApplicationConfig;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority, sealed_operation_reference};
 use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::DeliveryError;
-use wamn_environment::application::{
+use wamn_identity::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
@@ -100,8 +100,8 @@ struct UserRoleRequest {
     role: String,
 }
 
-impl From<wamn_environment::application::GrantError> for Refusal {
-    fn from(error: wamn_environment::application::GrantError) -> Self {
+impl From<wamn_identity::application::GrantError> for Refusal {
+    fn from(error: wamn_identity::application::GrantError) -> Self {
         AdministrationError::from(error).into()
     }
 }

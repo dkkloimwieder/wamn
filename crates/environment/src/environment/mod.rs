@@ -3,6 +3,7 @@
 pub mod analyse;
 pub mod bindings;
 pub mod capture_gap;
+mod cdc_reader;
 pub mod connections;
 pub mod delete;
 pub mod document;
@@ -15,7 +16,7 @@ pub mod sql;
 pub mod stage;
 pub mod write;
 
-use crate::application::{self, ApplicationTarget};
+use wamn_identity::application::{self, ApplicationTarget};
 use sqlx::Connection as _;
 use std::collections::BTreeSet;
 

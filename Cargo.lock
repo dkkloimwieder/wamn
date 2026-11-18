@@ -5508,7 +5508,7 @@ dependencies = [
  "tokio",
  "tracing",
  "wamn-catalog",
- "wamn-event-wire",
+ "wamn-event",
  "wamn-kubernetes",
  "wamn-registry",
 ]
@@ -5589,8 +5589,7 @@ dependencies = [
  "url",
  "wamn-broker",
  "wamn-catalog",
- "wamn-event-wire",
- "wamn-events",
+ "wamn-event",
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
@@ -5736,7 +5735,6 @@ dependencies = [
  "wamn-engine",
  "wamn-envelope",
  "wamn-environment",
- "wamn-event-wire",
  "wamn-http",
  "wamn-identity",
  "wamn-identity-client",
@@ -5776,9 +5774,8 @@ dependencies = [
  "wamn-catalog",
  "wamn-codegen",
  "wamn-digest",
- "wamn-engine",
  "wamn-environment",
- "wamn-event-wire",
+ "wamn-event",
  "wamn-fixture-package",
  "wamn-identity",
  "wamn-identity-protocol",
@@ -5928,8 +5925,7 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-envelope",
- "wamn-event-wire",
- "wamn-events",
+ "wamn-event",
  "wamn-fixture-package",
  "wamn-http",
  "wamn-identity",
@@ -5954,7 +5950,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-event-wire"
+name = "wamn-event"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -5963,39 +5959,6 @@ dependencies = [
  "sha2 0.11.0",
  "wamn-catalog",
  "wamn-registry",
-]
-
-[[package]]
-name = "wamn-events"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "async-trait",
- "chrono",
- "postgres-protocol",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "tracing",
- "url",
- "wamn-authority",
- "wamn-broker",
- "wamn-catalog",
- "wamn-connection",
- "wamn-digest",
- "wamn-engine",
- "wamn-event-wire",
- "wamn-events",
- "wamn-identity-protocol",
- "wamn-kubernetes",
- "wamn-postgres",
- "wamn-provision",
- "wamn-registry",
- "wamn-test-infrastructure",
- "wamn-test-postgres",
- "wash-runtime",
 ]
 
 [[package]]
@@ -6060,13 +6023,10 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-envelope",
- "wamn-environment",
- "wamn-event-wire",
+ "wamn-event",
  "wamn-http",
+ "wamn-identity",
  "wamn-identity-protocol",
- "wamn-oci",
- "wamn-postgres",
- "wamn-provision",
  "wamn-registry",
  "wamn-run-state",
  "wamn-sql",
@@ -6115,7 +6075,6 @@ dependencies = [
  "wamn-broker",
  "wamn-catalog",
  "wamn-connection",
- "wamn-digest",
  "wamn-engine",
  "wamn-envelope",
  "wamn-http",
@@ -6235,7 +6194,6 @@ dependencies = [
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
- "wamn-role",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "x509-parser",
@@ -6486,7 +6444,7 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-environment",
- "wamn-event-wire",
+ "wamn-event",
  "wamn-identity",
  "wamn-identity-protocol",
  "wamn-kubernetes",
@@ -6543,7 +6501,7 @@ dependencies = [
  "sqlx",
  "wamn-catalog",
  "wamn-digest",
- "wamn-event-wire",
+ "wamn-event",
  "wamn-identity-protocol",
  "wamn-registry",
 ]
@@ -6608,7 +6566,7 @@ dependencies = [
  "wamn-connection",
  "wamn-digest",
  "wamn-engine",
- "wamn-event-wire",
+ "wamn-event",
  "wamn-identity",
  "wamn-identity-protocol",
  "wamn-number-pattern",
@@ -6622,8 +6580,6 @@ dependencies = [
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
- "wasmtime-wasi",
- "wat",
 ]
 
 [[package]]
@@ -6638,7 +6594,6 @@ dependencies = [
  "wamn-catalog",
  "wamn-environment",
  "wamn-identity-protocol",
- "wamn-kubernetes",
  "wamn-oci",
  "wamn-postgres",
  "wamn-provision",
@@ -6744,7 +6699,7 @@ dependencies = [
  "wamn-codegen",
  "wamn-digest",
  "wamn-environment",
- "wamn-event-wire",
+ "wamn-event",
  "wamn-identity",
  "wamn-identity-client",
  "wamn-identity-protocol",

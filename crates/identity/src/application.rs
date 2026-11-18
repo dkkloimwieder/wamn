@@ -11,8 +11,15 @@ pub mod service;
 use sqlx::Row as _;
 use std::fmt;
 
+use crate::{IdentityError, IdentityErrorType, database_error};
 use wamn_identity_protocol::{ADMIN_ROLE, PrincipalId};
-use wamn_identity::{IdentityError, IdentityErrorType, database_error};
+
+/// Serialize the writes of the environment's roles and permission rows.
+///
+/// Package lineage remains independently locked per family. Role and
+/// permission writes additionally share this environment lock.
+pub const OPERATION_GRANT_LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
+     'wamn.operation-grants:' || $1, 0))";
 
 /// Whether the project database has its schema's platform seed rows.
 const PLATFORM_ROWS_SQL: &str =
@@ -71,7 +78,7 @@ pub async fn require_platform_rows(client: &mut sqlx::PgConnection) -> Result<()
 /// its host reads (docs/architecture/execution.md#routing-and-availability).
 pub async fn write_environment_status(
     client: &mut sqlx::PgConnection,
-    status: wamn_identity::org::EnvironmentStatus,
+    status: crate::org::EnvironmentStatus,
 ) -> Result<(), IdentityError> {
     sqlx::query(ENVIRONMENT_STATUS_ROW_SQL)
         .bind(status.as_str())
@@ -481,7 +488,7 @@ pub async fn project_authority(
     principal: &PrincipalId,
     issuer: &str,
 ) -> Result<(), IdentityError> {
-    wamn_identity::org::lock_membership(system, principal, coordinate.org).await?;
+    crate::org::lock_membership(system, principal, coordinate.org).await?;
     let row = sqlx::query("SELECT p.type, p.status, p.email, p.display_name, \
          EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
          identity.has_project_access(p.id,$2,$4,$3), \

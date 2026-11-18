@@ -117,7 +117,7 @@ impl Workflow {
                 config: request.config_json,
             };
             let causation = authority.causation.clone().or_else(|| {
-                Some(wamn_event_wire::Causation {
+                Some(wamn_event::Causation {
                     run: authority.delivery.clone(),
                     root: authority.delivery.clone(),
                     depth: 0,

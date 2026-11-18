@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/role", "crates/jsonata", "crates/events", "crates/event-wire", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/run-state", "crates/codegen", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/sql", "crates/http", "crates/blobstore", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker", "crates/oci"]
+members = ["crates/role", "crates/jsonata", "crates/event", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/run-state", "crates/codegen", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/sql", "crates/http", "crates/blobstore", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker", "crates/oci"]
 default-members = [
   "crates/catalog",
   "crates/run-state",
@@ -16,7 +16,7 @@ default-members = [
   "crates/oci",
   "services/host",
   "services/identity-service",
-  "crates/events",
+  "crates/event",
 ]
 # Guest components are built separately for wasm32-wasip2 (see apps/*).
 exclude = ["apps", "guests", "crates/guest", "crates/record-history", "test-support/fixtures/guests"]
@@ -233,8 +233,7 @@ wamn-environment = { path = "crates/environment", version = "0.1.0" }
 wamn-dev = { path = "crates/dev", version = "0.1.0" }
 wamn-provision = { path = "crates/provision", version = "0.1.0" }
 wamn-registry = { path = "crates/registry", version = "0.1.0" }
-wamn-events = { path = "crates/events", version = "0.1.0" }
-wamn-event-wire = { path = "crates/event-wire", version = "0.1.0" }
+wamn-event = { path = "crates/event", version = "0.1.0" }
 wamn-engine = { path = "crates/engine", version = "0.1.0" }
 postgres-protocol = "0.6.12"
 wamn-number-pattern = { path = "crates/number-pattern", version = "0.1.0" }

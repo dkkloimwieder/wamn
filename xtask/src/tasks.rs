@@ -219,6 +219,14 @@ async fn linked(root: &Path, package: &str, extra: &[&str]) -> anyhow::Result<BT
 }
 
 pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
+    let event = linked(root, "wamn-event", &[]).await?;
+    for dependency in ["wamn-broker", "wamn-run-state", "wamn-sql"] {
+        ensure!(
+            !event.contains(dependency),
+            "wamn-event links forbidden dependency {dependency}"
+        );
+    }
+
     let network = [
         "tokio-postgres",
         "deadpool-postgres",

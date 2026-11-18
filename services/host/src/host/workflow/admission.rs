@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::Instant;
 use wamn_catalog::canonical_name::CanonicalName;
-use wamn_event_wire::{Causation, SourceEvent};
+use wamn_event::{Causation, SourceEvent};
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::workflow_user_id;
 use wamn_run_state::admission::{RunAdmission, RunAdmitted, RunTrigger, admit_run, history_actor};
@@ -253,7 +253,7 @@ impl Workflow {
             tracing::warn!(%error, "read enabled data-change consumers");
             Refusal::Unavailable
         })?;
-        let stream = wamn_event_wire::stream_name(&app.org, &app.project, &app.environment);
+        let stream = wamn_event::stream_name(&app.org, &app.project, &app.environment);
         Ok(workflows
             .into_iter()
             .map(|id| wit_run::DataChangeConsumer {
@@ -283,14 +283,14 @@ impl Workflow {
             return Ok(None);
         };
         let headers: Vec<_> = message.message_ids.iter().map(String::as_str).collect();
-        let source_id = wamn_event_wire::verified_source_event_id(
+        let source_id = wamn_event::verified_source_event_id(
             &app.project,
             &app.environment,
             &envelope,
             &headers,
         )
         .ok_or_else(|| invalid("invalid Nats-Msg-Id"))?;
-        if wamn_event_wire::subject(
+        if wamn_event::subject(
             &app.org,
             &app.project,
             &app.environment,

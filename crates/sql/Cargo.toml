@@ -31,7 +31,7 @@ wamn-catalog = { workspace = true, features = ["sqlx"] }
 wamn-connection = { workspace = true }
 wamn-digest = { workspace = true }
 wamn-engine = { workspace = true }
-wamn-event-wire = { workspace = true }
+wamn-event = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-postgres = { workspace = true }
 wamn-registry = { workspace = true }
@@ -50,7 +50,6 @@ rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 ring = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }
-wasmtime-wasi = { workspace = true }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 
 rcgen = { workspace = true }
@@ -62,7 +61,6 @@ wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-sql = { path = ".", features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
-wat = "=1.254.2"
 
 [lints]
 workspace = true

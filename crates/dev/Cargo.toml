@@ -16,7 +16,6 @@ wamn-build.workspace = true
 wamn-catalog.workspace = true
 wamn-codegen.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
-wamn-engine.workspace = true
 wamn-environment.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-publish.workspace = true
@@ -44,7 +43,7 @@ wamn-kubernetes = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 oci-client = { workspace = true }
-wamn-event-wire = { workspace = true }
+wamn-event = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-publish = { workspace = true, features = ["test-util"] }

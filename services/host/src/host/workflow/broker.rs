@@ -33,7 +33,7 @@ impl Broker {
         let context = self.client.get_or_try_init(|| self.connect(app)).await?;
         Ok(Consumer {
             context: Arc::clone(context),
-            stream: wamn_event_wire::stream_name(&app.org, &app.project, &app.environment),
+            stream: wamn_event::stream_name(&app.org, &app.project, &app.environment),
             name: wamn_catalog::resource_names::workflow_event_consumer(
                 &app.application,
                 workflow_id,

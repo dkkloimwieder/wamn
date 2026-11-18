@@ -22,7 +22,7 @@ pub struct OperationTransaction {
     pub(super) identity: Arc<Mutex<Option<super::session_identity::transactions::BoundIdentity>>>,
     pub(super) finish: Arc<Mutex<Option<[String; 3]>>>,
     pub(super) known_result: Option<String>,
-    causation: Option<wamn_event_wire::Causation>,
+    causation: Option<wamn_event::Causation>,
 }
 
 /// Why a commit of an [`OperationTransaction`] did not succeed.

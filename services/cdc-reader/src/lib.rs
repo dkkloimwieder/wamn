@@ -19,9 +19,9 @@ use pg_walstream::{
 use postgres_protocol::escape::escape_identifier;
 use wamn_catalog::WiringEventOperation as Op;
 use wamn_catalog::manifest::CONTROL_OWNED_RELATION_TABLES;
-use wamn_event_wire::{Causation, CdcIdentity, Envelope, msg_id, subject};
+use wamn_event::{Causation, CdcIdentity, Envelope, msg_id, subject};
 
-use wamn_events::reader::ReaderConfig;
+use wamn_event::reader::ReaderConfig;
 
 /// What a session error means for the service.
 #[derive(Debug, PartialEq, Eq)]
@@ -788,7 +788,7 @@ async fn drain(
                     );
                     let id = msg_id(&args.project, &args.env, &envelope.identity);
                     let payload =
-                        match serde_json::to_vec(&wamn_event_wire::SourceEvent::Cdc(envelope)) {
+                        match serde_json::to_vec(&wamn_event::SourceEvent::Cdc(envelope)) {
                             Ok(p) => bytes::Bytes::from(p),
                             Err(e) => {
                                 return DrainOutcome::Severed(

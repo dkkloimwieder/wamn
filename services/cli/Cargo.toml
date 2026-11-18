@@ -10,7 +10,6 @@ name = "wamn"
 path = "src/bin/wamn.rs"
 
 [dependencies]
-wamn-codegen.workspace = true
 wamn-build.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 anyhow = { workspace = true }
@@ -49,6 +48,7 @@ wamn-registry = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 
 [dev-dependencies]
+wamn-codegen.workspace = true
 url = { workspace = true }
 wamn-broker = { workspace = true }
 wamn-postgres.workspace = true

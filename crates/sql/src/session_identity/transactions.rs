@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use tracing::Instrument as _;
 
-use wamn_event_wire::Causation;
+use wamn_event::Causation;
 use wamn_identity_protocol::AuthorityClass;
 
 use super::super::PgError;

@@ -59,7 +59,7 @@ pub(super) async fn commit_transaction(
     connection: &mut sqlx::PgConnection,
     xid: &str,
     finish: Option<&[String; 3]>,
-    run: Option<&wamn_event_wire::Causation>,
+    run: Option<&wamn_event::Causation>,
 ) -> Result<(), CommitError> {
     let mut batch = format!(
         "SELECT 1 / COALESCE(\

@@ -1,5 +1,5 @@
 [package]
-name = "wamn-event-wire"
+name = "wamn-event"
 description = "Event records, broker subjects and source identity."
 version.workspace = true
 edition.workspace = true

@@ -23,7 +23,7 @@ use tokio::time::Instant;
 use wamn_catalog::application_config::ApplicationConfig;
 use wamn_catalog::canonical_name::CanonicalName;
 use wamn_engine::operation::WamnOperation;
-use wamn_event_wire::Causation;
+use wamn_event::Causation;
 use wamn_identity_protocol::PrincipalId;
 use wamn_sql::WamnPostgres;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};

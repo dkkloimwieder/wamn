@@ -18,7 +18,7 @@ path = "../../apps/netsuite/tests/publication.rs"
 wamn-sql.workspace = true
 wamn-role.workspace = true
 wamn-connection = { workspace = true }
-wamn-events.workspace = true
+wamn-event.workspace = true
 wamn-platform-install.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
@@ -40,7 +40,6 @@ wamn-catalog = { workspace = true, features = ["sqlx"] }
 wamn-oci = { workspace = true }
 wamn-provision = { workspace = true }
 wamn-registry = { workspace = true }
-wamn-event-wire = { workspace = true }
 postgres-protocol = { workspace = true }
 wamn-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
@@ -67,7 +66,6 @@ wamn-connection = { workspace = true, features = ["test-util"] }
 wamn-sql = { workspace = true, features = ["test-util"] }
 wamn-http = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { workspace = true, features = ["test-util"] }
-wamn-events = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 uuid = { workspace = true }

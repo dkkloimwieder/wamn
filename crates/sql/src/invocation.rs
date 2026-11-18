@@ -8,7 +8,7 @@ use wamn_connection::invocation::{ReleaseContext, Scope};
 use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::invocation_scope::{InvocationAuthority, InvocationScopes, ScopeLifetime};
 use wamn_engine::invocation_trace::InvocationTrace;
-use wamn_event_wire::Causation;
+use wamn_event::Causation;
 
 pub fn validate_context(
     identity: &SessionIdentity,

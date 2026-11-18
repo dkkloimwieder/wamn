@@ -5,7 +5,7 @@ use std::time::Duration;
 use wamn_identity_protocol::{RoleName, wire::PatResponse};
 use wamn_registry::{ProjectEnvKey, platform_domain::PlatformDomain};
 
-use crate::application::{GrantAuthority, GrantChange, mutate_grant, service};
+use wamn_identity::application::{GrantAuthority, GrantChange, mutate_grant, service};
 
 /// Authored grants and credential lifetime for an API service.
 #[derive(Debug)]
@@ -33,7 +33,7 @@ pub async fn create(
         !request.roles.is_empty(),
         "an API service requires an authored role"
     );
-    sqlx::query(wamn_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
+    sqlx::query(wamn_identity::application::OPERATION_GRANT_LOCK_SQL)
         .bind(key)
         .execute(&mut **transaction)
         .await?;

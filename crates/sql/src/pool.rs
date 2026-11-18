@@ -375,16 +375,6 @@ pub(super) struct ProjectPool {
     pub(super) statement_timeout_ms: u32,
 }
 
-/// Raw checkout state, observed before any identity injection. Condition probes use
-/// this to observe the backend and any transaction that performed writes.
-#[derive(Debug)]
-pub struct CheckoutProbe {
-    pub backend_pid: i32,
-    /// `pg_current_xact_id_if_assigned()` — non-NULL means a leaked open
-    /// transaction that performed writes.
-    pub xact_id: Option<String>,
-}
-
 /// Discard a connection whose transaction outcome or session state is unknown.
 pub(super) fn destroy_connection(obj: Object, counter: &AtomicU64) {
     counter.fetch_add(1, Ordering::Relaxed);

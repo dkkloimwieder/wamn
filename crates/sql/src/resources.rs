@@ -192,16 +192,8 @@ pub(super) fn record_query_ms(
 /// this surface's own, while the `wamn.*` identity block is [`effect_span`]'s, shared with
 /// every other effect surface.
 ///
-/// The run and the wiring position come from the two identity registries the
-/// router driver binds before the pooled instance runs: `set_current_run` for
-/// the run, `bind_invocation` for the node (`wamn-0h0g.7.9`). Both are
-/// host-attested, so this span says which run and which node raised the call
-/// without walking its `wamn.component.invoke` parent (`wamn-0h0g.24.14`).
-///
-/// A call outside a node walk — a platform read, or a pooled instance between
-/// invocations — holds neither, and records the keys empty. `wamn.requirement`
-/// is empty on every postgres span: it names the connection requirement an
-/// HTTP effect was admitted under. SQL uses the transaction identity.
+/// The invocation scope supplies causation and wiring for workflow node calls.
+/// SQL uses the transaction identity.
 pub(super) fn db_span_for_project(
     plugin: &WamnPostgres,
     component_id: &str,

@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 use sqlx::Connection as _;
 use std::time::Duration;
 use wamn_catalog::canonical_name::CanonicalName;
-use wamn_environment::{api_service, application::service};
+use wamn_environment::api_service;
+use wamn_identity::application::service;
 use wamn_identity_protocol::{PrincipalId, RoleName, pat_prefix::PatPrefix};
 use wamn_registry::{EnvName, ProjectId};
 

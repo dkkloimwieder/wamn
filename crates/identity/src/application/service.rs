@@ -124,7 +124,7 @@ pub async fn write_service(
 }
 
 /// Resolve an active project service by its local subject.
-pub(crate) async fn active_service(
+pub async fn active_service(
     project: &mut sqlx::PgConnection,
     subject: &str,
 ) -> Result<Option<PrincipalId>, ServiceError> {

@@ -30,9 +30,7 @@
 //! declared here once and filled surface by surface, each on its own bead.
 //! `wamn.connection_http` (`wamn-0h0g.24.12`), `wamn.blobstore` and
 //! `wamn:postgres` (`wamn-0h0g.24.14`) each read back a host-bound
-//! `ConnectionInvocation` and fill all eight keys. `wamn.jetstream`
-//! (`wamn-0h0g.24.15`) holds a wiring position on one of its four operations
-//! and no invocation at all, so four of its eight keys stay empty even there.
+//! `ConnectionInvocation` and fill all eight keys.
 //!
 //! # The vocabulary
 //!
@@ -75,27 +73,8 @@
 //!
 //! # Why resolved strings and not a plugin handle
 //!
-//! Each plugin holds its identity differently — `WamnPostgres` in `pub(super)`
-//! identity maps, `ConnectionHttp` in frozen `Box<str>` fields, and `WamnJetstream`
-//! in its bind-time map. [`EffectIdentity`] takes
-//! the resolved `&str` triple so this module needs no access to any of them, and
-//! adding a surface here never widens a plugin's private identity API.
-//!
-//! # What is deliberately absent
-//!
-//! `wamn.jetstream` is the one surface that reads back no invocation of its
-//! own. It is not orphaned: an effect raised inside a node runs under
-//! `wamn.component.invoke`, the span
-//! `crates/workflow/src/router_driver.rs` instruments each `Step::Invoke`
-//! with, which already carries `wamn.wiring_id`, `wamn.wiring_version`,
-//! `wamn.node_id`, `wamn.component_digest` and `wamn.operation` — the spelling
-//! [`EffectWiring`] reuses rather than forking. `wamn.connection_http`
-//! (`wamn-0h0g.24.12`), `wamn.blobstore` and `wamn:postgres`
-//! (`wamn-0h0g.24.14`) copy them down so that one effect span is
-//! self-describing without a parent walk. `wamn.jetstream` stands at no wiring
-//! node on three of its four operations, and on the fourth its native callers
-//! hand down a position but no per-visit invocation (`wamn-0h0g.24.15`).
-//! `wamn-0h0g.24.2` landed the invocation span itself and covered none of them.
+//! [`EffectIdentity`] takes the resolved strings so plugins keep their
+//! identity APIs private.
 //!
 //! The EXECUTING COMPONENT IDENTITY and the NODE OPERATION arrive the same way,
 //! and a reader has to know what each one answers. `ConnectionInvocation`, the
@@ -327,12 +306,6 @@ effect_histogram!(
     "wamn-blobstore",
     "wamn.blobstore.duration_ms",
     "wasmcloud:blobstore effect latency in ms, by effect.operation"
-);
-effect_histogram!(
-    JETSTREAM_DURATION_MS,
-    "wamn-jetstream",
-    "wamn.jetstream.duration_ms",
-    "wamn:jetstream effect latency in ms, by effect.operation"
 );
 
 /// The `effect.operation` label the non-postgres surfaces record their duration

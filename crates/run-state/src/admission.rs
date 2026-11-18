@@ -129,7 +129,7 @@ pub async fn admit_run(
 /// Find the history actor of the CDC row when the source has a history table.
 pub async fn history_actor(
     connection: &mut sqlx::PgConnection,
-    envelope: &wamn_event_wire::Envelope,
+    envelope: &wamn_event::Envelope,
 ) -> Result<Option<wamn_identity_protocol::PrincipalId>, ProductionLeaseError> {
     let schemas = sqlx::query("SELECT n.nspname::text FROM pg_namespace n JOIN pg_class c ON c.relnamespace = n.oid WHERE c.relname = 'wamn_entities' AND c.relkind = 'r' ORDER BY 1").fetch_all(&mut *connection).await
         .map_err(|error| ProductionLeaseError::postgres("read entity map schemas", &error))?;

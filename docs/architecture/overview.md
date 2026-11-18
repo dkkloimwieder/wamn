@@ -40,13 +40,12 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/provision` | `wamn-provision`: database roles and provisioning SQL |
 | `crates/publish` | `wamn-publish`: package, release, integration, and web publication |
 | `crates/oci` | `wamn-oci`: registry transport, artifact readers, engine artifact adapter, and registry credentials |
-| `crates/environment` | `wamn-environment`: environment lifecycle, package apply, and retention |
+| `crates/environment` | `wamn-environment`: environment lifecycle, package apply, retention, and CDC reader lifecycle and recovery |
 | `crates/platform-install` | `wamn-platform-install`: chart installation and bootstrap |
 | `crates/dev` | `wamn-dev`: watched builds, publication, and deployment |
 | `crates/kubernetes` | `wamn-kubernetes`: Kubernetes transport, Secrets, and Job execution |
 | `crates/broker` | `wamn-broker`: NATS connections, streams, and shared memory buckets |
-| `crates/event-wire` | `wamn-event-wire`: event records and stable event identity |
-| `crates/events` | `wamn-events`: event admission, capture configuration, and reader lifecycle |
+| `crates/event` | `wamn-event`: event records, source identity, and CDC reader configuration |
 | `crates/component-policy` | `wamn-component-policy`: import admission and platform import declarations |
 | `crates/build` | `wamn-build`: package builds and overlay and base composition |
 | `crates/engine` | `wamn-engine`: native loading, dispatch, and the invocation scope registry |
@@ -59,7 +58,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/connection` | `wamn-connection`: connection facts, credentials, resource leases, invocation context, and bound Wasm import dispatch |
 | `crates/blobstore` | `wamn-blobstore`: authorized object storage |
 | `crates/authentication` | `wamn-authentication`: route authentication and session verification |
-| `crates/identity` | `wamn-identity`: identity authority and its SQL |
+| `crates/identity` | `wamn-identity`: identity authority, project user and grant administration, and their SQL |
 | `crates/identity-client` | `wamn-identity-client`: HTTPS client for identity administration |
 | `crates/identity-protocol` | `wamn-identity-protocol`: principal IDs, database login names, roles, credential formats, and public key documents |
 | `crates/guest` | `wamn-guest`: guest cursors, pages, scalar conversion, operation SQL, and document numbering |
