@@ -16,7 +16,7 @@ pub struct ParseOrgIdError;
 impl fmt::Display for ParseOrgIdError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(
-            "expected a lowercase organization slug of 1 to 40 bytes with isolated hyphens outside the reserved wamn prefix",
+            "expected a nonreserved lowercase organization slug of 1 to 40 bytes with isolated hyphens",
         )
     }
 }
@@ -28,6 +28,8 @@ impl TryFrom<String> for OrgId {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         if crate::identifiers::project_id_reason(&value).is_some()
             || crate::identifiers::project_id_is_reserved(&value)
+            || matches!(value.as_str(), "platform" | "hosts" | "cert-manager" | "default")
+            || value.starts_with("kube-")
         {
             return Err(ParseOrgIdError);
         }

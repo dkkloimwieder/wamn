@@ -1,0 +1,117 @@
+{{- with .Values.operations }}
+{{- $policy := include "project.networkPolicyNames" $ | fromJson }}
+{{- $cluster := dict "cnpg.io/cluster" .cluster }}
+{{- $reader := dict "app.kubernetes.io/name" "wamn-cdc-reader" "app.kubernetes.io/instance" (get (default dict $.Values.cdcReader) "key") }}
+{{- $control := dict "app.kubernetes.io/name" (required "Set operations.controlDeployment." .controlDeployment) }}
+{{- $worker := dict "app.kubernetes.io/component" "wamn-worker" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $policy.databaseClients }}, namespace: {{ $.Release.Namespace }}}
+spec:
+  podSelector:
+    matchLabels: {{ $cluster | toJson }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{ $cluster | toJson }}
+        - podSelector:
+            matchLabels: {wasmcloud.com/name: hostgroup, wasmcloud.com/hostgroup: {{ required "Set operations.hostGroup." .hostGroup | quote }}}
+        - podSelector:
+            matchLabels: {{ $control | toJson }}
+        - podSelector:
+            matchLabels: {{ $worker | toJson }}
+        {{- if $.Values.cdcReader }}
+        - podSelector:
+            matchLabels: {{ $reader | toJson }}
+        {{- end }}
+      ports: [{port: 5432, protocol: TCP}]
+{{- range $name, $labels := dict $policy.controlToDatabase $control $policy.workerToDatabase $worker }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $name }}, namespace: {{ $.Release.Namespace }}}
+spec:
+  podSelector:
+    matchLabels: {{ $labels | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{ $cluster | toJson }}
+      ports: [{port: 5432, protocol: TCP}]
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $policy.operator }}, namespace: {{ $.Release.Namespace }}}
+spec:
+  podSelector:
+    matchLabels: {{ $cluster | toJson }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: platform}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: cloudnative-pg}
+      ports: [{port: 8000, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $policy.replication }}, namespace: {{ $.Release.Namespace }}}
+spec:
+  podSelector:
+    matchLabels: {{ $cluster | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{ $cluster | toJson }}
+      ports: [{port: 5432, protocol: TCP}]
+{{- if $.Values.cdcReader }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $policy.cdcPostgres }}, namespace: {{ $.Release.Namespace }}}
+spec:
+  podSelector:
+    matchLabels: {{ $reader | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{ $cluster | toJson }}
+      ports: [{port: 5432, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $policy.cdcNats }}, namespace: {{ $.Release.Namespace }}}
+spec:
+  podSelector:
+    matchLabels: {{ $reader | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: platform}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: nats, app.kubernetes.io/instance: wamn}
+      ports: [{port: 4222, protocol: TCP}]
+{{- end }}
+{{- with $.Values.networkPolicy.objectStorage }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $policy.objectStorage }}, namespace: {{ $.Release.Namespace }}}
+spec:
+  podSelector:
+    matchLabels: {{ $cluster | toJson }}
+  policyTypes: [Egress]
+  egress:
+    {{- range . }}
+    - to: [{ipBlock: {cidr: {{ .cidr | quote }}}}]
+      ports: [{port: {{ .port | int }}, protocol: TCP}]
+    {{- end }}
+{{- end }}
+{{- end }}

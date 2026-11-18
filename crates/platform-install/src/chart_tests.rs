@@ -15,11 +15,12 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let cluster = "database-owner";
     let database = "recorded-environment-database";
+    let capture_secret = wamn_registry::name::project_login_secret(database, wamn_role::CDC_LOGIN);
     let entry = crate::environment::entry(
         &repository.join("deploy/charts/project"),
         document.org.as_str(),
         "fixture",
-        operations::values(&document, cluster, database)?,
+        operations::values(&document, cluster, database, std::iter::empty())?,
     )?;
     let objects = wamn_kubernetes::helm::template(&entry)?;
     let mut identities = std::collections::BTreeSet::new();
@@ -99,7 +100,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                             .iter()
                             .all(|verb| verb == "get")
                     );
-                    let allowed = [&capture, &format!("{cluster}-ca")];
+                    let allowed = [&capture_secret, &format!("{cluster}-ca")];
                     assert!(
                         rule["resourceNames"]
                             .as_array()

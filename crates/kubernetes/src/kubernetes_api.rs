@@ -122,6 +122,11 @@ impl KubernetesApi {
             .transpose()
             .map_err(|e| failure("encode", path, e))?
             .unwrap_or_default();
+        let content_type = if method == Method::PATCH {
+            "application/merge-patch+json"
+        } else {
+            "application/json"
+        };
         let request = Request::builder()
             .method(method)
             .uri(format!("{}{path}", self.base))
@@ -129,7 +134,7 @@ impl KubernetesApi {
                 hyper::header::AUTHORIZATION,
                 format!("Bearer {}", token.trim()),
             )
-            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .header(hyper::header::CONTENT_TYPE, content_type)
             .body(Full::new(Bytes::from(body)))
             .map_err(|e| failure("request", path, e))?;
         self.http

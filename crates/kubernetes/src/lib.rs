@@ -36,10 +36,19 @@ pub struct Error {
 pub enum ErrorType {
     /// The process has no in-cluster API endpoint.
     NoCluster,
+    /// The project chart has not created the credential Secret.
+    ProjectCredentialSecretMissing,
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.type_ == Some(ErrorType::ProjectCredentialSecretMissing) {
+            return write!(
+                f,
+                "the project chart has not created credential Secret {}",
+                self.reference
+            );
+        }
         write!(
             f,
             "{} Kubernetes operation on {} failed",

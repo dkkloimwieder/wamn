@@ -16,20 +16,30 @@ fn store_error(source: wamn_kubernetes::Error) -> ConnectionError {
     }
 }
 
-/// Require one hostname or IPv4 address and port that the operator can admit.
-pub fn validate_wasm_authority(value: &str) -> Result<(), ConnectionError> {
+/// Read the fixed socket port of an exact host that the operator can admit.
+pub fn wasm_authority_port(value: &str) -> Result<u16, ConnectionError> {
     use wash_runtime::host::allowed_hosts::AllowedHost;
 
-    let Ok(AllowedHost::Authority(authority)) = value.parse::<AllowedHost>() else {
+    if value.contains('@') || value.trim() != value {
         return Err(refuse("invalid_input", "authority"));
+    }
+    let authority = value
+        .parse::<AllowedHost>()
+        .map_err(|_| refuse("invalid_input", "authority"))?;
+    let host = match &authority {
+        AllowedHost::Authority(host) => host.host(),
+        AllowedHost::Url(url) => url
+            .host_str()
+            .ok_or_else(|| refuse("invalid_input", "authority"))?,
+        _ => return Err(refuse("invalid_input", "authority")),
     };
-    if authority.host().contains(':') {
+    if host.contains(':') {
         return Err(refuse("ipv6_authority_not_supported", "authority"));
     }
-    if authority.port_u16().is_none() || value.contains('@') || value.trim() != value {
-        return Err(refuse("invalid_input", "authority"));
-    }
-    Ok(())
+    authority
+        .socket_port()
+        .filter(|&port| port != 0)
+        .ok_or_else(|| refuse("invalid_input", "authority"))
 }
 
 /// Validate the non-secret request shape before any database call.
@@ -208,7 +218,7 @@ pub async fn execute(
             context["authority"].as_str()
         };
         if metadata["runtime_type"] == "wasm" {
-            validate_wasm_authority(
+            wasm_authority_port(
                 authority.ok_or_else(|| refuse("invalid_input", "authority"))?,
             )?;
         } else if authority.is_some() {

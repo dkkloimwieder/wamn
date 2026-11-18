@@ -56,6 +56,7 @@ metadata:
   namespace: {{ $.Release.Namespace }}
 rules:
   - apiGroups: [""]
+    # Helm release records remain in the org namespace until 9.3.
     resources: [secrets]
     verbs: [get, list, create, update, delete]
   - apiGroups: [""]
@@ -72,16 +73,37 @@ rules:
     verbs: [get, list, watch]
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
-    verbs: [get, list, watch, create, update, patch, delete]
+    # Helm's watcher observes NetworkPolicies without a name selector.
+    verbs: [list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    resourceNames:
+      {{- range (include "project.networkPolicyNames" $ | fromJson) }}
+      - {{ . | quote }}
+      {{- end }}
+      {{- range .applicationReleases }}
+      - {{ printf "%s-allow-public-integration-ports" . | quote }}
+      {{- end }}
+    verbs: [get, create, patch, delete]
   - apiGroups: [discovery.k8s.io]
     resources: [endpointslices]
     verbs: [list]
   - apiGroups: [runtime.wasmcloud.dev]
     resources: [workloaddeployments]
     verbs: [get, list, watch, create, update, patch, delete]
+  {{- $logins := get (default dict $.Values.cluster) "roles" }}
+  {{- if or $.Values.credentials $logins }}
   - apiGroups: [""]
     resources: [secrets]
+    resourceNames:
+      {{- with $.Values.credentials }}
+      - {{ .name | quote }}
+      {{- end }}
+      {{- range $logins }}
+      - {{ .passwordSecret.name | quote }}
+      {{- end }}
     verbs: [patch]
+  {{- end }}
   - apiGroups: [postgresql.cnpg.io]
     resources: [clusters]
     resourceNames: [{{ $operation.cluster | quote }}]
@@ -110,7 +132,12 @@ rules:
     verbs: [get, list, watch, patch]
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [roles, rolebindings]
-    resourceNames: [{{ $name | quote }}, {{ $operation.capture | quote }}]
+    resourceNames:
+      - {{ $name | quote }}
+      - {{ $operation.capture | quote }}
+      {{- with $.Values.credentials }}
+      - {{ .name | quote }}
+      {{- end }}
     verbs: [get, list, watch, patch]
   {{- with $.Values.brokerCertificates }}
   - apiGroups: [cert-manager.io]
