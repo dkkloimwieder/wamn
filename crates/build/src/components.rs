@@ -14,7 +14,21 @@ use wamn_digest::bytes_sha256;
 
 /// Where the components lie in a package's build output.
 const COMPONENTS: &str = "components";
-const GUEST_TARGET: &str = "wasm32-wasip2";
+/// Compilation target for an application or platform guest.
+#[derive(Clone, Copy, Debug)]
+pub enum GuestTarget {
+    WasiP2,
+    WasiP3,
+}
+
+impl GuestTarget {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::WasiP2 => "wasm32-wasip2",
+            Self::WasiP3 => "wasm32-wasip3",
+        }
+    }
+}
 
 /// One guest crate to build.
 struct Guest {
@@ -22,8 +36,7 @@ struct Guest {
     manifest: PathBuf,
     /// The Cargo package, when the manifest is a workspace root.
     package: String,
-    /// The Cargo target directory, when the guest is its own workspace.
-    target_directory: Option<PathBuf>,
+    target: GuestTarget,
 }
 
 /// One built guest.
@@ -65,7 +78,7 @@ pub(crate) async fn compile_components(
             &Guest {
                 manifest: workspace.join("Cargo.toml"),
                 package: name.as_str().replace('_', "-"),
-                target_directory: None,
+                target: GuestTarget::WasiP2,
             },
         )
         .await?;
@@ -126,13 +139,13 @@ pub async fn build_guest(
     repository: &Path,
     manifest: &Path,
     package: &str,
-    target_directory: Option<&Path>,
+    target: GuestTarget,
 ) -> Result<PathBuf> {
     let rustflags = guest_rustflags(repository).await?;
     let guest = Guest {
         manifest: manifest.to_owned(),
         package: package.to_owned(),
-        target_directory: target_directory.map(Path::to_owned),
+        target,
     };
     let built = compile_guest(repository, &rustflags, &guest).await?;
     Ok(built.file)
@@ -168,18 +181,14 @@ async fn compile_guest(repository: &Path, rustflags: &str, guest: &Guest) -> Res
             "--offline",
             "--release",
             "--target",
-            GUEST_TARGET,
+            guest.target.as_str(),
             "--message-format",
             "json-render-diagnostics",
             "--manifest-path",
         ])
         .arg(workspace.manifest());
     command.args(["-p", &guest.package]);
-    if let Some(target) = &guest.target_directory {
-        command.env("CARGO_TARGET_DIR", repository.join(target));
-    } else {
-        command.env("CARGO_TARGET_DIR", metadata.target_directory.as_std_path());
-    }
+    command.env("CARGO_TARGET_DIR", metadata.target_directory.as_std_path());
     let output = command.output().await.context("run cargo build")?;
     let name = &guest.package;
     ensure!(

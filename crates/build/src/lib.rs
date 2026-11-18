@@ -6,7 +6,7 @@ mod guest_workspace;
 pub mod kcl;
 pub mod palette;
 use anyhow::{Context as _, Result};
-pub use components::{build_guest, guest_rustflags};
+pub use components::{GuestTarget, build_guest, guest_rustflags};
 use std::{fs, path::Path};
 pub use wamn_codegen::build::{BuildRequest, default_output_root, package_output};
 use wamn_codegen::build_record::{BUILD_RECORD_FILE, BuildRecord};
@@ -23,7 +23,13 @@ pub async fn build_component(repository: &Path, manifest: &Path) -> Result<std::
         .iter()
         .find(|package| package.manifest_path.as_std_path() == manifest)
         .context("component manifest has no package")?;
-    build_guest(repository, &manifest, package.name.as_str(), None).await
+    build_guest(
+        repository,
+        &manifest,
+        package.name.as_str(),
+        GuestTarget::WasiP2,
+    )
+    .await
 }
 
 /// Build into the package workspace output and write one completed record.

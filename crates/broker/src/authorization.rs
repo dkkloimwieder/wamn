@@ -1,333 +1,245 @@
-//! Event broker users and credential Secrets for the declared environments.
+//! NATS accounts and client certificates for the shared broker.
 
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
-use crate::events::source_stream_config;
 use anyhow::Context as _;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use wamn_kubernetes::{Target, kubectl, secret::Secret};
+use wamn_registry::{Triple, name};
 
-use wamn_registry::Triple;
+const NAMESPACE: &str = "platform";
+const AUTHORIZATION: &str = "wamn-nats-authorization";
+const FILE: &str = "authorization.conf";
+const ACCOUNTS_PREFIX: &str = "accounts: ";
+const PLATFORM: &str = "PLATFORM";
 
-/// The Secret that holds the authorization file of the one NATS.
-pub const AUTHORIZATION: &str = "wamn-nats-authorization";
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Account {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    jetstream: Option<JetStreamLimits>,
+    users: Vec<User>,
+}
 
-mod configuration {
-    use super::{
-        Deserialize, Duration, STANDARD, Serialize, Value, json,
-        source_stream_config,
+#[derive(Debug, Serialize, Deserialize)]
+struct JetStreamLimits {
+    max_mem: u64,
+    max_file: u64,
+    max_streams: i64,
+    max_consumers: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct User {
+    user: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    permissions: Option<Permissions>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Permissions {
+    publish: Subjects,
+    subscribe: Subjects,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Subjects {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    allow: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    deny: Vec<String>,
+}
+
+fn scoped_user(user: &str, publish: &[&str], subscribe: &[&str]) -> User {
+    let subjects = |allow: &[&str]| Subjects {
+        allow: allow.iter().map(|subject| (*subject).into()).collect(),
+        deny: if allow.is_empty() { vec![">".into()] } else { Vec::new() },
     };
-    use anyhow::Context as _;
-    use base64::Engine as _;
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct Authorization {
-        pub users: Vec<Account>,
+    User {
+        user: user.into(),
+        permissions: Some(Permissions {
+            publish: subjects(publish),
+            subscribe: subjects(subscribe),
+        }),
     }
+}
 
-    /// A NATS user. A user with no password is a certificate user: the server
-    /// maps a client certificate to it by the certificate's DNS name.
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct Account {
-        pub user: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub password: Option<String>,
-        pub permissions: Permissions,
+fn platform_users() -> Vec<User> {
+    let control = ["runtime.host.>", "runtime.operator.>", "_INBOX.>"];
+    vec![
+        scoped_user("wasmcloud-operator", &control, &control),
+        scoped_user("wasmcloud-runtime", &control, &control),
+        scoped_user("wasmcloud-data", &[], &[]),
+    ]
+}
+
+type Accounts = BTreeMap<String, Account>;
+
+/// Seed the shared broker Secret before Helm. Preserve the installed environment accounts.
+pub async fn bootstrap(target: &Target) -> anyhow::Result<()> {
+    if authorization_secret(target).await?.is_none() {
+        update(target, |_| {}).await?;
     }
+    Ok(())
+}
 
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct Permissions {
-        pub publish: Subjects,
-        pub subscribe: Subjects,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct Subjects {
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        pub allow: Vec<String>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        pub deny: Vec<String>,
-    }
-
-    /// The certificate users of the platform clients (docs/plan/alignment.md R4).
-    ///
-    /// The operator and the host scheduler connection reach only the wasmCloud
-    /// control subjects. The data user of the chart grants nothing, because each
-    /// environment's host connects with its own certificate.
-    pub(super) fn platform_users() -> Vec<Account> {
-        let subjects = |allow: &[&str]| Subjects {
-            allow: allow.iter().map(|subject| (*subject).into()).collect(),
-            deny: if allow.is_empty() {
-                vec![">".into()]
-            } else {
-                Vec::new()
-            },
-        };
-        let user = |name: &str, publish: &[&str], subscribe: &[&str]| Account {
-            user: name.into(),
-            password: None,
-            permissions: Permissions {
-                publish: subjects(publish),
-                subscribe: subjects(subscribe),
-            },
-        };
-        let control = ["runtime.host.>", "runtime.operator.>", "_INBOX.>"];
-        // wamn and the provisioning Jobs run the same verbs: they manage the
-        // event streams and consumers, read the advisories, and delete memory keys.
-        let manage = [
-            "$JS.API.STREAM.INFO.>",
-            "$JS.API.STREAM.MSG.GET.>",
-            "$JS.API.STREAM.CREATE.*",
-            "$JS.API.STREAM.UPDATE.*",
-            "$JS.API.STREAM.DELETE.*",
-            "$JS.API.STREAM.PURGE.*",
-            "$JS.API.CONSUMER.INFO.>",
-            "$JS.API.CONSUMER.CREATE.>",
-            "$JS.API.CONSUMER.DURABLE.CREATE.>",
-            "$JS.API.CONSUMER.DELETE.>",
-        ];
-        let manager = |name: &str| user(name, &manage, &["_INBOX.>"]);
-        vec![
-            user("wasmcloud-operator", &control, &control),
-            user("wasmcloud-runtime", &control, &control),
-            user("wasmcloud-data", &[], &[]),
-            manager("wamn-ctl"),
-            user(
-                "wamn-cdc-reader",
-                &["evt.>", "$JS.API.STREAM.INFO.>"],
-                &["_INBOX.>"],
-            ),
-            manager("wamn-provisioning"),
-        ]
-    }
-
-    /// Put each platform user in `authorization`, in place of its old entry, and
-    /// drop every password user of an older install (docs/plan/alignment.md R4).
-    pub(super) fn keep_platform_users(authorization: &mut Authorization) {
-        authorization.users.retain(|user| user.password.is_none());
-        for user in platform_users() {
-            keep_user(authorization, user);
-        }
-    }
-
-    pub(super) fn read_authorization(live: Option<&str>) -> anyhow::Result<Authorization> {
-        Ok(match live {
-            Some(encoded) => {
-                let bytes = STANDARD
-                    .decode(encoded)
-                    .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
-                let text = std::str::from_utf8(&bytes)
-                    .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
-                serde_json::from_str::<Authorization>(
-                    text.strip_prefix("authorization: ")
-                        .context("the broker authorization has no prefix")?,
-                )
-                .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?
-            }
-            None => Authorization { users: Vec::new() },
-        })
-    }
-
-    pub fn render(target: &wamn_registry::Triple, authorization: &mut Authorization) -> Vec<Value> {
-        let project_env_key =
-            wamn_registry::project_env_key(&target.org, &target.project, &target.env);
-        let source = source_stream_config(target, 1, Duration::from_secs(120));
-        let user = wamn_registry::environment_nats_user(&project_env_key);
-        // The environment host reads its application consumers.
-        // Provisioning declares the streams and consumers before attachment.
-        let mut publish = vec![source.subjects[0].clone()];
-        for name in [&source.name] {
-            publish.push(wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "STREAM",
-                "INFO",
-                (name).as_ref(),
-            ]));
-        }
-        publish.extend([
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "CONSUMER",
-                "INFO",
-                (source.name).as_ref(),
-                "*",
-            ]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "CONSUMER",
-                "MSG",
-                "NEXT",
-                (source.name).as_ref(),
-                "*",
-            ]),
-            wamn_registry::name::nats_subject(&["$JS", "ACK", (source.name).as_ref(), ">"]),
-        ]);
-        keep_user(
-            authorization,
+/// Grant the environment host full rights and restrict the reader to its own project.
+pub async fn provision_project(target: &Target, coordinate: &Triple) -> anyhow::Result<()> {
+    update(target, |accounts| {
+        let (org, project, env) = (&coordinate.org, &coordinate.project, &coordinate.env);
+        let account = accounts.entry(name::environment_nats_account(org, env)).or_insert_with(|| {
             Account {
-                user: user.clone(),
-                password: None,
-                permissions: Permissions {
-                    publish: Subjects {
-                        allow: publish,
-                        deny: Vec::new(),
-                    },
-                    subscribe: Subjects {
-                        allow: vec![wamn_registry::name::nats_subject(&[
-                            &wamn_registry::name::nats_token("_INBOX_", (user).as_ref(), ""),
-                            ">",
-                        ])],
-                        deny: Vec::new(),
-                    },
-                },
-            },
-        );
-        // The environment host mounts this certificate only for this project's event client.
-        vec![environment_certificate(
-            &wamn_registry::name::nats_certificate(&project_env_key),
-            &user,
-        )]
-    }
-
-    /// Put `user` in `authorization`, in place of the entry of the same name.
-    pub(super) fn keep_user(authorization: &mut Authorization, user: Account) {
-        if let Some(existing) = authorization
-            .users
-            .iter_mut()
-            .find(|old| old.user == user.user)
-        {
-            *existing = user;
-        } else {
-            authorization.users.push(user);
-        }
-    }
-
-    /// The client certificate of a NATS user in the hosts namespace. Its DNS name
-    /// is the user (`verify_and_map`).
-    fn environment_certificate(name: &str, user: &str) -> Value {
-        json!({
-            "apiVersion": "cert-manager.io/v1",
-            "kind": "Certificate",
-            "metadata": {"name": name, "namespace": "hosts"},
-            "spec": {
-                "secretName": name,
-                "commonName": user,
-                "dnsNames": [user],
-                "usages": ["client auth", "digital signature", "key encipherment"],
-                "issuerRef": {"kind": "ClusterIssuer", "name": "wasmcloud-ca", "group": "cert-manager.io"}
+                jetstream: Some(JetStreamLimits {
+                    max_mem: 0,
+                    max_file: 1024 * 1024 * 1024,
+                    max_streams: -1,
+                    max_consumers: -1,
+                }),
+                users: vec![User { user: name::environment_nats_user(org, env), permissions: None }],
             }
-        })
-    }
-
-    /// The NATS user of the control host of `org` and its Certificate. It covers
-    /// every environment of the org (docs/plan/alignment.md R7).
-    pub fn control_user(org: &wamn_registry::OrgId) -> (Account, Value) {
-        let user = wamn_registry::control_nats_user(org);
-        let account = Account {
-            user: user.clone(),
-            password: None,
-            permissions: Permissions {
-                publish: Subjects {
-                    allow: Vec::new(),
-                    deny: Vec::new(),
-                },
-                subscribe: Subjects {
-                    allow: vec![wamn_registry::name::nats_subject(&[
-                        &wamn_registry::name::nats_token("_INBOX_", (user).as_ref(), ""),
-                        ">",
-                    ])],
-                    deny: Vec::new(),
-                },
-            },
-        };
-        (
-            account,
-            environment_certificate(&wamn_registry::name::control_nats_certificate(org), &user),
-        )
-    }
-}
-#[cfg(test)]
-use configuration::{Account, Authorization, platform_users};
-use configuration::{control_user, keep_platform_users, keep_user, read_authorization, render};
-
-/// Configuration fixtures for consumers of broker authority.
-#[cfg(feature = "test-util")]
-pub mod test_util {
-    pub use super::configuration::{
-        Account, Authorization, Permissions, Subjects, control_user, render,
-    };
+        });
+        let user = name::cdc_nats_user(coordinate);
+        let events = name::stream_subjects(org, project, env);
+        let stream = name::stream_name(org, project, env);
+        let info = format!("$JS.API.STREAM.INFO.{stream}");
+        account.users.retain(|entry| entry.user != user);
+        account.users.push(scoped_user(&user, &[&events, &info], &["_INBOX.>"]));
+        account.users.sort_unstable_by(|left, right| left.user.cmp(&right.user));
+    })
+    .await
 }
 
-/// Merge platform or environment users through the single authorization Secret writer.
-pub async fn update_authorization(
-    target: &wamn_kubernetes::Target,
-    org: &wamn_registry::OrgId,
-    coordinate: Option<&Triple>,
-) -> anyhow::Result<Vec<Value>> {
-    let mut certificates = Vec::new();
+/// Remove the reader user. Return whether the shared credential can be retired.
+pub async fn remove_project(target: &Target, coordinate: &Triple) -> anyhow::Result<bool> {
+    let account = name::environment_nats_account(&coordinate.org, &coordinate.env);
+    let reader = name::cdc_nats_user(coordinate);
+    let mut last = false;
+    update(target, |accounts| {
+        last = accounts.get_mut(&account).is_none_or(|entry| {
+            entry.users.retain(|user| user.user != reader);
+            entry.users.len() == 1
+        });
+        if last {
+            accounts.remove(&account);
+        }
+    })
+    .await?;
+    Ok(last)
+}
+
+async fn update(target: &Target, mut edit: impl FnMut(&mut Accounts)) -> anyhow::Result<()> {
     wamn_kubernetes::secret::update(
         &target.kubeconfig,
         &target.context,
-        "platform",
+        NAMESPACE,
         AUTHORIZATION,
         |secret| {
-            let live = if secret.data.is_empty() {
-                None
+            let mut accounts = if secret.metadata.resource_version.is_some() {
+                read_accounts(secret)?
             } else {
-                Some(
-                    secret
-                        .data
-                        .get("authorization.conf")
-                        .context("the broker Secret has no authorization.conf")?
-                        .as_str(),
-                )
+                let mut accounts = Accounts::new();
+                accounts.insert(PLATFORM.into(), Account { users: platform_users(), jetstream: None });
+                accounts
             };
-            anyhow::ensure!(
-                coordinate.is_none() || secret.metadata.resource_version.is_some(),
-                "missing event broker authorization Secret"
-            );
-            let mut authorization = read_authorization(live)?;
-            if let Some(target) = coordinate {
-                certificates = render(target, &mut authorization);
-            } else {
-                keep_platform_users(&mut authorization);
-                let (user, certificate) = control_user(org);
-                keep_user(&mut authorization, user);
-                certificates = vec![certificate];
-            }
-            secret.data.insert(
-                "authorization.conf".into(),
-                STANDARD.encode(format!("authorization: {}\n", json!(authorization))),
-            );
+            edit(&mut accounts);
+            let document = serde_json::to_string(&accounts).context("encode broker accounts")?;
+            secret.data.insert(FILE.into(), STANDARD.encode(format!("{ACCOUNTS_PREFIX}{document}\n")));
             Ok(())
         },
     )
-    .await?;
-    Ok(certificates)
+    .await
+}
+
+async fn authorization_secret(target: &Target) -> anyhow::Result<Option<Secret>> {
+    kubectl::get(&target.kubeconfig, &target.context, NAMESPACE, "secret", AUTHORIZATION).await
+}
+
+fn read_accounts(secret: &Secret) -> anyhow::Result<Accounts> {
+    let data = secret.data.get(FILE).context("broker Secret has no authorization.conf")?;
+    let bytes = STANDARD.decode(data).context("decode broker authorization data")?;
+    let text = std::str::from_utf8(&bytes).context("broker authorization is not UTF-8")?;
+    let payload = text.strip_prefix(ACCOUNTS_PREFIX).context("broker Secret has no accounts document")?;
+    serde_json::from_str(payload).context("decode broker accounts")
+}
+
+/// Check whether a project can still have a source stream. On an interrupted delete,
+/// removing the account can succeed before cleanup removes the certificate Secret.
+pub async fn environment_account_exists(target: &Target, coordinate: &Triple) -> anyhow::Result<bool> {
+    let Some(secret) = authorization_secret(target).await? else {
+        return Ok(false);
+    };
+    Ok(read_accounts(&secret)?.contains_key(
+        &name::environment_nats_account(&coordinate.org, &coordinate.env),
+    ))
+}
+
+/// Parameters of the Helm-owned client Certificate mapped into its account by DNS SAN.
+pub fn certificate(name: &str, secret: &str, user: &str) -> Value {
+    json!({
+        "name": name,
+        "spec": {
+            "secretName": secret,
+            "commonName": user,
+            "dnsNames": [user],
+            "usages": ["client auth", "digital signature", "key encipherment"],
+            "issuerRef": {"kind": "ClusterIssuer", "name": "wasmcloud-ca", "group": "cert-manager.io"}
+        }
+    })
+}
+
+/// Open the account from the issued Secret. Allow the server up to 60 seconds to reload it.
+pub async fn environment_context(
+    target: &Target,
+    coordinate: &Triple,
+    server: &str,
+) -> anyhow::Result<Option<async_nats::jetstream::Context>> {
+    let secret_name = name::environment_nats_secret(&coordinate.org, &coordinate.env);
+    let Some(secret) = kubectl::get::<Secret>(
+        &target.kubeconfig, &target.context, coordinate.org.as_str(), "secret", &secret_name,
+    ).await? else {
+        return Ok(None);
+    };
+    let directory = tempfile::tempdir().context("create directory for the environment broker credential")?;
+    for key in ["ca.crt", "tls.crt", "tls.key"] {
+        let value = secret.data.get(key).with_context(|| format!("Secret {secret_name} lacks {key}"))?;
+        std::fs::write(directory.path().join(key), STANDARD.decode(value)?)?;
+    }
+    let connection = crate::nats::PlatformNats {
+        nats_url: server.into(),
+        nats_tls_ca: directory.path().join("ca.crt"),
+        nats_tls_cert: directory.path().join("tls.crt"),
+        nats_tls_key: directory.path().join("tls.key"),
+        nats_tls_server_name: None,
+    };
+    let broker = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            let result = async {
+                let broker = async_nats::jetstream::new(connection.connect().await?);
+                broker.query_account().await.context("read JetStream account info")?;
+                Ok::<_, anyhow::Error>(broker)
+            }.await;
+            match result {
+                Ok(broker) => return broker,
+                Err(error) => tracing::debug!(%error, "waiting for the environment broker account"),
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }).await.with_context(|| format!("wait for the JetStream account of {coordinate}"))?;
+    Ok(Some(broker))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn document(project: &wamn_registry::ProjectId) -> Triple {
-        Triple::new(
-            "test".parse().unwrap(),
-            "dev".parse().unwrap(),
-            project.clone(),
-        )
-    }
-
     #[test]
     fn platform_certificate_users_keep_scheduler_permissions_targeted() {
         let users = platform_users();
-        assert!(users.iter().all(|user| user.password.is_none()));
         for name in ["wasmcloud-operator", "wasmcloud-runtime"] {
             let user = users.iter().find(|user| user.user == name).unwrap();
-            for subjects in [&user.permissions.publish, &user.permissions.subscribe] {
+            let permissions = user.permissions.as_ref().unwrap();
+            for subjects in [&permissions.publish, &permissions.subscribe] {
                 assert_eq!(
                     subjects.allow,
                     ["runtime.host.>", "runtime.operator.>", "_INBOX.>"]
@@ -335,191 +247,4 @@ mod tests {
             }
         }
     }
-
-    #[test]
-    fn an_environment_user_reaches_no_subject_of_another() {
-        let mut authorization = Authorization { users: Vec::new() };
-        render(&document(&"one".parse().unwrap()), &mut authorization);
-        render(&document(&"two".parse().unwrap()), &mut authorization);
-        let subjects = |user: &Account| {
-            let mut all = user.permissions.publish.allow.clone();
-            all.extend(user.permissions.subscribe.allow.clone());
-            all
-        };
-        let (one, two) = (&authorization.users[0], &authorization.users[1]);
-        for subject in subjects(one) {
-            // R5: the subjects of one environment name only its own keys,
-            // streams, consumers and inbox. The bucket metadata and the
-            // identity watch are the shared, read-only exceptions.
-            let shared = subject.starts_with("$JS.API.STREAM.INFO.KV_")
-                || subject.contains("$KV.wamn-auth.=identity.");
-            assert!(
-                shared || subject.contains("one"),
-                "{subject} is not targeted to environment one"
-            );
-            assert!(
-                !subject.contains("two"),
-                "{subject} reaches environment two"
-            );
-            assert!(!subjects(two).contains(&subject) || shared, "{subject}");
-        }
-        for bucket in ["wamn-auth", "wamn-connection"] {
-            assert!(
-                one.permissions
-                    .publish
-                    .allow
-                    .contains(&wamn_registry::name::nats_subject(&[
-                        "$KV",
-                        (bucket).as_ref(),
-                        wamn_registry::project_env_key(
-                            &"test".parse().unwrap(),
-                            &"one".parse().unwrap(),
-                            &"dev".parse().unwrap()
-                        )
-                        .as_str(),
-                        ">"
-                    ]))
-            );
-        }
-        // Native hosts attach to provisioned consumers. Broker mutations stay refused.
-        let stream = source_stream_config(
-            &document(&"one".parse().unwrap()),
-            1,
-            Duration::from_secs(120),
-        )
-        .name;
-        for subject in [
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "CONSUMER",
-                "CREATE",
-                (stream).as_ref(),
-                "mat",
-            ]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "CONSUMER",
-                "CREATE",
-                (stream).as_ref(),
-                "mat",
-                "evt",
-                "test",
-                "dev",
-                "two",
-                ">",
-            ]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "CONSUMER",
-                "DURABLE",
-                "CREATE",
-                (stream).as_ref(),
-                "mat",
-            ]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "CONSUMER",
-                "DELETE",
-                (stream).as_ref(),
-                "mat",
-            ]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "STREAM",
-                "CREATE",
-                (stream).as_ref(),
-            ]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "STREAM",
-                "UPDATE",
-                (stream).as_ref(),
-            ]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "STREAM",
-                "DELETE",
-                (stream).as_ref(),
-            ]),
-            wamn_registry::name::nats_subject(&[
-                "$JS",
-                "API",
-                "CONSUMER",
-                "CREATE",
-                (stream).as_ref(),
-                "mat",
-                "evt",
-                "test",
-                "dev",
-                "one",
-                "order",
-                ">",
-            ]),
-        ] {
-            assert!(
-                !one.permissions
-                    .publish
-                    .allow
-                    .iter()
-                    .any(|pattern| subject_matches(pattern, &subject)),
-                "{subject} is granted"
-            );
-        }
-        for subject in [wamn_registry::name::nats_subject(&[
-            "$JS",
-            "API",
-            "CONSUMER",
-            "MSG",
-            "NEXT",
-            (stream).as_ref(),
-            "mat",
-        ])] {
-            assert!(
-                one.permissions
-                    .publish
-                    .allow
-                    .iter()
-                    .any(|pattern| subject_matches(pattern, &subject))
-            );
-        }
-    }
-
-    /// Whether the NATS subject `pattern` matches `subject`.
-    fn subject_matches(pattern: &str, subject: &str) -> bool {
-        let mut subject = subject.split('.');
-        for token in pattern.split('.') {
-            match (token, subject.next()) {
-                (">", Some(_)) => return true,
-                ("*", Some(_)) => {}
-                (token, Some(value)) if token == value => {}
-                _ => return false,
-            }
-        }
-        subject.next().is_none()
-    }
-
-    #[test]
-    fn an_older_install_loses_its_password_users() {
-        let mut authorization: Authorization = serde_json::from_value(json!({"users":[{
-            "user":"platform-seal","password":"old",
-            "permissions":{"publish":{"deny":[">"]},"subscribe":{"deny":[">"]}}
-        }]}))
-        .unwrap();
-        keep_platform_users(&mut authorization);
-        assert!(
-            authorization
-                .users
-                .iter()
-                .all(|user| user.password.is_none())
-        );
-        assert_eq!(authorization.users.len(), platform_users().len());
-    }
-
 }

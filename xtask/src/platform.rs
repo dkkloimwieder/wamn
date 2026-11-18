@@ -6,10 +6,14 @@ use clap::Args as ClapArgs;
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use serde_json::Value;
 use std::path::PathBuf;
+use wamn_build::GuestTarget;
 use wamn_platform_install::release_chart::{self, ImageSet};
 
 const IMAGES: [&str; 5] = ["host", "control", "ctl", "identity", "edge-web"];
-const ROLES: [(&str, &str); 1] = [("http-route", "http")];
+const GUESTS: [(&str, &str, GuestTarget); 2] = [
+    ("http-route", "http", GuestTarget::WasiP2),
+    ("workflow-service", "workflow", GuestTarget::WasiP3),
+];
 
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -45,12 +49,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let components = tempfile::tempdir()?;
     let mut palette_pins = std::collections::BTreeMap::new();
     if !args.stamp_only {
-        // Both roles use the same component build and validation path as packages.
-        for (package, role) in ROLES {
-            let path = wamn_build::build_guest(&root, &root.join("apps/Cargo.toml"), package, None)
+        // Platform guests use the same component build and validation path as packages.
+        for (package, image, target) in GUESTS {
+            let path = wamn_build::build_guest(&root, &root.join("apps/Cargo.toml"), package, target)
                 .await?;
-            let bytes = std::fs::read(path)?;
-            std::fs::write(components.path().join(format!("{role}.wasm")), &bytes)?;
+            std::fs::copy(path, components.path().join(format!("{image}.wasm")))?;
         }
         for component in wamn_build::palette::build(&root).await? {
             let bytes = std::fs::read(&component.file)?;
@@ -140,11 +143,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             command.arg(".");
             process::execute(&mut command).await?;
         }
-        for (_, role) in ROLES {
-            let file = format!("{role}.wasm");
+        for (_, image, _) in GUESTS {
+            let file = format!("{image}.wasm");
             let bytes = std::fs::read(components.path().join(file))?;
             wash_runtime::oci::push_component(
-                &format!("{}/wamn/{role}:{version}", args.registry),
+                &format!("{}/wamn/{image}:{version}", args.registry),
                 &bytes,
                 wash_runtime::oci::OciConfig {
                     insecure: loopback(&args.registry),
@@ -203,12 +206,12 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         let digest = inspect(&root, &reference).await?;
         images.insert(image, format!("{reference}@{digest}"));
     }
-    let mut roles = Vec::new();
-    for (_, role) in ROLES {
-        let reference = format!("{}/wamn/{role}:{version}", args.registry);
+    let mut guests = std::collections::BTreeMap::new();
+    for (_, image, _) in GUESTS {
+        let reference = format!("{}/wamn/{image}:{version}", args.registry);
         let digest = inspect(&root, &reference).await?;
-        let pinned = format!("{}/wamn/{role}@{digest}", args.registry);
-        if args.stamp_only && role == "http" {
+        let pinned = format!("{}/wamn/{image}@{digest}", args.registry);
+        if args.stamp_only && image == "http" {
             let (bytes, _) = wash_runtime::oci::pull_component(
                 &pinned,
                 wash_runtime::oci::OciConfig {
@@ -220,7 +223,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             .await?;
             std::fs::write(components.path().join("http.wasm"), bytes)?;
         }
-        roles.push(pinned);
+        guests.insert(image, pinned);
     }
     let ui_digest = if ui {
         if args.stamp_only {
@@ -276,7 +279,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         &chart,
         &ImageSet {
             host: images.remove("host").context("host image")?,
-            http: roles.remove(0),
+            http: guests.remove("http").context("http image")?,
+            workflow: guests.remove("workflow").context("workflow image")?,
         },
         &args.out,
     )?;

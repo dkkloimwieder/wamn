@@ -105,7 +105,8 @@ fn seal(
 pub async fn build(repository: &Path) -> Result<Vec<PaletteComponent>> {
     let mut palette = Vec::new();
     for (manifest, package, declaration) in sources(repository)? {
-        let file = crate::build_guest(repository, &manifest, &package, None).await?;
+        let file =
+            crate::build_guest(repository, &manifest, &package, crate::GuestTarget::WasiP2).await?;
         let declaration = seal(&fs::read(&file)?, declaration)?;
         palette.push(PaletteComponent {
             name: declaration.component.clone(),

@@ -30,7 +30,8 @@ wamn platform status deploy/kind/cluster.k
 
 Deployment creates or reuses `wamn-local` and connects its registry to the kind network.
 Helm first installs cert-manager, CloudNativePG, and the TLS ingress controller.
-The platform chart then installs certificates, NATS, the wasmCloud operator, and the collector.
+The platform chart then installs certificates, NATS, wasmCloud runtime operator 2.12.1, and the collector.
+The NATS file-store limit and volume size use the same value, `nats.config.jetstream.fileStore.pvc.size`. It defaults to `10Gi`.
 The org chart creates PostgreSQL in the org namespace.
 Bootstrap Jobs initialize SQL and credentials before the service components start.
 Identity, control, and the edge belong to the platform Helm release.
@@ -170,7 +171,7 @@ Kubernetes removes completed Jobs after one hour.
 There is no operation history database.
 
 The server selects the image, command, namespace, actor, chart, and credential references.
-Deploy, rollback, and diff use the existing apply, registry, and NATS credentials.
+Deploy, rollback, and diff use the apply and registry credentials.
 Apply and reset also receive the project platform-migration, package-migration, and capture credentials.
 Reset advances replication through the capture login and removes package objects through their migration login.
 SQL steps run inside the authorized operation Job with their owning role credentials.
@@ -178,7 +179,8 @@ The control image runs workers and reads the installed chart reference.
 The installed control configuration names the pinned worker image and its configuration.
 Environment provisioning creates separate code and SQL ServiceAccounts and namespace Roles.
 Reset uses the existing lifecycle worker account to stop and resume the shared environment host.
-Each project's CDC account reads only its replication credential and database CA.
+Configure creates the CDC reader's ServiceAccount and Role from `operations.capture` before it deploys the reader.
+This account can read only the project's replication credential and database CA. Delete removes it with the reader.
 
 
 Set `WAMN_CONTROL_URL` to the deployed control host and `WAMN_TOKEN` to your password session token.
@@ -218,7 +220,15 @@ The installer reconciles the database and role declarations. The environment lib
 A new database receives its initial SQL through an installer bootstrap Job. That worker refuses an existing baseline.
 Later configuration updates use restricted connections and never read a superuser credential.
 Use `--disposable` only when first recording an environment that can be reset.
-Use `wamn env delete ORG/ENV/PROJECT` to remove an environment. Add `--data` and confirm the coordinate in a terminal to delete its database.
+Configure uses the environment chart to create the project's PostgreSQL publication. The publication selects the schemas of installed models for change data capture (CDC).
+The Job prepares the replication slot, then issues the shared environment Certificate and the project's reader Certificate.
+After the Certificates report ready, the Job reads the environment Secret. It waits up to 60 seconds for NATS to accept the account.
+The Job creates the project stream before it deploys the CDC reader from the pinned host image.
+The shared host group uses the runtime operator chart at version 2.12.1. Its `wasmcloud-nats` entry points to the broker and reads TLS files from `/etc/wasmcloud/host-plugin-secrets/<environment-secret>/`.
+
+Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Add `--data` and confirm the coordinate in a terminal to delete its database.
+Delete stops the reader before it removes the stream, then removes the replication slot and publication.
+The last project removes the environment account and shared Certificate after deleting its stream.
 These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
 Use `wamn revoke-pat --project PROJECT --env ENV --prefix PREFIX` from an org admin session.
 Other lifecycle operations take the coordinate and read the registry.
@@ -510,11 +520,9 @@ The deployed capture owner sets replican identity from the installed published p
 The development loop reconciles it directly from local source on each activation.
 Captured tables use REPLICA IDENTITY FULL so that events include the old row.
 
-Provisioning owns database schema, privileges, environment bindings, and broker stream configuration.
-Runtime uses credentials bound to that environment.
-Declare stream replicas and the duplicate window in the environment configuration.
-Activation compares declared configuration with the provisioned resources and refuses disagreement.
-It does not grant runtime credentials permission to reconfigure streams.
+The configure Job reads the replica count and duplicate window from the installed event policy.
+It compares an existing stream with the source declaration before it starts the reader.
+The release chart scopes application access to the project stream and the `evt.<org>.<env>.<project>.>` subjects. See [broker accounts and retention](../architecture/platform-services.md#events).
 
 A physical schema change follows the selected mode and recorded disposable authorization described above.
 
@@ -902,7 +910,9 @@ Control reads the same verifier settings from its mounted configuration.
 The HTTP interface keeps its `credential-unavailable` result.
 
 `wamn-kubernetes` owns Secret reads and writes. Each update preserves `resourceVersion` and retries concurrent changes.
-`wamn-broker` owns the NATS authorization Secret. Platform install and environment provisioning call the same writer.
+`wamn-broker` owns the accounts document in `platform/wamn-nats-authorization`.
+The installer helper creates the Secret before Helm when it is absent. Step 3.6 supplies the fresh-install entry point that calls this helper.
+Configure and delete Jobs update the same document.
 
 ### Transaction identity retention
 

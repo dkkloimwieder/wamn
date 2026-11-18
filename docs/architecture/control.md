@@ -26,9 +26,8 @@ It also checks the org control login and the fixed apply login.
 | `registry_auth_file` | Mounted registry credential file |
 | `registry_token_metadata` | Use the installed metadata credential source instead of the registry file |
 | `insecure_registry`, `oci_ca_paths` | Installed registry transport and public trust bundles |
-| `nats` | Broker `url`, mounted `ca`, `cert`, `key`, and optional `server_name` |
-| `event_observer` | Optional broker connection for capture-gap recovery, using the observer credential |
-| `events` | Optional event policy: `stream_replicas` and `dup_window_secs` |
+| `event_observer` | Optional broker connection for capture-gap observation. Installation leaves it unset. |
+| `events` | Optional event policy with `stream_replicas` and `dup_window_secs` |
 | `identity` | Optional operator `endpoint`, `client_cert`, `client_key`, and `server_ca` |
 | `oauth_encryption` | Optional envelope encryption configuration |
 
@@ -41,7 +40,8 @@ The worker calls `environment::operation::execute` once. It runs SQL in the same
 That operation also removes expired dev package tags after it reads package pins from every published release.
 Job status is visible only through the authorized target and operation annotations.
 
-The chart mounts the apply credential, `wamn-ctl-nats`, and the configured registry credential in operation Jobs.
+Operation Jobs mount the apply and registry credentials.
+Configure and delete Jobs read the environment's NATS Secret through Kubernetes. Configure reads it after the Certificate reports ready.
 SQL operations also mount the project platform-migration, package-migration, and capture credentials.
 Reset uses capture authority for replication and package-migration authority for package object deletion.
 Their names come from the registry coordinate, database identity, and the provisioning role definitions.

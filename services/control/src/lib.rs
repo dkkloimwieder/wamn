@@ -50,7 +50,6 @@ pub struct Configuration {
     pub insecure_registry: bool,
     #[serde(default)]
     pub oci_ca_paths: Vec<PathBuf>,
-    pub nats: Nats,
     pub events: Option<Events>,
     pub event_observer: Option<Nats>,
     #[serde(default)]
@@ -58,7 +57,7 @@ pub struct Configuration {
     pub oauth_encryption: Option<wamn_envelope::encryption::Configuration>,
 }
 
-/// The platform broker connection, using mounted TLS credentials.
+/// The optional capture-gap observer broker connection.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Nats {
@@ -80,7 +79,7 @@ impl Nats {
     }
 }
 
-/// The installed event stream policy, using the platform broker credentials.
+/// The installed event stream policy.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Events {
@@ -162,7 +161,6 @@ impl Configuration {
             host_group: None,
             identity_issuer: self.session_issuer.clone(),
             events: self.events.as_ref().map(|events| wamn_broker::EventBroker {
-                nats: self.nats.connection(),
                 stream_replicas: events.stream_replicas,
                 dup_window_secs: events.dup_window_secs,
             }),

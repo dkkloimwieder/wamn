@@ -165,30 +165,6 @@ pub fn reader_configuration(
     }
 }
 
-/// Render a reader with its replication configuration and broker certificate.
-pub fn reader_deployment(triple: &Triple, namespace: &str, image: &str) -> serde_json::Value {
-    use serde_json::json;
-    let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
-    let project_env_key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
-    let labels = json!({"app.kubernetes.io/name":"wamn-cdc-reader", "app.kubernetes.io/instance":project_env_key});
-    json!({
-        "apiVersion":"apps/v1", "kind":"Deployment",
-        "metadata":{"name":name,"namespace":namespace,"annotations":{"wamn.environment":triple.to_string()}},
-        "spec":{"replicas":1,"strategy":{"type":"Recreate"},"selector":{"matchLabels":labels},
-            "template":{"metadata":{"labels":labels},"spec":{
-                "automountServiceAccountToken":true,
-                "serviceAccountName":name,
-                "containers":[{"name":"reader","image":image,"command":["/usr/local/bin/wamn-cdc-reader"],
-                    "args":["--config","/etc/wamn/cdc/reader.json"],
-                    "volumeMounts":[{"name":"cdc","mountPath":"/etc/wamn/cdc","readOnly":true},
-                        {"name":"nats","mountPath":"/etc/wamn/nats","readOnly":true}]
-                }],"volumes":[{"name":"cdc","configMap":{"name":name}},
-                    {"name":"nats","secret":{"secretName":"wamn-cdc-reader-nats"}}]
-            }}
-        }
-    })
-}
-
 /// Stop the target reader without touching another environment's process or broker state.
 pub async fn stop_reader(
     kubeconfig: &std::path::Path,

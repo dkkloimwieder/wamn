@@ -26,6 +26,7 @@ pub fn prepared_chart(repository: &Path) -> anyhow::Result<Chart> {
         &ImageSet {
             host: format!("localhost:5001/host:host-build@sha256:{digest}"),
             http: format!("registry.example/components/http@sha256:{digest}"),
+            workflow: format!("registry.example/components/workflow@sha256:{digest}"),
         },
         &chart.0,
     )?;

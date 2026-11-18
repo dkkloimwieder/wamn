@@ -613,7 +613,6 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[IDENTITY-LIVE]` | Runtime `plugins::wamn_postgres::session_identity::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
-| `[CAPTURE-GAP]` | `crates/environment/tests/capture_gap_live.rs`: requires a Kubernetes target, a stamped release chart, PostgreSQL 18 with `wal_level=logical`, and the platform NATS inputs below. It stops and restarts the reader Deployment during recovery |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.
 Do not substitute shared services for missing test inputs.

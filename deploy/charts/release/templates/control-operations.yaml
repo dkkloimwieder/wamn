@@ -76,7 +76,7 @@ rules:
   resources: [roles, rolebindings]
   verbs: [get, list, watch, create, update, patch, delete, bind, escalate]
 - apiGroups: [postgresql.cnpg.io]
-  resources: [clusters, databases]
+  resources: [clusters, databases, publications]
   verbs: [get, list, watch, create, update, patch, delete]
 - apiGroups: [cert-manager.io]
   resources: [certificates, issuers]

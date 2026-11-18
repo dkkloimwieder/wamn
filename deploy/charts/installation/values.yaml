@@ -26,9 +26,8 @@ nats:
       enabled: true
       fileStore:
         pvc:
-          size: 1Gi
+          size: 10Gi
           storageClassName: standard
-        maxSize: 3GB
       memoryStore:
         enabled: true
         maxSize: 256MB
@@ -156,5 +155,3 @@ platform:
   chart: ''
 edgeDnsNames: []
 hostEnvironment: {}
-
-brokerCertificates: []

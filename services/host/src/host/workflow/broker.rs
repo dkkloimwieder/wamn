@@ -1,22 +1,18 @@
-//! Lazily connect to each project's source stream with its mounted certificate.
+//! Lazily connect to the environment account with its mounted certificate.
 
 use anyhow::Context as _;
 use async_nats::jetstream;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::OnceCell;
 use wamn_catalog::canonical_name::CanonicalName;
-use wamn_registry::ProjectEnvKey;
 
 use super::Workload;
-
-type ProjectClient = Arc<OnceCell<Arc<jetstream::Context>>>;
 
 pub(super) struct Broker {
     server: String,
     tls_first: bool,
-    projects: Mutex<HashMap<ProjectEnvKey, ProjectClient>>,
+    client: OnceCell<Arc<jetstream::Context>>,
 }
 
 impl Broker {
@@ -24,7 +20,7 @@ impl Broker {
         Self {
             server,
             tls_first,
-            projects: Mutex::default(),
+            client: OnceCell::new(),
         }
     }
 
@@ -34,18 +30,7 @@ impl Broker {
         workflow_id: &CanonicalName,
     ) -> anyhow::Result<Consumer> {
         let app = &workload.application;
-        let key = &workload.project_key;
-        let slot = {
-            let mut projects = self.projects.lock().expect("workflow broker lock poisoned");
-            if let Some(slot) = projects.get(key) {
-                Arc::clone(slot)
-            } else {
-                let slot = Arc::new(OnceCell::new());
-                projects.insert(key.clone(), Arc::clone(&slot));
-                slot
-            }
-        };
-        let context = slot.get_or_try_init(|| self.connect(key)).await?;
+        let context = self.client.get_or_try_init(|| self.connect(app)).await?;
         Ok(Consumer {
             context: Arc::clone(context),
             stream: wamn_event_wire::stream_name(&app.org, &app.project, &app.environment),
@@ -56,12 +41,14 @@ impl Broker {
         })
     }
 
-    async fn connect(&self, key: &ProjectEnvKey) -> anyhow::Result<Arc<jetstream::Context>> {
+    async fn connect(
+        &self,
+        app: &wamn_catalog::application_config::ApplicationConfig,
+    ) -> anyhow::Result<Arc<jetstream::Context>> {
         let directory = std::path::Path::new(super::super::HOST_PLUGIN_SECRET_DIRECTORY)
-            .join(wamn_registry::name::nats_certificate(key));
-        let inbox = wamn_registry::name::inbox(&wamn_registry::environment_nats_user(key));
+            .join(wamn_registry::name::environment_nats_secret(&app.org, &app.environment));
         let options = wamn_broker::nats::tls_options(
-            async_nats::ConnectOptions::new().custom_inbox_prefix(inbox),
+            async_nats::ConnectOptions::new().ignore_discovered_servers(),
             Some(&directory.join("ca.crt")),
             Some(&directory.join("tls.crt")),
             Some(&directory.join("tls.key")),
@@ -78,7 +65,7 @@ impl Broker {
             wamn_broker::nats::InitialConnect::Once,
         )
         .await
-        .with_context(|| format!("connect to the workflow event broker for {key}"))?;
+        .with_context(|| format!("connect to the workflow broker for {}/{}", app.org, app.environment))?;
         Ok(Arc::new(jetstream::new(client)))
     }
 }
@@ -116,14 +103,15 @@ impl Consumer {
         }
     }
 
-    pub(super) async fn create(&self, filter: &str, start_sequence: u64) -> anyhow::Result<()> {
+    pub(super) async fn create(&self, filter_subjects: Vec<String>, start_sequence: u64) -> anyhow::Result<()> {
         let config = jetstream::consumer::pull::Config {
             deliver_policy: jetstream::consumer::DeliverPolicy::ByStartSequence { start_sequence },
             max_deliver: -1,
             max_waiting: 64,
+            filter_subjects,
             ..wamn_broker::events::event_consumer_config(
                 &self.name,
-                filter,
+                "",
                 Duration::from_secs(30),
                 5,
             )

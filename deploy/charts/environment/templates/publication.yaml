@@ -13,7 +13,7 @@ spec:
   cluster: {name: {{ .cluster }}}
   dbname: {{ .database }}
   target:
-    objects:
+    objects:{{ if not .schemas }} []{{ end }}
     {{- range .schemas }}
       - tablesInSchema: {{ . | quote }}
     {{- end }}

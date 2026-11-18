@@ -349,14 +349,14 @@ async fn enable(
         }
         return Ok(ConsumerChange::Keep);
     }
-    let data_change = if let WiringEntry::DataChange { entity, .. } = checked.entry {
+    let data_change = if let WiringEntry::DataChange { entity, ops, .. } = checked.entry {
         let consumer = broker.consumer(workload, &version.workflow_id).await?;
         let start = consumer
             .last_sequence()
             .await?
             .checked_add(1)
             .context("workflow source stream sequence overflow")?;
-        Some((consumer, start, entity))
+        Some((consumer, start, entity, ops))
     } else {
         None
     };
@@ -385,15 +385,17 @@ async fn enable(
     .execute(connection)
     .await?;
     let had_data_change = previous.as_deref() == Some("data_change");
-    if let Some((consumer, start, entity)) = data_change {
+    if let Some((consumer, start, entity, ops)) = data_change {
         let already_owned = had_data_change && consumer.exists().await?;
-        let filter = wamn_event_wire::entity_filter(
-            &app.org,
-            &app.project,
-            &app.environment,
-            entity.as_str(),
-        );
-        consumer.create(&filter, start).await?;
+        let filters = ops.iter().map(|op| {
+            wamn_registry::name::event_subject(
+                &app.org,
+                &app.project,
+                &app.environment,
+                &format!("{entity}.{}", op.as_str()),
+            )
+        }).collect();
+        consumer.create(filters, start).await?;
         // A rollback keeps another version's existing consumer.
         return Ok(if already_owned {
             ConsumerChange::Keep

@@ -2,7 +2,7 @@
 
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_registry::Triple;
+use wamn_registry::{Triple, name};
 
 use super::super::{Platform, ensure::kubectl};
 
@@ -58,46 +58,36 @@ pub(super) async fn require_ownership(
             "refused: Publication {database} does not belong to {triple}"
         );
     }
-    let project_env_key =
-        wamn_provision::project_env_key(&triple.org, &triple.project, &triple.env);
-    let certificate = wamn_registry::name::nats_certificate(&project_env_key);
-    if let Some(object) = get(platform, namespace, "certificate", &certificate).await? {
-        let user = wamn_registry::environment_nats_user(&project_env_key);
-        anyhow::ensure!(
-            object["spec"]["secretName"] == certificate
-                && object["spec"]["commonName"] == user
-                && object["spec"]["dnsNames"] == serde_json::json!([user]),
-            "refused: Certificate {certificate} does not belong to {triple}"
-        );
-    }
-    if let Some(object) = get(platform, namespace, "secret", &certificate).await? {
-        anyhow::ensure!(
-            object["metadata"]["annotations"]["cert-manager.io/certificate-name"] == certificate,
-            "refused: Secret {certificate} does not belong to its environment Certificate"
-        );
+    let (org, env) = (&triple.org, &triple.env);
+    let cdc = name::cdc_nats_certificate(triple);
+    for (certificate, secret, user) in [
+        (name::environment_nats_certificate(org, env), name::environment_nats_secret(org, env),
+            name::environment_nats_user(org, env)),
+        (cdc.clone(), cdc, name::cdc_nats_user(triple)),
+    ] {
+        if let Some(object) = get(platform, namespace, "certificate", &certificate).await? {
+            anyhow::ensure!(
+                object["spec"]["secretName"] == secret
+                    && object["spec"]["commonName"] == user
+                    && object["spec"]["dnsNames"] == serde_json::json!([user]),
+                "refused: Certificate {certificate} does not belong to {triple}"
+            );
+        }
+        if let Some(object) = get(platform, namespace, "secret", &secret).await? {
+            anyhow::ensure!(
+                object["metadata"]["annotations"]["cert-manager.io/certificate-name"] == certificate,
+                "refused: Secret {secret} does not belong to Certificate {certificate}"
+            );
+        }
     }
     Ok(())
 }
 
 pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
-    let name = wamn_provision::project_env_cdc_secret_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-    );
-    kubectl(
+    reconcile_project(
         platform,
-        &platform.target.namespace,
-        &[
-            "delete",
-            "deployment",
-            &name,
-            "--ignore-not-found",
-            "--cascade=foreground",
-            "--wait=true",
-            "--timeout=120s",
-        ],
-        None,
+        triple,
+        serde_json::json!({"cdcReader": null, "operations": null}),
     )
     .await?;
     wamn_events::lifecycle::wait_reader_stopped(
@@ -149,26 +139,37 @@ pub(super) async fn delete_publication(platform: &Platform, database: &str) -> a
     Ok(())
 }
 
-pub(super) async fn delete_event_certificate(
+pub(super) async fn delete_event_certificates(
     platform: &Platform,
-    project_env_key: &wamn_registry::ProjectEnvKey,
+    triple: &Triple,
+    last: bool,
 ) -> anyhow::Result<()> {
-    let name = wamn_registry::name::nats_certificate(project_env_key);
-    for type_ in ["certificate", "secret"] {
-        kubectl(
-            platform,
-            &platform.target.namespace,
-            &[
-                "delete",
-                type_,
-                &name,
-                "--ignore-not-found",
-                "--wait=true",
-                "--timeout=120s",
-            ],
-            None,
-        )
-        .await?;
+    reconcile_project(platform, triple, serde_json::json!({"brokerCertificates": []})).await?;
+    delete_secret(platform, &name::cdc_nats_certificate(triple)).await?;
+    if last {
+        let host_release = name::environment_host_name(&triple.org, &triple.env);
+        wamn_kubernetes::helm::uninstall(&platform.target, &host_release).await?;
+        delete_secret(platform, &name::environment_nats_secret(&triple.org, &triple.env)).await?;
     }
     Ok(())
+}
+
+async fn reconcile_project(platform: &Platform, triple: &Triple, overlay: Value) -> anyhow::Result<()> {
+    let release = wamn_provision::environment_names::environment_resource_name(&triple.org, &triple.project, &triple.env)?;
+    if crate::platform::resources::release_values(
+        &platform.target, &platform.target.namespace, &release,
+    ).await?.is_some() {
+        wamn_platform_install::environment::apply(
+            &platform.target, &platform.chart.join("platform/environment"), &release, overlay,
+        ).await?;
+    }
+    Ok(())
+}
+
+async fn delete_secret(platform: &Platform, secret: &str) -> anyhow::Result<()> {
+    kubectl(
+        platform, &platform.target.namespace,
+        &["delete", "secret", secret, "--ignore-not-found"],
+        None,
+    ).await.map(drop)
 }

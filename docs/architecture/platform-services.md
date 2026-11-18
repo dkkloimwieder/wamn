@@ -309,40 +309,23 @@ PostgreSQL change capture publishes the [event contract](../../crates/event-wire
 The wire owner decodes records and verifies their source identity.
 Records carry `"type": "cdc"` or `"type": "derived"` and use underscore field names.
 Subjects use `evt.<org>.<env>.<project>.<entity>.<op>`.
-The declared organization, project, and environment jointly define stream isolation.
-Length-prefixed names distinguish triples that plain underscore joining can confuse.
-Source and advisory streams belong to that complete triple.
+Each project has its own source stream. Length-prefixed stream names distinguish the full org, environment, and project coordinates.
+The stream keeps messages for up to seven days and holds up to 256 MiB. It discards the oldest messages first.
 
-Provisioning credentials create the declared streams and durable consumers.
-Provisioning compares existing configuration and refuses a mismatch.
-Runtime publishers and event consumers can publish, subscribe, and attach to declared consumers.
-They cannot create, update, or delete streams or consumers.
-The constructor compares declared stream fields, including foreign sources, mirrors, filters, and delivery policy.
-The consumer test compares only the fields wamn sets; the broker owns every other consumer field, and the test does not compare it.
+The platform runs one NATS server. Each client presents a certificate, and NATS maps its DNS name to a user.
+The scheduler users `wasmcloud-operator` and `wasmcloud-runtime` belong to the `PLATFORM` account, along with the restricted `wasmcloud-data` user.
+Each environment has its own `ENV_<org>_<env>` account. It has 1 GiB of JetStream file storage, zero memory storage, and unlimited stream and consumer counts.
+The account contains all the environment's project streams. Accounts exchange no imports or exports.
 
-The platform runs one NATS for the scheduler, the events and the host memories.
-Each client presents a certificate, and the server maps it to a NATS user.
-An environment's user reaches only its own events, stream consumers and memory keys.
-Only the provisioning client creates, updates or deletes streams and consumers.
-NATS replication remains separate from Kubernetes workload replicas.
-The host carries the declared stream replica count and duplicate window into activation.
-No runtime default substitutes for a missing declaration.
-The [native declaration owner](../../crates/broker/src/events.rs) supplies the configurations used by provisioning and activation.
+The `wamn-env-<org>--<env>` user has full rights in its environment account.
+The configure and delete Jobs use that account to manage streams. The host uses it to manage workflow consumers.
+Each project gives its CDC reader a separate `wamn-cdc-<key>` user in the same account.
+The reader can publish only to its project's event subjects and stream-info API. It subscribes to `_INBOX.>` for replies.
 
-The workflow service pulls Data change messages and acknowledges them after the host admits the run.
-A disconnect before acknowledgement permits redelivery.
-The host deduplicates admission by workflow version and source event identity.
-
-The broker retains exhaustion and termination advisories for seven days, with 1,000 records per advisory subject.
-Payload bytes remain in the separately retained source stream.
-Source expiry can remove payload while its advisory remains.
-An advisory observation does not pretend that an expired payload is available.
-
-An observer connects with that environment's credentials.
-It can read only that environment's advisory metadata and any separately authorized source payload.
-Observer, runtime, and provisioning credentials remain distinct.
-The unauthenticated NATS HTTP monitor binds loopback and has no Service exposure.
-Administrator process access remains separate from environment observation.
+The host group declares one unnamed stock `wasmcloud-nats` binding with `workloadConfig: deny`.
+The binding mounts the environment TLS Secret and limits access to the environment's project streams and subjects.
+Each application workload narrows those grants to its own project's stream and subjects.
+The capture-gap observer stays unwired. The NATS HTTP monitor binds to loopback.
 
 Derived events use the host's admitted terminal, logical deduplication input, and bound causation.
 The guest cannot supply `project_env_key`, project, or environment authority.

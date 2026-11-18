@@ -5,8 +5,8 @@
 //! Under the lifecycle lock, test ownership and existing unfinished runs before
 //! uninstalling application releases. Drain their hosts and test runs again.
 //! Delete and drain the CDC reader before removing credentials or replication.
-//! Remove the environment host, Secrets, control administration key, streams,
-//! event certificate, Publication CR, replication slot, and Database CR.
+//! Retire the host and remove the project stream before retiring broker credentials.
+//! Then remove the replication slot, Publication CR, and Database CR.
 //! Remove control logins and, with `--data`, the instance roles.
 //! Remove the credential store Secret and its account before the final transaction.
 //! That transaction removes connection references after external resources are gone.
@@ -27,7 +27,6 @@ pub use plan::{instance_families, instance_roles};
 pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
-use async_nats::jetstream;
 use wamn_provision::sql::drop_replication_slot_sql;
 use wamn_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_login,
@@ -35,7 +34,7 @@ use wamn_provision::workload_role::{
 use wamn_provision::{
     cdc_object_name, control_administration_secret_name, project_env_database_name,
 };
-use wamn_registry::Triple;
+use wamn_registry::{Triple, name};
 
 use super::Platform;
 use super::analyse::application_releases;
@@ -232,30 +231,18 @@ async fn delete_locked(
             lines.push(format!("removed the environment's key of Secret {control}"));
         }
 
-        // Provisioning creates streams even before the reader is registered.
-        let broker = platform.events.as_ref().context(
-            "environment provisioning creates event streams; set WAMN_NATS_URL and its \
-         WAMN_NATS_TLS_* certificate to delete them",
-        )?;
-        let broker = jetstream::new(
-            broker
-                .nats
-                .connect()
-                .await
-                .context("connect the event provisioning credential")?,
-        );
-        let source = wamn_event_wire::stream_name(org, project, env);
-        for stream in [source] {
+        if wamn_broker::authorization::environment_account_exists(&platform.target, triple).await?
+            && let Some(broker) = wamn_broker::authorization::environment_context(
+                &platform.target, triple, wamn_platform_install::platform::identity::NATS_URL,
+            ).await?
+        {
+            let stream = name::stream_name(org, project, env);
             if wamn_broker::streams::delete(&broker, &stream).await? {
                 lines.push(format!("deleted stream {stream}"));
             }
         }
-        resources::delete_event_certificate(platform, &project_env_key).await?;
-        lines.push(format!(
-            "deleted the event certificate and Secret of {triple} (or they were gone)"
-        ));
-        resources::delete_publication(platform, &database).await?;
-        lines.push(format!("deleted publication {database} (or it was gone)"));
+        let last = wamn_broker::authorization::remove_project(&platform.target, triple).await?;
+        resources::delete_event_certificates(platform, triple, last).await?;
 
         // Slot administration belongs to the capture login on the recorded cluster.
         if cr_present {
@@ -285,6 +272,9 @@ async fn delete_locked(
                     .await?;
             }
         }
+
+        resources::delete_publication(platform, &database).await?;
+        lines.push(format!("deleted publication {database} (or it was gone)"));
 
         if let Some(lock) = &project_lock
             && !data
@@ -358,7 +348,6 @@ async fn delete_locked(
 
     let configurations = [
         wamn_provision::project_env_secret_name(org, project, env),
-        wamn_provision::project_env_cdc_secret_name(org, project, env),
     ];
     let mut arguments = vec!["delete", "configmap", "--ignore-not-found"];
     arguments.extend(configurations.iter().map(String::as_str));

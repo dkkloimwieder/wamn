@@ -8,6 +8,8 @@ platform:
     http:
       image: ""
       maxConcurrency: 1
+  workflow:
+    image: ""
   ctl:
     image: ""
   identity:

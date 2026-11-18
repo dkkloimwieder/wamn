@@ -321,14 +321,21 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
                 .collect::<Vec<_>>(),
         )?,
     );
+    let event_access = serde_json::json!({
+        "namespace":"wasmcloud",
+        "package":"nats",
+        "version":"0.1.3",
+        "interfaces":["jetstream"],
+        "config": {
+            "stream-allow":wamn_registry::name::stream_name(&input.org, &input.project, &input.env),
+            "subject-allow":wamn_registry::name::stream_subjects(&input.org, &input.project, &input.env),
+        }
+    });
     values.insert(
         "hostInterfaces".into(),
         serde_yaml::to_value(
-            input
-                .roles
-                .iter()
-                .flat_map(|role| &role.host_interfaces)
-                .collect::<Vec<_>>(),
+            input.roles.iter().flat_map(|role| &role.host_interfaces)
+                .chain(std::iter::once(&event_access)).collect::<Vec<_>>(),
         )?,
     );
     values.insert(

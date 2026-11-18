@@ -46,16 +46,6 @@ pub fn publication_values(
         "schemas":schemas,"publish":wamn_provision::sql::CDC_PUBLISH}})
 }
 
-/// Keep broker-owned certificate parameters in their Helm owner's values.
-pub fn broker_certificates(certificates: Vec<Value>) -> Value {
-    json!({"brokerCertificates":certificates.into_iter().map(|mut certificate| {
-        let mut entry = json!({});
-        entry["name"] = certificate["metadata"]["name"].take();
-        entry["spec"] = certificate["spec"].take();
-        entry
-    }).collect::<Vec<_>>()})
-}
-
 /// Resolve the recorded database on its owning CNPG cluster without reading credentials.
 pub async fn connection(
     registry: &str,

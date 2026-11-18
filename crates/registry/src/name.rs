@@ -17,16 +17,18 @@ pub fn project_env_key(
         .expect("validated registry coordinates fit a deployment key")
 }
 
-/// The NATS user of the environment `project_env_key`. Its client certificate
-/// carries this DNS name, and its replies use the inbox `_INBOX_<user>`
-/// (docs/plan/alignment.md R5).
-pub fn environment_nats_user(project_env_key: &crate::ProjectEnvKey) -> String {
-    format!("wamn-env-{project_env_key}")
+/// The JetStream account shared by the projects of an environment.
+pub fn environment_nats_account(org: &crate::OrgId, env: &crate::EnvName) -> String {
+    format!("ENV_{org}_{env}")
 }
 
-/// The NATS user of the control host of `org`, which covers every
-/// environment of the org (docs/plan/alignment.md R7).
-pub fn control_nats_user(org: &crate::OrgId) -> String {
+/// The full-access certificate user inside an environment account.
+pub fn environment_nats_user(org: &crate::OrgId, env: &crate::EnvName) -> String {
+    format!("wamn-env-{}", environment_key(org, env))
+}
+
+/// The ServiceAccount of the org control service.
+pub fn control_service_account(org: &crate::OrgId) -> String {
     format!("wamn-control-{org}")
 }
 
@@ -231,14 +233,31 @@ pub fn org_workload_secret_name(prefix: &str, org: &crate::OrgId) -> String {
 pub fn workload_secret_prefix(stem: &str) -> String {
     format!("wamn-{stem}-")
 }
-/// A broker certificate Secret.
-pub fn nats_certificate(key: &crate::ProjectEnvKey) -> String {
-    format!("wamn-nats-{key}")
+/// The Certificate shared by the projects of an environment.
+pub fn environment_nats_certificate(org: &crate::OrgId, env: &crate::EnvName) -> String {
+    format!("wamn-nats-{}", environment_key(org, env))
 }
-/// A control broker certificate Secret.
-pub fn control_nats_certificate(org: &crate::OrgId) -> String {
-    format!("wamn-nats-control-{org}")
+
+/// The TLS Secret issued for the environment Certificate.
+pub fn environment_nats_secret(org: &crate::OrgId, env: &crate::EnvName) -> String {
+    environment_nats_certificate(org, env)
 }
+
+/// The publish-only certificate user for the project's CDC reader.
+pub fn cdc_nats_user(target: &crate::Triple) -> String {
+    format!("wamn-cdc-{}", project_env_key(&target.org, &target.project, &target.env))
+}
+
+/// The Certificate and TLS Secret of the project's CDC reader.
+pub fn cdc_nats_certificate(target: &crate::Triple) -> String {
+    format!("wamn-cdc-nats-{}", project_env_key(&target.org, &target.project, &target.env))
+}
+
+/// The subject ceiling shared by the projects of an environment.
+pub fn environment_event_subjects(org: &crate::OrgId, env: &crate::EnvName) -> String {
+    format!("evt.{org}.{env}.>")
+}
+
 /// The prefix shared by a project deployment's event subjects.
 pub fn event_prefix(
     org: &crate::OrgId,
@@ -366,25 +385,11 @@ pub const ORG_AUDIENCE_PREFIX: &str = "urn:wamn:org:";
 pub fn org_audience(org: &crate::OrgId) -> String {
     format!("{ORG_AUDIENCE_PREFIX}{org}")
 }
-/// The reply subject prefix of one authenticated broker user.
-pub fn inbox(user: &str) -> String {
-    format!("_INBOX_{user}")
-}
-
 /// The release discovery filter for a validated environment slug.
 pub fn application_release_filter(env: &crate::EnvName) -> String {
     let slug: String = env.as_str().chars().take(SLUG_LEN).collect();
     format!("^r-{slug}-")
 }
-/// Join the parts of a broker subject without reordering its protocol tokens.
-pub fn nats_subject(parts: &[&str]) -> String {
-    parts.join(".")
-}
-/// A broker token that prefixes an identity.
-pub fn nats_token(prefix: &str, identity: &str, suffix: &str) -> String {
-    format!("{prefix}{identity}{suffix}")
-}
-
 /// The memory key of one connection's current facts.
 pub fn connection_key(project: &crate::ProjectEnvKey, id: impl std::fmt::Display) -> String {
     format!("{project}.connection.{id}")

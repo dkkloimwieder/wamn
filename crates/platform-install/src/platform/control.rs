@@ -131,47 +131,7 @@ pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::
     Ok(())
 }
 
-/// Render the org host values shared by the cluster and local control host.
-pub fn host_values(org: &wamn_registry::OrgId) -> Value {
-    let name = wamn_registry::name::resource_suffix("c", org.as_str());
-    let mut values = json!({"runtime-operator": {"runtime": {
-        "terminationGracePeriodSeconds": 70,
-        "serviceAccount": {"create":true,"name":wamn_registry::control_nats_user(org)},
-        // Control operation routes create their Jobs with this account's token.
-        "automountServiceAccountToken": true,
-        "hostGroups": [{
-            "name": name, "namespace": org, "replicas": 1,
-            "schedulerNatsUrl": "nats://wamn-nats.platform.svc.cluster.local:4222",
-            "dataNatsUrl": "nats://wamn-nats.platform.svc.cluster.local:4222",
-            "envFrom": [{"configMapRef":{"name":"wamn-host-settings"}}],
-            "env": [
-                {"name": "WAMN_DRAIN_BOUND_SECONDS", "value": "70"},
-                {"name": "WAMN_CONTROL_URL", "value": "/etc/wamn/control-administration/control.json"},
-                {"name": "WAMN_PAT_ISSUER", "value": format!("https://identity.{org}.svc.cluster.local")},
-                {"name": "WAMN_PAT_CLIENT_CERT", "value": "/etc/identity-operator/tls.crt"},
-                {"name": "WAMN_PAT_CLIENT_KEY", "value": "/etc/identity-operator/tls.key"},
-                {"name": "WAMN_PAT_SERVER_CA", "value": "/etc/identity-ca/ca.crt"},
-                {"name": "WAMN_CONTROL_ADMINISTRATION_DIR", "value": "/etc/wamn/control-administration"}
-            ],
-            "volumes": [
-                {"name": "identity-operator", "secret": {"secretName": wamn_registry::name::resource_suffix("operator",org.as_str())}},
-                {"name": "control-administration", "configMap": {"name": wamn_registry::name::control_administration_secret_name(org)}}
-            ],
-            "volumeMounts": [
-                {"name": "identity-operator", "mountPath": "/etc/identity-operator", "readOnly": true},
-                {"name": "control-administration", "mountPath": "/etc/wamn/control-administration", "readOnly": true}
-            ],
-            "http": {"enabled": true, "port": 80},
-            "resources": {"requests": {"memory": "256Mi", "cpu": "250m"},
-                "limits": {"memory": "4Gi", "cpu": "2"}}
-        }]
-    }}});
-    // The control host's data connection is its org's NATS user, which covers
-    // every environment of the org (docs/plan/alignment.md R7).
-    values["global"] = json!({"certificates": {"dataCertSecretName": wamn_registry::name::control_nats_certificate(org)}});
-    values
-}
-
+/// Render the native control service and its Job configuration.
 pub(super) fn resource_entry(
     document: &ClusterDocument,
     chart: &SelectedChart,
@@ -191,7 +151,6 @@ pub(super) fn resource_entry(
             secret,
         )
     };
-    let nats = json!({"url":super::identity::NATS_URL,"ca":"/credentials/nats/ca.crt","cert":"/credentials/nats/tls.crt","key":"/credentials/nats/tls.key","server_name":null});
     let platform_ui = chart
         .values()
         .get("platformUi")
@@ -208,12 +167,12 @@ pub(super) fn resource_entry(
         "administration_dir":"/etc/wamn/control-administration","worker":{"image":chart.image("control")?,"configuration":configuration,"service_account":wamn_registry::name::operation(org)},
         "chart":chart.reference(),
         "registry_auth_file":"/credentials/registry/config.json",
-        "nats":nats,"events":{"stream_replicas":1,"dup_window_secs":120},
+        "events":{"stream_replicas":1,"dup_window_secs":120},
         "event_observer":null,"identity":{"endpoint":super::identity::issuer(org.as_str()),"client_cert":"/etc/identity-control/tls.crt","client_key":"/etc/identity-control/tls.key","server_ca":"/etc/identity-ca/ca.crt"}});
     Ok(
         json!({"chart":chart.directory(),"version":chart.version,"name":name,"namespace":org,
         "values":{"controlService":true,"org":org,"platformUi":platform_ui,"routeHost":document.route_hosts.control,"roles":[],"runtime-operator":{"runtime":{"hostGroups":[]}},
-        "control":{"image":chart.image("control")?,"configuration":config,"natsSecret":wamn_registry::name::control_nats_certificate(org),"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::control_nats_user(org)},
+        "control":{"image":chart.image("control")?,"configuration":config,"administration":wamn_registry::name::control_administration_secret_name(org),"account":wamn_registry::name::control_service_account(org)},
         "platform":{"chart":chart.reference()}}}),
     )
 }

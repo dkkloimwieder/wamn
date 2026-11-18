@@ -457,7 +457,9 @@ Guest context stays a plain attribute.
 The host's native logging callback enters the invocation span stored in the active scope before it emits each record.
 The scope retains signing authority through commit and replay.
 Cancellation or shutdown revokes both records. Normal completion releases them after result signing.
-The [workflow plugin](../../services/host/src/host/workflow.rs) serves the `wamn:workflow` interfaces for the workflow service.
+The release chart starts the workflow component as the `service` of every application WorkloadDeployment.
+It uses the pinned `platform.workflow.image` and imports `wamn:workflow`, `wasi:clocks`, and `wasmcloud:nats/jetstream@0.1.3`.
+The [workflow plugin](../../services/host/src/host/workflow.rs) serves the `wamn:workflow` interfaces.
 `wamn-run-state` owns admission, leases, checkpoints, settlement and pruning.
 The host uses the project platform login and binds `wamn_run` as the transaction's search path.
 Admission gives the first lease to the winning insert.
@@ -540,7 +542,9 @@ The host admits only one run across replicas.
 The service admits schedules each UTC minute and takes expired leases every 30 seconds.
 It starts each leased run immediately and renews the lease while the run is active.
 
-The service pulls from the durable consumer of each enabled Data change workflow.
+At enable, the host creates one durable consumer in the environment account with one exact subject filter per declared operation.
+The host reads the current stream sequence before the enable LSN. The consumer starts at the next sequence.
+The service pulls from each enabled Data change workflow's consumer through the stock JetStream interface.
 It acknowledges each message after admission and then runs any workflow for which it received a lease.
 It sends JetStream progress acknowledgements during long deliveries.
 For Data change, the host verifies the subject and the `Nats-Msg-Id` against the CDC envelope.
@@ -554,8 +558,9 @@ Only the current owner and generation can renew, record the Response checkpoint 
 A recovered run loads its original workflow version and calls components from the live workload.
 It can resume from the checkpoint in `runs.state_json`.
 
-The reader loads publication and slot names from its configuration.
-It holds its replication login and broker certificate.
+The environment chart deploys one PostgreSQL change data capture (CDC) reader for each project.
+The reader loads the publication and slot names from `reader.json` and the replication connection from `connection.json`.
+It uses the project's capture login and its own NATS Certificate.
 Reset stops the reader before discarding its backlog and broker events.
 
 Apply creates one service principal per application that composes `wamn_integration`, in each environment.
