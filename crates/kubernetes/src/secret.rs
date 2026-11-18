@@ -79,7 +79,7 @@ impl Secret {
     }
 }
 
-/// Read, edit and replace a Secret, retrying a concurrent creation or write.
+/// Read, edit and replace an existing Secret, retrying a concurrent write.
 /// Every edit runs against the latest resource version.
 pub async fn update(
     kubeconfig: &Path,
@@ -93,10 +93,10 @@ pub async fn update(
         for attempt in 0..5 {
             let existing: Option<Secret> =
                 crate::kubectl::get(kubeconfig, context, namespace, "secret", name).await?;
-            let creates = existing.is_none();
-            let mut secret = existing.unwrap_or_else(|| Secret::new(namespace, name));
+            let mut secret =
+                existing.with_context(|| format!("Secret {namespace}/{name} is absent"))?;
             ensure!(
-                creates || secret.metadata.resource_version.is_some(),
+                secret.metadata.resource_version.is_some(),
                 "Secret has no resourceVersion"
             );
             edit(&mut secret)?;
@@ -105,7 +105,7 @@ pub async fn update(
                 kubeconfig,
                 context,
                 namespace,
-                &[if creates { "create" } else { "replace" }, "-f", "-"],
+                &["replace", "-f", "-"],
                 Some(&body),
             )
             .await;

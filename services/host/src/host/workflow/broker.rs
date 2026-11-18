@@ -47,8 +47,12 @@ impl Broker {
     ) -> anyhow::Result<Arc<jetstream::Context>> {
         let directory = std::path::Path::new(super::super::HOST_PLUGIN_SECRET_DIRECTORY)
             .join(wamn_registry::name::environment_nats_secret(&app.org, &app.environment));
+        let user = wamn_registry::name::environment_nats_user(&app.org, &app.environment);
+        let inbox = wamn_broker::nats::inbox_prefix(&user);
         let options = wamn_broker::nats::tls_options(
-            async_nats::ConnectOptions::new().ignore_discovered_servers(),
+            async_nats::ConnectOptions::new()
+                .ignore_discovered_servers()
+                .custom_inbox_prefix(format!("{inbox}.native")),
             Some(&directory.join("ca.crt")),
             Some(&directory.join("tls.crt")),
             Some(&directory.join("tls.key")),

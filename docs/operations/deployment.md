@@ -915,9 +915,16 @@ The HTTP interface keeps its `credential-unavailable` result.
 
 Connection administration passes the registry's credential Secret name and the coordinate values to `wamn-kubernetes`.
 `wamn-kubernetes` reads and writes the Secret. Each update preserves `resourceVersion` and retries concurrent changes.
-`wamn-broker` owns the accounts document in `platform/wamn-nats-authorization`.
-The installer helper creates the Secret before Helm when it is absent. Step 3.6 supplies the fresh-install entry point that calls this helper.
-Configure and delete Jobs update the same document.
+
+The trusted installer sets `global.natsAccountOrgs` in the installation chart.
+Helm creates each `platform/wamn-nats-accounts-<org>` Secret before it adds that org's include and mount.
+On removal, Helm updates the includes and mounts before it deletes the Secret.
+Adding or removing an org restarts the single NATS pod.
+
+The base NATS configuration defines the `PLATFORM` account and includes one `accounts.conf` per org in the same accounts block.
+The reloader watches the files for changes.
+Kubernetes RBAC grants each org worker access to its named Secret.
+The broker writer accepts only `ENV_<org>_<env>` account names for that org.
 
 ### Transaction identity retention
 

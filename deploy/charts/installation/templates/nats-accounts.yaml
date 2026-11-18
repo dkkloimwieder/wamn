@@ -1,0 +1,41 @@
+{{- range .Values.global.natsAccountOrgs }}
+{{- $name := printf "wamn-nats-accounts-%s" . }}
+{{- $existing := lookup "v1" "Secret" "platform" $name }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: platform
+type: Opaque
+{{- if not (dig "data" "accounts.conf" "" $existing) }}
+# Seed the projected key. A nonempty key belongs to the org worker.
+data:
+  accounts.conf: ""
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: platform
+rules:
+- apiGroups: [""]
+  resources: [secrets]
+  resourceNames: [{{ $name }}]
+  verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+- kind: ServiceAccount
+  name: wamn-operation-{{ . }}
+  namespace: {{ . }}
+{{- end }}

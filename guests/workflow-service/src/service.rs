@@ -9,7 +9,7 @@ use wit_bindgen::spawn_local;
 
 use crate::bindings::wamn::workflow::run::{self, DataChange, DataChangeConsumer, LeasedRun};
 use crate::bindings::wasi::clocks::{monotonic_clock as clock, system_clock};
-use crate::bindings::wasmcloud::nats::jetstream::{self, MessageHandle, NatsError};
+use crate::bindings::workflow::{self, MessageHandle, NatsError};
 use crate::delivery::{self, NANOS_PER_SECOND};
 
 const UTC_MINUTE: i64 = 60;
@@ -114,11 +114,8 @@ async fn consumers() {
 
 async fn pull(worker: Rc<Worker>) {
     while worker.enabled.get() {
-        match jetstream::open_pull_consumer(
-            worker.spec.stream.clone(),
-            worker.spec.consumer.clone(),
-        )
-        .await
+        match workflow::open_pull_consumer(worker.spec.stream.clone(), worker.spec.consumer.clone())
+            .await
         {
             Ok(consumer) => {
                 while worker.enabled.get() {
