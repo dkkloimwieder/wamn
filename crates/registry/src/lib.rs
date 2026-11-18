@@ -11,7 +11,7 @@ pub mod platform_domain;
 pub mod sql;
 mod types;
 
-pub use name::{control_nats_user, credential_secret_name, environment_nats_user, project_env_key};
+pub use name::{credential_secret_name, project_env_key};
 pub use types::{Environment, Triple};
 mod org_id;
 mod project_id;

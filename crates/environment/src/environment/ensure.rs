@@ -5,7 +5,7 @@ use sqlx::Row as _;
 
 
 use anyhow::Context as _;
-use wamn_registry::Triple;
+use wamn_registry::{Triple, name};
 
 use super::Platform;
 use super::document::EnvironmentDocument;
@@ -25,7 +25,9 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     else {
         return Ok(());
     };
-    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
+    let Some(group) = values["runtime-operator"]["runtime"]["hostGroups"].get_mut(0) else {
+        return Ok(());
+    };
     let plugins = group["plugins"]
         .as_array_mut()
         .context("environment host has no plugins")?;
@@ -59,10 +61,10 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
             values,
         )
         .await?;
-        super::drain::wait_stopped(platform, &name).await?;
-        return wamn_kubernetes::helm::uninstall(&platform.target, &name).await;
+        return super::drain::wait_stopped(platform, &name).await;
     }
     postgres["secretFrom"] = postgres_secrets(&postgres["config"])?;
+    set_nats_plugin(plugins, &triple.org, &triple.env)?;
     let bound = values["runtime-operator"]["runtime"]["terminationGracePeriodSeconds"]
         .as_u64()
         .context("environment host has no shutdown bound")?;
@@ -161,6 +163,47 @@ fn postgres_secrets(config: &serde_json::Value) -> anyhow::Result<serde_json::Va
         }
     }
     Ok(serde_json::to_value(secrets)?)
+}
+
+/// Set the stream ceiling from the projects that this group serves.
+fn set_nats_plugin(
+    plugins: &mut Vec<serde_json::Value>,
+    org: &wamn_registry::OrgId,
+    env: &wamn_registry::EnvName,
+) -> anyhow::Result<()> {
+    let projects = plugins
+        .iter()
+        .find(|plugin| plugin["id"] == "wamn-postgres")
+        .and_then(|plugin| plugin["config"].as_object())
+        .context("host has no project configuration")?;
+    let streams = projects.keys()
+        .map(|project| {
+            let project = project.parse()?;
+            Ok(name::stream_name(org, &project, env))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?
+        .join(",");
+    let secret = name::environment_nats_secret(org, env);
+    let directory = format!("/etc/wasmcloud/host-plugin-secrets/{secret}");
+    let entry = serde_json::json!({
+        "id": "wasmcloud-nats",
+        "workloadConfig": "deny",
+        "secretFrom": [secret],
+        "config": {
+            "servers": wamn_platform_install::platform::identity::NATS_URL,
+            "tls-ca": format!("{directory}/ca.crt"),
+            "tls-cert": format!("{directory}/tls.crt"),
+            "tls-key": format!("{directory}/tls.key"),
+            "stream-allow": streams,
+            "subject-allow": name::environment_event_subjects(org, env),
+        },
+    });
+    if let Some(plugin) = plugins.iter_mut().find(|plugin| plugin["id"] == "wasmcloud-nats") {
+        *plugin = entry;
+    } else {
+        plugins.push(entry);
+    }
+    Ok(())
 }
 
 /// Publish each project's login locations in the upstream native plugin entry.
@@ -292,6 +335,7 @@ pub(super) async fn host_project(
     postgres["workloadConfig"] = "deny".into();
     postgres["config"][document.project.as_str()] = config.to_string().into();
     postgres["secretFrom"] = postgres_secrets(&postgres["config"])?;
+    set_nats_plugin(plugins, &document.org, &document.env)?;
     wamn_platform_install::environment::apply(
         &platform.target,
         &platform.chart.join("platform/environment"),
@@ -318,55 +362,29 @@ pub async fn installed_manifests(
 }
 
 
-/// Provision the environment's source and advisory streams, with the same
-/// target, consumers and duplicate window as [`enable_cdc`], and no slot,
-/// publication or reader. Without an event broker there is nothing to provision.
-pub(super) async fn ensure_streams(
+/// Provision the project source stream through its environment account.
+pub(super) async fn ensure_stream(
     platform: &Platform,
-    document: &EnvironmentDocument,
-    manifests: &[wamn_catalog::manifest::PackageManifest],
+    triple: &Triple,
 ) -> anyhow::Result<()> {
-    let Some(events) = &platform.events else {
-        return Ok(());
-    };
-    let triple = document.triple();
-    let mut consumers = Vec::new();
-    for (application, selection) in &document.applications {
-        for (package, entity) in manifests
-            .iter()
-            .filter(|manifest| selection.packages.contains(&manifest.package.id))
-            .flat_map(wamn_catalog::manifest::PackageManifest::entity_pairs)
-        {
-            consumers.push(wamn_broker::events::application_consumer(
-                &triple,
-                application,
-                package,
-                entity,
-            )?);
-        }
-    }
-    let broker = async_nats::jetstream::new(
-        events
-            .nats
-            .connect()
-            .await
-            .context("connect the event provisioning credential")?,
-    );
+    let events = platform.events.as_ref().context("event stream policy is absent")?;
+    let broker = wamn_broker::authorization::environment_context(
+        &platform.target,
+        triple,
+        wamn_platform_install::platform::identity::NATS_URL,
+    ).await?.context("environment broker credential is absent")?;
     wamn_broker::streams::provision(
         &broker,
-        &triple,
+        triple,
         events.stream_replicas,
         std::time::Duration::from_secs(events.dup_window_secs),
-        &consumers,
-    )
-    .await
+        &[],
+    ).await
 }
-
 
 /// Whether the environment's CDC is in place, judged by what it observes: the
 /// publication `cdc_name` captures exactly `schemas` in database `project`, the
-/// connection the probe runs on. [`ensure_cdc`] writes the publication last
-/// among the CDC writes and records the reader on every apply.
+/// connection the probe runs on.
 ///
 /// # Errors
 ///
@@ -430,31 +448,42 @@ pub(crate) async fn kubectl(
     .await
 }
 
-/// Slot creation uses the capture role; schema ownership grants no replication privilege.
-pub(super) async fn prepare_cdc_with_connection(
+/// Reconcile the publication before creating its failover slot.
+pub(super) async fn prepare_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
+    outcome: &crate::provision_project_env::ProvisionProjectEnvOutcome,
+    database: &str,
+    owner: &str,
     capture: &str,
-) -> anyhow::Result<()> {
-    let instance =
-        read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
-    let role: wamn_identity_protocol::LoginName = wamn_provision::cdc_object_name(
-        &document.org,
-        &document.project,
-        &document.env,
-        &instance,
-    )
-    .parse()?;
-    let mut connection = connect(capture).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::sql::create_failover_slot_sql(role.as_str()),
-    ))
-    .execute(&mut connection)
-    .await?;
-    let name = wamn_provision::project_env_cdc_secret_name(
-        &document.org,
-        &document.project,
-        &document.env,
+) -> anyhow::Result<String> {
+    let triple = document.triple();
+    let schemas = installed_manifests(platform, document)
+        .await?
+        .into_iter()
+        .flat_map(|manifest| manifest.models.into_values().map(|model| model.schema.into()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let publication = wamn_provision::cdc_object_name(
+        &triple.org, &triple.project, &triple.env, &outcome.instance,
     );
-    wamn_kubernetes::kubectl::apply(&platform.target.kubeconfig,&platform.target.context,document.org.as_str(),&serde_json::json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":document.org},"data":{"connection.json":capture}})).await
+    let name = wamn_provision::environment_names::environment_resource_name(&triple.org, &triple.project, &triple.env)?;
+    wamn_platform_install::environment::apply(
+        &platform.target,
+        &platform.chart.join("platform/environment"),
+        &name,
+        wamn_platform_install::environment::publication_values(
+            &triple, &outcome.instance, &outcome.cluster, &publication, &schemas,
+        ),
+    ).await?;
+    let mut project = connect(owner).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        while !cdc_in_place(&mut project, &publication, &schemas).await? {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        Ok::<_, anyhow::Error>(())
+    }).await.with_context(|| format!("wait for publication {publication}"))??;
+    wamn_events::lifecycle::apply_cdc_sql(owner, capture, &schemas, &publication, database).await?;
+    Ok(publication)
 }

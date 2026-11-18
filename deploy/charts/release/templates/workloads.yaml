@@ -24,6 +24,10 @@ spec:
       kubernetes:
         service:
           name: {{ (default $.Release.Name $.Values.name) }}-http
+      service:
+        image: {{ $.Values.platform.workflow.image | quote }}
+        imagePullPolicy: Always
+        maxRestarts: 3
       hostInterfaces:
         - namespace: wasi
           package: http
@@ -43,6 +47,14 @@ spec:
           package: operation
           version: "0.1.0"
           interfaces: [operation]
+        - namespace: wamn
+          package: workflow
+          version: "0.1.0"
+          interfaces: [run, node]
+        - namespace: wasi
+          package: clocks
+          version: "0.3.0"
+          interfaces: [monotonic-clock, system-clock]
         {{- with $.Values.hostInterfaces }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

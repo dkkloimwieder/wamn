@@ -13,7 +13,8 @@ wamn.application: {{ keys . | first | quote }}
 hostgroup: {{ required "hostGroup is required" .Values.hostGroup | quote }}
 {{- end }}
 
-{{/* Refuse a chart whose HTTP image was not selected. */}}
+{{/* Require both application workload guests. */}}
 {{- define "release.requireImageSet" -}}
 {{- $_ := required "platform.roles.http.image is required: stamp the platform image set" .Values.platform.roles.http.image }}
+{{- $_ := required "platform.workflow.image is required: stamp the platform image set" .Values.platform.workflow.image }}
 {{- end }}

@@ -29,6 +29,7 @@ wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true
+wamn-broker.workspace = true
 wamn-provision.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-oci.workspace = true

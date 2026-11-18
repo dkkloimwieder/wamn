@@ -1,5 +1,6 @@
 database: null
 publication: null
+cdcReader: null
 operations: null
 credentialAccess: null
 

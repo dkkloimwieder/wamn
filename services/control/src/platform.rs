@@ -150,13 +150,6 @@ impl Execution {
         }
         wamn_kubernetes::job::mount(
             &mut job,
-            "nats",
-            "wamn-ctl-nats",
-            "/credentials/nats",
-            &["ca.crt", "tls.crt", "tls.key"],
-        );
-        wamn_kubernetes::job::mount(
-            &mut job,
             "identity-operator",
             &wamn_registry::name::resource_suffix("operator", self.org.as_str()),
             "/etc/identity-operator",

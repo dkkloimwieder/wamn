@@ -61,6 +61,10 @@ pub struct HostArgs {
     #[arg(long, default_value = "0s", value_parser = humantime::parse_duration)]
     pub nats_connect_timeout: Duration,
 
+    /// Keep broker connections on the chart-configured endpoints.
+    #[arg(long)]
+    pub nats_ignore_discovered_servers: bool,
+
     /// Wait during cleanup after refusing new work so traffic removal can propagate.
     #[arg(long, env = "WASH_DRAIN_DELAY", default_value = "0s", value_parser = humantime::parse_duration)]
     pub drain_delay: Duration,
@@ -322,7 +326,8 @@ fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::Plug
                 .get(secret)
                 .context("plugin Secret is absent from host secrets catalog")?;
             anyhow::ensure!(
-                entry.id == wamn_sql::WAMN_POSTGRES_ID
+                (entry.id == wamn_sql::WAMN_POSTGRES_ID
+                    || entry.id == plugin::wasmcloud_nats::PLUGIN_NATS_ID)
                     && source.dir
                         == PathBuf::from(HOST_PLUGIN_SECRET_DIRECTORY).join(secret),
                 "unsupported plugin Secret projection"
@@ -420,6 +425,9 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
         args.scheduler_nats_tls_key.as_deref(),
         None,
     )?;
+    if args.nats_ignore_discovered_servers {
+        opts = opts.ignore_discovered_servers();
+    }
     if args.scheduler_nats_tls_first {
         opts = opts.tls_first();
     }
@@ -660,6 +668,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     plugins.push(Arc::new(
         plugin::wasmcloud_nats::WasmcloudNats::new()
+            .with_ignore_discovered_servers(args.nats_ignore_discovered_servers)
             .with_memory_budget(host_memory.max_guest_memory)
             .with_lattice_prefixes(vec![
                 format!("{}.", wash_runtime::washlet::HOST_API_PREFIX),

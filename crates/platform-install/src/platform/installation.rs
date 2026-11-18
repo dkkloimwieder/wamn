@@ -116,6 +116,7 @@ pub async fn apply(
         None => "hosts",
     };
     ensure_web_csrf_secret(target, namespace).await?;
+    wamn_broker::authorization::bootstrap(target).await?;
     let mut entry = platform_entry(chart, std::mem::take(values))?;
     let result = resources::apply_release(target, &entry, directory).await;
     *values = entry["values"].take();

@@ -62,7 +62,7 @@ pub fn stamp(chart: &Path, set: &ImageSet, out: &Path) -> anyhow::Result<PathBuf
     let host: oci_client::Reference = set.host.parse().context("parse the host image")?;
 
     ensure!(host.tag().is_some(), "the host image requires a tag");
-    let pinned = [("http", &set.http)];
+    let pinned = [("http", &set.http), ("workflow", &set.workflow)];
     for (name, image) in pinned {
         ensure!(
             image.contains("@sha256:"),
@@ -78,6 +78,7 @@ pub fn stamp(chart: &Path, set: &ImageSet, out: &Path) -> anyhow::Result<PathBuf
     let platform = &mut values["platform"];
     platform["host"]["image"] = set.host.clone().into();
     platform["roles"]["http"]["image"] = set.http.clone().into();
+    platform["workflow"]["image"] = set.workflow.clone().into();
     std::fs::write(&path, serde_yaml::to_string(&values)?)
         .with_context(|| format!("write {}", path.display()))?;
     Ok(out.to_owned())
@@ -107,6 +108,7 @@ pub async fn image_set(chart: &Path) -> anyhow::Result<ImageSet> {
     Ok(ImageSet {
         host,
         http: stamped(&roles["http"]["image"], "http image")?,
+        workflow: stamped(&values["platform"]["workflow"]["image"], "workflow image")?,
     })
 }
 

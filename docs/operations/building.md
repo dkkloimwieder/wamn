@@ -143,11 +143,11 @@ Application contracts lie under `wit/` in each package's build output, `apps/tar
 ## Platform artifacts
 
 `cargo xtask build-platform` builds, pushes, and stamps the platform artifacts.
-It builds `host`, `ctl`, `identity`, and `edge-web` through Docker BuildKit.
-The HTTP role and the palette use the package component builder.
-Each guest gets its own Cargo invocation.
-The HTTP role publishes the raw route component after the component builder checks its pin.
-The ctl image receives the same checked HTTP component through a named BuildKit context.
+It builds `host`, `control`, `ctl`, `identity`, and `edge-web` through Docker BuildKit.
+The native host image includes `wamn-cdc-reader`.
+The component builder runs Cargo separately for each guest. It builds the HTTP route and palette for `wasm32-wasip2` and the workflow service for `wasm32-wasip3`.
+It publishes the HTTP route and workflow guests as OCI components under `<registry>/wamn/http` and `<registry>/wamn/workflow`.
+The ctl image receives the checked HTTP component through a named BuildKit context.
 
 The registry must already be available and authenticated through the Docker configuration.
 For local deployment, use the registry address in `deploy/kind/cluster.k`.
@@ -170,7 +170,8 @@ cargo xtask build-platform --stamp-only --registry localhost:5001 --out /var/tmp
 ```
 
 Stamping reads every selected digest from the registry and refuses a missing artifact.
-The chart holds the pinned images and role components in `values.yaml`.
+The chart holds the pinned images and guest components in `values.yaml`.
+The HTTP route uses `platform.roles.http.image`. The workflow service uses `platform.workflow.image`.
 The output also carries the runtime operator archive, the identity and edge charts, and deployment resources under `platform/`.
 `palette.json` records immutable platform artifact pins and descriptors sealed against the published guest bytes.
 The platform owns palette guests under `wamn_palette`, independently of application package membership.
@@ -384,8 +385,7 @@ Keep one Cargo process per target directory.
 
 Each checkout keeps its own Docker target cache and its own host target directory.
 The native images `host`, `ctl`, and `identity` use one `build-native` stage.
-The host image also carries `wamn-cdc-reader`.
-It compiles every native package in one `cargo build`, so features unify once.
+One `cargo build` compiles the native packages with their shared features.
 The `edge-web` image has its own stage, `build-edge-web`. It shares the target cache of `build-native`.
 The same native build produces `wamn-control` for the control image.
 The key uses the first 16 hexadecimal characters of the SHA-256 hash of the canonical absolute checkout path, with no trailing newline.

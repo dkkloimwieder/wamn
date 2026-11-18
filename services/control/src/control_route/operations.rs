@@ -76,7 +76,6 @@ impl Operation {
     ) -> Vec<(String, &'static str, &'static str)> {
         let mut needs = vec![
             (apply_credential.into(), "apply", "/credentials/apply"),
-            ("wamn-ctl-nats".into(), "nats", "/credentials/nats"),
         ];
         if self.privileged() {
             let owner = wamn_provision::migrations::MigrationDatabase::Project
