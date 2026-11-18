@@ -43,6 +43,7 @@ pub struct WamnOperation {
 
 struct Binding {
     workload: String,
+    ingress: bool,
     application: ApplicationConfig,
     targets: OnceLock<BTreeMap<String, ComponentTarget>>,
 }
@@ -112,6 +113,39 @@ impl WamnOperation {
             .await
     }
 
+    /// Verify the active component is the resolved ingress of this workload.
+    pub fn is_ingress_caller(&self, active: &str, workload: &str) -> bool {
+        self.binding(active).is_ok_and(|binding| {
+            binding.ingress
+                && binding
+                    .targets
+                    .get()
+                    .and_then(BTreeMap::first_key_value)
+                    .is_some_and(|(_, target)| target.dispatch.workload().id() == workload)
+        })
+    }
+
+    /// Deliver one event to the exact sibling under the admitted invocation scope.
+    pub async fn dispatch_data_change(
+        &self,
+        ingress: &str,
+        sibling: &str,
+        scopes: &InvocationScopes,
+        scope: Arc<str>,
+        event: String,
+    ) -> anyhow::Result<Result<(), String>> {
+        let binding = self.binding(ingress)?;
+        let deadline = Instant::now()
+            + Duration::from_millis(crate::native_routes::bounded_node_deadline_ms(None));
+        binding
+            .target(sibling)?
+            .call(scopes, scope, deadline, move |call| DataChangeInvocation {
+                call,
+                event,
+            })
+            .await
+    }
+
     fn binding(&self, route: &str) -> anyhow::Result<Arc<Binding>> {
         self.bindings
             .read()
@@ -132,47 +166,64 @@ impl Binding {
         context: node_types::NodeContext,
         input: String,
     ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
-        let target = self
-            .targets
-            .get()
-            .and_then(|targets| targets.get(sibling))
-            .context("operation dispatch target missing")?;
         let deadline = Instant::now()
             + Duration::from_millis(crate::native_routes::bounded_node_deadline_ms(
                 context.deadline_ms,
             ));
-        let execution = InvocationExecution::new(deadline);
-        scopes.set_execution(&scope, execution)?;
+        self.target(sibling)?
+            .call(scopes, scope, deadline, move |call| OperationInvocation {
+                call,
+                operation,
+                context,
+                input,
+            })
+            .await
+    }
+
+    fn target(&self, sibling: &str) -> anyhow::Result<&ComponentTarget> {
+        self.targets
+            .get()
+            .and_then(|targets| targets.get(sibling))
+            .context("operation dispatch target missing")
+    }
+}
+
+impl ComponentTarget {
+    async fn call<T: Send + 'static, C: GuestCall>(
+        &self,
+        scopes: &InvocationScopes,
+        scope: Arc<str>,
+        deadline: Instant,
+        guest_call: impl FnOnce(ScopedCall<T>) -> C,
+    ) -> anyhow::Result<T> {
+        scopes.set_execution(&scope, InvocationExecution::new(deadline))?;
         let execution = scopes
             .execution(&scope)
             .context("operation scope missing")?;
         let deadline = execution.deadline();
         let (reply, response) = oneshot::channel();
         let retired = Arc::new(AtomicBool::new(false));
+        let call = guest_call(ScopedCall {
+            scope,
+            execution,
+            trace: InvocationTrace::capture(),
+            result: CallResult {
+                warm: self.warm,
+                reply,
+                retired: Arc::clone(&retired),
+            },
+        });
         tokio::time::timeout_at(deadline, async {
-            let result = target
-                .dispatch
-                .dispatch(OperationInvocation {
-                    scope,
-                    warm: target.warm,
-                    operation,
-                    context,
-                    input,
-                    execution,
-                    trace: InvocationTrace::capture(),
-                    reply,
-                    retired: Arc::clone(&retired),
-                })
-                .await;
+            let result = self.dispatch.dispatch(call).await;
             if !retired.load(Ordering::SeqCst) {
-                result.context("dispatch application operation")?;
+                result.context("dispatch application component")?;
             }
             response
                 .await
-                .context("operation dispatch returned no result")
+                .context("component dispatch returned no result")
         })
         .await
-        .context("operation deadline elapsed")?
+        .context("component dispatch deadline elapsed")?
     }
 }
 
@@ -206,6 +257,7 @@ impl HostPlugin for WamnOperation {
                     component.id().to_owned(),
                     Arc::new(Binding {
                         workload: component.workload_id().to_owned(),
+                        ingress: component.name() == "ingress",
                         application,
                         targets: OnceLock::new(),
                     }),
@@ -277,22 +329,61 @@ impl HostPlugin for WamnOperation {
     }
 }
 
-struct OperationInvocation {
+struct ScopedCall<T> {
     scope: Arc<str>,
+    execution: InvocationExecution,
+    trace: InvocationTrace,
+    result: CallResult<T>,
+}
+
+struct CallResult<T> {
     warm: bool,
+    reply: oneshot::Sender<T>,
+    retired: Arc<AtomicBool>,
+}
+
+impl<T> CallResult<T> {
+    fn send(self, accessor: &Accessor<SharedCtx>, answer: T) -> anyhow::Result<()> {
+        self.reply
+            .send(answer)
+            .map_err(|_| anyhow::anyhow!("guest response abandoned"))?;
+        if self.warm && accessor.with(|mut access| !access.get().table.is_empty()) {
+            let resources = accessor.with(|mut access| std::mem::take(&mut access.get().table));
+            drop(resources);
+            self.retired.store(true, Ordering::SeqCst);
+            anyhow::bail!("guest completed with retained resources; retire instance");
+        }
+        Ok(())
+    }
+}
+
+struct OperationInvocation {
+    call: ScopedCall<Result<node_types::Emission, node_types::NodeError>>,
     operation: CanonicalName,
     context: node_types::NodeContext,
     input: String,
-    execution: InvocationExecution,
-    trace: InvocationTrace,
-    reply: oneshot::Sender<Result<node_types::Emission, node_types::NodeError>>,
-    retired: Arc<AtomicBool>,
+}
+
+struct DataChangeInvocation {
+    call: ScopedCall<Result<(), String>>,
+    event: String,
 }
 
 /// Restore the native identity before an instance can serve another invocation.
 struct ActiveScope<'a> {
     accessor: &'a Accessor<SharedCtx>,
     component: Arc<str>,
+}
+
+impl<'a> ActiveScope<'a> {
+    fn enter(accessor: &'a Accessor<SharedCtx>, scope: Arc<str>) -> Self {
+        let component = accessor
+            .with(|mut access| std::mem::replace(&mut access.get().active_ctx.component_id, scope));
+        Self {
+            accessor,
+            component,
+        }
+    }
 }
 
 impl Drop for ActiveScope<'_> {
@@ -309,7 +400,8 @@ impl GuestCall for OperationInvocation {
     }
 
     fn deadline(&self) -> Duration {
-        self.execution
+        self.call
+            .execution
             .deadline()
             .saturating_duration_since(Instant::now())
     }
@@ -319,26 +411,20 @@ impl GuestCall for OperationInvocation {
         accessor: &Accessor<SharedCtx>,
         instance: Instance,
     ) -> GuestCallFuture<'_> {
-        let trace = self.trace.clone();
+        let Self {
+            call,
+            operation,
+            context,
+            input,
+        } = *self;
+        let ScopedCall {
+            scope,
+            execution,
+            trace,
+            result,
+        } = call;
         Box::pin(trace.run(async move {
-            let Self {
-                scope,
-                warm,
-                operation,
-                context,
-                input,
-                execution,
-                reply,
-                retired,
-                ..
-            } = *self;
-            let component = accessor.with(|mut access| {
-                std::mem::replace(&mut access.get().active_ctx.component_id, scope)
-            });
-            let _active = ActiveScope {
-                accessor,
-                component,
-            };
+            let _active = ActiveScope::enter(accessor, scope);
             let run = accessor.with(|mut access| {
                 let handler = instance
                     .get_export_index(&mut access, None, operation.as_str())
@@ -378,15 +464,56 @@ impl GuestCall for OperationInvocation {
                 )),
             };
             let refused = outcome.is_err().then_some("handler");
-            reply
-                .send(outcome)
-                .map_err(|_| anyhow::anyhow!("operation response abandoned"))?;
-            if warm && accessor.with(|mut access| !access.get().table.is_empty()) {
-                let resources = accessor.with(|mut access| std::mem::take(&mut access.get().table));
-                drop(resources);
-                retired.store(true, Ordering::SeqCst);
-                anyhow::bail!("operation completed with retained resources; retire instance");
-            }
+            result.send(accessor, outcome)?;
+            Ok(refused)
+        }))
+    }
+}
+
+impl GuestCall for DataChangeInvocation {
+    fn describe(&self) -> &str {
+        wamn_catalog::DATA_CHANGE_EXPORT
+    }
+
+    fn deadline(&self) -> Duration {
+        self.call
+            .execution
+            .deadline()
+            .saturating_duration_since(Instant::now())
+    }
+
+    fn call(
+        self: Box<Self>,
+        accessor: &Accessor<SharedCtx>,
+        instance: Instance,
+    ) -> GuestCallFuture<'_> {
+        let Self { call, event } = *self;
+        let ScopedCall {
+            scope,
+            execution,
+            trace,
+            result,
+        } = call;
+        Box::pin(trace.run(async move {
+            let _active = ActiveScope::enter(accessor, scope);
+            let handle = accessor.with(|mut access| {
+                let interface = instance
+                    .get_export_index(&mut access, None, wamn_catalog::DATA_CHANGE_EXPORT)
+                    .context("component has no data change export")?;
+                let export = instance
+                    .get_export_index(&mut access, Some(&interface), "handle")
+                    .context("data change interface has no handle entrypoint")?;
+                instance
+                    .get_typed_func::<(String,), (Result<(), String>,)>(&mut access, export)
+                    .map_err(anyhow::Error::from)
+                    .context("data change handle has the wrong signature")
+            })?;
+            let (answer,) = execution
+                .run(handle.call_concurrent(accessor, (event,)))
+                .await
+                .context("data change invocation ended")??;
+            let refused = answer.is_err().then_some("handler");
+            result.send(accessor, answer)?;
             Ok(refused)
         }))
     }

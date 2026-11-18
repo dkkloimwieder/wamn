@@ -306,7 +306,7 @@ pub(super) async fn exercise(
             .any(|component| component["image"]
                 .as_str()
                 .is_some_and(|image| image
-                    .ends_with(selected.image("http").unwrap().split_once('/').unwrap().1))),
+                    .ends_with(selected.image("ingress").unwrap().split_once('/').unwrap().1))),
         "control did not select the prepared executable"
     );
     update(journey, "upgrade-identity", &identity, selected.directory()).await?;

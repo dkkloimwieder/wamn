@@ -374,18 +374,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "http-route"
-version = "0.1.0"
-dependencies = [
- "futures",
- "serde",
- "serde_json",
- "url",
- "wamn-digest",
- "wit-bindgen",
-]
-
-[[package]]
 name = "hybrid-array"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -538,6 +526,18 @@ dependencies = [
  "hashbrown",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "ingress"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "serde",
+ "serde_json",
+ "url",
+ "wamn-digest",
+ "wit-bindgen",
 ]
 
 [[package]]

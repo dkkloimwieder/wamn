@@ -8,7 +8,7 @@ use std::sync::Arc;
 use wamn_catalog::application_config::ApplicationConfig;
 use wamn_catalog::canonical_name::CanonicalName;
 use wamn_catalog::{HostAttachment, HostHandler, WiringDocument, WiringEntry};
-use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::DeliveryError;
 use wamn_identity_protocol::PrincipalId;
 use wamn_registry::sql::{ENVIRONMENT_LOCK_SQL, ENVIRONMENT_TRANSACTION_LOCK_SQL};

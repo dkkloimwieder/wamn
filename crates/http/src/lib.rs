@@ -48,7 +48,7 @@ mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         path: [
             "../../wit/wamn-connection",
-            "../../wit/wamn-flow-http-routing",
+            "../../wit/wamn-ingress",
             "../../wit/wamn-postgres-0.4",
             "../../wit/wamn-node",
             "../../wit/wamn-operation-0.1",
@@ -468,8 +468,8 @@ impl HostPlugin for ConnectionHttp {
         let components = components.read().await;
         let route = components
             .values()
-            .find(|component| component.name() == "flow-http")
-            .context("flow-http missing")?;
+            .find(|component| component.name() == "ingress")
+            .context("ingress missing")?;
         let application: wamn_catalog::application_config::ApplicationConfig =
             serde_json::from_str(
                 route

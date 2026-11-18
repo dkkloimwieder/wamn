@@ -93,20 +93,20 @@ Cargo then hashes relative package paths, including packages outside `apps/`.
 The builder preserves dependency declarations and remaps the source view to `/wamn`.
 It refreshes the copied lock file offline for that workspace before the locked build.
 The same sources, lockfile and toolchain produce the same bytes in different checkouts.
-`cargo xtask build-component guests/http-route/Cargo.toml` uses that path for one guest.
+`cargo xtask build-component guests/ingress/Cargo.toml` uses that path for one guest.
 The build refuses a built guest that contains `/home/`, the Cargo home, or the repository path.
-A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifact, for example `http_route.wasm.sha256`.
+A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifact, for example `ingress.wasm.sha256`.
 The build and the Dockerfile stage refuse a guest that does not match its pin.
-If you change the router on purpose, write its new digest to `guests/http-route/http_route.wasm.sha256`.
+If you change the router on purpose, write its new digest to `guests/ingress/ingress.wasm.sha256`.
 A plain `cargo build` bypasses the source view, so its bytes can depend on the checkout path.
 Use the component builder when you update a pin.
-The release publisher also needs the pinned `http-route` guest.
-The ctl image carries it at `/usr/local/share/wamn/http_route.wasm`.
-For native publication, set `WAMN_FLOW_HTTP_COMPONENT` to the built guest and `WAMN_COMPONENT_ARTIFACT_BASE` to the component repository.
+The release publisher also needs the pinned `ingress` guest.
+The ctl image carries it at `/usr/local/share/wamn/ingress.wasm`.
+For native publication, set `WAMN_INGRESS_COMPONENT` to the built guest and `WAMN_COMPONENT_ARTIFACT_BASE` to the component repository.
 Publication pushes the separate route component to `<component-artifact-base>/entries`.
 The manifest records only the path `entries@sha256:<manifest-digest>`, relative to the component artifact base.
 
-The workload guest `http-route` belongs to no package.
+The workload guest `ingress` belongs to no package.
 
 The platform build publishes the pinned route component without an application or dispatcher.
 The publisher uses the same route bytes for each application release.
@@ -146,7 +146,7 @@ Application contracts lie under `wit/` in each package's build output, `apps/tar
 It builds `host`, `control`, `ctl`, `identity`, and `edge-web` through Docker BuildKit.
 The native host image includes `wamn-cdc-reader`.
 The component builder runs Cargo separately for each guest. It builds the HTTP route and palette for `wasm32-wasip2` and the workflow service for `wasm32-wasip3`.
-It publishes the HTTP route and workflow guests as OCI components under `<registry>/wamn/http` and `<registry>/wamn/workflow`.
+It publishes the HTTP route and workflow guests as OCI components under `<registry>/wamn/ingress` and `<registry>/wamn/workflow`.
 The ctl image receives the checked HTTP component through a named BuildKit context.
 
 The registry must already be available and authenticated through the Docker configuration.
@@ -171,11 +171,11 @@ cargo xtask build-platform --stamp-only --registry localhost:5001 --out /var/tmp
 
 Stamping reads every selected digest from the registry and refuses a missing artifact.
 The chart holds the pinned images and guest components in `values.yaml`.
-The HTTP route uses `platform.roles.http.image`. The workflow service uses `platform.workflow.image`.
+The HTTP route uses `platform.roles.ingress.image`. The workflow service uses `platform.workflow.image`.
 The output also carries the runtime operator archive, the identity and edge charts, and deployment resources under `platform/`.
 `palette.json` records immutable platform artifact pins and descriptors sealed against the published guest bytes.
 The platform owns palette guests under `wamn_palette`, independently of application package membership.
-The platform distribution places the document and digest-named guest files beside `http_route.wasm`.
+The platform distribution places the document and digest-named guest files beside `ingress.wasm`.
 Release publication and development use the same reader for that document and verify each guest digest.
 They keep palette ports and node configuration. Palette components receive no public HTTP routes.
 Packages no longer bundle palette guests.

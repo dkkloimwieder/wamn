@@ -1463,14 +1463,14 @@ mod tests {
     #[test]
     fn selected_images_are_enumerated_and_an_inaccessible_chart_stays_unknown() {
         let values = json!({"host":{"image":"registry/host@sha256:abc"},
-            "roles":{"http":{"image":"registry/http@sha256:def"}},
+            "roles":{"ingress":{"image":"registry/ingress@sha256:def"}},
             "extra":[{"image":"registry/extra@sha256:fed"}]});
         let mut images = BTreeMap::new();
         image_references(&values, "platform", &mut images);
         assert_eq!(images["platform/host"], values["host"]["image"]);
         assert_eq!(
-            images["platform/roles/http"],
-            values["roles"]["http"]["image"]
+            images["platform/roles/ingress"],
+            values["roles"]["ingress"]["image"]
         );
         assert_eq!(images["platform/extra/0"], values["extra"][0]["image"]);
         for (path, image) in images {

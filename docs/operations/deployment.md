@@ -541,7 +541,7 @@ The environment document selects the application package closure.
 
 Source publication records the release by its canonical manifest digest.
 If the release has an HTTP attachment, publication composes the pinned route guest with the application.
-Set `WAMN_COMPONENT_ARTIFACT_BASE` for this step. `WAMN_FLOW_HTTP_COMPONENT` can name another route guest file.
+Set `WAMN_COMPONENT_ARTIFACT_BASE` for this step. `WAMN_INGRESS_COMPONENT` can name another route guest file.
 It pushes the entry to `<component-artifact-base>/entries`, beside the members.
 The tag of the entry is its content digest. If that tag is already present with the same bytes, publication reuses it and pushes nothing.
 The manifest records the entry as `entries@sha256:<manifest-digest>`, a path relative to the component artifact base.

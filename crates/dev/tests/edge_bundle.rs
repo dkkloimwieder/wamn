@@ -1,7 +1,7 @@
 //! The edge bundle carries the composed entry, pinned by its digest.
 //!
-//! Run `wamn build apps/edge_device` first, and set WAMN_FLOW_HTTP_COMPONENT
-//! to the pinned http-route guest. See docs/operations/running-tests.md.
+//! Run `wamn build apps/edge_device` first, and set WAMN_INGRESS_COMPONENT
+//! to the pinned ingress guest. See docs/operations/running-tests.md.
 
 use std::path::{Path, PathBuf};
 
@@ -14,9 +14,9 @@ fn repository() -> PathBuf {
 }
 
 #[test]
-#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT, input:edge-application"]
+#[ignore = "requires: env:WAMN_INGRESS_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT, input:edge-application"]
 fn the_bundle_pins_the_separate_route_component() {
-    let route = PathBuf::from(std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").unwrap());
+    let route = PathBuf::from(std::env::var_os("WAMN_INGRESS_COMPONENT").unwrap());
     let component = PathBuf::from(
         std::env::var_os("WAMN_EDGE_DEVICE_COMPONENT")
             .expect("set WAMN_EDGE_DEVICE_COMPONENT to the built edge_device component"),

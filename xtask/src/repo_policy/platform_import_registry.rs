@@ -54,7 +54,7 @@ fn vendored_wasi_packages(root: &Path) -> BTreeSet<String> {
 pub(super) fn report_problems(root: &Path, problems: &mut Problems) {
     // Deliberately unregistered: reachable in the tree's WIT, refused by
     // admission. `wasi:sockets` is the denied egress package; `wasi:http` is
-    // imported only by `http-route`, a `wash push` workload on the
+    // imported only by `ingress`, a `wash push` workload on the
     // non-project path the registry does not govern. Publication supplies route
     // data through wasi:config only to that platform workload (P12). The platform
     // The SQL command fixture exports wasi:cli/run as a service workload.

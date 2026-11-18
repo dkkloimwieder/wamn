@@ -5,7 +5,7 @@ use futures::executor::block_on;
 use futures::{FutureExt as _, StreamExt as _};
 use serde_json::{Value, json};
 
-use http_route::{
+use ingress::{
     AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Header, HttpResponse,
     OperationRequest, ProviderError, ReadCache, RequestHead, RouteDefinition, SchemaInvalid,
     handle_request,
@@ -226,7 +226,7 @@ fn request(
     backend: &mut FakeBackend,
     head: &RequestHead,
     bytes: &[u8],
-) -> http_route::HttpResponse {
+) -> ingress::HttpResponse {
     let mut body = Chunks::json(&[bytes]);
     block_on(handle_request(backend, &mut body, head, limits()))
 }

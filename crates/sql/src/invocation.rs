@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::{OperationTransaction, SessionIdentity, WamnPostgres};
 use wamn_connection::connection::ConnectionInvocation;
 use wamn_connection::invocation::{ReleaseContext, Scope};
-use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::invocation_scope::{InvocationAuthority, InvocationScopes, ScopeLifetime};
 use wamn_engine::invocation_trace::InvocationTrace;
 use wamn_event_wire::Causation;

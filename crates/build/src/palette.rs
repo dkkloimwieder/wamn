@@ -81,6 +81,7 @@ fn seal(
         bytes,
         wamn_engine::component_admission::ComponentAdmissionRequest {
             declaration: wamn_catalog::ComponentDeclaration {
+                data_change: false,
                 target: wamn_catalog::palette_target(
                     &"platform--palette--platform"
                         .parse::<wamn_registry::ProjectEnvKey>()

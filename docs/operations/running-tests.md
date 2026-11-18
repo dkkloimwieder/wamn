@@ -133,7 +133,7 @@ Prepare generated application inputs through their owning build commands before 
 The tool builds native binaries, application packages, and guests only when selected cases need them.
 The selection file names each preparation step, its output variables, and its commands.
 The runner keeps nonempty overrides and skips their preparation commands.
-The pinned HTTP guest keeps its required release artifact. Edge tests read that prepared artifact from `WAMN_FLOW_HTTP_COMPONENT`. Other native and standalone guest inputs use debug mode.
+The pinned HTTP guest keeps its required release artifact. Edge tests read that prepared artifact from `WAMN_INGRESS_COMPONENT`. Other native and standalone guest inputs use debug mode.
 The `jsonata` recipe builds the platform `jsonata-expression` guest directly.
 It builds applications through a private PostgreSQL database.
 Root workspace targets compile without `apps/target/wamn`.
@@ -190,12 +190,12 @@ In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this che
 | `WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm` |
 | `WAMN_GENERATED_WIDGET_UPDATE_SCHEMA` | `ROOT/apps/target/wamn/platform_fixture/routes/widget/update.json` |
 | `WAMN_RECEIVING_DEV_BIN` | `TARGET/debug/wamn` |
-| `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/wasm32-wasip2/release/http_route.wasm` |
+| `WAMN_INGRESS_COMPONENT` | `TARGET/wasm32-wasip2/release/ingress.wasm` |
 | `WAMN_BLOB_PUT_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/blob_put.wasm` |
 | `WAMN_SYNC_BENCH_DIST` | `TARGET/sync-bench/web` |
 | `WAMN_HOST_LIVE_NATS_SERVER_BIN` | Same input as `WAMN_NATIVE_C_NATS_BIN` |
 | `WAMN_SESSION_EXCHANGE_CTL_BIN` | Same input as `WAMN_RECEIVING_DEV_BIN` |
-| `WAMN_DEV_ENV_FLOW_HTTP_COMPONENT` | Same input as `WAMN_FLOW_HTTP_COMPONENT` |
+| `WAMN_DEV_ENV_INGRESS_COMPONENT` | Same input as `WAMN_INGRESS_COMPONENT` |
 | `WAMN_POSTGRES_BIN_DIR` | `/usr/lib/postgresql/18/bin` |
 
 The PostgreSQL directory holds `initdb`, `postgres`, `pg_ctl`, and `psql` from PostgreSQL 18.
@@ -575,7 +575,7 @@ If the user requests the separate contract command, run it after the sweep, incl
 cargo xtask contract-diff run > "$WAMN_RESULTS/contract-diff.log" 2>&1
 ```
 
-It runs the guest `http-route` adversarial tests.
+It runs the guest `ingress` adversarial tests.
 The guest test belongs to another workspace, so the root sweep cannot reach it.
 `cargo xtask contract-diff dry-run` only prints the commands.
 
@@ -730,7 +730,7 @@ Artifact preparation builds authored scratch packages from `apps/platform_fixtur
 Focused application bodies also require these publication inputs:
 
 - Set `DATABASE_URL` to a separate disposable PostgreSQL 18 server with permission to create and drop databases.
-- Set `WAMN_FLOW_HTTP_COMPONENT` to the raw pinned `http_route.wasm`.
+- Set `WAMN_INGRESS_COMPONENT` to the raw pinned `ingress.wasm`.
 - Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, and `WAMN_RELEASE_ARTIFACT_BASE` under the selected kind registry.
 - Set `WAMN_REGISTRY_AUTH_FILE` to the registry's protected `.dockerconfigjson` file.
 

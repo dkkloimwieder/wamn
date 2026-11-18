@@ -7,7 +7,7 @@ use wamn_catalog::application_config::{ApplicationConfig, ApplicationConnection}
 /// Host-attested identity of one component invocation.
 ///
 /// `component` is the name the catalog admitted the executing component under,
-/// and `operation` is the node operation the router driver called on it. Both
+/// and `operation`, when present, is the operation called on it. Both
 /// come from the driver, never from the guest. The operation identifies the
 /// authorized export; an effect span records the host function separately.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +17,7 @@ pub struct ConnectionInvocation {
     pub package_id: wamn_catalog::PackageName,
     pub component_digest: wamn_digest::Digest,
     pub component: wamn_catalog::canonical_name::CanonicalName,
-    pub operation: wamn_catalog::canonical_name::CanonicalName,
+    pub operation: Option<wamn_catalog::canonical_name::CanonicalName>,
     pub closure: ConnectionExecutionClosure,
     /// Optional bounded failure evidence owned by this invocation.
     pub effects: Option<EffectEvidence>,
@@ -35,7 +35,15 @@ impl ConnectionInvocation {
                 && component.digest == self.component_digest
                 && component.name == self.component.as_str()
         })?;
-        component.operations.get(&self.operation)?;
+        match (&self.entry, &self.operation) {
+            (InvocationEntry::DataChange, None) => {
+                component.data_change.as_ref()?;
+            }
+            (InvocationEntry::Route | InvocationEntry::Wiring(_), Some(operation)) => {
+                component.operations.get(operation)?;
+            }
+            _ => return None,
+        }
         wamn_catalog::application_config::binding(application, &component.name, alias.as_str())
     }
 
@@ -65,7 +73,7 @@ impl ConnectionInvocation {
             package_id: component.package.clone(),
             component_digest: component.digest,
             component: name,
-            operation: operation.clone(),
+            operation: Some(operation.clone()),
             closure: ConnectionExecutionClosure::Released,
             effects: None,
         })
@@ -91,7 +99,10 @@ impl ConnectionInvocation {
             occurrence,
             component_digest: Some(&self.component_digest),
             component_name: self.component.as_str(),
-            operation: self.operation.as_str(),
+            operation: self
+                .operation
+                .as_ref()
+                .map_or("", |operation| operation.as_str()),
         }
     }
 }
@@ -101,6 +112,8 @@ impl ConnectionInvocation {
 pub enum InvocationEntry {
     /// A route called the origin export once. The origin names the route.
     Route,
+    /// A JetStream delivery to a declared data change handler.
+    DataChange,
     /// One node occurrence of an exact wiring version.
     Wiring(WiringPosition),
 }
@@ -109,7 +122,7 @@ impl InvocationEntry {
     /// The wiring position, or `None` for a route.
     pub fn wiring(&self) -> Option<&WiringPosition> {
         match self {
-            Self::Route => None,
+            Self::Route | Self::DataChange => None,
             Self::Wiring(position) => Some(position),
         }
     }

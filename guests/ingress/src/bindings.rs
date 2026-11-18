@@ -1,7 +1,7 @@
 wit_bindgen::generate!({
-    world: "wamn:flow-http/flow-http@0.1.0",
+    world: "wamn:ingress-component/ingress@0.1.0",
     path: [
-        "../../wit/wamn-flow-http-routing",
+        "../../wit/wamn-ingress",
         "../../wit/wamn-postgres-0.4",
         "../../wit/wamn-node",
         "../../wit/wamn-operation-0.1",
@@ -12,7 +12,9 @@ wit_bindgen::generate!({
     generate_all,
     async: [
         "export:wasi:http/handler@0.3.0#handle",
-        "wamn:flow-http-routing/routing@0.1.0#authenticate",
+        "export:wasmcloud:nats/jetstream-handler@0.1.3#handle-message",
+        "wamn:operation/operation@0.1.0#dispatch-data-change",
+        "wamn:ingress/routing@0.1.0#authenticate",
         "wamn:operation/operation@0.1.0#invoke",
         "wamn:operation/operation@0.1.0#sign-result",
     ],

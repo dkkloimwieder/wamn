@@ -16,7 +16,7 @@ use chrono::{SecondsFormat, Utc};
 use serde_json::json;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
-use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
+use wamn_engine::ingress::{AuthenticatedCaller, CredentialType};
 
 use crate::config::DeviceConfig;
 use crate::operation::EdgeOperation;

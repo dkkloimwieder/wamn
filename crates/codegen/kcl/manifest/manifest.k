@@ -326,7 +326,13 @@ schema InternalRelation:
     table: str
     cdc: "excluded"
 
+schema DataChange:
+    role: str
+    models: {str:[EventOp]}
+    host_transaction: bool = True
+
 schema Component:
+    data_change?: DataChange
     connections?: [str]
     exports?: {str:any}
     parameters?: {str:[any]}

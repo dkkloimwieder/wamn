@@ -177,6 +177,7 @@ pub fn render_package_declaration(
     )
     .map_err(|source| invalid(source.to_string()))?;
     let document = wamn_catalog::ComponentDeclaration {
+        data_change: false,
         target,
         component: declaration.component,
         interface_version: declaration.interface_version,

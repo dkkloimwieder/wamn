@@ -2,6 +2,6 @@ package wamn:engine@0.1.0;
 
 /// The HTTP route guest imports authentication and the shared operation boundary.
 world route-plugins {
-  import wamn:flow-http-routing/routing@0.1.0;
+  import wamn:ingress/routing@0.1.0;
   import wamn:operation/operation@0.1.0;
 }

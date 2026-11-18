@@ -42,7 +42,7 @@ wash-runtime = { workspace = true }
 [dev-dependencies]
 hmac.workspace = true
 jsonwebtoken.workspace = true
-http-route = { path = "../../guests/http-route" }
+ingress = { path = "../../guests/ingress" }
 wamn-authentication = { workspace = true, features = ["test-util"] }
 tokio-rustls = { workspace = true }
 sha2 = { workspace = true }

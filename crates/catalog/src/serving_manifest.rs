@@ -930,7 +930,7 @@ impl ServingManifest {
             }
             let descriptor = &component.descriptor;
 
-            if component.descriptor.operations.is_empty() {
+            if component.descriptor.operations.is_empty() && !component.descriptor.data_change {
                 return invalid("a serving component must export at least one operation");
             }
             for operation in descriptor.operations.values() {
@@ -1191,6 +1191,7 @@ mod tests {
 
             package_id: package.parse().unwrap(),
             descriptor: ComponentDescriptor {
+                data_change: false,
                 operations: BTreeMap::from([(
                     operation.parse().unwrap(),
                     crate::AdmittedComponentOperation {

@@ -210,14 +210,14 @@ impl HostPlugin for Workflow {
             let components = components.read().await;
             components
                 .iter()
-                .find(|(_, component)| component.name() == "flow-http")
+                .find(|(_, component)| component.name() == "ingress")
                 .map(|(route, _)| Box::from(route.as_ref()))
-                .context("workflow workload has no flow-http sibling")?
+                .context("workflow workload has no ingress sibling")?
         };
         let application = self
             .postgres
             .workflow_application(&route)
-            .context("flow-http has no bound wamn.application")?;
+            .context("ingress has no bound wamn.application")?;
         let project_key = wamn_registry::name::project_env_key(
             &application.org,
             &application.project,

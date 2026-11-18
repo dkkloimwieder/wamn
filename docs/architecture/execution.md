@@ -62,7 +62,7 @@ A `query` with its feed part (the [change feed](#change-feed)) sends `no-cache`.
 Each is `private`, unless the auth policy of the route is `none`, and then it is `public`.
 A successful read also sends `Vary: Authorization, Cookie`.
 Every other response sends `Cache-Control: no-store`: a write, any status other than 200, and any request that carries `x-wamn-csrf`.
-[`read_cache_control`](../../crates/engine/src/flow_http_routing.rs) owns the values.
+[`read_cache_control`](../../crates/engine/src/ingress.rs) owns the values.
 
 ## Signed file results
 
@@ -330,7 +330,7 @@ The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
 For an unexpected property, the pointer names that property.
 An unparseable payload carries the root pointer `""`.
 A platform cause, such as a missing or uncompiled schema, gives a body with no `data`.
-The [route validator](../../crates/engine/src/flow_http_routing.rs) and the [HTTP route adapter](../../guests/http-route/src/lib.rs) own this response.
+The [route validator](../../crates/engine/src/ingress.rs) and the [HTTP route adapter](../../guests/ingress/src/lib.rs) own this response.
 
 An unknown hostname returns the native 404 response.
 An explicit hostname in the release returns 503 while its route binding is absent.
@@ -432,7 +432,7 @@ Native epochs bound guest execution. Duration metering does not grant instructio
 All cleanup paths retain their resource bounds and return failures to their owner.
 
 The [engine operation module](../../crates/engine/src/operation.rs) dispatches exports through resolved wasmCloud targets.
-The workflow host plugin selects the exact sibling and export using the application configuration on `flow-http`.
+The workflow host plugin selects the exact sibling and export using the application configuration on `ingress`.
 It installs the run's SQL and connection authority before each invocation.
 A route reports a retryable or rate-limited error as the failure that a wiring reports after its last attempt.
 The caller decides whether to send a new request.
@@ -510,12 +510,22 @@ The host keeps `search_path` and `statement_timeout` local to the transaction.
 The accessors in `wamn_authority` read only its caller row. A guest cannot replace that row or select the identity table.
 
 
+## Application data change delivery
+
+Deploy resolves handler declarations from the verified package manifests. It adds their owner packages, entities, operations, and roles to `wamn.application`. Deploy refuses two handlers for the same owner package, model, and operation in an application.
+
+The application workload uses its unnamed NATS binding for JetStream. Deploy adds one durable subscription per entity and operation, with the queue group `<application>-<entity>-<op>`. The stock plugin sends messages to `ingress`. It matches the event's package, entity, and operation before it asks the host to call the handler.
+
+Only the workload's `ingress` can call `dispatch-data-change`. The host reads the declared role's grants and supplies the same SQL and connection scope it uses for workflow nodes. A successful call acknowledges the message after any host transaction commits. An error leaves the message for redelivery. Delivery is at least once and creates no workflow run row.
+
+Edge uses the same `ingress.wasm`. It supplies the otherwise unbound NATS imports as traps during linking and starts no subscription.
+
 ## Workflows
 
 A workflow is an authored graph that belongs to one application.
 Its entry is Request, Schedule or Data change.
 The workflow service reads format 0.2 graphs and calls each sibling and export named in the graph through `wamn:workflow/node.call`.
-The host checks that pair against `wamn.application` on the `flow-http` sibling and dispatches to that component.
+The host checks that pair against `wamn.application` on the `ingress` sibling and dispatches to that component.
 The same lookup applies to palette nodes.
 Each entry passes the stored input unchanged, including when an admin runs the workflow.
 Retryable and rate-limited node errors get three attempts by default.

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use wamn_authentication::authorization::AuthorizationStore;
 use wamn_catalog::application_config::ApplicationConfig;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteSet};
-use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
     resolve_authorized_host_route,
@@ -220,7 +220,7 @@ impl HostRouteDelivery {
     /// Serve a platform endpoint through native ingress.
     pub async fn http(
         &self,
-        routing: &wamn_engine::flow_http_routing::FlowHttpRouting,
+        routing: &wamn_engine::ingress::IngressRouting,
         workflow: &Workflow,
         workload: &str,
         request: hyper::Request<wasmtime_wasi_http::WasiBody>,
@@ -262,7 +262,7 @@ impl HostRouteDelivery {
                 value
                     .to_str()
                     .ok()
-                    .map(|value| wamn_engine::flow_http_routing::Header {
+                    .map(|value| wamn_engine::ingress::Header {
                         name: name.to_string(),
                         value: value.to_owned(),
                     })
@@ -290,7 +290,7 @@ impl HostRouteDelivery {
             .authenticate_policy(
                 &self.project_env_key,
                 id,
-                wamn_engine::flow_http_routing::RoutePolicy {
+                wamn_engine::ingress::RoutePolicy {
                     policy: &attachment.auth_policy,
                 },
                 &headers,

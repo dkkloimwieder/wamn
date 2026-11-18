@@ -59,7 +59,7 @@ The test `local_feed` in `apps/wamn_wms/tests` runs it against a local WMS host:
 ```bash
 cd web/sync-bench && pnpm run build && cd ../..
 WAMN_APPLICATION_COMPONENTS="$PWD/apps/target/virtualized/std-empty-environment" \
-WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/release/http_route.wasm" \
+WAMN_INGRESS_COMPONENT="$PWD/apps/target/wasm32-wasip2/release/ingress.wasm" \
 WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)" \
   cargo test --locked --offline -p wamn-wms-tests --lib local_feed:: -- --ignored
 ```

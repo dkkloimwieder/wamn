@@ -5,7 +5,7 @@ platform:
     image: ""
   # The role component images of the platform image set: `<repository>@sha256:<hex>`.
   roles:
-    http:
+    ingress:
       image: ""
       maxConcurrency: 1
   workflow:

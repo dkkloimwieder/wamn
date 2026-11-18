@@ -28,8 +28,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 use wamn_catalog::application_config::ApplicationConfig;
 use wamn_catalog::{HostAttachment, HostHandler};
-use wamn_engine::flow_http_routing::{
-    AuthenticatedCaller, CredentialType, FlowHttpRouting, Header, RoutePolicy,
+use wamn_engine::ingress::{
+    AuthenticatedCaller, CredentialType, Header, IngressRouting, RoutePolicy,
 };
 use wamn_identity_protocol::PrincipalId;
 use wamn_sql::WamnPostgres;
@@ -715,7 +715,7 @@ impl FileRoutes {
     }
     pub async fn http(
         &self,
-        routing: &FlowHttpRouting,
+        routing: &IngressRouting,
         request: hyper::Request<WasiBody>,
     ) -> std::ops::ControlFlow<hyper::Response<WasiBody>, hyper::Request<WasiBody>> {
         let Some(route) = native_route(request.uri().path()) else {
@@ -730,7 +730,7 @@ impl FileRoutes {
 
     async fn host_http(
         &self,
-        routing: &FlowHttpRouting,
+        routing: &IngressRouting,
         request: hyper::Request<WasiBody>,
     ) -> std::ops::ControlFlow<hyper::Response<WasiBody>, hyper::Request<WasiBody>> {
         let Some((id, attachment)) = wamn_catalog::HostRouteSet::Application
@@ -893,7 +893,7 @@ impl FileRoutes {
 
     async fn http_request(
         &self,
-        routing: &FlowHttpRouting,
+        routing: &IngressRouting,
         request: hyper::Request<WasiBody>,
         route: NativeRoute,
     ) -> Result<hyper::Response<WasiBody>, FileError> {
@@ -1194,7 +1194,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
     use wamn_catalog::HostRouteSet;
-    use wamn_engine::flow_http_routing::CredentialType;
+    use wamn_engine::ingress::CredentialType;
     fn caller(
         action: Option<&str>,
         admin: bool,

@@ -2,7 +2,7 @@
 
 use wamn_catalog::SignedFileReads;
 use wamn_catalog::canonical_name::CanonicalName;
-use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::operation::node_types::NodeError;
 
 /// Retained operation authority; no open SQL transaction is required.

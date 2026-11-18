@@ -35,7 +35,7 @@
 wash_runtime::wasmtime::component::bindgen!({
     path: [
         "../../wit/wamn-connection",
-        "../../wit/wamn-flow-http-routing",
+        "../../wit/wamn-ingress",
         "../../wit/wamn-postgres-0.4",
         "../../wit/wamn-node",
         "../../wit/wamn-operation-0.1",

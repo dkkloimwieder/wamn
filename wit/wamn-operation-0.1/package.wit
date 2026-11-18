@@ -5,7 +5,7 @@ package wamn:operation@0.1.0;
 interface operation {
   use wamn:postgres/types@0.4.0.{pg-error};
   use wamn:node/types@0.1.0.{node-context, emission, node-error};
-  use wamn:flow-http-routing/routing@0.1.0.{authenticated-caller};
+  use wamn:ingress/routing@0.1.0.{authenticated-caller};
 
   /// The existing operation id text, validated against the loaded release.
   type sealed-operation-id = string;
@@ -35,6 +35,9 @@ interface operation {
 
   /// Call the typed application export under the current invocation authority.
   invoke: async func(operation: sealed-operation-id, context: node-context, input: string) -> result<emission, node-error>;
+
+  /// Dispatch one data change delivery from the workload's ingress.
+  dispatch-data-change: async func(component: string, event: string) -> result<_, string>;
 
   /// Sign results after commit or replay, using the retained invocation authority.
   sign-result: async func(payload: string) -> result<string, node-error>;

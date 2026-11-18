@@ -25,7 +25,7 @@ use wamn_authority::identity::SessionIdentity;
 use crate::WamnPostgres;
 use crate::write_log::Claim;
 use crate::invocation::{AuthorizedInvocation, InvocationRequest};
-use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::ingress::AuthenticatedCaller;
 const SEQUENCE_SQL: &str =
     "SELECT id::text, pattern FROM platform.number_sequence WHERE application = $1 AND name = $2";
 

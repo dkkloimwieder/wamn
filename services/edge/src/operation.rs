@@ -10,7 +10,7 @@ use std::sync::Arc;
 use wamn_catalog::canonical_name::CanonicalName;
 use wamn_engine::entry_operation::operation::{self, Begun, Refusal};
 use wamn_engine::entry_operation::postgres_types::PgError;
-use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::{authorize_registered_operation, bounded_node_deadline_ms};
 use crate::native_operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wash_runtime::engine::ctx::{ActiveCtx, extract_active_ctx};
@@ -297,6 +297,14 @@ fn storage_refusal(error: &anyhow::Error) -> Refusal {
 }
 
 impl<T: 'static + Send> operation::HostWithStore<T> for EdgeOperationHost {
+    fn dispatch_data_change(
+        _accessor: &Accessor<T, Self>,
+        _component: String,
+        _event: String,
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<Result<(), String>>> {
+        std::future::ready(Ok(Err("data change dispatch is unavailable at the edge".into())))
+    }
+
     async fn invoke(
         accessor: &Accessor<T, Self>,
         operation: String,

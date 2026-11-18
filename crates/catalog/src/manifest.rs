@@ -617,13 +617,15 @@ impl PackageManifest {
 
     /// Decode a compiled document. Authored input is checked by `from_authored_slice`.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, ManifestError> {
-        serde_json::from_slice(bytes).map_err(|source| {
+        let manifest = serde_json::from_slice(bytes).map_err(|source| {
             ManifestError::with_source(
                 ManifestErrorType::InvalidManifest,
                 "document does not match the closed manifest vocabulary",
                 source,
             )
-        })
+        })?;
+        validate_data_change(&manifest)?;
+        Ok(manifest)
     }
 
     /// Decode authored input before defaults erase derived-member presence.
@@ -728,6 +730,7 @@ impl PackageManifest {
             ));
         }
 
+        validate_data_change(manifest)?;
         validate_operation_vocabulary(manifest)?;
         for (name, operation) in &manifest.custom_operations {
             validate_count_text(name, operation)?;
@@ -1154,6 +1157,30 @@ fn validate_routes(routes: &RoutesDeclaration) -> Result<(), ManifestError> {
     Ok(())
 }
 
+fn validate_data_change(manifest: &PackageManifest) -> Result<(), ManifestError> {
+    for (name, declaration) in &manifest.components {
+        if let Some(handler) = &declaration.data_change {
+            for (model, ops) in &handler.models {
+                if !manifest.models.contains_key(model) {
+                    return Err(ManifestError::new(
+                        ManifestErrorType::InvalidComponent,
+                        format!("component {name} handles data changes for unknown model {model}"),
+                    ));
+                }
+                if ops.is_empty()
+                    || ops.iter().enumerate().any(|(index, op)| ops[..index].contains(op))
+                {
+                    return Err(ManifestError::new(
+                        ManifestErrorType::InvalidComponent,
+                        format!("component {name} must declare a nonempty list of distinct operations for model {model}"),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_component_groups(
     manifest: &PackageManifest,
     component_by_operation: &BTreeMap<LocalOperation, Option<&SourceName>>,
@@ -1209,7 +1236,9 @@ fn validate_component_groups(
         };
         *count += 1;
     }
-    if let Some((component, _)) = grouped.iter().find(|(_, count)| **count == 0) {
+    if let Some((component, _)) = grouped.iter().find(|(name, count)| {
+        **count == 0 && manifest.components[**name].data_change.is_none()
+    }) {
         return Err(ManifestError::new(
             ManifestErrorType::InvalidComponent,
             format!("component {component} groups no operations"),
@@ -2884,7 +2913,10 @@ impl RoutesDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ComponentDeclaration {
-    /// External connection aliases available to every operation of this component.
+    /// Data change events handled by this component.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_change: Option<DataChangeDeclaration>,
+    /// External connection aliases available to this component.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connections: Vec<crate::canonical_name::CanonicalName>,
     /// Private component exports outside the generated operation interfaces.
@@ -2895,6 +2927,20 @@ pub struct ComponentDeclaration {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub parameters:
         BTreeMap<crate::canonical_name::CanonicalName, Vec<crate::ComponentParameterDeclaration>>,
+}
+
+/// The models, row operations and execution role of a data change handler.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DataChangeDeclaration {
+    pub role: wamn_identity_protocol::RoleName,
+    pub models: BTreeMap<SourceName, Vec<crate::WiringEventOperation>>,
+    #[serde(default = "host_transaction_default")]
+    pub host_transaction: bool,
+}
+
+fn host_transaction_default() -> bool {
+    true
 }
 
 pub fn custom_artifact_stem(operation: &LocalOperation) -> String {

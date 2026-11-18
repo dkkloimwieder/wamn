@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use sqlx::PgConnection as Client;
 use wamn_catalog::application_config::ApplicationConfig;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority, sealed_operation_reference};
-use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::DeliveryError;
 use wamn_environment::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,

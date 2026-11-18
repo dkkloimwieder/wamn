@@ -1,5 +1,7 @@
 use super::{Mapping, ServingManifest, Value, ensure};
 use anyhow::Context as _;
+use std::collections::{BTreeMap, BTreeSet};
+use wamn_catalog::{PackageName, manifest::PackageManifest};
 
 /// The Helm release name of an application: `r-<slug>-<hash>`.
 ///
@@ -33,6 +35,7 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 /// Each role's configuration derives from the coordinate.
 pub fn roles(
     manifest: &ServingManifest,
+    package_manifests: &BTreeMap<PackageName, PackageManifest>,
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
@@ -43,7 +46,7 @@ pub fn roles(
 ) -> anyhow::Result<Vec<Role>> {
     use wamn_catalog::application_config::{
         ApplicationComponent, ApplicationConfig, ApplicationConnection, ApplicationOperation,
-        ApplicationOperationType,
+        ApplicationDataChange, ApplicationOperationType, DataChangeModel,
     };
     let mut components = Vec::new();
     let mut declared_connections = std::collections::BTreeMap::new();
@@ -52,8 +55,11 @@ pub fn roles(
         .components
         .iter()
         .map(component_name)
-        .chain(std::iter::once("flow-http".to_owned()))
+        .chain(std::iter::once("ingress".to_owned()))
         .collect();
+    let stream = wamn_registry::name::stream_name(org, project, env);
+    let mut subscriptions = BTreeSet::new();
+    let mut handlers = BTreeMap::new();
     let mut typed_operations = std::collections::BTreeSet::new();
     for component in &manifest.components {
         let name = component_name(component);
@@ -189,6 +195,47 @@ pub fn roles(
                 },
             );
         }
+        let package = package_manifests.get(&component.package_id);
+        let declaration = package
+            .and_then(|package| package.components.get(component.descriptor.component.as_str()))
+            .and_then(|declaration| declaration.data_change.as_ref());
+        ensure!(
+            component.descriptor.data_change == declaration.is_some(),
+            "component {name} has a data change export that differs from its verified package manifest"
+        );
+        let data_change = if let (Some(package), Some(declaration)) = (package, declaration) {
+            let mut models = Vec::with_capacity(declaration.models.len());
+            for (model, ops) in &declaration.models {
+                let relation = package.models.get(model)
+                    .with_context(|| format!("component {name} handles unknown model {model}"))?;
+                // CDC publishes the package-local model name as the entity segment.
+                let entity = model;
+                for op in ops {
+                    let op = op.as_str();
+                    if let Some(previous) = handlers.insert((&relation.owner, model, op), component) {
+                        anyhow::bail!(
+                            "components {} and {name} both handle data changes for {}/{model}/{op}",
+                            component_name(previous), relation.owner,
+                        );
+                    }
+                    let subject = wamn_registry::name::event_subject(org, project, env, &format!("{entity}.{op}"));
+                    subscriptions.insert(format!("{stream}:{subject}:new:{application}-{entity}-{op}"));
+                }
+                models.push(DataChangeModel {
+                    owner_package: relation.owner.clone(),
+                    model: model.clone(),
+                    entity: entity.clone(),
+                    ops: ops.clone(),
+                });
+            }
+            Some(ApplicationDataChange {
+                role: declaration.role.clone(),
+                host_transaction: declaration.host_transaction,
+                models,
+            })
+        } else {
+            None
+        };
         components.push(ApplicationComponent {
             name,
             package: component.package_id.clone(),
@@ -196,6 +243,7 @@ pub fn roles(
             connections,
             schema: component.runtime_schema.clone(),
             operations,
+            data_change,
         });
     }
     let application = ApplicationConfig {
@@ -229,10 +277,23 @@ pub fn roles(
         wamn_catalog::application_config::APPLICATION_CONFIG.into(),
         serde_json::to_string(&application)?.into(),
     );
+    let mut host_interfaces = host_interfaces(manifest, !integrations.is_empty())?;
+    if !subscriptions.is_empty() {
+        host_interfaces.push(serde_json::json!({
+            "namespace": "wasmcloud",
+            "package": "nats",
+            "version": "0.1.3",
+            "interfaces": ["jetstream-handler"],
+            "config": {
+                "component": "ingress",
+                "jetstream-subscriptions": subscriptions.into_iter().collect::<Vec<_>>().join(","),
+            },
+        }));
+    }
     Ok(vec![Role {
         name: RoleName::Http,
         config,
-        host_interfaces: host_interfaces(manifest, !integrations.is_empty())?,
+        host_interfaces,
         integration_components: integrations.into_values().collect(),
     }])
 }

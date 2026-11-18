@@ -162,6 +162,7 @@ mod tests {
     fn admitted(bytes: &[u8]) -> AdmittedComponent {
         normalize_component_fact(
             ComponentDeclaration {
+                data_change: false,
                 connections: Vec::new(),
                 target: ComponentPackageCoordinate {
                     project_env_key: "org-a--dev--project".parse().unwrap(),

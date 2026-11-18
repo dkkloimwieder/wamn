@@ -186,8 +186,12 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         .with_context(|| format!("read component declaration {}", args.declaration.display()))?;
     let document: serde_json::Value = serde_json::from_slice(&declaration_bytes)
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
-    let declaration: ComponentDeclaration = serde_json::from_value(document)
+    let mut declaration: ComponentDeclaration = serde_json::from_value(document)
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
+
+    declaration.data_change = package_manifest.components
+        .get(declaration.component.as_str())
+        .is_some_and(|component| component.data_change.is_some());
 
     let engine = wamn_engine::build_engine(&[]).context("build component admission engine")?;
     let facts = validate_component_admission(
@@ -303,6 +307,7 @@ mod tests {
             serde_json::from_value(document).expect("two-component manifest parses");
         let operation = "observer-fixture:audit/observe@3.0.0".parse().unwrap();
         let component = AdmittedComponent {
+            data_change: false,
             target: wamn_catalog::ComponentPackageCoordinate {
                 project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: manifest.package.id.clone(),
@@ -425,6 +430,7 @@ mod tests {
         registered: Option<&wamn_catalog::registered_operation::RegisteredOperation>,
     ) -> AdmittedComponent {
         AdmittedComponent {
+            data_change: false,
             target: wamn_catalog::ComponentPackageCoordinate {
                 project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: manifest.package.id.clone(),

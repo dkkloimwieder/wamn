@@ -9,8 +9,8 @@
 //! - `components.json`: the admitted component facts of the release, which the
 //!   cloud host reads from its catalog.
 //! - `grants.json`: the permissions of each role ([`Grants`]).
-//! - `flow-http.wasm`: the composed entry that serves the routes, the
-//!   http-route guest composed with the application at publish. The box
+//! - `ingress.wasm`: the composed entry that serves the routes, the
+//!   ingress guest composed with the application at publish. The box
 //!   composes nothing.
 //! - `<sha256>.wasm`: the bytes of each component.
 //!
@@ -286,6 +286,7 @@ pub(crate) mod test_util {
             committed_result_schema: None,
         };
         let fact = AdmittedComponent {
+            data_change: false,
             target: ComponentPackageCoordinate {
                 project_env_key: "org-a--dev--project".parse().unwrap(),
                 package_id: "scale".parse().unwrap(),

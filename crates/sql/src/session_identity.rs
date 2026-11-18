@@ -927,9 +927,9 @@ impl WamnPostgres {
         project_env_key: &wamn_registry::ProjectEnvKey,
         principal_id: &wamn_identity_protocol::PrincipalId,
         role: &str,
-    ) -> anyhow::Result<Option<wamn_engine::flow_http_routing::AuthenticatedCaller>> {
+    ) -> anyhow::Result<Option<wamn_engine::ingress::AuthenticatedCaller>> {
         if *principal_id == wamn_identity_protocol::workflow_user_id() {
-            use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
+            use wamn_engine::ingress::{AuthenticatedCaller, CredentialType};
             let permissions = self.executor_read(project, async |connection| {
                 Ok(sqlx::query_scalar::<_, Vec<String>>(
                     "SELECT ARRAY(SELECT permission FROM platform.permission WHERE role_name = r.name)

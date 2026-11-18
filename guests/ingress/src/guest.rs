@@ -35,12 +35,14 @@ impl Guest for Component {
     }
 }
 
+mod data_change;
+
 bindings::export!(Component with_types_in bindings);
 
 #[derive(Default)]
 struct GuestBackend;
 impl Backend for GuestBackend {
-    type AuthenticatedCaller = bindings::wamn::flow_http_routing::routing::AuthenticatedCaller;
+    type AuthenticatedCaller = bindings::wamn::ingress::routing::AuthenticatedCaller;
     fn routes(
         &mut self,
         method: &str,
@@ -60,7 +62,7 @@ impl Backend for GuestBackend {
         body: &[u8],
     ) -> Result<Option<Self::AuthenticatedCaller>, AuthRejection> {
         let policy = route.auth_policy.to_string();
-        bindings::wamn::flow_http_routing::routing::authenticate(
+        bindings::wamn::ingress::routing::authenticate(
             route.attachment_id.clone(),
             policy,
             headers.to_vec(),

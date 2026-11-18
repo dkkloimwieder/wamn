@@ -7,10 +7,10 @@
 //! - [`lifecycle`]: bounded service shutdown and native liveness supervision.
 //! - [`HostPlugin`]: the plugin trait. It is wash-runtime's trait, re-exported.
 //!   The engine owns no plugin trait of its own.
-//! - [`flow_http_routing`]: HTTP authentication from workload configuration.
+//! - [`ingress`]: HTTP authentication from workload configuration.
 //! - [`native_routes`]: native host requests and operation authorization.
 //! - [`entry_operation`]: the generated host side of `wamn:operation`, the
-//!   entry-owned operation boundary of the http-route guest. Each host
+//!   entry-owned operation boundary of the ingress guest. Each host
 //!   implements it over its own store.
 //! - [`expected_router`]: the native HTTP router that refuses an unbound
 //!   release hostname as unavailable.
@@ -41,7 +41,7 @@ pub mod component_admission;
 pub mod engine;
 pub mod entry_operation;
 pub mod expected_router;
-pub mod flow_http_routing;
+pub mod ingress;
 pub mod invocation_scope;
 pub mod invocation_trace;
 pub mod lifecycle;

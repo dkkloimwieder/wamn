@@ -388,7 +388,7 @@ Only the route component imports `wamn:operation`.
 The control-only entry links this interface without operation authority.
 Its begin calls return `unknown-operation`, and its commit, rollback, and WAL calls return `not-begun`.
 Package members that import `wamn:postgres/statements` need only the PostgreSQL WIT package path.
-The `wamn:postgres@0.4.0` package has no dependency on `wamn:flow-http-routing`.
+The `wamn:postgres@0.4.0` package has no dependency on `wamn:ingress`.
 
 `begin-operation` takes the opaque caller handle from `authenticate`, the sealed operation id, an idempotency key, and request hash bytes.
 The caller is optional only for an operation that registers no grant in the loaded release.
@@ -400,7 +400,7 @@ The host binds the identity before it inserts the write-log claim in a new trans
 The host stores the hash bytes unchanged and returns stored result text unchanged as `begun::finished` on replay.
 The entry returns that text and runs no work. `finished` leaves no operation open, so another begin is allowed immediately.
 
-The host projects each base route's operation id and idempotency key path through `wamn:flow-http-routing/routing@0.1.0`.
+The host projects each base route's operation id and idempotency key path through `wamn:ingress/routing@0.1.0`.
 The server hashes the parsed request element with sorted object keys.
 It leaves out `request_id` and the route's idempotency key field.
 It preserves scalar spelling and array order before hashing and invocation.
@@ -941,7 +941,7 @@ The shared control, catalog, and run tables store the composed `org--env--projec
 The separate `environment` field stores the short name, such as `dev`.
 Target JSON, catalog identities, run keys, and manifest targets use `project_env_key`.
 Event fields and workload identity use `project_env_key`. Credential hashes frame that name.
-The management variable is `WAMN_MANAGEMENT_PROJECT_ENV_KEY`, and `flow-http.json` carries `wamn.project_env_key`.
+The management variable is `WAMN_MANAGEMENT_PROJECT_ENV_KEY`. The `ingress` component's workload configuration carries `wamn.project_env_key`.
 The event subject keeps its separate organization, project, and short environment tokens.
 Auth invalidation keys still include the environment key, so equal principal IDs in separate environments keep separate cached grants and status.
 `wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key` or on a history table.

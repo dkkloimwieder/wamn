@@ -1,6 +1,6 @@
 //! Host request facts read from the route component's workload configuration.
 
-use crate::flow_http_routing::{RoutePolicy, RouteProvider};
+use crate::ingress::{RoutePolicy, RouteProvider};
 use std::collections::HashMap;
 use wamn_catalog::application_config::{APPLICATION_CONFIG, ApplicationConfig};
 use wamn_catalog::http_routes::{HTTP_ROUTES_CONFIG, RouteDefinition};

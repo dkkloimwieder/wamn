@@ -1,7 +1,7 @@
 //! The edge's manifest-based route policy, retained until the edge design.
 use crate::release::EdgeRelease;
 use wamn_catalog::AttachmentType;
-use wamn_engine::flow_http_routing::{RoutePolicy, RouteProvider};
+use wamn_engine::ingress::{RoutePolicy, RouteProvider};
 
 impl RouteProvider for EdgeRelease {
     fn target(&self) -> &wamn_registry::ProjectEnvKey {

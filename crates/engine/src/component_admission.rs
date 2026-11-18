@@ -291,6 +291,19 @@ pub fn validate_component_admission(
             source,
         )
     })?;
+    let handler = component_type.get_export(raw, wamn_catalog::DATA_CHANGE_EXPORT);
+    if request.declaration.data_change != handler.is_some() {
+        return Err(ComponentAdmissionError::new(
+            ComponentAdmissionErrorType::OperationExportMismatch,
+            component_name.as_str(),
+            anyhow::anyhow!("the data change export must match the package declaration"),
+        ));
+    }
+    if let Some(handler) = handler {
+        validate_data_change_signature(raw, handler.ty).map_err(|error| {
+            operation_signature_mismatch(component_name.as_str(), wamn_catalog::DATA_CHANGE_EXPORT, error)
+        })?;
+    }
     let declared_exports: BTreeSet<_> = request.declaration.operations.keys().cloned().collect();
     let byte_exports: BTreeSet<_> = component_type
         .exports(raw)
@@ -312,7 +325,10 @@ pub fn validate_component_admission(
     // declared operations, so an export of an embedded member is inert.
     let extra: Vec<_> = byte_exports
         .difference(&declared_exports)
-        .filter(|export| !embedded.exports.contains(export.as_str()))
+        .filter(|export| {
+            export.as_str() != wamn_catalog::DATA_CHANGE_EXPORT
+                && !embedded.exports.contains(export.as_str())
+        })
         .cloned()
         .collect();
     if !missing.is_empty() || !extra.is_empty() {
@@ -413,6 +429,34 @@ pub fn validate_component_admission(
         )
     })?;
     Ok(facts)
+}
+
+fn validate_data_change_signature(
+    engine: &wash_runtime::wasmtime::Engine,
+    item: ComponentItem,
+) -> anyhow::Result<()> {
+    use wash_runtime::wasmtime::component::Type;
+
+    let ComponentItem::ComponentInstance(instance) = item else {
+        anyhow::bail!("data change export is not an interface instance");
+    };
+    let mut exports = instance.exports(engine);
+    let Some(("handle", handle)) = exports.next() else {
+        anyhow::bail!("data change interface must export handle");
+    };
+    anyhow::ensure!(exports.next().is_none(), "data change interface must export only handle");
+    let ComponentItem::ComponentFunc(handle) = handle.ty else {
+        anyhow::bail!("handle is not a component function");
+    };
+    anyhow::ensure!(handle.async_() && handle.params().eq([("event", Type::String)]),
+        "handle must be async and accept an event string");
+    let mut results = handle.results();
+    anyhow::ensure!(
+        matches!(results.next(), Some(Type::Result(result)) if result.ok().is_none() && result.err() == Some(Type::String))
+            && results.next().is_none(),
+        "handle must return result<_, string>"
+    );
+    Ok(())
 }
 
 // Nested calls use separate stores. Only owned values can cross that boundary.
@@ -750,6 +794,7 @@ mod tests {
     fn request() -> ComponentAdmissionRequest {
         ComponentAdmissionRequest {
             declaration: ComponentDeclaration {
+                data_change: false,
                 connections: Vec::new(),
                 target: ComponentPackageCoordinate {
                     project_env_key: "org-a--dev--project".parse().unwrap(),
