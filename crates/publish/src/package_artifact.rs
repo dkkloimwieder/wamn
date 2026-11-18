@@ -196,38 +196,6 @@ fn collect_files(
     Ok(())
 }
 
-/// One component named by the compiled package.
-#[derive(Debug)]
-struct SourceComponent {
-    name: wamn_catalog::canonical_name::CanonicalName,
-    file: PathBuf,
-    sha256: wamn_digest::Digest,
-}
-fn source_components(
-    root: &Path,
-    manifest: &PackageManifest,
-    record: &wamn_codegen::build_record::BuildRecord,
-) -> anyhow::Result<Vec<SourceComponent>> {
-    let output = wamn_codegen::output_root(root);
-    manifest
-        .components
-        .keys()
-        .map(|name| {
-            let entry = record
-                .outputs
-                .components
-                .iter()
-                .find(|entry| entry.name.as_str() == name.as_str())
-                .with_context(|| format!("build.json records no component {name}"))?;
-            Ok(SourceComponent {
-                name: name.clone().into(),
-                file: output.join(&entry.path),
-                sha256: entry.sha256,
-            })
-        })
-        .collect()
-}
-
 /// One admitted component and its exact bytes, before the registry assigns its image digest.
 #[derive(Debug)]
 struct VerifiedComponent {
@@ -236,10 +204,10 @@ struct VerifiedComponent {
 }
 
 fn verify_package(
-    root: &Path,
+    output: &Path,
+    finished: &wamn_codegen::fingerprint::Fingerprint,
     manifest: &mut PackageManifest,
 ) -> anyhow::Result<Vec<VerifiedComponent>> {
-    let build_record = wamn_codegen::build_record::read(&wamn_codegen::output_root(root))?;
     let contract = &manifest.required_platform_policy_contract;
     ensure!(
         contract.state == PolicyContractState::Satisfied,
@@ -254,11 +222,17 @@ fn verify_package(
         .map(|base| base.digest)
         .collect::<std::collections::BTreeSet<_>>();
     let mut components = Vec::new();
-    for source in source_components(root, manifest, &build_record)? {
-        let declaration =
-            package_declaration(manifest, &source.name, &admission_project_env_key())?;
-        let bytes = std::fs::read(&source.file)
-            .with_context(|| format!("read {}", source.file.display()))?;
+    let names = manifest
+        .components
+        .keys()
+        .cloned()
+        .map(Into::into)
+        .collect::<Vec<wamn_catalog::canonical_name::CanonicalName>>();
+    for name in names {
+        let declaration = package_declaration(manifest, &name, &admission_project_env_key())?;
+        let path = wamn_build::component_path(name.as_str());
+        let file = output.join(&path);
+        let bytes = std::fs::read(&file).with_context(|| format!("read {}", file.display()))?;
         let admission = admit(
             manifest,
             bytes,
@@ -269,17 +243,13 @@ fn verify_package(
                 .collect(),
             base_digests.clone(),
         )
-        .with_context(|| format!("admit component {}", source.name))?;
+        .with_context(|| format!("admit component {name}"))?;
         let (descriptor, bytes) = admission.into_descriptor_and_bytes();
-        let digest = descriptor.component_digest;
-        ensure!(
-            digest == source.sha256,
-            "component {} is {digest}, but build.json records {}; run wamn build again",
-            source.name,
-            source.sha256
-        );
+        wamn_codegen::fingerprint::verify_digest(
+            output, finished, &path, descriptor.component_digest,
+        )?;
         if !manifest.connections.is_empty() {
-            let declaration = &manifest.components[source.name.as_str()];
+            let declaration = &manifest.components[name.as_str()];
             crate::connection_requirement::validate_connections(
                 &bytes,
                 manifest,
@@ -357,7 +327,15 @@ pub async fn push_package(
     bases: &BTreeMap<PackageCoordinate, PushedPackage>,
 ) -> anyhow::Result<PushedPackage> {
     let root = &request.package;
+    let output = wamn_codegen::output_root(root);
+    let finished = wamn_codegen::fingerprint::read(&output)?;
     let directory = crate::package_source::read_package_directory(root)?;
+    wamn_codegen::fingerprint::verify_digest(
+        &output,
+        &finished,
+        Path::new("wamn.json"),
+        bytes_sha256(&directory.manifest_bytes),
+    )?;
     refuse_workflow_declarations(&directory.manifest_bytes)?;
     let coordinate = wamn_catalog::package_schema::package_metadata(&directory)
         .context("plan the package migrations")?
@@ -378,7 +356,7 @@ pub async fn push_package(
         );
         base_packages.insert(alias.clone(), published.digest);
     }
-    let components = verify_package(root, &mut manifest)?;
+    let components = verify_package(&output, &finished, &mut manifest)?;
     let tag = format!(
         "{}-{}",
         coordinate.package_id(),
@@ -387,6 +365,24 @@ pub async fn push_package(
     .parse::<wamn_oci::package_artifact::tag::OciTag>()?;
     let repository = Repository::open(&request.registry, &tag)?;
     let files = migration_files(root)?;
+    let expected_migrations = finished
+        .outputs
+        .keys()
+        .filter(|path| MIGRATION_PATHS.iter().any(|directory| path.starts_with(directory)))
+        .count();
+    ensure!(
+        expected_migrations == files.len(),
+        "migration files differ from the finished build"
+    );
+
+    for (path, bytes) in &files {
+        wamn_codegen::fingerprint::verify_digest(
+            &output,
+            &finished,
+            Path::new(path),
+            bytes_sha256(bytes),
+        )?;
+    }
     let migrations = migrations_layer(&files)?;
     let (existing, created) = if let Some((raw, digest)) = repository.manifest().await? {
         let (previous, previous_created) = repository
@@ -799,48 +795,6 @@ mod tests {
         std::fs::write(path, bytes).unwrap();
     }
 
-    /// The completed `build.json` of the package at `root`, with
-    /// the components `receiving` and `blob-put` in its build output.
-    fn write_build_record(root: &Path) {
-        use wamn_codegen::build_record;
-        let output = wamn_codegen::output_root(root);
-        let components = ["blob-put", "receiving"]
-            .map(|name| {
-                let path = format!("components/{name}.wasm");
-                write(&output, &path, name.as_bytes());
-                build_record::BuildComponent {
-                    name: name.parse().unwrap(),
-                    path,
-                    sha256: bytes_sha256(name.as_bytes()),
-                }
-            })
-            .to_vec();
-        let build_record = build_record::BuildRecord {
-            schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
-            package: build_record::BuildPackage {
-                id: "wamn_receiving".parse().unwrap(),
-                version: "2.1.0".parse().unwrap(),
-            },
-
-            dependencies: Vec::new(),
-            generator: build_record::BuildGenerator {
-                id: "generator".to_owned(),
-                toolchain: "toolchain".to_owned(),
-                sqlx: "0.9.0".to_owned(),
-            },
-            outputs: build_record::BuildOutputs {
-                manifest: bytes_sha256(b"manifest"),
-                files: BTreeMap::new(),
-                components,
-            },
-        };
-        write(
-            &output,
-            build_record::BUILD_RECORD_FILE,
-            &build_record.to_bytes(),
-        );
-    }
-
     #[test]
     fn web_edits_leave_the_package_digest_unchanged() {
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
@@ -853,15 +807,12 @@ mod tests {
         );
         write(&root, "generated/web/index.html", b"old output\n");
         write(&root, "web/src/main.ts", b"old source\n");
-        write_build_record(&root);
         let first = pack_package(&root).unwrap();
         assert_eq!(first.layers.len(), 2, "one manifest and one migrations tar");
         std::fs::write(root.join("web/src/main.ts"), b"changed source\n").unwrap();
         std::fs::write(root.join("generated/web/index.html"), b"changed output\n").unwrap();
         let web = wamn_codegen::output_root(&root).join("web-artifact/dist");
         write(&web, "index.html", b"standalone output\n");
-        // Record the changed compiled output.
-        write_build_record(&root);
         assert_eq!(
             (first.digest.to_string())
                 .parse::<wamn_digest::Digest>()

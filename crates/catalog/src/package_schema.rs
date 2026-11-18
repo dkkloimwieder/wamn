@@ -87,20 +87,3 @@ pub fn package_metadata(directory: &PackageDirectory) -> anyhow::Result<PackageM
         cdc_excluded_relations,
     })
 }
-
-/// Refuse a different artifact for an already recorded coordinate.
-pub fn validate_package_schema_source(
-    coordinate: &PackageCoordinate,
-    artifact_digest: Option<&wamn_digest::Digest>,
-    existing: &AppliedPackage,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        existing.coordinate.package_id() == coordinate.package_id(),
-        "installed schema belongs to another package"
-    );
-    anyhow::ensure!(
-        existing.coordinate != *coordinate || existing.artifact_digest.as_ref() == artifact_digest,
-        "package-coordinate-content-conflict: {coordinate:?}"
-    );
-    Ok(())
-}

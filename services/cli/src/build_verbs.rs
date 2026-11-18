@@ -2,19 +2,36 @@
 
 use std::path::PathBuf;
 
-use wamn_build::{BuildRequest, build_package, default_output_root, package_output};
+use wamn_build::{BuildRequest, DescribeMode, build_package, default_output_root, package_output};
 
 /// Arguments of `wamn build`.
 #[derive(Debug, clap::Args)]
 pub struct BuildArgs {
     /// The package directories, built in the order given. Give a base package
-    /// before its overlays: an overlay reads the base's build.json.
+    /// before its overlays.
     #[arg(required = true)]
     pub packages: Vec<PathBuf>,
-    /// A superuser URL of a PostgreSQL server. The build creates its own
-    /// verification database there and drops it at the end.
+    #[command(flatten)]
+    describe: RefreshDescribeArgs,
+    /// Compare the committed SQL describe evidence with PostgreSQL.
+    #[arg(long, requires = "database_url", conflicts_with = "refresh_describe")]
+    check_describe: bool,
+}
+
+#[derive(Debug, Default, clap::Args)]
+pub(crate) struct RefreshDescribeArgs {
+    /// PostgreSQL superuser URL for a disposable verification database.
     #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
-    pub database_url: String,
+    database_url: Option<String>,
+    /// Recreate the committed SQL describe evidence from PostgreSQL.
+    #[arg(long, requires = "database_url")]
+    pub(crate) refresh_describe: bool,
+}
+
+impl RefreshDescribeArgs {
+    pub(crate) fn mode(&self, check: bool) -> anyhow::Result<DescribeMode<'_>> {
+        DescribeMode::from_options(self.database_url.as_deref(), self.refresh_describe, check)
+    }
 }
 
 /// Build each package and print its manifest digest and output directory.
@@ -23,20 +40,16 @@ pub struct BuildArgs {
 ///
 /// When a build fails. The packages before it keep their output.
 pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
+    let describe = args.describe.mode(args.check_describe)?;
     for package in &args.packages {
         let output_root = default_output_root(package);
-        let build_record = build_package(&BuildRequest::new(
-            package,
-            &output_root,
-            &args.database_url,
-        ))
-        .await?;
+        let built = build_package(&BuildRequest::new(package, &output_root, describe)).await?;
         println!(
             "{} {} {} {}",
-            build_record.package.id,
-            build_record.package.version,
-            build_record.outputs.manifest,
-            package_output(&output_root, &build_record.package.id).display()
+            built.package.id,
+            built.package.version,
+            built.manifest_digest,
+            package_output(&output_root, &built.package.id).display()
         );
     }
     Ok(())

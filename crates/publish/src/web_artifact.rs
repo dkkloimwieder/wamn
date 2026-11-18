@@ -18,7 +18,7 @@ use object_store::aws::AmazonS3Builder;
 use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutMode, PutOptions};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
-use wamn_codegen::build_record::{self, BuildRecord};
+use wamn_codegen::fingerprint;
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_oci::package_artifact::registry_credentials::read_registry_push_credentials;
 use wamn_oci::package_artifact::{Repository, registry_auth};
@@ -118,22 +118,19 @@ pub fn artifact_output(package_root: &Path) -> PathBuf {
     wamn_codegen::output_root(package_root).join(ARTIFACT_DIRECTORY)
 }
 
-/// Build browser files against the contract in the package's build record.
-///
-/// Web source changes do not require another package build. The compiled
-/// manifest must still match the contract that `build.json` records.
+/// Build browser files against the finished package's compiled contract.
 /// The web version comes from the package's `web/package.json`.
 ///
 /// # Errors
 ///
-/// Refuses a missing build record or web version, a changed manifest, no client,
-/// or a failed Vite build.
+/// Refuses a missing fingerprint, changed manifest, missing web version or
+/// client, or a failed Vite build.
 pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtifactError> {
     async {
         let output = wamn_codegen::output_root(package_root);
-        let record = build_record::read(&output)?;
-        let path = output.join("wamn.json");
-        let compiled = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        let finished = fingerprint::read(&output)?;
+        let (compiled, digest) =
+            fingerprint::read_artifact(&output, &finished, Path::new("wamn.json"))?;
         let path = package_root.join("web/package.json");
         let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
         let package: serde_json::Value =
@@ -143,7 +140,7 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
             .and_then(serde_json::Value::as_str)
             .filter(|version| !version.is_empty())
             .with_context(|| format!("{} has no nonempty version", path.display()))?;
-        let manifest = web_manifest(&record, &compiled, version.to_owned())?;
+        let manifest = web_manifest(&compiled, digest, version.to_owned())?;
         let root = artifact_output(package_root);
         std::fs::create_dir_all(&root)?;
         let sidecar = root.join(WEB_MANIFEST_FILE);
@@ -618,9 +615,9 @@ pub mod test_support;
 mod tests {
     use super::test_support::{artifact_fixture, build_fixture, fixture_registry};
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
-    use wamn_codegen::build_record::{self, BuildRecord};
+    use wamn_codegen::fingerprint::{self, Fingerprint};
     use wamn_digest::{bytes_sha256, canonical_json_bytes};
     use wamn_oci::package_artifact::registry_pull::test_server::Server;
     use wamn_test_infrastructure::scratch::ScratchRoot;
@@ -630,23 +627,19 @@ mod tests {
         pull_web_artifact, push_web_artifact, read_web_manifest,
     };
 
-    fn write_build(scratch: &ScratchRoot, record: &BuildRecord, compiled: &[u8]) -> PathBuf {
+    fn write_build(scratch: &ScratchRoot, record: &Fingerprint, compiled: &[u8]) -> PathBuf {
         let package = scratch.path().join("apps/web_fixture");
         fs::create_dir_all(package.join("web")).unwrap();
         fs::write(package.join("web/package.json"), r#"{"version":"0.2.0"}"#).unwrap();
         let output = wamn_codegen::output_root(&package);
         fs::create_dir_all(&output).unwrap();
-        fs::write(
-            output.join(build_record::BUILD_RECORD_FILE),
-            record.to_bytes(),
-        )
-        .unwrap();
+        fingerprint::write(&output, record).unwrap();
         fs::write(output.join("wamn.json"), compiled).unwrap();
         package
     }
 
     #[tokio::test]
-    async fn web_build_refuses_a_manifest_that_differs_from_the_build_record() {
+    async fn web_build_refuses_a_manifest_that_differs_from_the_finished_build() {
         let scratch = ScratchRoot::create().unwrap();
         let (record, mut compiled) = build_fixture(Some("@wamn/web-fixture-client"));
         compiled.push(b' ');
@@ -679,7 +672,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn web_build_rebuilds_changed_web_source_without_changing_the_package_record() {
+    async fn web_build_rebuilds_changed_web_source_without_changing_the_build_fingerprint() {
         let scratch = ScratchRoot::create().unwrap();
         let (record, compiled) = build_fixture(Some("@wamn/web-fixture-client"));
         let package = write_build(&scratch, &record, &compiled);
@@ -734,13 +727,13 @@ fs.copyFileSync('index.html', dist + '/index.html');
             (metadata.contract_digest.to_string())
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
-            (record.outputs.manifest.to_string())
+            (record.outputs[Path::new("wamn.json")].to_string())
                 .parse::<wamn_digest::Digest>()
                 .unwrap()
         );
 
         assert_eq!(
-            build_record::read(&wamn_codegen::output_root(&package)).unwrap(),
+            fingerprint::read(&wamn_codegen::output_root(&package)).unwrap(),
             record
         );
         fs::write(source.join("build.cjs"), "process.exit(1);").unwrap();

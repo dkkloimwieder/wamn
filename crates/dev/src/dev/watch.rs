@@ -23,7 +23,7 @@ use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 use tokio::io::AsyncWriteExt as _;
 use tokio::io::unix::AsyncFd;
 use tokio::process::Command;
-use wamn_codegen::build_record::is_input_path;
+use wamn_codegen::is_input_path;
 
 pub use super::git_source::{
     GitSourceError, GitSourceErrorType, GitSourceSnapshot, GitSourceState,

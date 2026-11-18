@@ -239,7 +239,7 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
         environment: "dev".parse().unwrap(),
     };
     const INITIAL: &str = "CREATE TABLE fixture_app.item(id int PRIMARY KEY)";
-    apply_package::apply_package_schema(request(write_package("first", "item", "1.0.0", INITIAL)?))
+    apply_package::apply_package(request(write_package("first", "item", "1.0.0", INITIAL)?))
         .await?;
     let mut admin = wamn_postgres::connect(database.as_str()).await?;
     let original: sqlx::postgres::types::Oid =
@@ -251,7 +251,7 @@ async fn package_apply_refuses_rebinding_an_existing_relation(
         write_package("first", "replacement", "2.0.0", INITIAL)?,
     ] {
         assert!(
-            apply_package::apply_package_schema(request(package))
+            apply_package::apply_package(request(package))
                 .await
                 .is_err()
         );

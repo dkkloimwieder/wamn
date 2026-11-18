@@ -8,8 +8,7 @@ use wamn_catalog::package_schema::{MigrationSource, PackageDirectory};
 
 /// A package tree and the digest of the verified package artifact it was
 /// opened from. The opener holds the digest in memory and passes it here; no
-/// file in the tree carries it (docs/operations/building.md#reading-a-pushed-package). `None`
-/// is a working tree, which only `wamn dev` applies.
+/// file in the tree carries it (docs/operations/building.md#reading-a-pushed-package).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageRoot {
     pub path: PathBuf,

@@ -8,6 +8,8 @@ use tokio::signal::unix::{SignalKind, signal};
 use wamn_dev::dev::watch::{FilesystemInvalidationSource, GitSource};
 use wamn_environment::environment::document::EnvironmentDocument;
 
+use crate::build_verbs::RefreshDescribeArgs;
+
 /// Inputs for development against an installed platform.
 #[derive(Debug, Args)]
 pub struct DevCommandArgs {
@@ -20,6 +22,8 @@ pub struct DevCommandArgs {
     /// Rebuild, publish and deploy when source inputs change.
     #[arg(long)]
     watch: bool,
+    #[command(flatten)]
+    describe: RefreshDescribeArgs,
 }
 
 /// Run the same source deployment as `wamn deploy` on each watch pass.
@@ -27,10 +31,15 @@ pub struct DevCommandArgs {
 pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     crate::operation_verbs::ControlHost::from_env()?;
     let document = EnvironmentDocument::compile(&args.config)?;
-    let (_, roots) = wamn_dev::source_deploy::sources(&document, &args.overlay_root)?;
+    let mut first = Some(wamn_dev::source_deploy::sources(&document, &args.overlay_root).await?);
     let source = if args.watch {
         let git = GitSource::discover(&args.overlay_root).await?;
-        let (shared, files) = watch_inputs(&roots, &args.config)?;
+        let (_, sources) = first.as_ref().context("initial source pass")?;
+        let roots = sources
+            .iter()
+            .map(|source| source.root().to_owned())
+            .collect::<Vec<_>>();
+        let (shared, files) = watch_inputs(sources, &args.config)?;
         let mut source = FilesystemInvalidationSource::new(roots, shared, git).await?;
         source.replace_configuration_files(files)?;
         Some(source)
@@ -51,19 +60,36 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     });
     let result = wamn_dev::dev::run(source, receiver, async |source| {
         let result = async {
-            let document = EnvironmentDocument::compile(&args.config)?;
-            let (application, roots) =
-                wamn_dev::source_deploy::sources(&document, &args.overlay_root)?;
-            if let Some(source) = source {
-                let (shared, files) = watch_inputs(&roots, &args.config)?;
+            let initial = first.is_some();
+            let (application, sources) = if let Some(pass) = first.take() {
+                pass
+            } else {
+                let document = EnvironmentDocument::compile(&args.config)?;
+                wamn_dev::source_deploy::sources(&document, &args.overlay_root).await?
+            };
+            if let Some(source) = source
+                && !initial
+            {
+                let roots = sources
+                    .iter()
+                    .map(|source| source.root().to_owned())
+                    .collect::<Vec<_>>();
+                let (shared, files) = watch_inputs(&sources, &args.config)?;
                 source.replace_roots(roots, shared).await?;
                 source.replace_configuration_files(files)?;
             }
-            crate::application_verbs::develop(crate::application_verbs::DeployArgs {
-                package: Some(args.overlay_root.clone()),
-                release: None,
+            let (application, digest) = wamn_dev::source_deploy::publish_development(
+                application,
+                sources,
+                args.describe.mode(false)?,
+            )
+            .await?;
+            crate::application_verbs::deploy(crate::application_verbs::DeployArgs {
+                package: None,
+                release: Some(digest),
                 application,
                 env: args.config.clone(),
+                describe: RefreshDescribeArgs::default(),
             })
             .await
         }
@@ -101,12 +127,12 @@ pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
 }
 
 fn watch_inputs(
-    roots: &[PathBuf],
+    sources: &[wamn_build::PreparedSource],
     configuration: &std::path::Path,
 ) -> anyhow::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
     let mut inputs = std::collections::BTreeSet::new();
-    for root in roots {
-        inputs.extend(wamn_dev::source_deploy::build_inputs(root)?);
+    for source in sources {
+        inputs.extend(wamn_build::build_inputs(source)?);
     }
     inputs.insert(configuration.canonicalize()?);
     Ok(inputs.into_iter().partition(|path| path.is_dir()))

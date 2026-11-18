@@ -115,7 +115,7 @@ The build leaves standard WASI imports unchanged. The host supplies their empty 
 
 The build then composes each component of a package that pins bases in `base_dependencies`.
 `wamn-build` joins the overlay component and each base whose operations it imports into one component.
-It reads each base component from the base's `build.json`, so build the base first.
+Build the base first. The overlay hashes the base’s compiled `wamn.json` and the component named in it.
 The overlay imports each base operation that it calls under the base's export name, and the base supplies that operation.
 An overlay that imports no base operation stays as it is.
 Each member that imports `wamn:postgres/statements` gets its own outer import, `sql-0`, `sql-1`, in member order ([components](../architecture/components.md)). Each import borrows the same host operation transaction. Generated accessors include their SQL bytes. Publication carries no admitted statement sets.
@@ -126,10 +126,8 @@ The composed component replaces the overlay's raw output.
 `wamn build` compares each base component's bytes with the digest pin in `wamn.json` before compilation.
 Publication repeats this comparison.
 
-Last, the build copies each component that the package owns to `components/<name>.wasm` in the package's build output. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
-Source publication and the dev loop read `build.json` for the bytes of each component.
-`push-package` refuses a component without an entry, and a file whose digest differs from its entry.
-For the `build.json` that `push-package` needs, see [Pushing a package](#pushing-a-package).
+The build writes each package component to `components/<name>.wasm` under its build output.
+Publication checks the fingerprint beside that output and hashes the files it reads.
 The dev loop watches package roots, `guests/`, shared WIT, and the local Cargo dependency closure.
 An edit to these inputs rebuilds the affected components.
 
@@ -228,30 +226,31 @@ An overlay's `wamn.k` imports nothing from its base; `base_dependencies` stays a
 
 ## wamn build
 
-`wamn build` compiles each package through one SQL corpus.
-It needs a PostgreSQL server, which it does not start.
-Give a superuser URL of the server in `DATABASE_URL` or `--database-url`.
-The build creates its own verification database on that server and drops it at the end.
-The server keeps the roles `wamn_app` and `wamn_db_owner` if the build had to create them.
+`wamn build` compiles each authored `wamn.k` once and uses committed evidence in `.wamn/describe/`.
+The evidence contains SQLx statement descriptions, catalog facts, and ordered history columns.
+An ordinary build needs no database. It refuses missing or stale evidence.
+
+If SQL or the verification schema changes, refresh the evidence with PostgreSQL 18.
+Set `DATABASE_URL` or pass `--database-url` with a superuser URL.
+The build creates and drops a verification database on the server.
+The server keeps the platform roles that the build creates.
 
 ```bash
-DATABASE_URL=postgres://postgres:<password>@127.0.0.1:<port>/postgres \
-  cargo run --locked --offline -p wamn-cli --bin wamn -- build \
-  apps/wamn_receiving apps/client_acme_receiving
+wamn build --refresh-describe apps/wamn_receiving apps/client_acme_receiving
+wamn build --check-describe apps/wamn_receiving apps/client_acme_receiving
 ```
 
-The build compiles `wamn.k` and migrates the verification database.
-The migrations of each base package run first, then the package's own migrations, then the history tables.
+Commit the refreshed `.wamn/describe/` files and any new `history/` migrations.
+`--check-describe` runs verification again and compares the evidence byte for byte.
+Both flags are also available on `cargo xtask build-package`.
+
+Verification runs base migrations first, then the package migrations.
 SQLx describes authored statements to fill their declared value types.
 The compiler derives relations and feed sources, then generates the remaining SQL once.
 SQLx describes every generated statement, including each fixed list sort and each feed statement.
 The compiler checks each accessor's parameters and selected columns against those descriptions before it writes consumers.
 One type table in `wamn-scalar` maps PostgreSQL names for build and runtime.
 
-The build classifies writes and row locks from PostgreSQL plans.
-A call to an authored routine also counts as a write and retains the command transaction.
-It generates no application grant contribution and plans without installing derived grants.
-Deployable routine support remains incomplete.
 The compiler writes history changes as SQLx migrations under `history/` in the package source and build output.
 Keep these files in source control. Each file remains unchanged after release.
 Authored `migrations/` and generated `history/` share one version sequence.
@@ -262,10 +261,10 @@ Each generated history migration records the authored versions it follows.
 An authored version change also appends this durable checkpoint.
 The build refuses new versions below that checkpoint, including in an uncommitted source tree.
 History files without an input checkpoint are refused.
-Publication also compares the sequence with every earlier published package.
+Publication compares the sequence with the migrations under the current digest of that tag.
 Build output does not hold the migration baseline.
 A history declaration change appends a generated migration, even when authored SQL stays unchanged.
-The build executes the combined sequence in its verification database before it returns output.
+Refresh runs the complete migration sequence before it writes the updated evidence.
 
 A statement value in `wamn.k` can leave out its `type`, and the build takes the type from SQLx.
 A stated type that differs from the type SQLx gives is refused.
@@ -284,26 +283,19 @@ If the build cannot produce a requested client, it fails and names the consuming
 The build writes each package to `<output root>/<package id>/`.
 Package builds write to the workspace output root, `apps/target/wamn` for applications.
 There is no custom-output option: guest includes and artifact readers use this same path.
-Below it, the layout keeps the logical `generated/` paths that contracts and releases name, without the `generated/` prefix, plus `build.json`.
-Git holds no build output, and the repository policy lint refuses a tracked `generated/` or `.sqlx` file under `apps/`.
-Generation replaces obsolete output files.
-The output includes copies of the authored KCL, SQL and migrations used by this build.
-Build every package before you compile the apps workspace, the app test crates, or an app web: their sources include files from the build output.
-`build.json` is the build record, schema `wamn.build/v1`, in canonical JSON.
-It records the package, base packages, compiler identity and output digests.
-The build writes it once, after component compilation and client materialization finish.
-The compiler derives its identity from Cargo, the toolchain file and the dependency lock.
-Cargo decides whether guest code needs compilation.
-Every package build regenerates its compiler output without source freshness checks.
-Artifact readers take every file from this output tree.
-An older completed build publishes its older inputs and outputs together.
-An overlay reads each base package's completed record, so build bases first.
-The build calls the composer library directly.
-The build performs no WASI byte rewriting.
-`wamn build` does not run Vite or record browser files in `build.json`.
+The output keeps the logical `generated/` paths without that prefix.
+The output also includes copies of the authored KCL, SQL, and migrations used by this build.
+Build the packages before compiling the apps workspace. Its sources include files from this output.
 
-`wamn web build` builds a standalone web artifact against the recorded package contract.
-It permits web source changes and requires the compiled manifest to match `outputs.manifest`.
+A `<package>.fingerprint` file sits beside each package output directory.
+The build writes it after generation and guest compilation finish.
+A matching signature and all expected output files let the next build reuse the output.
+Artifact readers use the finished output even if the authored sources change later.
+An overlay reads its base manifest and component bytes from the base output.
+The build calls the composer library directly.
+
+`wamn web build` builds a standalone web artifact against the finished package contract.
+It permits web source changes and checks the compiled manifest digest against the fingerprint.
 See [web clients](web-upload.md#build-and-push) for its output, metadata, and registry commands.
 
 ### Ejecting defaults

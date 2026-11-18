@@ -1,41 +1,26 @@
-use super::{BuildRecord, Path, WEB_MANIFEST_FILE, WebManifest, bail, bytes_sha256, ensure};
+use super::{Path, WEB_MANIFEST_FILE, WebManifest, bail, ensure};
 use anyhow::Context as _;
 
 pub(super) fn web_manifest(
-    record: &BuildRecord,
     compiled: &[u8],
+    digest: wamn_digest::Digest,
     version: String,
 ) -> anyhow::Result<WebManifest> {
-    let digest = bytes_sha256(compiled);
-    ensure!(
-        digest == record.outputs.manifest,
-        "package {}@{} wamn.json hashes to {digest}, but build.json records {}",
-        record.package.id,
-        record.package.version,
-        record.outputs.manifest
-    );
     let manifest = wamn_catalog::manifest::PackageManifest::from_slice(compiled)?;
-    ensure!(
-        manifest.package.id == record.package.id
-            && manifest.package.version == record.package.version,
-        "wamn.json identity differs from build.json for package {}@{}",
-        record.package.id,
-        record.package.version
-    );
     let client = manifest.client_package.with_context(|| {
         format!(
             "package {}@{} has no client_package and no web artifact",
-            record.package.id, record.package.version
+            manifest.package.id, manifest.package.version
         )
     })?;
     Ok(WebManifest {
         client_package: client.name,
         version,
         package: wamn_catalog::PackageCoordinate::new(
-            record.package.id.clone(),
-            record.package.version.clone(),
+            manifest.package.id,
+            manifest.package.version,
         )?,
-        contract_digest: record.outputs.manifest,
+        contract_digest: digest,
     })
 }
 

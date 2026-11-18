@@ -6,13 +6,13 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
-use wamn_codegen::build_record::{self, BuildGenerator, BuildOutputs, BuildPackage, BuildRecord};
+use wamn_codegen::fingerprint::Fingerprint;
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_oci::package_artifact::PackageRegistry;
 use wamn_oci::package_artifact::registry_pull::test_server::Server;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-pub fn build_fixture(client: Option<&str>) -> (BuildRecord, Vec<u8>) {
+pub fn build_fixture(client: Option<&str>) -> (Fingerprint, Vec<u8>) {
     let mut manifest = serde_json::json!({
         "package": {"id": "web_fixture", "version": "1.0.0"},
         "required_platform_policy_contract": {"id": "web_fixture_data_access", "state": "satisfied"},
@@ -22,24 +22,9 @@ pub fn build_fixture(client: Option<&str>) -> (BuildRecord, Vec<u8>) {
         manifest["client_package"] = serde_json::json!({"name": client});
     }
     let compiled = canonical_json_bytes(&manifest);
-    let record = BuildRecord {
-        schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
-        package: BuildPackage {
-            id: "web_fixture".parse().unwrap(),
-            version: "1.0.0".parse().unwrap(),
-        },
-
-        dependencies: Vec::new(),
-        generator: BuildGenerator {
-            id: "fixture".into(),
-            toolchain: "fixture".into(),
-            sqlx: "0.9.0".into(),
-        },
-        outputs: BuildOutputs {
-            manifest: bytes_sha256(&compiled),
-            files: BTreeMap::new(),
-            components: Vec::new(),
-        },
+    let record = Fingerprint {
+        input: bytes_sha256(b"fixture"),
+        outputs: BTreeMap::from([("wamn.json".into(), bytes_sha256(&compiled))]),
     };
     (record, compiled)
 }
@@ -71,9 +56,13 @@ pub fn artifact_fixture(root: &Path, reversed: bool) {
     let (record, compiled) = build_fixture(Some("@wamn/web-fixture-client"));
     fs::write(
         root.join(WEB_MANIFEST_FILE),
-        web_manifest(&record, &compiled, "0.2.0".into())
-            .unwrap()
-            .to_bytes(),
+        web_manifest(
+            &compiled,
+            record.outputs[Path::new("wamn.json")],
+            "0.2.0".into(),
+        )
+        .unwrap()
+        .to_bytes(),
     )
     .unwrap();
 }
