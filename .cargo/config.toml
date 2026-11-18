@@ -7,17 +7,6 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [build]
 jobs = 4
-# This file selects clang/mold, limits build jobs, and enables offline SQLx.
+# This file selects clang/mold, limits build jobs.
 # It sets no `rustc-wrapper`, so Docker builds need no wrapper binary.
 # Local Cargo uses kache through the personal ~/.cargo/config.toml.
-
-[env]
-# SQLx query macros compile from the `.sqlx/` data in each package's build
-# output, `apps/target/wamn/<package>/.sqlx/`, which the development loop
-# prepares. Git holds none of it, and an ordinary build needs no database. The macros ignore an ambient
-# `DATABASE_URL` while `SQLX_OFFLINE` is true, and they read this value before
-# any `.env` file. `force` stays off on purpose: `cargo sqlx prepare` sets
-# `SQLX_OFFLINE=false` for its own `cargo check`, and that value must win so
-# preparation reaches its database. An explicit `SQLX_OFFLINE=false` in your
-# environment also wins.
-SQLX_OFFLINE = "true"

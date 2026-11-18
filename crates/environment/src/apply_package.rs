@@ -90,20 +90,8 @@ pub(crate) async fn prepare_package(root: &PackageRoot) -> anyhow::Result<Prepar
     })
 }
 
-/// Initialize an absent package. Existing packages retain their installed SQL.
+/// Apply an absent package or advance its installed SQL with append-only migrations.
 pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
-    apply_request(request, false).await
-}
-
-/// Explicitly advance package SQL without selecting or caching executable releases.
-pub async fn apply_package_schema(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
-    apply_request(request, true).await
-}
-
-async fn apply_request(
-    request: ApplyPackageRequest,
-    advance_schema: bool,
-) -> anyhow::Result<ApplyOutcome> {
     let package = prepare_package(&request.package).await?;
     if package.directory.artifact_digest.is_none() {
         return Err(ApplyPackageError::artifact_required(&format!(
@@ -122,7 +110,6 @@ async fn apply_request(
         &request.database_url,
         &request.project_env_key(),
         package,
-        advance_schema,
     )
     .await;
     drop(client);
@@ -135,7 +122,6 @@ async fn apply(
     catalog_input: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
     package: PreparedPackage,
-    advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
     let plan = package_metadata(&package.directory)?;
     let package_id = plan.coordinate.package_id().to_owned();
@@ -186,26 +172,9 @@ async fn apply(
             .ok_or_else(|| ApplyPackageError::artifact_required(&coordinate))?,
     );
     let applied = load_applied_package(&mut tx, &package_id).await?;
-    if !advance_schema && let Some(installed) = &applied {
-        wamn_catalog::package_schema::validate_package_schema_source(
-            &plan.coordinate,
-            artifact_digest,
-            installed,
-        )?;
-        return Ok(ApplyOutcome {
-            package_id,
-            package_version,
-            migrations_applied: 0,
-            changed: false,
-        });
-    }
-    if let Some(installed) = &applied {
-        wamn_catalog::package_schema::validate_package_schema_source(
-            &plan.coordinate,
-            artifact_digest,
-            installed,
-        )?;
-    }
+    let installed_migrations =
+        read_package_migrations(&mut tx, project_env_key, &package_id).await?;
+    validate_append(&package.migrations, &installed_migrations)?;
     tx.rollback().await?;
     let mut tx = migration::begin(client, project_env_key).await?;
     let mut changed = false;
@@ -243,6 +212,35 @@ async fn apply(
         migrations_applied,
         changed: changed || migrations_applied != 0,
     })
+}
+
+fn validate_append(
+    migrations: &sqlx::migrate::Migrator,
+    installed: &[sqlx::migrate::AppliedMigration],
+) -> anyhow::Result<()> {
+    let sources = migrations
+        .iter()
+        .filter(|file| file.migration_type.is_up_migration());
+    for row in installed {
+        let source = sources
+            .clone()
+            .find(|file| file.version == row.version)
+            .ok_or(sqlx::migrate::MigrateError::VersionMissing(row.version))?;
+        ensure!(
+            source.checksum == row.checksum,
+            sqlx::migrate::MigrateError::VersionMismatch(row.version)
+        );
+    }
+    if let Some(highest) = installed.iter().map(|row| row.version).max() {
+        for source in sources.filter(|file| file.version <= highest) {
+            ensure!(
+                installed.iter().any(|row| row.version == source.version),
+                "new migration version {} must exceed installed version {highest}",
+                source.version
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Bind `wamn:apply-package` as the actor and the operation of the

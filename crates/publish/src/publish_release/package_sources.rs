@@ -248,7 +248,6 @@ mod tests {
                 serde_json::to_vec(&manifest).unwrap(),
             )
             .unwrap();
-            wamn_test_infrastructure::fixture_digest::write_build_record(&root);
 
             super::read_package_manifests(&[root]).unwrap();
         }

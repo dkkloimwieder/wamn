@@ -23,7 +23,7 @@ pub enum WebCommand {
 
 #[derive(Debug, Args)]
 pub struct BuildArgs {
-    /// Source package whose build output holds build.json and wamn.json.
+    /// Source package with a finished build.
     #[arg(long)]
     pub package: std::path::PathBuf,
 }

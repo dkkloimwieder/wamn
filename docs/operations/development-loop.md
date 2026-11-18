@@ -13,7 +13,9 @@ Make the registry and control endpoint reachable from the development machine.
 Use the platform's own credential and identity services for connections and sign-in.
 
 Set `WAMN_CONTROL_URL` to the control service URL and `WAMN_TOKEN` to the caller's token.
-Set `DATABASE_URL` to the PostgreSQL server that the package builder uses for disposable build databases.
+If SQL or the verification schema changes, refresh the [committed describe evidence](building.md#wamn-build).
+Pass `--refresh-describe` to a dev invocation to refresh with the dev base pins.
+Set `DATABASE_URL` or pass `--database-url` for that invocation.
 Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE` for publication.
 `WAMN_INGRESS_COMPONENT` selects the stamped HTTP route component and its adjacent palette.
 If the registry needs extra trust roots, set `WAMN_OCI_CA_PATHS`.
@@ -23,8 +25,7 @@ The platform and local publication inputs must use the same stamped artifacts.
 
 The environment document selects one application for the development session.
 The source package and its declared bases supply the package closure.
-Build the bases before the overlay when you prepare their build records.
-[Building](building.md) describes package output and its source records.
+The loop builds each base before the overlay.
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn" publish apps/platform_fixture --env environment.yaml
@@ -38,8 +39,8 @@ It excludes generated output and Git-ignored directories.
 Changes that arrive during a deployment wait for the next pass.
 A failed pass reports its error. A later source change retries the product operation.
 Interrupting the watcher waits for the active deployment to finish.
-Use the product schema commands when application SQL needs to change.
-The watcher does not reset application data on each save.
+The package SQL step applies pending migrations and keeps the SQLx checksum of each installed migration.
+The Epic 8.2 deploy worker calls this step before it installs the new code.
 
 Package tags point to the latest digest published under each version.
 A replacement must preserve every migration and use higher numbers for additions.
@@ -49,7 +50,8 @@ The prefix `h` keeps all-digit digests valid in semantic versions.
 The digest includes package sources, shared build inputs, and built bases.
 A repeated save uses the same coordinate. Changed content gets a new coordinate.
 The builder records the matching base versions and component digests in overlays.
-It writes development SQL history to build output without changing authored history.
+Refresh appends generated migrations to the package’s existing `history/` directory.
+Each dev pass carries those files into the package it publishes.
 Only dev package manifests carry the OCI publication timestamp `org.opencontainers.image.created`.
 A repeat publication under the same tag keeps the original timestamp.
 

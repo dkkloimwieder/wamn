@@ -3,13 +3,19 @@ mod components;
 pub mod composer;
 pub mod eject;
 mod guest_workspace;
+mod inputs;
 pub mod kcl;
 pub mod palette;
 use anyhow::{Context as _, Result};
-pub use components::{GuestTarget, build_guest, guest_rustflags};
-use std::{fs, path::Path};
-pub use wamn_codegen::build::{BuildRequest, default_output_root, package_output};
-use wamn_codegen::build_record::{BUILD_RECORD_FILE, BuildRecord};
+pub use components::{GuestTarget, build_guest, component_path, guest_rustflags};
+pub use inputs::paths as build_inputs;
+use std::path::Path;
+use wamn_catalog::manifest::PackageManifest;
+pub use wamn_codegen::build::{
+    BuildRequest, DescribeMode, PreparedSource, default_output_root, package_output,
+};
+use wamn_codegen::fingerprint::{self, Fingerprint};
+use wamn_digest::Digest;
 
 /// Build a standalone component crate through the shared guest compiler.
 pub async fn build_component(repository: &Path, manifest: &Path) -> Result<std::path::PathBuf> {
@@ -32,8 +38,22 @@ pub async fn build_component(repository: &Path, manifest: &Path) -> Result<std::
     .await
 }
 
-/// Build into the package workspace output and write one completed record.
-pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
+/// The kind of package build and its versioning policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum BuildMode {
+    Published,
+    Development,
+}
+
+/// Package identity and exact compiled manifest digest.
+#[derive(Debug)]
+pub struct BuiltPackage {
+    pub package: wamn_catalog::manifest::PackageIdentity,
+    pub manifest_digest: Digest,
+}
+
+/// Install pinned KCL if needed and compile one frozen authored document.
+pub async fn prepare_source(root: &Path) -> Result<PreparedSource> {
     if std::env::var_os(wamn_codegen::kcl::KCL_ENV).is_none() {
         kcl::install(
             Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -42,12 +62,116 @@ pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
         )
         .await?;
     }
-    let mut record = wamn_codegen::build::generate_package(request).await?;
-    let output = package_output(&request.output_root, &record.package.id);
-    record.outputs.components = components::compile_components(request, &record.package.id).await?;
-    fs::write(output.join(BUILD_RECORD_FILE), record.to_bytes())
-        .context("write completed build record")?;
-    Ok(record)
+    wamn_codegen::build::prepare_source(&root.canonicalize()?)
+}
+
+/// Build into the package workspace output.
+pub async fn build_package(request: &BuildRequest<'_>) -> Result<BuiltPackage> {
+    let source = prepare_source(&request.package_root).await?;
+    build_prepared(request, &source, BuildMode::Published).await
+}
+
+/// Reuse the authored package already compiled during discovery.
+pub async fn build_prepared(
+    request: &BuildRequest<'_>,
+    source: &PreparedSource,
+    mode: BuildMode,
+) -> Result<BuiltPackage> {
+    let lock_root = request.output_root.clone();
+    let _lock = tokio::task::spawn_blocking(move || fingerprint::lock(&lock_root)).await??;
+    let output_root = request.output_root.canonicalize()?;
+    let request = BuildRequest::new(source.root(), &output_root, request.describe);
+    let output = package_output(&request.output_root, &source.package().id);
+    let bases = components::base_components(&request.output_root, source, mode)?;
+    let paths = build_inputs(source)?;
+    let workspace = wamn_codegen::package_workspace(source.root());
+    let (rustflags, toolchain) = if source.components().next().is_some() {
+        components::guest_compiler(&workspace.join("..")).await?
+    } else {
+        (String::new(), String::new())
+    };
+    let key = || inputs::digest(source, &paths, &bases.bytes, mode, &toolchain);
+    source.validate_snapshot()?;
+    let before = key()?;
+    if matches!(request.describe, DescribeMode::Cached)
+        && let Ok(marker) = fingerprint::read(&output)
+        && marker.input == before
+    {
+        let (bytes, manifest_digest) =
+            fingerprint::read_artifact(&output, &marker, Path::new("wamn.json"))?;
+        let manifest = PackageManifest::from_slice(&bytes)?;
+        return Ok(BuiltPackage {
+            package: manifest.package,
+            manifest_digest,
+        });
+    }
+
+    let version = if mode == BuildMode::Development {
+        Some(development_version(&source.package().version, &before)?)
+    } else {
+        None
+    };
+    let development = version.as_ref().map(|version| (version, &bases.pins));
+    let (mut manifest, mut outputs) =
+        wamn_codegen::build::generate_prepared(&request, source, &bases.manifests, development)
+            .await?;
+    if matches!(request.describe, DescribeMode::Check(_)) {
+        let manifest_digest = wamn_digest::bytes_sha256(&wamn_digest::canonical_json_bytes(
+            &serde_json::to_value(&manifest)?,
+        ));
+        return Ok(BuiltPackage {
+            package: manifest.package,
+            manifest_digest,
+        });
+    }
+    // Refresh intentionally changes the committed evidence and can append history.
+    let expected = if matches!(request.describe, DescribeMode::Refresh(_)) {
+        key()?
+    } else {
+        before
+    };
+    if mode == BuildMode::Development && expected != before {
+        // Refresh can append history and replace evidence. Publish the version
+        // of those final inputs, using the same KCL document and updated snapshot.
+        let version = development_version(&source.package().version, &expected)?;
+        let cached = BuildRequest::new(source.root(), &request.output_root, DescribeMode::Cached);
+        (manifest, outputs) = wamn_codegen::build::generate_prepared(
+            &cached, source, &bases.manifests, Some((&version, &bases.pins)),
+        ).await?;
+    }
+    outputs.extend(
+        components::compile_components(source.root(), &output, &manifest, &bases.wasm, &rustflags)
+            .await?,
+    );
+    anyhow::ensure!(
+        key()? == expected,
+        "package inputs changed during build; retry"
+    );
+    let manifest_digest = outputs[Path::new("wamn.json")];
+    fingerprint::write(
+        &output,
+        &Fingerprint {
+            input: expected,
+            outputs,
+        },
+    )?;
+    Ok(BuiltPackage {
+        package: manifest.package,
+        manifest_digest,
+    })
+}
+
+/// Derive the development version from the complete build fingerprint.
+pub fn development_version(
+    authored: &wamn_catalog::package_version::PackageVersion,
+    digest: &Digest,
+) -> Result<wamn_catalog::package_version::PackageVersion> {
+    let base = authored
+        .as_str()
+        .split(['-', '+'])
+        .next()
+        .context("authored package version")?;
+    Ok(format!("{base}-dev.h{}", &digest.hex()[..12]).parse()?)
 }
 
 /// Build the package's web client with Vite into `dist`.

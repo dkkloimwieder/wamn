@@ -277,7 +277,8 @@ The operation declares `delete: true` on that relation and names the columns tha
 Generation derives these relation facts from the SQL once.
 Projections and history tables refuse delete access.
 
-The compiler generates SQL once, then SQLx describes every statement before consumer emission.
+The compiler emits SQL and checks it against committed SQLx descriptions before it writes the bindings.
+A live refresh runs SQLx describe against the verification database and writes the evidence.
 This includes authored SQL, each fixed list sort, and feed statements.
 The build checks parameter counts and types, selected column names and types, and compatible nullability.
 PostgreSQL plans determine whether a statement writes or locks rows.

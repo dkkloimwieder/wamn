@@ -196,7 +196,8 @@ An application command finds the project from the application name.
 Control selects the runtime inputs.
 
 Source publication stays local and returns the top package OCI digest.
-Source builds require `DATABASE_URL` for disposable build databases and the existing registry inputs.
+Source builds use [committed PostgreSQL describe evidence](building.md#wamn-build) and the existing registry inputs.
+To refresh the evidence during a source deploy, pass `--refresh-describe` with `--database-url` or set `DATABASE_URL`.
 Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE` for publication.
 `WAMN_OCI_CA_PATHS` supplies optional registry certificates.
 For an HTTP registry, the existing `WAMN_RELEASE_HOST_GROUP` document supplies `--allow-insecure-registries` in `extraArgs`.
@@ -204,7 +205,7 @@ For an HTTP registry, the existing `WAMN_RELEASE_HOST_GROUP` document supplies `
 
 Application, schema and administration commands require `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
 Control selects the installed database, chart, registry and broker configuration.
-The CLI has no direct database fallback. Source publication still uses a disposable build database.
+The CLI sends database operations to the control service.
 See [Native control](../architecture/control.md) for the service and worker configuration.
 
 The registry stores applied project settings, application hostnames, client pins, and connection aliases.

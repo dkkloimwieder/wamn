@@ -94,14 +94,12 @@ impl ControlHost {
     }
 }
 
-/// Publish source with registry credentials and disposable build databases only.
+/// Publish source with registry credentials and committed describe evidence.
 pub(crate) async fn publish(
     document: &EnvironmentDocument,
     package: &Path,
 ) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
-    let database_url =
-        std::env::var("DATABASE_URL").context("set DATABASE_URL for disposable build databases")?;
-    wamn_dev::source_deploy::publish_from_env(document, package, &database_url).await
+    wamn_dev::source_deploy::publish_from_env(document, package, wamn_build::DescribeMode::Cached).await
 }
 
 /// Parse the existing org/env/project CLI coordinate.

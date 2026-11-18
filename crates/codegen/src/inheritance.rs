@@ -8,9 +8,7 @@ use anyhow::{Context as _, Result, ensure};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
-/// Read the same base builds that component composition uses. The build record
-/// records each manifest’s digest. Release resolution tests the package
-/// artifact pin.
+/// Read the compiled manifests used for inherited model declarations.
 pub(crate) fn load_base_manifests(
     output_root: &Path,
     dependencies: &std::collections::BTreeMap<

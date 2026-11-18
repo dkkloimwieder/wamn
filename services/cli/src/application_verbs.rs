@@ -6,6 +6,7 @@ use serde_json::json;
 use std::path::PathBuf;
 use wamn_environment::environment::{self, document::EnvironmentFile};
 
+use crate::build_verbs::RefreshDescribeArgs;
 use crate::operation_verbs::ControlHost;
 
 #[derive(Debug, Args)]
@@ -22,6 +23,8 @@ pub struct DeployArgs {
     /// The target environment file. Apply application SQL before deploying code.
     #[arg(long)]
     pub env: PathBuf,
+    #[command(flatten)]
+    pub(crate) describe: RefreshDescribeArgs,
 }
 
 #[derive(Debug, Args)]
@@ -45,14 +48,10 @@ pub struct StatusArgs {
 }
 
 pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
-    deploy_source(args, false).await
-}
-
-pub(crate) async fn develop(args: DeployArgs) -> anyhow::Result<()> {
-    deploy_source(args, true).await
-}
-
-async fn deploy_source(args: DeployArgs, development: bool) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.package.is_some() || !args.describe.refresh_describe,
+        "--refresh-describe requires a source package"
+    );
     let host = ControlHost::from_env()?;
     let file = EnvironmentFile::compile(&args.env)?;
     let triple = file.triple(file.application_project(&args.application)?);
@@ -62,18 +61,7 @@ async fn deploy_source(args: DeployArgs, development: bool) -> anyhow::Result<()
                 &file.into_project(&triple.project)?,
                 Some(&args.application),
             )?;
-            let published = if development {
-                let database_url = std::env::var("DATABASE_URL")
-                    .context("set DATABASE_URL for disposable build databases")?;
-                wamn_dev::source_deploy::publish_development_from_env(
-                    &document,
-                    &package,
-                    &database_url,
-                )
-                .await?
-            } else {
-                crate::operation_verbs::publish(&document, &package).await?
-            };
+            let published = wamn_dev::source_deploy::publish_from_env(&document, &package, args.describe.mode(false)?).await?;
             published.1
         }
         None => args

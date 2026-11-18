@@ -20,7 +20,7 @@ The composing application owns its public entry points and permissions.
 The package declares no event registration, so change data capture (CDC) does not include its tables.
 
 Build the package before its consumers with `target/debug/wamn build apps/wamn_integration`.
-Set `DATABASE_URL` to a PostgreSQL 18 server as [building](../../docs/operations/building.md#wamn-build) describes.
+Set `DATABASE_URL` when you [refresh or check the describe evidence](../../docs/operations/building.md#wamn-build).
 Run component unit tests in the apps workspace with `cargo test --manifest-path apps/Cargo.toml -p wamn-integration --lib`.
 Run the SQL test with `cargo test -p wamn-environment --test wamn_integration_live`.
 The SQL test uses the [test database fixture](../../docs/operations/running-tests.md) and the generated application grants.

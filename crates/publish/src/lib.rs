@@ -3,7 +3,8 @@
 pub mod component_admission;
 pub mod component_declaration;
 pub mod connection_requirement;
-pub mod development;
+#[cfg(test)]
+mod development;
 pub mod integration;
 pub mod package_artifact;
 pub mod package_source;
@@ -13,4 +14,3 @@ pub mod web_artifact;
 
 pub mod palette;
 pub mod publish_release;
-pub mod release_composition;

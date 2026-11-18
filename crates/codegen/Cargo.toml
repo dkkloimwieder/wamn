@@ -25,6 +25,9 @@ wamn-catalog = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-number-pattern = { workspace = true }
 
+[build-dependencies]
+wamn-digest.workspace = true
+
 [dev-dependencies]
 wit-parser = { workspace = true }
 url.workspace = true

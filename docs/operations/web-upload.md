@@ -22,18 +22,18 @@ wamn web push --package apps/wamn_receiving \
 ```
 
 The build writes `apps/target/wamn/<package>/web-artifact/dist/` and `web.json` beside it.
-The source package's compiled `wamn.json` must hash to `build.json`'s `outputs.manifest`.
+The compiled `wamn.json` must match the digest in the finished build’s fingerprint.
 The build refuses a different digest or a package without `client_package`, and names the package.
 The build refuses a missing or empty `version` in the package's `web/package.json`, and names that file.
 `web.json` contains four fields:
 
 - `client_package`: The client name from the compiled manifest.
 - `version`: The version from the package's `web/package.json`.
-- `package`: `<id>@<package version>` from the build record.
-- `contract_digest`: `outputs.manifest`, the digest of the canonical package manifest.
+- `package`: `<id>@<package version>` from the compiled manifest.
+- `contract_digest`: The digest of the canonical package manifest.
 
 Web source edits need only another `wamn web build` against that recorded contract.
-This command leaves the package build record unchanged.
+This command updates the web artifact.
 `wamn build` builds package components without Vite.
 Package artifacts contain no web layer or browser files.
 
