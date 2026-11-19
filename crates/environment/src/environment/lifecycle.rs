@@ -183,25 +183,21 @@ async fn configure_project(
 
     wamn_broker::authorization::provision_project(&platform.target, triple).await?;
 
-    installer::platform::resources::merge(
+    installer::environment::set_operation_values(
         &mut values,
-        installer::platform::operations::values(
-            triple,
-            &cluster,
-            &connection.database,
-            document.applications.keys(),
-        )?,
-    );
-    installer::platform::resources::merge(
-        &mut values,
-        installer::environment::publication_values(
-            triple,
-            instance,
-            &cluster,
-            &publication,
-            &schemas,
-        ),
-    );
+        triple,
+        &cluster,
+        &connection.database,
+        document.applications.keys(),
+    )?;
+    values["publication"] = installer::environment::publication_values(
+        triple,
+        instance,
+        &cluster,
+        &publication,
+        &schemas,
+    )["publication"]
+        .take();
     values["databaseConfig"] = workload::configuration_values(triple, instance, &connections)?;
     let certificate = name::cdc_nats_certificate(triple);
     let recovery = name::recovery_nats_user(triple);

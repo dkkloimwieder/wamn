@@ -1,0 +1,15 @@
+{{- if not .Values.edge.neg }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wamn-edge
+  namespace: hosts
+spec:
+  tls:
+    - secretName: wamn-edge-tls
+  defaultBackend:
+    service:
+      name: wamn-edge
+      port:
+        name: http
+{{- end }}

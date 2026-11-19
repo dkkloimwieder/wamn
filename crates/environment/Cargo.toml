@@ -7,8 +7,8 @@ license.workspace = true
 
 [features]
 default = []
-test-util = ["wamn-platform-install/test-util"]
-ops = ["wamn-provision/ops", "wamn-platform-install/ops"]
+test-util = []
+ops = ["wamn-provision/ops"]
 
 [dependencies]
 wamn-sql.workspace = true
@@ -54,7 +54,6 @@ base64 = { workspace = true }
 futures-util = { workspace = true }
 wamn-registry = { workspace = true, features = ["test-util"] }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-logging"] }
-wamn-platform-install = { workspace = true, features = ["test-util"] }
 wamn-build.workspace = true
 object_store.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "macros", "migrate"] }

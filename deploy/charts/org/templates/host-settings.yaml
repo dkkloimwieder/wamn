@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wamn-host-settings
+  namespace: {{ .Values.org | quote }}
+data:
+  DOCKER_CONFIG: /etc/wamn/registry
+  WAMN_SESSION_ISSUER: https://identity.platform.svc.cluster.local
+  WAMN_SESSION_JWKS_URL: https://identity.platform.svc.cluster.local/.well-known/jwks.json
+  WAMN_SESSION_AUDIENCE: {{ printf "urn:wamn:org:%s" .Values.org | quote }}
+  WAMN_SESSION_ALGORITHMS: EdDSA
+  WAMN_SESSION_JWKS_CA: /etc/identity-ca/ca.crt

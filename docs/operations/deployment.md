@@ -18,33 +18,19 @@ Keep registry, database, and broker credentials outside committed files.
 Certificate subjects must match the endpoint names that their clients verify.
 
 From the source checkout, prepare the registry and artifacts as [building](building.md#local-platform-artifacts) describes.
-`deploy/kind/cluster.k` uses the local registry at `localhost:5001`.
-The published application chart includes the pinned infrastructure, installation, org, environment, and project charts.
-On an existing kind platform, the org namespace holds the `wamn-registry-pull` Secret.
-Helm first installs cert-manager, CloudNativePG, and the TLS ingress controller.
-The installation chart supplies certificates, NATS, wasmCloud runtime operator 2.12.2, and the collector.
-The NATS file-store limit and volume size use the same value, `nats.config.jetstream.fileStore.pvc.size`. It defaults to `10Gi`.
-The org chart declares the org namespace, quota, base RBAC and default-deny policy.
-The installation chart creates the system PostgreSQL Cluster in namespace `platform`.
-It renders each system login Secret in `platform` and in the org with the same password.
-The org copy of the system CA contains only its public certificate.
-Bootstrap Jobs initialize SQL and credentials before the service components start.
-Identity, control, and the edge belong to the platform Helm release.
-Identity runs two replicas. Its chart requires the same envelope provider and wrapping key as the OAuth hosts.
-Supply `oauthEncryption` and, for a local provider, the existing `oauthSecret` in the identity values.
-The [identity chart](../../deploy/charts/identity/README.md) defines these inputs and the trusted proxy count.
-Without a recorded org control release, deployment initializes `wamn_system`, the organization, identity, and control.
-The org worker runs platform SQL Jobs and has named access to its NATS accounts Secret in `platform`.
+The kind values file sets the registry to `localhost:5001`. [Kind values](../../deploy/charts/platform/values-kind.yaml)
+The published application bundle includes the infrastructure, platform, org, environment, and project charts.
+Helm installs cert-manager, CloudNativePG, and the ingress controller before the platform.
+The platform chart installs the system PostgreSQL Cluster, shared identity, edge, NATS, the wasmCloud runtime operator, and the collector.
+The org chart owns control, the namespace quota, RBAC, and network policies.
+Supply the org's public CA copies and control credentials during org creation. [Org chart](../../deploy/charts/org/README.md)
 
-The GCP collector exports traces and logs to the declared telemetry bucket with a persistent queue.
-Its chart uses the existing collector workload identity. Local clusters use debug export.
+Set `global.maxProjects` to the total number of project streams across all environments.
+Each NATS pod uses 256 MiB per project for streams and 64 MiB per project for storage overhead.
+The resolver has a separate claim when operator mode is enabled. [Platform chart](../../deploy/charts/platform/README.md)
 
-Helm records the chart reference for later operations.
-Status reads that reference and reports selected artifacts separately from running images.
-It reads Helm, Kubernetes, certificate, service, and system database state.
-Its categories are `ready`, `incomplete`, `failed`, and `unknown`.
-A failed query reports `unknown`. Status never creates a missing cluster.
-Unselected UI, external mail, or telemetry does not prevent platform readiness.
+The GCP collector exports traces and logs to the telemetry bucket with a persistent queue.
+It uses the collector workload identity. The local collector uses debug export.
 
 Kubernetes and its operators own running resources. Helm owns release revisions.
 WAMN stores no generic installation-completion ConfigMaps and has no numbered resume steps.
@@ -61,11 +47,10 @@ An administrator sends invitations through the `user.invite` control route.
 The local outbox is temporary pod storage. Keep invitation codes and passwords out of logs.
 
 A port-forward connects a local port to a pod.
-The control Service has no selector, because the wasmCloud operator manages its endpoints.
-Forward `deployment/hostgroup-c-<org>` in the org namespace.
-Use `route_hosts.control` as the HTTP host.
-For the committed document, the Deployment is `hostgroup-c-local` and the host is `control.wamn.localhost`.
-Kind application hosts use `<application>.wamn.localhost`, covered by the edge certificate for `*.wamn.localhost`.
+The control Service selects the org's control Deployment, `c-<org>`.
+Use the host in the org chart's `control.routeHost`.
+The example uses org `local` and host `control.wamn.localhost`.
+The edge certificate covers `*.wamn.localhost`, including application hosts.
 Export the cluster access file to a private directory:
 
 ```bash
@@ -73,7 +58,7 @@ umask 077
 mkdir -p /tmp/wamn-local-access
 kind export kubeconfig --name wamn-local --kubeconfig /tmp/wamn-local-access/kubeconfig
 kubectl --kubeconfig /tmp/wamn-local-access/kubeconfig -n local \
-  port-forward deployment/hostgroup-c-local 8080:80
+  port-forward deployment/c-local 8080:80
 ```
 
 Keep that command running while you use the service.
@@ -555,10 +540,8 @@ It writes `clients/<package>/<web digest hex>/` and skips all writes when the in
 That page owns the command, required inputs, destination paths, output, and errors.
 The shell reads `/config.json` from the installed web service before sign-in.
 Browser sign-in uses the web host over HTTPS.
-The edge chart mounts the `key` entry of `wamn-web-csrf` in the web Deployment's namespace.
-The installation chart uses `hosts` by default.
-The platform installer writes 32 random bytes on first creation and preserves the Secret on a repeat install.
-The bootstrap caller must prepare that namespace before the installer writes the Secret.
+The platform chart mounts the `key` entry of `hosts/wamn-web-csrf` in the web Deployment.
+Helm generates 32 random bytes on first install and reuses the Secret on upgrades.
 The bucket must allow reads without credentials.
 Edge deployment remains outside the local platform milestone.
 
@@ -585,7 +568,7 @@ Ruled: the files under `assets/` carry a content hash in their names, so they ar
 
 ## Platform UI files
 
-Use [Web upload](web-upload.md#platform-ui) with the artifact digest that the prepared chart pins in `platformUi`.
+Use [Web upload](web-upload.md#platform-ui) with the artifact digest that the prepared org chart pins in `control.platformUi`.
 The command pulls the artifact from the platform registry and makes sure that its bytes match the digest before any bucket write.
 The default destination is `gs://wamn-dev-web/platform-ui/sha256-<hex>/`.
 Organization configuration lives separately at `platform-ui/orgs/<org>/config.json`.
@@ -595,14 +578,13 @@ Deployment needs no source checkout, pnpm installation, or local UI output.
 Kind keeps an empty web bucket and selects no platform UI.
 
 The control root is `https://control.wamn.dev`.
-The installation chart runs `wamn-control --config /etc/wamn/control/config.json platform` in the org namespace.
+The org chart runs `wamn-control --config /etc/wamn/control/config.json platform` in the org namespace.
 The native service has no route guest or application release.
 The control Service selects that Deployment.
 Local platform deployment installs control without a UI upload. GCP integration for public control access remains unfinished.
 
-The edge values can contain a separate `control` entry with `host` and `api`.
-The control host serves no native file routes, so its entry has no `files`.
-The edge chart forwards `/api/` to the control Service and `/password/` to identity.
+The org chart writes the control host and Service address to a route ConfigMap.
+The edge forwards `/api/` to the control Service and `/password/` to identity.
 The Rust web front serves platform UI files and generates its org configuration.
 Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `/recover`, `/reset`, and control or project-environment audience paths.
 
@@ -633,7 +615,7 @@ External delivery requires both Resend values. Kind deployment instead selects l
 The CLI also accepts `--resend-api-key` and `--resend-from`. Prefer environment input for the secret.
 
 For Kubernetes, create a Secret with the `api-key` entry in the identity namespace.
-Set the identity chart's `resendSecret` to that Secret and `resendFrom` to the verified sender.
+Set `identity.resendSecret` to that Secret and `identity.resendFrom` to the verified sender in the platform chart.
 Set `operatorCaSecret` to the CA that signs the control client certificate.
 Set `controlSubject` to `CN=control-<org>`.
 Control mounts the `control-<org>` Secret. It must contain `tls.crt` and `tls.key`.
@@ -896,10 +878,9 @@ Local startup still provisions the disposable databases and starts identity, con
 Those processes use explicit operator connection URLs with verified TLS.
 They do not supply a local connection credential store.
 Identity login uses the org audience `urn:wamn:org:<org>`.
-The identity chart no longer accepts session target ConfigMaps or project database reader credentials.
 The identity Deployment mounts the system login and CA certificate.
 
-The installation writes `WAMN_SESSION_ISSUER`, `WAMN_SESSION_JWKS_URL`, `WAMN_SESSION_AUDIENCE`, `WAMN_SESSION_ALGORITHMS`, and `WAMN_SESSION_JWKS_CA` into the org's `wamn-host-settings` ConfigMap.
+The org chart writes `WAMN_SESSION_ISSUER`, `WAMN_SESSION_JWKS_URL`, `WAMN_SESSION_AUDIENCE`, `WAMN_SESSION_ALGORITHMS`, and `WAMN_SESSION_JWKS_CA` into the org's `wamn-host-settings` ConfigMap.
 Environment hosts read these defaults and mount the org's `identity-ca` ConfigMap at `/etc/identity-ca`.
 Control reads the same verifier settings from its mounted configuration.
 
@@ -908,15 +889,7 @@ The HTTP interface keeps its `credential-unavailable` result.
 Connection administration passes the registry's credential Secret name and the coordinate values to `wamn-kubernetes`.
 Separate credential keys can change independently. The project chart must create the Secret before control writes credentials.
 
-The trusted installer sets `global.natsAccountOrgs` in the installation chart.
-Helm creates each `platform/wamn-nats-accounts-<org>` Secret before it adds that org's include and mount.
-On removal, Helm updates the includes and mounts before it deletes the Secret.
-Adding or removing an org restarts the single NATS pod.
-
-The base NATS configuration defines the `PLATFORM` account and includes one `accounts.conf` per org in the same accounts block.
-The reloader watches the files for changes.
-Kubernetes RBAC grants each org worker access to its named Secret.
-The broker writer accepts only `ENV_<org>_<env>` account names for that org.
+The broker retains the static `PLATFORM` account and authentication through client certificates. Org account provisioning requires the migration to operator mode in Epic 10.2.
 
 ### Transaction identity retention
 

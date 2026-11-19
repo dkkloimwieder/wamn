@@ -654,7 +654,7 @@ The focused connection and caller test above uses this product path.
 
 The CLI browser target `receiving_ui_live` also uses this path.
 They call `wamn env apply` and `wamn dev` against an installed disposable platform.
-Supply `WAMN_TEST_CLUSTER`, `WAMN_DEV_ENV`, `WAMN_TIMINGS_ROOT`, and the existing `WAMN_BROWSER_*` sign-in inputs listed in each test.
+Supply `WAMN_DEV_ENV`, `WAMN_TIMINGS_ROOT`, and the existing `WAMN_BROWSER_*` sign-in inputs listed in each test.
 The environment directory contains `environment.yaml` for one application.
 The platform browser reads invitation mail from the installed identity service's outbox.
 Receiving browser assertions still require the fixed business dataset. The product has no import route for that dataset.
@@ -733,7 +733,7 @@ Focused application bodies also require these publication inputs:
 - Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, and `WAMN_RELEASE_ARTIFACT_BASE` under the selected kind registry.
 - Set `WAMN_REGISTRY_AUTH_FILE` to the registry's protected `.dockerconfigjson` file.
 
-The registry authority must match `cluster.k`, normally `localhost:5001`.
+Use the registry in the platform values file. The kind default is `localhost:5001`.
 Tests read product-created service credentials from Secrets.
 Control routes require a password-login session and refuse a PAT (personal access token).
 Application routes use a project service PAT issued through the control route.
@@ -749,14 +749,11 @@ Each fresh-platform installation generates one password in memory and reuses it 
 Use an existing disposable kind platform for the focused cases in Epic 9.
 `wamn platform deploy --only` returns with the Epic 10 `platform` chart.
 Set `PATH` to include the `debug` directory under `CARGO_TARGET_DIR`.
-Use the platform's cluster document and kubeconfig.
+Use the kubeconfig for the disposable platform.
 After the owner approves the fixture, annotate its `platform` namespace with `wamn.dev/disposable=true`.
 
 The namespace annotation records consent to use this platform as disposable.
 Focused tests refuse an absent or false annotation before any platform mutation.
-`WAMN_TEST_CLUSTER` is the single target input authorized by `wamn-alrvy.18`.
-The cluster document supplies the name for the existing provider's kubeconfig export and the product's `Target`.
-Helm's `platform/chart` value supplies the installed chart path, regardless of the caller's `WAMN_RELEASE_CHART`.
 
 Before the first focused run, enter the owner password without echoing it:
 
@@ -772,8 +769,7 @@ If the owner already has a password, supply that existing password.
 Run focused application recovery against that platform:
 
 ```bash
-WAMN_TEST_CLUSTER=/var/tmp/wamn-kind-dep3/cluster.k \
-  cargo test --locked --offline -p wamn-dev --test platform_apply_kind application_recovery_kind -- --ignored --exact --nocapture
+cargo test --locked --offline -p wamn-dev --test platform_apply_kind application_recovery_kind -- --ignored --exact --nocapture
 ```
 
 Select `same_name_reset_kind` in the same command for reset and CDC tests.

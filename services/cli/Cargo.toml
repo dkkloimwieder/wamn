@@ -34,7 +34,6 @@ wamn-catalog = { workspace = true }
 # The control operations that the verbs call.
 wamn-publish = { workspace = true }
 wamn-environment = { workspace = true }
-wamn-platform-install.workspace = true
 wamn-dev = { workspace = true }
 # `wamn inspect` and `wamn diff` read verified package artifacts.
 wamn-oci = { workspace = true }

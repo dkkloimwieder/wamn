@@ -9,20 +9,19 @@ use std::path::Path;
 fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let chart = wamn_fixture_package::repository_root().join("deploy/charts/application");
+    let chart = wamn_fixture_package::repository_root().join("deploy/charts/org");
     let metadata: Value =
         serde_yaml::from_slice(&fs::read(chart.join("Chart.yaml")).unwrap()).unwrap();
     let objects = wamn_kubernetes::helm::template(&serde_json::json!({
-        "chart": chart, "version": metadata["version"], "name": "wamn-control", "namespace": "platform",
-        "values": {"controlService": true, "org": "acme", "namespace": "platform", "control": {
-            "image": "wamn-control:dev", "account": "control",
+        "chart": chart, "version": metadata["version"], "name": "wamn-control", "namespace": "wamn-helm-acme",
+        "values": {"org": "acme", "control": {
+            "image": "wamn-control:dev",
             "configuration": {"database": {
                 "credentials": {"name": "wamn-control-db"},
                 "server_ca": {"name": "wamn-pg-ca"}
             }},
             "systemMigrationSecret": "wamn-platform-sql-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "administration": "control-administration", "natsSecret": "control-nats",
-            "operatorSecret": "control-operator", "registrySecret": "registry-pull",
+            "registrySecret": "registry-pull",
             "oauthSecret": "wamn-oauth"
         }}
     })).expect("render the control service");
@@ -30,8 +29,8 @@ fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
         .iter()
         .find(|object| {
             object["kind"] == "Deployment"
-                && object["metadata"]["name"] == "wamn-control"
-                && object["metadata"]["namespace"] == "platform"
+                && object["metadata"]["name"] == "c-acme"
+                && object["metadata"]["namespace"] == "acme"
         })
         .unwrap();
     let pod = &deployment["spec"]["template"]["spec"];

@@ -53,7 +53,7 @@ enum Command {
     /// Inspect or apply application SQL independently of serving code.
     #[command(subcommand)]
     Schema(wamn_cli::schema_verbs::SchemaCommand),
-    /// Inspect platform configuration or manage platform SQL.
+    /// Inspect or apply platform SQL.
     #[command(subcommand)]
     Platform(wamn_cli::platform_verbs::ProductPlatformCommand),
     /// Build packages: generate every output from wamn.k into target/wamn.
@@ -118,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Status(args) => wamn_cli::application_verbs::status(args).await,
         Command::Schema(command) => wamn_cli::schema_verbs::run(command).await,
         Command::Platform(command) => {
-            wamn_cli::platform_verbs::run_product(command, std::io::stdout().lock()).await
+            wamn_cli::platform_verbs::run_product(command).await
         }
         Command::Eject(args) => wamn_cli::build_verbs::eject(args),
         Command::Build(args) => wamn_cli::build_verbs::run(args).await,

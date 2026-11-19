@@ -11,7 +11,10 @@
 //! install values carry no image digest and no integer release id: the release
 //! is named by its manifest digest alone (R1).
 
+pub mod bundle;
 pub(super) mod plan;
+#[cfg(test)]
+mod test_util;
 
 use std::path::{Path, PathBuf};
 
