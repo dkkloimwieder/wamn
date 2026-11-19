@@ -23,6 +23,7 @@ use wamn_identity::application::{self, ApplicationTarget};
 use std::path::PathBuf;
 
 use wamn_kubernetes::Target;
+use wamn_platform_install::release_chart::bundle::SelectedChart;
 
 /// The platform inputs of the lifecycle verbs.
 #[derive(Debug, Clone)]
@@ -36,7 +37,7 @@ pub struct Platform {
     /// A stamped release chart directory.
     pub chart: PathBuf,
     /// Keep fetched chart files alive for this operation.
-    pub chart_download: Option<std::sync::Arc<crate::platform::artifact_plan::SelectedChart>>,
+    pub chart_download: Option<std::sync::Arc<SelectedChart>>,
     pub registry_auth_file: PathBuf,
     pub registry_token_metadata: bool,
     pub oci_ca_paths: Vec<PathBuf>,

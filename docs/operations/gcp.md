@@ -17,8 +17,7 @@ Keep these variables set for `gcloud` and `kubectl` reads and writes.
 Keep the operator's default gcloud and Kubernetes files separate from the agent files above.
 The owner runs billing commands and enables APIs.
 
-The GCP provider runs `gcloud container clusters get-credentials` with the cluster document's project, zone, and cluster name.
-It writes credentials to the caller's kubeconfig file and selects the matching GKE context.
+Use the project, zone, and cluster name in the GCP values file when you get cluster credentials. [GCP values](../../deploy/charts/platform/values-gcp.yaml)
 Install `gke-gcloud-auth-plugin` on the deployment host so kubectl can use the gcloud login.
 
 ## 1. Owner inputs
@@ -396,7 +395,7 @@ gcloud compute disks list --project wamn-dev --format="table(name,sizeGb,users.b
 ```
 
 The disks of the volumes of `wamn-pg-1`, `data-wamn-nats-0`, and `otel-collector-queue` stay after the delete.
-The collector's [volume claim](../../deploy/charts/installation/values-gcp.yaml) requests `1Gi`.
+The collector's [volume claim](../../deploy/charts/platform/values-gcp.yaml) requests `1Gi`.
 Delete each one by name, one command for each disk:
 
 ```bash
@@ -426,7 +425,7 @@ done
 
 GCP and kind use the same platform artifact set and prepared chart contract.
 `cargo xtask build-platform` builds and pins the shared images, including `ctl`, and the role components.
-The cluster document selects UI storage. BuildKit runs on the calling machine.
+The GCP values file names the web bucket. BuildKit runs on the calling machine.
 The prepared chart supplies the pinned `ctl` image for control operation Jobs in namespace `platform`.
 
 Use the target's configured registry for artifact production and publication.
@@ -474,7 +473,6 @@ Set these inputs:
 
 - `PATH` with the `debug` directory of `$CARGO_TARGET_DIR`.
 - `CLOUDSDK_CONFIG` and `KUBECONFIG` from this page.
-- `WAMN_TEST_CLUSTER` as the absolute path to `deploy/gcp/cluster.k`.
 - `WAMN_RELEASE_CHART` and `WAMN_KCL` as absolute paths to the prepared chart and pinned compiler.
 - `WAMN_TEST_OWNER_PASSWORD` as the enrolled owner's password from your secret store.
 - For a describe refresh or check, set `DATABASE_URL` to a PostgreSQL 18 server with permission to create and drop databases.
@@ -487,7 +485,7 @@ Grant the section 1 worker permissions for organization `dkk`, project `journey`
 The environment coordinate is `e-dev-` followed by the first 20 hexadecimal SHA-256 digits of `dkk/journey/dev`.
 Use that coordinate for the code and SQL service accounts.
 The test creates those accounts through product provisioning and creates no IAM grants.
-It derives all artifact repository bases from the cluster document's registry.
+It derives all artifact repository bases from the registry in the GCP values file.
 
 Run these steps in order:
 
@@ -515,7 +513,7 @@ The case has a 90-minute bound.
 It reapplies the platform chart and requires readiness.
 It reuses `ControlOperations` for authenticated deploy, rollback, and schema apply through the public HTTPS control route.
 It makes one public HTTPS GET and requires the UI document with certificate validation enabled.
-Application requests use a TLS port-forward with hostnames under the document's control domain.
+Application requests use a TLS port-forward with hostnames under the control domain.
 The GKE body omits the kind-only outsider enrollment from the local mail file.
 
 The case attempts environment deletion and PAT revocation after operation success or failure.
@@ -529,25 +527,11 @@ Section 3 keeps that registry, the uploaded UI, buckets, IAM grants, and other p
 
 ### 5.1 Pool after the daily guard
 
-The guard sets every pool to 0 nodes at 03:00 New York time (07:00 UTC) every day. Run the wake verb to set every pool back to the size that `deploy/gcp/project.k` declares:
-
-```bash
-cargo xtask platform wake deploy/gcp/cluster.k
-```
-
-The verb resizes pool `pg` first, then the other pools. It prints one line for each pool. The `Cluster` keeps its old `Ready` condition while its pod is gone, so the verb then waits up to 900 seconds for the pod `wamn-pg-1` to exist and be Ready. Last, it waits up to 600 seconds for the statefulset `wamn-nats` to roll out.
-
-Pod replacement ends existing port-forwards. Restart them for the services that you need.
+The guard scales each pool to zero at 03:00 New York time. Restore the approved pool sizes through the infrastructure configuration. Wait for `wamn-pg-1` and `wamn-nats` to be ready after the pools resume. Reopen port-forwards after pod replacement.
 
 ### 5.2 Pause
 
-Run the sleep verb to set every pool to 0 nodes. The PostgreSQL volume keeps the data:
-
-```bash
-cargo xtask platform sleep deploy/gcp/cluster.k
-```
-
-The verb prints one line for each pool, and then the names of the pools that it set to 0. Run section 5.1 to start the cluster again.
+Use the infrastructure configuration to scale the pools to zero. The PostgreSQL volume keeps its data.
 
 ### Application operations
 

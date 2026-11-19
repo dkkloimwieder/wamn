@@ -1,0 +1,20 @@
+{{- if not .Values.edge.neg }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik-to-edge
+  namespace: hosts
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: wamn-edge
+      app.kubernetes.io/instance: wamn-edge
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: platform}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: traefik}
+      ports: [{port: 8080, protocol: TCP}]
+{{- end }}

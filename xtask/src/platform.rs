@@ -26,7 +26,7 @@ pub struct Args {
     /// Stamp existing published images without building or pushing.
     #[arg(long)]
     stamp_only: bool,
-    /// Select the platform UI when this cluster has a web bucket.
+    /// Platform Helm values. A GCP web bucket selects the platform UI.
     #[arg(long)]
     cluster: Option<PathBuf>,
 }
@@ -40,12 +40,14 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     );
     let chart = root.join("deploy/charts/application");
     let version = release_chart::chart_version(&chart)?;
-    let ui = args
-        .cluster
-        .as_deref()
-        .map(wamn_platform_install::platform::document::ClusterDocument::compile)
-        .transpose()?
-        .is_some_and(|cluster| !cluster.buckets.web.is_empty());
+    let ui = if let Some(file) = args.cluster.as_deref() {
+        let values: Value = serde_yaml::from_slice(&std::fs::read(file)?)?;
+        values.pointer("/gcp/buckets/web")
+            .and_then(Value::as_str)
+            .is_some_and(|bucket| !bucket.is_empty())
+    } else {
+        false
+    };
     let components = tempfile::tempdir()?;
     let mut palette_pins = std::collections::BTreeMap::new();
     if !args.stamp_only {
@@ -290,9 +292,18 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         values["platform"][if name == "edge-web" { "edge" } else { name }]["image"] =
             reference.into();
     }
-    values["platformUi"] = serde_json::to_value(ui_digest)?;
     std::fs::write(path, serde_yaml::to_string(&values)?)?;
-    wamn_platform_install::platform::artifact_plan::prepare_payload(&root, &stamped)?;
+    release_chart::bundle::prepare_payload(&root, &stamped)?;
+    let path = stamped.join("platform/platform/values.yaml");
+    let mut platform: Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;
+    platform["identity"]["image"] = values["platform"]["identity"]["image"].take();
+    platform["edge"]["image"] = values["platform"]["edge"]["image"].take();
+    std::fs::write(path, serde_yaml::to_string(&platform)?)?;
+    let path = stamped.join("platform/org/values.yaml");
+    let mut org: Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;
+    org["control"]["image"] = values["platform"]["control"]["image"].take();
+    org["control"]["platformUi"] = serde_json::to_value(ui_digest)?;
+    std::fs::write(path, serde_yaml::to_string(&org)?)?;
     println!("{}", stamped.display());
     std::fs::copy(
         components.path().join("ingress.wasm"),

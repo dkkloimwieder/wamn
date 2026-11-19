@@ -439,22 +439,9 @@ pub async fn upstream(root: &Path, args: &UpstreamArgs) -> anyhow::Result<()> {
 pub fn collector(root: &Path, output: &Path) -> anyhow::Result<()> {
     let directory = output.join("local-artifacts/otel");
     std::fs::create_dir_all(&directory)?;
-    let document = wamn_platform_install::platform::document::ClusterDocument::compile(
-        &root.join("deploy/kind/cluster.k"),
-    )?;
-    let mut values: Value = serde_yaml::from_slice(&std::fs::read(
-        root.join("deploy/charts/installation/values-gcp.yaml"),
-    )?)?;
-    values["systemDatabase"] =
-        wamn_platform_install::platform::installation::system_database_values(&document.org)?;
-    values["org"] = serde_json::Value::String(document.org.into());
-    values["registry"] = document.registry.into();
-    let entry = wamn_platform_install::environment::entry(
-        &root.join("deploy/charts/installation"),
-        "platform",
-        "wamn",
-        values,
-    )?;
+    let chart = root.join("deploy/charts/platform");
+    let values: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values-gcp.yaml"))?)?;
+    let entry = wamn_platform_install::environment::entry(&chart, "platform", "wamn", values)?;
     let documents = wamn_kubernetes::helm::template(&entry)?;
     let config = documents
         .iter()
@@ -471,13 +458,12 @@ pub fn collector(root: &Path, output: &Path) -> anyhow::Result<()> {
     )?;
     let image = documents
         .iter()
-        .find_map(|doc| {
-            doc.pointer("/spec/template/spec/containers/0/image")
-                .and_then(Value::as_str)
-        })
+        .find(|doc| doc["kind"] == "Deployment" && doc["metadata"]["name"] == "otel-collector")
+        .and_then(|doc| doc.pointer("/spec/template/spec/containers/0/image"))
+        .and_then(Value::as_str)
         .context("collector image")?;
     let user = process_user()?;
-    let compose = json!({"services":{"receiving-dev-collector":{"image":image,"pull_policy":"never","user":user,"command":["--config=/var/lib/otelcol/config.yaml"],"environment":{"CLUSTER":document.cluster_name},"volumes":[{"type":"bind","source":directory.canonicalize()?,"target":"/var/lib/otelcol"}],"ports":["127.0.0.1:${WAMN_RECEIVING_DEV_OTLP_PORT:-4319}:4317"]}}});
+    let compose = json!({"services":{"receiving-dev-collector":{"image":image,"pull_policy":"never","user":user,"command":["--config=/var/lib/otelcol/config.yaml"],"environment":{"CLUSTER":"wamn-local"},"volumes":[{"type":"bind","source":directory.canonicalize()?,"target":"/var/lib/otelcol"}],"ports":["127.0.0.1:${WAMN_RECEIVING_DEV_OTLP_PORT:-4319}:4317"]}}});
     std::fs::write(
         directory.join("compose.json"),
         serde_json::to_vec_pretty(&compose)?,

@@ -1,0 +1,12 @@
+{{- if eq .Values.provider "gcp" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wamn-collector-gcp
+  namespace: platform
+data:
+  cluster: {{ .Values.gcp.clusterName | quote }}
+  project: {{ .Values.gcp.projectId | quote }}
+  region: {{ regexReplaceAll "-[a-z]$" .Values.gcp.zone "" | quote }}
+  bucket: {{ .Values.gcp.buckets.otel | quote }}
+{{- end }}

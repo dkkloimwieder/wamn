@@ -1,0 +1,9 @@
+{{- with .Values.postgresCa }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-pg-ca
+  namespace: {{ $.Values.org | quote }}
+data:
+  ca.crt: {{ . | b64enc | quote }}
+{{- end }}

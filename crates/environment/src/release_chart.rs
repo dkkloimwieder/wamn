@@ -7,3 +7,6 @@ pub use plan::{
 
 use anyhow::ensure;
 use serde_yaml::{Mapping, Value};
+
+#[doc(inline)]
+pub use wamn_platform_install::release_chart::bundle;

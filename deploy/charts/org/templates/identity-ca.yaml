@@ -1,0 +1,9 @@
+{{- with .Values.identityCa }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: identity-ca
+  namespace: {{ $.Values.org | quote }}
+data:
+  ca.crt: {{ . | quote }}
+{{- end }}

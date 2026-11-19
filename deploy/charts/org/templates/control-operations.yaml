@@ -1,0 +1,34 @@
+{{- if .Values.control.image }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: c-{{ .Values.org }}-operations
+  namespace: {{ .Values.org | quote }}
+rules:
+- apiGroups: [batch]
+  resources: [jobs]
+  verbs: [create, get]
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [list]
+- apiGroups: [""]
+  resources: [pods/log, configmaps]
+  verbs: [get]
+- apiGroups: [""]
+  resources: [configmaps]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: c-{{ .Values.org }}-operations
+  namespace: {{ .Values.org | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: c-{{ .Values.org }}-operations
+subjects:
+- kind: ServiceAccount
+  name: wamn-control-{{ .Values.org }}
+  namespace: {{ .Values.org | quote }}
+{{- end }}

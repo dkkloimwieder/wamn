@@ -1,0 +1,49 @@
+{{- $existing := lookup "v1" "Secret" "platform" "wamn-identity-ca" }}
+{{- $crt := "" }}
+{{- $key := "" }}
+{{- if $existing }}
+{{- $crt = required "wamn-identity-ca requires tls.crt" (index $existing.data "tls.crt") }}
+{{- $key = required "wamn-identity-ca requires tls.key" (index $existing.data "tls.key") }}
+{{- else }}
+{{- $ca := genCA "WAMN identity HTTPS" 3650 }}
+{{- $crt = $ca.Cert | b64enc }}
+{{- $key = $ca.Key | b64enc }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-identity-ca
+  namespace: platform
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ $crt | quote }}
+  tls.key: {{ $key | quote }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: wamn-identity-serving
+  namespace: platform
+spec:
+  ca:
+    secretName: wamn-identity-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity
+  namespace: platform
+spec:
+  secretName: identity-tls
+  dnsNames: [identity.platform.svc.cluster.local]
+  issuerRef:
+    kind: Issuer
+    name: wamn-identity-serving
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: identity-ca
+  namespace: hosts
+data:
+  ca.crt: {{ $crt | b64dec | quote }}

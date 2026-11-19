@@ -1,4 +1,3 @@
-{{- if not .Values.controlService }}
 {{- include "application.requireImageSet" . }}
 {{- range .Values.roles }}
 {{- if eq .name "http" }}
@@ -85,6 +84,5 @@ spec:
         {{- end }}
 {{- else }}
 {{- fail (printf "unknown role %q: the application role is http" .name) }}
-{{- end }}
 {{- end }}
 {{- end }}
