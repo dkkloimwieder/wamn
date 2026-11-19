@@ -752,6 +752,7 @@ Issues:
 - Then the owner invitation Job.
 - One Job in `platform` makes the org's control login and the `registry.orgs` row, and patches the password into the Secret that the org chart creates empty.
 - The org SQL Job also makes the org's apply login (A). Control's host name is `<org>.<base>` (C).
+- Org-scoped grants on the system database, as ruled on 2026-11-19.
 
 10.5 Settings (K).
 - One settings file each for host, control, identity, cdc-reader and web. Constant flags become code defaults.
@@ -837,6 +838,7 @@ Issues:
 - Later option, not in Epic 10: offer wasmCloud a change so its runtime-operator tracks host pods in all namespaces by label (T4). The `len(podCacheNamespaces) == 0` fallback in `cmd/main.go` never runs.
 - Later option: custom domains for applications through a verified-domain list (E).
 - Later option: integration types owned by one org (Q4).
+- Later option: users in more than one org, through an invitation the user accepts (grant ruling, change 1).
 
 # Part 2: Review log
 
@@ -2353,5 +2355,19 @@ Facts:
 - Q3. Project Helm Jobs stay on the org worker. Helm stores every project's records in `wamn-helm-<org>` and needs list there, so an account for each project gains no isolation. Client certificates (10.8) keep passwords out of the records.
 - Q4. Only the platform publishes integration types. They ship as seed data in the platform's system SQL, like `http`, `gcs`, `s3` and `modbus` today, and change only through `wamn platform deploy`. EXECUTE on `registry.publish_integration(...)` is revoked from `wamn_control`. Later option: integration types owned by one org, which needs an org column.
 - Principals. An org's control login can create a principal, and can change only principals whose memberships are all in its own org. A principal with memberships in more than one org changes only through identity. Reason: `wamn_control` has INSERT and UPDATE on `identity.principals`, which has no org column, so any org could change another org's user's email or status and take over the account through a password reset.
+
+**Ruled (D, 2026-11-19): org-scoped grants on the system database.**
+- Accepted as the agent's plan (third note on wamn-0vj2i.4, checked at 51b6cf1a9):
+  - Each org has two logins, `wamn_control_<hash>` in group role `wamn_control` and `wamn_apply_<hash>` in group role `wamn_apply`; neither group role logs in.
+  - `registry.login_org()` replaces `registry.control_org()`, and `registry.login_principal(uuid)` replaces `registry.control_principal(uuid)`.
+  - The org policy covers members of both group roles, and is added to `registry.event_readers`, `wamn_authority.author_login_projects`, `registry.capture_gap` and `registry.retired_project_envs`.
+  - Principals: INSERT is allowed; UPDATE only when every membership is in the login's org (`identity.principal_in_login_org_only`).
+  - The seven new apply grants.
+  - Platform roles stay unlimited.
+  - The unreachable `SET ROLE wamn_system` helper in `environment/connections.rs` is deleted.
+- Change 1: an org login may insert or activate a membership only for a principal that has no memberships, or memberships only in that org. Adding a user who already belongs to another org is refused. Reason: control creates memberships as `active` at once, and the foreign key check ignores the row policy, so an org could attach itself to another org's user without consent and lock that user's own org out of changing them.
+- Change 2: the org policy's `USING` clause is the org check only. `WITH CHECK` keeps the bound actor and the org check. Reason: with no bound actor, reads returned no rows, so `env delete` and other apply reads did nothing.
+- Change 3: `registry.project_capacity_available(requested int) RETURNS boolean` replaces `registry.project_stream_count()`, under the same capacity lock, so no org sees the total project count.
+- Later option: users in more than one org, through an invitation that the user accepts and identity activates.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
