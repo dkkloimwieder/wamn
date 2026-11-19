@@ -1,5 +1,6 @@
 cert-manager:
   namespace: cert-manager
+  enableCertificateOwnerRef: true
   crds:
     enabled: true
 cloudnative-pg:
