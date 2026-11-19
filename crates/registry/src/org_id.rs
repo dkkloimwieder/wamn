@@ -5,6 +5,7 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 
 /// A lowercase organization slug of at most 40 bytes, with isolated hyphens.
+/// The `wamn-` prefix is reserved for platform hosts.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct OrgId(Box<str>);
@@ -16,7 +17,7 @@ pub struct ParseOrgIdError;
 impl fmt::Display for ParseOrgIdError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(
-            "expected a nonreserved lowercase organization slug of 1 to 40 bytes with isolated hyphens",
+            "expected a nonreserved lowercase organization slug of 1 to 40 bytes with isolated hyphens (prefix 'wamn-' is reserved)",
         )
     }
 }

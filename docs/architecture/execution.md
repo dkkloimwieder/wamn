@@ -1233,7 +1233,7 @@ An empty audience sets `navigation={false}` to omit the pane and its toggle.
 The application owns addresses, permission filtering, and page actions.
 
 The shell calls the release under `/api` through its [transport](../../apps/platform_ui/src/shell.tsx).
-The platform UI calls the control host through `/api/wamn_control` at `control.wamn.dev`.
+The platform UI calls `/api/wamn_control` on the org's control host.
 Its [deployment](../operations/deployment.md#platform-ui-files) owns the edge routing and the org-only configuration.
 
 A revision-bearing operation needs a declared compatible record read and revision mapping.

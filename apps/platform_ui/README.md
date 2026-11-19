@@ -87,7 +87,7 @@ The build writes `apps/platform_ui/dist`.
 The page reads only the org from `/config.json` and signs in directly to that org.
 The platform UI is a platform asset with no `wamn.k` or package artifact.
 [Building](../../docs/operations/building.md#platform-ui) owns its build record.
-[Deployment](../../docs/operations/deployment.md#platform-ui-files) owns upload and routing at `control.wamn.dev`.
+[Deployment](../../docs/operations/deployment.md#platform-ui-files) describes upload and routing for the org's control host.
 
 To test these UI changes with existing generated clients, run the commands directly from the repository root:
 
