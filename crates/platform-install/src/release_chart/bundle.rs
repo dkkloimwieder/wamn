@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 
-const POD_REGISTRY: &str = "wamn-registry.platform.svc.cluster.local:5000";
+/// Registry Service address for the local cluster.
+pub const POD_REGISTRY: &str = "wamn-registry.platform.svc.cluster.local:5000";
 
 /// A prepared platform chart validated before provider setup.
 #[derive(Debug)]

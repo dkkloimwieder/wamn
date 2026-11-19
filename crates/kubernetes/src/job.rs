@@ -75,6 +75,22 @@ fn state(job: &Value) -> State {
     }
 }
 
+/// Wait for a named Job to reach a terminal condition within the caller's deadline.
+pub async fn wait(target: &crate::Target, name: &str, timeout: Duration) -> anyhow::Result<()> {
+    let failed = std::cell::Cell::new(false);
+    crate::kubectl::wait_named(target, "job", name, timeout, |job| match state(job) {
+        State::Succeeded => true,
+        State::Failed => {
+            failed.set(true);
+            true
+        }
+        State::Pending | State::Running => false,
+    })
+    .await?;
+    ensure!(!failed.get(), "Job {}/{} failed", target.namespace, name);
+    Ok(())
+}
+
 /// Installed worker image and its public component configuration.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

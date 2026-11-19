@@ -14,7 +14,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ $name }}-settings
-  namespace: {{ $namespace }}
+  namespace: {{ $namespace | quote }}
 data:
   settings.json: {{ $settings | quote }}
 ---
@@ -22,15 +22,16 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ $account }}
-  namespace: {{ $namespace }}
+  namespace: {{ $namespace | quote }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ $name }}
-  namespace: {{ $namespace }}
+  namespace: {{ $namespace | quote }}
 spec:
   replicas: 1
+  strategy: {type: Recreate}
   selector:
     matchLabels: {app.kubernetes.io/name: {{ $name }}}
   template:
@@ -108,7 +109,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ $name }}-http
-  namespace: {{ $namespace }}
+  namespace: {{ $namespace | quote }}
 spec:
   selector: {app.kubernetes.io/name: {{ $name }}}
   ports: [{name: http, port: 80, targetPort: http}]

@@ -39,7 +39,7 @@ use sqlx::{Connection as _, Row as _};
 mod connection_test;
 mod integration;
 pub(crate) mod operations;
-mod users;
+pub(crate) mod users;
 
 use std::path::Path;
 use std::time::Duration;

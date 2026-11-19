@@ -6359,6 +6359,7 @@ dependencies = [
  "oci-client",
  "postgres-protocol",
  "rcgen",
+ "ring",
  "serde",
  "serde_json",
  "serde_yaml",

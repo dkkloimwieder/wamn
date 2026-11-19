@@ -41,7 +41,7 @@ The published application bundle includes the infrastructure, platform, org, env
 Helm installs cert-manager, CloudNativePG, and the ingress controller before the platform.
 The platform chart installs the system PostgreSQL Cluster, its SQL Job, shared identity, edge, NATS, the wasmCloud runtime operator, and the collector.
 The org chart owns control, the namespace quota, RBAC, and network policies.
-Supply the org's public CA copies and control credentials during org creation. [Org chart](../../deploy/charts/org/README.md)
+Run `wamn org create <org> --owner <email>` with the admin kubeconfig. The command installs the org chart with public platform settings. Its platform Job writes the control password directly to the org Secret before the invitation Job runs. [Org chart](../../deploy/charts/org/README.md)
 
 Set `global.maxProjects` to the project stream limit for the installation. Each project in an environment uses one slot.
 `wamn env apply` refuses new reservations if their total across all organizations and environments would exceed the limit.
@@ -229,7 +229,7 @@ projects:
 Helm installs, upgrades, and rollbacks use `--server-side=true`.
 Environment and application installs and upgrades pass `--skip-crds`. The installation release provides the runtime resource types.
 Org release records go in `wamn-helm-<org>`. The charts use an explicit org namespace value for their workloads and credentials.
-The storage namespace must exist before the org chart runs. The trusted install entry point in Epic 10 will create it.
+`wamn org create` creates the storage namespace before installing the org chart.
 Use this layout for new installs. Existing Helm records and their resource ownership stay in place.
 The kstatus watcher retains `list` and `watch` on the non-Secret kinds that environment and application charts render.
 

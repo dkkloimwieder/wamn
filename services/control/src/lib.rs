@@ -4,6 +4,7 @@ pub mod connection_health;
 mod control_route;
 pub mod environment_status;
 mod execution;
+pub mod first_owner;
 mod host_route;
 pub mod platform;
 pub mod retention;
@@ -110,7 +111,9 @@ impl Configuration {
             registry_auth_file: REGISTRY_AUTH_FILE.into(),
             registry_token_metadata: self.registry_token_metadata,
             oci_ca_paths: self.oci_ca_paths.clone(),
-            insecure_registry: wamn_registry::registry_is_loopback(&self.registry),
+            insecure_registry: wamn_registry::registry_is_loopback(&self.registry)
+                || self.registry.split('/').next()
+                    == Some(wamn_platform_install::release_chart::bundle::POD_REGISTRY),
             package_artifact_base: Some(format!("{}/wamn/packages", self.registry)),
             host_group: None,
             identity_issuer: self.identity_issuer.clone(),
@@ -169,20 +172,8 @@ async fn wait_for_system_schema(database: &str) -> anyhow::Result<sqlx::PgConnec
 pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     let platform = config.platform()?;
     write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
-    let integration_artifact_base = format!("{}/wamn/integrations", config.registry);
-    let registry_base = wamn_catalog::parse_component_artifact_base(&integration_artifact_base)?;
-    let registry_credentials = if config.registry_token_metadata {
-        wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer
-    } else {
-        wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
-            wamn_oci::package_artifact::registry_credentials::read_registry_credentials(
-                Path::new(REGISTRY_AUTH_FILE),
-                registry_base.registry(),
-            )?,
-        )
-    };
     let integration_registry = wamn_oci::package_artifact::PackageRegistry {
-        artifact_base: integration_artifact_base,
+        artifact_base: format!("{}/wamn/integrations", config.registry),
         credentials: None,
         registry_auth_file: REGISTRY_AUTH_FILE.into(),
         insecure_registry: platform.insecure_registry,
@@ -190,7 +181,8 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     };
     let database = config.database.to_json()?;
     let writer = wait_for_system_schema(&database).await?;
-    let pool = wamn_postgres::pool(&database, 4).await?;
+    // The login permits four connections, including the dedicated writer.
+    let pool = wamn_postgres::pool(&database, 3).await?;
     let identity_databases = Path::new(ADMINISTRATION_DIR);
     let identity_system = wamn_provision::migrations::MigrationDatabase::System
         .configuration(&platform.system_database_url)?;
@@ -241,11 +233,10 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
             org: config.org.clone(),
             worker: worker.clone(),
             administration: ADMINISTRATION_DIR.into(),
-            control_database: database,
+            control: pool,
             registry_token_metadata: config.registry_token_metadata,
             system_database: identity_system.clone(),
             integration_registry,
-            registry_credentials,
         }))
         .with_worker(worker)
         .with_operation_jobs(wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?)

@@ -25,6 +25,18 @@ enum Command {
         #[arg(long)]
         max_projects: std::num::NonZeroU32,
     },
+    #[command(hide = true)]
+    ProvisionOrg {
+        org: wamn_registry::OrgId,
+        #[arg(long)]
+        database: PathBuf,
+    },
+    #[command(hide = true)]
+    InviteOrgOwner {
+        org: wamn_registry::OrgId,
+        #[arg(long)]
+        owner: String,
+    },
 }
 
 #[tokio::main]
@@ -37,26 +49,17 @@ async fn main() -> anyhow::Result<()> {
         .log_internal_errors(false)
         .init();
     let cli = Cli::parse();
-    if let Command::ProvisionSystem {
-        database,
-        platform_domain,
-        max_projects,
-    } = cli.command
-    {
-        let request = wamn_platform_install::provision_system::ProvisionSystemRequest {
-            database: wamn_postgres::ConnectionConfig::read(&database).await?,
-            platform_domain,
-            max_projects,
-        };
-        return wamn_platform_install::provision_system::provision_system(&request).await;
-    }
-    let config = cli
-        .settings
-        .ok_or_else(|| anyhow::anyhow!("--settings is required"))?;
-    let config = wamn_control::Configuration::read(&config)?;
+    let configuration = || {
+        wamn_control::Configuration::read(
+            cli.settings
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--settings is required"))?,
+        )
+    };
     match cli.command {
-        Command::Platform => wamn_control::serve(config).await,
+        Command::Platform => wamn_control::serve(configuration()?).await,
         Command::Worker => {
+            let config = configuration()?;
             let request = std::fs::read_to_string("/etc/wamn/request/request.json")?;
             println!(
                 "{}",
@@ -64,6 +67,24 @@ async fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
-        Command::ProvisionSystem { .. } => unreachable!("provision-system already dispatched"),
+        Command::ProvisionSystem {
+            database,
+            platform_domain,
+            max_projects,
+        } => {
+            let request = wamn_platform_install::provision_system::ProvisionSystemRequest {
+                database: wamn_postgres::ConnectionConfig::read(&database).await?,
+                platform_domain,
+                max_projects,
+            };
+            wamn_platform_install::provision_system::provision_system(&request).await
+        }
+        Command::ProvisionOrg { org, database } => {
+            let database = wamn_postgres::ConnectionConfig::read(&database).await?;
+            wamn_platform_install::provision_org::provision_org(&database, &org).await
+        }
+        Command::InviteOrgOwner { org, owner } => {
+            wamn_control::first_owner::invite(&org, &owner).await
+        }
     }
 }

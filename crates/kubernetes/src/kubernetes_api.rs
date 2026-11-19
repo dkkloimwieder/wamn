@@ -312,6 +312,20 @@ impl KubernetesApi {
         ).await
     }
 
+    /// Set a data entry on an existing Secret in a named namespace.
+    pub async fn patch_namespaced_secret_data(
+        &self,
+        namespace: &str,
+        name: &str,
+        key: &str,
+        value: &[u8],
+    ) -> Result<(), Error> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let path = format!("/api/v1/namespaces/{namespace}/secrets/{name}");
+        let body = serde_json::json!({"data": {key: STANDARD.encode(value)}});
+        successful(self.write(Method::PATCH, &path, &body).await?, &path)
+    }
+
     /// Submit a server-built Job once.
     pub async fn create_job(&self, namespace: &str, job: &Value) -> Result<Value, Error> {
         let path = format!("/apis/batch/v1/namespaces/{namespace}/jobs");

@@ -36,11 +36,7 @@ impl Execution {
         let login = wamn_postgres::ConnectionConfig::read(&self.administration.join(key))
             .await
             .context("read the project's administration login")?;
-        let mut system_connection = wamn_postgres::connect(&self.control_database)
-            .await
-            .context("connect the control login for service administration")?;
-        let mut system =
-            wamn_identity::transaction::read_connection(&mut system_connection, caller).await?;
+        let mut system = wamn_identity::transaction::read_pool(&self.control, caller).await?;
         let instance: wamn_registry::instance_suffix::InstanceSuffix = sqlx::query_scalar(
             "SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
         )

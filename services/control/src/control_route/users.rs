@@ -187,3 +187,83 @@ fn user_refused() -> Refusal {
         detail: json!({"field": "email"}),
     }
 }
+
+/// Grant the first owner under the provisioning actor after identity accepts mail.
+pub(crate) async fn first_owner(
+    handlers: &crate::host_route::HostRouteHandlers,
+    email: &str,
+) -> anyhow::Result<hyper::StatusCode> {
+    use hyper::StatusCode;
+    use wamn_identity::org::ORG_ADMIN_ROLE;
+
+    let display_name = email.trim().split('@').next().unwrap_or_default();
+    let display_name = &display_name[..display_name.floor_char_boundary(200)];
+    if require_user_contact(email, display_name).is_err() {
+        return Ok(StatusCode::BAD_REQUEST);
+    }
+
+    let org = &handlers.org;
+    let mut writer = handlers.writer.lock().await;
+    let mut tx = wamn_platform_install::transaction::provisioning_transaction(&mut writer).await?;
+    let registered: bool =
+        sqlx::query_scalar("SELECT COALESCE(registry.control_org() = $1, false)")
+            .bind(org)
+            .fetch_one(&mut *tx)
+            .await?;
+    if !registered {
+        return Ok(StatusCode::FORBIDDEN);
+    }
+    // Serialize bootstrap requests even across two control processes in a rollout.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("wamn:first-owner:{org}"))
+        .execute(&mut *tx)
+        .await?;
+    let (has_owner, same_owner): (bool, bool) = sqlx::query_as(
+        "SELECT count(*) > 0, COALESCE(bool_or(p.email = $3), false)
+           FROM identity.org_roles r LEFT JOIN identity.principals p ON p.id = r.principal_id
+          WHERE r.org = $1 AND r.role = $2",
+    )
+    .bind(org)
+    .bind(ORG_ADMIN_ROLE)
+    .bind(email.trim().to_lowercase())
+    .fetch_one(&mut *tx)
+    .await?;
+    if has_owner {
+        return Ok(if same_owner {
+            StatusCode::NO_CONTENT
+        } else {
+            StatusCode::CONFLICT
+        });
+    }
+
+    let identity = handlers
+        .identity
+        .as_ref()
+        .context("control has no identity user client")?;
+    let user = match create_identity(identity, email, display_name).await {
+        Ok(user) => user,
+        Err(Refusal::Declared { .. }) => return Ok(StatusCode::BAD_REQUEST),
+        Err(Refusal::Failed(error)) => return Err(error),
+        Err(Refusal::Delivery(_)) => unreachable!("identity creation does not route requests"),
+    };
+    // Token issue can lock the principal. Request delivery before mutating
+    // membership, so mail failure leaves the first-owner gate open for retry.
+    if !user.enrolled {
+        identity.invite(&user.principal_id).await?;
+    }
+    let grants = MemberGrants {
+        org_admin: true,
+        ..MemberGrants::default()
+    };
+    invite_member(&mut tx, &user.principal_id, org, &grants).await?;
+    let active: bool =
+        sqlx::query_scalar("SELECT status = 'active' FROM identity.principals WHERE id = $1")
+            .bind(user.principal_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if !active {
+        return Ok(StatusCode::BAD_REQUEST);
+    }
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
