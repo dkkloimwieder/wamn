@@ -23,9 +23,6 @@ const RESEND_TOKEN: &str = "/var/run/wamn-identity/resend/api-key";
 #[derive(Debug, Parser)]
 #[command(name = "wamn-identity", version, about)]
 pub struct Cli {
-    /// Path to the identity JSON settings file.
-    #[arg(long, global = true)]
-    settings: PathBuf,
     #[command(subcommand)]
     command: Command,
 }
@@ -55,14 +52,25 @@ enum MailSettings {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Serve public keys and configured user authentication endpoints over HTTPS.
-    Serve,
+    Serve {
+        /// Path to the identity JSON settings file.
+        #[arg(long)]
+        settings: PathBuf,
+    },
     /// Remove compromised public and private material immediately.
     Remove {
+        /// Path to the identity JSON settings file.
+        #[arg(long)]
+        settings: PathBuf,
         #[arg(long)]
         kid: String,
     },
     /// Delete generations whose public retention window has expired.
-    Retire,
+    Retire {
+        /// Path to the identity JSON settings file.
+        #[arg(long)]
+        settings: PathBuf,
+    },
 }
 
 impl Settings {
@@ -77,14 +85,18 @@ impl Settings {
 
 /// Run a local command; lifecycle output contains public metadata only.
 pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
-    let settings = Settings::read(&cli.settings).await?;
+    let settings = match &cli.command {
+        Command::Serve { settings }
+        | Command::Remove { settings, .. }
+        | Command::Retire { settings } => Settings::read(settings).await?,
+    };
     let issuer = settings.issuer;
     let database = settings
         .database
         .to_json()
         .map_err(|_| IdentityServiceError::new("encode identity database configuration failed"))?;
     let mut config = IdentityConfig::new(&issuer, &database)?;
-    if matches!(cli.command, Command::Serve) {
+    if matches!(cli.command, Command::Serve { .. }) {
         config.nats = settings.nats;
         let config = match settings.mail {
             Some(MailSettings::Local { spool }) => config.with_local_mail(spool),
@@ -110,19 +122,19 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
     }
     let mut database = connect(&config).await?;
     let output = match cli.command {
-        Command::Remove { kid } => {
+        Command::Remove { kid, .. } => {
             let removed = remove_compromised_session_key(&mut database.client, &issuer, &kid)
                 .await
                 .map_err(|_| IdentityServiceError::new("remove identity key failed"))?;
             json!({"issuer": issuer, "kid": kid, "removed": removed})
         }
-        Command::Retire => {
+        Command::Retire { .. } => {
             let retired = retire_session_keys(&mut database.client, &issuer)
                 .await
                 .map_err(|_| IdentityServiceError::new("retire identity keys failed"))?;
             json!({"issuer": issuer, "retired": retired})
         }
-        Command::Serve => unreachable!("serve returned before lifecycle dispatch"),
+        Command::Serve { .. } => unreachable!("serve returned before lifecycle dispatch"),
     };
     println!("{output}");
     Ok(())
