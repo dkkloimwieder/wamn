@@ -112,6 +112,9 @@ fn valid_route_host(host: &str, namespace: &str, base: &PlatformDomain) -> bool 
     if domain != base.as_str() || namespace.is_empty() || label.len() > 63 || host.len() > 253 {
         return false;
     }
+    if label == namespace {
+        return true;
+    }
     label
         .strip_suffix(namespace)
         .and_then(|prefix| prefix.strip_suffix("--"))

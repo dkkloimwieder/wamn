@@ -69,7 +69,7 @@ The local outbox is temporary pod storage. Keep invitation codes and passwords o
 A port-forward connects a local port to a pod.
 The control Service selects the org's control Deployment, `c-<org>`.
 Use `<org>.<base>`, where `<base>` is the platform chart's `platformDomain`.
-The example uses org `local` and host `control.wamn.localhost`.
+The example uses org `local` and host `local.wamn.localhost`.
 The edge certificate covers `*.wamn.localhost`, including application hosts.
 Export the cluster access file to a private directory:
 
@@ -82,11 +82,11 @@ kubectl --kubeconfig /tmp/wamn-local-access/kubeconfig -n local \
 ```
 
 Keep that command running while you use the service.
-Send control requests to `http://127.0.0.1:8080` with `Host: control.wamn.localhost`.
+Send control requests to `http://127.0.0.1:8080` with `Host: local.wamn.localhost`.
 From another terminal, read the unauthenticated control response:
 
 ```bash
-curl -i -H 'Host: control.wamn.localhost' http://127.0.0.1:8080/wamn_control/control/mine
+curl -i -H 'Host: local.wamn.localhost' http://127.0.0.1:8080/wamn_control/control/mine
 ```
 
 This request must return HTTP 401.
@@ -611,7 +611,7 @@ The edge selects shared files by that digest and reads configuration from the or
 Deployment needs no source checkout, pnpm installation, or local UI output.
 Kind keeps an empty web bucket and selects no platform UI.
 
-The control root is `https://control.wamn.dev`.
+The control root is `https://<org>.<base>`, where `<base>` is the platform chart's `platformDomain`.
 The org chart runs `wamn-control --settings /etc/wamn/control/settings.json platform` in the org namespace.
 The native service has no route guest or application release.
 The control Service selects that Deployment.
