@@ -125,35 +125,18 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
             helm::Install::CreateNamespace,
         )
         .await?;
+        // The platform chart needs the CloudNativePG admission webhook.
+        kubectl::wait_deployment_ready(&target, "cnpg-controller-manager", ROLLOUT_TIMEOUT).await?;
     }
     if platform {
-        let chart = charts.join("platform");
-        let install = || {
-            upgrade(
-                &target,
-                &chart,
-                PLATFORM_RELEASE,
-                &values,
-                helm::Install::ExistingNamespace,
-            )
-        };
-        if let Err(error) = install().await {
-            // On a fresh install the infrastructure release can return while
-            // the CloudNativePG admission webhook is still starting.
-            let message = format!("{error:#}");
-            if !infrastructure
-                || !(message.contains("failed calling webhook")
-                    && message.contains(".cnpg.io\"")
-                    && (message.contains("no endpoints available")
-                        || message.contains("connection refused")))
-            {
-                return Err(error);
-            }
-            kubectl::wait_deployment_ready(&target, "cnpg-controller-manager", ROLLOUT_TIMEOUT)
-                .await
-                .context(error)?;
-            install().await?;
-        }
+        upgrade(
+            &target,
+            &charts.join("platform"),
+            PLATFORM_RELEASE,
+            &values,
+            helm::Install::ExistingNamespace,
+        )
+        .await?;
     }
     let deadline = tokio::time::Instant::now() + ROLLOUT_TIMEOUT;
     let wait = async |namespace: &str, command: &[&str]| {
