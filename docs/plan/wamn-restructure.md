@@ -853,6 +853,8 @@ Merged to main on 2026-11-19 after review. The first kind run waits for D's appr
 - 3.7b: component admission takes only the package id and version; the palette key and `ProjectEnvKey::platform_palette()` go.
 - Later option: registry access for each org. Today every org uses the same registry credential (a copied file on kind, the node's token on GCP), so an org's hosts could pull another org's packages. For example, one repository per org, with read access only to its own.
 - Before any install that must survive an upgrade: system schema migrations. The system schema loads only when it is absent (`provision_system.rs:242`), and no system migration exists, so a schema change today needs a new cluster.
+- Later option: `wamn platform deploy` applies `wamn org create` again for every org in `registry.orgs` after the platform release, so each org's control image and bundle reference follow a platform upgrade. Today a platform upgrade reaches an org only when its org chart is applied again. `org create` is idempotent and changes nothing shared (T1).
+- The org owner's access token lasts about 15 minutes, which can be shorter than a long `env apply` run by hand.
 
 # Part 2: Review log
 
@@ -2425,6 +2427,7 @@ Facts:
 - Vendored charts stay stock: no repacked chart for the Barman plugin certificates.
 - K6: `wamn org create` writes `wamn-registry-pull` into the org namespace from the operator's registry auth file, as listed in "Secrets made by Rust". On kind the file may be `{"auths":{"localhost:5001":{}}}`, because the local registry has no authentication. Skipped with registry token metadata. Cause: the old install path that wrote it was deleted (550cdc5f1).
 - Pulls read an explicit empty entry for the exact registry as anonymous, the same as pushes; a missing or partial entry is refused before any request.
+- K7: `wamn platform deploy` records the application bundle's digest reference in `wamn-org-inputs`, and `wamn org create` sets control's `chart` setting from it, as it already does for `controlImage`. Cause: `org create` pointed control at the plain chart folder in the image, while the worker needs the stamped bundle.
 
 **Ruled (D, 2026-11-19): preflight and smoke runs.**
 - Preflight, run before any kind install:
