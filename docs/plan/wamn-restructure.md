@@ -745,6 +745,7 @@ Issues:
 - One SQL Job. Identity creates its own first key; `Publish` and `Activate` go.
 - A readiness probe replaces the probe Job. Confirm that L1 is gone.
 - System migrations run only here (A).
+- Identity calls `platform.prune_tx_identity()` every 60 s (Q1). Integration types are seed data in the system SQL (Q4).
 
 10.4 `wamn org create <org> --owner <email>`.
 - The org row, the invitation Job's service account (E), `wamn-helm-<org>`, then the org chart: namespace, quota, RBAC, NetworkPolicy, Helm storage, worker, control, system login Secrets, identity CA and the control administration map.
@@ -767,14 +768,16 @@ Issues:
 
 10.8 Database logins by client certificate.
 - One cert-manager `Certificate` per login; `pg_hba` requires `cert` for each login; roles have no password Secrets.
-- `wamn-postgres` uses `ssl_client_cert` and `ssl_client_key`; project accounts run their own Helm Jobs again.
+- `wamn-postgres` uses `ssl_client_cert` and `ssl_client_key`.
 - Platform logins on the system database and every project database login use certificates. The org's control login on the system database keeps a password (G).
 - One CA per project Cluster (B).
+- Project Helm Jobs stay on the org worker (Q3).
 
 10.9 Certificate trust (G).
 - Namespaced platform issuers, no ClusterIssuer for trusted identities, `ingresses` removed from the org worker, the edge's ACME issuer namespaced. TokenReview rights for identity and control.
 
 10.10 Host names (E). `<label>--<org>.<base>` in the environment file and the registry; web drops routes whose host does not match their namespace.
+- Web also accepts exactly `<namespace>.<base>` for control (Q2).
 
 ## Open items
 
@@ -833,6 +836,7 @@ Issues:
 - Epic 10 (10.8): database logins by client certificate. Each project chart renders a cert-manager `Certificate` per login, Postgres authenticates by certificate, and hosts mount `tls.crt` and `tls.key`. Release records then hold no passwords, project accounts can run their own Helm Jobs again, and nothing needs password rotation. Check CloudNativePG's support for certificate auth on managed roles and `wamn-postgres` connecting with a client certificate.
 - Later option, not in Epic 10: offer wasmCloud a change so its runtime-operator tracks host pods in all namespaces by label (T4). The `len(podCacheNamespaces) == 0` fallback in `cmd/main.go` never runs.
 - Later option: custom domains for applications through a verified-domain list (E).
+- Later option: integration types owned by one org (Q4).
 
 # Part 2: Review log
 
@@ -2342,5 +2346,12 @@ Facts:
 - C. Each org's control host name is `<org>.<base>`, covered by the platform wildcard certificate.
 - D. The org worker keeps Secret rights across its own namespace, as a stated exception inside the org.
 - E. Application host names are `<label>--<org>.<base>`. The user picks only `<label>`; the registry keeps it unique within the org. Web drops any route whose host does not end in `--<namespace>.<base>`, where the namespace is the route ConfigMap's namespace. One level deep, so the platform wildcard certificate covers it. This is the pattern Netlify uses (`branch--site.netlify.app`). Later option: custom domains through a verified-domain list. Reason: host names were free text with no uniqueness across orgs, and web served the lowest ConfigMap name on a clash (`web/src/lib.rs::Releases::routes`), so any org could take over another org's host name.
+
+**Ruled (D, 2026-11-19): system cleanup, control's host, project Helm Jobs, integration types, principals.**
+- Q1. Identity runs the system database cleanup of `platform.tx_identity` in its existing 60 s loop. It calls one function, `platform.prune_tx_identity()`, which is SECURITY DEFINER, owned by the table owner, and runs only `DELETE FROM platform.tx_identity WHERE xid < pg_snapshot_xmin(pg_current_snapshot())`. Identity's login gets EXECUTE on that function, not DELETE on the table. The owner login stays in the one-time install SQL Job. The project database cleanup stays in each org's control, using its own project login.
+- Q2. Web accepts a route host that is exactly `<namespace>.<base>` (control) or ends in `--<namespace>.<base>` (applications), where the namespace is the route ConfigMap's namespace. Org ids allow only single hyphens, so the two forms never meet. Any future platform host under `<base>` is `wamn-<name>.<base>`; org ids cannot start with `wamn-`.
+- Q3. Project Helm Jobs stay on the org worker. Helm stores every project's records in `wamn-helm-<org>` and needs list there, so an account for each project gains no isolation. Client certificates (10.8) keep passwords out of the records.
+- Q4. Only the platform publishes integration types. They ship as seed data in the platform's system SQL, like `http`, `gcs`, `s3` and `modbus` today, and change only through `wamn platform deploy`. EXECUTE on `registry.publish_integration(...)` is revoked from `wamn_control`. Later option: integration types owned by one org, which needs an org column.
+- Principals. An org's control login can create a principal, and can change only principals whose memberships are all in its own org. A principal with memberships in more than one org changes only through identity. Reason: `wamn_control` has INSERT and UPDATE on `identity.principals`, which has no org column, so any org could change another org's user's email or status and take over the account through a password reset.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
