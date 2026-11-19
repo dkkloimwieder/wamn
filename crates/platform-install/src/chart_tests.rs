@@ -6,7 +6,6 @@ use std::path::Path;
 #[test]
 fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() -> anyhow::Result<()>
 {
-    use crate::platform::operations;
     let document = wamn_registry::Triple::new(
         "acme".parse().expect("fixed identifier"),
         "dev".parse().unwrap(),
@@ -16,8 +15,14 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     let cluster = "database-owner";
     let database = "recorded-environment-database";
     let application = "shop".parse()?;
-    let mut values =
-        operations::values(&document, cluster, database, std::iter::once(&application))?;
+    let mut values = json!({});
+    crate::environment::set_operation_values(
+        &mut values,
+        &document,
+        cluster,
+        database,
+        std::iter::once(&application),
+    )?;
     values["namespace"] = json!(document.org);
     let entry = crate::environment::entry(
         &repository.join("deploy/charts/project"),

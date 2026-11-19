@@ -51,8 +51,21 @@ pub fn upsert_project_env_with_policy_sql() -> &'static str {
 }
 
 // --- event readers (wamn-l5i9.9, D19 v3) ------------------------------------
-//
-// Capture recovery reads the reader registration by org, project, and env.
+
+/// Record the applied CDC reader configuration and keep its original creation time.
+/// Parameters follow the insert column order.
+pub fn upsert_event_reader_sql() -> &'static str {
+    "INSERT INTO registry.event_readers \
+       (org, project, env, publication, schema, slot, stream, \
+        replication_secret_name, replication_secret_namespace) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+     ON CONFLICT (org, env, project) DO UPDATE SET \
+       publication = EXCLUDED.publication, schema = EXCLUDED.schema, \
+       slot = EXCLUDED.slot, stream = EXCLUDED.stream, \
+       replication_secret_name = EXCLUDED.replication_secret_name, \
+       replication_secret_namespace = EXCLUDED.replication_secret_namespace, \
+       updated_at = now()"
+}
 
 /// Read what `recover-capture-gap` needs of one CDC reader registration
 /// (`wamn-59z6`). Params: `$1` org, `$2` project, `$3` env. Columns: `slot`,

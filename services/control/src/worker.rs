@@ -56,7 +56,7 @@ pub(crate) async fn execute(
         "mounted environment does not match the Job target"
     );
     let triple = Triple::new(file.org.clone(), request.env, request.project);
-    let chart = wamn_platform_install::platform::artifact_plan::select(&platform.chart)?;
+    let chart = wamn_platform_install::release_chart::bundle::select(&platform.chart)?;
     let platform = Platform {
         chart: chart.directory().to_owned(),
         ..platform

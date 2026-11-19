@@ -41,22 +41,6 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: allow-identity-clients, namespace: {{ $org | quote }}}
-spec:
-  podSelector:
-    matchLabels: {{ $identity | toJson }}
-  policyTypes: [Ingress]
-  ingress:
-    - from:
-        - {{ $edge | toJson }}
-        - podSelector:
-            matchLabels: {{ $host | toJson }}
-        - podSelector:
-            matchLabels: {{ $control | toJson }}
-      ports: [{port: 8443, protocol: TCP}]
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
 metadata: {name: allow-control-to-identity, namespace: {{ $org | quote }}}
 spec:
   podSelector:
@@ -64,10 +48,11 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        - podSelector:
+        - namespaceSelector: {{ $platform | toJson }}
+          podSelector:
             matchLabels: {{ $identity | toJson }}
       ports: [{port: 8443, protocol: TCP}]
-{{- range $name, $labels := dict "control" $control "worker" $worker "identity" $identity }}
+{{- range $name, $labels := dict "control" $control "worker" $worker }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -99,7 +84,7 @@ spec:
             matchLabels: {app.kubernetes.io/name: nats, app.kubernetes.io/instance: wamn}
       ports: [{port: 4222, protocol: TCP}]
 {{- end }}
-{{- $apiClients := dict "control" (dict "matchLabels" $control) "worker" (dict "matchLabels" $worker) "postgres" $postgres "host" (dict "matchLabels" $host) "cdc" (dict "matchLabels" $cdc) "identity" (dict "matchLabels" $identity) }}
+{{- $apiClients := dict "control" (dict "matchLabels" $control) "worker" (dict "matchLabels" $worker) "postgres" $postgres "host" (dict "matchLabels" $host) "cdc" (dict "matchLabels" $cdc) }}
 {{- $registryClients := dict "control" (dict "matchLabels" $control) "worker" (dict "matchLabels" $worker) "host" (dict "matchLabels" $host) }}
 {{- range $purpose, $destinations := dict "api-server" .Values.networkPolicy.apiServer "registry" .Values.networkPolicy.registry }}
 {{- if $destinations }}

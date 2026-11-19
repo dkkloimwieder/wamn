@@ -1,0 +1,23 @@
+{{- if and .Values.control.image .Values.control.routeHost }}
+{{- $org := .Values.org }}
+{{- $name := printf "c-%s" $org }}
+{{- $host := .Values.control.routeHost }}
+{{- $digest := required "Set control.image to an image pinned by digest when publishing its route." (regexFind "sha256:[a-f0-9]{64}$" .Values.control.image) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ $org | quote }}
+data:
+  release.json: {{ dict "host" $host "digest" $digest "clients" dict "webs" dict "platformUi" .Values.control.platformUi "org" $org "project" $name | toJson | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-route
+  namespace: {{ $org | quote }}
+  labels:
+    wamn.route: "true"
+data:
+  route.json: {{ dict "host" $host "release" $name "api" (printf "http://%s-http.%s.svc.cluster.local" $name $org) | toJson | quote }}
+{{- end }}

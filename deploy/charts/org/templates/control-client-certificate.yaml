@@ -1,0 +1,14 @@
+{{- with .Values.control.certificateIssuer }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: control-{{ $.Values.org }}
+  namespace: {{ $.Values.org | quote }}
+spec:
+  commonName: control-{{ $.Values.org }}
+  secretName: control-{{ $.Values.org }}
+  usages: [client auth]
+  issuerRef:
+    kind: Issuer
+    name: {{ . | quote }}
+{{- end }}

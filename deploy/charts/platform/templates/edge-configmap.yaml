@@ -1,0 +1,8 @@
+{{- $buckets := (.Values.gcp | default dict).buckets | default dict -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wamn-edge
+  namespace: hosts
+data:
+  web.json: {{ dict "listen" "0.0.0.0:8080" "bucket" (default "" $buckets.web) "identity" "https://identity.platform.svc.cluster.local" "identity_ca" "/etc/wamn-edge/identity-ca/ca.crt" "trusted_proxy_hops" .Values.edge.trustedProxyHops "csrf_key_file" "/etc/wamn-edge/csrf/key" | toJson | quote }}
