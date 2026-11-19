@@ -784,6 +784,8 @@ Issues:
 
 10.12 Platform logins use certificates.
 
+Merged to main on 2026-11-19 after review. The first kind run waits for D's approval.
+
 ## Open items
 
 - Checks in phase 3: Helm values size for the largest application (3.2).
@@ -846,6 +848,8 @@ Issues:
 - Later option: integration types owned by one org (Q4).
 - Later option: users in more than one org, through an invitation the user accepts (grant ruling, change 1).
 - Next CloudNativePG upgrade: move the Pooler's certificate lookup to `.spec.pgbouncer` `clientTLSSecret`, `clientCASecret`, `serverTLSSecret` and `serverCASecret` (added in 1.28), away from the deprecated field.
+- 3.7b: Kubernetes calls move to `kube-rs`; kubectl error-text matching and `kubernetes_api.rs` go (kubectl error text ruling).
+- 3.7b or 3.8: clippy exits 101 because of old `implicit_clone` errors in `crates/guest`.
 
 # Part 2: Review log
 
@@ -2394,5 +2398,9 @@ Facts:
 - `max_connections` on the system Cluster is computed by the platform chart: Pooler totals, password lookups, identity's pool, the fixed Job connections, reserved slots and a margin of 10. The provision-org Job and the system SQL Job each have one fixed name, so Kubernetes runs at most one of each at a time, and the count is exact. Reason: the hand-set 200 could be exceeded at peak, and identity would be refused first.
 - Control reconnects its writer after a failed connection. Reason: a Pooler restart left control broken until it restarted.
 - Pooler certificate renewal needs no code. The CloudNativePG resync (about 10 hours) reconciles each Pooler and writes the current Secret versions into its status. The PgBouncer pod sees the change and reloads. A renewal at day 60 is in use well before the expiry at day 90.
+
+**Ruled (D, 2026-11-19): kubectl error text.**
+- Recorded exception until 3.7b: `crates/kubernetes/src/kubectl.rs` reads kubectl's error text to tell Conflict and AlreadyExists from NotFound. kubectl gives no structured error, only exit code 1. The Conflict check is older; the NotFound check came with the fixed Job names in Epic 10.
+- In 3.7b, all Kubernetes calls move to `kube-rs`, which reads kubeconfig (exec plugins included) and returns typed API errors. The kubectl error-text checks and the hand-written in-cluster client (`kubernetes_api.rs`) both go.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
