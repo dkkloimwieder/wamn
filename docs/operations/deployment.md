@@ -12,12 +12,21 @@ A fresh platform contains zero application environments and zero application rel
 
 ## Local platform
 
-Use Docker, kind, Helm, kubectl, OpenSSL, and the pinned KCL compiler on the deployment host.
+Use Docker, kind 0.32, Helm, kubectl, OpenSSL, and the pinned KCL compiler on the deployment host.
 Use the `wamn` binary from the selected build.
 Keep registry, database, and broker credentials outside committed files.
 Certificate subjects must match the endpoint names that their clients verify.
 
-From the source checkout, prepare the registry and artifacts as [building](building.md#local-platform-artifacts) describes.
+From the source checkout, create the local cluster and OCI registry.
+
+```bash
+cargo xtask kind-cluster-create
+```
+
+The command reuses the `wamn-local` cluster and the registry at `localhost:5001` if they already exist.
+Select the `kind-wamn-local` Kubernetes context for the local deployment.
+Copy the printed `registryEndpoint` block into `deploy/charts/platform/values-kind.yaml`.
+Prepare the artifacts as [building](building.md#local-platform-artifacts) describes.
 The kind values file sets the registry to `localhost:5001`. [Kind values](../../deploy/charts/platform/values-kind.yaml)
 The published application bundle includes the infrastructure, platform, org, environment, and project charts.
 Helm installs cert-manager, CloudNativePG, and the ingress controller before the platform.
@@ -89,7 +98,6 @@ kind delete cluster --name wamn-local
 
 Rebuilding a disposable platform requires the Epic 10 installation path.
 A new platform starts with zero applications. Redeploy each required application through `wamn deploy`.
-Keep a kind cluster's mounted registry directory until you delete the cluster.
 
 ## Application and schema operations
 
