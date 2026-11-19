@@ -780,6 +780,8 @@ Issues:
 10.10 Host names (E). `<label>--<org>.<base>` in the environment file and the registry; web drops routes whose host does not match their namespace.
 - Web also accepts exactly `<namespace>.<base>` for control (Q2).
 
+10.11 System database pooler (fix 2).
+
 ## Open items
 
 - Checks in phase 3: Helm values size for the largest application (3.2).
@@ -829,6 +831,7 @@ Issues:
 - Recorded exceptions to C1 until 3.6: operation Jobs and their per-request input ConfigMaps, `wamn-credential-*` (written by connection administration at run time), and `wamn-nats-authorization`.
 - Epic 10: `wamn platform deploy --only` (updating control, identity or a host in place) returns with the `platform` chart. Epic 9 deleted the control Job path and its `helm get values` read-back.
 - After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
+- After 3.6, first kind run: the Pooler: session mode with the org logins, the auth query, and waiting at the per-login limit.
 - When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
 - After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
 - Epic 10: D6, the host NATS URLs default to `nats.<release namespace>` while the service is `wamn-nats.platform`, and hosts start no HTTP listener. D7, `registry.event_readers` has no writer, so capture-gap recovery refuses on a fresh project.
@@ -2369,5 +2372,9 @@ Facts:
 - Change 2: the org policy's `USING` clause is the org check only. `WITH CHECK` keeps the bound actor and the org check. Reason: with no bound actor, reads returned no rows, so `env delete` and other apply reads did nothing.
 - Change 3: `registry.project_capacity_available(requested int) RETURNS boolean` replaces `registry.project_stream_count()`, under the same capacity lock, so no org sees the total project count.
 - Later option: users in more than one org, through an invitation that the user accepts and identity activates.
+
+**Ruled (D, 2026-11-19): Epic 10 review.**
+- Fix 1. `wamn platform deploy` always waits for `cnpg-controller-manager` after the infrastructure release and installs the platform release once. No retry based on error text.
+- Fix 2 (10.11). Org logins reach the system database through one CloudNativePG Pooler in session mode, in `platform`. PgBouncer limits are fixed at install: `max_user_connections` 4 per control login and 8 per apply login, and `max_db_connections` as the total. A client over its limit waits rather than fails. Postgres `max_connections` is set once at install, so a new org changes no Postgres setting (T1). Role connection limits match the pooler limits. Platform logins connect directly with certificates. wamn provides PgBouncer authentication, because the system Cluster uses its own certificates. Reason: each org's apply login had `CONNECTION LIMIT 101` against the default `max_connections` of 100, so one org could take every connection, and raising `max_connections` later needs a Postgres restart.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
