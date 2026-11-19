@@ -258,8 +258,7 @@ async fn project_schema(
     use std::io::Write as _;
 
     let migration =
-        wamn_platform_install::environment::connection(&platform.system_database_url, triple)
-            .await?;
+        wamn_platform_install::environment::connection(&mut *lock.client().await, triple).await?;
     platform.prepare_database(&migration).await?;
     let migration = migration.to_json()?;
     writeln!(output, "Project {}", triple.project)?;

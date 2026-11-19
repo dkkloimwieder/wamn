@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use sqlx::PgConnection as Client;
-use wamn_catalog::{PackageName, manifest::PackageManifest};
+use wamn_catalog::{PackageName, lifecycle_lock::LifecycleLock, manifest::PackageManifest};
 use wamn_postgres::connect;
 
 use super::Platform;
@@ -278,9 +278,10 @@ pub fn application_release_name(
 /// Derive application release names from declarations and observed workloads.
 pub(crate) async fn application_releases(
     platform: &Platform,
+    system: &LifecycleLock,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<BTreeMap<wamn_catalog::ApplicationName, String>> {
-    let mut client = connect(&platform.system_database_url).await?;
+    let mut client = system.client().await;
     let mut tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
     let mut applications: BTreeSet<wamn_catalog::ApplicationName> = sqlx::query_scalar::<_, wamn_catalog::ApplicationName>(
         "SELECT application FROM registry.environment_applications WHERE org=$1 AND env=$2 AND project=$3",
@@ -288,6 +289,7 @@ pub(crate) async fn application_releases(
     .bind(&triple.org).bind(&triple.env).bind(&triple.project)
     .fetch_all(&mut *tx).await?.into_iter().collect();
     tx.commit().await?;
+    drop(client);
     let coordinate = triple.to_string();
     let workloads = super::ensure::kubectl(
         platform, triple.org.as_str(), &["get", "workloaddeployments", "-o", "json"], None,

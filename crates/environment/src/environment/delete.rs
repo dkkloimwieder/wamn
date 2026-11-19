@@ -92,7 +92,7 @@ async fn delete_locked(
     let database = project_env_database_name(org, project, env, &instance);
 
     resources::require_ownership(platform, triple, &database).await?;
-    let applications = application_releases(platform, triple).await?;
+    let applications = application_releases(platform, system, triple).await?;
     let cr_present = !kubectl(
         platform,
         &platform.target.namespace,
@@ -163,7 +163,7 @@ async fn delete_locked(
             helm::uninstall(&platform.target, &namespace, name, helm::Wait::Watcher).await?;
             lines.push(format!("uninstalled {name}"));
         }
-        super::ensure::suspend_project(platform, triple).await?;
+        super::ensure::suspend_project(platform, system, triple).await?;
 
         // Runtime state can change during the drain, outside lifecycle exclusion.
         if let Some(lock) = &project_lock {

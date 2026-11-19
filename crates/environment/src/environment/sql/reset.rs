@@ -2,16 +2,17 @@
 
 use anyhow::ensure;
 use sqlx::Connection as _;
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 
 /// Delete migration-owned objects and application state. Callers stop users first.
 pub async fn reset_database(
-    system_url: &str,
+    system: &LifecycleLock,
     database_url: &str,
     migration_url: &str,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<()> {
-    let mut system = wamn_postgres::connect(system_url).await?;
-    let disposable = wamn_registry::deployment::disposable(&mut system, triple).await?;
+    let disposable =
+        wamn_registry::deployment::disposable(&mut *system.client().await, triple).await?;
     ensure!(disposable, "environment is not recorded as disposable");
     let mut client = wamn_postgres::connect(database_url).await?;
     let database: String = sqlx::query_scalar("SELECT current_database()::text")

@@ -140,7 +140,7 @@ pub async fn application(
                 "application {name} is not declared"
             );
             let connection = wamn_platform_install::environment::connection(
-                &platform.system_database_url,
+                &mut *system.client().await,
                 &triple,
             )
             .await?;
@@ -178,14 +178,13 @@ pub async fn application(
                             .expect("declared application");
                         selection.current = DeclaredRelease::Digest(digest);
                         selection.packages = packages.manifests.keys().cloned().collect();
-                        let mut system_client = system.client().await;
-                        let platform_domain =
-                            wamn_identity::application::service::platform_domain(&mut system_client)
-                                .await?;
-                        let mut project_client = project.client().await;
+                        let platform_domain = wamn_identity::application::service::platform_domain(
+                            &mut *system.client().await,
+                        )
+                        .await?;
                         let bindings = bindings::analyse(
-                            &mut system_client,
-                            &mut project_client,
+                            system,
+                            project,
                             &document,
                             packages.manifests.values(),
                         )
@@ -202,9 +201,7 @@ pub async fn application(
                             component_base,
                         )?;
                         let app = application_config(&values)?;
-                        check_workflows(&mut project_client, &app).await?;
-                        drop(project_client);
-                        drop(system_client);
+                        check_workflows(&mut *project.client().await, &app).await?;
                         apply_sql(platform, system, &triple, &connection, &owner, &packages)
                             .await?;
                         stage::materialize_application_principals(
@@ -445,7 +442,7 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
             ensure!(disposable, "environment is not recorded as disposable");
             drop(client);
             let conn = wamn_platform_install::environment::connection(
-                &platform.system_database_url,
+                &mut *system.client().await,
                 &triple,
             )
             .await?;
@@ -491,19 +488,14 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                         packages.artifacts.insert(id, artifact);
                     }
                     packages.order()?;
-                    super::ensure::suspend_project(platform, &triple).await?;
+                    super::ensure::suspend_project(platform, system, &triple).await?;
                     let migration = wamn_provision::migrations::MigrationDatabase::Project
                         .configuration(&owner)?;
-                    sql::reset::reset_database(
-                        &platform.system_database_url,
-                        &owner,
-                        &migration,
-                        &triple,
-                    )
-                    .await?;
+                    sql::reset::reset_database(system, &owner, &migration, &triple).await?;
                     apply_sql(platform, system, &triple, &conn, &owner, &packages).await?;
                     let (_, host) = super::ensure::prepare_host_upgrade(
                         platform,
+                        system,
                         &triple.org,
                         &triple.env,
                         &document.policy,

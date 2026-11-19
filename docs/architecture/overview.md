@@ -133,6 +133,7 @@ A workflow run keeps its workflow version and uses the live application workload
 Environment apply and delete check for unfinished application runs.
 
 The control service authenticates each request and selects the operation worker, chart, credentials, and target.
+Each apply Job uses the system database session that holds its environment advisory lock for all system database work.
 Workers apply package migrations through SQLx while logged in as the restricted migration role.
 Trusted catalog writes use a separate connection.
 The project chart creates each credential store Secret. Control writes individual credential keys through the Kubernetes API, so credential values stay outside Helm values.

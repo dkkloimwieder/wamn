@@ -201,8 +201,9 @@ impl LifecycleLock {
         }
     }
 
-    /// The connection that holds the lock. A phase may read on it, and must
-    /// leave no transaction open.
+    /// Borrow the session that owns the advisory locks for SQL, including
+    /// transactions. The heartbeat waits for this guard. End any transaction
+    /// and drop the guard before waiting on external work.
     pub async fn client(&self) -> tokio::sync::MutexGuard<'_, Client> {
         self.client.lock().await
     }
