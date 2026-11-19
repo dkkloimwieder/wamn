@@ -30,6 +30,9 @@ Org → environment → project → application. One boundary per level.
 - Logins per project database: migration (owner), application, read-only (dynamic SQL), platform (all host platform work, retention included), and the CDC replication login. Until 3.6 each login is suffixed per project database and inherits the plain NOLOGIN group role; plain login names come with one cluster per project database. One system database reader per environment. Each login has a connection limit (3.6).
 - One operation service account per project.
 - `project_env_key` is not stored in project databases (no column, no row policy, no `project_key()` functions).
+- Shared platform components (infrastructure operators, NATS, identity, edge, web) are trusted, run across all namespaces and know orgs only as run-time data. Adding an org changes no shared config and restarts no shared pod. Least privilege applies to the actors inside each org: org workers, hosts, control and users (T1).
+- Orgs are data in the system Postgres (`registry.orgs`). No chart values list orgs (T2).
+- NATS runs in operator (JWT) mode with the full resolver. Accounts and users are signed JWTs, pushed to the running server. One account per environment plus `PLATFORM`. JetStream limits and user permissions, including each user's inbox prefix, live in the JWTs. Clients connect with creds files; TLS stays, for encryption only (T3).
 
 ## Database, identity in SQL, grants
 
@@ -127,6 +130,9 @@ Org → environment → project → application. One boundary per level.
 
 - Install: one infrastructure release (operators and resource types first), then one platform release with identity, control and edge on; one wait at the end. One SQL Job. Identity makes its own first signing key. One owner-invitation Job. All logins in the first install of their chart. No superuser SQL from the developer machine.
 - Each service reads one rendered settings file with its real inputs; constant flags become code defaults.
+- `wamn platform deploy <values>` is the install entry point. It runs the infrastructure chart, then the platform chart, with one wait at the end (Q1 a).
+- `wamn org create <org> --owner <email>` creates an org (T2).
+- The host's settings file arrives through the stock runtime-operator `volumes`/`volumeMounts` and an extra `--settings` argument; the stock host arguments stay (Q3 a).
 - Kind cluster and local registry creation is an `xtask` step. Provider differences are two values files. No key-parity check.
 - Step 3.6 makes sure three install defects found by reading are gone (L1): the issuer Job's missing `--db-host`, `wamn-oauth` written to the wrong namespace, `platform status` reading the database in the wrong namespace.
 
@@ -716,6 +722,50 @@ Issues:
 9.6 `wamn-postgres` loses `wamn-kubernetes` (P5).
 - Its credentials come from mounted files, as the host's project logins already do.
 
+## Epic 10: step 3.6, part 2, install and tenancy
+
+Rule: adding an org changes no pod spec in the platform or infrastructure chart.
+
+Issues:
+
+10.1 `platform` chart.
+- Merge `installation`, `identity`, `edge` and control. No per-org values: no `.Values.org`, and every per-org object moves to the org chart.
+- `values.schema.json` (K5), with one kind values file and one GCP values file (K4).
+- Delete `cluster.k`, `ClusterDocument`, `platform show`, and in `platform-install`: `artifact_plan`, `installation`, `oauth`, `edge`, `status`, `resources`, `operations`. Delete the duplicate registry-helper.
+- Platform NetworkPolicies select org namespaces by label.
+
+10.2 NATS operator mode (T3).
+- Server config, `PLATFORM` users (operator `-nats-creds`; host `--scheduler-nats-creds` and `--data-nats-creds`, the same names as stock `wash host`).
+- Environment accounts pushed at `env apply`, environment user creds Secrets in the org namespace, named bindings using the stock `creds` field.
+- Delete Epic 9's file-based accounts.
+
+10.3 `wamn platform deploy <values>`.
+- One SQL Job. Identity creates its own first key; `Publish` and `Activate` go.
+- A readiness probe replaces the probe Job. Confirm that L1 is gone.
+
+10.4 `wamn org create <org> --owner <email>`.
+- The org row, the org's NATS account material, `wamn-helm-<org>`, then the org chart: namespace, quota, RBAC, NetworkPolicy, Helm storage, worker, control, system login Secrets, identity CA, the `CN=control-<org>` certificate and the control administration map.
+- Then the owner invitation Job.
+
+10.5 Settings (K).
+- One settings file each for host, control, identity, cdc-reader and web. Constant flags become code defaults.
+- One NATS address and one identity issuer address (E6). Hosts get a default HTTP listener (D6).
+- The environment chart renders the host group from its own values, and `environment/ensure.rs` stops building it.
+
+10.6 Operator and traffic (T4, T5).
+- `watchNamespaces` empty; fixed `-host-namespaces`.
+- The web proxy retries on connection failure, with a 1 s connect timeout.
+- Identity accepts any `CN=control-<org>` for an org in `registry.orgs`.
+- The upstream operator change is written on a local branch only, not pushed and with no PR.
+
+10.7 Remaining items.
+- `--only` (Q5 a); D7 (`env apply` writes the `registry.event_readers` row); K4 (xtask creates the kind cluster and the local registry); the xtask dependency check on `wamn-edge`; NATS volume sizing (Q6); GCP schema patterns (Q6).
+
+10.8 Database logins by client certificate.
+- One cert-manager `Certificate` per login; `pg_hba` requires `cert` for each login; roles have no password Secrets.
+- `wamn-postgres` uses `ssl_client_cert` and `ssl_client_key`; project accounts run their own Helm Jobs again.
+- This covers the system database and every project database.
+
 ## Open items
 
 - Checks in phase 3: Helm values size for the largest application (3.2).
@@ -768,10 +818,10 @@ Issues:
 - When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
 - After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
 - Epic 10: D6, the host NATS URLs default to `nats.<release namespace>` while the service is `wamn-nats.platform`, and hosts start no HTTP listener. D7, `registry.event_readers` has no writer, so capture-gap recovery refuses on a fresh project.
-- After the restructure: NATS JWT accounts with a resolver, replacing file-based accounts. NATS's own docs treat splitting auth into include files as buying time before moving off centralized configuration.
-- Epic 10 or later: NATS runs as one pod with one-replica streams, so adding an org (a new accounts Secret mount) restarts the broker for 10 to 60 seconds, and core NATS messages in that gap are lost. Three NATS pods with three-replica streams would keep quorum through a rolling restart.
+- After the first kind run: three NATS pods with three-replica streams.
 - Epic 10: the trusted install entry point installs the org chart (namespace, quota, base RBAC, default deny) and creates `wamn-helm-<org>` before it.
-- Epic 10, to verify: database logins by client certificate. Each project chart renders a cert-manager `Certificate` per login, Postgres authenticates by certificate, and hosts mount `tls.crt` and `tls.key`. Release records then hold no passwords, project accounts can run their own Helm Jobs again, and nothing needs password rotation. Check CloudNativePG's support for certificate auth on managed roles and `wamn-postgres` connecting with a client certificate.
+- Epic 10 (10.8): database logins by client certificate. Each project chart renders a cert-manager `Certificate` per login, Postgres authenticates by certificate, and hosts mount `tls.crt` and `tls.key`. Release records then hold no passwords, project accounts can run their own Helm Jobs again, and nothing needs password rotation. Check CloudNativePG's support for certificate auth on managed roles and `wamn-postgres` connecting with a client certificate.
+- Upstream wasmCloud: runtime-operator host-pod tracking in all namespaces by label (T4). The `len(podCacheNamespaces) == 0` fallback in `cmd/main.go` never runs.
 
 # Part 2: Review log
 
@@ -2239,5 +2289,18 @@ Facts:
 **Ruled (D, 2026-11-18): Epic 9 install entry, platform update, restore, NATS names and Helm accounts.** The org chart's install entry point is Epic 10. The control Job path for `platform update` goes now, with its read-back and the org worker's wide rights in `platform`; `--only` returns with the `platform` chart. Restore is copy-back only into the live database, whose endpoint never changes. NATS does not enforce per-org account names; wamn's writer and name-scoped RBAC do. Jobs that run Helm use the org worker account, because Helm release records hold login passwords and only the org's worker may list them; client-certificate logins, which would remove passwords from the records, are an Epic 10 item.
 
 **Ruled (D, 2026-11-18): recovery after total loss.** A lost project Cluster is recovered as a new generation: restore to `<cluster>-restore`, dump, `env delete --data`, `env apply`, load the dump. Under `--data` only, env delete accepts an unreachable project database and reports it. This corrects the earlier full-loss text, which could not work: env apply reads the live database first, and a same-generation Cluster would archive into the old prefix.
+
+**Ruled (D, 2026-11-18): tenancy and Epic 10 install.**
+- T1. Shared platform components (infrastructure operators, NATS, identity, edge, web) are trusted, run across all namespaces and know orgs only as run-time data. Adding an org changes no shared config and restarts no shared pod. Least privilege applies to the actors inside each org: org workers, hosts, control and users.
+- T2. Orgs are data in the system Postgres (`registry.orgs`). No chart values list orgs. `wamn org create <org> --owner <email>` creates an org.
+- T3. NATS runs in operator (JWT) mode with the full resolver. Accounts and users are signed JWTs, pushed to the running server. One account per environment plus `PLATFORM`. JetStream limits and user permissions, including each user's inbox prefix, live in the JWTs. Clients connect with creds files; TLS stays, for encryption only.
+- T4. wasmCloud operator: `watchNamespaces` is empty (all namespaces). `-host-namespaces` stays fixed and never lists org namespaces, so the operator never restarts for a new org. Cost: no host-pod finalizer, so a gone host leaves the application endpoints only after heartbeats time out (about 1 to 2 minutes). The web proxy retries when a connection fails, with a connect timeout of about 1 s; nothing reached the host, so this is safe for every request. wamn offers upstream a change that tracks host pods in all namespaces by the `wasmcloud.com/hostgroup` label; the finalizer comes back when a wasmCloud release has it.
+- T5. Identity accepts `CN=control-<org>` for any org in `registry.orgs`. The `controlSubject` value goes.
+- Q1 a: `wamn platform deploy <values>` is the install entry point. It runs the infrastructure chart, then the platform chart, with one wait at the end.
+- Q3 a: each service reads one settings file. The host's file arrives through the stock runtime-operator `volumes`/`volumeMounts` and an extra `--settings` argument; the stock host arguments stay.
+- Q4 a: database logins by client certificate are in Epic 10.
+- Q5 a: `--only infrastructure|platform` picks which charts to upgrade. Host images move through `env apply`. No read-back.
+- Q6: the GCP project ID, zone and bucket checks become `pattern` rules in `values.schema.json`. The NATS volume (JetStream plus resolver) is sized from a `maxProjects` value, and `env apply` refuses a project once the total would go over it. Three NATS pods come after the first kind run.
+- Overturned from Epic 9: the per-org NATS accounts Secret, its include mounts and `natsAccountOrgs`; the org worker's access to that Secret; NATS users mapped from certificates (`verify_and_map`); the Secret writer in `wamn_broker::authorization`.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
