@@ -1,14 +1,5 @@
-//! The `provision-system` subcommand: install the control store into an empty
-//! system database and record the platform domain of the deployment.
-//!
-//! The database and its owner role `wamn_system` exist before this runs. On
-//! CloudNativePG, the `initdb` bootstrap of the cluster creates both. The
-//! verb connects as the superuser, installs [`CONTROL_BOOTSTRAP_SQL`] as
-//! `wamn_system`, closes the PUBLIC minimums, creates `wamn_apply`, and writes
-//! `registry.meta.platform_domain`. A complete installation needs no replay.
-//! Partial initialization requires explicit repair. Interrupted migrations resume
-//! through `wamn platform schema apply --target system --chart <prepared-chart>`.
-//!
+//! Install or upgrade the control store using the platform SQL Job.
+
 use std::{fmt, io};
 
 use anyhow::Context as _;
@@ -22,49 +13,60 @@ use wamn_provision::{CONTROL_BOOTSTRAP_SQL, sql};
 /// Inputs of one `provision-system` run.
 #[derive(Debug)]
 pub struct ProvisionSystemRequest {
-    /// Superuser URL of the system database.
-    pub system_database_url: String,
-    /// The platform migration login's actual credential for explicit PostgreSQL access.
-    pub migration_database_url: Option<String>,
+    /// Public connection settings for the mounted CNPG postgres login.
+    pub database: wamn_postgres::ConnectionConfig,
     /// The email domain of the platform principal rows.
     pub platform_domain: wamn_registry::platform_domain::PlatformDomain,
 }
 
 /// Install the control store and record the platform domain.
 pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Result<()> {
-    let mut client = connect_system_database(&request.system_database_url)
+    anyhow::ensure!(
+        request.database.username.as_str() == "postgres"
+            && request.database.database == wamn_provision::identity_role::IDENTITY_ISSUER_DATABASE,
+        "platform SQL requires the system database's postgres login"
+    );
+    let database = request.database.to_json()?;
+    let mut client = connect_system_database(&database)
         .await
         .context("connect to the system database")?;
+    let scope = MigrationDatabase::System;
+    crate::credentials::wait_role(&mut client, &scope.login(&request.database.database)).await?;
+    crate::credentials::wait_role(&mut client, &wamn_role::APPLY_ROLE.parse()?).await?;
+    let migration_input = scope.configuration(&database)?;
 
-    let result = async {
-        let migration_input = if let Some(input) = request.migration_database_url.as_deref() {
-            input.to_owned()
-        } else {
-            let input = wamn_postgres::configuration(&request.system_database_url)?;
-            let config: wamn_postgres::ConnectionConfig = serde_json::from_str(&input).context(
-                "explicit platform initialization requires a separate migration connection",
-            )?;
-            let role = MigrationDatabase::System.managed_role(&config.database);
-            // The bootstrap chart has already declared this fixed platform role and Secret.
-            crate::credentials::wait_role(&mut client, &role.name).await?;
-            MigrationDatabase::System.configuration(&config.to_json()?)?
-        };
-        initialize_system(
-            &mut client,
-            &migration_input,
-            &crate::platform_migrations::embedded_sources(MigrationDatabase::System),
-        )
-        .await?;
-        set_platform_domain(&mut client, &request.platform_domain).await?;
-        Ok(())
-    }
-    .await;
-    drop(client);
-    result
+    initialize_system(
+        &mut client,
+        &migration_input,
+        &crate::platform_migrations::embedded_sources(scope),
+    )
+    .await?;
+    let mut transaction = crate::transaction::provisioning_transaction(&mut client).await?;
+    sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+        .execute(&mut *transaction)
+        .await
+        .context("assume the control owner to finalize system provisioning")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_provision::identity_role::grants_sql(),
+    ))
+    .execute(&mut *transaction)
+    .await
+    .context("grant the identity issuer surface")?;
+    sqlx::raw_sql(wamn_provision::apply::APPLY_GRANTS_SQL)
+        .execute(&mut *transaction)
+        .await
+        .context("grant the apply surface")?;
+    sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN)
+        .bind(&request.platform_domain)
+        .execute(&mut *transaction)
+        .await
+        .context("record the platform domain")?;
+    transaction.commit().await?;
+    Ok(())
 }
 
-// Allow 30 seconds for the CNPG service to accept TCP after Cluster Ready,
-// well inside the platform Job's 15-minute deadline. Never replay initialization.
+// The Job starts alongside the CNPG Cluster. Retry refused connections before
+// Kubernetes starts another attempt.
 const CONNECT_RETRIES: u32 = 30;
 
 async fn connect_system_database(url: &str) -> anyhow::Result<Client> {
@@ -82,22 +84,6 @@ async fn connect_system_database(url: &str) -> anyhow::Result<Client> {
         Ok(())
     })
     .await
-}
-
-/// Record the deployment domain with the provisioning actor.
-pub async fn set_platform_domain(
-    client: &mut Client,
-    domain: &wamn_registry::platform_domain::PlatformDomain,
-) -> anyhow::Result<()> {
-    let mut transaction = crate::transaction::provisioning_transaction(client).await?;
-    sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN)
-        .bind(domain)
-        .execute(&mut *transaction)
-        .await
-        .map(|result| result.rows_affected())
-        .context("record the platform domain")?;
-    transaction.commit().await?;
-    Ok(())
 }
 
 /// Database state recorded by the atomic system bootstrap.
@@ -147,22 +133,16 @@ pub async fn system_state(client: &mut sqlx::PgConnection) -> anyhow::Result<Sys
     })
 }
 
-/// Initialize an empty system database, then run the selected image's migrations.
-/// Existing initialization never runs pending files on platform reapply.
+/// Ensure the system baseline exists, then apply pending migrations from the selected image.
 pub async fn initialize_system(
     admin: &mut Client,
     migration_input: &str,
     sources: &[Migration],
 ) -> anyhow::Result<()> {
-    if install_control_store(admin).await? {
-        let mut migration = wamn_postgres::connect(migration_input).await?;
-        crate::platform_migrations::apply_target(
-            &mut migration,
-            MigrationDatabase::System,
-            sources,
-        )
+    install_control_store(admin).await?;
+    let mut migration = wamn_postgres::connect(migration_input).await?;
+    crate::platform_migrations::apply_target(&mut migration, MigrationDatabase::System, sources)
         .await?;
-    }
     Ok(())
 }
 
@@ -179,61 +159,26 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
             .await
             .map(drop)
             .context("lock system initialization")?;
-        match system_state(admin).await? {
-            SystemState::Absent => {}
-            SystemState::Complete => {
-                sqlx::raw_sql("COMMIT")
-                    .execute(&mut *admin)
-                    .await
-                    .map(drop)
-                    .context("finish system initialization read")?;
-                return Ok(false);
-            }
+        let absent = match system_state(admin).await? {
+            SystemState::Absent => true,
+            SystemState::Complete => false,
             state @ SystemState::Incomplete => anyhow::bail!("{state}"),
-        }
+        };
 
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            sql::ensure_system_roles_sql(),
-        ))
-        .execute(&mut *admin)
-        .await?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            ("DO $$ BEGIN EXECUTE format('ALTER DATABASE %I OWNER TO wamn_system', \
-                                            current_database()); END $$;")
-                .to_string(),
-        ))
-        .execute(&mut *admin)
-        .await
-        .map(drop)
-        .context("give wamn_system the system database")?;
-        sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql::ensure_system_roles_sql()))
+            .execute(&mut *admin)
+            .await?;
+        if absent {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                ("DO $$ BEGIN EXECUTE format('ALTER DATABASE %I OWNER TO wamn_system', \
+                                                current_database()); END $$;")
+                    .to_string(),
+            ))
             .execute(&mut *admin)
             .await
             .map(drop)
-            .context("assume the control owner")?;
-        for stage in CONTROL_BOOTSTRAP_SQL {
-            sqlx::raw_sql(sqlx::AssertSqlSafe((stage).to_string()))
-                .execute(&mut *admin)
-                .await
-                .map(drop)
-                .context("install the control store")?;
+            .context("give wamn_system the system database")?;
         }
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_provision::system_reader::grants_sql(),
-        ))
-        .execute(&mut *admin)
-        .await?;
-        wamn_provision::migration::prepare_history(
-            admin,
-            wamn_registry::migrations::HISTORY_TABLE,
-            &wamn_role::SYSTEM_ROLE.parse()?,
-        )
-        .await?;
-        sqlx::raw_sql("RESET ROLE")
-            .execute(&mut *admin)
-            .await
-            .map(drop)
-            .context("release the control owner before cluster ACL convergence")?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (sql::revoke_public_connect_base_grants_sql()).to_string(),
         ))
@@ -250,12 +195,37 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
         .await
         .map(drop)
         .context("converge the system database PUBLIC TEMPORARY base grants")?;
+        if absent {
+            sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+                .execute(&mut *admin)
+                .await
+                .map(drop)
+                .context("assume the control owner")?;
+            for stage in CONTROL_BOOTSTRAP_SQL {
+                sqlx::raw_sql(sqlx::AssertSqlSafe((stage).to_string()))
+                    .execute(&mut *admin)
+                    .await
+                    .map(drop)
+                    .context("install the control store")?;
+            }
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                wamn_provision::system_reader::grants_sql(),
+            ))
+            .execute(&mut *admin)
+            .await?;
+            wamn_provision::migration::prepare_history(
+                admin,
+                wamn_registry::migrations::HISTORY_TABLE,
+                &wamn_role::SYSTEM_ROLE.parse()?,
+            )
+            .await?;
+        }
         sqlx::raw_sql("COMMIT")
             .execute(&mut *admin)
             .await
             .map(drop)
             .context("commit system initialization")?;
-        Ok(true)
+        Ok(absent)
     }
     .await;
     match result {

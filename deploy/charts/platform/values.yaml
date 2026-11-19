@@ -1,4 +1,5 @@
 provider: kind
+platformDomain: wamn.localhost
 registry: localhost:5001
 registryEndpoint: null
 global:
@@ -171,7 +172,6 @@ opentelemetry-collector:
           - debug
 identity:
   image: ""
-  trustedProxyHops: 1
   oauthEncryption:
     provider: local
   oauthSecret: wamn-oauth
@@ -188,7 +188,6 @@ identity:
       memory: 128Mi
     limits:
       memory: 512Mi
-  keyRotationSeconds: 2592000
 edge:
   image: ""
   trustedProxyHops: 1
@@ -204,5 +203,7 @@ edge:
       memory: 32Mi
     limits:
       memory: 128Mi
+systemSql:
+  image: ""
 postgres:
   image: ghcr.io/cloudnative-pg/postgresql:18.7

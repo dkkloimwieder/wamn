@@ -1,14 +1,10 @@
-{{- $namespace := "platform" }}
-{{- $cluster := "wamn-pg" }}
-{{- $database := "wamn_system" }}
-{{- $migration := printf "wamn_platform_sql_%s" (toJson (list "platform-migration" $database $database) | sha256sum | trunc 40) }}
-{{- /* This login follows wamn_provision::identity_role::identity_issuer_login for the fixed platform issuer. */}}
-{{- $identity := "wamn_identity_issuer_172c451f63aa4fdc22159b71333ebbf4e46732ee" }}
+{{- $system := include "wamn-platform.systemDatabase" . | fromJson }}
+{{- $namespace := $system.namespace }}
+{{- $database := $system.name }}
 {{- $roles := list
     (dict "name" "wamn_apply" "login" true "inherit" true "passwordSecret" (dict "name" "wamn-apply"))
-    (dict "name" $migration "login" true "inherit" true "inRoles" (list $database) "passwordSecret" (dict "name" ($migration | replace "_" "-")))
-    (dict "name" $identity "login" true "inherit" true "inRoles" (list "wamn_identity_issuer") "passwordSecret" (dict "name" "wamn-identity-db")) }}
-{{- $caName := printf "%s-ca" $cluster }}
+    $system.migrationRole $system.identityRole }}
+{{- $caName := $system.ca }}
 {{- $ca := lookup "v1" "Secret" $namespace $caName }}
 {{- $crt := "" }}
 {{- $key := "" }}
@@ -60,22 +56,12 @@ type: kubernetes.io/basic-auth
 data:
   username: {{ $username | quote }}
   password: {{ $password | quote }}
-{{- if eq $name "wamn-identity-db" }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ $name }}-configuration
-  namespace: {{ $namespace }}
-data:
-  connection.json: {{ dict "host" (printf "%s-rw.platform.svc.cluster.local" $cluster) "port" 5432 "database" $database "username" .name "credentials" (dict "namespace" $namespace "name" $name) "server_ca" (dict "namespace" $namespace "name" $caName) | toJson | quote }}
-{{- end }}
 {{- end }}
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: {{ $cluster }}
+  name: {{ $system.cluster }}
   namespace: {{ $namespace }}
 spec:
   instances: 1

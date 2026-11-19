@@ -1,7 +1,5 @@
-{{- $databaseSecret := "wamn-identity-db" -}}
-{{- if and .Values.identity.resendFrom (not .Values.identity.resendSecret) -}}
-{{- fail "Set resendSecret when resendFrom is enabled." -}}
-{{- end -}}
+{{- $system := include "wamn-platform.systemDatabase" . | fromJson -}}
+{{- $databaseSecret := $system.identityRole.passwordSecret.name -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,6 +16,8 @@ spec:
       app.kubernetes.io/instance: identity
   template:
     metadata:
+      annotations:
+        checksum/settings: {{ include (print $.Template.BasePath "/identity-settings.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: wamn-identity
         app.kubernetes.io/instance: identity
@@ -28,52 +28,9 @@ spec:
         - name: identity
           image: {{ .Values.identity.image | default (printf "%s/wamn-identity:%s" .Values.registry .Chart.Version) | quote }}
           imagePullPolicy: IfNotPresent
-          args:
-            - serve
-            - --trusted-proxy-hops
-            - {{ .Values.identity.trustedProxyHops | quote }}
-            - --key-rotation-seconds
-            - {{ .Values.identity.keyRotationSeconds | quote }}
-            {{- if .Values.identity.localMail }}
-            - --local-mail
-            - {{ .Values.identity.localMail | quote }}
-            {{- end }}
+          args: [serve, --settings, /etc/wamn/identity/settings.json]
+          {{- if .Values.identity.authNats.url }}
           env:
-            - name: WAMN_OAUTH_ENCRYPTION
-              value: {{ required "Set oauthEncryption to the same envelope configuration as OAuth hosts." .Values.identity.oauthEncryption | toJson | quote }}
-            {{- if eq .Values.identity.oauthEncryption.provider "local" }}
-            - name: WAMN_OAUTH_KEY_FILE
-              value: /etc/wamn/oauth/key
-            {{- end }}
-            - name: WAMN_IDENTITY_BIND
-              value: "0.0.0.0:8443"
-            - name: WAMN_IDENTITY_ISSUER
-              value: https://identity.platform.svc.cluster.local
-            - name: WAMN_IDENTITY_DATABASE_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ printf "%s-configuration" $databaseSecret | quote }}
-                  key: connection.json
-                  optional: false
-            {{- if .Values.identity.resendSecret }}
-            - name: RESEND_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.identity.resendSecret | quote }}
-                  key: api-key
-                  optional: false
-            - name: RESEND_FROM
-              value: {{ required "Set resendFrom when resendSecret is enabled." .Values.identity.resendFrom | quote }}
-            {{- if .Values.identity.inviteUrl }}
-            - name: WAMN_IDENTITY_INVITE_URL
-              value: {{ .Values.identity.inviteUrl | quote }}
-            {{- end }}
-            {{- end }}
-            - name: WAMN_IDENTITY_TLS_CERT
-              value: /var/run/wamn-identity/tls/tls.crt
-            - name: WAMN_IDENTITY_TLS_KEY
-              value: /var/run/wamn-identity/tls/tls.key
-            {{- if .Values.identity.authNats.url }}
             - name: WAMN_NATS_URL
               value: {{ .Values.identity.authNats.url | quote }}
             - name: WAMN_NATS_TLS_CA
@@ -89,9 +46,13 @@ spec:
           readinessProbe:
             httpGet:
               scheme: HTTPS
-              path: /healthz
+              path: /readyz
               port: https
           volumeMounts:
+            - {name: settings, mountPath: /etc/wamn/identity, readOnly: true}
+            {{- if .Values.identity.resendSecret }}
+            - {name: resend, mountPath: /var/run/wamn-identity/resend, readOnly: true}
+            {{- end }}
             - {name: database, mountPath: /etc/wamn/db, readOnly: true}
             {{- if eq .Values.identity.oauthEncryption.provider "local" }}
             - name: oauth-key
@@ -113,6 +74,17 @@ spec:
           resources:
 {{ toYaml .Values.identity.resources | indent 12 }}
       volumes:
+        - name: settings
+          configMap:
+            name: identity-settings
+        {{- if .Values.identity.resendSecret }}
+        - name: resend
+          secret:
+            secretName: {{ .Values.identity.resendSecret | quote }}
+            defaultMode: 0400
+            items:
+              - {key: api-key, path: api-key}
+        {{- end }}
         - name: database
           projected:
             defaultMode: 0400
@@ -123,7 +95,7 @@ spec:
                     - {key: username, path: {{ printf "%s/username" $databaseSecret | quote }}}
                     - {key: password, path: {{ printf "%s/password" $databaseSecret | quote }}}
               - secret:
-                  name: wamn-pg-ca
+                  name: {{ $system.ca | quote }}
                   items:
                     - {key: ca.crt, path: {{ printf "%s/ca.crt" $databaseSecret | quote }}}
         {{- if eq .Values.identity.oauthEncryption.provider "local" }}

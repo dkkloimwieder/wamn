@@ -30,7 +30,7 @@ Prepare the artifacts as [building](building.md#local-platform-artifacts) descri
 The kind values file sets the registry to `localhost:5001`. [Kind values](../../deploy/charts/platform/values-kind.yaml)
 The published application bundle includes the infrastructure, platform, org, environment, and project charts.
 Helm installs cert-manager, CloudNativePG, and the ingress controller before the platform.
-The platform chart installs the system PostgreSQL Cluster, shared identity, edge, NATS, the wasmCloud runtime operator, and the collector.
+The platform chart installs the system PostgreSQL Cluster, its SQL Job, shared identity, edge, NATS, the wasmCloud runtime operator, and the collector.
 The org chart owns control, the namespace quota, RBAC, and network policies.
 Supply the org's public CA copies and control credentials during org creation. [Org chart](../../deploy/charts/org/README.md)
 
@@ -610,32 +610,19 @@ It makes sure of the identity certificate, as it does in kind.
 
 ## Identity password configuration
 
-`wamn-identity` loads `.env` from its working directory before it starts the runtime.
-Existing environment variables take precedence over `.env`. Explicit command flags take precedence over both.
-A missing `.env` is allowed. An unreadable or malformed file stops startup without printing its contents.
-The root `.env.example` documents `RESEND_API_KEY` and `RESEND_FROM`.
-The private `.env` is ignored by Git and needs owner-only read and write permissions (`0600`).
-No home-directory path is required.
+`wamn-identity serve --settings <path>` reads one JSON file. The chart renders the issuer, public database connection, envelope provider, and mail mode into that file.
+The pod mounts the database credentials, TLS keys, local wrapping key, and Resend token as files.
 
-For local email configuration, copy `.env.example` to `.env` before adding the key and verified sender.
-Keep the existing issuer, database, TLS, operator CA, and control certificate subject configuration.
-External delivery requires both Resend values. Kind deployment instead selects local mail as described in [local access](#local-access-and-owner-invitation).
-The CLI also accepts `--resend-api-key` and `--resend-from`. Prefer environment input for the secret.
-
-For Kubernetes, create a Secret with the `api-key` entry in the identity namespace.
+Create a Secret in `platform` with an `api-key` entry.
 Set `identity.resendSecret` to that Secret and `identity.resendFrom` to the verified sender in the platform chart.
-Set `operatorCaSecret` to the CA that signs the control client certificate.
-Set `controlSubject` to `CN=control-<org>`.
-Control mounts the `control-<org>` Secret. It must contain `tls.crt` and `tls.key`.
-Set `inviteUrl` to the web client base, for example `https://receiving.wamn.dev`.
+Set `identity.inviteUrl` to the web client base, for example `https://receiving.wamn.dev`.
 The invitation mail links to `<inviteUrl>/invite#<code>`.
 The reset mail links to `<inviteUrl>/reset#<secret>`.
 If `inviteUrl` is empty, each mail shows the code.
-Use `user.create` to add an org member without sending mail. Use `user.invite` to add the member and send an invitation when needed.
+For kind, use the local mail file described in [local access](#local-access-and-owner-invitation).
 
-Restart the Deployment after changing the credential, sender, operator CA, or control certificate subject.
-CloudNativePG manages the issuer login and its basic-auth Secret. `provision-identity-issuer` publishes its public connection configuration.
-Use the current system schema on a fresh database, following the repository's schema installation contract.
+Use `user.create` to add an org member without sending mail. Use `user.invite` to send an invitation.
+Restart the Deployment after changing the mounted Resend token.
 
 The route bodies and limits are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
 
@@ -746,9 +733,9 @@ Control membership routes project committed authority into affected application 
 
 ## Identity target credentials
 
-After changing the identity service connection ConfigMap, restart the identity service.
-Its database target connections are selected at process startup.
-Use the environment's identity Deployment and require its readiness before issuing new sessions.
+The identity Deployment in `platform` reads its database connection from the mounted settings file at startup.
+The chart rolls the Deployment when the settings file changes.
+The readiness probe checks that the database answers and that the issuer has an active signing key.
 
 ## Platform schema upgrades
 
@@ -771,10 +758,8 @@ Each transactional file commits with its SQLx history row.
 A later failure keeps earlier commits.
 Files that begin with `-- no-transaction` need safe retries after partial execution.
 
-Fresh platform installation initializes an empty system database, then runs every embedded system migration.
-If migration execution stops, resume with `platform schema apply --target system` with the same installed worker image.
-Repeated installation preserves initialization and runs no pending migration.
-Ordinary platform reapply also runs no migration.
+The platform SQL Job initializes an empty system database and applies pending system migrations from the control image.
+Each platform upgrade runs the Job again. It preserves the baseline and skips migrations recorded in SQLx history.
 
 System schema apply changes only system SQL objects and migration records.
 It changes no service release, application selection, credential, or Helm release.
@@ -843,9 +828,7 @@ Restart the host to change trust or pool configuration. The replacement process 
 ### Environment apply credentials
 
 Set `WAMN_SYSTEM_ADMIN_URL` to the administrator connection configuration for the ensure phase.
-Run `wamn provision-system --platform-domain DOMAIN` in the org namespace.
-For explicit PostgreSQL access, also pass the system migration login's connection through `--migration-database-url`.
-It declares the restricted apply login through CloudNativePG and publishes its connection data in the `wamn-apply` ConfigMap.
+CloudNativePG declares the restricted apply login. The platform SQL Job grants its system database privileges.
 The installer supplies that public apply connection object in the native control configuration.
 The other apply phases use the restricted credential from the worker's database volume.
 
@@ -853,7 +836,7 @@ The other apply phases use the restricted credential from the worker's database 
 
 Runtime pools, OAuth transactions, and resource leases use SQLx with verified TLS.
 Component configuration names the database host, port, database, login, basic-auth Secret, and CNPG CA Secret.
-Both Secrets and the consumer belong to the org namespace. Hosts, CDC readers, identity and control use read-only database mounts.
+The login and CA Secrets live in the consumer’s namespace. Shared identity and the platform SQL Job mount them in `platform`. Hosts, CDC readers, and control use read-only mounts in their org namespace.
 Operation workers copy the selected Secret keys to a memory-backed volume as the database names become known.
 The database client reads `username`, `password` and `ca.crt` from `/etc/wamn/db/<login-secret>/`. It makes sure that the username matches the configured login.
 The control administration directory supplies the same files for project connections.

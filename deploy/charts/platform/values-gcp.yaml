@@ -1,4 +1,5 @@
 provider: gcp
+platformDomain: wamn.dev
 registry: us-central1-docker.pkg.dev/wamn-dev/wamn
 gcp:
   clusterName: wamn
@@ -11,7 +12,6 @@ gcp:
 global:
   maxProjects: 32
 identity:
-  trustedProxyHops: 2
   oauthEncryption:
     provider: gcp
     project: wamn-dev
