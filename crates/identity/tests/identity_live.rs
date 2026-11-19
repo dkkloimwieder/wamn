@@ -262,12 +262,9 @@ async fn project_environment_membership_round_trip(
              VALUES ('other'); \
              INSERT INTO registry.projects (org, id) \
              VALUES ('demo', 'inventory'), ('other', 'widgets'); \
-             INSERT INTO registry.env_policies \
-               (org, name) \
+             INSERT INTO registry.environments (org, env) \
              SELECT id, env \
              FROM registry.orgs CROSS JOIN (VALUES ('dev'), ('prod')) AS envs(env); \
-             INSERT INTO registry.environments (org, env, policy_name) \
-             SELECT org, name, name FROM registry.env_policies; \
              INSERT INTO registry.environment_projects \
                (org, env, project, secret_name, instance_suffix) \
              SELECT p.org, e.env, p.id, 'membership-test-secret', 'a1b2c3d4' \

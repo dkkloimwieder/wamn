@@ -76,7 +76,8 @@ impl EnvironmentDocument {
             project: self.project.clone(),
             env: self.env.clone(),
             target: self.target.clone(),
-            policy: self.policy.clone(),
+            readiness_budget_seconds: self.readiness_budget_seconds,
+            drain_bound_seconds: self.drain_bound_seconds,
             schema: self.schema,
             applications: self
                 .applications
@@ -104,7 +105,8 @@ impl EnvironmentDocument {
             project: configuration.project,
             env: configuration.env,
             target: configuration.target,
-            policy: configuration.policy,
+            readiness_budget_seconds: configuration.readiness_budget_seconds,
+            drain_bound_seconds: configuration.drain_bound_seconds,
             revocation_seconds: None,
             schema: configuration.schema,
             applications: configuration
@@ -188,7 +190,7 @@ mod tests {
 
     fn configuration() -> Value {
         json!({"org":"acme","project":"wms","env":"prod","target":"cloud",
-            "policy":"prod","revocation_seconds":60,"schema":{"mode":"reset"},
+            "revocation_seconds":60,"schema":{"mode":"reset"},
             "applications":{"wms":{"label":"wms",
                 "connections":{"erp":"shared-erp"},
                 "client":{"package":"wamn_wms","web":format!("sha256:{:064x}",1)}}},

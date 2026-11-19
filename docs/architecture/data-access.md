@@ -1076,7 +1076,7 @@ An environment stores its target identity on first apply. The target cannot chan
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, and `identity.project_env_memberships`.
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
-The full system schema also stamps `registry.meta`, `orgs`, `env_policies`, `environments`, `projects`, `environment_projects`, `retired_project_envs`, `capture_gap`,.
+The full system schema also stamps `registry.meta`, `orgs`, `environments`, `projects`, `environment_projects`, `retired_project_envs`, and `capture_gap`.
 It stamps `identity.session_keys`, `session_signing_state`, and `password_attempts` too.
 The full control schema stamps registry declarations and `wamn_authority.author_login_projects`.
 The system operations tables carry no stamps.

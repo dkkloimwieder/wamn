@@ -16,7 +16,8 @@ pub struct EnvironmentConfiguration {
     pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
     pub target: String,
-    pub policy: wamn_registry::EnvName,
+    pub readiness_budget_seconds: i32,
+    pub drain_bound_seconds: i32,
     #[serde(default)]
     pub schema: Schema,
     pub applications: BTreeMap<crate::ApplicationName, ApplicationConfiguration>,
@@ -121,7 +122,7 @@ pub async fn read(
 ) -> Result<Option<EnvironmentConfiguration>, sqlx::Error> {
     // One statement gives every child the same snapshot, including concurrent client writes.
     let rows = sqlx::query(
-        "SELECT t.name AS target, e.policy_name, p.schema_mode, c.* \
+        "SELECT t.name AS target, e.readiness_budget_seconds, e.drain_bound_seconds, p.schema_mode, c.* \
          FROM registry.environment_projects p JOIN registry.environments e USING (org,env) \
          JOIN registry.target t ON t.id=e.target_id LEFT JOIN LATERAL ( \
            SELECT 1 AS record_type, application AS name, label AS value, \
@@ -150,7 +151,8 @@ pub async fn read(
         env: triple.env.clone(),
         project: triple.project.clone(),
         target: row.try_get("target")?,
-        policy: row.try_get("policy_name")?,
+        readiness_budget_seconds: row.try_get("readiness_budget_seconds")?,
+        drain_bound_seconds: row.try_get("drain_bound_seconds")?,
         schema: Schema { mode },
         applications: BTreeMap::new(),
         integrations: BTreeMap::new(),
@@ -234,13 +236,23 @@ pub async fn write(
         transaction.rollback().await?;
         return Ok(false);
     }
-    // Policy and target already have one typed owner at the shared environment.
+    // The shared environment owns the readiness budget, drain bound, and target.
     let target: String = sqlx::query_scalar("SELECT id::text FROM registry.target WHERE name=$1")
         .bind(&c.target)
         .fetch_one(&mut *transaction)
         .await?;
-    sqlx::query("UPDATE registry.environments SET policy_name=$3, target_id=$4::text::uuid WHERE org=$1 AND env=$2")
-        .bind(&c.org).bind(&c.env).bind(&c.policy).bind(target).execute(&mut *transaction).await?;
+    sqlx::query(
+        "UPDATE registry.environments
+         SET readiness_budget_seconds=$3, drain_bound_seconds=$4, target_id=$5::text::uuid
+         WHERE org=$1 AND env=$2",
+    )
+    .bind(&c.org)
+    .bind(&c.env)
+    .bind(c.readiness_budget_seconds)
+    .bind(c.drain_bound_seconds)
+    .bind(target)
+    .execute(&mut *transaction)
+    .await?;
     for (name, integration) in &c.integrations {
         sqlx::query("INSERT INTO registry.environment_integrations (org,env,name,version) VALUES ($1,$2,$3,$4) \
                      ON CONFLICT (org,env,name) DO UPDATE SET version=EXCLUDED.version")

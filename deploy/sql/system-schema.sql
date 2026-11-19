@@ -32,18 +32,6 @@
 -- binds a transaction principal: the identity issuer
 -- and wamn bind wamn:provisioning, and test fixtures bind a principal.
 --
--- THE GENERIC DEPLOYMENT MODEL (D18, wamn-8df.3;
--- org-owned policies + templates, wamn-8df.4): the closed tier/env CHECK
--- enumerations are RETIRED. `env` is a validated slug resolving a
--- `registry.env_policies` row IN ITS ORG's set (referential integrity — the
--- composite FK below — replaces the old `env IN ('dev','canary','prod')`
--- CHECK), and an org carries a minimal placement (`pooled` | `dedicated`) from
--- which clusters derive (crates/registry cluster_of). Policies are
--- PER-ORG rows stamped from a named Template preset (`trials` / `standard` /
--- `dedicated` — the Tier successor, crates/registry Template) at
--- provision-org time; there is NO platform-global policy seed — an org
--- instantiates a template and then customizes its own rows per-env.
---
 -- THE FOUR INVARIANTS for T1, and how this schema
 -- encodes / makes each testable:
 --   (1) control-plane authority: project workloads cannot connect here.
@@ -255,36 +243,6 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 $$;
 REVOKE ALL ON FUNCTION registry.login_org() FROM PUBLIC;
 
-
--- ---------------------------------------------------------------------------
--- Organization-owned runtime policies. PostgreSQL sizing and backup cadence
--- belong to the authored environment file.
--- ---------------------------------------------------------------------------
-CREATE TABLE registry.env_policies (
-    -- the org FK (CASCADE) is added AFTER project_envs below — ordering note there
-    org             text NOT NULL,
-    name            text NOT NULL,
-    -- The readiness budget and drain bound of `env apply`
-    -- (docs/architecture/overview.md#environment-lifecycle).
-    readiness_budget_seconds int NOT NULL DEFAULT 600
-        CONSTRAINT env_policies_readiness_budget_check CHECK (readiness_budget_seconds > 0),
-    drain_bound_seconds int NOT NULL DEFAULT 300
-        CONSTRAINT env_policies_drain_bound_check CHECK (drain_bound_seconds > 0),
-    created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
-    updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
-    PRIMARY KEY (org, name),
-    -- cjv.20 charset backstop: `name` IS the env slug (report_env_issues mirror) — a
-    -- lowercase slug ≤ 40 bytes; no reserved rule (an env may be any slug).
-    CONSTRAINT env_policies_name_charset_check
-        CHECK (name ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
-               AND char_length(name) <= 40)
-);
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON registry.env_policies
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
 -- Projects — structure within an org. Unique per org (the composite PK);
@@ -684,18 +642,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- ---------------------------------------------------------------------------
 -- Project-envs — the registry LEAF: one provisioned (org, project, env)
 -- database, keyed by the identity triple, with a REFERENCE to its credential
--- Secret. `env` is a validated slug. `policy_name` is the policy its document
--- names, and its composite FK to `registry.env_policies (org, name)` enforces
--- that it names a policy in ITS ORG's set; provisioning records the env
--- name (D18 + 8df.4 — referential integrity replaces the retired
--- `env IN ('dev','canary','prod')` CHECK; another org's policy never
--- satisfies it). The policy FK is deliberately NOT a CASCADE: a policy in use
--- by a provisioned env cannot be dropped (a cascade would silently erase the
--- record of a real provisioned database). It is DEFERRABLE INITIALLY IMMEDIATE
--- — inserts are validated immediately; `SET CONSTRAINTS ... DEFERRED` inside a
--- transaction is the order-independent escape hatch for bulk teardown (the
--- env_policies org-FK ordering note below makes plain single-statement org
--- DELETEs cascade cleanly on a fresh apply).
+-- Secret. `env` is a validated slug.
 --
 -- INVARIANT 2 (no credentials, R8b): `secret_name` (+ optional
 -- `secret_namespace`) is a REFERENCE — the actual credential material lives in a
@@ -728,20 +675,19 @@ CREATE TRIGGER wamn_record_history_stamp
 -- offers no audience of an inactive environment, and its host serves none of
 -- its routes. CDC, data and grants stay as they are.
 -- ---------------------------------------------------------------------------
--- An environment owns the policy and lifecycle of all its project deployments.
+-- An environment owns the readiness budget, drain bound, and lifecycle of its project deployments.
 CREATE TABLE registry.environments (
     org text NOT NULL REFERENCES registry.orgs(id) ON DELETE CASCADE,
     env text NOT NULL CHECK (env ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND char_length(env) <= 40),
-    policy_name text NOT NULL,
+    readiness_budget_seconds int NOT NULL DEFAULT 600 CHECK (readiness_budget_seconds > 0),
+    drain_bound_seconds int NOT NULL DEFAULT 300 CHECK (drain_bound_seconds > 0),
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     disposable boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    PRIMARY KEY (org, env),
-    FOREIGN KEY (org, policy_name) REFERENCES registry.env_policies(org, name)
-        DEFERRABLE INITIALLY IMMEDIATE
+    PRIMARY KEY (org, env)
 );
 CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.environments
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
@@ -840,17 +786,6 @@ CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.project_env_memberships
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
--- The env_policies → orgs CASCADE is added HERE, after projects/project_envs
--- exist: Postgres fires an org DELETE's cascade triggers in creation order, so
--- adding this FK LAST means the projects → project_envs cascade clears the
--- referencing rows BEFORE the policy rows are deleted — a plain
--- `DELETE FROM registry.orgs WHERE id = ...` tears a whole org down in one
--- statement without tripping the in-use-policy FK above. If a future schema
--- restore reorders the triggers, the DEFERRABLE escape hatch above still works.
-ALTER TABLE registry.env_policies
-    ADD CONSTRAINT env_policies_org_fkey
-    FOREIGN KEY (org) REFERENCES registry.orgs (id) ON DELETE CASCADE;
 
 -- ---------------------------------------------------------------------------
 -- Retired project-envs — the handle a SUPERSEDED instance would otherwise not
@@ -1098,7 +1033,7 @@ DECLARE
     bound_actor constant text := '(SELECT wamn_authority.current_principal_id()) IS NOT NULL';
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'registry.orgs', 'registry.env_policies', 'registry.projects',
+        'registry.orgs', 'registry.projects',
         'registry.environments', 'registry.environment_projects',
         'registry.environment_applications', 'registry.environment_application_connections',
         'registry.environment_integrations', 'registry.event_readers',

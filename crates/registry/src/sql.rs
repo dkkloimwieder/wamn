@@ -26,7 +26,7 @@ const PROJECT_ENV_COLUMNS: &str = "env, project, secret_name, secret_namespace, 
 /// Read ONE provisioned project-env by its identity triple — the read a consumer
 /// that derives physical names needs, since a triple alone cannot yield the
 /// environment's `instance_suffix` and only the provisioner sees it come back
-/// from [`upsert_project_env_with_policy_sql`]. Params: `$1` org, `$2` project, `$3` env.
+/// from [`upsert_project_env_sql`]. Params: `$1` org, `$2` project, `$3` env.
 /// Columns: `PROJECT_ENV_COLUMNS`.
 pub fn select_project_env_sql() -> String {
     format!(
@@ -36,10 +36,12 @@ pub fn select_project_env_sql() -> String {
 }
 
 /// Record the environment, then its project database. Parameters follow the caller's
-/// org, project, environment, Secret, namespace, suffix, disposable, policy, target values.
-pub fn upsert_project_env_with_policy_sql() -> &'static str {
-    "WITH parent AS (INSERT INTO registry.environments (org,env,disposable,policy_name,target_id) \
-       VALUES ($1,$3,COALESCE($7,false),$8,$9::text::uuid) \
+/// org, project, environment, Secret, namespace, suffix, disposable, readiness budget,
+/// drain bound, and target values.
+pub fn upsert_project_env_sql() -> &'static str {
+    "WITH parent AS (INSERT INTO registry.environments \
+       (org,env,disposable,readiness_budget_seconds,drain_bound_seconds,target_id) \
+       VALUES ($1,$3,COALESCE($7,false),$8,$9,$10::text::uuid) \
        ON CONFLICT (org,env) DO UPDATE SET disposable=COALESCE($7,registry.environments.disposable), \
          target_id=EXCLUDED.target_id RETURNING org,env,disposable), \
      deployment AS (INSERT INTO registry.environment_projects \
@@ -208,28 +210,20 @@ pub const UPDATE_PLATFORM_META_SQL: &str =
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV: &str =
     "SELECT id::text FROM registry.target WHERE name = $1";
 
-/// crates/environment/src/provision_project_env/registry.rs::read_project_env_policy registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_READ_PROJECT_ENV_POLICY: &str = "SELECT policy_name FROM registry.environment_projects JOIN registry.environments USING (org,env) \
-                  WHERE org = $1 AND project = $2 AND env = $3";
-
 /// crates/environment/src/environment/analyse.rs::replica_refusals registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_REPLICA_REFUSALS: &str =
     "SELECT type = 'cloud' FROM registry.target WHERE name = $1";
 
 /// crates/environment/src/environment/analyse.rs::read_row registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, policy_name, disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) \
+pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";
-
-/// crates/environment/src/environment/analyse.rs::read_policy registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_POLICY: &str = "SELECT readiness_budget_seconds, drain_bound_seconds \
-               FROM registry.env_policies WHERE org = $1 AND name = $2";
 
 /// crates/environment/src/environment/status.rs::stranded_runs registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_STATUS_STRANDED_RUNS: &str =
     "SELECT 1 FROM registry.environment_projects WHERE org = $1 AND project = $2 AND env = $3";
 
 /// crates/environment/src/environment/delete.rs::delete_locked registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED: &str = "SELECT instance_suffix, policy_name FROM registry.environment_projects JOIN registry.environments USING (org,env) \
+pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED: &str = "SELECT instance_suffix, readiness_budget_seconds, drain_bound_seconds FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";
 
 /// crates/environment/src/environment/delete/rows.rs::delete_registry_rows registry statement.

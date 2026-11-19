@@ -61,8 +61,8 @@ pub fn disable_project_connection_sql() -> &'static str {
 }
 
 /// Database fixture statement for provision.
-pub fn seed_disposable_policy_sql() -> &'static str {
-    "INSERT INTO registry.orgs (id) VALUES ('demo'); INSERT INTO registry.env_policies (org,name) VALUES ('demo','dev');"
+pub fn seed_demo_org_sql() -> &'static str {
+    "INSERT INTO registry.orgs (id) VALUES ('demo');"
 }
 
 /// Database fixture statement for provision.

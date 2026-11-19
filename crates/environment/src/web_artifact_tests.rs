@@ -20,7 +20,7 @@ async fn two_environments_with_the_same_web_digest_share_one_completed_upload() 
     .await;
     let registry = fixture_registry(&scratch, &server);
     let first: EnvironmentDocument = serde_json::from_value(serde_json::json!({
-        "org": "acme", "project": "web-fixture", "env": "dev", "target": "dev", "policy": "dev","revocation_seconds":60,
+        "org": "acme", "project": "web-fixture", "env": "dev", "target": "dev", "revocation_seconds":60,
         "applications": {"fixture": {"label": "dev", "client": {"package": "web_fixture", "web": packed.digest}}}}))
     .unwrap();
     let mut second = first.clone();

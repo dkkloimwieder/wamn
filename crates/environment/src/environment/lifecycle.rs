@@ -96,7 +96,7 @@ pub async fn configure(
                 &lock,
                 &first.org,
                 &first.env,
-                &first.policy,
+                first.drain_bound_seconds,
                 &project_names,
             )
             .await?;
@@ -165,7 +165,8 @@ async fn reserve_project(
     registry::record_project_env(
         transaction,
         &document.triple(),
-        Some(&document.policy),
+        document.readiness_budget_seconds,
+        document.drain_bound_seconds,
         &document.target,
         &name::project_env_secret_name(&document.org, &document.project, &document.env),
         Some(document.org.as_str()),

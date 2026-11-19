@@ -69,7 +69,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) 
         .await
         .map(drop)
         .unwrap();
-    sqlx::raw_sql(wamn_registry::test_util::seed_disposable_policy_sql())
+    sqlx::raw_sql(wamn_registry::test_util::seed_demo_org_sql())
         .execute(&mut *transaction)
         .await
         .map(drop)
@@ -85,7 +85,8 @@ async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) 
         record_project_env(
             &mut transaction,
             &triple,
-            None,
+            600,
+            300,
             "cloud",
             "db-first",
             Some("system"),

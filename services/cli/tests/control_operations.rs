@@ -68,7 +68,7 @@ fn command(root: &Path, url: &str, arguments: &[&str]) -> anyhow::Result<Command
     let file = root.join("environment.yaml");
     let document: wamn_environment::environment::document::EnvironmentFile =
         serde_json::from_value(json!({
-            "org":"acme", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
+            "org":"acme", "env":"dev", "target":"cloud", "revocation_seconds":60,
             "database":{"instances":1,"storage":"2Gi","cpu":"200m","memory":"256Mi"},
             "projects":[{"name":"apps","applications":{"a":{ "label":"a"}}}]
         }))?;

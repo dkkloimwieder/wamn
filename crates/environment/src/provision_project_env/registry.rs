@@ -72,33 +72,6 @@ pub async fn read_project_env_instance(
     result
 }
 
-/// Read the policy name of one project-env's registry row. The environment
-/// document owns it (docs/architecture/overview.md#environment-lifecycle).
-pub async fn read_project_env_policy(
-    system_url: &str,
-    triple: &Triple,
-) -> anyhow::Result<wamn_registry::EnvName> {
-    let mut client = wamn_postgres::connect(system_url)
-        .await
-        .context("system db connect")?;
-
-    let mut transaction = wamn_identity::transaction::read_connection(
-        &mut client,
-        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
-    )
-    .await?;
-    let result = async {
-        wamn_registry::deployment::project_policy(&mut transaction, triple)
-            .await
-            .context("read the project deployment policy")?
-            .with_context(|| format!("project-env {triple} is not recorded"))
-    }
-    .await;
-    transaction.commit().await?;
-    drop(client);
-    result
-}
-
 /// Record the project and its deployment in the caller's reservation transaction.
 ///
 /// Returns the stored instance suffix. A new deployment uses `minted`.
@@ -106,7 +79,8 @@ pub async fn read_project_env_policy(
 pub(crate) async fn record_project_env(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     triple: &Triple,
-    policy: Option<&wamn_registry::EnvName>,
+    readiness_budget_seconds: i32,
+    drain_bound_seconds: i32,
     target: &str,
     secret_name: &str,
     secret_namespace: Option<&str>,
@@ -128,7 +102,8 @@ pub(crate) async fn record_project_env(
             secret_namespace,
             instance_suffix: minted,
             disposable,
-            policy: policy.unwrap_or(&triple.env),
+            readiness_budget_seconds,
+            drain_bound_seconds,
             target_id: &target_id,
         },
     )

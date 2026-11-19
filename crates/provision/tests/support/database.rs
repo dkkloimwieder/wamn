@@ -73,9 +73,7 @@ pub fn seed_org_project_env_sql(
         "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{actor}','','fixture') ON CONFLICT(xid) DO NOTHING; \
          INSERT INTO registry.orgs(id) VALUES ({org}) ON CONFLICT DO NOTHING; \
          INSERT INTO registry.projects(org,id) VALUES ({org},{project}) ON CONFLICT DO NOTHING; \
-         INSERT INTO registry.env_policies(org,name) \
-         VALUES ({org},{env}) ON CONFLICT DO NOTHING; \
-         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ({org},{env},{env}) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ({org},{project},{env},'s1','aaaaaaa1') ON CONFLICT DO NOTHING;"
+         WITH parent_environment AS (INSERT INTO registry.environments (org,env) VALUES ({org},{env}) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ({org},{project},{env},'s1','aaaaaaa1') ON CONFLICT DO NOTHING;"
     )
 }
 
