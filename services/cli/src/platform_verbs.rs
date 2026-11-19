@@ -1,16 +1,45 @@
 //! Thin platform command adapters.
 
-use std::path::PathBuf;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
+use wamn_kubernetes::{Target, helm, kubectl};
+use wamn_platform_install::release_chart::bundle;
+
+const INFRASTRUCTURE_RELEASE: &str = "wamn-infrastructure";
+const PLATFORM_RELEASE: &str = "wamn";
+const ROLLOUT_TIMEOUT: Duration = Duration::from_secs(960);
 
 /// Platform verbs exposed by the product command.
 #[derive(Debug, Subcommand)]
 pub enum ProductPlatformCommand {
+    /// Install or upgrade the shared Kubernetes platform.
+    Deploy(DeployArgs),
     /// Inspect or apply platform SQL through control.
     #[command(subcommand)]
     Schema(PlatformSchemaCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct DeployArgs {
+    /// Helm values for this installation.
+    values: PathBuf,
+    /// Prepared chart bundle directory or OCI digest.
+    #[arg(long, env = "WAMN_RELEASE_CHART")]
+    chart: PathBuf,
+    /// Install or upgrade only the selected chart.
+    #[arg(long, value_enum)]
+    only: Option<DeployChart>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DeployChart {
+    Infrastructure,
+    Platform,
 }
 
 #[derive(Debug, Subcommand)]
@@ -76,7 +105,12 @@ impl Args for PlatformSchemaArgs {
 
 pub async fn run_product(command: ProductPlatformCommand) -> anyhow::Result<()> {
     let mut signals = signals()?;
-    let ProductPlatformCommand::Schema(command) = command;
+    let command = match command {
+        ProductPlatformCommand::Deploy(args) => {
+            return interruptible(&mut signals, deploy(&args)).await;
+        }
+        ProductPlatformCommand::Schema(command) => command,
+    };
     let (args, apply) = match command {
         PlatformSchemaCommand::Diff(args) => (args, false),
         PlatformSchemaCommand::Apply(args) => (args, true),
@@ -107,6 +141,140 @@ pub async fn run_product(command: ProductPlatformCommand) -> anyhow::Result<()> 
         })),
     )
     .await
+}
+
+async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
+    let values = args
+        .values
+        .canonicalize()
+        .context("resolve the Helm values file")?;
+    let chart = bundle::select(&args.chart)?;
+    let kubeconfig = PathBuf::new();
+    let context = kubectl::current_context(&kubeconfig)?;
+    let target = Target {
+        kubeconfig,
+        context,
+        namespace: "platform".into(),
+    };
+    let infrastructure = !matches!(args.only, Some(DeployChart::Platform));
+    let platform = !matches!(args.only, Some(DeployChart::Infrastructure));
+    let charts = chart.directory().join("platform");
+    if infrastructure {
+        upgrade(
+            &target,
+            &charts.join("infra"),
+            INFRASTRUCTURE_RELEASE,
+            &values,
+            helm::Install::CreateNamespace,
+        )
+        .await?;
+    }
+    if platform {
+        let chart = charts.join("platform");
+        let install = || {
+            upgrade(
+                &target,
+                &chart,
+                PLATFORM_RELEASE,
+                &values,
+                helm::Install::ExistingNamespace,
+            )
+        };
+        if let Err(error) = install().await {
+            // On a fresh install the infrastructure release can return while
+            // the CloudNativePG admission webhook is still starting.
+            let message = format!("{error:#}");
+            if !infrastructure
+                || !(message.contains("failed calling webhook")
+                    && message.contains(".cnpg.io\"")
+                    && (message.contains("no endpoints available")
+                        || message.contains("connection refused")))
+            {
+                return Err(error);
+            }
+            kubectl::wait_deployment_ready(&target, "cnpg-controller-manager", ROLLOUT_TIMEOUT)
+                .await
+                .context(error)?;
+            install().await?;
+        }
+    }
+    let deadline = tokio::time::Instant::now() + ROLLOUT_TIMEOUT;
+    let wait = async |namespace: &str, command: &[&str]| {
+        kubectl::with_timeout(
+            deadline,
+            &target.kubeconfig,
+            &target.context,
+            namespace,
+            command,
+        )
+        .await
+    };
+    let infrastructure_rollout = async {
+        if infrastructure {
+            // The Traefik chart appends the release namespace to its instance label.
+            let selector = format!(
+                "app.kubernetes.io/instance in ({INFRASTRUCTURE_RELEASE},{INFRASTRUCTURE_RELEASE}-{})",
+                target.namespace
+            );
+            let command = ["rollout", "status", "deployment", "--selector", &selector];
+            tokio::try_join!(
+                wait("cert-manager", &command),
+                wait(&target.namespace, &command)
+            )
+            .context("wait for infrastructure operators")?;
+        }
+        anyhow::Ok(())
+    };
+    let platform_rollout = async {
+        if platform {
+            let selector = format!("app.kubernetes.io/instance in ({PLATFORM_RELEASE},identity)");
+            let job_selector = format!("app.kubernetes.io/instance={PLATFORM_RELEASE}");
+            let rollout = [
+                "rollout",
+                "status",
+                "deployment,statefulset",
+                "--selector",
+                &selector,
+            ];
+            let job = [
+                "wait",
+                "--for=condition=complete",
+                "job",
+                "--selector",
+                &job_selector,
+                "--timeout=960s",
+            ];
+            tokio::try_join!(
+                wait(&target.namespace, &rollout),
+                wait("hosts", &["rollout", "status", "deployment/wamn-edge"]),
+                wait(&target.namespace, &job),
+            )
+            .context("wait for platform rollouts and the system SQL Job")?;
+        }
+        anyhow::Ok(())
+    };
+    tokio::try_join!(infrastructure_rollout, platform_rollout)?;
+    Ok(())
+}
+
+async fn upgrade(
+    target: &Target,
+    chart: &Path,
+    release: &str,
+    values: &Path,
+    install: helm::Install,
+) -> anyhow::Result<()> {
+    helm::upgrade(
+        target,
+        &target.namespace,
+        chart,
+        release,
+        values,
+        helm::Wait::None,
+        install,
+    )
+    .await
+    .with_context(|| format!("install or upgrade {release}"))
 }
 
 struct Signals {

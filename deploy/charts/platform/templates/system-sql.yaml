@@ -11,12 +11,15 @@ metadata:
   namespace: {{ $namespace }}
 data:
   database.json: {{ dict "host" $system.host "port" $system.port "database" $system.name "username" "postgres" "credentials" (dict "namespace" $namespace "name" $admin) "server_ca" (dict "namespace" $namespace "name" $ca) | toJson | quote }}
+  max_projects: {{ .Values.global.maxProjects | quote }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: {{ printf "%s-%d" $name .Release.Revision }}
   namespace: {{ $namespace }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   activeDeadlineSeconds: 900
   template:

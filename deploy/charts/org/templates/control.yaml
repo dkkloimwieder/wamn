@@ -1,5 +1,8 @@
 {{- if .Values.control.image }}
 {{- $namespace := .Values.org }}
+{{- $platform := lookup "v1" "ConfigMap" "platform" "wamn-system-sql" }}
+{{- $maxProjects := int64 (required "Deploy the platform to set its project stream limit before installing an org." (dig "data" "max_projects" "" $platform)) }}
+{{- $configuration := mergeOverwrite (dict) .Values.control.configuration (dict "max_projects" $maxProjects) }}
 {{- $name := printf "c-%s" $namespace }}
 {{- $account := printf "wamn-control-%s" $namespace }}
 {{- $database := .Values.control.configuration.database }}
@@ -12,7 +15,7 @@ metadata:
   name: {{ $name }}-configuration
   namespace: {{ $namespace }}
 data:
-  config.json: {{ .Values.control.configuration | toJson | quote }}
+  config.json: {{ $configuration | toJson | quote }}
 ---
 apiVersion: v1
 kind: ServiceAccount

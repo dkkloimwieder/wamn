@@ -1,14 +1,18 @@
 # Deployment
 
-`wamn platform deploy --only` returns in Epic 10 with the `platform` chart.
-Use an existing platform for environment, application, and SQL operations in Epic 9.
 A chart is a Helm package of Kubernetes resources.
 Deployment consumes pinned artifacts, whose digests identify exact bytes.
 It does not compile source, build JavaScript, publish packages, or select application releases.
 A fresh platform contains zero application environments and zero application releases.
 
-[Building](building.md#local-platform-artifacts) owns artifact production.
-[Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites) remain external inputs. GCP deployment integration is unfinished.
+[Building](building.md#platform-artifacts) explains how to prepare the chart bundle.
+Run `wamn platform deploy <values>` on a developer machine with Helm 4, kubectl, and an administrator kubeconfig.
+The command uses the current Kubernetes context. Helm validates the operator's values against the platform chart schema.
+Set `WAMN_RELEASE_CHART` to the prepared bundle directory or its published OCI digest reference. You can also pass it with `--chart`.
+
+The command installs or upgrades infrastructure first, then the platform. At the end it waits for the SQL Job to complete and the workloads to roll out. Identity reports readiness through its `/readyz` probe.
+Use `--only infrastructure` for cert-manager, CloudNativePG, and Traefik when enabled. Use `--only platform` for the shared platform workloads on an existing infrastructure install.
+Use `wamn env apply` to roll out a host image.
 
 ## Local platform
 
@@ -25,21 +29,27 @@ cargo xtask kind-cluster-create
 
 The command reuses the `wamn-local` cluster and the registry at `localhost:5001` if they already exist.
 Select the `kind-wamn-local` Kubernetes context for the local deployment.
-Copy the printed `registryEndpoint` block into `deploy/charts/platform/values-kind.yaml`.
-Prepare the artifacts as [building](building.md#local-platform-artifacts) describes.
-The kind values file sets the registry to `localhost:5001`. [Kind values](../../deploy/charts/platform/values-kind.yaml)
+Copy the kind values file to `platform-kind.yaml` and add the printed `registryEndpoint` block. The kind values file sets the registry to `localhost:5001`. [Kind values](../../deploy/charts/platform/values-kind.yaml)
+Prepare the artifacts as [building](building.md#platform-artifacts) describes.
+
+```bash
+kubectl config use-context kind-wamn-local
+wamn platform deploy platform-kind.yaml --chart /var/tmp/wamn-platform-chart
+```
+
 The published application bundle includes the infrastructure, platform, org, environment, and project charts.
 Helm installs cert-manager, CloudNativePG, and the ingress controller before the platform.
 The platform chart installs the system PostgreSQL Cluster, its SQL Job, shared identity, edge, NATS, the wasmCloud runtime operator, and the collector.
 The org chart owns control, the namespace quota, RBAC, and network policies.
 Supply the org's public CA copies and control credentials during org creation. [Org chart](../../deploy/charts/org/README.md)
 
-Set `global.maxProjects` to the total number of project streams across all environments.
+Set `global.maxProjects` to the project stream limit for the installation. Each project in an environment uses one slot.
+`wamn env apply` refuses new reservations if their total across all organizations and environments would exceed the limit.
+The org chart copies the limit into the configuration that control and its worker share.
 Each NATS pod uses 256 MiB per project for streams and 64 MiB per project for storage overhead.
 The resolver has a separate claim when operator mode is enabled. [Platform chart](../../deploy/charts/platform/README.md)
 
-The GCP collector exports traces and logs to the telemetry bucket with a persistent queue.
-It uses the collector workload identity. The local collector uses debug export.
+The local collector uses debug export.
 
 Kubernetes and its operators own running resources. Helm owns release revisions.
 WAMN stores no generic installation-completion ConfigMaps and has no numbered resume steps.
@@ -96,8 +106,20 @@ Keep the shared registry container and its volume for later builds.
 kind delete cluster --name wamn-local
 ```
 
-Rebuilding a disposable platform requires the Epic 10 installation path.
+To rebuild a disposable platform, repeat the local platform steps.
 A new platform starts with zero applications. Redeploy each required application through `wamn deploy`.
+
+## Google Cloud platform
+
+Provision the GKE cluster and select its administrator context. [Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites)
+Copy the GCP values file to `platform-gcp.yaml`. Set the registry, project, zone, domain, and buckets for your installation. [GCP values](../../deploy/charts/platform/values-gcp.yaml)
+Use the chart bundle published to your registry.
+
+```bash
+wamn platform deploy platform-gcp.yaml
+```
+
+The GCP collector uses its workload identity to export traces and logs to the telemetry bucket. It uses a persistent queue.
 
 ## Application and schema operations
 

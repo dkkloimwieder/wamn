@@ -52,6 +52,7 @@ pub struct Configuration {
     #[serde(default)]
     pub oci_ca_paths: Vec<PathBuf>,
     pub events: Option<Events>,
+    pub max_projects: std::num::NonZeroU32,
     #[serde(default)]
     pub identity: Identity,
     pub oauth_encryption: Option<wamn_envelope::encryption::Configuration>,

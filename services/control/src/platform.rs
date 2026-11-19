@@ -219,6 +219,7 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                 application.as_ref(),
                 disposable,
                 &system,
+                config.max_projects,
             )
             .await?;
             Ok(json!({"configured":true}))

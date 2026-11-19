@@ -10,6 +10,14 @@
         "gcp"
       ]
     },
+    "traefik": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
     "platformDomain": {
       "type": "string",
       "maxLength": 253,
@@ -60,6 +68,7 @@
         "maxProjects": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 4294967295,
           "description": "Project streams across all environments. JetStream reserves 320 MiB per project per pod."
         },
         "nats": {

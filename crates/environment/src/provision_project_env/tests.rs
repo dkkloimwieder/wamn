@@ -1,10 +1,10 @@
-use super::registry::do_record_project_env;
+use super::{provisioning_transaction, registry::record_project_env};
 use sqlx::{Connection as _, Row as _};
 
 use super::write_secret_json;
 use serde_json::{Value, json};
-use std::os::unix::fs::PermissionsExt as _;
 use std::fs::Permissions;
+use std::os::unix::fs::PermissionsExt as _;
 use wamn_registry::Triple;
 
 #[test]
@@ -81,8 +81,9 @@ async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) 
         "inventory".parse().unwrap(),
     );
     for disposable in [Some(true), None] {
-        do_record_project_env(
-            &mut client,
+        let mut transaction = provisioning_transaction(&mut client).await.unwrap();
+        record_project_env(
+            &mut transaction,
             &triple,
             None,
             "cloud",
@@ -93,6 +94,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) 
         )
         .await
         .unwrap();
+        transaction.commit().await.unwrap();
     }
     let registry: bool = sqlx::query(wamn_registry::test_util::disposable_environment_sql())
         .fetch_one(&mut client)

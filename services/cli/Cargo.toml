@@ -35,6 +35,8 @@ wamn-catalog = { workspace = true }
 wamn-publish = { workspace = true }
 wamn-environment = { workspace = true }
 wamn-dev = { workspace = true }
+wamn-kubernetes.workspace = true
+wamn-platform-install.workspace = true
 # `wamn inspect` and `wamn diff` read verified package artifacts.
 wamn-oci = { workspace = true }
 # The pure provisioning SQL builders + identifier naming + credential Secret
@@ -51,7 +53,6 @@ wamn-codegen.workspace = true
 url = { workspace = true }
 wamn-broker = { workspace = true }
 wamn-postgres.workspace = true
-wamn-kubernetes.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal", "macros", "migrate"] }
 wamn-oci = { workspace = true }
 wit-parser = { workspace = true }

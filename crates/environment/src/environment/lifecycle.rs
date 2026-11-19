@@ -7,7 +7,7 @@ use super::{
 use crate::provision_project_env::{self, registry, workload};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{num::NonZeroU32, time::Duration};
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_platform_install as installer;
 use wamn_registry::{Triple, name, sql::upsert_event_reader_sql};
@@ -18,6 +18,7 @@ pub async fn configure(
     application: Option<&wamn_catalog::ApplicationName>,
     disposable: Option<bool>,
     system_owner: &str,
+    max_projects: NonZeroU32,
 ) -> anyhow::Result<()> {
     let mut platform = platform.clone();
     super::runtime::resolve_platform(&mut platform)?;
@@ -39,22 +40,46 @@ pub async fn configure(
             let first = projects
                 .first()
                 .context("environment has no selected projects")?;
-            let mut reserved = Vec::with_capacity(projects.len());
-            for project in &projects {
-                let outcome = reserve_project(project, disposable, system_owner)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Reserve project {} failed. Run env apply again to continue.",
-                            project.project
-                        )
-                    })?;
-                reserved.push(outcome);
-            }
             let project_names: Vec<_> = projects
                 .iter()
                 .map(|project| project.project.as_str())
                 .collect();
+            let mut reserved = Vec::with_capacity(projects.len());
+            {
+                let mut client = wamn_postgres::connect(system_owner).await?;
+                let mut transaction = provision_project_env::provisioning_transaction(&mut client)
+                    .await?;
+                sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('wamn.project-stream-capacity', 0))")
+                    .execute(&mut *transaction)
+                    .await
+                    .context("lock platform project stream capacity")?;
+                let (current, additional): (i64, i64) = sqlx::query_as(
+                    "SELECT (SELECT count(*) FROM registry.environment_projects), count(*) \
+                     FROM unnest($3::text[]) AS selected(project) \
+                     WHERE NOT EXISTS (SELECT 1 FROM registry.environment_projects AS registered \
+                         WHERE registered.org = $1 AND registered.env = $2 \
+                         AND registered.project = selected.project)",
+                )
+                .bind(&first.org)
+                .bind(&first.env)
+                .bind(&project_names)
+                .fetch_one(&mut *transaction)
+                .await
+                .context("count project stream reservations")?;
+                let projected = current + additional;
+                ensure!(
+                    additional == 0 || projected <= i64::from(max_projects.get()),
+                    "project stream limit is {max_projects}, count would reach {projected} ({current} reserved, {additional} new)"
+                );
+                for project in &projects {
+                    reserved.push(
+                        reserve_project(&mut transaction, project, disposable)
+                            .await
+                            .with_context(|| format!("reserve project {}", project.project))?,
+                    );
+                }
+                transaction.commit().await.context("commit project reservations")?;
+            }
             let (replicas, host) = resources::prepare_host_upgrade(
                 &platform,
                 &first.org,
@@ -122,13 +147,13 @@ pub async fn configure(
 }
 
 async fn reserve_project(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     document: &EnvironmentDocument,
     disposable: Option<bool>,
-    system_owner: &str,
 ) -> anyhow::Result<wamn_registry::instance_suffix::InstanceSuffix> {
     wamn_provision::validate_project_env_cdc(&document.org, &document.project, &document.env)?;
     registry::record_project_env(
-        system_owner,
+        transaction,
         &document.triple(),
         Some(&document.policy),
         &document.target,
