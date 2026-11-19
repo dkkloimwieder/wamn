@@ -1,4 +1,5 @@
 {{- $system := include "wamn-platform.systemDatabase" . | fromJson }}
+{{- $poolers := include "wamn-platform.systemDatabasePoolers" . | fromJson }}
 {{- $namespace := $system.namespace }}
 {{- $database := $system.name }}
 {{- $roles := list
@@ -145,6 +146,11 @@ spec:
     {{- end }}
     roles: {{ concat $ordered $roles | toJson }}
   podSelectorRefs:
+    {{- range $family, $name := $poolers.names }}
+    - name: {{ $family }}-pooler
+      selector:
+        matchLabels: {cnpg.io/poolerName: {{ $name }}}
+    {{- end }}
     - name: platform-sql-jobs
       selector:
         matchExpressions:
@@ -162,14 +168,20 @@ spec:
   postgresql:
     pg_hba:
       - hostssl {{ $database }} {{ $system.identityRole.name }} all cert
+      {{- range $family := keys $poolers.names | sortAlpha }}
+      - hostssl {{ $database }} +wamn_{{ $family }} ${podselector:{{ $family }}-pooler} scram-sha-256
+      - hostssl postgres {{ $poolers.authRole }} ${podselector:{{ $family }}-pooler} cert
+      {{- end }}
       - hostssl {{ $database }} postgres ${podselector:platform-sql-jobs} cert
       - hostssl postgres postgres ${podselector:system-sql} cert
       - hostssl {{ $database }} {{ $system.migrationRole.name }} ${podselector:system-sql} cert
       - hostssl wamn_pg_minimum postgres ${podselector:pg-minimum-client} cert
       - hostssl postgres,wamn_pg_minimum postgres 127.0.0.1/32 cert
+      - host all +wamn_control,+wamn_apply,{{ $poolers.authRole }} all reject
       - host all postgres,{{ $system.migrationRole.name }} all reject
       - hostssl all all all scram-sha-256
     parameters:
+      max_connections: {{ .Values.postgres.maxConnections | quote }}
       max_slot_wal_keep_size: "4GB"
       pg_stat_statements.max: "10000"
       pg_stat_statements.track: top

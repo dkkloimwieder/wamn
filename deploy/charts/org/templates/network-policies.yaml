@@ -54,21 +54,25 @@ spec:
             matchLabels: {{ $identity | toJson }}
       ports: [{port: 8443, protocol: TCP}]
 {{- end }}
-{{- range $name, $labels := dict "control" $control "worker" $worker }}
+{{- $database := .Values.control.configuration -}}
+{{- $systemClients := dict "control" (dict "labels" $control "connection" ($database.database | default dict)) "worker" (dict "labels" $worker "connection" ($database.apply_database | default dict)) }}
+{{- range $name, $client := $systemClients }}
+{{- with $client.connection.host }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: allow-{{ $name }}-to-postgres, namespace: {{ $org | quote }}}
 spec:
   podSelector:
-    matchLabels: {{ $labels | toJson }}
+    matchLabels: {{ $client.labels | toJson }}
   policyTypes: [Egress]
   egress:
     - to:
         - namespaceSelector: {{ $platform | toJson }}
           podSelector:
-            matchLabels: {cnpg.io/cluster: wamn-pg}
-      ports: [{port: 5432, protocol: TCP}]
+            matchLabels: {cnpg.io/poolerName: {{ . | splitList "." | first | quote }}}
+      ports: [{port: {{ $client.connection.port | int }}, protocol: TCP}]
+{{- end }}
 {{- end }}
 {{- range $name, $labels := dict "control" $control "worker" $worker }}
 ---

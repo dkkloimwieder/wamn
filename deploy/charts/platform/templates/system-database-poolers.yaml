@@ -1,0 +1,66 @@
+{{- $system := include "wamn-platform.systemDatabase" . | fromJson -}}
+{{- $poolers := include "wamn-platform.systemDatabasePoolers" . | fromJson -}}
+{{- $values := .Values.postgres.pooler -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $poolers.authSecret }}
+  namespace: {{ $system.namespace }}
+spec:
+  secretName: {{ $poolers.authSecret }}
+  secretTemplate:
+    labels:
+      cnpg.io/reload: "true"
+  commonName: {{ $poolers.authRole }}
+  usages: [digital signature, client auth]
+  issuerRef: {kind: Issuer, name: {{ $system.cluster }}}
+{{- range $family, $name := $poolers.names }}
+{{- $limits := index $values $family }}
+{{- $tls := printf "%s-tls" $name }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $tls }}
+  namespace: {{ $system.namespace }}
+spec:
+  secretName: {{ $tls }}
+  dnsNames:
+    - {{ $name }}
+    - {{ $name }}.{{ $system.namespace }}
+    - {{ $name }}.{{ $system.namespace }}.svc
+    - {{ $name }}.{{ $system.namespace }}.svc.cluster.local
+  usages: [digital signature, key encipherment, server auth]
+  issuerRef: {kind: Issuer, name: {{ $system.cluster }}}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: {{ $name }}
+  namespace: {{ $system.namespace }}
+spec:
+  cluster: {name: {{ $system.cluster }}}
+  type: rw
+  instances: 1
+  deploymentStrategy: {type: Recreate}
+  pgbouncer:
+    poolMode: session
+    authQuery: {{ printf "SELECT * FROM wamn_pooler.lookup_login($1, 'wamn_%s')" $family | quote }}
+    authQuerySecret: {name: {{ $poolers.authSecret }}}
+    clientTLSSecret: {name: {{ $tls }}}
+    serverCASecret: {name: {{ $system.ca }}}
+    pg_hba:
+      - hostssl {{ $system.name }} all all scram-sha-256
+      - host all all all reject
+    parameters:
+      client_tls_sslmode: require
+      server_tls_sslmode: verify-full
+      max_client_conn: {{ $values.maxClientConnections | quote }}
+      max_user_connections: {{ $limits.maxUserConnections | quote }}
+      max_db_connections: {{ $limits.maxDbConnections | quote }}
+      {{- if eq $family "apply" }}
+      query_wait_timeout: {{ $limits.queryWaitTimeout | quote }}
+      # The first login for a role can also wait for a backend connection.
+      client_login_timeout: {{ $limits.queryWaitTimeout | quote }}
+      {{- end }}
+{{- end }}

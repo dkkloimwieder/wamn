@@ -203,9 +203,9 @@ fn org_values(
             || registry.to_owned(),
             |path| format!("{POD_REGISTRY}{path}"),
         );
-    let connection = |username: &str, secret: &str| {
+    let connection = |host: &str, username: &str, secret: &str| {
         json!({
-            "host": database.host, "port": database.port, "database": database.database,
+            "host": host, "port": database.port, "database": database.database,
             "username": username, "credentials": {"namespace": org, "name": secret},
             "server_ca": {"namespace": org, "name": "wamn-pg-ca"},
         })
@@ -220,8 +220,8 @@ fn org_values(
             "image": image,
             "configuration": {
                 "org": org,
-                "database": connection(control.as_str(), CONTROL_SECRET),
-                "apply_database": connection(apply.as_str(), APPLY_SECRET),
+                "database": connection(field(inputs, "controlDatabaseHost")?, control.as_str(), CONTROL_SECRET),
+                "apply_database": connection(field(inputs, "applyDatabaseHost")?, apply.as_str(), APPLY_SECRET),
                 "identity_issuer": field(inputs, "identityIssuer")?,
                 "nats_url": field(inputs, "natsUrl")?,
                 "registry": internal_registry,

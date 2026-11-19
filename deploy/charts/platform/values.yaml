@@ -213,3 +213,13 @@ systemSql:
   image: ""
 postgres:
   image: ghcr.io/cloudnative-pg/postgresql:18.7
+  maxConnections: 200
+  pooler:
+    maxClientConnections: 4096
+    control:
+      maxUserConnections: 8
+      maxDbConnections: 50
+    apply:
+      maxUserConnections: 16
+      maxDbConnections: 100
+      queryWaitTimeout: 900

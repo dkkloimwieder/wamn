@@ -43,6 +43,7 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         &crate::platform_migrations::embedded_sources(scope),
     )
     .await?;
+    install_pooler_auth(&database).await?;
     let mut transaction = crate::transaction::provisioning_transaction(&mut client).await?;
     sqlx::raw_sql("SET LOCAL ROLE wamn_system")
         .execute(&mut *transaction)
@@ -76,6 +77,28 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
     }
     transaction.commit().await?;
     Ok(())
+}
+
+async fn install_pooler_auth(admin_database: &str) -> anyhow::Result<()> {
+    use sqlx::Connection as _;
+
+    let database = wamn_postgres::database_configuration(admin_database, "postgres")
+        .context("select postgres for Pooler authentication setup")?;
+    let mut admin = connect_system_database(&database)
+        .await
+        .context("connect to postgres for Pooler authentication setup")?;
+    let mut transaction = admin
+        .begin()
+        .await
+        .context("begin Pooler authentication setup")?;
+    sqlx::raw_sql(include_str!("../../../deploy/sql/system-pooler-auth.sql"))
+        .execute(&mut *transaction)
+        .await
+        .context("install Pooler authentication in postgres")?;
+    transaction
+        .commit()
+        .await
+        .context("commit Pooler authentication setup")
 }
 
 // A Job can start before the database listens or CNPG reloads its pod IP in pg_hba.

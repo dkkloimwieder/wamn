@@ -45,11 +45,10 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
         .await
         .context("lock the org login")?;
 
-    // The default org quota admits 50 Jobs, with up to two apply sessions each.
-    // The single control replica allows one concurrent publication on this login.
+    // These limits match the role limits in the platform Poolers.
     let logins = [
-        (control, wamn_role::CONTROL_ROLE, 4_i32, CONTROL_SECRET),
-        (apply, wamn_role::APPLY_ROLE, 101_i32, APPLY_SECRET),
+        (control, wamn_role::CONTROL_ROLE, 8_i32, CONTROL_SECRET),
+        (apply, wamn_role::APPLY_ROLE, 16_i32, APPLY_SECRET),
     ];
     let mut passwords = Vec::with_capacity(logins.len());
     let mut tx = crate::transaction::provisioning_transaction(&mut connection).await?;
