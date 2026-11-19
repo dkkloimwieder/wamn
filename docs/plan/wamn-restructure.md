@@ -850,6 +850,7 @@ Merged to main on 2026-11-19 after review. The first kind run waits for D's appr
 - Next CloudNativePG upgrade: move the Pooler's certificate lookup to `.spec.pgbouncer` `clientTLSSecret`, `clientCASecret`, `serverTLSSecret` and `serverCASecret` (added in 1.28), away from the deprecated field.
 - 3.7b: Kubernetes calls move to `kube-rs`; kubectl error-text matching and `kubernetes_api.rs` go (kubectl error text ruling).
 - 3.7b or 3.8: clippy exits 101 because of old `implicit_clone` errors in `crates/guest`.
+- 3.7b: component admission takes only the package id and version; the palette key and `ProjectEnvKey::platform_palette()` go.
 
 # Part 2: Review log
 
@@ -2402,5 +2403,10 @@ Facts:
 **Ruled (D, 2026-11-19): kubectl error text.**
 - Recorded exception until 3.7b: `crates/kubernetes/src/kubectl.rs` reads kubectl's error text to tell Conflict and AlreadyExists from NotFound. kubectl gives no structured error, only exit code 1. The Conflict check is older; the NotFound check came with the fixed Job names in Epic 10.
 - In 3.7b, all Kubernetes calls move to `kube-rs`, which reads kubeconfig (exec plugins included) and returns typed API errors. The kubectl error-text checks and the hand-written in-cluster client (`kubernetes_api.rs`) both go.
+
+**Ruled (D, 2026-11-19): first kind run, B1 and checks.**
+- B1: palette sealing uses `ProjectEnvKey::platform_palette()`, a constructor in `wamn-registry` with the reserved org `wamn`, which `parse` refuses. The parser stays strict. The key never reaches the stored palette entry. `read_palette` had no caller and is deleted. Cause: `platform` became a reserved org in Epic 9 (4d3ea4ea4), so the parsed key panicked in `cargo xtask build-platform`.
+- Standard checks from now on: build, clippy, `cargo xtask build-platform`, the schema-apply check and the Helm size check. `build-platform` is a build, not a test.
+- The first kind run deploys `apps/wamn_receiving` and `client_acme_receiving`, which has the only Data change handler.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
