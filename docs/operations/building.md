@@ -10,17 +10,18 @@ It includes application components, platform components under `guests/`, guest l
 Each moved guest package declares that workspace explicitly. Native workspace exclusions keep the two owners distinct.
 [Components](../architecture/components.md) defines artifact and interface boundaries.
 
-Before a lane or test run, prepare the checkout once from its repository root:
+Before a lane or test run, prepare the checkout once from its repository root.
+Set `CARGO_TARGET_DIR` first so that Cargo builds `xtask` in the checkout's cache directory.
 
 ```bash
+checkout_key=$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)
+export CARGO_TARGET_DIR="$HOME/.cache/wamn-target/$checkout_key"
 eval "$(cargo xtask lane-start "$PWD")"
 ```
 
-The command initializes submodules and selects the Cargo cache directory.
-It runs no builds, web installation, or database.
+The command initializes submodules and prints two exports.
 Build the artifacts required by the selected command.
 For tests, [the selection file](../../tests/selection.toml) binds preparation to its consuming targets and suites.
-The command prints two exports.
 `CARGO_TARGET_DIR` is `$HOME/.cache/wamn-target/<key>`, and `WAMN_CHECKOUT_KEY` is the key.
 Cargo writes its output to `CARGO_TARGET_DIR`, so commands in this repository use `$CARGO_TARGET_DIR` and not `target/` or `apps/target`.
 `wamn build` still writes package output to `apps/target/wamn`.
