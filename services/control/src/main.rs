@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 struct Cli {
     #[arg(long)]
-    config: Option<PathBuf>,
+    settings: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -16,6 +16,13 @@ enum Command {
     Platform,
     #[command(hide = true)]
     Worker,
+    /// Install or upgrade the in-cluster system database.
+    ProvisionSystem {
+        #[arg(long)]
+        database: PathBuf,
+        #[arg(long)]
+        platform_domain: wamn_registry::platform_domain::PlatformDomain,
+    },
     #[command(hide = true)]
     ProvisionOrg {
         org: wamn_registry::OrgId,
@@ -42,9 +49,9 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let configuration = || {
         wamn_control::Configuration::read(
-            cli.config
+            cli.settings
                 .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("--config is required"))?,
+                .ok_or_else(|| anyhow::anyhow!("--settings is required"))?,
         )
     };
     match cli.command {
@@ -57,6 +64,16 @@ async fn main() -> anyhow::Result<()> {
                 wamn_control::platform::execute(&config, &request).await?
             );
             Ok(())
+        }
+        Command::ProvisionSystem {
+            database,
+            platform_domain,
+        } => {
+            let request = wamn_platform_install::provision_system::ProvisionSystemRequest {
+                database: wamn_postgres::ConnectionConfig::read(&database).await?,
+                platform_domain,
+            };
+            wamn_platform_install::provision_system::provision_system(&request).await
         }
         Command::ProvisionOrg { org, database } => {
             let database = wamn_postgres::ConnectionConfig::read(&database).await?;

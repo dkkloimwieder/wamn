@@ -35,7 +35,7 @@ metadata:
   namespace: platform
 spec:
   secretName: identity-tls
-  dnsNames: [identity.platform.svc.cluster.local]
+  dnsNames: [{{ trimPrefix "https://" .Values.global.identityIssuer | quote }}]
   issuerRef:
     kind: Issuer
     name: wamn-identity-serving

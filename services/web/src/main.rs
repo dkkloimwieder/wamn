@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 struct Cli {
     #[arg(long)]
-    config: PathBuf,
+    settings: PathBuf,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let cli = Cli::parse();
     match cli.command {
-        Some(Command::Probe) => wamn_web::probe(&cli.config).await,
-        None => wamn_web::serve(&cli.config).await,
+        Some(Command::Probe) => wamn_web::probe(&cli.settings).await,
+        None => wamn_web::serve(&cli.settings).await,
     }
 }

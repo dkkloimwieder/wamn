@@ -2,17 +2,21 @@
 {{- $namespace := .Values.org }}
 {{- $name := printf "c-%s" $namespace }}
 {{- $account := printf "wamn-control-%s" $namespace }}
-{{- $database := .Values.control.configuration.database }}
+{{- $configuration := .Values.control.configuration }}
+{{- $_ := required "Set control.configuration.identity_issuer to the platform identity issuer." $configuration.identity_issuer }}
+{{- $_ := required "Set control.configuration.nats_url to the platform NATS address." $configuration.nats_url }}
+{{- $settings := $configuration | toJson }}
+{{- $database := $configuration.database }}
 {{- $login := required "Set control.configuration.database.credentials.name." $database.credentials.name }}
 {{- $migration := required "Set control.systemMigrationSecret." .Values.control.systemMigrationSecret }}
 {{- $ca := required "Set control.configuration.database.server_ca.name." $database.server_ca.name }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ $name }}-configuration
+  name: {{ $name }}-settings
   namespace: {{ $namespace | quote }}
 data:
-  config.json: {{ .Values.control.configuration | toJson | quote }}
+  settings.json: {{ $settings | quote }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -33,6 +37,8 @@ spec:
   template:
     metadata:
       labels: {app.kubernetes.io/name: {{ $name }}, app.kubernetes.io/component: wamn-control}
+      annotations:
+        checksum/settings: {{ $settings | sha256sum | quote }}
     spec:
       serviceAccountName: {{ $account }}
       {{- if .Values.control.registrySecret }}
@@ -41,27 +47,24 @@ spec:
       containers:
         - name: control
           image: {{ .Values.control.image | quote }}
-          args: [--config, /etc/wamn/control/config.json, platform]
+          args: [--settings, /etc/wamn/control/settings.json, platform]
           ports: [{name: http, containerPort: 80}]
           env:
             - {name: DOCKER_CONFIG, value: /credentials/registry}
-            {{- if .Values.control.oauthSecret }}
-            - {name: WAMN_OAUTH_KEY_FILE, value: /etc/wamn/oauth/key}
-            {{- end }}
           volumeMounts:
             - {name: configuration, mountPath: /etc/wamn/control, readOnly: true}
             - {name: work, mountPath: /work}
             - {name: database, mountPath: /etc/wamn/db, readOnly: true}
             - {name: administration, mountPath: /etc/wamn/control-administration, readOnly: true}
             - {name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}
-            - {name: identity-control, mountPath: /etc/identity-control, readOnly: true}
+            - {name: identity-token, mountPath: /var/run/secrets/wamn-identity, readOnly: true}
             - {name: registry, mountPath: /credentials/registry, readOnly: true}
             {{- if .Values.control.oauthSecret }}
             - {name: oauth, mountPath: /etc/wamn/oauth, readOnly: true}
             {{- end }}
       volumes:
         - name: configuration
-          configMap: {name: {{ $name }}-configuration}
+          configMap: {name: {{ $name }}-settings}
         - {name: work, emptyDir: {}}
         - name: database
           projected:
@@ -83,8 +86,12 @@ spec:
         - name: administration
           configMap: {name: wamn-control-administration-{{ $namespace }}}
         - {name: identity-ca, configMap: {name: identity-ca}}
-        - name: identity-control
-          secret: {secretName: {{ printf "control-%s" $namespace | quote }}}
+        - name: identity-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: wamn-identity
+                  path: token
         - name: registry
           {{- if .Values.control.registrySecret }}
           secret:

@@ -10,6 +10,12 @@
         "gcp"
       ]
     },
+    "platformDomain": {
+      "type": "string",
+      "maxLength": 253,
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$",
+      "description": "Email domain for platform principals."
+    },
     "registry": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9.:-]*(/[a-z0-9][a-z0-9._-]*)*$"
@@ -56,21 +62,24 @@
           "minimum": 1,
           "description": "Project streams across all environments. JetStream reserves 320 MiB per project per pod."
         },
+        "identityIssuer": {
+          "const": "https://identity.platform.svc.cluster.local"
+        },
         "nats": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "schedulerUrl": {
-              "type": "string"
-            },
-            "dataUrl": {
-              "type": "string"
+              "const": "nats://wamn-nats.platform.svc.cluster.local:4222"
             }
-          }
+          },
+          "required": ["schedulerUrl"]
         }
       },
       "required": [
-        "maxProjects"
+        "maxProjects",
+        "identityIssuer",
+        "nats"
       ]
     },
     "gcp": {
@@ -123,10 +132,6 @@
       "properties": {
         "image": {
           "type": "string"
-        },
-        "trustedProxyHops": {
-          "type": "integer",
-          "minimum": 0
         },
         "oauthEncryption": {
           "type": "object",
@@ -192,9 +197,6 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "url": {
-              "type": "string"
-            },
             "tlsSecret": {
               "type": "string",
               "maxLength": 253
@@ -203,10 +205,6 @@
         },
         "resources": {
           "$ref": "#/definitions/resources"
-        },
-        "keyRotationSeconds": {
-          "type": "integer",
-          "minimum": 1
         }
       }
     },
@@ -269,6 +267,15 @@
         }
       }
     },
+    "systemSql": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string"
+        }
+      }
+    },
     "postgres": {
       "type": "object",
       "additionalProperties": false,
@@ -327,6 +334,7 @@
   },
   "required": [
     "provider",
+    "platformDomain",
     "registry",
     "global"
   ],

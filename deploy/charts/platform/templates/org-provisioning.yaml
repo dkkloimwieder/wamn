@@ -15,3 +15,5 @@ data:
   provider: {{ .Values.provider | quote }}
   registry: {{ .Values.registry | quote }}
   postgresImage: {{ .Values.postgres.image | quote }}
+  identityIssuer: {{ .Values.global.identityIssuer | quote }}
+  natsUrl: {{ .Values.global.nats.schedulerUrl | quote }}

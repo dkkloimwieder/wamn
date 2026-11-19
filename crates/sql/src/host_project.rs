@@ -1,23 +1,21 @@
 //! Project login Secrets belong to the host plugin; pools start at workload bind.
 use crate::{
     AuthorityClass, ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
-    StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
+    StaticCredentialProvider, WamnPostgres,
 };
 use anyhow::Context as _;
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-#[derive(Deserialize)]
+/// Public database coordinates and mounted login references for one host project.
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct HostProject {
+pub struct HostProject {
     host: String,
     port: u16,
     database: String,
     logins: BTreeMap<String, String>,
-    guest_pool_max_size: Option<usize>,
-    wait_timeout_ms: Option<u64>,
-    statement_timeout_ms: Option<u32>,
 }
 
 #[derive(Default)]
@@ -37,13 +35,11 @@ impl CredentialProvider for HostCredentials {
 }
 
 impl WamnPostgres {
-    /// Parse host-owned project locations without reading credentials or building pools.
-    pub fn from_host_config(config: &HashMap<String, String>) -> anyhow::Result<Self> {
-        let mut projects = BTreeMap::new();
-        for (project, config) in config {
-            let project: wamn_registry::ProjectId = project.parse()?;
-            let config: HostProject =
-                serde_json::from_str(config).context("decode host project configuration")?;
+    /// Validate host-owned project locations without reading credentials or building pools.
+    pub fn from_host_config(
+        projects: BTreeMap<wamn_registry::ProjectId, HostProject>,
+    ) -> anyhow::Result<Self> {
+        for config in projects.values() {
             anyhow::ensure!(!config.logins.is_empty(), "project has no database logins");
             for (class, secret) in &config.logins {
                 anyhow::ensure!(
@@ -57,7 +53,6 @@ impl WamnPostgres {
                     secret,
                 )?;
             }
-            projects.insert(project, config);
         }
         let credentials = Arc::new(HostCredentials::default());
         let mut postgres =
@@ -110,21 +105,12 @@ impl WamnPostgres {
                 .append_pair("sslrootcert", &directory.join("ca.crt").to_string_lossy());
             urls = urls.with_class(class, String::from(url));
         }
-        let base = WamnPostgresConfig::from_env();
         let next = ProjectConfig {
             credentials: urls,
-            guest_pool_max_size: config
-                .guest_pool_max_size
-                .unwrap_or(base.guest_pool_max_size),
-            platform_pool_max_size: base.platform_pool_max_size,
-            wait_timeout_ms: super::pool::bounded_wait_timeout_ms(
-                config.wait_timeout_ms.unwrap_or(base.wait_timeout_ms),
-            ),
-            statement_timeout_ms: super::pool::bounded_statement_timeout_ms(u64::from(
-                config
-                    .statement_timeout_ms
-                    .unwrap_or(base.statement_timeout_ms),
-            )),
+            guest_pool_max_size: 16,
+            platform_pool_max_size: 8,
+            wait_timeout_ms: super::pool::bounded_wait_timeout_ms(2_000),
+            statement_timeout_ms: super::pool::bounded_statement_timeout_ms(5_000),
         };
         let changed = credentials
             .0

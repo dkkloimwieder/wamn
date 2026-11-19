@@ -3,7 +3,6 @@ use anyhow::Context as _;
 use sqlx::Row as _;
 use std::fmt::Write as _;
 use std::time::Duration;
-use wamn_event::reader::ReaderConfig;
 use wamn_provision::{cdc_reader_name, sql};
 use wamn_registry::Triple;
 
@@ -66,27 +65,6 @@ fn cdc_schema_sql_bundle(
         .expect("write CDC SQL into a string");
     }
     bundle
-}
-
-/// Configuration for a reader whose connection is mounted from its own ConfigMap.
-pub fn reader_configuration(triple: &Triple, cdc_name: &str, nats_url: &str) -> ReaderConfig {
-    ReaderConfig {
-        org: triple.org.clone(),
-        project: triple.project.clone(),
-        env: triple.env.clone(),
-        publication: cdc_name.into(),
-        slot: cdc_name.into(),
-        stream: wamn_event::stream_name(&triple.org, &triple.project, &triple.env),
-        cdc_url: "/etc/wamn/cdc/connection.json".into(),
-        nats_url: nats_url.into(),
-        nats_tls_ca: Some("/etc/wamn/nats/ca.crt".into()),
-        nats_tls_cert: Some("/etc/wamn/nats/tls.crt".into()),
-        nats_tls_key: Some("/etc/wamn/nats/tls.key".into()),
-        feedback_secs: 5,
-        stall_threshold_secs: 30,
-        slot_poll_secs: 30,
-        slot_safe_wal_warn_bytes: 268_435_456,
-    }
 }
 
 /// Wait for reader pods, including pods left by an interrupted Deployment delete.

@@ -1,0 +1,27 @@
+{{- $system := include "wamn-platform.systemDatabase" . | fromJson -}}
+{{- $identity := .Values.identity -}}
+{{- if and $identity.localMail $identity.resendSecret -}}
+{{- fail "Select either identity.localMail or identity.resendSecret." -}}
+{{- end -}}
+{{- if and $identity.resendFrom (not $identity.resendSecret) -}}
+{{- fail "Set identity.resendSecret when identity.resendFrom is enabled." -}}
+{{- end -}}
+{{- $database := dict "host" $system.host "port" $system.port "database" $system.name "username" $system.identityRole.name "credentials" (dict "namespace" $system.namespace "name" $system.identityTlsSecret) "server_ca" (dict "namespace" $system.namespace "name" $system.ca) -}}
+{{- $settings := dict "issuer" .Values.global.identityIssuer "database" $database "envelope" $identity.oauthEncryption -}}
+{{- if $identity.localMail -}}
+{{- $_ := set $settings "mail" (dict "mode" "local" "spool" $identity.localMail) -}}
+{{- else if $identity.resendSecret -}}
+{{- $sender := required "Set identity.resendFrom when identity.resendSecret is enabled." $identity.resendFrom -}}
+{{- $mail := dict "mode" "resend" "sender" $sender -}}
+{{- if $identity.inviteUrl -}}
+{{- $_ := set $mail "invite_url" $identity.inviteUrl -}}
+{{- end -}}
+{{- $_ := set $settings "mail" $mail -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: identity-settings
+  namespace: {{ $system.namespace }}
+data:
+  settings.json: {{ $settings | toJson | quote }}

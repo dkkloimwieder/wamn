@@ -1,6 +1,7 @@
 //! Admin-side installation of a single org.
 
 use anyhow::{Context as _, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{net::IpAddr, path::PathBuf, time::Duration};
 use wamn_kubernetes::{Target, helm, job, kubectl};
@@ -8,6 +9,7 @@ use wamn_postgres::ConnectionConfig;
 use wamn_registry::OrgId;
 
 use crate::provision_org::{CONTROL_AUDIENCE, CONTROL_SECRET, INVITATION_ACCOUNT, SQL_ACCOUNT};
+use crate::release_chart::bundle::POD_REGISTRY;
 
 const PLATFORM: &str = "platform";
 const SYSTEM_SQL_CONFIG: &str = "wamn-system-sql";
@@ -25,10 +27,23 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
         context,
         namespace: PLATFORM.into(),
     };
-    let (inputs, database_config, identity_ca, api_server) = tokio::try_join!(
+    let (inputs, database_config, identity_ca, nats_ca, api_server) = tokio::try_join!(
         config_map(&target, PLATFORM, "wamn-org-inputs"),
         config_map(&target, PLATFORM, SYSTEM_SQL_CONFIG),
         config_map(&target, "hosts", "identity-ca"),
+        kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            PLATFORM,
+            &[
+                "get",
+                "secret",
+                "wasmcloud-ca",
+                "-o",
+                r"jsonpath={.data.tls\.crt}"
+            ],
+            None,
+        ),
         api_destinations(&target),
     )?;
     let database: ConnectionConfig =
@@ -43,11 +58,13 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
     )
     .await?
     .context("public system database CA Secret is absent")?;
-    let postgres_ca = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        field(&postgres_ca["data"], "ca.crt")?,
-    )
-    .context("decode the public system database CA")?;
+    let postgres_ca = STANDARD
+        .decode(field(&postgres_ca["data"], "ca.crt")?)
+        .context("decode the public system database CA")?;
+    ensure!(!nats_ca.is_empty(), "public NATS CA is absent");
+    let nats_ca = STANDARD
+        .decode(nats_ca)
+        .context("decode the public NATS CA")?;
     let inputs = &inputs["data"];
     let image = field(inputs, "controlImage")?;
     let (_, digest) = image.rsplit_once('@').context(
@@ -60,6 +77,7 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
         &database,
         org,
         field(&identity_ca["data"], "ca.crt")?,
+        std::str::from_utf8(&nats_ca).context("read the public NATS CA as PEM")?,
         std::str::from_utf8(&postgres_ca).context("read the public system database CA as PEM")?,
         &api_server,
     )?;
@@ -169,6 +187,7 @@ fn org_values(
     database: &ConnectionConfig,
     org: &OrgId,
     identity_ca: &str,
+    nats_ca: &str,
     postgres_ca: &str,
     api_server: &[Value],
 ) -> anyhow::Result<Value> {
@@ -180,11 +199,10 @@ fn org_values(
         .filter(|rest| rest.is_empty() || rest.starts_with('/'))
         .map_or_else(
             || registry.to_owned(),
-            |path| format!("wamn-registry.platform.svc.cluster.local:5000{path}"),
+            |path| format!("{POD_REGISTRY}{path}"),
         );
     let control = wamn_registry::name::control_resource(org);
     let origin = format!("http://{control}-http.{org}.svc.cluster.local");
-    let issuer = "https://identity.platform.svc.cluster.local";
     let connection = |username: &str, secret: &str| {
         json!({
             "host": database.host, "port": database.port, "database": database.database,
@@ -196,29 +214,22 @@ fn org_values(
     let migration =
         wamn_provision::migrations::MigrationDatabase::System.managed_role(&database.database);
     Ok(json!({
-        "org": org, "registry": internal_registry, "identityCa": identity_ca, "postgresCa": postgres_ca,
+        "org": org, "registry": internal_registry, "identityCa": identity_ca, "natsCa": nats_ca, "postgresCa": postgres_ca,
         "postgres": {"image": field(inputs, "postgresImage")?},
         "networkPolicy": {"apiServer": api_server},
         "control": {
             "image": image,
             "systemMigrationSecret": migration.password_secret.name,
             "configuration": {
-                "org": org, "http_addr": "0.0.0.0:80", "public_origin": origin,
+                "org": org, "public_origin": origin,
                 "database": connection(login.as_str(), CONTROL_SECRET),
                 "apply_database": connection(wamn_role::APPLY_ROLE, "wamn-apply"),
-                "session_issuer": issuer, "session_jwks_url": format!("{issuer}/.well-known/jwks.json"),
-                "session_audience": wamn_registry::name::org_audience(org),
-                "session_algorithms": ["EdDSA"], "session_jwks_ca": "/etc/identity-ca/ca.crt",
-                "administration_dir": "/etc/wamn/control-administration",
-                "worker": {"image": image, "configuration": format!("{control}-configuration"),
-                           "service_account": wamn_registry::name::operation(org)},
+                "identity_issuer": field(inputs, "identityIssuer")?,
+                "nats_url": field(inputs, "natsUrl")?,
+                "registry": internal_registry,
+                "worker_image": image,
                 "chart": "/usr/local/share/wamn/deploy/charts/application",
-                "package_artifact_base": format!("{internal_registry}/wamn/packages"),
-                "component_artifact_base": format!("{internal_registry}/wamn/components"),
-                "integration_artifact_base": format!("{internal_registry}/wamn/integrations"),
-                "registry_auth_file": "/credentials/registry/config.json",
-                "registry_token_metadata": !kind, "insecure_registry": kind,
-                "identity": {"endpoint": issuer, "server_ca": "/etc/identity-ca/ca.crt"},
+                "registry_token_metadata": !kind,
             },
         },
     }))

@@ -27,6 +27,8 @@ chrono = { workspace = true, features = ["std"] }
 pg_walstream = { workspace = true }
 # The event records and source identity contract.
 wamn-event = { workspace = true }
+wamn-registry.workspace = true
+serde.workspace = true
 # Canonical PostgreSQL identifier quoting shared with the guest-safe planners.
 postgres-protocol = { workspace = true }
 
@@ -35,6 +37,5 @@ workspace = true
 
 [dev-dependencies]
 futures-util = { workspace = true }
-wamn-registry.workspace = true
 wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }

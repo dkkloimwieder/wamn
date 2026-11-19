@@ -218,7 +218,7 @@ The four status routes need `org-admin`, and they write `registry.environments.s
 Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
-Control calls identity through one HTTPS client with the certificate `CN=control-<org>`.
+Control calls identity over HTTPS with a projected service account token for the `wamn-identity` audience.
 `user.create` and `user.invite` call `POST /users` before writing the membership.
 `user.invite` also writes the requested grants. Control calls `POST /invitations` only when the user has no password.
 Control checks contact details before it calls identity. It answers `user_refused` when identity refuses the user.
@@ -421,8 +421,7 @@ Both default to enforce. Each linear memory has a 256 MiB ceiling.
 The shared guest memory budget remains derived from the container limit.
 Existing route and queue admission limits and deployment memory limits remain independent.
 Wasmtime's pooling allocator remains enabled under its separate resource limits.
-The release chart sets how many bytes each allocator slot keeps resident after use.
-Dev activation and the local benchmark read the same values ([host environment](../operations/development-loop.md)).
+The host defaults to 64 KiB of resident linear memory, 4 KiB of resident table memory, and 8 KiB of resident async stack memory per allocator slot.
 These values change residency only. They do not increase slot counts or memory ceilings.
 Wasmtime leaves async stack zeroing disabled, so its async stack residency value has no effect under this configuration.
 Native epochs bound guest execution. Duration metering does not grant instruction fuel.
@@ -814,7 +813,7 @@ Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.
 The shared [encryption module](../../crates/envelope/src/encryption.rs) supports regional Cloud KMS and a local key file.
-The host reads its provider from `WAMN_OAUTH_ENCRYPTION`.
+The host reads its provider from the `oauth_encryption` field in its settings file.
 Use `gcp` for Cloud KMS or `local` for a key file.
 [Deployment instructions](../operations/gcp.md#49-platform-install-inputs) describe that configuration.
 Each host retains at most 1024 unwrapped keys and evicts the least recently used key.
@@ -975,8 +974,7 @@ Enrollment requires 15 Unicode characters and accepts at most 1,024 UTF-8 bytes 
 The identity chart runs two replicas. Each replica limits password requests to eight and HTTPS connections to 128.
 Password requests use `wamn_postgres::pool` with eight connections. SQLx flushes pending rollbacks before returning a connection to the pool.
 Rotation retains its dedicated database connection and issuer advisory lock.
-The service trusts zero proxy hops by default. The identity chart sets `trustedProxyHops` to one for the forwarding web proxy.
-The count selects an address backward through all `x-forwarded-for` headers, as in `wamn-web`. Zero uses the TLS peer address.
+The service trusts one hop for the forwarding web proxy. It uses the last address in the `X-Forwarded-For` headers.
 Database counters enforce 60-second windows across replicas: 120 requests globally, 20 per source address, and five per account.
 Enrollment uses the principal ID for its account counter. Login uses a digest of the normalized email.
 The source is the client address forwarded by ingress in `X-Forwarded-For`.
@@ -984,8 +982,6 @@ The Rust web front normalizes the final address in the chain before proxying a p
 Direct requests without that header use the TLS peer address.
 Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
-User management uses the client certificate that the operator CA verifies.
-The certificate subject must match `WAMN_IDENTITY_CONTROL_SUBJECT`, which is `CN=control-<org>`.
 User management shares the request limits. Its source is the TLS peer address.
 `POST /invitations` takes a `principal_id` and requires mail configuration.
 The service sends the one-time secret through Resend to that principal's stored email.
@@ -1062,7 +1058,7 @@ Application builds preserve that process, its identity database, and its signing
 This process ownership adds no external identity provider.
 
 Unknown accounts and incorrect passwords receive the same unauthorized response.
-These routes are enabled only when the service has a Resend key and sender.
+Mail configuration enables these routes. The service uses either Resend or a local mail file.
 The terminal serializes renewal and preserves the original absolute deadline with both wall-clock and monotonic expiry tests.
 It clears credentials before renewal I/O, so failure or cancellation requires another login without retrying a consumed credential.
 Logout clears local credentials even when server revocation cannot be confirmed.
@@ -1081,16 +1077,17 @@ A fetch permits five seconds and 65,536 response bytes.
 A stale set refuses authentication even for a previously known key.
 Final admission cannot extend freshness after slow permission reads.
 
-The identity service activates a key only after its committed publication is at least 330 seconds old.
-This bound is the advertised 300-second JWKS cache lifetime plus `KEY_PUBLICATION_MARGIN_SECONDS` (30 seconds).
-Scheduled rotation publishes first, then waits for that bound before activation. Explicit activation obeys the same bound.
+On startup, identity creates the first key and active pointer for a new issuer in one transaction.
+Readiness requires a working database connection and an active key.
+During rotation, identity commits the new public key and waits at least 330 seconds before activation.
+That interval is the 300-second JWKS cache lifetime plus a 30-second margin.
 A transaction lock establishes the stop-signing boundary before retirement.
 Public keys remain available for 930 seconds after that boundary.
 An emergency key removal does not activate a replacement.
 Previously cached keys can still authenticate for their remaining 300-second freshness window.
 
 Private signing keys are encrypted by `wamn-envelope` with the same provider and wrapping key as OAuth tokens.
-Identity requires `WAMN_OAUTH_ENCRYPTION` and, for the local provider, `WAMN_OAUTH_KEY_FILE`. There is no plaintext fallback.
+The identity settings file selects the provider. The local provider reads its wrapping key from `/etc/wamn/oauth/key`.
 `identity.session_keys.private_key_envelope` stores the packed JSON envelope as bytes: ciphertext, nonce, wrapped key and key id.
 Retirement erases that whole column. Identity decrypts the active key under the existing shared issuer lock for each signature.
 The public endpoint exposes only public key material.

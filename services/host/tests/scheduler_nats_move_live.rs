@@ -363,6 +363,10 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
     docker(&["network", "create", &network]).await?;
     let host = fixture.container("host");
     let binary_mount = format!("{}:/wamn-host:ro", env!("CARGO_BIN_EXE_wamn-host"));
+    let nats_url = "nats://nats:4222";
+    let settings = native_host::write_settings(&evidence, "nats-move-test", nats_url)?;
+    let settings_mount = format!("{}:/settings/settings.json:ro", settings.display());
+    let plugins_mount = format!("{}:/settings/host.yaml:ro", evidence.join("host.yaml").display());
     let cert_mount = format!(
         "{}:/runtime-cert:ro",
         evidence.join("runtime-cert").display()
@@ -380,6 +384,10 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
         &binary_mount,
         "-v",
         &cert_mount,
+        "-v",
+        &settings_mount,
+        "-v",
+        &plugins_mount,
         // The HTTP transport loads the system roots at startup.
         "-v",
         "/etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro",
@@ -393,7 +401,9 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
         "--environment",
         "nats-move-test",
         "--scheduler-nats-url",
-        "nats://nats:4222",
+        nats_url,
+        "--data-nats-url",
+        nats_url,
         "--scheduler-nats-tls-ca",
         "/runtime-cert/ca.crt",
         "--scheduler-nats-tls-cert",
@@ -412,8 +422,10 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
         "count",
         "--drain-delay",
         "5s",
-        "--drain-bound-seconds",
-        "300",
+        "--settings",
+        "/settings/settings.json",
+        "--user-config",
+        "/settings/host.yaml",
     ])
     .await?;
     let probe_port = published_port(&host, "9090/tcp").await?;

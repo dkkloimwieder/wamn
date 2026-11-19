@@ -17,13 +17,6 @@ fn main() -> ExitCode {
         .with_writer(std::io::stderr)
         .log_internal_errors(false)
         .init();
-    // Load before the runtime creates threads. Existing environment values win.
-    if let Err(error) = dotenvy::from_filename(".env")
-        && !error.not_found()
-    {
-        tracing::error!("identity .env file refused");
-        return ExitCode::FAILURE;
-    }
     let cli = Cli::parse();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

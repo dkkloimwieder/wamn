@@ -298,7 +298,10 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let mut platform: Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;
     platform["identity"]["image"] = values["platform"]["identity"]["image"].take();
     platform["edge"]["image"] = values["platform"]["edge"]["image"].take();
-    platform["systemSql"]["image"] = values["platform"]["control"]["image"].clone();
+    platform["systemSql"]["image"] = values["platform"]["control"]["image"]
+        .as_str()
+        .context("control image")?
+        .into();
     std::fs::write(path, serde_yaml::to_string(&platform)?)?;
     let path = stamped.join("platform/org/values.yaml");
     let mut org: Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;

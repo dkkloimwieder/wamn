@@ -142,9 +142,6 @@ The owner supplies these external cloud inputs.
     DNS for every route host must point to the global address that OpenTofu creates.
     The owner supplies a firewall rule for TCP port 8080 from `35.191.0.0/16` and `130.211.0.0/22` to the cluster nodes.
     Platform deployment creates the Service before OpenTofu plans the load balancer.
-    The edge mounts the Secret `hosts/wamn-edge-tls`, which cert-manager creates from `deploy/gcp/letsencrypt.yaml`.
-    The issuer uses Cloud DNS zone `wamn-dev` in project `wamn-dev`.
-    The owner grants `roles/dns.admin` on that zone to the manifest's service account `cert-manager/cert-manager`.
     The load balancer uses its own Google-managed certificate from Certificate Manager.
 
 15. Read and create access to `buckets.web` for web uploads.
@@ -178,7 +175,7 @@ The teardown keeps these resources for later cloud integration. The owner makes 
   The project document declares this repository. [Project document](../../deploy/gcp/project.k)
 - The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
-- The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone. `project.k` declares the zone. OpenTofu does not own the records or the binding.
+- The Cloud DNS zone `wamn-dev` and its records. `project.k` declares the zone. OpenTofu does not own the records.
 - The direct worker grants on `wamn`, `gs://wamn-dev-labels` and `gs://wamn-dev-web` (section 1, items 4 and 15).
 - The firewall rule that permits ingress traffic to the Rust web front on TCP port 8080. The project document declares the load balancer objects.
 
@@ -447,16 +444,12 @@ Use the existing infrastructure and platform owners in this order.
    Save the plan and apply it after approval.
    OpenTofu resource targeting includes each target's dependencies. [OpenTofu plan](https://opentofu.org/docs/cli/commands/plan/)
 2. Deploy the platform with the Epic 10 installation path.
-   The platform owner deploys cert-manager, the edge certificate, and the edge Helm release.
+   The platform owner deploys cert-manager and the edge Service.
    GKE creates the NEG from the Service annotation.
 3. Run a full `tofu plan` in the same directory and apply the approved saved plan.
    OpenTofu reads the Service-owned NEG and creates the HTTPS load balancer, address, CDN, and Google-managed certificate.
    The DNS owner publishes the certificate authorization CNAME from the OpenTofu outputs.
    The DNS owner points each route host at the global address `wamn-edge`.
-
-Keep the cert-manager DNS challenge record and the load balancer's certificate authorization CNAME separate.
-The OpenTofu authorization uses a per-project DNS name.
-cert-manager uses `_acme-challenge` for the certificate mounted by the edge.
 
 ### One approved GKE verification
 

@@ -14,6 +14,7 @@ networkPolicy:
   registry: []
 registry: localhost:5001
 identityCa: ""
+natsCa: ""
 postgresCa: ""
 postgres:
   image: ghcr.io/cloudnative-pg/postgresql:18.7
@@ -27,6 +28,5 @@ control:
   platformUi: null
   registrySecret: ""
   oauthSecret: ""
-  certificateIssuer: ""
   systemMigrationSecret: ""
   configuration: {}
