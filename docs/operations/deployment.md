@@ -234,9 +234,8 @@ Use this layout for new installs. Existing Helm records and their resource owner
 The kstatus watcher retains `list` and `watch` on the non-Secret kinds that environment and application charts render.
 
 `wamn env apply environment.yaml` holds one environment lock.
-The worker reserves the selected projects. It starts one environment chart upgrade with `--wait=watcher` before it configures the projects.
+The worker reserves the selected projects, asks identity to publish the environment account, and writes the host and admin credential Secrets. It starts one environment chart upgrade with `--wait=watcher` before it configures the projects.
 It upgrades one project chart per project and runs that project's SQL in file order.
-The first project waits up to 120 seconds for the host chart's broker certificate.
 After the last project succeeds, the worker checks the environment chart's Helm result and removes unused connection pins on a full apply.
 If a project fails, the worker stops and names the project. Fix the error and run the command again to continue.
 New projects later in the file stay reserved without applied configuration.
@@ -246,20 +245,19 @@ The project chart declares one PostgreSQL Cluster and five managed logins per pr
 The environment YAML sets the database size for all projects. The installation values pin the PostgreSQL image.
 Project upgrades keep the login passwords and omit the Helm wait flag.
 See [Backup and recovery](backup-and-recovery.md) for backup settings.
-The worker reads each required PostgreSQL cluster, Database, certificate, and reader Deployment by name.
+The worker reads each required PostgreSQL cluster, Database, and reader Deployment by name.
 The project chart creates the PostgreSQL publication for change data capture (CDC).
 For each project, the worker waits for the database to be applied and allows up to 120 seconds for it to accept a SQL connection.
 CloudNativePG creates the database with `wamn_migration` as owner. The worker installs the project schema before restoring platform migrations. It checks the publication in SQL before it creates the replication slot.
 The CDC reader waits up to 120 seconds for its slot before it starts replication.
-After the certificates report ready, the worker reads the environment Secret and waits up to 60 seconds for NATS to accept the account.
-The worker creates the stream and saves the project's applied configuration.
+The worker creates the stream with the environment's `stream-admin` credentials and saves the project's applied configuration.
 The project chart mounts the YAML document in later project Jobs.
 The reader stays paused while a capture gap is open.
-The shared host group uses the runtime operator chart at version 2.12.2. Its `wasmcloud-nats` entry points to the broker and reads TLS files from `/etc/wasmcloud/host-plugin-secrets/<environment-secret>/`.
+The shared host group uses the runtime operator chart at version 2.12.2. The host reads NATS user credentials from `/etc/wamn/nats/` and trusts the broker CA at `/etc/wamn/nats-ca/ca.crt`.
 
 Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Helm keeps the Cluster and ObjectStore by default. Add `--data` and confirm the coordinate to remove both resources.
 Delete stops the reader before it removes the stream, then removes the replication slot and publication.
-The last project removes the environment account and shared Certificate after deleting its stream.
+Delete removes the project’s CDC and recovery credential Secrets. For the last project it also removes the host group, the shared credentials, and the environment account.
 These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
 Use `wamn revoke-pat --project PROJECT --env ENV --prefix PREFIX` from an org admin session.
 Other lifecycle operations take the coordinate and read the registry.

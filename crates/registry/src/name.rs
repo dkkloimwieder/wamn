@@ -22,19 +22,22 @@ pub fn environment_nats_account(org: &crate::OrgId, env: &crate::EnvName) -> Str
     format!("ENV_{org}_{env}")
 }
 
-/// The certificate user for the hosts in an environment account.
-pub fn environment_nats_user(org: &crate::OrgId, env: &crate::EnvName) -> String {
-    format!("wamn-env-{}", environment_key(org, env))
+/// Inbox prefix for a user NKey issued by identity.
+pub fn nats_user_inbox(public_key: &str) -> String {
+    format!("_INBOX_wamn.{public_key}")
 }
 
-/// The certificate user and Secret name for environment stream administration.
-pub fn environment_nats_admin(org: &crate::OrgId, env: &crate::EnvName) -> String {
-    format!("wamn-nats-admin-{}", environment_key(org, env))
+/// The org Secret holding an environment-scoped NATS user.
+pub fn environment_nats_secret(org: &crate::OrgId, env: &crate::EnvName, kind: &str) -> String {
+    format!("wamn-nats-{kind}-{}", environment_host_name(org, env))
 }
 
-/// The platform Secret that contains one org's broker accounts.
-pub fn org_nats_accounts_secret(org: &crate::OrgId) -> String {
-    format!("wamn-nats-accounts-{org}")
+/// The org Secret holding a project-scoped NATS user.
+pub fn project_nats_secret(target: &crate::Triple, kind: &str) -> String {
+    format!(
+        "wamn-nats-{kind}-{}",
+        environment_resource_name(&target.org, &target.project, &target.env)
+    )
 }
 
 /// The ServiceAccount of the org control service.
@@ -110,7 +113,10 @@ pub fn project_env_database_name(
 /// The project's CloudNativePG Cluster. The database name encodes its
 /// coordinate and generation. Keep space for the recovery suffix.
 pub fn project_cluster(database: &str) -> String {
-    format!("wamn-pg-{}", &hex::encode(sha256(database.as_bytes()))[..32])
+    format!(
+        "wamn-pg-{}",
+        &hex::encode(sha256(database.as_bytes()))[..32]
+    )
 }
 
 /// The project primary service in its organization.
@@ -122,7 +128,10 @@ pub fn project_database_host(database: &str, org: &crate::OrgId) -> String {
 /// fit the runtime operator's volume name with the host-plugin-secret- prefix.
 pub fn project_login_secret(database: &str, login: &str) -> String {
     let identity = format!("{database}/{login}");
-    format!("wamn-login-{}", &hex::encode(sha256(identity.as_bytes()))[..32])
+    format!(
+        "wamn-login-{}",
+        &hex::encode(sha256(identity.as_bytes()))[..32]
+    )
 }
 
 /// Read a project coordinate only from a valid, generation-qualified database name.
@@ -241,41 +250,6 @@ pub fn cdc_object_name_stem(
         flat(org.as_str()),
         flat(env.as_str()),
         flat(project.as_str())
-    )
-}
-
-/// The Certificate shared by the projects of an environment.
-pub fn environment_nats_certificate(org: &crate::OrgId, env: &crate::EnvName) -> String {
-    format!("wamn-nats-{}", environment_key(org, env))
-}
-
-/// The TLS Secret issued for the environment Certificate.
-pub fn environment_nats_secret(org: &crate::OrgId, env: &crate::EnvName) -> String {
-    environment_nats_certificate(org, env)
-}
-
-/// The publish-only certificate user for the project's CDC reader.
-pub fn cdc_nats_user(
-    org: &crate::OrgId,
-    project: &crate::ProjectId,
-    env: &crate::EnvName,
-) -> String {
-    format!("wamn-cdc-{}", project_env_key(org, project, env))
-}
-
-/// The Certificate and TLS Secret of the project's CDC reader.
-pub fn cdc_nats_certificate(target: &crate::Triple) -> String {
-    format!(
-        "wamn-cdc-nats-{}",
-        project_env_key(&target.org, &target.project, &target.env)
-    )
-}
-
-/// The project recovery user and its client Certificate and Secret name.
-pub fn recovery_nats_user(target: &crate::Triple) -> String {
-    format!(
-        "wamn-recovery-{}",
-        project_env_key(&target.org, &target.project, &target.env)
     )
 }
 

@@ -2,6 +2,7 @@
 
 pub mod analyse;
 pub mod bindings;
+mod broker;
 pub mod capture_gap;
 mod cdc_reader;
 pub mod connections;

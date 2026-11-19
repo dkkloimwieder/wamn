@@ -211,6 +211,25 @@ pub fn credentials(jwt: &str, key: &KeyPair) -> Result<Zeroizing<String>, Error>
     )))
 }
 
+pub(super) fn delete_account(
+    key: &KeyPair,
+    account: &str,
+    issued_at: i64,
+) -> Result<String, Error> {
+    // The resolver requires a generic JWT self-signed by a trusted operator key.
+    let subject = key.public_key();
+    encode(
+        key,
+        &subject,
+        "delete-account",
+        issued_at,
+        serde_json::json!({
+            "accounts": [account],
+            "version": 2
+        }),
+    )
+}
+
 fn encode<T: Serialize>(
     key: &KeyPair,
     subject: &str,

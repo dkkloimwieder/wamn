@@ -4,7 +4,7 @@ This chart installs shared services in `platform` and the edge in `hosts`. Use t
 
 Use `values-kind.yaml` or `values-gcp.yaml` for the installation. The schema validates WAMN inputs. Vendored charts accept their upstream values.
 
-Each NATS pod reserves 320 MiB of JetStream storage per `global.maxProjects`. A project stream can use 256 MiB. The remaining 64 MiB per project covers metadata and filesystem overhead. The resolver has its own persistent volume claim when enabled. Lane 10.2 replaces the legacy file-based org account provisioning.
+Each NATS pod reserves 320 MiB of JetStream storage per `global.maxProjects`. A project stream can use 256 MiB. The remaining 64 MiB per project covers metadata and filesystem overhead. The full resolver has a separate 1 GiB persistent volume claim. The NATS init container waits for identity to publish the operator JWT.
 
 The SQL Job runs `provision-system` from the `wamn-control` image. Platform artifact stamping pins that image through `systemSql.image`.
 It applies pending system migrations and records `platformDomain` as the email domain for platform principals.

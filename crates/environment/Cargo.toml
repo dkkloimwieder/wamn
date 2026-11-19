@@ -11,6 +11,7 @@ test-util = []
 ops = ["wamn-provision/ops"]
 
 [dependencies]
+base64.workspace = true
 wamn-role.workspace = true
 wamn-connection = { workspace = true }
 wamn-event.workspace = true
@@ -40,6 +41,9 @@ wamn-provision = { workspace = true }
 wamn-registry = { workspace = true }
 postgres-protocol = { workspace = true }
 wamn-identity = { workspace = true }
+wamn-identity-client.workspace = true
+nkeys.workspace = true
+zeroize.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-run-state = { workspace = true }
 wamn-codegen = { workspace = true }

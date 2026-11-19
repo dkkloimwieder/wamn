@@ -524,14 +524,13 @@ pub async fn run_with_shutdown(
             .append_pair("sslrootcert", ca.strip_prefix("file: ").unwrap_or(&ca));
     }
     args.cdc_url = input.into();
-    let nats_options = wamn_broker::nats::tls_options(
-        async_nats::ConnectOptions::new()
-            .custom_inbox_prefix(wamn_broker::nats::inbox_prefix(&args.nats_user())),
+    let mut nats_options = wamn_broker::nats::tls_options(
+        async_nats::ConnectOptions::new(),
         args.nats_tls_ca.as_deref(),
-        args.nats_tls_cert.as_deref(),
-        args.nats_tls_key.as_deref(),
-        None,
-    )?;
+    );
+    if let Some(creds) = &args.nats_creds {
+        nats_options = wamn_broker::nats::credentials_options(nats_options, creds).await?;
+    }
     let client = wamn_broker::nats::connect(
         nats_options,
         &args.nats_url,
@@ -816,19 +815,19 @@ async fn drain(
                         row.op,
                     );
                     let id = msg_id(&args.project, &args.env, &envelope.identity);
-                    let payload =
-                        match serde_json::to_vec(&wamn_event::SourceEvent::Cdc(envelope)) {
-                            Ok(p) => bytes::Bytes::from(p),
-                            Err(e) => {
-                                return DrainOutcome::Severed(
-                                    ReplicationError::Io(std::io::Error::new(
-                                        std::io::ErrorKind::InvalidData,
-                                        e,
-                                    )),
-                                    summary,
-                                );
-                            }
-                        };
+                    let payload = match serde_json::to_vec(&wamn_event::SourceEvent::Cdc(envelope))
+                    {
+                        Ok(p) => bytes::Bytes::from(p),
+                        Err(e) => {
+                            return DrainOutcome::Severed(
+                                ReplicationError::Io(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    e,
+                                )),
+                                summary,
+                            );
+                        }
+                    };
                     msgs.push(PreparedMsg {
                         subject,
                         id,

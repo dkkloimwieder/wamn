@@ -4,7 +4,7 @@
 {{- $login := required "Set cdcReader.database.credentials.name" $database.credentials.name }}
 {{- $ca := required "Set cdcReader.database.server_ca.name" $database.server_ca.name }}
 {{- $publication := required "publication is required for the CDC reader" $.Values.publication }}
-{{- $settings := dict "org" $publication.org "project" $publication.project "env" $publication.env "database" $database "cdc_name" $publication.name "nats_url" (required "cdcReader.natsUrl is required" .natsUrl) | toJson }}
+{{- $settings := dict "org" $publication.org "project" $publication.project "env" $publication.env "database" $database "cdc_name" $publication.name "nats_url" (required "cdcReader.natsUrl is required" .natsUrl) "nats_creds" "/etc/wamn/nats/user.creds" | toJson }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -50,6 +50,7 @@ spec:
             - {name: cdc, mountPath: /etc/wamn/cdc, readOnly: true}
             - {name: database, mountPath: /etc/wamn/db, readOnly: true}
             - {name: nats, mountPath: /etc/wamn/nats, readOnly: true}
+            - {name: nats-ca, mountPath: /etc/wamn/nats-ca, readOnly: true}
       volumes:
         - name: cdc
           configMap: {name: {{ .name | quote }}}
@@ -67,5 +68,10 @@ spec:
                   items:
                     - {key: ca.crt, path: {{ printf "%s/ca.crt" $login | quote }}}
         - name: nats
-          secret: {secretName: {{ .natsSecret | quote }}}
+          secret:
+            secretName: {{ required "Set cdcReader.natsSecret" .natsSecret | quote }}
+            defaultMode: 0400
+            items: [{key: user.creds, path: user.creds}]
+        - name: nats-ca
+          configMap: {name: nats-ca}
 {{- end }}

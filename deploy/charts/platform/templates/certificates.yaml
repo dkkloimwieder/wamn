@@ -57,22 +57,3 @@ spec:
     kind: Issuer
     name: wasmcloud-ca
     group: cert-manager.io
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: wasmcloud-operator-tls
-  namespace: platform
-spec:
-  secretName: wasmcloud-operator-tls
-  commonName: wasmcloud-operator
-  dnsNames:
-    - wasmcloud-operator
-  usages:
-    - client auth
-    - digital signature
-    - key encipherment
-  issuerRef:
-    kind: Issuer
-    name: wasmcloud-ca
-    group: cert-manager.io

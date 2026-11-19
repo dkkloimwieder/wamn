@@ -14,13 +14,11 @@ registryTokenMetadata: false
 ociCaPaths: []
 oauthEncryption: null
 environmentNats: null
-brokerCertificates: []
-brokerAdminCertificate: null
 
 global:
-  certificates:
-    # The platform owns the CA and broker certificate Secrets.
-    generate: false
+  tls:
+    # The host sets the broker CA and credentials in its group arguments.
+    enabled: false
 
 runtime-operator:
   networkPolicy:

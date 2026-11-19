@@ -37,6 +37,13 @@ impl Error {
         }
     }
 
+    /// Whether the requested account would exceed the platform project limit.
+    pub fn is_project_limit(&self) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|source| source.is::<store::ProjectLimit>())
+    }
+
     /// Whether the client supplied an invalid NATS user public key.
     pub fn is_invalid_user_key(&self) -> bool {
         self.source.is_none()
@@ -78,6 +85,7 @@ pub struct Authority {
     operator_signing: KeyPair,
     platform: String,
     platform_signing: KeyPair,
+    max_projects: i64,
 }
 
 impl fmt::Debug for Authority {
@@ -88,6 +96,8 @@ impl fmt::Debug for Authority {
 
 /// The subject used to push account claims to the NATS full resolver.
 pub const UPDATE_SUBJECT: &str = "$SYS.REQ.CLAIMS.UPDATE";
+/// Resolver endpoint for operator-signed account removal.
+pub const DELETE_SUBJECT: &str = "$SYS.REQ.CLAIMS.DELETE";
 /// Inbox prefix for the platform runtime operator.
 pub const RUNTIME_OPERATOR_INBOX: &str = "_INBOX_wasmcloud-operator";
 
@@ -96,6 +106,7 @@ pub async fn bootstrap(
     client: &mut PgConnection,
     issuer: &str,
     envelope: &Envelope,
+    max_projects: i64,
 ) -> Result<Bootstrap, Error> {
     let mut tx = client.begin().await.map_err(store::database_error)?;
     store::lock(&mut tx, issuer).await?;
@@ -189,7 +200,10 @@ pub async fn bootstrap(
         &resolver_user_id,
         "wamn-identity-resolver",
         unix_seconds()?,
-        &permissions([UPDATE_SUBJECT], [format!("{system_inbox}.>")]),
+        &permissions(
+            [UPDATE_SUBJECT, DELETE_SUBJECT],
+            [format!("{system_inbox}.>")],
+        ),
     )?;
     let system_creds = claims::credentials(&jwt, &resolver_user)?;
     let jwt = claims::user(
@@ -217,6 +231,7 @@ pub async fn bootstrap(
             operator_signing: signing.pair,
             platform: platform_id,
             platform_signing: platform_signing.pair,
+            max_projects,
         },
     })
 }
@@ -232,8 +247,16 @@ impl Authority {
         env: &EnvName,
         project_count: i32,
     ) -> Result<(String, String), Error> {
-        let key =
-            store::ensure_environment(client, envelope, issuer, org, env, project_count).await?;
+        let key = store::ensure_environment(
+            client,
+            envelope,
+            issuer,
+            org,
+            env,
+            project_count,
+            self.max_projects,
+        )
+        .await?;
         let jwt = claims::account(
             &self.operator_signing,
             &key.subject,
@@ -243,6 +266,23 @@ impl Authority {
             &[key.signer.public_key()],
         )?;
         Ok((key.subject, jwt))
+    }
+
+    /// Advance the account revision and sign a full-resolver delete request.
+    pub async fn retire_environment(
+        &self,
+        client: &mut PgConnection,
+        issuer: &str,
+        org: &OrgId,
+        env: &EnvName,
+    ) -> Result<Option<(String, String)>, Error> {
+        let Some((account, issued_at)) =
+            store::retire_environment(client, issuer, org, env).await?
+        else {
+            return Ok(None);
+        };
+        let jwt = claims::delete_account(&self.operator_signing, &account, issued_at)?;
+        Ok(Some((account, jwt)))
     }
 
     /// Issue a scoped JWT in an existing environment account.

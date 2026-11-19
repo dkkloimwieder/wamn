@@ -5,7 +5,6 @@ publication: null
 cdcReader: null
 operations: null
 environmentDocument: null
-brokerCertificates: []
 cluster: null
 recovery: null
 deleteData: false

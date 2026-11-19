@@ -38,22 +38,23 @@
 {{- $mounts = append $mounts (dict "name" "project-database" "mountPath" "/etc/wamn/db" "readOnly" true) }}
 
 {{- $broker := required "Set environmentNats." .Values.environmentNats }}
-{{- $brokerDirectory := printf "/etc/wasmcloud/host-plugin-secrets/%s" $broker.secret }}
-{{- $natsConfig := dict
-    "servers" $nats
-    "tls-ca" (printf "%s/ca.crt" $brokerDirectory)
-    "tls-cert" (printf "%s/tls.crt" $brokerDirectory)
-    "tls-key" (printf "%s/tls.key" $brokerDirectory)
-    "stream-allow" (join "," $streams)
-    "subject-allow" $broker.subjects
-}}
+{{- $ca := "/etc/wamn/nats-ca/ca.crt" }}
+{{- $volumes = append $volumes (dict "name" "nats-ca" "configMap" (dict "name" "nats-ca")) }}
+{{- $mounts = append $mounts (dict "name" "nats-ca" "mountPath" (dir $ca) "readOnly" true) }}
+{{- $brokerNames := dict "scheduler" $broker.scheduler "data" $broker.data "workflow-native" $broker.native "workflow" $broker.workflow.secret "ingress" $broker.ingress.secret }}
+{{- range $kind, $secret := $brokerNames }}
+{{- $volumes = append $volumes (dict "name" (printf "nats-%s" $kind) "secret" (dict "secretName" $secret "defaultMode" 256 "items" (list (dict "key" "user.creds" "path" "user.creds")))) }}
+{{- $mounts = append $mounts (dict "name" (printf "nats-%s" $kind) "mountPath" (printf "/etc/wamn/nats/%s" $kind) "readOnly" true) }}
+{{- end }}
+{{- $natsConfig := dict "stream-allow" (join "," $streams) "subject-allow" $broker.subjects }}
 {{- $bindings := dict }}
 {{- range $binding := list "workflow" "ingress" }}
-{{- $_ := set $bindings $binding (dict "config" (dict "inbox-prefix" (printf "%s.%s" $broker.inbox $binding))) }}
+{{- $user := index $broker $binding }}
+{{- $_ := set $bindings $binding (dict "config" (dict "servers" $nats "tls-ca" $ca "creds" (printf "/etc/wamn/nats/%s/user.creds" $binding) "inbox-prefix" $user.inbox)) }}
 {{- end }}
 {{- $plugins := list
     (dict "id" "wamn-postgres" "workloadConfig" "deny")
-    (dict "id" "wasmcloud-nats" "workloadConfig" "deny" "secretFrom" (list $broker.secret) "config" $natsConfig "bindings" $bindings)
+    (dict "id" "wasmcloud-nats" "workloadConfig" "deny" "config" $natsConfig "bindings" $bindings)
 }}
 
 {{- $settings := dict "org" $org "env" $env "identity_issuer" $issuer "nats_url" $nats "drain_bound_seconds" $drain "insecure_registry" .Values.insecureRegistry "oauth_encryption" .Values.oauthEncryption "projects" $projects | toJson }}
@@ -92,7 +93,12 @@ data:
     "plugins" $plugins
     "volumes" $volumes
     "volumeMounts" $mounts
-    "extraArgs" (list "--settings=/etc/wamn/host/settings.json")
+    "extraArgs" (list "--settings=/etc/wamn/host/settings.json"
+        "--scheduler-nats-creds=/etc/wamn/nats/scheduler/user.creds"
+        "--data-nats-creds=/etc/wamn/nats/data/user.creds"
+        (printf "--scheduler-nats-tls-ca=%s" $ca)
+        (printf "--data-nats-tls-ca=%s" $ca)
+    )
 ) $placement }}
 {{- $_ := set $runtime "hostGroups" (list $group) }}
 {{- $_ := set $runtime "terminationGracePeriodSeconds" $drain }}

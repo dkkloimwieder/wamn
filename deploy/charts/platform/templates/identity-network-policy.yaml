@@ -22,4 +22,8 @@ spec:
             matchLabels: {wamn.dev/org: "true"}
           podSelector:
             matchLabels: {app.kubernetes.io/component: wamn-control}
+        - namespaceSelector:
+            matchLabels: {wamn.dev/org: "true"}
+          podSelector:
+            matchLabels: {app.kubernetes.io/component: wamn-worker}
       ports: [{port: 8443, protocol: TCP}]

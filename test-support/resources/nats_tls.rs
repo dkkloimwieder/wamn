@@ -51,17 +51,6 @@ pub struct ClientCertificate {
 }
 
 impl ClientCertificate {
-    /// The connection of a platform process with this certificate.
-    pub fn platform_nats(&self, url: &str) -> wamn_broker::nats::PlatformNats {
-        wamn_broker::nats::PlatformNats {
-            nats_url: url.to_owned(),
-            nats_tls_ca: self.ca.clone(),
-            nats_tls_cert: self.cert.clone(),
-            nats_tls_key: self.key.clone(),
-            nats_tls_server_name: None,
-        }
-    }
-
     /// Connect with this certificate. Replies use the user's private inbox.
     pub async fn connect(&self, url: &str) -> anyhow::Result<async_nats::Client> {
         self.options()

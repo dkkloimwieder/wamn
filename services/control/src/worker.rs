@@ -31,6 +31,31 @@ pub(crate) fn mount_registry(job: &mut Value, metadata: bool) {
     job::environment(job, &[("DOCKER_CONFIG", "/credentials/registry")]);
 }
 
+/// Mount the CA used to verify the broker's TLS certificate.
+pub(crate) fn mount_broker_ca(job: &mut Value) {
+    job["spec"]["template"]["spec"]["volumes"].as_array_mut().expect("volumes").push(
+        json!({"name":"nats-ca","configMap":{"name":"nats-ca","items":[{"key":"ca.crt","path":"ca.crt"}]}}),
+    );
+    wamn_kubernetes::job::container(job)["volumeMounts"]
+        .as_array_mut()
+        .expect("mounts")
+        .push(json!({"name":"nats-ca","mountPath":"/etc/wamn/nats-ca","readOnly":true}));
+}
+
+pub(crate) fn mount_identity_worker_token(job: &mut Value) {
+    let token_file = Path::new(wamn_identity_client::TOKEN_PATH);
+    job["spec"]["template"]["spec"]["volumes"].as_array_mut().expect("volumes").extend([
+        json!({"name":"identity-ca","configMap":{"name":"identity-ca"}}),
+        json!({"name":"identity-token","projected":{"sources":[{"serviceAccountToken":{
+            "audience":wamn_identity_client::TOKEN_AUDIENCE,"path":token_file.file_name().and_then(std::ffi::OsStr::to_str).expect("token file name"),"expirationSeconds":3600
+        }}]}}),
+    ]);
+    wamn_kubernetes::job::container(job)["volumeMounts"].as_array_mut().expect("mounts").extend([
+        json!({"name":"identity-ca","mountPath":"/etc/identity-ca","readOnly":true}),
+        json!({"name":"identity-token","mountPath":token_file.parent().expect("token directory"),"readOnly":true}),
+    ]);
+}
+
 /// Mount the worker's credential staging directory.
 pub(crate) fn mount_database_files(job: &mut Value) {
     job["spec"]["template"]["spec"]["volumes"]
@@ -80,10 +105,8 @@ pub(crate) async fn execute(
                     system_database_url: platform.system_database_url.clone(),
                     nats: wamn_broker::nats::PlatformNats {
                         nats_url: platform.nats_url.clone(),
-                        nats_tls_ca: "/etc/wamn/recovery-nats/ca.crt".into(),
-                        nats_tls_cert: "/etc/wamn/recovery-nats/tls.crt".into(),
-                        nats_tls_key: "/etc/wamn/recovery-nats/tls.key".into(),
-                        nats_tls_server_name: None,
+                        nats_tls_ca: wamn_broker::nats::CA_FILE.into(),
+                        creds: "/etc/wamn/recovery-nats/user.creds".into(),
                     },
                 },
             )

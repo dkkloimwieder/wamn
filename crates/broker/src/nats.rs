@@ -1,124 +1,86 @@
-//! The NATS client of the platform processes that are not hosts.
+//! Verified TLS and user credentials for broker connections.
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
-/// Root of the request inboxes for a restricted certificate user.
-pub fn inbox_prefix(user: &str) -> String {
-    format!("_INBOX_{user}")
-}
+use anyhow::Context as _;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
-/// The NATS connection of a platform process that is not a host: identity,
-/// wamn, the CDC reader and the provisioning Jobs. The server takes only a
-/// client certificate of the platform CA, and maps it to the process's user
-/// (docs/plan/alignment.md R4).
+/// Mounted trust roots for the NATS server.
+pub const CA_FILE: &str = "/etc/wamn/nats-ca/ca.crt";
+pub const CREDENTIALS_KEY: &str = "user.creds";
+
+/// Credentials for a broker operation.
 #[derive(Debug, Clone)]
 pub struct PlatformNats {
-    /// The NATS URL.
     pub nats_url: String,
-    /// The CA certificate of the server.
     pub nats_tls_ca: PathBuf,
-    /// The client certificate.
-    pub nats_tls_cert: PathBuf,
-    /// The key of the client certificate.
-    pub nats_tls_key: PathBuf,
-    /// The name the server certificate must carry, when the URL reaches the
-    /// server by another name, for example through a port-forward.
-    pub nats_tls_server_name: Option<String>,
+    pub creds: PathBuf,
 }
 
 impl PlatformNats {
-    /// Read the connection from `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`,
-    /// `WAMN_NATS_TLS_CERT`, `WAMN_NATS_TLS_KEY` and the optional
-    /// `WAMN_NATS_TLS_SERVER_NAME`.
-    pub fn from_env() -> anyhow::Result<Self> {
-        use anyhow::Context as _;
-        let variable = |name: &str| {
-            std::env::var(name).with_context(|| format!("set {name} for the platform NATS"))
-        };
-        Ok(Self {
-            nats_url: variable("WAMN_NATS_URL")?,
-            nats_tls_ca: variable("WAMN_NATS_TLS_CA")?.into(),
-            nats_tls_cert: variable("WAMN_NATS_TLS_CERT")?.into(),
-            nats_tls_key: variable("WAMN_NATS_TLS_KEY")?.into(),
-            nats_tls_server_name: std::env::var("WAMN_NATS_TLS_SERVER_NAME").ok(),
-        })
-    }
-
-    /// Connect with the client certificate.
     pub async fn connect(&self) -> anyhow::Result<async_nats::Client> {
-        self.connect_with_options(async_nats::ConnectOptions::new())
-            .await
-    }
-
-    /// Connect with the client certificate and a caller-selected inbox prefix.
-    pub async fn connect_with_inbox_prefix(
-        &self,
-        prefix: &str,
-    ) -> anyhow::Result<async_nats::Client> {
-        self.connect_with_options(async_nats::ConnectOptions::new().custom_inbox_prefix(prefix))
-            .await
-    }
-
-    async fn connect_with_options(
-        &self,
-        options: async_nats::ConnectOptions,
-    ) -> anyhow::Result<async_nats::Client> {
-        let options = tls_options(
-            options,
-            Some(&self.nats_tls_ca),
-            Some(&self.nats_tls_cert),
-            Some(&self.nats_tls_key),
-            self.nats_tls_server_name.as_deref(),
-        )?;
-        connect(options, &self.nats_url, InitialConnect::Once).await
+        let options = credentials_options(async_nats::ConnectOptions::new(), &self.creds).await?;
+        connect(
+            tls_options(options, Some(&self.nats_tls_ca)),
+            &self.nats_url,
+            InitialConnect::Once,
+        )
+        .await
     }
 }
 
-/// Verifies the server certificate against one fixed name instead of the host
-/// of the URL. The chain and the signatures get the full WebPKI test.
-#[derive(Debug)]
-struct PinnedName {
-    inner: Arc<rustls::client::WebPkiServerVerifier>,
-    name: rustls::pki_types::ServerName<'static>,
+/// Parse the public subject to derive the exact inbox this user JWT authorizes.
+pub fn credentials_inbox(creds: &str) -> anyhow::Result<String> {
+    #[derive(serde::Deserialize)]
+    struct Claim {
+        sub: String,
+    }
+    let token = creds
+        .lines()
+        .skip_while(|line| line.trim() != "-----BEGIN NATS USER JWT-----")
+        .nth(1)
+        .context("NATS credentials have no user JWT")?;
+    let payload = token
+        .trim()
+        .split('.')
+        .nth(1)
+        .context("invalid NATS user JWT")?;
+    let payload = URL_SAFE_NO_PAD
+        .decode(payload)
+        .context("invalid NATS user JWT payload")?;
+    let claim: Claim = serde_json::from_slice(&payload).context("decode NATS user subject")?;
+    anyhow::ensure!(
+        claim.sub.len() == 56
+            && claim.sub.starts_with('U')
+            && claim
+                .sub
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || (b'2'..=b'7').contains(&byte)),
+        "invalid NATS user public key"
+    );
+    Ok(wamn_registry::name::nats_user_inbox(&claim.sub))
 }
 
-impl rustls::client::danger::ServerCertVerifier for PinnedName {
-    fn verify_server_cert(
-        &self,
-        end_entity: &rustls::pki_types::CertificateDer<'_>,
-        intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        ocsp_response: &[u8],
-        now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        self.inner
-            .verify_server_cert(end_entity, intermediates, &self.name, ocsp_response, now)
-    }
+/// Apply one issued user JWT, its local NKey, and the matching inbox prefix.
+pub fn user_options(
+    options: async_nats::ConnectOptions,
+    creds: &str,
+) -> anyhow::Result<async_nats::ConnectOptions> {
+    Ok(options
+        .custom_inbox_prefix(credentials_inbox(creds)?)
+        .credentials(creds)?)
+}
 
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        certificate: &rustls::pki_types::CertificateDer<'_>,
-        signature: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        self.inner
-            .verify_tls12_signature(message, certificate, signature)
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        certificate: &rustls::pki_types::CertificateDer<'_>,
-        signature: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        self.inner
-            .verify_tls13_signature(message, certificate, signature)
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.inner.supported_verify_schemes()
-    }
+pub async fn credentials_options(
+    options: async_nats::ConnectOptions,
+    path: &Path,
+) -> anyhow::Result<async_nats::ConnectOptions> {
+    let creds = zeroize::Zeroizing::new(
+        tokio::fs::read_to_string(path)
+            .await
+            .context("read NATS credentials")?,
+    );
+    user_options(options, &creds)
 }
 
 /// Whether a first transport outage starts the client's reconnect loop.
@@ -164,65 +126,15 @@ pub async fn connect(
     .await
 }
 
-/// Configure the shared NATS transport, with an optional client certificate.
+/// Set server TLS trust roots when a CA is supplied.
 pub fn tls_options(
     options: async_nats::ConnectOptions,
-    ca: Option<&std::path::Path>,
-    cert: Option<&std::path::Path>,
-    key: Option<&std::path::Path>,
-    server_name: Option<&str>,
-) -> anyhow::Result<async_nats::ConnectOptions> {
-    use anyhow::Context as _;
-    use rustls::pki_types::pem::PemObject as _;
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
-    let Some(ca) = ca else {
-        anyhow::ensure!(
-            cert.is_none() && key.is_none() && server_name.is_none(),
-            "NATS TLS needs a CA"
-        );
-        return Ok(options);
-    };
-    anyhow::ensure!(
-        cert.is_some() == key.is_some(),
-        "NATS client certificate and key must be supplied together"
-    );
-    // A CA-only connection still verifies the server through the same root input.
-    let (Some(cert), Some(key)) = (cert, key) else {
-        anyhow::ensure!(
-            server_name.is_none(),
-            "a pinned NATS server name needs a client certificate"
-        );
-        return Ok(options
+    ca: Option<&Path>,
+) -> async_nats::ConnectOptions {
+    match ca {
+        Some(ca) => options
             .require_tls(true)
-            .add_root_certificates(ca.to_owned()));
-    };
-    let mut roots = rustls::RootCertStore::empty();
-    for certificate in
-        CertificateDer::pem_file_iter(ca).with_context(|| format!("read {}", ca.display()))?
-    {
-        roots.add(certificate?)?;
+            .add_root_certificates(ca.to_path_buf()),
+        None => options,
     }
-    let chain = CertificateDer::pem_file_iter(cert)
-        .with_context(|| format!("read {}", cert.display()))?
-        .collect::<Result<Vec<_>, _>>()?;
-    let key =
-        PrivateKeyDer::from_pem_file(key).with_context(|| format!("read {}", key.display()))?;
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let roots = Arc::new(roots);
-    let verifier =
-        rustls::client::WebPkiServerVerifier::builder_with_provider(roots, Arc::clone(&provider))
-            .build()?;
-    let builder = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()?;
-    let config = match &server_name {
-        Some(name) => builder
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(PinnedName {
-                inner: verifier,
-                name: ServerName::try_from((*name).to_owned())?,
-            })),
-        None => builder.with_webpki_verifier(verifier),
-    }
-    .with_client_auth_cert(chain, key)?;
-    Ok(options.require_tls(true).tls_client_config(config))
 }

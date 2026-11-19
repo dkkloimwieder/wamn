@@ -27,6 +27,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 pub(super) struct Settings {
     url: String,
     tls_ca: PathBuf,
+    max_projects: i64,
 }
 
 pub(super) struct State {
@@ -43,9 +44,10 @@ impl State {
             .await
     }
 
-    async fn publish_account(
+    async fn resolver_request(
         &self,
-        account: &str,
+        subject: &'static str,
+        account: Option<&str>,
         jwt: String,
     ) -> Result<(), IdentityServiceError> {
         let message = tokio::time::timeout(REQUEST_TIMEOUT, async {
@@ -54,7 +56,7 @@ impl State {
                 .await
                 .map_err(|_| IdentityServiceError::new("connect to NATS resolver failed"))?;
             client
-                .request(nats::UPDATE_SUBJECT, jwt.into())
+                .request(subject, jwt.into())
                 .await
                 .map_err(|_| IdentityServiceError::new("request NATS account update failed"))
         })
@@ -62,10 +64,9 @@ impl State {
         .map_err(|_| IdentityServiceError::new("NATS account update timed out"))??;
         let reply: UpdateReply = serde_json::from_slice(&message.payload)
             .map_err(|_| IdentityServiceError::new("decode NATS account update reply failed"))?;
-        if reply
-            .data
-            .is_some_and(|data| data.code == 200 && data.account == account)
-            && reply.error.is_none()
+        if reply.data.is_some_and(|data| {
+            data.code == 200 && account.is_none_or(|account| data.account == account)
+        }) && reply.error.is_none()
         {
             Ok(())
         } else {
@@ -84,6 +85,7 @@ struct UpdateReply {
 
 #[derive(Deserialize)]
 struct UpdateStatus {
+    #[serde(default)]
     account: String,
     code: u16,
 }
@@ -95,9 +97,19 @@ pub(super) async fn start(
     api: Option<&KubernetesApi>,
     settings: Option<Settings>,
 ) -> Result<Option<State>, IdentityServiceError> {
-    let Some(Settings { url, tls_ca }) = settings else {
+    let Some(Settings {
+        url,
+        tls_ca,
+        max_projects,
+    }) = settings
+    else {
         return Ok(None);
     };
+    if max_projects < 1 {
+        return Err(IdentityServiceError::new(
+            "NATS project limit must be positive",
+        ));
+    }
     let server: ServerAddr = url
         .parse()
         .map_err(|_| IdentityServiceError::new("invalid identity NATS URL"))?;
@@ -112,7 +124,7 @@ pub(super) async fn start(
             "identity NATS bootstrap requires the platform namespace",
         ));
     }
-    let bootstrap = nats::bootstrap(db, issuer, envelope)
+    let bootstrap = nats::bootstrap(db, issuer, envelope, max_projects)
         .await
         .map_err(|error| {
             tracing::error!(%error, "NATS bootstrap failed");
@@ -188,6 +200,30 @@ async fn ensure_account(
     let Ok(count) = i32::try_from(request.project_count) else {
         return invalid();
     };
+    if count == 0 {
+        let deleted = match state
+            .authority
+            .retire_environment(client, &inner.issuer, org, &request.env)
+            .await
+        {
+            Ok(None) => {
+                return json(&Account {
+                    public_key: String::new(),
+                });
+            }
+            Ok(Some(deleted)) => deleted,
+            Err(error) => return signing_error(&error),
+        };
+        let (public_key, jwt) = deleted;
+        if let Err(error) = state
+            .resolver_request(nats::DELETE_SUBJECT, None, jwt)
+            .await
+        {
+            tracing::warn!(%error, "retire NATS environment account failed");
+            return unavailable();
+        }
+        return json(&Account { public_key });
+    }
     let (public_key, jwt) = match state
         .authority
         .ensure_environment(
@@ -201,9 +237,19 @@ async fn ensure_account(
         .await
     {
         Ok(value) => value,
+        Err(error) if error.is_project_limit() => {
+            return response(
+                StatusCode::CONFLICT,
+                "application/json",
+                br#"{"error":"platform NATS project limit exceeded"}"#.to_vec(),
+            );
+        }
         Err(error) => return signing_error(&error),
     };
-    if let Err(error) = state.publish_account(&public_key, jwt).await {
+    if let Err(error) = state
+        .resolver_request(nats::UPDATE_SUBJECT, Some(&public_key), jwt)
+        .await
+    {
         tracing::warn!(%error, "publish NATS environment account failed");
         return unavailable();
     }
@@ -226,7 +272,7 @@ async fn sign_user(
     if !nats::is_user_public_key(&request.public_key) {
         return invalid();
     }
-    let inbox_prefix = format!("_INBOX_wamn.{}", request.public_key);
+    let inbox_prefix = name::nats_user_inbox(&request.public_key);
     let (name, permissions) = template(&request, &inbox_prefix);
     let user = nats::User {
         public_key: &request.public_key,

@@ -313,24 +313,22 @@ Subjects use `evt.<org>.<env>.<project>.<entity>.<op>`.
 Each project has its own source stream. Length-prefixed stream names distinguish the full org, environment, and project coordinates.
 The stream keeps messages for up to seven days and holds up to 256 MiB. It discards the oldest messages first.
 
-The platform runs one NATS server. Each client presents a certificate, and NATS maps its DNS name to a user.
-The scheduler users `wasmcloud-operator` and `wasmcloud-runtime` belong to the `PLATFORM` account, along with the restricted `wasmcloud-data` user.
-Each environment has its own `ENV_<org>_<env>` account.
+The platform runs one NATS server in operator mode. TLS protects the connection, and NATS user JWTs authenticate clients.
+Identity signs account and user JWTs. NATS stores account JWTs in its full resolver.
+The `PLATFORM` account contains a user for the runtime operator and separate scheduler and data users for each host group.
+Each environment has its own account for project events.
 Its JetStream file storage limit is 256 MiB times the number of projects in the environment.
 It has zero memory storage and unlimited stream and consumer counts.
 The account contains all the environment's project streams. Accounts exchange no imports or exports.
 
-The `wamn-nats-admin-<org>--<env>` user has full rights in its environment account.
-Configure reads its Secret by name after the Certificate is ready. Delete mounts the same Secret.
-Hosts use the restricted `wamn-env-<org>--<env>` user to read stream information, manage consumers, and acknowledge messages.
-Each project gives its CDC reader a separate `wamn-cdc-<key>` user in the same account.
-The reader can publish only to its project's event subjects and stream-info API.
-The recovery worker has a separate `wamn-recovery-<key>` user. It can request stream info and read messages from its project's stream.
-Each restricted user receives replies only on `_INBOX_<user>.>`.
+The org worker generates the user keys and stores the credentials in Secrets in the org namespace.
+The worker uses the environment's `stream-admin` credentials to manage project streams.
+Each project's CDC reader can publish only to the project's event subjects.
+Its recovery worker can request stream information and read messages from that project's stream.
+Each JWT authorizes a separate reply inbox.
 
-The host group mounts the workload TLS Secret and declares the `workflow` and `ingress` bindings with `workloadConfig: deny`.
-Each binding uses a separate child inbox and narrows access to the application's project stream and subjects.
-The host's native workflow client uses a third child inbox on the same credential.
+The host group mounts separate credentials for `workflow` and `ingress` bindings and for its native workflow client.
+Bindings use `workloadConfig: deny` and narrow access to the application's project stream and subjects.
 The NATS HTTP monitor binds to loopback.
 
 Delivery is at least once for application handlers.
