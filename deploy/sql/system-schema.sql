@@ -1061,9 +1061,10 @@ BEGIN
                     USING (%s) WITH CHECK (%s AND %s)', predicate, bound_actor, predicate);
 
     ALTER TABLE identity.password_logins ENABLE ROW LEVEL SECURITY;
-    EXECUTE format('CREATE POLICY login_org_select ON identity.password_logins FOR SELECT
-                    USING (CASE WHEN %s THEN registry.login_principal(principal_id) ELSE true END)',
-                   org_login);
+    predicate := format('CASE WHEN %s THEN registry.login_principal(principal_id) ELSE true END',
+                        org_login);
+    EXECUTE format('CREATE POLICY login_org ON identity.password_logins FOR ALL
+                    USING (%s) WITH CHECK (%s)', predicate, predicate);
 
     IF to_regrole('wamn_control') IS NOT NULL THEN
         GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid),
