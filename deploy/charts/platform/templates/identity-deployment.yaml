@@ -23,7 +23,6 @@ spec:
         app.kubernetes.io/instance: identity
     spec:
       serviceAccountName: identity
-      automountServiceAccountToken: false
       containers:
         - name: identity
           image: {{ .Values.identity.image | default (printf "%s/wamn-identity:%s" .Values.registry .Chart.Version) | quote }}

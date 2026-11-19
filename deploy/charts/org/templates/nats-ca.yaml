@@ -1,0 +1,9 @@
+{{- with .Values.natsCa }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-ca
+  namespace: {{ $.Values.org | quote }}
+data:
+  ca.crt: {{ . | quote }}
+{{- end }}

@@ -22,3 +22,4 @@ For Resend, set `identity.resendSecret` to a Secret in `platform` with an `api-k
 Set `identity.resendFrom` to the verified sender and `identity.inviteUrl` to the web client base.
 
 The edge trusts the public identity CA. The kind values set wildcard TLS coverage for `*.wamn.localhost`. GCP terminates TLS at the external load balancer.
+If the cluster Ingress uses ACME, set `edge.acme` for the `wamn-edge` Issuer in `hosts`.
