@@ -5,8 +5,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{net::IpAddr, path::PathBuf, time::Duration};
 use wamn_kubernetes::{Target, helm, job, kubectl};
+use wamn_oci::package_artifact::registry_credentials::project_registry_credentials;
 use wamn_postgres::ConnectionConfig;
-use wamn_registry::OrgId;
+use wamn_registry::{OrgId, name::REGISTRY_PULL};
 
 use crate::provision_org::{
     APPLY_SECRET, CONTROL_AUDIENCE, CONTROL_SECRET, INVITATION_ACCOUNT, OAUTH_ENCRYPTION_INPUT,
@@ -86,6 +87,15 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
         std::str::from_utf8(&postgres_ca).context("read the public system database CA as PEM")?,
         &api_server,
     )?;
+    let registry_secret = if registry_token_metadata(inputs)? {
+        None
+    } else {
+        Some(registry_pull_secret(
+            org,
+            field(inputs, "registry")?,
+            field(&values, "registry")?,
+        )?)
+    };
     let values_file =
         tempfile::NamedTempFile::new().context("create a file for public org values")?;
     serde_json::to_writer(values_file.as_file(), &values).context("write public org values")?;
@@ -113,6 +123,12 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
         helm::Install::ExistingNamespace,
     )
     .await?;
+
+    if let Some(secret) = registry_secret {
+        kubectl::apply(&target.kubeconfig, &target.context, org.as_str(), &secret)
+            .await
+            .with_context(|| format!("apply {REGISTRY_PULL} in {org}"))?;
+    }
 
     let login = &database.credentials.name;
     let mut sql = org_job(
@@ -190,6 +206,26 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
     run_job(&target, &invitation).await
 }
 
+fn registry_pull_secret(org: &OrgId, registry: &str, pod_registry: &str) -> anyhow::Result<Value> {
+    let path = std::env::var_os("WAMN_REGISTRY_AUTH_FILE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .context("registry-credentials-file-required: set WAMN_REGISTRY_AUTH_FILE")?;
+    let registry = registry.split('/').next().unwrap_or_default();
+    let pod_registry = pod_registry.split('/').next().unwrap_or_default();
+    let config = project_registry_credentials(&path, registry, pod_registry)?;
+    let data = STANDARD.encode(serde_json::to_vec(&config)?);
+    Ok(json!({
+        "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
+        "metadata": {"name": REGISTRY_PULL, "namespace": org},
+        "data": {".dockerconfigjson": data},
+    }))
+}
+
+fn registry_token_metadata(inputs: &Value) -> anyhow::Result<bool> {
+    Ok(field(inputs, "provider")? != "kind")
+}
+
 fn org_values(
     inputs: &Value,
     database: &ConnectionConfig,
@@ -201,7 +237,6 @@ fn org_values(
 ) -> anyhow::Result<Value> {
     let image = field(inputs, "controlImage")?;
     let registry = field(inputs, "registry")?;
-    let kind = field(inputs, "provider")? == "kind";
     let oauth_encryption: Value = serde_json::from_str(field(inputs, OAUTH_ENCRYPTION_INPUT)?)
         .context("decode the platform OAuth encryption configuration")?;
     let internal_registry = registry
@@ -235,7 +270,7 @@ fn org_values(
                 "registry": internal_registry,
                 "worker_image": image,
                 "chart": "/usr/local/share/wamn/deploy/charts/application",
-                "registry_token_metadata": !kind,
+                "registry_token_metadata": registry_token_metadata(inputs)?,
                 "oauth_encryption": oauth_encryption,
             },
         },

@@ -21,6 +21,7 @@ oci-client.workspace = true
 tempfile.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes.workspace = true
+wamn-oci.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true
 wamn-provision.workspace = true
