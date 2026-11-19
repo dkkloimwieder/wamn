@@ -33,12 +33,28 @@ pub async fn wait_role(
     connection: &mut sqlx::PgConnection,
     username: &wamn_identity_protocol::LoginName,
 ) -> anyhow::Result<()> {
+    wait_role_kind(connection, username, true).await
+}
+
+pub(crate) async fn wait_group_role(
+    connection: &mut sqlx::PgConnection,
+    role: &wamn_identity_protocol::LoginName,
+) -> anyhow::Result<()> {
+    wait_role_kind(connection, role, false).await
+}
+
+async fn wait_role_kind(
+    connection: &mut sqlx::PgConnection,
+    role: &wamn_identity_protocol::LoginName,
+    can_login: bool,
+) -> anyhow::Result<()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
     loop {
         let present: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin)",
+            "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin=$2)",
         )
-        .bind(username)
+        .bind(role)
+        .bind(can_login)
         .fetch_one(&mut *connection)
         .await?;
         if present {
@@ -46,7 +62,7 @@ pub async fn wait_role(
         }
         anyhow::ensure!(
             tokio::time::Instant::now() < deadline,
-            "CNPG did not reconcile the database login"
+            "CNPG did not reconcile database role {role}"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

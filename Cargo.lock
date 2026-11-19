@@ -5803,7 +5803,6 @@ dependencies = [
  "wamn-provision",
  "wamn-publish",
  "wamn-registry",
- "wamn-role",
  "wasmtime-wasi-http",
 ]
 

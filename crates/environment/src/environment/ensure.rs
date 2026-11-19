@@ -130,6 +130,7 @@ async fn host_values(
         }
     };
     tx.commit().await?;
+    drop(system);
     if projects.is_empty() {
         return Ok(json!({"org":org, "env":env}));
     }

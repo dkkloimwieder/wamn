@@ -3,18 +3,11 @@
 use sqlx::Connection as _;
 use std::path::Path;
 use wamn_postgres::ConnectionInput;
-use wamn_provision::migrations::MigrationDatabase;
 
-async fn prune_identities(
-    input: ConnectionInput<'_>,
-    scope: MigrationDatabase,
-) -> anyhow::Result<()> {
-    // Bound connection establishment, role selection and delete.
+async fn prune_identities(input: ConnectionInput<'_>) -> anyhow::Result<()> {
+    // Bound connection establishment and cleanup.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         let mut connection = wamn_postgres::connect(input).await?;
-        if scope == MigrationDatabase::System {
-            scope.require_login(&mut connection).await?;
-        }
         let mut transaction = connection.begin().await?;
         sqlx::raw_sql("SET LOCAL statement_timeout = '5s'")
             .execute(&mut *transaction)
@@ -24,9 +17,7 @@ async fn prune_identities(
         )
         .execute(&mut *transaction)
         .await?;
-        if scope == MigrationDatabase::Project {
-            wamn_connection::credential_cleanup::collect(&mut transaction).await?;
-        }
+        wamn_connection::credential_cleanup::collect(&mut transaction).await?;
         transaction.commit().await?;
         Ok(())
     })
@@ -34,10 +25,7 @@ async fn prune_identities(
 }
 
 /// Remove identities that no running transaction can still use.
-pub(crate) async fn identities(directory: &Path, system: &str) -> anyhow::Result<()> {
-    if let Err(error) = prune_identities(system.into(), MigrationDatabase::System).await {
-        tracing::warn!(%error, "system transaction identity retention failed");
-    }
+pub(crate) async fn identities(directory: &Path) -> anyhow::Result<()> {
     let mut entries = tokio::fs::read_dir(directory).await?;
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
@@ -53,7 +41,7 @@ pub(crate) async fn identities(directory: &Path, system: &str) -> anyhow::Result
             let login = wamn_provision::workload_role::platform_connection(config)?
                 .mounted_options(directory)
                 .await?;
-            prune_identities(login.into(), MigrationDatabase::Project).await
+            prune_identities(login.into()).await
         }
         .await;
         if let Err(error) = result {

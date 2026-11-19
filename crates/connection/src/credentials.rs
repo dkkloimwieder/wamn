@@ -74,17 +74,3 @@ pub async fn database_login(
         .map_err(|()| anyhow::anyhow!("fixture password"))?;
     Ok(url.into())
 }
-
-/// Supply the native apply role and grants for a database interface test.
-pub async fn apply_login(input: &str) -> anyhow::Result<String> {
-    let mut connection = wamn_postgres::connect(input).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "{} DO $$ BEGIN IF to_regrole('wamn_apply') IS NULL THEN CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; ALTER ROLE wamn_apply PASSWORD 'database-interface-only'; {}",
-        wamn_provision::sql::ensure_project_roles_sql(),
-        wamn_provision::apply::APPLY_GRANTS_SQL,
-    ))).execute(&mut connection).await?;
-    let mut input = url::Url::parse(input)?;
-    input.set_username("wamn_apply").unwrap();
-    input.set_password(Some("database-interface-only")).unwrap();
-    Ok(input.into())
-}

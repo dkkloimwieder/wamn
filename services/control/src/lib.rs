@@ -75,8 +75,12 @@ impl Configuration {
             "control credentials must belong to the org namespace"
         );
         ensure!(
-            config.apply_database.username.as_str() == wamn_role::APPLY_ROLE,
-            "operation configuration requires the apply role"
+            config.apply_database.username
+                == wamn_platform_install::provision_org::apply_login(
+                    &config.org,
+                    &config.apply_database.database,
+                ),
+            "operation configuration requires the org apply login"
         );
         let (_, digest) = config
             .worker_image
@@ -184,8 +188,6 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     // The login permits four connections, including the dedicated writer.
     let pool = wamn_postgres::pool(&database, 3).await?;
     let identity_databases = Path::new(ADMINISTRATION_DIR);
-    let identity_system = wamn_provision::migrations::MigrationDatabase::System
-        .configuration(&platform.system_database_url)?;
     let verifier = wamn_authentication::access_token::AccessTokenVerifier::new(
         &config.identity_issuer,
         &format!(
@@ -235,7 +237,8 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
             administration: ADMINISTRATION_DIR.into(),
             control: pool,
             registry_token_metadata: config.registry_token_metadata,
-            system_database: identity_system.clone(),
+            system_database: platform.system_database_url,
+            integration_publication: tokio::sync::Mutex::new(()),
             integration_registry,
         }))
         .with_worker(worker)
@@ -255,7 +258,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticks.tick().await;
-            if let Err(error) = retention::identities(identity_databases, &identity_system).await {
+            if let Err(error) = retention::identities(identity_databases).await {
                 tracing::warn!(%error, "transaction identity retention failed");
             }
         }

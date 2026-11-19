@@ -14,17 +14,21 @@ fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
         serde_yaml::from_slice(&fs::read(chart.join("Chart.yaml")).unwrap()).unwrap();
     let objects = wamn_kubernetes::helm::template(&serde_json::json!({
         "chart": chart, "version": metadata["version"], "name": "wamn-control", "namespace": "wamn-helm-acme",
-        "values": {"org": "acme", "control": {
-            "image": "wamn-control:dev",
+        "values": {"org": "acme", "base": "wamn.localhost", "control": {
+            "image": format!("wamn-control@sha256:{}", "a".repeat(64)),
             "configuration": {
                 "identity_issuer": "https://identity.platform.svc.cluster.local",
                 "nats_url": wamn_platform_install::platform::identity::NATS_URL,
                 "database": {
+                    "username": "wamn_control_fixture",
                     "credentials": {"name": "wamn-control-db"},
                     "server_ca": {"name": "wamn-pg-ca"}
+                },
+                "apply_database": {
+                    "username": "wamn_apply_fixture",
+                    "credentials": {"name": "wamn-apply-db"}
                 }
             },
-            "systemMigrationSecret": "wamn-platform-sql-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "registrySecret": "registry-pull",
             "oauthSecret": "wamn-oauth"
         }}
