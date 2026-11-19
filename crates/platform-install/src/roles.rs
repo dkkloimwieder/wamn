@@ -1,11 +1,22 @@
 //! CloudNativePG managed roles for project databases.
 
+use serde::Serialize;
 use wamn_provision::WorkloadRoleFamily;
-use wamn_provision::connection::{ManagedRole, managed_replication_role, managed_role};
-use wamn_registry::name::project_login_secret;
+use wamn_registry::name::project_login_certificate;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectRole {
+    name: &'static str,
+    certificate_secret: String,
+    pub(crate) connection_limit: u32,
+    in_roles: [&'static str; 1],
+    inherit: bool,
+    replication: bool,
+}
 
 /// Derive project role limits from the environment host replica count.
-pub(crate) fn project(database: &str, replicas: u32) -> anyhow::Result<Vec<ManagedRole>> {
+pub(crate) fn project(database: &str, replicas: u32) -> anyhow::Result<Vec<ProjectRole>> {
     // Keep max_connections within PostgreSQL's supported range.
     anyhow::ensure!(
         replicas <= (262_143 - 22) / 40,
@@ -14,21 +25,28 @@ pub(crate) fn project(database: &str, replicas: u32) -> anyhow::Result<Vec<Manag
     let mut roles = Vec::new();
     for family in WorkloadRoleFamily::ALL {
         let name = family.login_name();
-        let mut role = managed_role(
-            name.parse()?,
-            family.acl_role(),
-            project_login_secret(database, name),
-        );
-        role.connection_limit = Some(match family {
+        let connection_limit = match family {
             WorkloadRoleFamily::App | WorkloadRoleFamily::Query => replicas * 16,
             WorkloadRoleFamily::Platform => replicas * 8 + 4,
             WorkloadRoleFamily::Migration => 4,
+        };
+        roles.push(ProjectRole {
+            name,
+            certificate_secret: project_login_certificate(database, name),
+            connection_limit,
+            in_roles: [family.acl_role()],
+            inherit: true,
+            replication: false,
         });
-        roles.push(role);
     }
     let cdc = wamn_role::CDC_LOGIN;
-    let mut role = managed_replication_role(cdc.parse()?, project_login_secret(database, cdc));
-    role.connection_limit = Some(4);
-    roles.push(role);
+    roles.push(ProjectRole {
+        name: cdc,
+        certificate_secret: project_login_certificate(database, cdc),
+        connection_limit: 4,
+        in_roles: [wamn_role::CHECKPOINT_ROLE],
+        inherit: false,
+        replication: true,
+    });
     Ok(roles)
 }

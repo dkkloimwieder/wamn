@@ -118,7 +118,6 @@ pub fn set_operation_values<'a>(
         &triple.env,
     )?;
     let capture = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
-    let capture_secret = wamn_registry::name::project_login_secret(database, wamn_role::CDC_LOGIN);
     let diff_workloads: Vec<_> = applications
         .map(|application| {
             let release = wamn_catalog::resource_names::application_release_name(
@@ -131,14 +130,14 @@ pub fn set_operation_values<'a>(
         })
         .collect();
     let diff_secrets = [
-        MigrationDatabase::System.managed_role("wamn_system").password_secret.name,
+        MigrationDatabase::System.credential_secret("wamn_system"),
         "wamn-pg-ca".into(),
-        MigrationDatabase::Project.managed_role(database).password_secret.name,
+        MigrationDatabase::Project.credential_secret(database),
         format!("{cluster}-ca"),
     ];
     values["operations"] = json!({
         "name":name,"cluster":cluster,
-        "capture":capture,"captureSecret":capture_secret,
+        "capture":capture,
         "hostGroup":wamn_registry::name::environment_host_name(&triple.org, &triple.env),
         "controlDeployment":wamn_registry::name::control_resource(&triple.org),
         "diffWorkloads":diff_workloads,
@@ -226,15 +225,16 @@ pub fn connection_for(
     use wamn_registry::name;
     let database =
         name::project_env_database_name(&triple.org, &triple.project, &triple.env, instance);
-    let owner = wamn_provision::migrations::MigrationDatabase::Project.managed_role(&database);
+    let owner = MigrationDatabase::Project.login(&database);
+    let certificate = name::project_login_certificate(&database, owner.as_str());
     crate::credentials::configuration(
         triple.org.as_str(),
         &name::project_cluster(&database),
         name::project_database_host(&database, &triple.org),
         5432,
         database,
-        owner.name,
-        owner.password_secret.name,
+        owner,
+        certificate,
     )
 }
 
@@ -244,7 +244,7 @@ pub fn capture_configuration(
 ) -> anyhow::Result<wamn_postgres::ConnectionConfig> {
     config.username = wamn_role::CDC_LOGIN.parse()?;
     config.credentials.name =
-        wamn_registry::name::project_login_secret(&config.database, config.username.as_str());
+        wamn_registry::name::project_login_certificate(&config.database, config.username.as_str());
     Ok(config)
 }
 
@@ -259,11 +259,7 @@ pub fn database_values(
     let database = &connection.database;
     let cluster = name::project_cluster(database);
     let roles = crate::roles::project(database, replicas)?;
-    let max_connections = roles
-        .iter()
-        .filter_map(|role| role.connection_limit)
-        .sum::<u32>()
-        + 10;
+    let max_connections = roles.iter().map(|role| role.connection_limit).sum::<u32>() + 10;
     if let Some(backup) = sizing.get_mut("backup") {
         for key in ["endpoint", "bucket", "secret"] {
             backup[key] = settings["backup"][key]
@@ -282,7 +278,6 @@ pub fn database_values(
     // Reserve headroom for PostgreSQL and the operator.
     sizing["maxConnections"] = max_connections.max(100).into();
     sizing["initializeRoles"] = wamn_provision::sql::ensure_project_roles_sql().into();
-    sizing["ownerSecret"] = json!(connection.credentials.name);
     let extensions = wamn_provision::sql::PLATFORM_EXTENSIONS.map(|name| json!({"name":name}));
     Ok(json!({
         "namespace":connection.credentials.namespace,

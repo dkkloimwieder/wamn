@@ -76,3 +76,31 @@ pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyho
     )
     .await
 }
+
+pub(super) async fn delete_database_certificate_secrets(
+    platform: &Platform,
+    database: &str,
+) -> anyhow::Result<()> {
+    // cert-manager is configured to retain its Secrets after Certificate deletion.
+    let cluster = name::project_cluster(database);
+    let root = format!("{cluster}-login-ca");
+    let namespace = &platform.target.namespace;
+    anyhow::ensure!(
+        get(platform, namespace, "certificate.cert-manager.io", &root)
+            .await?
+            .is_none(),
+        "cannot remove database certificate Secrets while Certificate {root} exists"
+    );
+    let secrets: Vec<_> = wamn_provision::WorkloadRoleFamily::ALL
+        .into_iter()
+        .map(wamn_provision::WorkloadRoleFamily::login_name)
+        .chain([wamn_role::CDC_LOGIN])
+        .map(|login| name::project_login_certificate(database, login))
+        .chain([root, format!("{cluster}-client-repl")])
+        .collect();
+    let mut arguments = vec!["delete", "secret", "--ignore-not-found"];
+    arguments.extend(secrets.iter().map(String::as_str));
+    super::kubectl(platform, namespace, &arguments, None)
+        .await
+        .map(drop)
+}

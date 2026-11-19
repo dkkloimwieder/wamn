@@ -233,6 +233,6 @@ pub fn platform_connection(
 ) -> anyhow::Result<wamn_postgres::ConnectionConfig> {
     config.username = wamn_role::PLATFORM_LOGIN.parse()?;
     config.credentials.name =
-        wamn_registry::name::project_login_secret(&config.database, config.username.as_str());
+        wamn_registry::name::project_login_certificate(&config.database, config.username.as_str());
     Ok(config)
 }

@@ -1,0 +1,68 @@
+{{- if not .Values.recovery }}
+{{- with .Values.cluster }}
+{{- $namespace := include "project.namespace" $ | quote }}
+{{- $cluster := .name }}
+{{- $root := printf "%s-login-ca" $cluster }}
+{{- $selfSigned := printf "%s-self-signed" $cluster }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $selfSigned }}
+  namespace: {{ $namespace }}
+  {{- if not $.Values.deleteData }}
+  annotations: {helm.sh/resource-policy: keep}
+  {{- end }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $root }}
+  namespace: {{ $namespace }}
+  {{- if not $.Values.deleteData }}
+  annotations: {helm.sh/resource-policy: keep}
+  {{- end }}
+spec:
+  secretName: {{ $root }}
+  commonName: {{ $root }}
+  isCA: true
+  duration: 87600h
+  privateKey:
+    rotationPolicy: Never
+  issuerRef: {kind: Issuer, name: {{ $selfSigned }}}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $root }}
+  namespace: {{ $namespace }}
+  {{- if not $.Values.deleteData }}
+  annotations: {helm.sh/resource-policy: keep}
+  {{- end }}
+spec:
+  ca:
+    secretName: {{ $root }}
+{{- $replication := dict "name" "streaming_replica" "certificateSecret" (include "project.replicationCertificate" $cluster) }}
+{{- range append .roles $replication }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .certificateSecret }}
+  namespace: {{ $namespace }}
+  {{- if not $.Values.deleteData }}
+  annotations: {helm.sh/resource-policy: keep}
+  {{- end }}
+spec:
+  secretName: {{ .certificateSecret }}
+  {{- if eq .name "streaming_replica" }}
+  secretTemplate:
+    labels: {cnpg.io/reload: "true"}
+  {{- end }}
+  commonName: {{ .name | quote }}
+  usages: [digital signature, client auth]
+  issuerRef: {kind: Issuer, name: {{ $root }}}
+{{- end }}
+{{- end }}
+{{- end }}

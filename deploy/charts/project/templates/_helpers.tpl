@@ -15,3 +15,7 @@
 {{- define "project.namespace" -}}
 {{- required "Set namespace." .Values.namespace -}}
 {{- end -}}
+
+{{- define "project.replicationCertificate" -}}
+{{- printf "%s-client-repl" . -}}
+{{- end -}}

@@ -1,8 +1,7 @@
 //! Database declarations, restricted login identities and privilege SQL.
 //!
-//! CloudNativePG owns login roles and their basic-auth Secrets. SQL declarations
-//! own passwordless privilege roles and grants. Each login has CONNECT only on
-//! its declared database. Project identities remain distinct inside that database.
+//! CloudNativePG owns managed login roles. Project logins authenticate with
+//! client certificates. SQL declarations own privilege roles and grants.
 
 pub mod apply;
 pub mod audit_retention;

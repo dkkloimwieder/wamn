@@ -243,19 +243,19 @@ An omitted project schema mode follows the environment's disposable setting.
 Use `--disposable` only when first recording an environment that can be reset.
 The project chart declares one PostgreSQL Cluster and five managed logins per project.
 The environment YAML sets the database size for all projects. The installation values pin the PostgreSQL image.
-Project upgrades keep the login passwords and omit the Helm wait flag.
+Project upgrades omit the Helm wait flag. Each project Cluster has a CA that signs its five login certificates and its replication certificate.
 See [Backup and recovery](backup-and-recovery.md) for backup settings.
 The worker reads each required PostgreSQL cluster, Database, and reader Deployment by name.
 The project chart creates the PostgreSQL publication for change data capture (CDC).
 For each project, the worker waits for the database to be applied and allows up to 120 seconds for it to accept a SQL connection.
-CloudNativePG creates the database with `wamn_migration` as owner. The worker installs the project schema before restoring platform migrations. It checks the publication in SQL before it creates the replication slot.
+CloudNativePG creates the database and assigns ownership to `wamn_migration`. The worker installs the project schema before restoring platform migrations. It checks the publication in SQL before it creates the replication slot.
 The CDC reader waits up to 120 seconds for its slot before it starts replication.
 The worker creates the stream with the environment's `stream-admin` credentials and saves the project's applied configuration.
 The project chart mounts the YAML document in later project Jobs.
 The reader stays paused while a capture gap is open.
 The shared host group uses the runtime operator chart at version 2.12.2. The host reads NATS user credentials from `/etc/wamn/nats/` and trusts the broker CA at `/etc/wamn/nats-ca/ca.crt`.
 
-Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Helm keeps the Cluster and ObjectStore by default. Add `--data` and confirm the coordinate to remove both resources.
+Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Helm keeps the Cluster, ObjectStore, and project certificate resources by default. Add `--data` to remove them.
 Delete stops the reader before it removes the stream, then removes the replication slot and publication.
 Delete removes the project’s CDC and recovery credential Secrets. For the last project it also removes the host group, the shared credentials, and the environment account.
 These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
@@ -866,8 +866,8 @@ Operation workers copy the selected Secret keys to a memory-backed volume as the
 The database client reads `ca.crt` from `/etc/wamn/db/<login-secret>/` to verify the server.
 For a password login, the client reads `username` and `password` from that directory.
 It makes sure that the username matches the configured login.
-For identity's system database login, SQLx reads `tls.crt` and `tls.key` on each new connection. PostgreSQL matches the certificate's common name to the configured login.
-The control administration directory supplies the password login files and `ca.crt` for project connections.
+For project logins and identity's system database login, SQLx reads `tls.crt` and `tls.key` on each new connection. PostgreSQL matches the certificate's common name to the configured login.
+Project clients use `ca.crt` from the CloudNativePG server CA Secret to verify the server.
 Explicit operator connection strings must name a readable CA file through `sslrootcert`.
 The database hostname must match the server certificate.
 The provisioned CNPG clusters accept client connections only over TLS.
