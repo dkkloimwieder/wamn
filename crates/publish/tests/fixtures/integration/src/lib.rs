@@ -1,4 +1,4 @@
-//! A small integration artifact for build and publication tests.
+//! A small integration artifact for build tests.
 
 #[cfg(target_arch = "wasm32")]
 extern crate alloc;

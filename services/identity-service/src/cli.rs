@@ -141,15 +141,18 @@ async fn run_server(
     let tls = tls_config(&certificate, &private_key)?;
     drop(private_key);
     let service = IdentityService::connect(config, envelope).await?;
-    let rotation_state = Arc::clone(&service.inner);
-    rotation_state.rotate_keys().await?;
-    let rotation = async {
+    let maintenance_state = Arc::clone(&service.inner);
+    maintenance_state.rotate_keys().await?;
+    let maintenance = async {
         let mut poll = tokio::time::interval(Duration::from_secs(60));
         poll.tick().await;
         loop {
             poll.tick().await;
-            if let Err(error) = rotation_state.rotate_keys().await {
+            if let Err(error) = maintenance_state.rotate_keys().await {
                 tracing::error!(%error, "scheduled signing key rotation failed");
+            }
+            if let Err(error) = maintenance_state.prune_tx_identity().await {
+                tracing::warn!(%error, "system transaction identity retention failed");
             }
         }
     };
@@ -162,7 +165,7 @@ async fn run_server(
     tracing::info!(%address, "identity listening");
     tokio::select! {
         result = serve(listener, service, tls) => result,
-        () = rotation => unreachable!("rotation runs until shutdown"),
+        () = maintenance => unreachable!("maintenance runs until shutdown"),
         result = tokio::signal::ctrl_c() => result.map_err(|_| IdentityServiceError::new("identity shutdown signal failed")),
     }
 }

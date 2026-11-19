@@ -22,7 +22,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
 wamn-catalog = { workspace = true }
 sqlx = { workspace = true, optional = true, features = ["postgres"] }
-wamn-registry = { workspace = true }
 wamn-kubernetes = { workspace = true }
 tower-service = { workspace = true }
 http-auth = { version = "0.1.10", default-features = false }

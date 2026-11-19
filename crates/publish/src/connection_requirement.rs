@@ -2,7 +2,6 @@
 
 use sqlx::Row as _;
 pub(super) mod plan;
-pub(crate) use plan::exported_interfaces;
 #[cfg(test)]
 use plan::require_imports;
 

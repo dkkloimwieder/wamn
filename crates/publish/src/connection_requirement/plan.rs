@@ -1,32 +1,5 @@
 use super::ensure;
 
-pub(crate) fn exported_interfaces(bytes: &[u8]) -> anyhow::Result<Vec<String>> {
-    world_interfaces(bytes, true)
-}
-
-pub(super) fn world_interfaces(bytes: &[u8], exports: bool) -> anyhow::Result<Vec<String>> {
-    let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?
-    else {
-        anyhow::bail!("connection authority needs a component binary")
-    };
-    let world = &resolve.worlds[world];
-    let items = if exports {
-        &world.exports
-    } else {
-        &world.imports
-    };
-    let mut names = items
-        .values()
-        .filter_map(|item| match item {
-            wit_parser::WorldItem::Interface { id, .. } => resolve.id_of(*id),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    names.sort();
-    names.dedup();
-    Ok(names)
-}
-
 #[cfg(test)]
 pub(super) fn require_imports(bytes: &[u8], name: &str, interface: &str) -> anyhow::Result<()> {
     let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?

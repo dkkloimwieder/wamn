@@ -63,7 +63,7 @@ The system database supplies the platform domain for service email addresses.
 Service creation refuses with `platform-domain-unset` if the domain is missing.
 Workflow administration also uses server-selected connections and the authenticated principal.
 `wamn-environment` owns capture-gap recovery and reader lifecycle. Recovery selects the recorded capture role and its project recovery certificate. It accepts no database URL from the CLI.
-Integration publication pushes local build output first. The service verifies the published artifact before it records its version.
+The platform system schema seeds integration types. Only `wamn platform deploy` can change them.
 
 `wamn` is the user CLI and runs internal bootstrap steps.
 Deploy, rollback, status, schema, workflow, and integration administration use authenticated routes.

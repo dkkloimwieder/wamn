@@ -38,7 +38,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/number-pattern` | `wamn-number-pattern`: document number pattern parsing |
 | `crates/registry` | `wamn-registry`: hierarchy coordinates, resource names, and registry SQL |
 | `crates/provision` | `wamn-provision`: database roles and provisioning SQL |
-| `crates/publish` | `wamn-publish`: package, release, integration, and web publication |
+| `crates/publish` | `wamn-publish`: package, release, and web publication, plus local integration builds |
 | `crates/oci` | `wamn-oci`: registry transport, artifact readers, engine artifact adapter, and registry credentials |
 | `crates/environment` | `wamn-environment`: environment lifecycle, package apply, retention, and CDC reader lifecycle and recovery |
 | `crates/platform-install` | `wamn-platform-install`: chart installation and bootstrap |

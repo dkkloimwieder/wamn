@@ -176,13 +176,6 @@ async fn wait_for_system_schema(database: &str) -> anyhow::Result<sqlx::PgConnec
 pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     let platform = config.platform()?;
     write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
-    let integration_registry = wamn_oci::package_artifact::PackageRegistry {
-        artifact_base: format!("{}/wamn/integrations", config.registry),
-        credentials: None,
-        registry_auth_file: REGISTRY_AUTH_FILE.into(),
-        insecure_registry: platform.insecure_registry,
-        oci_ca_paths: platform.oci_ca_paths,
-    };
     let database = config.database.to_json()?;
     let writer = wait_for_system_schema(&database).await?;
     // The login permits four connections, including the dedicated writer.
@@ -237,9 +230,6 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
             administration: ADMINISTRATION_DIR.into(),
             control: pool,
             registry_token_metadata: config.registry_token_metadata,
-            system_database: platform.system_database_url,
-            integration_publication: tokio::sync::Mutex::new(()),
-            integration_registry,
         }))
         .with_worker(worker)
         .with_operation_jobs(wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?)

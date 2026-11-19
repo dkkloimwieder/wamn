@@ -100,7 +100,6 @@
     "operation/status.errors.json",
     "api_service/create.errors.json",
     "application/stop.errors.json",
-    "integration/publish.errors.json",
     "platform/schema.errors.json",
     "platform/operation_status.errors.json",
     "capture_gap/recover.errors.json",

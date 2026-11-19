@@ -368,13 +368,6 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Control,
-        operation: "integration.publish",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::OrgAdmin,
-        handler: HostHandler::ControlExecution,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
         operation: "api_service.create",
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
