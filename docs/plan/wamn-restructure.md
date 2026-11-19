@@ -2411,5 +2411,18 @@ Facts:
 - C1: `cargo xtask build-platform` always uses its own buildx builder, `wamn-platform` (docker-container driver, host network). It creates the builder when `docker buildx inspect` exits non-zero, and never changes Docker's current builder. Lanes never change Docker's current builder either; they use `--builder` or `BUILDX_BUILDER`. Cause: a lane left Docker's current builder set to a deleted builder, so buildx fell back to the default driver, which cannot export the registry cache.
 - N1: overlays commit their `.wamn/describe/` files, the same as bases, so they build without a database.
 - C2: the Dockerfile copies `mise.toml`, because `crates/codegen/src/kcl.rs::binary` builds the KCL version pin into the program at compile time. `mise.toml` stays the one source of tool pins. Cause: the compile-time read came in on 2026-11-15 (494238ae4), and no check ran `build-platform` until the first kind run.
+- K1: the NATS probes drop the chart's default `httpGet` through `container.patch`; a `null` in parent values did not remove it, so each probe had two handlers and the API server refused the StatefulSet.
+- K2: PostgreSQL is pinned to `18.6` by tag and digest. The `18.7` pin from Epic 8 named an image that CloudNativePG never published.
+- K3: `--settings` is an argument of each service subcommand. A required global argument is checked before the subcommand is read, so `serve --settings X` failed.
+
+**Ruled (D, 2026-11-19): preflight and smoke runs.**
+- Preflight, run before any kind install:
+  (1) `cargo xtask build-platform`;
+  (2) every image reference in the rendered charts resolves, checked with `docker buildx imagetools inspect` by exit code;
+  (3) every rendered chart is accepted by `kubectl apply --dry-run=server` against the kind cluster with the CRDs installed;
+  (4) every wamn container in the rendered charts accepts its rendered command and arguments: run the image with them and `--help` appended, by exit code.
+- Every epic ends with a kind smoke run before it merges to main: the preflight, then `wamn platform deploy`, `wamn org create` and one application deploy. Local kind has standing approval for these runs; GCP and other clusters still need D's approval.
+- During a run, collect every failing pod and its cause at each step before stopping, rather than stopping at the first.
+- Reason: the standard checks never built images, pulled images, sent objects to an API server or started a binary, so ten epics of runtime defects surfaced one per round in the first kind run.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
