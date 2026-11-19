@@ -745,7 +745,7 @@ Issues:
 - A readiness probe replaces the probe Job. Confirm that L1 is gone.
 
 10.4 `wamn org create <org> --owner <email>`.
-- The org row, the org's CA and its public certificate in `registry.orgs` (G), the first-owner token hash (E), `wamn-helm-<org>`, then the org chart: namespace, quota, RBAC, NetworkPolicy, Helm storage, worker, control, system login Secrets, identity CA, the `CN=control-<org>` certificate and the control administration map.
+- The org row, the invitation Job's service account (E), `wamn-helm-<org>`, then the org chart: namespace, quota, RBAC, NetworkPolicy, Helm storage, worker, control, system login Secrets, identity CA and the control administration map.
 - Then the owner invitation Job.
 
 10.5 Settings (K).
@@ -756,7 +756,7 @@ Issues:
 10.6 Operator and traffic (T4, T5).
 - `watchNamespaces` empty; fixed `-host-namespaces`.
 - The web proxy retries on connection failure, with a 1 s connect timeout.
-- Identity accepts any `CN=control-<org>` for an org in `registry.orgs`.
+- Identity and control check service account tokens through TokenReview; the namespace must be an org in `registry.orgs`.
 
 10.7 Remaining items.
 - `--only` (Q5 a); D7 (`env apply` writes the `registry.event_readers` row); K4 (xtask creates the kind cluster and the local registry); the xtask dependency check on `wamn-edge`; NATS volume sizing (Q6); GCP schema patterns (Q6).
@@ -767,7 +767,7 @@ Issues:
 - Platform logins on the system database and every project database login use certificates. The org's control login on the system database keeps a password (G).
 
 10.9 Certificate trust (G).
-- Namespaced platform issuers, no ClusterIssuer for trusted identities, a CA for each org, the admission policy for org Certificates, `ingresses` removed from the org worker, and the edge's ACME issuer namespaced.
+- Namespaced platform issuers, no ClusterIssuer for trusted identities, `ingresses` removed from the org worker, the edge's ACME issuer namespaced. TokenReview rights for identity and control.
 
 ## Open items
 
@@ -2298,7 +2298,7 @@ Facts:
 - T2. Orgs are data in the system Postgres (`registry.orgs`). No chart values list orgs. `wamn org create <org> --owner <email>` creates an org.
 - T3. NATS runs in operator (JWT) mode with the full resolver. Accounts and users are signed JWTs, pushed to the running server. One account per environment plus `PLATFORM`. JetStream limits and user permissions, including each user's inbox prefix, live in the JWTs. Clients connect with creds files; TLS stays, for encryption only.
 - T4. wasmCloud operator: `watchNamespaces` is empty (all namespaces). `-host-namespaces` stays fixed and never lists org namespaces, so the operator never restarts for a new org. Cost: no host-pod finalizer, so a gone host leaves the application endpoints only after heartbeats time out (about 1 to 2 minutes). The web proxy retries when a connection fails, with a connect timeout of about 1 s; nothing reached the host, so this is safe for every request. No upstream change in Epic 10. Later option: offer wasmCloud a change so its operator tracks host pods in all namespaces by the `wasmcloud.com/hostgroup` label, which brings back the host-pod finalizer.
-- T5. Identity accepts `CN=control-<org>` for any org in `registry.orgs`. The `controlSubject` value goes.
+- T5. Identity accepts `CN=control-<org>` for any org in `registry.orgs`. The `controlSubject` value goes. Replaced on 2026-11-19 by the service account token ruling.
 - Q1 a: `wamn platform deploy <values>` is the install entry point. It runs the infrastructure chart, then the platform chart, with one wait at the end.
 - Q3 a: each service reads one settings file. The host's file arrives through the stock runtime-operator `volumes`/`volumeMounts` and an extra `--settings` argument; the stock host arguments stay.
 - Q4 a: database logins by client certificate are in Epic 10.
@@ -2307,12 +2307,21 @@ Facts:
 - Overturned from Epic 9: the per-org NATS accounts Secret, its include mounts and `natsAccountOrgs`; the org worker's access to that Secret; NATS users mapped from certificates (`verify_and_map`); the Secret writer in `wamn_broker::authorization`.
 
 **Ruled (D, 2026-11-19): Epic 10 scout answers.**
-- A. Identity signs NATS accounts and user JWTs. The caller creates each user's key pair and sends only the public key; user private keys never leave the org. Identity signs only for the org whose CA the caller's certificate chains to (G). Identity becomes a NATS client, so that it can push accounts.
+- A. Identity signs NATS accounts and user JWTs. The caller creates each user's key pair and sends only the public key; user private keys never leave the org. Identity signs only for the org whose CA the caller's certificate chains to (G). Identity becomes a NATS client, so that it can push accounts. The caller is identified by its service account token (see the service account token ruling), not by a certificate.
 - B. The NATS root key and the operator signing key live in identity's encrypted store in the system Postgres; daily signing uses the signing key. The public operator JWT and system account JWT go into one Secret in `platform`, which the chart creates empty and identity fills. NATS mounts that Secret once, through `$include`, and needs no private key.
 - C. `nkeys` plus wamn's own claim types, written with serde, in the format of the NATS Go reference. The first kind run checks that the server accepts them.
 - D. `org create` does nothing in NATS. `env apply` creates each environment's account.
-- E. The first owner comes from a control operation that needs a one-time token and works only while the org has no owner. `org create` stores the token's hash in `registry.orgs`; the invitation Job reads the token from a Secret in the org namespace.
+- E. The first owner comes from a control operation that needs a one-time token and works only while the org has no owner. `org create` stores the token's hash in `registry.orgs`; the invitation Job reads the token from a Secret in the org namespace. Changed by the service account token ruling.
 - F. Dropped: no upstream work in Epic 10.
-- G. No ClusterIssuer signs an identity that NATS, identity or Postgres trusts; platform issuers are namespaced in `platform`. `org create` creates a CA for each org, with a namespaced Issuer in the org namespace, and stores its public certificate in `registry.orgs`. Identity accepts `CN=control-<org>` only when the certificate chains to that org's CA. Platform logins on the system database and all project database logins use certificates. The org's control login on the system database keeps a password, which `org create` writes and which is never in a Helm record; this narrows Q4 a. A ValidatingAdmissionPolicy refuses Certificates in org namespaces that point at a ClusterIssuer. The org worker loses `ingresses`. The edge's ACME issuer becomes namespaced. Reason: today the org worker can create a Certificate from `ClusterIssuer/wasmcloud-ca`, which NATS maps to users by name, so it can connect to NATS as `wasmcloud-operator`.
+- G. No ClusterIssuer signs an identity that NATS, identity or Postgres trusts; platform issuers are namespaced in `platform`. `org create` creates a CA for each org, with a namespaced Issuer in the org namespace, and stores its public certificate in `registry.orgs`. Identity accepts `CN=control-<org>` only when the certificate chains to that org's CA. Platform logins on the system database and all project database logins use certificates. The org's control login on the system database keeps a password, which `org create` writes and which is never in a Helm record; this narrows Q4 a. A ValidatingAdmissionPolicy refuses Certificates in org namespaces that point at a ClusterIssuer. The org worker loses `ingresses`. The edge's ACME issuer becomes namespaced. Reason: today the org worker can create a Certificate from `ClusterIssuer/wasmcloud-ca`, which NATS maps to users by name, so it can connect to NATS as `wasmcloud-operator`. Changed by the service account token ruling.
+
+**Ruled (D, 2026-11-19): workload identity by service account token.** This replaces part of A, E, G and T5.
+- Identity, for NATS signing, and control, for the first owner, verify the caller's projected service account token through the Kubernetes TokenReview API. The token's audience is the receiving service. The token's namespace gives the org, which must exist in `registry.orgs`. The service account name gives the caller's role.
+- Prior art: Vault's Kubernetes auth method binds roles to service account names and namespaces, and checks tokens with TokenReview.
+- Removed: the CA for each org, its certificate in `registry.orgs`, the ValidatingAdmissionPolicy, the first-owner token and its hash, and the `CN=control-<org>` checks.
+- Kept from G: no ClusterIssuer signs an identity that NATS, identity or Postgres trusts; platform issuers are namespaced in `platform`; the org worker loses `ingresses`; the edge's ACME issuer is namespaced; the org's control login on the system database keeps a password, written by `org create` and never in a Helm record.
+- E becomes: the invitation Job runs as its own service account in the org namespace. Control accepts the first-owner operation only from that service account, and only while the org has no owner.
+- T5 becomes: identity accepts control by its service account token, not by certificate subject.
+- Cost: identity and control need the right to create `tokenreviews`, a standard cluster permission. An org's worker can run pods as any service account in its own namespace, which stays inside the org.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
