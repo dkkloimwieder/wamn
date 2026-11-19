@@ -15,4 +15,5 @@ The chart grants the org worker access to Helm release Secrets in that namespace
 Set `control.image` and `control.configuration` to deploy the org's control service.
 Set `control.routeHost` and pin `control.image` by digest to publish its API route. Set `control.platformUi` to publish the UI release at that host.
 Control mounts its database login and system migration credential from named Secrets. Supply both Secrets before installing control.
-Pass the public CAs through `identityCa` and `postgresCa`. Set `control.certificateIssuer` to the existing namespaced Issuer for the control client certificate.
+Pass the public CA certificates as PEM through `identityCa`, `natsCa`, and `postgresCa`.
+Read `tls.crt` from `platform/wamn-identity-ca` and `platform/wasmcloud-ca`, and `ca.crt` from `platform/wamn-pg-ca`.

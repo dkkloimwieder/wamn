@@ -1,8 +1,9 @@
 {{- if not .Values.edge.neg }}
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
   name: wamn-edge
+  namespace: hosts
 spec:
 {{- if .Values.edge.acme }}
   acme: {{ .Values.edge.acme | toJson }}
@@ -19,6 +20,6 @@ spec:
   secretName: wamn-edge-tls
   dnsNames: {{ .Values.edge.tlsDnsNames | toJson }}
   issuerRef:
-    kind: ClusterIssuer
+    kind: Issuer
     name: wamn-edge
 {{- end }}

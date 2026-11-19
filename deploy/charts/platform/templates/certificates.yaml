@@ -1,7 +1,8 @@
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
   name: wamn-selfsigned
+  namespace: platform
 spec:
   selfSigned: {}
 ---
@@ -9,7 +10,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: wasmcloud-ca
-  namespace: cert-manager
+  namespace: platform
 spec:
   isCA: true
   secretName: wasmcloud-ca
@@ -20,14 +21,15 @@ spec:
     algorithm: ECDSA
     size: 256
   issuerRef:
-    kind: ClusterIssuer
+    kind: Issuer
     name: wamn-selfsigned
     group: cert-manager.io
 ---
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
   name: wasmcloud-ca
+  namespace: platform
 spec:
   ca:
     secretName: wasmcloud-ca
@@ -52,7 +54,7 @@ spec:
     - digital signature
     - key encipherment
   issuerRef:
-    kind: ClusterIssuer
+    kind: Issuer
     name: wasmcloud-ca
     group: cert-manager.io
 ---
@@ -71,6 +73,6 @@ spec:
     - digital signature
     - key encipherment
   issuerRef:
-    kind: ClusterIssuer
+    kind: Issuer
     name: wasmcloud-ca
     group: cert-manager.io

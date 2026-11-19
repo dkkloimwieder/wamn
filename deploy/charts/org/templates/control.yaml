@@ -53,7 +53,7 @@ spec:
             - {name: database, mountPath: /etc/wamn/db, readOnly: true}
             - {name: administration, mountPath: /etc/wamn/control-administration, readOnly: true}
             - {name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}
-            - {name: identity-control, mountPath: /etc/identity-control, readOnly: true}
+            - {name: identity-token, mountPath: /var/run/secrets/wamn-identity, readOnly: true}
             - {name: registry, mountPath: /credentials/registry, readOnly: true}
             {{- if .Values.control.oauthSecret }}
             - {name: oauth, mountPath: /etc/wamn/oauth, readOnly: true}
@@ -82,8 +82,12 @@ spec:
         - name: administration
           configMap: {name: wamn-control-administration-{{ $namespace }}}
         - {name: identity-ca, configMap: {name: identity-ca}}
-        - name: identity-control
-          secret: {secretName: {{ printf "control-%s" $namespace | quote }}}
+        - name: identity-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: wamn-identity
+                  path: token
         - name: registry
           {{- if .Values.control.registrySecret }}
           secret:

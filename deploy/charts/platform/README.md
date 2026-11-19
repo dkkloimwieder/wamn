@@ -11,3 +11,4 @@ Identity serves `https://identity.platform.svc.cluster.local` and uses the syste
 For local encryption, supply the existing `identity.oauthSecret` with a 32-byte `key`. For Cloud KMS, supply the matching project and region under `identity.oauthEncryption` and configure the pod identity. Identity stores signing keys in encrypted form.
 
 The edge trusts the public identity CA. The kind values set wildcard TLS coverage for `*.wamn.localhost`. GCP terminates TLS at the external load balancer.
+If the cluster Ingress uses ACME, set `edge.acme` for the `wamn-edge` Issuer in `hosts`.
