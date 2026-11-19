@@ -744,11 +744,13 @@ Issues:
 10.3 `wamn platform deploy <values>`.
 - One SQL Job. Identity creates its own first key; `Publish` and `Activate` go.
 - A readiness probe replaces the probe Job. Confirm that L1 is gone.
+- System migrations run only here (A).
 
 10.4 `wamn org create <org> --owner <email>`.
 - The org row, the invitation Job's service account (E), `wamn-helm-<org>`, then the org chart: namespace, quota, RBAC, NetworkPolicy, Helm storage, worker, control, system login Secrets, identity CA and the control administration map.
 - Then the owner invitation Job.
 - One Job in `platform` makes the org's control login and the `registry.orgs` row, and patches the password into the Secret that the org chart creates empty.
+- The org SQL Job also makes the org's apply login (A). Control's host name is `<org>.<base>` (C).
 
 10.5 Settings (K).
 - One settings file each for host, control, identity, cdc-reader and web. Constant flags become code defaults.
@@ -767,9 +769,12 @@ Issues:
 - One cert-manager `Certificate` per login; `pg_hba` requires `cert` for each login; roles have no password Secrets.
 - `wamn-postgres` uses `ssl_client_cert` and `ssl_client_key`; project accounts run their own Helm Jobs again.
 - Platform logins on the system database and every project database login use certificates. The org's control login on the system database keeps a password (G).
+- One CA per project Cluster (B).
 
 10.9 Certificate trust (G).
 - Namespaced platform issuers, no ClusterIssuer for trusted identities, `ingresses` removed from the org worker, the edge's ACME issuer namespaced. TokenReview rights for identity and control.
+
+10.10 Host names (E). `<label>--<org>.<base>` in the environment file and the registry; web drops routes whose host does not match their namespace.
 
 ## Open items
 
@@ -827,6 +832,7 @@ Issues:
 - Epic 10: the trusted install entry point installs the org chart (namespace, quota, base RBAC, default deny) and creates `wamn-helm-<org>` before it.
 - Epic 10 (10.8): database logins by client certificate. Each project chart renders a cert-manager `Certificate` per login, Postgres authenticates by certificate, and hosts mount `tls.crt` and `tls.key`. Release records then hold no passwords, project accounts can run their own Helm Jobs again, and nothing needs password rotation. Check CloudNativePG's support for certificate auth on managed roles and `wamn-postgres` connecting with a client certificate.
 - Later option, not in Epic 10: offer wasmCloud a change so its runtime-operator tracks host pods in all namespaces by label (T4). The `len(podCacheNamespaces) == 0` fallback in `cmd/main.go` never runs.
+- Later option: custom domains for applications through a verified-domain list (E).
 
 # Part 2: Review log
 
@@ -2329,5 +2335,12 @@ Facts:
 **Ruled (D, 2026-11-19): org control login and host scheduler users.**
 - The org's control login: `org create` starts one Job in `platform`. The Job uses the same image and binary as the 10.3 install SQL Job, with a different subcommand. The Job generates the password in the cluster and runs `CREATE ROLE ... LOGIN PASSWORD ... CONNECTION LIMIT 4 IN ROLE wamn_control`. It writes the `registry.orgs` row and patches the password into the org's basic-auth Secret. The org chart creates that Secret empty, because Kubernetes RBAC cannot limit `create` to one resource name. The org chart grants the Job's service account `get`, `update` and `patch` on that one Secret name only. The password never leaves the cluster and is never in a Helm record. The system Cluster spec never changes when an org is added. The role leaves the `installation` chart's `systemDatabase.roles` and `platform-install/src/roles.rs::control`.
 - Host scheduler users: each host group gets its own PLATFORM user with its own inbox prefix and the same subject rights as `wasmcloud-runtime` today. This is a stated exception to T1. Reason: host ids are random, single-token subject parts, so no NATS permission can separate one org's hosts from another's. wasmCloud's threat model treats the host process, and anyone who can publish on `runtime.host.>`, as trusted. Later option: one NATS user per host pod, with the host id set from the pod name and a JWT from identity.
+
+**Ruled (D, 2026-11-19): Epic 10 logins, CAs and host names.**
+- A. System migrations run only in `platform`, in the 10.3 SQL Job. No org namespace holds the system migration login. Each org gets its own apply login, made by the org SQL Job in `platform` in the same way as the org's control login: the password is created in the cluster and patched into a Secret that the org chart creates empty. The shared `wamn_apply` login goes. The org-scoped grants tie each org's apply login and control login to that org, so a login can write only its own org's rows. Reason: each org's control mounted the system migration login and the shared apply login (`org/templates/control.yaml`, `platform-install/src/org.rs`), so any org could change the whole system database.
+- B. One CA per project Cluster signs that project's login certificates. Projects are their own isolation level (F7).
+- C. Each org's control host name is `<org>.<base>`, covered by the platform wildcard certificate.
+- D. The org worker keeps Secret rights across its own namespace, as a stated exception inside the org.
+- E. Application host names are `<label>--<org>.<base>`. The user picks only `<label>`; the registry keeps it unique within the org. Web drops any route whose host does not end in `--<namespace>.<base>`, where the namespace is the route ConfigMap's namespace. One level deep, so the platform wildcard certificate covers it. This is the pattern Netlify uses (`branch--site.netlify.app`). Later option: custom domains through a verified-domain list. Reason: host names were free text with no uniqueness across orgs, and web served the lowest ConfigMap name on a clash (`web/src/lib.rs::Releases::routes`), so any org could take over another org's host name.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
