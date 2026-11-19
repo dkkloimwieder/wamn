@@ -17,9 +17,11 @@ pub struct ProvisionSystemRequest {
     pub database: wamn_postgres::ConnectionConfig,
     /// The email domain of the platform principal rows.
     pub platform_domain: wamn_registry::platform_domain::PlatformDomain,
+    /// The platform-wide project stream limit.
+    pub max_projects: std::num::NonZeroU32,
 }
 
-/// Install the control store and record the platform domain.
+/// Install the control store and record the platform domain and stream limit.
 pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Result<()> {
     anyhow::ensure!(
         request.database.username.as_str() == "postgres"
@@ -46,6 +48,10 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         .execute(&mut *transaction)
         .await
         .context("assume the control owner to finalize system provisioning")?;
+    sqlx::query(wamn_registry::sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
+        .execute(&mut *transaction)
+        .await
+        .context("lock platform project stream capacity")?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_provision::identity_role::grants_sql(),
     ))
@@ -56,11 +62,18 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         .execute(&mut *transaction)
         .await
         .context("grant the apply surface")?;
-    sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN)
+    let first_limit: Option<bool> = sqlx::query_scalar(wamn_registry::sql::UPDATE_PLATFORM_META_SQL)
         .bind(&request.platform_domain)
-        .execute(&mut *transaction)
+        .bind(i64::from(request.max_projects.get()))
+        .fetch_optional(&mut *transaction)
         .await
-        .context("record the platform domain")?;
+        .context("record the platform domain and project stream limit")?;
+    if first_limit == Some(true) {
+        sqlx::raw_sql("ALTER TABLE registry.meta ALTER COLUMN max_projects SET NOT NULL")
+            .execute(&mut *transaction)
+            .await
+            .context("require the installed project stream limit")?;
+    }
     transaction.commit().await?;
     Ok(())
 }

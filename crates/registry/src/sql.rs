@@ -194,9 +194,15 @@ pub fn grant_control_policy_execute_sql(role: &str) -> String {
     )
 }
 
-/// crates/environment/src/provision_system.rs::set_platform_domain registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN: &str =
-    "UPDATE registry.meta SET platform_domain = $1 WHERE platform_domain IS DISTINCT FROM $1";
+/// Serialize writes to the project stream limit and reservations against it.
+pub const PROJECT_STREAM_CAPACITY_LOCK_SQL: &str =
+    "SELECT pg_advisory_xact_lock(hashtextextended('wamn.project-stream-capacity', 0))";
+
+/// Set the installation's domain and project stream limit.
+pub const UPDATE_PLATFORM_META_SQL: &str =
+    "UPDATE registry.meta SET platform_domain = $1, max_projects = $2 \
+     WHERE (platform_domain, max_projects) IS DISTINCT FROM ($1, $2) \
+     RETURNING old.max_projects IS NULL";
 
 /// crates/environment/src/provision_project_env/registry.rs::do_record_project_env registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV: &str =

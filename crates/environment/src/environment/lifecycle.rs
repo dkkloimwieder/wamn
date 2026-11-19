@@ -39,22 +39,50 @@ pub async fn configure(
             let first = projects
                 .first()
                 .context("environment has no selected projects")?;
-            let mut reserved = Vec::with_capacity(projects.len());
-            for project in &projects {
-                let outcome = reserve_project(project, disposable, system_owner)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Reserve project {} failed. Run env apply again to continue.",
-                            project.project
-                        )
-                    })?;
-                reserved.push(outcome);
-            }
             let project_names: Vec<_> = projects
                 .iter()
                 .map(|project| project.project.as_str())
                 .collect();
+            let mut reserved = Vec::with_capacity(projects.len());
+            {
+                let mut client = wamn_postgres::connect(&platform.system_database_url)
+                    .await
+                    .context("connect as the apply role to reserve projects")?;
+                let mut transaction = provision_project_env::provisioning_transaction(&mut client)
+                    .await?;
+                sqlx::query(wamn_registry::sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
+                    .execute(&mut *transaction)
+                    .await
+                    .context("lock platform project stream capacity")?;
+                let (max_projects, current, additional): (Option<i64>, i64, i64) = sqlx::query_as(
+                    "SELECT (SELECT max_projects FROM registry.meta), \
+                            (SELECT count(*) FROM registry.environment_projects), count(*) \
+                     FROM unnest($3::text[]) AS selected(project) \
+                     WHERE NOT EXISTS (SELECT 1 FROM registry.environment_projects AS registered \
+                         WHERE registered.org = $1 AND registered.env = $2 \
+                         AND registered.project = selected.project)",
+                )
+                .bind(&first.org)
+                .bind(&first.env)
+                .bind(&project_names)
+                .fetch_one(&mut *transaction)
+                .await
+                .context("count project stream reservations")?;
+                let max_projects = max_projects.context("the system SQL Job has not set the project stream limit")?;
+                let projected = current + additional;
+                ensure!(
+                    additional == 0 || projected <= max_projects,
+                    "project stream limit is {max_projects}, count would reach {projected} ({current} reserved, {additional} new)"
+                );
+                for project in &projects {
+                    reserved.push(
+                        reserve_project(&mut transaction, project, disposable)
+                            .await
+                            .with_context(|| format!("reserve project {}", project.project))?,
+                    );
+                }
+                transaction.commit().await.context("commit project reservations")?;
+            }
             let (replicas, host) = resources::prepare_host_upgrade(
                 &platform,
                 &first.org,
@@ -122,13 +150,13 @@ pub async fn configure(
 }
 
 async fn reserve_project(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     document: &EnvironmentDocument,
     disposable: Option<bool>,
-    system_owner: &str,
 ) -> anyhow::Result<wamn_registry::instance_suffix::InstanceSuffix> {
     wamn_provision::validate_project_env_cdc(&document.org, &document.project, &document.env)?;
     registry::record_project_env(
-        system_owner,
+        transaction,
         &document.triple(),
         Some(&document.policy),
         &document.target,

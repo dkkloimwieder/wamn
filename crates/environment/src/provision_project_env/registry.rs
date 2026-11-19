@@ -104,15 +104,12 @@ pub async fn read_project_env_policy(
     result
 }
 
-/// Record the project and the provisioned project-env in the registry (idempotent).
-/// The supplied credential holds the grants used by the registry builders.
+/// Record the project and its deployment in the caller's reservation transaction.
 ///
-/// Returns the environment's STORED instance suffix, which is `minted` only on a
-/// first provision — see [`do_record_project_env`]. The project derives from
-/// the coordinate (`project_env_key`).
+/// Returns the stored instance suffix. A new deployment uses `minted`.
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn record_project_env(
-    system_url: &str,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     triple: &Triple,
     policy: Option<&wamn_registry::EnvName>,
     target: &str,
@@ -121,46 +118,15 @@ pub(crate) async fn record_project_env(
     minted: &InstanceSuffix,
     disposable: Option<bool>,
 ) -> anyhow::Result<InstanceSuffix> {
-    let mut client = wamn_postgres::connect(system_url)
-        .await
-        .context("system db connect")?;
-
-    let result = do_record_project_env(
-        &mut client,
-        triple,
-        policy,
-        target,
-        secret_name,
-        secret_namespace,
-        minted,
-        disposable,
-    )
-    .await;
-    drop(client);
-    result
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn do_record_project_env(
-    client: &mut sqlx::PgConnection,
-    triple: &Triple,
-    policy: Option<&wamn_registry::EnvName>,
-    target: &str,
-    secret_name: &str,
-    secret_namespace: Option<&str>,
-    minted: &InstanceSuffix,
-    disposable: Option<bool>,
-) -> anyhow::Result<InstanceSuffix> {
-    let mut transaction = super::provisioning_transaction(client).await?;
-    wamn_registry::deployment::record_project(&mut transaction, &triple.org, &triple.project)
+    wamn_registry::deployment::record_project(transaction, &triple.org, &triple.project)
         .await
         .context("record project")?;
-    let target_id = wamn_registry::deployment::target_id(&mut transaction, target)
+    let target_id = wamn_registry::deployment::target_id(transaction, target)
         .await
         .context("read deployment target")?
         .with_context(|| format!("target {target:?} is not registered"))?;
-    let stored = wamn_registry::deployment::record(
-        &mut transaction,
+    wamn_registry::deployment::record(
+        transaction,
         &wamn_registry::deployment::Registration {
             triple,
             secret_name,
@@ -172,12 +138,7 @@ pub(super) async fn do_record_project_env(
         },
     )
     .await
-    .context("record project deployment")?;
-    transaction
-        .commit()
-        .await
-        .context("commit registry coordinates")?;
-    Ok(stored)
+    .context("record project deployment")
 }
 
 /// Require the environment's registry coordinate to exist.
