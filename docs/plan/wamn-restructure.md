@@ -834,6 +834,7 @@ Issues:
 - Epic 10: `wamn platform deploy --only` (updating control, identity or a host in place) returns with the `platform` chart. Epic 9 deleted the control Job path and its `helm get values` read-back.
 - After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
 - After 3.6, first kind run: The two Poolers: session mode with the org logins, the auth query, waiting at the per-login limit, and the 15-minute apply wait.
+- After 3.6, first kind run: Pooler certificate renewal: renew one Pooler certificate, restart the CloudNativePG operator to force a reconcile, and confirm that PgBouncer serves the new certificate.
 - When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
 - After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
 - Epic 10: D6, the host NATS URLs default to `nats.<release namespace>` while the service is `wamn-nats.platform`, and hosts start no HTTP listener. D7, `registry.event_readers` has no writer, so capture-gap recovery refuses on a fresh project.
@@ -844,6 +845,7 @@ Issues:
 - Later option: custom domains for applications through a verified-domain list (E).
 - Later option: integration types owned by one org (Q4).
 - Later option: users in more than one org, through an invitation the user accepts (grant ruling, change 1).
+- Next CloudNativePG upgrade: move the Pooler's certificate lookup to `.spec.pgbouncer` `clientTLSSecret`, `clientCASecret`, `serverTLSSecret` and `serverCASecret` (added in 1.28), away from the deprecated field.
 
 # Part 2: Review log
 
@@ -2387,5 +2389,10 @@ Facts:
 - 10.12: platform logins use certificates, as ruling G says. That covers the SQL Job, the system migration login, each provision-org Job, and the `postgres` superuser that the SQL Job uses (`CN=postgres` from the platform issuer and a `hostssl ... postgres ... cert` rule). Their password Secrets go.
 - One session per apply Job: the work runs on the connection that holds the environment lock (a session advisory lock stays held across transactions on that session), so a Job never waits for a second session.
 - Accepted from the agent: the auth query function lives in the `postgres` database, is owned by `postgres` and returns password hashes only for org logins; each Pooler has a certificate from the platform issuer and clients check its name; the database accepts org logins only from the Pooler pods.
+
+**Ruled (D, 2026-11-19): pooler review.**
+- `max_connections` on the system Cluster is computed by the platform chart: Pooler totals, password lookups, identity's pool, the fixed Job connections, reserved slots and a margin of 10. The provision-org Job and the system SQL Job each have one fixed name, so Kubernetes runs at most one of each at a time, and the count is exact. Reason: the hand-set 200 could be exceeded at peak, and identity would be refused first.
+- Control reconnects its writer after a failed connection. Reason: a Pooler restart left control broken until it restarted.
+- Pooler certificate renewal needs no code. The CloudNativePG resync (about 10 hours) reconciles each Pooler and writes the current Secret versions into its status. The PgBouncer pod sees the change and reloads. A renewal at day 60 is in use well before the expiry at day 90.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
