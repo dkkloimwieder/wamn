@@ -18,7 +18,6 @@ hmac = { workspace = true }
 sha2 = { workspace = true }
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
-wamn-broker = { workspace = true }
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes = { workspace = true, features = ["test-util"] }
 anyhow = { workspace = true }

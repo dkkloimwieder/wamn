@@ -22,6 +22,7 @@ pub const SIGN_USER_PATH: &str = "/nats/users";
 pub struct EnsureAccount {
     pub org: OrgId,
     pub env: EnvName,
+    /// A zero count removes the account from the full resolver.
     pub project_count: u32,
 }
 
@@ -110,6 +111,10 @@ impl NatsClient {
             .http
             .post(endpoint, serde_json::to_vec(request)?)
             .await?;
+        anyhow::ensure!(
+            response.status() != StatusCode::CONFLICT,
+            "platform NATS project limit exceeded"
+        );
         anyhow::ensure!(
             response.status() == StatusCode::OK,
             "identity NATS request failed: {}",

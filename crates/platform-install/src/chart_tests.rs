@@ -130,7 +130,12 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
                 "drainBoundSeconds":60,
                 "identityIssuer":"https://identity.platform.svc.cluster.local",
                 "natsUrl":crate::platform::identity::NATS_URL,
-                "environmentNats":{"secret":"environment-nats", "inbox":"_INBOX_fixture", "subjects":"evt.fixture.>"},
+                "environmentNats":{
+                    "scheduler":"scheduler-nats", "data":"data-nats", "native":"native-nats",
+                    "workflow":{"secret":"workflow-nats", "inbox":"_INBOX_workflow"},
+                    "ingress":{"secret":"ingress-nats", "inbox":"_INBOX_ingress"},
+                    "subjects":"evt.fixture.>",
+                },
                 "projects":{(project):{
                     "host":"project-rw", "port":5432, "database":"project", "cluster":"project",
                     "logins":{"guest-sql":"project-app"}, "serverCa":"project-ca",

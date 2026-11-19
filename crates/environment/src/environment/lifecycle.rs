@@ -51,6 +51,10 @@ pub async fn configure(
                     })?;
                 reserved.push(outcome);
             }
+            let count =
+                super::broker::project_count(&mut *lock.client().await, &first.org, &first.env)
+                    .await?;
+            super::broker::configure(&platform, &first.org, &first.env, count).await?;
             let project_names: Vec<_> = projects
                 .iter()
                 .map(|project| project.project.as_str())
@@ -64,7 +68,7 @@ pub async fn configure(
             )
             .await?;
             let configure_projects = async {
-                for (index, (project, instance)) in projects.iter().zip(reserved).enumerate() {
+                for (project, instance) in projects.iter().zip(reserved) {
                     let connection =
                         installer::environment::connection_for(&project.triple(), &instance);
                     let database = installer::environment::database_values(
@@ -82,7 +86,6 @@ pub async fn configure(
                         database,
                         system_owner,
                         &lock,
-                        index == 0,
                         &applied_document,
                     )
                     .await
@@ -149,14 +152,9 @@ async fn configure_project(
     mut values: Value,
     system_owner: &str,
     lock: &LifecycleLock,
-    first: bool,
     applied_document: &str,
 ) -> anyhow::Result<()> {
     let triple = &document.triple();
-    if first {
-        let admin = name::environment_nats_admin(&triple.org, &triple.env);
-        resources::wait_certificate(platform, &admin).await?;
-    }
     let unconfigured = super::document::read_configuration(&mut *lock.client().await, triple)
         .await?
         .is_none();
@@ -181,7 +179,7 @@ async fn configure_project(
         wamn_provision::cdc_object_name(&triple.org, &triple.project, &triple.env, instance);
     let connections = workload::connections(connection)?;
 
-    wamn_broker::authorization::provision_project(&platform.target, triple).await?;
+    super::broker::configure_project(platform, triple).await?;
 
     installer::environment::set_operation_values(
         &mut values,
@@ -199,16 +197,6 @@ async fn configure_project(
     )["publication"]
         .take();
     values["databaseConfig"] = workload::configuration_values(triple, instance, &connections)?;
-    let certificate = name::cdc_nats_certificate(triple);
-    let recovery = name::recovery_nats_user(triple);
-    values["brokerCertificates"] = json!([
-        wamn_broker::authorization::certificate(
-            &certificate,
-            &certificate,
-            &name::cdc_nats_user(&triple.org, &triple.project, &triple.env),
-        ),
-        wamn_broker::authorization::certificate(&recovery, &recovery, &recovery),
-    ]);
     values["environmentDocument"] = applied_document.into();
     values["cdcReader"] = reader_values(platform, triple, &capture).await?;
     let paused = super::capture_gap::is_open(&mut *lock.client().await, triple).await?;
@@ -282,10 +270,6 @@ async fn configure_project(
                 &schemas,
             )
             .await?;
-            tokio::try_join!(
-                resources::wait_certificate(platform, &certificate),
-                resources::wait_certificate(platform, &recovery),
-            )?;
             resources::ensure_stream(platform, triple).await?;
             if !paused {
                 super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;
@@ -332,7 +316,7 @@ async fn reader_values(
         "coordinate": triple.to_string(),
         "image": image,
         "registrySecret": (!platform.registry_token_metadata).then_some(name::REGISTRY_PULL),
-        "natsSecret": name::cdc_nats_certificate(triple),
+        "natsSecret": name::project_nats_secret(triple, "cdc"),
         "database": capture,
         "natsUrl": platform.nats_url,
     }))

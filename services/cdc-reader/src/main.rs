@@ -23,6 +23,7 @@ struct Settings {
     database: wamn_postgres::ConnectionConfig,
     cdc_name: String,
     nats_url: String,
+    nats_creds: PathBuf,
 }
 
 fn init_tracing() {
@@ -56,9 +57,8 @@ async fn main() -> anyhow::Result<()> {
         stream,
         cdc_url: settings.database.to_json()?,
         nats_url: settings.nats_url,
-        nats_tls_ca: Some("/etc/wamn/nats/ca.crt".into()),
-        nats_tls_cert: Some("/etc/wamn/nats/tls.crt".into()),
-        nats_tls_key: Some("/etc/wamn/nats/tls.key".into()),
+        nats_tls_ca: Some(wamn_broker::nats::CA_FILE.into()),
+        nats_creds: Some(settings.nats_creds),
         feedback_secs: 5,
         stall_threshold_secs: 30,
         slot_poll_secs: 30,

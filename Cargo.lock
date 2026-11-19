@@ -5560,16 +5560,14 @@ dependencies = [
  "async-nats",
  "base64 0.22.1",
  "futures-util",
- "rustls",
  "serde",
  "serde_json",
- "tempfile",
  "tokio",
  "tracing",
  "wamn-catalog",
  "wamn-event",
- "wamn-kubernetes",
  "wamn-registry",
+ "zeroize",
 ]
 
 [[package]]
@@ -5958,6 +5956,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
+ "nkeys",
  "object_store",
  "oci-client",
  "pg_query",
@@ -5989,6 +5988,7 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-http",
  "wamn-identity",
+ "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-oci",
@@ -6007,6 +6007,7 @@ dependencies = [
  "wat",
  "wit-component 0.254.2",
  "wit-parser 0.254.2",
+ "zeroize",
 ]
 
 [[package]]
@@ -6094,6 +6095,7 @@ dependencies = [
  "wamn-test-postgres",
  "wash-runtime",
  "wasmtime-wasi-http",
+ "zeroize",
 ]
 
 [[package]]
@@ -6672,7 +6674,6 @@ dependencies = [
  "sqlx",
  "tokio",
  "url",
- "wamn-broker",
  "wamn-catalog",
  "wamn-codegen",
  "wamn-digest",

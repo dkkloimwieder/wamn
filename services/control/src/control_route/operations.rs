@@ -242,12 +242,13 @@ fn manifest(
     container["resources"] =
         json!({"requests":{"cpu":"100m","memory":"256Mi"},"limits":{"cpu":"2","memory":"2Gi"}});
     if matches!(operation, Operation::Recover) {
+        crate::worker::mount_broker_ca(&mut job);
         wamn_kubernetes::job::mount(
             &mut job,
             "recovery-nats",
-            &wamn_registry::name::recovery_nats_user(triple),
+            &wamn_registry::name::project_nats_secret(triple, "recovery"),
             "/etc/wamn/recovery-nats",
-            &["ca.crt", "tls.crt", "tls.key"],
+            &[wamn_broker::nats::CREDENTIALS_KEY],
         );
     }
     crate::worker::mount_database_files(&mut job);

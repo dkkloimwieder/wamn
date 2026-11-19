@@ -99,16 +99,6 @@ pub(super) async fn prepare_host_upgrade<'a>(
     Ok((replicas, upgrade))
 }
 
-pub(super) async fn wait_certificate(platform: &Platform, name: &str) -> anyhow::Result<()> {
-    wamn_kubernetes::kubectl::wait_ready(
-        &platform.target,
-        "certificate",
-        name,
-        std::time::Duration::from_secs(120),
-    )
-    .await
-}
-
 async fn host_values(
     platform: &Platform,
     org: &OrgId,
@@ -196,14 +186,10 @@ async fn host_values(
             }),
         );
     }
-    let certificate = name::environment_nats_certificate(org, env);
-    let certificate = wamn_broker::authorization::certificate(
-        &certificate,
-        &name::environment_nats_secret(org, env),
-        &name::environment_nats_user(org, env),
-    );
-    let admin = name::environment_nats_admin(org, env);
-    let admin_certificate = wamn_broker::authorization::certificate(&admin, &admin, &admin);
+    let (workflow, ingress) = tokio::try_join!(
+        super::broker::binding(platform, org, env, "workflow"),
+        super::broker::binding(platform, org, env, "ingress"),
+    )?;
     Ok(json!({
         "org":org,
         "env":env,
@@ -220,12 +206,13 @@ async fn host_values(
         "ociCaPaths":platform.oci_ca_paths,
         "oauthEncryption":platform.oauth_encryption,
         "environmentNats":{
-            "secret":name::environment_nats_secret(org, env),
-            "inbox":wamn_broker::nats::inbox_prefix(&name::environment_nats_user(org, env)),
+            "scheduler":name::environment_nats_secret(org,env,"scheduler"),
+            "data":name::environment_nats_secret(org,env,"data"),
+            "native":name::environment_nats_secret(org,env,"workflow-native"),
+            "workflow":workflow,
+            "ingress":ingress,
             "subjects":name::environment_event_subjects(org, env),
         },
-        "brokerCertificates":[certificate],
-        "brokerAdminCertificate":admin_certificate,
     }))
 }
 
@@ -251,12 +238,9 @@ pub(super) async fn ensure_stream(platform: &Platform, triple: &Triple) -> anyho
         .events
         .as_ref()
         .context("event stream policy is absent")?;
-    let broker = wamn_broker::authorization::issued_admin_context(
-        &platform.target,
-        triple,
-        &platform.nats_url,
-    )
-    .await?;
+    let broker = super::broker::admin(platform, &triple.org, &triple.env)
+        .await?
+        .context("environment stream-admin credential is absent")?;
     wamn_broker::streams::provision(
         &broker,
         triple,

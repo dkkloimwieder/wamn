@@ -27,7 +27,7 @@ use tokio::net::TcpStream;
 use tokio::process::Command;
 use tokio::time::{Instant, sleep, timeout};
 
-/// The chart's NATS image (charts/runtime-operator/values.yaml, `nats.image`).
+/// The platform chart's NATS image.
 const NATS_IMAGE: &str = "nats:2.12.15-alpine";
 /// A base whose glibc runs the host binary that Cargo built for this test.
 const HOST_IMAGE: &str = "debian:trixie-slim";
@@ -40,7 +40,7 @@ const STARTUP_BUDGET: Duration = Duration::from_secs(60);
 const NATS_OUTAGE: Duration = Duration::from_secs(20);
 const RECOVERY_BUDGET: Duration = Duration::from_secs(60);
 
-/// The chart's server configuration (templates/nats/config.yaml) with TLS on.
+/// A broker with server TLS for exercising scheduler reconnection.
 const NATS_CONFIG: &str = r#"port: 4222
 jetstream {
   store_dir: "/data/jetstream"
@@ -48,15 +48,6 @@ jetstream {
 tls {
   cert_file: /nats-cert/tls.crt
   key_file: /nats-cert/tls.key
-  ca_file: /nats-cert/ca.crt
-  verify_and_map: true
-}
-authorization {
-  users = [
-    { user: "wasmcloud-operator" },
-    { user: "wasmcloud-runtime" },
-    { user: "wasmcloud-data" }
-  ]
 }
 "#;
 
@@ -118,17 +109,8 @@ async fn published_port(name: &str, port: &str) -> anyhow::Result<u16> {
     Ok(port.parse()?)
 }
 
-struct Certificates {
-    ca: PathBuf,
-    operator_cert: PathBuf,
-    operator_key: PathBuf,
-}
-
-/// The chart's certificate set (templates/certificates.yaml): one CA, a server
-/// certificate for `nats`, and client certificates whose names map to users.
-/// The server also names `localhost`, because this test reaches NATS through a
-/// published loopback port.
-fn certificates(nats_dir: &Path, runtime_dir: &Path) -> anyhow::Result<Certificates> {
+/// The server names localhost as well as nats for loopback clients.
+fn certificates(nats_dir: &Path, runtime_dir: &Path) -> anyhow::Result<PathBuf> {
     let mut ca_params = CertificateParams::new(Vec::<String>::new())?;
     ca_params
         .distinguished_name
@@ -148,39 +130,16 @@ fn certificates(nats_dir: &Path, runtime_dir: &Path) -> anyhow::Result<Certifica
         Ok((cert.pem(), key.serialize_pem()))
     };
     let (nats_cert, nats_key) = signed("nats", vec!["nats".to_owned(), "localhost".to_owned()])?;
-    let (runtime_cert, runtime_key) =
-        signed("wasmcloud-runtime", vec!["wasmcloud-runtime".to_owned()])?;
-    let (operator_cert, operator_key) =
-        signed("wasmcloud-operator", vec!["wasmcloud-operator".to_owned()])?;
-    for (dir, cert, key) in [
-        (nats_dir, &nats_cert, &nats_key),
-        (runtime_dir, &runtime_cert, &runtime_key),
-    ] {
-        fs::write(dir.join("ca.crt"), ca.pem())?;
-        fs::write(dir.join("tls.crt"), cert)?;
-        fs::write(dir.join("tls.key"), key)?;
-    }
-    let operator_dir = runtime_dir
-        .parent()
-        .context("certificate directory needs a parent")?
-        .join("operator-cert");
-    fs::create_dir(&operator_dir)?;
-    fs::write(operator_dir.join("ca.crt"), ca.pem())?;
-    fs::write(operator_dir.join("tls.crt"), operator_cert)?;
-    fs::write(operator_dir.join("tls.key"), operator_key)?;
-    Ok(Certificates {
-        ca: operator_dir.join("ca.crt"),
-        operator_cert: operator_dir.join("tls.crt"),
-        operator_key: operator_dir.join("tls.key"),
-    })
+    fs::write(nats_dir.join("tls.crt"), nats_cert)?;
+    fs::write(nats_dir.join("tls.key"), nats_key)?;
+    let ca_path = runtime_dir.join("ca.crt");
+    fs::write(&ca_path, ca.pem())?;
+    Ok(ca_path)
 }
 
-/// A client of the test process, as the operator connects: its own
-/// certificate, through the published port of the current NATS container.
-async fn operator_client(certs: &Certificates, port: u16) -> anyhow::Result<async_nats::Client> {
+async fn operator_client(ca: &Path, port: u16) -> anyhow::Result<async_nats::Client> {
     Ok(async_nats::ConnectOptions::new()
-        .add_root_certificates(certs.ca.clone())
-        .add_client_certificate(certs.operator_cert.clone(), certs.operator_key.clone())
+        .add_root_certificates(ca.to_owned())
         .connect(format!("tls://localhost:{port}"))
         .await?)
 }
@@ -189,7 +148,7 @@ async fn start_nats(
     fixture: &mut Fixture,
     role: &str,
     evidence: &Path,
-    certs: &Certificates,
+    certs: &Path,
 ) -> anyhow::Result<(String, u16)> {
     let name = fixture.container(role);
     let network = fixture.network();
@@ -272,7 +231,7 @@ async fn save_host_log(host: &str, evidence: &Path) -> anyhow::Result<String> {
 }
 
 async fn heartbeat_rpc(
-    certs: &Certificates,
+    certs: &Path,
     port: u16,
     host_id: &str,
     host_name: &str,
@@ -307,7 +266,7 @@ async fn heartbeat_rpc(
 /// ready host connected to the first NATS container.
 struct Case {
     evidence: PathBuf,
-    certs: Certificates,
+    certs: PathBuf,
     fixture: Fixture,
     network: String,
     host: String,
@@ -366,7 +325,10 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
     let nats_url = "nats://nats:4222";
     let settings = native_host::write_settings(&evidence, "nats-move-test", nats_url)?;
     let settings_mount = format!("{}:/settings/settings.json:ro", settings.display());
-    let plugins_mount = format!("{}:/settings/host.yaml:ro", evidence.join("host.yaml").display());
+    let plugins_mount = format!(
+        "{}:/settings/host.yaml:ro",
+        evidence.join("host.yaml").display()
+    );
     let cert_mount = format!(
         "{}:/runtime-cert:ro",
         evidence.join("runtime-cert").display()
@@ -406,10 +368,6 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
         nats_url,
         "--scheduler-nats-tls-ca",
         "/runtime-cert/ca.crt",
-        "--scheduler-nats-tls-cert",
-        "/runtime-cert/tls.crt",
-        "--scheduler-nats-tls-key",
-        "/runtime-cert/tls.key",
         "--http-addr",
         "0.0.0.0:8080",
         "--probe-addr",

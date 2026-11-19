@@ -86,6 +86,19 @@ async fn ensure_key(
     Ok(Key { pair, issued_at })
 }
 
+#[derive(Debug)]
+pub(super) struct ProjectLimit {
+    max_projects: i64,
+}
+
+impl std::fmt::Display for ProjectLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "platform limit is {} NATS projects", self.max_projects)
+    }
+}
+
+impl std::error::Error for ProjectLimit {}
+
 pub(super) async fn ensure_environment(
     client: &mut PgConnection,
     envelope: &Envelope,
@@ -93,9 +106,29 @@ pub(super) async fn ensure_environment(
     org: &OrgId,
     env: &EnvName,
     project_count: i32,
+    max_projects: i64,
 ) -> Result<Account, Error> {
     let mut tx = client.begin().await.map_err(database_error)?;
-    lock(&mut tx, &format!("{issuer} {org} {env}")).await?;
+    lock(&mut tx, &format!("{issuer} nats accounts")).await?;
+    let (total, current): (i64, i32) = sqlx::query_as(
+        "SELECT COALESCE(sum(project_count), 0),
+                COALESCE(max(project_count) FILTER (WHERE org = $2 AND env = $3), 0)
+         FROM identity.nats_keys WHERE issuer = $1 AND kind = 'environment'",
+    )
+    .bind(issuer)
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(database_error)?;
+    if project_count > current
+        && total - i64::from(current) + i64::from(project_count) > max_projects
+    {
+        return Err(Error::new(
+            "reserve NATS project capacity",
+            ProjectLimit { max_projects },
+        ));
+    }
 
     // The full resolver breaks ties on JWT bytes for two claims issued in the
     // same second. Persist a strictly increasing iat when the limits change.
@@ -159,6 +192,32 @@ pub(super) async fn ensure_environment(
     })
 }
 
+pub(super) async fn retire_environment(
+    client: &mut PgConnection,
+    issuer: &str,
+    org: &OrgId,
+    env: &EnvName,
+) -> Result<Option<(String, i64)>, Error> {
+    let mut tx = client.begin().await.map_err(database_error)?;
+    lock(&mut tx, &format!("{issuer} nats accounts")).await?;
+    let row = sqlx::query_as(
+        "UPDATE identity.nats_keys
+         SET issued_at = CASE WHEN project_count = 0 THEN issued_at ELSE
+             GREATEST(issued_at + 1, floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) END,
+             project_count = 0
+         WHERE issuer = $1 AND kind = 'environment' AND org = $2 AND env = $3
+         RETURNING public_key, issued_at",
+    )
+    .bind(issuer)
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(database_error)?;
+    tx.commit().await.map_err(database_error)?;
+    Ok(row)
+}
+
 pub(super) async fn environment_signer(
     client: &mut PgConnection,
     envelope: &Envelope,
@@ -171,7 +230,7 @@ pub(super) async fn environment_signer(
          FROM identity.nats_keys a
          JOIN identity.nats_keys s USING (issuer, org, env)
          WHERE a.issuer = $1 AND a.kind = 'environment' AND s.kind = 'environment-signing'
-               AND a.org = $2 AND a.env = $3",
+               AND a.org = $2 AND a.env = $3 AND a.project_count > 0",
     )
     .bind(issuer)
     .bind(org.as_str())

@@ -144,10 +144,9 @@ pub async fn recover_capture_gap(
         }
     };
 
-    let inbox = wamn_broker::nats::inbox_prefix(&wamn_registry::name::recovery_nats_user(&triple));
     let broker = async_nats::jetstream::new(
         args.nats
-            .connect_with_inbox_prefix(&inbox)
+            .connect()
             .await
             .context("connect the event observer credential")?,
     );
@@ -339,4 +338,3 @@ async fn provisioning_transaction(
     .await?;
     Ok(transaction)
 }
-

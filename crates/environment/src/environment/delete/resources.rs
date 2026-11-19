@@ -3,7 +3,7 @@
 use serde_json::Value;
 use wamn_registry::{Triple, name};
 
-use super::super::{Platform, ensure::kubectl};
+use super::super::Platform;
 
 async fn get(
     platform: &Platform,
@@ -28,8 +28,7 @@ pub(super) async fn require_ownership(
     database: &str,
 ) -> anyhow::Result<()> {
     let namespace = &platform.target.namespace;
-    let reader =
-        wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
+    let reader = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
     if let Some(object) = get(platform, namespace, "deployment", &reader).await? {
         anyhow::ensure!(
             object["metadata"]["annotations"]["wamn.environment"].as_str()
@@ -54,47 +53,11 @@ pub(super) async fn require_ownership(
             "refused: Publication {database} does not belong to {triple}"
         );
     }
-    let (org, env) = (&triple.org, &triple.env);
-    let cdc = name::cdc_nats_certificate(triple);
-    let recovery = name::recovery_nats_user(triple);
-    let admin = name::environment_nats_admin(org, env);
-    let workload = name::environment_nats_certificate(org, env);
-    for (certificate, user) in [
-        (
-            workload.as_str(),
-            name::environment_nats_user(org, env).as_str(),
-        ),
-        (admin.as_str(), admin.as_str()),
-        (
-            cdc.as_str(),
-            name::cdc_nats_user(org, &triple.project, env).as_str(),
-        ),
-        (recovery.as_str(), recovery.as_str()),
-    ] {
-        if let Some(object) = get(platform, namespace, "certificate", certificate).await? {
-            anyhow::ensure!(
-                object["spec"]["secretName"] == certificate
-                    && object["spec"]["commonName"] == user
-                    && object["spec"]["dnsNames"] == serde_json::json!([user]),
-                "refused: Certificate {certificate} does not belong to {triple}"
-            );
-        }
-        if certificate != admin
-            && let Some(object) = get(platform, namespace, "secret", certificate).await?
-        {
-            anyhow::ensure!(
-                object["metadata"]["annotations"]["cert-manager.io/certificate-name"]
-                    == certificate,
-                "refused: Secret {certificate} does not belong to its Certificate"
-            );
-        }
-    }
     Ok(())
 }
 
 pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
-    let cdc =
-        wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
+    let cdc = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
     if get(platform, &platform.target.namespace, "deployment", &cdc)
         .await?
         .is_some()
@@ -112,41 +75,4 @@ pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyho
         triple,
     )
     .await
-}
-
-pub(super) async fn delete_event_certificates(
-    platform: &Platform,
-    triple: &Triple,
-    last: bool,
-) -> anyhow::Result<()> {
-    delete_secret(platform, &name::cdc_nats_certificate(triple)).await?;
-    delete_secret(platform, &name::recovery_nats_user(triple)).await?;
-    if last {
-        let host_release = name::environment_host_name(&triple.org, &triple.env);
-        use wamn_kubernetes::helm::{self, Wait};
-        let namespace = helm::org_release_namespace(&platform.target.namespace);
-        helm::uninstall(&platform.target, &namespace, &host_release, Wait::Watcher).await?;
-        delete_secret(
-            platform,
-            &name::environment_nats_secret(&triple.org, &triple.env),
-        )
-        .await?;
-        delete_secret(
-            platform,
-            &name::environment_nats_admin(&triple.org, &triple.env),
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-async fn delete_secret(platform: &Platform, secret: &str) -> anyhow::Result<()> {
-    kubectl(
-        platform,
-        &platform.target.namespace,
-        &["delete", "secret", secret, "--ignore-not-found"],
-        None,
-    )
-    .await
-    .map(drop)
 }

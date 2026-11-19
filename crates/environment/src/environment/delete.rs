@@ -33,7 +33,6 @@ use wamn_registry::{Triple, name};
 use super::Platform;
 use super::analyse::application_releases;
 use super::ensure::kubectl;
-use wamn_broker::authorization::{ADMIN_CREDENTIAL_DIR, admin_context, environment_account_exists};
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_kubernetes::helm;
 use wamn_postgres::connect;
@@ -246,13 +245,7 @@ async fn delete_locked(
             lines.push(format!("removed the environment's key of Secret {control}"));
         }
 
-        if environment_account_exists(&platform.target, triple).await? {
-            let broker = admin_context(
-                triple,
-                &platform.nats_url,
-                std::path::Path::new(ADMIN_CREDENTIAL_DIR),
-            )
-            .await?;
+        if let Some(broker) = super::broker::admin(platform, org, env).await? {
             let stream = name::stream_name(org, project, env);
             if wamn_broker::streams::delete(&broker, &stream).await? {
                 lines.push(format!("deleted stream {stream}"));
@@ -343,8 +336,15 @@ async fn delete_locked(
         lines.push("uninstalled the project release".into());
     }
 
-    let last = wamn_broker::authorization::remove_project(&platform.target, triple).await?;
-    resources::delete_event_certificates(platform, triple, last).await?;
+    let remaining = super::broker::project_count(&mut system, org, env)
+        .await?
+        .saturating_sub(1);
+    if remaining == 0 {
+        let host = name::environment_host_name(org, env);
+        let namespace = helm::org_release_namespace(&platform.target.namespace);
+        helm::uninstall(&platform.target, &namespace, &host, helm::Wait::Watcher).await?;
+    }
+    super::broker::after_delete(platform, triple, remaining).await?;
     // Keep the registry inputs until the credential store and its account are gone.
     let secret = wamn_registry::credential_secret_name(org, project, env);
     let deleted = kubectl(

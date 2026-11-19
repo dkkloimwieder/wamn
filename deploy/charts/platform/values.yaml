@@ -12,12 +12,27 @@ runtime-operator:
   global:
     certificates:
       generate: false
-      operatorCertSecretName: wasmcloud-operator-tls
+    tls:
+      enabled: false
   operator:
     allowSharedHosts: false
     extraArgs:
       - --nats-inbox-prefix=_INBOX_wasmcloud-operator
+      - -nats-creds=/etc/wamn/nats/operator.creds
+      - -nats-ca=/etc/wamn/nats/ca.crt
       - -host-namespaces=
+    volumes:
+      - name: nats-operator
+        projected:
+          sources:
+            - secret:
+                name: wamn-nats-runtime-operator
+                items: [{key: operator.creds, path: operator.creds}]
+            - secret:
+                name: wasmcloud-nats-tls
+                items: [{key: ca.crt, path: ca.crt}]
+    volumeMounts:
+      - {name: nats-operator, mountPath: /etc/wamn/nats, readOnly: true}
     watchNamespaces: []
     hostNamespaces: []
   nats:
@@ -43,54 +58,47 @@ nats:
       memoryStore:
         enabled: true
         maxSize: 256MB
-    # Lane 10.2 enables the full resolver. Its account JWTs have a separate claim.
     resolver:
-      enabled: false
+      enabled: true
       dir: /data/resolver
+      merge: {type: full, allow_delete: true, interval: 2m}
       pvc:
         enabled: true
         size: 1Gi
     merge:
       max_payload: 1048576
-      accounts:
-        # Lane 10.2 replaces the per-org account includes and mounts with JWTs.
-        PLATFORM:
-          users:
-          - user: wasmcloud-operator
-            permissions:
-              publish:
-                allow: &schedulerPublish
-                - runtime.host.>
-                - runtime.operator.>
-                - _INBOX_wasmcloud-operator.>
-                - _INBOX_wasmcloud-runtime.>
-              subscribe:
-                allow: [runtime.host.>, runtime.operator.>, _INBOX_wasmcloud-operator.>]
-          - user: wasmcloud-runtime
-            permissions:
-              publish:
-                allow: *schedulerPublish
-              subscribe:
-                allow: [runtime.host.>, runtime.operator.>, _INBOX_wasmcloud-runtime.>]
-          - user: wasmcloud-data
-            permissions:
-              publish:
-                deny: ['>']
-              subscribe:
-                allow: [_INBOX_wasmcloud-data.>]
+      $include: ../wamn-nats-operator/operator.conf
     nats:
       tls:
         enabled: true
         secretName: wasmcloud-nats-tls
-        merge:
-          verify_and_map: true
     patch:
     - op: remove
       path: /http_port
     - op: add
       path: /http
       value: 127.0.0.1:8222
+  podTemplate:
+    patch:
+      - op: add
+        path: /spec/volumes/-
+        value: {name: operator-claims, secret: {secretName: wamn-nats-operator}}
+      - op: add
+        path: /spec/initContainers
+        value:
+          - name: wait-for-operator
+            image: nats:2.12.15-alpine
+            command: [sh, -ec]
+            args:
+              - |
+                until grep -q '^operator: "ey' /etc/wamn-nats-operator/operator.conf 2>/dev/null; do sleep 1; done
+            volumeMounts:
+              - {name: operator-claims, mountPath: /etc/wamn-nats-operator, readOnly: true}
   container:
+    patch:
+      - op: add
+        path: /volumeMounts/-
+        value: {name: operator-claims, mountPath: /etc/wamn-nats-operator, readOnly: true}
     startupProbe:
       httpGet: null
       exec:
@@ -180,7 +188,7 @@ identity:
   inviteUrl: ""
   localMail: ""
   authNats:
-    tlsSecret: ""
+    tlsSecret: wasmcloud-nats-tls
   resources:
     requests:
       cpu: 100m

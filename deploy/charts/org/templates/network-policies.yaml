@@ -38,13 +38,14 @@ spec:
   ingress:
     - from: [{{ $edge | toJson }}]
       ports: [{port: 80, protocol: TCP}]
+{{- range $name, $labels := dict "control" $control "worker" $worker }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: allow-control-to-identity, namespace: {{ $org | quote }}}
+metadata: {name: allow-{{ $name }}-to-identity, namespace: {{ $org | quote }}}
 spec:
   podSelector:
-    matchLabels: {{ $control | toJson }}
+    matchLabels: {{ $labels | toJson }}
   policyTypes: [Egress]
   egress:
     - to:
@@ -52,6 +53,7 @@ spec:
           podSelector:
             matchLabels: {{ $identity | toJson }}
       ports: [{port: 8443, protocol: TCP}]
+{{- end }}
 {{- range $name, $labels := dict "control" $control "worker" $worker }}
 ---
 apiVersion: networking.k8s.io/v1

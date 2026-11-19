@@ -68,14 +68,11 @@ pub struct HostArgs {
     #[arg(long = "scheduler-nats-tls-first", default_value_t = false)]
     pub scheduler_nats_tls_first: bool,
 
-    #[arg(long = "scheduler-nats-tls-cert")]
-    pub scheduler_nats_tls_cert: Option<PathBuf>,
-
-    #[arg(long = "scheduler-nats-tls-key")]
-    pub scheduler_nats_tls_key: Option<PathBuf>,
+    #[arg(long = "scheduler-nats-creds")]
+    pub scheduler_nats_creds: Option<PathBuf>,
 
     /// NATS URL of the event plane: `wamn:jetstream`, the auth memory and the
-    /// connection memory connect here with the environment certificate
+    /// connection memory connect here using its PLATFORM credentials
     /// (docs/plan/alignment.md R5, R8).
     #[arg(long = "data-nats-url")]
     pub data_nats_url: String,
@@ -86,11 +83,8 @@ pub struct HostArgs {
     #[arg(long = "data-nats-tls-first", default_value_t = false)]
     pub data_nats_tls_first: bool,
 
-    #[arg(long = "data-nats-tls-cert")]
-    pub data_nats_tls_cert: Option<PathBuf>,
-
-    #[arg(long = "data-nats-tls-key")]
-    pub data_nats_tls_key: Option<PathBuf>,
+    #[arg(long = "data-nats-creds")]
+    pub data_nats_creds: Option<PathBuf>,
 
     /// The host configuration file that the operator chart renders for the
     /// host group's `plugins` entries (docs/plan/alignment.md R6, R9).
@@ -263,8 +257,8 @@ const HOST_PLUGIN_SECRET_DIRECTORY: &str = "/etc/wasmcloud/host-plugin-secrets";
 
 /// The operator's binding declarations from the chart's host configuration
 /// file. A `wasmcloud:nats` binding that names no `servers` dials the data
-/// connection with its certificate, as `wash host` does: the address and its
-/// TLS are one bundle, so a binding pointed elsewhere inherits no TLS.
+/// connection with its credentials, as `wash host` does. A binding with its own
+/// server uses its own credential and TLS settings.
 fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::PluginBindings> {
     let config: UserConfig =
         serde_yaml::from_str(source).context("decode the host configuration file")?;
@@ -298,14 +292,18 @@ fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::Plug
         }
         if entry.id == plugin::wasmcloud_nats::PLUGIN_NATS_ID {
             let mut bundle = vec![("servers", args.data_nats_url.clone())];
-            for (key, path) in [
-                ("tls-ca", &args.data_nats_tls_ca),
-                ("tls-cert", &args.data_nats_tls_cert),
-                ("tls-key", &args.data_nats_tls_key),
-            ] {
-                if let Some(path) = path {
-                    bundle.push((key, path.display().to_string()));
-                }
+            if let Some(ca) = &args.data_nats_tls_ca {
+                bundle.push(("tls-ca", ca.display().to_string()));
+            }
+            if let Some(creds) = &args.data_nats_creds {
+                let document = zeroize::Zeroizing::new(
+                    std::fs::read_to_string(creds).context("read data NATS credentials")?,
+                );
+                bundle.push((
+                    "inbox-prefix",
+                    wamn_broker::nats::credentials_inbox(&document)?,
+                ));
+                bundle.push(("creds", creds.display().to_string()));
             }
             if args.data_nats_tls_first {
                 bundle.push(("tls-first", "true".to_owned()));
@@ -362,16 +360,12 @@ const SCHEDULER_NATS_BUFFER: usize = 2048;
 async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<async_nats::Client> {
     let mut opts = async_nats::ConnectOptions::new()
         .name(name)
-        .custom_inbox_prefix(wamn_broker::nats::inbox_prefix("wasmcloud-runtime"))
         .max_reconnects(None)
         .client_capacity(SCHEDULER_NATS_BUFFER);
-    opts = wamn_broker::nats::tls_options(
-        opts,
-        args.scheduler_nats_tls_ca.as_deref(),
-        args.scheduler_nats_tls_cert.as_deref(),
-        args.scheduler_nats_tls_key.as_deref(),
-        None,
-    )?;
+    opts = wamn_broker::nats::tls_options(opts, args.scheduler_nats_tls_ca.as_deref());
+    if let Some(creds) = &args.scheduler_nats_creds {
+        opts = wamn_broker::nats::credentials_options(opts, creds).await?;
+    }
     if args.nats_ignore_discovered_servers {
         opts = opts.ignore_discovered_servers();
     }
@@ -934,8 +928,6 @@ mod tests {
             "wamn-host",
             "--data-nats-url=nats://wamn-nats.platform.svc.cluster.local:4222",
             "--data-nats-tls-ca=/data-cert/ca.crt",
-            "--data-nats-tls-cert=/data-cert/tls.crt",
-            "--data-nats-tls-key=/data-cert/tls.key",
         ])
         .unwrap()
         .args;
@@ -965,7 +957,7 @@ host:
             events.get("servers"),
             Some("nats://wamn-nats.platform.svc.cluster.local:4222")
         );
-        assert_eq!(events.get("tls-cert"), Some("/data-cert/tls.crt"));
+        assert_eq!(events.get("tls-ca"), Some("/data-cert/ca.crt"));
         assert_eq!(
             events.get("stream-allow"),
             Some("EVT_7_fixture_4_prod_7_widgets")
@@ -974,7 +966,7 @@ host:
         // R6: workloadConfig deny refuses a workload's connection or wider grant.
         for (key, value) in [
             ("servers", "nats://foreign.invalid:4222"),
-            ("tls-cert", "/foreign/tls.crt"),
+            ("tls-ca", "/foreign/ca.crt"),
             ("inbox-prefix", "_INBOX_foreign"),
             ("stream-allow", ">"),
             ("subject-allow", ">"),

@@ -28,12 +28,8 @@ pub struct ReaderConfig {
     /// The CA of the NATS server.
     pub nats_tls_ca: Option<PathBuf>,
 
-    /// The reader's client certificate, which the server maps to its user
-    /// (docs/plan/alignment.md R4).
-    pub nats_tls_cert: Option<PathBuf>,
-
-    /// The key of the client certificate.
-    pub nats_tls_key: Option<PathBuf>,
+    /// The reader's signed user JWT and local NKey.
+    pub nats_creds: Option<PathBuf>,
 
     /// Standby-status feedback interval, seconds (how often the confirmed
     /// LSN reaches the server).
@@ -54,11 +50,4 @@ pub struct ReaderConfig {
     /// below this many bytes — the early alert that fires BEFORE `wal_status`
     /// leaves `reserved` (E2). Default 256 MiB (≈16 WAL segments of headroom).
     pub slot_safe_wal_warn_bytes: i64,
-}
-
-impl ReaderConfig {
-    /// The restricted certificate identity used for publishing and replies.
-    pub fn nats_user(&self) -> String {
-        wamn_registry::name::cdc_nats_user(&self.org, &self.project, &self.env)
-    }
 }
