@@ -1,12 +1,4 @@
-//! Platform configuration, deployment resources, and service helpers.
+//! Shared service coordinates and control rollout helpers.
 
-pub mod artifact_plan;
 pub mod control;
-pub mod document;
-pub mod edge;
 pub mod identity;
-pub mod installation;
-pub mod oauth;
-pub mod operations;
-pub mod resources;
-pub mod status;

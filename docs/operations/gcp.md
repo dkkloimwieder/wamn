@@ -17,8 +17,7 @@ Keep these variables set for `gcloud` and `kubectl` reads and writes.
 Keep the operator's default gcloud and Kubernetes files separate from the agent files above.
 The owner runs billing commands and enables APIs.
 
-The GCP provider runs `gcloud container clusters get-credentials` with the cluster document's project, zone, and cluster name.
-It writes credentials to the caller's kubeconfig file and selects the matching GKE context.
+Use the project, zone, and cluster name in the GCP values file when you get cluster credentials. [GCP values](../../deploy/charts/platform/values-gcp.yaml)
 Install `gke-gcloud-auth-plugin` on the deployment host so kubectl can use the gcloud login.
 
 ## 1. Owner inputs
@@ -143,9 +142,6 @@ The owner supplies these external cloud inputs.
     DNS for every route host must point to the global address that OpenTofu creates.
     The owner supplies a firewall rule for TCP port 8080 from `35.191.0.0/16` and `130.211.0.0/22` to the cluster nodes.
     Platform deployment creates the Service before OpenTofu plans the load balancer.
-    The edge mounts the Secret `hosts/wamn-edge-tls`, which cert-manager creates from `deploy/gcp/letsencrypt.yaml`.
-    The issuer uses Cloud DNS zone `wamn-dev` in project `wamn-dev`.
-    The owner grants `roles/dns.admin` on that zone to the manifest's service account `cert-manager/cert-manager`.
     The load balancer uses its own Google-managed certificate from Certificate Manager.
 
 15. Read and create access to `buckets.web` for web uploads.
@@ -179,7 +175,7 @@ The teardown keeps these resources for later cloud integration. The owner makes 
   The project document declares this repository. [Project document](../../deploy/gcp/project.k)
 - The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
-- The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone. `project.k` declares the zone. OpenTofu does not own the records or the binding.
+- The Cloud DNS zone `wamn-dev` and its records. `project.k` declares the zone. OpenTofu does not own the records.
 - The direct worker grants on `wamn`, `gs://wamn-dev-labels` and `gs://wamn-dev-web` (section 1, items 4 and 15).
 - The firewall rule that permits ingress traffic to the Rust web front on TCP port 8080. The project document declares the load balancer objects.
 
@@ -396,7 +392,7 @@ gcloud compute disks list --project wamn-dev --format="table(name,sizeGb,users.b
 ```
 
 The disks of the volumes of `wamn-pg-1`, `data-wamn-nats-0`, and `otel-collector-queue` stay after the delete.
-The collector's [volume claim](../../deploy/charts/installation/values-gcp.yaml) requests `1Gi`.
+The collector's [volume claim](../../deploy/charts/platform/values-gcp.yaml) requests `1Gi`.
 Delete each one by name, one command for each disk:
 
 ```bash
@@ -426,7 +422,7 @@ done
 
 GCP and kind use the same platform artifact set and prepared chart contract.
 `cargo xtask build-platform` builds and pins the shared images, including `ctl`, and the role components.
-The cluster document selects UI storage. BuildKit runs on the calling machine.
+The GCP values file names the web bucket. BuildKit runs on the calling machine.
 The prepared chart supplies the pinned `ctl` image for control operation Jobs in namespace `platform`.
 
 Use the target's configured registry for artifact production and publication.
@@ -448,16 +444,12 @@ Use the existing infrastructure and platform owners in this order.
    Save the plan and apply it after approval.
    OpenTofu resource targeting includes each target's dependencies. [OpenTofu plan](https://opentofu.org/docs/cli/commands/plan/)
 2. Deploy the platform with the Epic 10 installation path.
-   The platform owner deploys cert-manager, the edge certificate, and the edge Helm release.
+   The platform owner deploys cert-manager and the edge Service.
    GKE creates the NEG from the Service annotation.
 3. Run a full `tofu plan` in the same directory and apply the approved saved plan.
    OpenTofu reads the Service-owned NEG and creates the HTTPS load balancer, address, CDN, and Google-managed certificate.
    The DNS owner publishes the certificate authorization CNAME from the OpenTofu outputs.
    The DNS owner points each route host at the global address `wamn-edge`.
-
-Keep the cert-manager DNS challenge record and the load balancer's certificate authorization CNAME separate.
-The OpenTofu authorization uses a per-project DNS name.
-cert-manager uses `_acme-challenge` for the certificate mounted by the edge.
 
 ### One approved GKE verification
 
@@ -474,7 +466,6 @@ Set these inputs:
 
 - `PATH` with the `debug` directory of `$CARGO_TARGET_DIR`.
 - `CLOUDSDK_CONFIG` and `KUBECONFIG` from this page.
-- `WAMN_TEST_CLUSTER` as the absolute path to `deploy/gcp/cluster.k`.
 - `WAMN_RELEASE_CHART` and `WAMN_KCL` as absolute paths to the prepared chart and pinned compiler.
 - `WAMN_TEST_OWNER_PASSWORD` as the enrolled owner's password from your secret store.
 - For a describe refresh or check, set `DATABASE_URL` to a PostgreSQL 18 server with permission to create and drop databases.
@@ -487,7 +478,7 @@ Grant the section 1 worker permissions for organization `dkk`, project `journey`
 The environment coordinate is `e-dev-` followed by the first 20 hexadecimal SHA-256 digits of `dkk/journey/dev`.
 Use that coordinate for the code and SQL service accounts.
 The test creates those accounts through product provisioning and creates no IAM grants.
-It derives all artifact repository bases from the cluster document's registry.
+It derives all artifact repository bases from the registry in the GCP values file.
 
 Run these steps in order:
 
@@ -515,7 +506,7 @@ The case has a 90-minute bound.
 It reapplies the platform chart and requires readiness.
 It reuses `ControlOperations` for authenticated deploy, rollback, and schema apply through the public HTTPS control route.
 It makes one public HTTPS GET and requires the UI document with certificate validation enabled.
-Application requests use a TLS port-forward with hostnames under the document's control domain.
+Application requests use a TLS port-forward with hostnames under the control domain.
 The GKE body omits the kind-only outsider enrollment from the local mail file.
 
 The case attempts environment deletion and PAT revocation after operation success or failure.
@@ -529,25 +520,11 @@ Section 3 keeps that registry, the uploaded UI, buckets, IAM grants, and other p
 
 ### 5.1 Pool after the daily guard
 
-The guard sets every pool to 0 nodes at 03:00 New York time (07:00 UTC) every day. Run the wake verb to set every pool back to the size that `deploy/gcp/project.k` declares:
-
-```bash
-cargo xtask platform wake deploy/gcp/cluster.k
-```
-
-The verb resizes pool `pg` first, then the other pools. It prints one line for each pool. The `Cluster` keeps its old `Ready` condition while its pod is gone, so the verb then waits up to 900 seconds for the pod `wamn-pg-1` to exist and be Ready. Last, it waits up to 600 seconds for the statefulset `wamn-nats` to roll out.
-
-Pod replacement ends existing port-forwards. Restart them for the services that you need.
+The guard scales each pool to zero at 03:00 New York time. Restore the approved pool sizes through the infrastructure configuration. Wait for `wamn-pg-1` and `wamn-nats` to be ready after the pools resume. Reopen port-forwards after pod replacement.
 
 ### 5.2 Pause
 
-Run the sleep verb to set every pool to 0 nodes. The PostgreSQL volume keeps the data:
-
-```bash
-cargo xtask platform sleep deploy/gcp/cluster.k
-```
-
-The verb prints one line for each pool, and then the names of the pools that it set to 0. Run section 5.1 to start the cluster again.
+Use the infrastructure configuration to scale the pools to zero. The PostgreSQL volume keeps its data.
 
 ### Application operations
 

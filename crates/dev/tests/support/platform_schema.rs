@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_environment::environment::document::{DeclaredRelease, EnvironmentDocument};
-use wamn_environment::platform::artifact_plan::{self, SelectedChart};
+use wamn_environment::release_chart::bundle::{self, SelectedChart};
 
 use super::{Journey, Run, helm_history};
 
@@ -47,8 +47,8 @@ pub(super) fn inputs(run: &Run) -> anyhow::Result<SelectedChart> {
         std::env::var_os("WAMN_RELEASE_CHART")
             .context("set WAMN_RELEASE_CHART to the prepared schema chart")?,
     );
-    let selected = artifact_plan::select(&path)?;
-    let original = artifact_plan::select(&run.chart)?;
+    let selected = bundle::select(&path)?;
+    let original = bundle::select(&run.chart)?;
     let mut images = BTreeMap::new();
     let mut installed = BTreeMap::new();
     for (chart, images) in [(&selected, &mut images), (&original, &mut installed)] {
@@ -381,14 +381,6 @@ pub(super) async fn exercise(
             environment.environment
         );
     }
-    journey
-        .apply(
-            "platform-schema-status",
-            journey
-                .command(&["platform", "status"])
-                .arg(journey.run.directory.join("cluster.k")),
-        )
-        .await?;
     journey.status().await?;
     other.delete_environment().await
 }

@@ -7,6 +7,8 @@ use wamn_kubernetes::{
     Target,
     helm::{self, Install, Wait},
 };
+use wamn_provision::migrations::MigrationDatabase;
+use wamn_registry::Triple;
 
 /// Recover the host release and prepare one upgrade that waits for readiness.
 pub async fn prepare_host_upgrade<'a>(
@@ -97,6 +99,56 @@ pub fn resource(objects: Vec<Value>, type_: &str) -> anyhow::Result<Value> {
         .into_iter()
         .find(|object| object["kind"] == type_)
         .context("chart did not render the requested resource")
+}
+
+/// Set worker and credential values on the project release.
+///
+/// # Errors
+/// Returns an error when the coordinates cannot name an environment resource.
+pub fn set_operation_values<'a>(
+    values: &mut Value,
+    triple: &Triple,
+    cluster: &str,
+    database: &str,
+    applications: impl Iterator<Item = &'a wamn_catalog::ApplicationName>,
+) -> anyhow::Result<()> {
+    let name = wamn_provision::environment_names::environment_resource_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+    )?;
+    let capture = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
+    let capture_secret = wamn_registry::name::project_login_secret(database, wamn_role::CDC_LOGIN);
+    let diff_workloads: Vec<_> = applications
+        .map(|application| {
+            let release = wamn_catalog::resource_names::application_release_name(
+                &triple.org,
+                &triple.project,
+                &triple.env,
+                application,
+            );
+            wamn_registry::name::resource_suffix(&release, "http")
+        })
+        .collect();
+    let diff_secrets = [
+        MigrationDatabase::System.managed_role("wamn_system").password_secret.name,
+        "wamn-pg-ca".into(),
+        MigrationDatabase::Project.managed_role(database).password_secret.name,
+        format!("{cluster}-ca"),
+    ];
+    values["operations"] = json!({
+        "name":name,"cluster":cluster,
+        "capture":capture,"captureSecret":capture_secret,
+        "hostGroup":wamn_registry::name::environment_host_name(&triple.org, &triple.env),
+        "controlDeployment":wamn_registry::name::control_resource(&triple.org),
+        "diffWorkloads":diff_workloads,
+        "diffSecrets":diff_secrets,
+    });
+    values["credentials"] = json!({
+        "name":wamn_registry::credential_secret_name(&triple.org, &triple.project, &triple.env),
+        "controlAccount":wamn_registry::name::control_service_account(&triple.org),
+    });
+    Ok(())
 }
 
 pub fn publication_values(

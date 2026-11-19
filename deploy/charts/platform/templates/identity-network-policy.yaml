@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-identity-clients
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: wamn-identity
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: hosts}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: wamn-edge}
+        - namespaceSelector:
+            matchLabels: {wamn.dev/org: "true"}
+          podSelector:
+            matchLabels: {wasmcloud.com/name: hostgroup}
+        - namespaceSelector:
+            matchLabels: {wamn.dev/org: "true"}
+          podSelector:
+            matchLabels: {app.kubernetes.io/component: wamn-control}
+      ports: [{port: 8443, protocol: TCP}]

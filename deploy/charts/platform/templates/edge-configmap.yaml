@@ -1,0 +1,12 @@
+{{- $buckets := (.Values.gcp | default dict).buckets | default dict -}}
+{{- $bucket := "" -}}
+{{- if $buckets.web -}}
+{{- $bucket = printf "gs://%s" $buckets.web -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wamn-edge
+  namespace: hosts
+data:
+  web.json: {{ dict "bucket" $bucket "identity_issuer" .Values.global.identityIssuer "trusted_proxy_hops" .Values.edge.trustedProxyHops | toJson | quote }}

@@ -28,8 +28,6 @@ const HTTP_PORT: u16 = 80;
 const ADMINISTRATION_DIR: &str = "/etc/wamn/control-administration";
 const REGISTRY_AUTH_FILE: &str = "/credentials/registry/config.json";
 const IDENTITY_CA: &str = "/etc/identity-ca/ca.crt";
-const IDENTITY_CLIENT_CERT: &str = "/etc/identity-control/tls.crt";
-const IDENTITY_CLIENT_KEY: &str = "/etc/identity-control/tls.key";
 const OAUTH_KEY: &str = "/etc/wamn/oauth/key";
 const SETTINGS_FILE: &str = "/etc/wamn/control/settings.json";
 
@@ -143,6 +141,30 @@ fn write_kubeconfig(path: &Path, namespace: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn wait_for_system_schema(database: &str) -> anyhow::Result<sqlx::PgConnection> {
+    use std::time::Duration;
+
+    tokio::time::timeout(Duration::from_mins(5), async {
+        loop {
+            let ready = tokio::time::timeout(Duration::from_secs(5), async {
+                let mut connection = wamn_postgres::connect(database).await?;
+                let domain: Option<String> =
+                    sqlx::query_scalar(wamn_registry::sql::PLATFORM_DOMAIN_SQL)
+                        .fetch_one(&mut connection)
+                        .await?;
+                Ok::<_, anyhow::Error>(domain.map(|_| connection))
+            })
+            .await;
+            if let Ok(Ok(Some(connection))) = ready {
+                return connection;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("wait for system schema timed out"))
+}
+
 /// Serve org routes on native HTTP and drain active requests on shutdown.
 pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     let platform = config.platform()?;
@@ -167,6 +189,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         oci_ca_paths: platform.oci_ca_paths,
     };
     let database = config.database.to_json()?;
+    let writer = wait_for_system_schema(&database).await?;
     let pool = wamn_postgres::pool(&database, 4).await?;
     let identity_databases = Path::new(ADMINISTRATION_DIR);
     let identity_system = wamn_provision::migrations::MigrationDatabase::System
@@ -203,13 +226,9 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     let handlers = Arc::new(
         HostRouteDelivery::new(HostRouteHandlers {
             control: pool.clone(),
-            writer: Arc::new(tokio::sync::Mutex::new(
-                wamn_postgres::connect(&database).await?,
-            )),
+            writer: Arc::new(tokio::sync::Mutex::new(writer)),
             identity: Some(UserClient::new(
                 &config.identity_issuer,
-                Path::new(IDENTITY_CLIENT_CERT),
-                Path::new(IDENTITY_CLIENT_KEY),
                 Path::new(IDENTITY_CA),
             )?),
             issuer: config.identity_issuer,

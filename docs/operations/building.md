@@ -151,7 +151,7 @@ It publishes the HTTP route and workflow guests as OCI components under `<regist
 The ctl image receives the checked HTTP component through a named BuildKit context.
 
 The registry must already be available and authenticated through the Docker configuration.
-For local deployment, use the registry address in `deploy/kind/cluster.k`.
+For local deployment, use the registry address in `deploy/charts/platform/values-kind.yaml`.
 The output directory must not exist.
 
 ```bash
@@ -173,7 +173,7 @@ cargo xtask build-platform --stamp-only --registry localhost:5001 --out /var/tmp
 Stamping reads every selected digest from the registry and refuses a missing artifact.
 The chart holds the pinned images and guest components in `values.yaml`.
 The HTTP route uses `platform.roles.ingress.image`. The workflow service uses `platform.workflow.image`.
-The output also carries the runtime operator archive, the identity and edge charts, and deployment resources under `platform/`.
+The output contains the platform, infrastructure, org, environment, project, and application charts under `platform/`.
 `palette.json` records immutable platform artifact pins and descriptors sealed against the published guest bytes.
 The platform owns palette guests under `wamn_palette`, independently of application package membership.
 The platform distribution places the document and digest-named guest files beside `ingress.wasm`.
@@ -183,10 +183,10 @@ Packages no longer bundle palette guests.
 Transfer the whole output directory to another deployment machine.
 [Local deployment](deployment.md#local-platform) consumes it through `--chart`.
 
-An explicit `--cluster` document with a web bucket selects the platform UI.
+Pass the Helm values file to `--cluster`. A value for `gcp.buckets.web` selects the platform UI.
 Install web dependencies with `pnpm install --offline` first.
 The producer builds `@wamn/platform-ui` and publishes `<registry>/wamn/platform-ui:<platform version>`.
-The chart records its digest in `platformUi`.
+The org chart records its digest in `control.platformUi`.
 With `--stamp-only`, the command reads the published UI without a local bundle.
 
 ## Repository tasks and tools

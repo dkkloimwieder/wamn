@@ -1,0 +1,137 @@
+{{- $system := include "wamn-platform.systemDatabase" . | fromJson -}}
+{{- $databaseSecret := $system.identityRole.passwordSecret.name -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: wamn-identity
+    app.kubernetes.io/instance: identity
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wamn-identity
+      app.kubernetes.io/instance: identity
+  template:
+    metadata:
+      annotations:
+        checksum/settings: {{ include (print $.Template.BasePath "/identity-settings.yaml") . | sha256sum }}
+      labels:
+        app.kubernetes.io/name: wamn-identity
+        app.kubernetes.io/instance: identity
+    spec:
+      serviceAccountName: identity
+      containers:
+        - name: identity
+          image: {{ .Values.identity.image | default (printf "%s/wamn-identity:%s" .Values.registry .Chart.Version) | quote }}
+          imagePullPolicy: IfNotPresent
+          args: [serve, --settings, /etc/wamn/identity/settings.json]
+          {{- if .Values.identity.authNats.tlsSecret }}
+          env:
+            - name: WAMN_NATS_URL
+              value: {{ .Values.global.nats.schedulerUrl | quote }}
+            - name: WAMN_NATS_TLS_CA
+              value: /var/run/wamn-identity/nats/ca.crt
+            - name: WAMN_NATS_TLS_CERT
+              value: /var/run/wamn-identity/nats/tls.crt
+            - name: WAMN_NATS_TLS_KEY
+              value: /var/run/wamn-identity/nats/tls.key
+            {{- end }}
+          ports:
+            - name: https
+              containerPort: 8443
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /readyz
+              port: https
+          volumeMounts:
+            - {name: settings, mountPath: /etc/wamn/identity, readOnly: true}
+            {{- if .Values.identity.resendSecret }}
+            - {name: resend, mountPath: /var/run/wamn-identity/resend, readOnly: true}
+            {{- end }}
+            - {name: database, mountPath: /etc/wamn/db, readOnly: true}
+            {{- if eq .Values.identity.oauthEncryption.provider "local" }}
+            - name: oauth-key
+              mountPath: /etc/wamn/oauth
+              readOnly: true
+            {{- end }}
+            {{- if .Values.identity.localMail }}
+            - name: local-mail
+              mountPath: {{ dir .Values.identity.localMail | quote }}
+            {{- end }}
+            - name: serving-tls
+              mountPath: /var/run/wamn-identity/tls
+              readOnly: true
+            {{- if .Values.identity.authNats.tlsSecret }}
+            - name: auth-nats
+              mountPath: /var/run/wamn-identity/nats
+              readOnly: true
+            {{- end }}
+          resources:
+{{ toYaml .Values.identity.resources | indent 12 }}
+      volumes:
+        - name: settings
+          configMap:
+            name: identity-settings
+        {{- if .Values.identity.resendSecret }}
+        - name: resend
+          secret:
+            secretName: {{ .Values.identity.resendSecret | quote }}
+            defaultMode: 0400
+            items:
+              - {key: api-key, path: api-key}
+        {{- end }}
+        - name: database
+          projected:
+            defaultMode: 0400
+            sources:
+              - secret:
+                  name: {{ $databaseSecret | quote }}
+                  items:
+                    - {key: username, path: {{ printf "%s/username" $databaseSecret | quote }}}
+                    - {key: password, path: {{ printf "%s/password" $databaseSecret | quote }}}
+              - secret:
+                  name: {{ $system.ca | quote }}
+                  items:
+                    - {key: ca.crt, path: {{ printf "%s/ca.crt" $databaseSecret | quote }}}
+        {{- if eq .Values.identity.oauthEncryption.provider "local" }}
+        - name: oauth-key
+          secret:
+            secretName: {{ required "Set oauthSecret to the OAuth wrapping-key Secret." .Values.identity.oauthSecret | quote }}
+            optional: false
+            defaultMode: 0400
+            items:
+              - key: key
+                path: key
+        {{- end }}
+        {{- if .Values.identity.localMail }}
+        - name: local-mail
+          emptyDir: {}
+        {{- end }}
+        - name: serving-tls
+          secret:
+            secretName: identity-tls
+            optional: false
+            defaultMode: 0400
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        {{- if .Values.identity.authNats.tlsSecret }}
+        - name: auth-nats
+          secret:
+            secretName: {{ .Values.identity.authNats.tlsSecret | quote }}
+            optional: false
+            defaultMode: 0400
+            items:
+              - key: ca.crt
+                path: ca.crt
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        {{- end }}

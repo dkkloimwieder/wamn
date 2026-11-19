@@ -1,0 +1,162 @@
+{{- $system := include "wamn-platform.systemDatabase" . | fromJson }}
+{{- $namespace := $system.namespace }}
+{{- $database := $system.name }}
+{{- $roles := list
+    (dict "name" "wamn_apply" "login" true "inherit" true "passwordSecret" (dict "name" "wamn-apply"))
+    $system.migrationRole $system.identityRole }}
+{{- $cluster := $system.cluster }}
+{{- $caName := $system.ca }}
+{{- $signingCaName := printf "%s-signing-ca" $cluster }}
+{{- $serverTlsName := printf "%s-server-tls" $cluster }}
+{{- $replicationTlsName := printf "%s-replication-tls" $cluster }}
+{{- $ca := lookup "v1" "Secret" $namespace $signingCaName }}
+{{- $crt := "" }}
+{{- $key := "" }}
+{{- if $ca }}
+{{- $crt = required "System database signing CA requires tls.crt" (index $ca.data "tls.crt") }}
+{{- $key = required "System database signing CA requires tls.key" (index $ca.data "tls.key") }}
+{{- else }}
+{{- $new := genCA "WAMN system PostgreSQL" 3650 }}
+{{- $crt = $new.Cert | b64enc }}
+{{- $key = $new.Key | b64enc }}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $caName }}
+  namespace: {{ $namespace }}
+data:
+  ca.crt: {{ $crt | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $signingCaName }}
+  namespace: {{ $namespace }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ $crt | quote }}
+  tls.key: {{ $key | quote }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $cluster }}
+  namespace: {{ $namespace }}
+spec:
+  ca:
+    secretName: {{ $signingCaName }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $serverTlsName }}
+  namespace: {{ $namespace }}
+spec:
+  secretName: {{ $serverTlsName }}
+  secretTemplate:
+    labels:
+      cnpg.io/reload: "true"
+  dnsNames:
+    {{- range list "rw" "ro" "r" }}
+    {{- $service := printf "%s-%s" $cluster . }}
+    - {{ $service }}
+    - {{ $service }}.{{ $namespace }}
+    - {{ $service }}.{{ $namespace }}.svc
+    - {{ $service }}.{{ $namespace }}.svc.cluster.local
+    {{- end }}
+  usages: [digital signature, key encipherment, server auth]
+  issuerRef:
+    kind: Issuer
+    name: {{ $cluster }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $replicationTlsName }}
+  namespace: {{ $namespace }}
+spec:
+  secretName: {{ $replicationTlsName }}
+  secretTemplate:
+    labels:
+      cnpg.io/reload: "true"
+  commonName: streaming_replica
+  usages: [digital signature, client auth]
+  issuerRef:
+    kind: Issuer
+    name: {{ $cluster }}
+{{- $groups := dict }}
+{{- range $roles }}
+{{- range .inRoles }}
+{{- if ne . $database }}
+{{- $_ := set $groups . (dict "name" . "login" false "inherit" false) }}
+{{- end }}
+{{- end }}
+{{- $name := .passwordSecret.name }}
+{{- $old := lookup "v1" "Secret" $namespace $name }}
+{{- $username := .name | b64enc }}
+{{- $password := "" }}
+{{- if $old }}
+{{- if or (ne $old.type "kubernetes.io/basic-auth") (ne $old.data.username $username) (not $old.data.password) }}
+{{- fail (printf "Invalid basic-auth Secret %s in %s" $name $namespace) }}
+{{- end }}
+{{- $password = $old.data.password }}
+{{- else }}
+{{- $password = randAlphaNum 48 | b64enc }}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    cnpg.io/reload: "true"
+type: kubernetes.io/basic-auth
+data:
+  username: {{ $username | quote }}
+  password: {{ $password | quote }}
+{{- end }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $system.cluster }}
+  namespace: {{ $namespace }}
+spec:
+  instances: 1
+  enablePDB: false
+  imageName: {{ .Values.postgres.image | quote }}
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: true
+  certificates:
+    serverCASecret: {{ $caName }}
+    serverTLSSecret: {{ $serverTlsName }}
+    clientCASecret: {{ $caName }}
+    replicationTLSSecret: {{ $replicationTlsName }}
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+  storage:
+    size: 10Gi
+  managed:
+    {{- $ordered := list }}
+    {{- range keys $groups | sortAlpha }}
+    {{- $ordered = append $ordered (index $groups .) }}
+    {{- end }}
+    roles: {{ concat $ordered $roles | toJson }}
+  postgresql:
+    pg_hba: [hostssl all all all scram-sha-256]
+    parameters:
+      max_slot_wal_keep_size: "4GB"
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: top
+      auto_explain.log_min_duration: "-1"
+  bootstrap:
+    initdb:
+      database: {{ $database }}
+      owner: {{ $database }}
+      postInitSQL:
+        - {{ printf "ALTER ROLE %s NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS" (quote $database) | quote }}

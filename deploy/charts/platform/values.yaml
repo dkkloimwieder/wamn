@@ -1,0 +1,208 @@
+provider: kind
+platformDomain: wamn.localhost
+registry: localhost:5001
+registryEndpoint: null
+global:
+  # Each project can fill one 256 MiB stream on every broker pod.
+  maxProjects: 32
+  nats:
+    schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
+  identityIssuer: https://identity.platform.svc.cluster.local
+runtime-operator:
+  global:
+    certificates:
+      generate: false
+      operatorCertSecretName: wasmcloud-operator-tls
+  operator:
+    allowSharedHosts: false
+    extraArgs:
+      - --nats-inbox-prefix=_INBOX_wasmcloud-operator
+      - -host-namespaces=
+    watchNamespaces: []
+    hostNamespaces: []
+  nats:
+    enabled: false
+  gateway:
+    enabled: false
+  runtime:
+    hostGroups: []
+nats:
+  fullnameOverride: wamn-nats
+  namespaceOverride: platform
+  config:
+    jetstream:
+      enabled: true
+      fileStore:
+        maxSize:
+          $tplYaml: '{{ mul .Values.global.maxProjects 256 }}Mi'
+        pvc:
+          storageClassName: standard
+          # Reserve 256 MiB per project plus 25% for metadata and filesystem overhead.
+          computedSize:
+            $tplYamlSpread: 'size: {{ mul .Values.global.maxProjects 320 }}Mi'
+      memoryStore:
+        enabled: true
+        maxSize: 256MB
+    # Lane 10.2 enables the full resolver. Its account JWTs have a separate claim.
+    resolver:
+      enabled: false
+      dir: /data/resolver
+      pvc:
+        enabled: true
+        size: 1Gi
+    merge:
+      max_payload: 1048576
+      accounts:
+        # Lane 10.2 replaces the per-org account includes and mounts with JWTs.
+        PLATFORM:
+          users:
+          - user: wasmcloud-operator
+            permissions:
+              publish:
+                allow: &schedulerPublish
+                - runtime.host.>
+                - runtime.operator.>
+                - _INBOX_wasmcloud-operator.>
+                - _INBOX_wasmcloud-runtime.>
+              subscribe:
+                allow: [runtime.host.>, runtime.operator.>, _INBOX_wasmcloud-operator.>]
+          - user: wasmcloud-runtime
+            permissions:
+              publish:
+                allow: *schedulerPublish
+              subscribe:
+                allow: [runtime.host.>, runtime.operator.>, _INBOX_wasmcloud-runtime.>]
+          - user: wasmcloud-data
+            permissions:
+              publish:
+                deny: ['>']
+              subscribe:
+                allow: [_INBOX_wasmcloud-data.>]
+    nats:
+      tls:
+        enabled: true
+        secretName: wasmcloud-nats-tls
+        merge:
+          verify_and_map: true
+    patch:
+    - op: remove
+      path: /http_port
+    - op: add
+      path: /http
+      value: 127.0.0.1:8222
+  container:
+    startupProbe:
+      httpGet: null
+      exec:
+        command:
+        - wget
+        - -q
+        - -T
+        - '2'
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8222/healthz
+    readinessProbe:
+      httpGet: null
+      exec:
+        command:
+        - wget
+        - -q
+        - -T
+        - '2'
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8222/healthz
+    livenessProbe:
+      httpGet: null
+      exec:
+        command:
+        - wget
+        - -q
+        - -T
+        - '2'
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8222/healthz
+    image:
+      tag: 2.12.15-alpine
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+  natsBox:
+    enabled: false
+  tlsCA:
+    enabled: true
+    secretName: wasmcloud-nats-tls
+    key: ca.crt
+  reloader:
+    merge:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 64Mi
+plugin-barman-cloud:
+  fullnameOverride: barman-cloud
+opentelemetry-collector:
+  mode: deployment
+  fullnameOverride: otel-collector
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: 0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
+  command:
+    name: otelcol-contrib
+  config:
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        traces:
+          exporters:
+          - debug
+        metrics:
+          exporters:
+          - debug
+        logs:
+          exporters:
+          - debug
+identity:
+  image: ""
+  oauthEncryption:
+    provider: local
+  oauthSecret: wamn-oauth
+  resendSecret: ""
+  resendFrom: ""
+  inviteUrl: ""
+  localMail: ""
+  authNats:
+    tlsSecret: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+edge:
+  image: ""
+  trustedProxyHops: 1
+  neg: false
+  tlsDnsNames: ["*.wamn.localhost"]
+  acme: null
+  service:
+    type: ClusterIP
+    nodePort: null
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+systemSql:
+  image: ""
+postgres:
+  image: ghcr.io/cloudnative-pg/postgresql:18.7

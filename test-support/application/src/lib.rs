@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use wamn_environment::environment::document::{
     DeclaredRelease, EnvironmentDocument, EnvironmentFile,
 };
-use wamn_environment::platform::document::ClusterDocument;
 use wamn_oci::package_artifact::http_client::HttpClient;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -24,14 +23,9 @@ pub struct Application {
 impl Application {
     pub async fn prepare(source: &Path) -> anyhow::Result<Self> {
         let scratch = ScratchRoot::create()?;
-        let cluster = ClusterDocument::compile(Path::new(&std::env::var("WAMN_TEST_CLUSTER")?))?;
         let mut authored = EnvironmentFile::compile(
             &PathBuf::from(std::env::var("WAMN_DEV_ENV")?).join("environment.yaml"),
         )?;
-        ensure!(
-            authored.org == cluster.org,
-            "fixture org differs from the platform"
-        );
         let [project] = authored.projects.as_mut_slice() else {
             anyhow::bail!("select one fixture project");
         };

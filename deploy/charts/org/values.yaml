@@ -12,3 +12,21 @@ quota:
 networkPolicy:
   apiServer: []
   registry: []
+registry: localhost:5001
+identityCa: ""
+natsCa: ""
+postgresCa: ""
+postgres:
+  image: ghcr.io/cloudnative-pg/postgresql:18.7
+  backup:
+    endpoint: null
+    bucket: null
+    secret: null
+control:
+  image: ""
+  routeHost: ""
+  platformUi: null
+  registrySecret: ""
+  oauthSecret: ""
+  systemMigrationSecret: ""
+  configuration: {}

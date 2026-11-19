@@ -27,7 +27,9 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
 use tokio_rustls::TlsAcceptor;
-use wamn_identity::session_keys::session_jwks;
+use wamn_identity::session_keys::{
+    active_session_key_exists, initialize_session_key, session_jwks,
+};
 use wamn_provision::identity_role::identity_issuer_login;
 
 // Match the public-key client's total fetch bound. No retry or stale response
@@ -35,14 +37,12 @@ use wamn_provision::identity_role::identity_issuer_login;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The default signing key rotation interval: 30 days.
-pub const DEFAULT_KEY_ROTATION: Duration = Duration::from_hours(30 * 24);
+const DEFAULT_KEY_ROTATION: Duration = Duration::from_hours(30 * 24);
 
 /// Validated exact issuer and its narrow database credential.
 #[derive(Clone)]
 pub struct IdentityConfig {
     issuer: String,
-    key_rotation: Duration,
-    trusted_proxy_hops: usize,
     control_org: Option<wamn_registry::OrgId>,
     connection: String,
     mail: Option<mail::MailConfig>,
@@ -65,18 +65,10 @@ impl IdentityConfig {
         let connection = database_url.to_owned();
         Ok(Self {
             issuer: issuer.to_owned(),
-            key_rotation: DEFAULT_KEY_ROTATION,
-            trusted_proxy_hops: 0,
             control_org: None,
             connection,
             mail: None,
         })
-    }
-
-    /// Trust this many proxy addresses at the end of the forwarded chain. Zero uses the peer.
-    pub fn with_trusted_proxy_hops(mut self, hops: usize) -> Self {
-        self.trusted_proxy_hops = hops;
-        self
     }
 
     /// Enable user management for the designated control certificate subject.
@@ -92,17 +84,6 @@ impl IdentityConfig {
                 "invalid control certificate subject",
             ));
         }
-        Ok(self)
-    }
-
-    /// Set the signing key schedule. The previous public key retains its token window.
-    pub fn with_key_rotation(mut self, interval: Duration) -> Result<Self, IdentityServiceError> {
-        if interval.as_secs() == 0 || i64::try_from(interval.as_secs()).is_err() {
-            return Err(IdentityServiceError::new(
-                "signing key interval must be positive",
-            ));
-        }
-        self.key_rotation = interval;
         Ok(self)
     }
 
@@ -127,8 +108,6 @@ pub struct IdentityService {
 
 struct Inner {
     issuer: String,
-    key_rotation: Duration,
-    trusted_proxy_hops: usize,
     control_org: Option<wamn_registry::OrgId>,
     // Every held connection opens again with this connection string after Postgres
     // closes it, for example when the server restarts.
@@ -171,7 +150,7 @@ impl Inner {
         wamn_identity::session_keys::rotate_session_keys(
             &mut database.client,
             &self.issuer,
-            self.key_rotation,
+            DEFAULT_KEY_ROTATION,
             &self.envelope,
         )
         .await
@@ -204,9 +183,14 @@ impl fmt::Debug for IdentityConfig {
 
 impl IdentityService {
     /// Connect using already validated issuer-targeted authority.
-    pub async fn connect(config: IdentityConfig) -> Result<Self, IdentityServiceError> {
-        let envelope = signing_envelope()?;
-        let database = connect(&config).await?;
+    pub async fn connect(
+        config: IdentityConfig,
+        envelope: wamn_envelope::encryption::Envelope,
+    ) -> Result<Self, IdentityServiceError> {
+        let mut database = wait_for_schema(&config).await?;
+        initialize_session_key(&mut database.client, &config.issuer, &envelope)
+            .await
+            .map_err(|_| IdentityServiceError::new("initialize session signing key failed"))?;
         let passwords = if let Some(mail) = config.mail {
             Some(password::State::new(mail, &config.connection).await?)
         } else {
@@ -215,8 +199,6 @@ impl IdentityService {
         Ok(Self {
             inner: Arc::new(Inner {
                 issuer: config.issuer,
-                key_rotation: config.key_rotation,
-                trusted_proxy_hops: config.trusted_proxy_hops,
                 control_org: config.control_org,
                 envelope,
                 connection: config.connection,
@@ -254,30 +236,28 @@ impl IdentityService {
             };
             return Ok(users::respond(&self.inner, org, request, source).await);
         }
-        let source = if self.inner.trusted_proxy_hops == 0
-            || !request.headers().contains_key("x-forwarded-for")
+        let source = if let Some(value) = request
+            .headers()
+            .get_all("x-forwarded-for")
+            .iter()
+            .next_back()
         {
-            source
-        } else {
-            match request
-                .headers()
-                .get_all("x-forwarded-for")
-                .iter()
-                .rev()
-                .flat_map(|value| value.as_bytes().rsplit(|byte| *byte == b','))
-                .nth(self.inner.trusted_proxy_hops - 1)
+            let address = value
+                .as_bytes()
+                .rsplit(|byte| *byte == b',')
+                .next()
                 .and_then(|value| std::str::from_utf8(value).ok())
-                .and_then(|value| value.trim().parse::<std::net::IpAddr>().ok())
-            {
-                Some(address) => address,
-                None => {
-                    return Ok(response(
-                        StatusCode::BAD_REQUEST,
-                        "application/json",
-                        b"{\"error\":\"invalid client address\"}".to_vec(),
-                    ));
-                }
-            }
+                .and_then(|value| value.trim().parse::<std::net::IpAddr>().ok());
+            let Some(address) = address else {
+                return Ok(response(
+                    StatusCode::BAD_REQUEST,
+                    "application/json",
+                    b"{\"error\":\"invalid client address\"}".to_vec(),
+                ));
+            };
+            address
+        } else {
+            source
         };
         if request.method() == Method::POST
             && request.uri().query().is_none()
@@ -302,6 +282,17 @@ impl IdentityService {
                 "/healthz" => match self.inner.database().await {
                     Ok(_) => response(StatusCode::OK, "text/plain", b"ok\n".to_vec()),
                     Err(_) => unavailable(),
+                },
+                "/readyz" => match tokio::time::timeout(IO_TIMEOUT, async {
+                    let mut database = self.inner.database().await.map_err(|_| ())?;
+                    active_session_key_exists(&mut database.client, &self.inner.issuer)
+                        .await
+                        .map_err(|_| ())
+                })
+                .await
+                {
+                    Ok(Ok(true)) => response(StatusCode::OK, "text/plain", b"ok\n".to_vec()),
+                    _ => unavailable(),
                 },
                 "/.well-known/jwks.json" => {
                     match tokio::time::timeout(IO_TIMEOUT, async {
@@ -367,13 +358,26 @@ impl PeerCertificate {
     }
 }
 
-fn signing_envelope() -> Result<wamn_envelope::encryption::Envelope, IdentityServiceError> {
-    let configuration = std::env::var("WAMN_OAUTH_ENCRYPTION")
-        .map_err(|_| IdentityServiceError::new("signing key envelope configuration is required"))?;
-    let configuration = serde_json::from_str(&configuration)
-        .map_err(|_| IdentityServiceError::new("signing key envelope configuration refused"))?;
-    wamn_envelope::encryption::Envelope::open(&configuration)
-        .map_err(|_| IdentityServiceError::new("open signing key envelope failed"))
+async fn wait_for_schema(config: &IdentityConfig) -> Result<Database, IdentityServiceError> {
+    tokio::time::timeout(Duration::from_mins(5), async {
+        loop {
+            if let Ok(mut database) = connect(config).await
+                && matches!(
+                    tokio::time::timeout(
+                        IO_TIMEOUT,
+                        active_session_key_exists(&mut database.client, &config.issuer),
+                    )
+                    .await,
+                    Ok(Ok(_))
+                )
+            {
+                return database;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
+    .await
+    .map_err(|_| IdentityServiceError::new("wait for identity schema timed out"))
 }
 
 fn unavailable() -> Response<Full<Bytes>> {

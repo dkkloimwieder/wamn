@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wamn-edge
+  namespace: hosts
+  labels:
+    app.kubernetes.io/name: wamn-edge
+    app.kubernetes.io/instance: wamn-edge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wamn-edge
+      app.kubernetes.io/instance: wamn-edge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wamn-edge
+        app.kubernetes.io/instance: wamn-edge
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/edge-configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: wamn-edge
+      containers:
+        - name: web
+          image: {{ .Values.edge.image | default (printf "%s/wamn-edge-web:%s" .Values.registry .Chart.Version) | quote }}
+          args: ["--settings", "/etc/wamn-edge/web.json"]
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/wamn-edge/web.json
+              subPath: web.json
+              readOnly: true
+            - name: identity-ca
+              mountPath: /etc/wamn-edge/identity-ca
+              readOnly: true
+            - name: csrf
+              mountPath: /etc/wamn-edge/csrf
+              readOnly: true
+          resources:
+{{ toYaml .Values.edge.resources | indent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: wamn-edge
+        - name: identity-ca
+          configMap:
+            name: identity-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: csrf
+          secret:
+            secretName: wamn-web-csrf
+            items:
+              - key: key
+                path: key

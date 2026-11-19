@@ -1,4 +1,4 @@
-{{- if and (not .Values.controlService) .Values.roles }}
+{{- if .Values.roles }}
 {{- $ports := list }}
 {{- range .Values.components }}
 {{- if .authority }}
