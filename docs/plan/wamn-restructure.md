@@ -2418,6 +2418,9 @@ Facts:
 - Org `wamn-oauth`: the provision-org Job fills one random key per org into a Secret that the org chart creates empty. Skipped when OAuth encryption uses KMS.
 - `registry.env_policies` is deleted. `registry.environments` holds `readiness_budget_seconds` (default 600) and `drain_bound_seconds` (default 300), written by `env apply` from the environment file and read by `env delete` from the environment's own row. Reason: the table held only these two numbers and nothing in the product wrote it.
 - N2: cert-manager deletes a certificate's Secret with its `Certificate` (`enableCertificateOwnerRef`). Certificates used by kept Clusters are kept. Cause: an uninstall left TLS Secrets signed by deleted CAs, which a reinstall reused.
+- K5: `identity.password_logins` had row-level security with only a SELECT policy, so identity's insert was refused. Each table with row-level security now has a policy for every command a role is granted on it, with the table's org check; grants still limit org logins. Cause: the org-scoped grant work (2bde29040) added a SELECT-only policy.
+- Org control mounts the org's `wamn-oauth` key and the OAuth encryption setting, like the org's hosts: control encrypts OAuth connection tokens and hosts decrypt them, inside one org.
+- Vendored charts stay stock: no repacked chart for the Barman plugin certificates.
 
 **Ruled (D, 2026-11-19): preflight and smoke runs.**
 - Preflight, run before any kind install:
