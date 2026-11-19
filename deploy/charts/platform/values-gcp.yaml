@@ -19,7 +19,6 @@ identity:
 edge:
   neg: true
   trustedProxyHops: 2
-  tlsDnsNames: ["*.wamn.dev"]
 opentelemetry-collector:
   extraEnvs:
   - name: CLUSTER

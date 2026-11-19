@@ -6,8 +6,10 @@ const WORKFLOW_BINDING: &str = "workflow";
 use wamn_catalog::{
     ComponentDescriptor, PackageName,
     canonical_name::CanonicalName,
+    configuration::Client,
     manifest::{PackageManifest, deploy::PublishedComponent},
 };
+use wamn_registry::platform_domain::PlatformDomain;
 
 /// The Helm release name of an application: `r-<slug>-<hash>`.
 ///
@@ -392,13 +394,19 @@ pub fn component_name(package: &PackageName, component: &CanonicalName) -> Strin
 }
 
 /// Render the install values of one application.
-pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
+pub fn values(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
     ensure!(
         input.applications.len() == 1,
         "a release must select exactly one application"
     );
 
     let environment = wamn_registry::name::host_status(&input.org, &input.project, &input.env);
+    let route_host =
+        wamn_registry::name::application_host(input.route_label, &input.org, input.platform_domain);
+    ensure!(
+        route_host.len() <= 253,
+        "application host exceeds 253 bytes"
+    );
     let roles = input
         .roles
         .iter()
@@ -416,7 +424,27 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         mapping([("manifestDigest", input.manifest_digest.to_string())]),
     );
     values.insert("environment".into(), environment.into());
-    values.insert("routeHost".into(), input.route_host.clone().into());
+    values.insert(
+        "webClients".into(),
+        serde_yaml::to_value(
+            input
+                .client
+                .into_iter()
+                .map(|client| (&route_host, &client.package))
+                .collect::<BTreeMap<_, _>>(),
+        )?,
+    );
+    values.insert(
+        "webDigests".into(),
+        serde_yaml::to_value(
+            input
+                .client
+                .into_iter()
+                .map(|client| (&route_host, &client.web))
+                .collect::<BTreeMap<_, _>>(),
+        )?,
+    );
+    values.insert("routeHost".into(), route_host.into());
     values.insert("org".into(), input.org.to_string().into());
     values.insert("namespace".into(), input.org.as_str().into());
     values.insert("project".into(), input.project.to_string().into());
@@ -488,13 +516,15 @@ impl RoleName {
 
 /// The inputs of one application's install values.
 #[derive(Debug, Clone)]
-pub struct ValuesInput {
+pub struct ValuesInput<'a> {
     pub org: wamn_registry::OrgId,
     pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
     /// `sha256:<hex>` of the release manifest.
     pub manifest_digest: wamn_digest::Digest,
-    pub route_host: String,
+    pub route_label: &'a str,
+    pub platform_domain: &'a PlatformDomain,
+    pub client: Option<&'a Client>,
     /// Exactly one application's membership, retained in Helm values for status reads.
     pub applications: wamn_catalog::EnvironmentApplications,
     pub roles: Vec<Role>,

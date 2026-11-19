@@ -506,7 +506,7 @@ The case has a 90-minute bound.
 It reapplies the platform chart and requires readiness.
 It reuses `ControlOperations` for authenticated deploy, rollback, and schema apply through the public HTTPS control route.
 It makes one public HTTPS GET and requires the UI document with certificate validation enabled.
-Application requests use a TLS port-forward with hostnames under the control domain.
+Application requests use a TLS port-forward with host names of the form `<label>--<org>.<base>`.
 The GKE body omits the kind-only outsider enrollment from the local mail file.
 
 The case attempts environment deletion and PAT revocation after operation success or failure.

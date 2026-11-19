@@ -18,7 +18,8 @@ metadata:
   namespace: hosts
 spec:
   secretName: wamn-edge-tls
-  dnsNames: {{ .Values.edge.tlsDnsNames | toJson }}
+  dnsNames:
+  - {{ printf "*.%s" .Values.platformDomain | quote }}
   issuerRef:
     kind: Issuer
     name: wamn-edge

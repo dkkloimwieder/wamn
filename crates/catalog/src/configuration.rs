@@ -28,7 +28,7 @@ pub struct EnvironmentConfiguration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationConfiguration {
-    pub hostname: String,
+    pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -124,7 +124,7 @@ pub async fn read(
         "SELECT t.name AS target, e.policy_name, p.schema_mode, c.* \
          FROM registry.environment_projects p JOIN registry.environments e USING (org,env) \
          JOIN registry.target t ON t.id=e.target_id LEFT JOIN LATERAL ( \
-           SELECT 1 AS record_type, application AS name, hostname AS value, \
+           SELECT 1 AS record_type, application AS name, label AS value, \
              client_package, client_web, NULL::text AS alias, NULL::integer AS version \
            FROM registry.environment_applications WHERE org=p.org AND env=p.env AND project=p.project \
            UNION ALL SELECT 2, application, connection_name, NULL, NULL, alias, NULL \
@@ -170,7 +170,7 @@ pub async fn read(
                 configuration.applications.insert(
                     row.try_get("name")?,
                     ApplicationConfiguration {
-                        hostname: row.try_get("value")?,
+                        label: row.try_get("value")?,
                         client,
                         connections: BTreeMap::new(),
                     },
@@ -254,12 +254,12 @@ pub async fn write(
     for (name, application) in &c.applications {
         sqlx::query(
             "INSERT INTO registry.environment_applications \
-             (org,env,project,application,hostname,client_package,client_web) \
+             (org,env,project,application,label,client_package,client_web) \
              VALUES ($1,$2,$3,$4,$5,$6,$7) \
-             ON CONFLICT (org,env,project,application) DO UPDATE SET hostname=EXCLUDED.hostname, \
+             ON CONFLICT (org,env,project,application) DO UPDATE SET label=EXCLUDED.label, \
              client_package=EXCLUDED.client_package, client_web=EXCLUDED.client_web",
         )
-        .bind(&c.org).bind(&c.env).bind(&c.project).bind(name).bind(&application.hostname)
+        .bind(&c.org).bind(&c.env).bind(&c.project).bind(name).bind(&application.label)
         .bind(application.client.as_ref().map(|client| &client.package))
         .bind(application.client.as_ref().map(|client| &client.web))
         .execute(&mut *transaction).await?;

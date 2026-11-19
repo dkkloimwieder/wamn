@@ -6,5 +6,3 @@ traefik:
   enabled: true
 identity:
   localMail: /var/run/wamn-identity/mail/outbox.jsonl
-edge:
-  tlsDnsNames: ["*.wamn.localhost"]

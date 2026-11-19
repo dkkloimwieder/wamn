@@ -14,6 +14,7 @@ use super::analyse::{self, Installed};
 use super::document::EnvironmentDocument;
 use wamn_postgres::connect;
 use wamn_publish::package_artifact::{OpenedPackage, open_package};
+use wamn_registry::platform_domain::PlatformDomain;
 
 /// Create each integration application principal and its declared dependency role.
 /// An identical apply writes no rows.
@@ -22,7 +23,7 @@ use wamn_publish::package_artifact::{OpenedPackage, open_package};
 ///
 /// Returns an error if an identity is disabled or a database write fails.
 pub async fn materialize_application_principals(
-    platform: &Platform,
+    domain: &PlatformDomain,
     project_url: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
     packages: &BTreeMap<wamn_catalog::PackageName, PackageManifest>,
@@ -36,8 +37,6 @@ pub async fn materialize_application_principals(
     if applications.is_empty() {
         return Ok(());
     }
-    let mut system = connect(&platform.system_database_url).await?;
-    let domain = wamn_identity::application::service::platform_domain(&mut system).await?;
     let mut project = super::analyse::connect_project(project_url).await?;
     let mut transaction = project.begin().await?;
     sqlx::query(wamn_identity::application::OPERATION_GRANT_LOCK_SQL)
@@ -55,7 +54,7 @@ pub async fn materialize_application_principals(
             wamn_catalog::resource_names::application_subject(project_env_key, &package.package.id);
         wamn_identity::application::service::write_service(
             &mut transaction,
-            &domain,
+            domain,
             &subject,
             &subject,
         )

@@ -68,7 +68,7 @@ The local outbox is temporary pod storage. Keep invitation codes and passwords o
 
 A port-forward connects a local port to a pod.
 The control Service selects the org's control Deployment, `c-<org>`.
-Use `<org>.<base>`, where `<base>` comes from the platform wildcard.
+Use `<org>.<base>`, where `<base>` is the platform chart's `platformDomain`.
 The example uses org `local` and host `control.wamn.localhost`.
 The edge certificate covers `*.wamn.localhost`, including application hosts.
 Export the cluster access file to a private directory:
@@ -189,13 +189,17 @@ Control selects the installed database, chart, registry and broker configuration
 The CLI sends database operations to the control service.
 See [Native control](../architecture/control.md) for the service and worker configuration.
 
-The registry stores applied project settings, application hostnames, client pins, and connection aliases.
+The registry stores applied project settings, application host labels, client pins, and connection aliases.
 The shared environment owns its target, policy, and connection versions.
 The top package pins its base packages by OCI digest.
 Helm records the release history. A WorkloadDeployment exposes the applied package digest and Helm revision.
 
 Use one `environment.yaml` file for each environment. Each application name must be unique in the file.
 The [environment schema](../../crates/environment/environment.schema.json) describes the YAML fields.
+Set each application's `label` to a value unique within the org, across all its environments and projects.
+Use 1 to 21 lowercase letters, digits, and single hyphens between letters or digits.
+Deploy uses `<label>--<org>.<base>` as the host name. For example, `shop` in org `acme` uses `shop--acme.wamn.dev` on GCP.
+The platform's `platformDomain` value supplies the base for both deploy and web.
 An application connection alias names a connection from the shared `connections` map.
 Set `revocation_seconds` to an integer from 0 to 3600 for the environment.
 Deploy sets this grant cache lifetime on each application workload. Zero disables the cache.
@@ -217,13 +221,13 @@ projects:
   - name: orders
     applications:
       shop:
-        hostname: shop.example.com
+        label: shop
         connections:
           orders: orders-api
   - name: reporting
     applications:
       reports:
-        hostname: reports.example.com
+        label: reports
         connections:
           orders: orders-api
 ```
@@ -639,7 +643,7 @@ Identity creates the first session signing key at startup. CloudNativePG manages
 
 Create a Secret in `platform` with an `api-key` entry.
 Set `identity.resendSecret` to that Secret and `identity.resendFrom` to the verified sender in the platform chart.
-Set `identity.inviteUrl` to the web client base, for example `https://receiving.wamn.dev`.
+Set `identity.inviteUrl` to the web client base, for example `https://receiving--acme.wamn.dev`.
 The invitation mail links to `<inviteUrl>/invite#<code>`.
 The reset mail links to `<inviteUrl>/reset#<secret>`.
 If `inviteUrl` is empty, each mail shows the code.

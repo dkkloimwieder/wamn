@@ -140,7 +140,7 @@ async fn applications(journey: &Journey<'_>) -> anyhow::Result<Value> {
             app,
             json!({
                 "current":selection["current"],
-                "hostname":selection["hostname"], "served":served,
+                "label":selection["label"], "served":served,
                 "release_name":name, "revision":observed["revision"],
                 "helm_revision":helm["revision"], "helm_status":helm["status"]
             }),
@@ -239,12 +239,13 @@ pub(super) async fn exercise(
     let chart = selected.directory();
     let mut document = EnvironmentDocument::compile(&journey.file)?;
     document.env = format!("isolated-{}", journey.environment).parse()?;
+    let env_digest = wamn_digest::bytes_sha256(document.env.as_str().as_bytes()).hex();
     let application = document
         .applications
         .get_mut("alpha")
         .context("isolated application")?;
     application.current = DeclaredRelease::None;
-    application.hostname = journey.isolated_host.into();
+    application.label = format!("iso-{}", &env_digest[..16]);
     let file = journey
         .run
         .directory

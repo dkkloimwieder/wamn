@@ -70,7 +70,7 @@ fn command(root: &Path, url: &str, arguments: &[&str]) -> anyhow::Result<Command
         serde_json::from_value(json!({
             "org":"acme", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
             "database":{"instances":1,"storage":"2Gi","cpu":"200m","memory":"256Mi"},
-            "projects":[{"name":"apps","applications":{"a":{ "hostname":"a.invalid"}}}]
+            "projects":[{"name":"apps","applications":{"a":{ "label":"a"}}}]
         }))?;
     std::fs::write(&file, document.to_yaml()?)?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));

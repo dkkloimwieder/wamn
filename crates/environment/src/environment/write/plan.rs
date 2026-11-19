@@ -4,6 +4,7 @@ use anyhow::Context as _;
 /// Build release values from the document, artifact, policy, and host overlay.
 pub(super) fn release_values(
     document: &EnvironmentDocument,
+    platform_domain: &wamn_registry::platform_domain::PlatformDomain,
     application: &wamn_catalog::ApplicationName,
     package_manifests: &std::collections::BTreeMap<
         wamn_catalog::PackageName,
@@ -43,7 +44,9 @@ pub(super) fn release_values(
         project: document.project.clone(),
         env: document.env.clone(),
         manifest_digest: *package_digest,
-        route_host: selection.hostname.clone(),
+        route_label: &selection.label,
+        platform_domain,
+        client: selection.client.as_ref(),
         applications,
         roles,
         actor: actor.to_owned(),
@@ -65,21 +68,5 @@ pub(super) fn release_values(
         .as_sequence_mut()
         .expect("release values contain a component list")
         .extend(components);
-    rendered["webClients"] = serde_yaml::to_value(
-        selection
-            .client
-            .as_ref()
-            .map(|client| (&selection.hostname, &client.package))
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-    )?;
-    rendered["webDigests"] = serde_yaml::to_value(
-        selection
-            .client
-            .as_ref()
-            .map(|client| (&selection.hostname, &client.web))
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-    )?;
     Ok((rendered, names))
 }

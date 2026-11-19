@@ -44,11 +44,7 @@ impl Application {
             .0
             .to_owned();
         let application = project.applications.get_mut(&name).context("application")?;
-        let (_, domain) = application
-            .hostname
-            .split_once('.')
-            .context("fixture hostname domain")?;
-        application.hostname = format!("{}.{domain}", authored.env);
+        application.label = authored.env.to_string();
         application.current = DeclaredRelease::None;
         let file = scratch.path().join("environment.yaml");
         std::fs::write(&file, authored.to_yaml()?)?;
@@ -99,12 +95,20 @@ impl Application {
             .context("caller principal")?
             .parse()?;
         std::fs::remove_file(secret)?;
+        let mut system = wamn_postgres::connect(&std::env::var("WAMN_SYSTEM_ADMIN_URL")?).await?;
+        let base = sqlx::query_scalar(wamn_registry::sql::PLATFORM_DOMAIN_SQL)
+            .fetch_one(&mut system)
+            .await?;
         let routes = Routes {
             endpoint: format!(
                 "{}/api/{name}",
                 std::env::var("WAMN_BROWSER_URL")?.trim_end_matches('/')
             ),
-            host: document.applications[&name].hostname.clone(),
+            host: wamn_registry::name::application_host(
+                &document.applications[&name].label,
+                &document.org,
+                &base,
+            ),
             bearer,
             client: HttpClient::builder()
                 .timeout(std::time::Duration::from_secs(60))

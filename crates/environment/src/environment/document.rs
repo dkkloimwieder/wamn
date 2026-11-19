@@ -85,7 +85,7 @@ impl EnvironmentDocument {
                     (
                         name.clone(),
                         ApplicationConfiguration {
-                            hostname: application.hostname.clone(),
+                            label: application.label.clone(),
                             client: application.client.clone(),
                             connections: application.connections.clone(),
                         },
@@ -114,7 +114,7 @@ impl EnvironmentDocument {
                     (
                         name,
                         ApplicationSelection {
-                            hostname: application.hostname,
+                            label: application.label,
                             client: application.client,
                             connections: application.connections,
                             current: DeclaredRelease::None,
@@ -189,7 +189,7 @@ mod tests {
     fn configuration() -> Value {
         json!({"org":"acme","project":"wms","env":"prod","target":"cloud",
             "policy":"prod","revocation_seconds":60,"schema":{"mode":"reset"},
-            "applications":{"wms":{"hostname":"wms.example",
+            "applications":{"wms":{"label":"wms",
                 "connections":{"erp":"shared-erp"},
                 "client":{"package":"wamn_wms","web":format!("sha256:{:064x}",1)}}},
             "integrations":{"shared-erp":{"version":1}}})
