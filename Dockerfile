@@ -22,6 +22,7 @@ WORKDIR /build
 # written. The native builds now share one stage and target cache.
 FROM toolchain AS root-source
 COPY Cargo.toml Cargo.lock ./
+COPY mise.toml ./
 COPY crates ./crates
 COPY wit ./wit
 # Both workspaces consume guest libraries and binding sources.
