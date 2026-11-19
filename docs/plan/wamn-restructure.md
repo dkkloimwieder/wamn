@@ -2410,5 +2410,6 @@ Facts:
 - The first kind run deploys `apps/wamn_receiving` and `client_acme_receiving`, which has the only Data change handler.
 - C1: `cargo xtask build-platform` always uses its own buildx builder, `wamn-platform` (docker-container driver, host network). It creates the builder when `docker buildx inspect` exits non-zero, and never changes Docker's current builder. Lanes never change Docker's current builder either; they use `--builder` or `BUILDX_BUILDER`. Cause: a lane left Docker's current builder set to a deleted builder, so buildx fell back to the default driver, which cannot export the registry cache.
 - N1: overlays commit their `.wamn/describe/` files, the same as bases, so they build without a database.
+- C2: the Dockerfile copies `mise.toml`, because `crates/codegen/src/kcl.rs::binary` builds the KCL version pin into the program at compile time. `mise.toml` stays the one source of tool pins. Cause: the compile-time read came in on 2026-11-15 (494238ae4), and no check ran `build-platform` until the first kind run.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
