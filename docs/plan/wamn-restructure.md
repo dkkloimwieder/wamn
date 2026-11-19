@@ -2412,8 +2412,12 @@ Facts:
 - N1: overlays commit their `.wamn/describe/` files, the same as bases, so they build without a database.
 - C2: the Dockerfile copies `mise.toml`, because `crates/codegen/src/kcl.rs::binary` builds the KCL version pin into the program at compile time. `mise.toml` stays the one source of tool pins. Cause: the compile-time read came in on 2026-11-15 (494238ae4), and no check ran `build-platform` until the first kind run.
 - K1: the NATS probes drop the chart's default `httpGet` through `container.patch`; a `null` in parent values did not remove it, so each probe had two handlers and the API server refused the StatefulSet.
-- K2: PostgreSQL is pinned to `18.6` by tag and digest. The `18.7` pin from Epic 8 named an image that CloudNativePG never published.
+- K2: PostgreSQL is pinned to `18.6` by tag and digest. The `18.7` pin from the 2026-11-18 CloudNativePG ruling named an image that CloudNativePG never published.
 - K3: `--settings` is an argument of each service subcommand. A required global argument is checked before the subcommand is read, so `serve --settings X` failed.
+- K4: the first owner's membership is written before identity sends the invitation; a retry re-sends the invitation until the owner enrolls. Identity still refuses users with no membership.
+- Org `wamn-oauth`: the provision-org Job fills one random key per org into a Secret that the org chart creates empty. Skipped when OAuth encryption uses KMS.
+- `registry.env_policies` is deleted. `registry.environments` holds `readiness_budget_seconds` (default 600) and `drain_bound_seconds` (default 300), written by `env apply` from the environment file and read by `env delete` from the environment's own row. Reason: the table held only these two numbers and nothing in the product wrote it.
+- N2: cert-manager deletes a certificate's Secret with its `Certificate` (`enableCertificateOwnerRef`). Certificates used by kept Clusters are kept. Cause: an uninstall left TLS Secrets signed by deleted CAs, which a reinstall reused.
 
 **Ruled (D, 2026-11-19): preflight and smoke runs.**
 - Preflight, run before any kind install:
