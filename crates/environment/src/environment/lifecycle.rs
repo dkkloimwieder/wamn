@@ -251,6 +251,18 @@ async fn configure_project(
     )
     .await?;
 
+    let wait_certificate = |name| {
+        wamn_kubernetes::kubectl::wait_ready(
+            &platform.target,
+            "certificate.cert-manager.io",
+            name,
+            Duration::from_secs(120),
+        )
+    };
+    tokio::try_join!(
+        wait_certificate(&connection.credentials.name),
+        wait_certificate(&capture.credentials.name),
+    )?;
     if unconfigured {
         platform.prepare_database(connection).await?;
     }

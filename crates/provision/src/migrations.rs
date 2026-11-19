@@ -47,22 +47,26 @@ impl MigrationDatabase {
         }
     }
 
-    /// One native basic-auth Secret for the managed login.
+    /// Declare the system migration login with its basic-auth Secret.
+    ///
+    /// # Panics
+    /// Panics if called for a project database, whose login uses a certificate.
     pub fn managed_role(self, database: &str) -> crate::connection::ManagedRole {
+        assert_eq!(self, Self::System);
         let login = self.login(database);
-        let secret = match self {
-            Self::Project => wamn_registry::name::project_login_secret(database, login.as_str()),
+        let secret = login.as_str().replace('_', "-");
+        crate::connection::managed_role(login, wamn_role::SYSTEM_ROLE, secret)
+    }
+
+    /// The Kubernetes Secret that holds the selected migration login's credentials.
+    pub fn credential_secret(self, database: &str) -> String {
+        let login = self.login(database);
+        match self {
+            Self::Project => {
+                wamn_registry::name::project_login_certificate(database, login.as_str())
+            }
             Self::System => login.as_str().replace('_', "-"),
-        };
-        crate::connection::managed_role(
-            login,
-            if self == Self::System {
-                wamn_role::SYSTEM_ROLE
-            } else {
-                wamn_role::PLATFORM_ROLE
-            },
-            secret,
-        )
+        }
     }
 
     /// Project the managed credential without changing an explicit operator connection.
@@ -72,9 +76,8 @@ impl MigrationDatabase {
             return Ok(input.into_owned());
         }
         let mut config: wamn_postgres::ConnectionConfig = serde_json::from_str(&input)?;
-        let role = self.managed_role(&config.database);
-        config.username = role.name;
-        config.credentials.name = role.password_secret.name;
+        config.username = self.login(&config.database);
+        config.credentials.name = self.credential_secret(&config.database);
         config.to_json()
     }
 

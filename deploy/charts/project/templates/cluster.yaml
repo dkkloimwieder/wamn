@@ -33,11 +33,30 @@ spec:
   storage:
     size: {{ .storage | quote }}
   {{- if not $recovery }}
+  certificates:
+    {{- /* The replication Secret carries the public client CA in ca.crt. */}}
+    clientCASecret: {{ include "project.replicationCertificate" $name }}
+    replicationTLSSecret: {{ include "project.replicationCertificate" $name }}
   managed:
-    roles: {{ .roles | toJson }}
+    roles:
+      {{- range .roles }}
+      - {{ pick . "name" "connectionLimit" "inRoles" "inherit" "replication" | mustMerge (dict "login" true "disablePassword" true) | toJson }}
+      {{- end }}
   {{- end }}
   postgresql:
-    pg_hba: [hostssl all all all scram-sha-256]
+    pg_hba:
+      {{- if $recovery }}
+      - hostssl all postgres all scram-sha-256
+      {{- else }}
+      {{- range .roles }}
+      - hostssl {{ $database.name }} {{ .name }} all cert
+      {{- if or .replication (eq .name $database.owner) }}
+      - hostssl postgres {{ .name }} all cert
+      {{- end }}
+      {{- end }}
+      {{- end }}
+      {{- /* CNPG appends a default password rule after these rules. */}}
+      - host all all all reject
     parameters:
       max_slot_wal_keep_size: "1GB"
       max_connections: {{ required "cluster.maxConnections is required" .maxConnections | quote }}
@@ -78,9 +97,10 @@ spec:
   bootstrap:
     initdb:
       database: {{ $database.name }}
-      owner: {{ $database.owner }}
-      secret: {name: {{ .ownerSecret }}}
+      {{- /* CNPG requires a bootstrap password. The Database resource assigns ownership to the migration login. */}}
+      owner: {{ $database.name }}
       postInitSQL:
+        - {{ printf "ALTER ROLE %s NOLOGIN" (quote $database.name) | quote }}
         - {{ required "cluster.initializeRoles is required" .initializeRoles | quote }}
   {{- end }}
   {{- with .backup }}

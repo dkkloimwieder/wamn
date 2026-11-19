@@ -176,8 +176,8 @@ pub async fn platform_migration_input(
     let database = options
         .get_database()
         .ok_or_else(|| anyhow::anyhow!("fixture database is absent"))?;
-    let role = scope.managed_role(database);
-    let name = postgres_protocol::escape::escape_identifier(role.name.as_str());
+    let login = scope.login(database);
+    let name = postgres_protocol::escape::escape_identifier(login.as_str());
     let mut admin = wamn_postgres::connect(input).await?;
     match scope {
         crate::migrations::MigrationDatabase::System => {
@@ -191,7 +191,7 @@ pub async fn platform_migration_input(
     }
     // CNPG grants this membership with SET permission, which ownership transfers require.
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {name} LOGIN PASSWORD 'platform-migration-fixture' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; GRANT {} TO {name} WITH INHERIT TRUE, SET TRUE; GRANT CONNECT ON DATABASE {} TO {name}",
-        postgres_protocol::escape::escape_literal(role.name.as_str()), postgres_protocol::escape::escape_identifier(if scope == crate::migrations::MigrationDatabase::System { wamn_role::SYSTEM_ROLE } else { wamn_role::PLATFORM_ROLE }), postgres_protocol::escape::escape_identifier(database))))
+        postgres_protocol::escape::escape_literal(login.as_str()), postgres_protocol::escape::escape_identifier(if scope == crate::migrations::MigrationDatabase::System { wamn_role::SYSTEM_ROLE } else { wamn_role::PLATFORM_ROLE }), postgres_protocol::escape::escape_identifier(database))))
         .execute(&mut admin).await?;
     if scope == crate::migrations::MigrationDatabase::Project {
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
@@ -207,11 +207,11 @@ pub async fn platform_migration_input(
             .await?;
     if identity_exists {
         sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-            .bind(&role.name).bind(crate::PlatformComponent::ApplyPackage.principal_id())
+            .bind(&login).bind(crate::PlatformComponent::ApplyPackage.principal_id())
             .execute(&mut admin).await?;
     }
     let mut url = url::Url::parse(input)?;
-    url.set_username(role.name.as_str())
+    url.set_username(login.as_str())
         .map_err(|()| anyhow::anyhow!("fixture login"))?;
     url.set_password(Some("platform-migration-fixture"))
         .map_err(|()| anyhow::anyhow!("fixture password"))?;

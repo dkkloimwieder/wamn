@@ -13,7 +13,7 @@
 //! Delete the applied configuration with the environment row
 //! last and commit. Disable connection principals in a retained database.
 //!
-//! Helm preserves the Cluster and ObjectStore unless deletion includes data.
+//! Helm preserves the Cluster, ObjectStore, and certificates unless deletion includes data.
 //! With `--data`, an absent or unreachable project database skips database-side cleanup.
 
 use sqlx::{Connection as _, Row as _};
@@ -334,6 +334,9 @@ async fn delete_locked(
         )
         .await?;
         lines.push("uninstalled the project release".into());
+    }
+    if data {
+        resources::delete_database_certificate_secrets(platform, &database).await?;
     }
 
     let remaining = super::broker::project_count(&mut system, org, env)

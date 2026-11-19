@@ -57,15 +57,3 @@ pub fn managed_role(
         password_secret: PasswordSecret { name: secret },
     }
 }
-
-/// Declare the existing capture login without database writer privileges.
-pub fn managed_replication_role(
-    name: wamn_identity_protocol::LoginName,
-    secret: String,
-) -> ManagedRole {
-    let mut role = managed_role(name, "", secret);
-    role.in_roles = vec![wamn_role::CHECKPOINT_ROLE.into()];
-    role.inherit = false;
-    role.replication = true;
-    role
-}

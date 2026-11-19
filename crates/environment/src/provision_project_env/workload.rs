@@ -14,7 +14,7 @@ pub(crate) fn connections(
         .map(|family| {
             let mut connection = owner.clone();
             connection.username = family.login_name().parse()?;
-            connection.credentials.name = wamn_registry::name::project_login_secret(
+            connection.credentials.name = wamn_registry::name::project_login_certificate(
                 &connection.database,
                 connection.username.as_str(),
             );

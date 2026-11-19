@@ -61,8 +61,8 @@ spec:
               - secret:
                   name: {{ $login | quote }}
                   items:
-                    - {key: username, path: {{ printf "%s/username" $login | quote }}}
-                    - {key: password, path: {{ printf "%s/password" $login | quote }}}
+                    - {key: tls.crt, path: {{ printf "%s/tls.crt" $login | quote }}}
+                    - {key: tls.key, path: {{ printf "%s/tls.key" $login | quote }}}
               - secret:
                   name: {{ $ca | quote }}
                   items:

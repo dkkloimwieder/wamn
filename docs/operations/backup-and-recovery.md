@@ -115,7 +115,7 @@ VALUES ('<operator-principal-id>'::uuid, '', '', 'admin:restore');
 ```
 
 The live Cluster disables password access for `postgres`.
-Its database owner is `wamn_migration`. The installer passes its basic-auth Secret name as `cluster.ownerSecret`.
+Its database owner is `wamn_migration`, which authenticates over the network with a client certificate.
 Run the copy through the local PostgreSQL socket on the live primary as `postgres`.
 The temporary load and the merge run in one transaction. [CloudNativePG local authentication](https://cloudnative-pg.io/docs/1.28/bootstrap/)
 
@@ -155,19 +155,25 @@ Make sure that the live database contains the expected rows before you resume wr
    ```
 
 5. Load the dump into the new project database with `pg_restore`.
-   Connect as `wamn_migration`, the database owner that `initdb` creates.
-   Read the new database, Cluster, and login Secret names from the new Helm release values.
-   Read the login name and password from that Secret in the org namespace.
+   Connect as `wamn_migration`, the database owner.
+   Read the database, Cluster, and login certificate Secret names from the Helm release values.
+   Save the client certificate, private key, and server CA certificate in a private directory.
 
    ```bash
    new_values="$(helm get values "$project_release" --namespace "$helm_namespace" --output json)"
    new_database="$(jq -er '.database.name' <<< "$new_values")"
    new_cluster="$(jq -er '.cluster.name' <<< "$new_values")"
-   new_login_secret="$(jq -er '.cluster.ownerSecret' <<< "$new_values")"
-   new_login="$(kubectl -n "$org" get secret "$new_login_secret" --output json)"
-   new_user="$(jq -er '.data.username | @base64d | @uri' <<< "$new_login")"
-   new_password="$(jq -er '.data.password | @base64d | @uri' <<< "$new_login")"
-   new_db_uri="postgresql://${new_user}:${new_password}@127.0.0.1:15433/${new_database}?sslmode=require"
+   new_user="$(jq -er '.database.owner' <<< "$new_values")"
+   new_login_secret="$(jq -er --arg user "$new_user" '.cluster.roles[] | select(.name == $user) | .certificateSecret' <<< "$new_values")"
+   new_tls="$(mktemp -d)"
+   trap 'rm -r -- "$new_tls"' EXIT
+   (
+     umask 077
+     kubectl -n "$org" get secret "$new_login_secret" --output jsonpath='{.data.tls\.crt}' | base64 -d > "$new_tls/tls.crt"
+     kubectl -n "$org" get secret "$new_login_secret" --output jsonpath='{.data.tls\.key}' | base64 -d > "$new_tls/tls.key"
+     kubectl -n "$org" get secret "${new_cluster}-ca" --output jsonpath='{.data.ca\.crt}' | base64 -d > "$new_tls/ca.crt"
+   )
+   new_db_uri="host=${new_cluster}-rw.${org}.svc.cluster.local hostaddr=127.0.0.1 port=15433 dbname=$new_database user=$new_user sslmode=verify-full sslcert='$new_tls/tls.crt' sslkey='$new_tls/tls.key' sslrootcert='$new_tls/ca.crt'"
    ```
 
    In a second terminal, set `org` and `new_cluster` to the same values.
