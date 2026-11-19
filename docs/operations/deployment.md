@@ -76,7 +76,8 @@ Helm installs cert-manager, CloudNativePG, and the ingress controller before the
 The platform chart installs the system PostgreSQL Cluster, its SQL Job, shared identity, edge, NATS, the wasmCloud runtime operator, and the collector.
 The org chart owns control, the namespace quota, RBAC, and network policies.
 Run `wamn org create <org> --owner <email>` with the admin kubeconfig.
-The command installs the org chart with public platform settings. Its platform Job writes the control and apply passwords to their org Secrets before the invitation Job runs. [Org chart](../../deploy/charts/org/README.md)
+The command installs the org chart with public platform settings. Its platform Job writes the control and apply passwords to their org Secrets before the invitation Job runs.
+For local OAuth encryption, the same Job generates a separate 32-byte key in `<org>/wamn-oauth` if the `key` entry is absent. Cloud KMS uses no org OAuth Secret. [Org chart](../../deploy/charts/org/README.md)
 
 Set `global.maxProjects` to the project stream limit for the installation. Each project in an environment uses one slot.
 `wamn env apply` refuses new reservations if their total across all organizations and environments would exceed the limit.
