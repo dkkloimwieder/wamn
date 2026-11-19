@@ -118,7 +118,7 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
         &storage,
         &chart,
         "wamn-org",
-        values_file.path(),
+        &[values_file.path()],
         helm::Wait::None,
         helm::Install::ExistingNamespace,
     )
@@ -236,6 +236,15 @@ fn org_values(
     api_server: &[Value],
 ) -> anyhow::Result<Value> {
     let image = field(inputs, "controlImage")?;
+    let application_chart = field(inputs, "applicationChart")?;
+    let (_, digest) = application_chart
+        .strip_prefix("oci://")
+        .and_then(|reference| reference.rsplit_once('@'))
+        .filter(|(repository, _)| !repository.is_empty())
+        .context("pin applicationChart in the platform release to an OCI chart digest")?;
+    digest
+        .parse::<wamn_digest::Digest>()
+        .context("invalid applicationChart digest in the platform release")?;
     let registry = field(inputs, "registry")?;
     let oauth_encryption: Value = serde_json::from_str(field(inputs, OAUTH_ENCRYPTION_INPUT)?)
         .context("decode the platform OAuth encryption configuration")?;
@@ -269,7 +278,7 @@ fn org_values(
                 "nats_url": field(inputs, "natsUrl")?,
                 "registry": internal_registry,
                 "worker_image": image,
-                "chart": "/usr/local/share/wamn/deploy/charts/application",
+                "chart": application_chart,
                 "registry_token_metadata": registry_token_metadata(inputs)?,
                 "oauth_encryption": oauth_encryption,
             },

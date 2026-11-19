@@ -277,6 +277,9 @@
         }
       }
     },
+    "applicationChart": {
+      "type": "string"
+    },
     "postgres": {
       "type": "object",
       "additionalProperties": false,

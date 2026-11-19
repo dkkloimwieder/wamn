@@ -140,12 +140,13 @@ pub async fn update_values(
 }
 
 /// Install or upgrade one Helm release and leave failed revisions available for inspection.
+/// Helm applies the values files in the given order.
 pub async fn upgrade(
     target: &Target,
     namespace: &str,
     chart: &std::path::Path,
     name: &str,
-    values: &std::path::Path,
+    values: &[&std::path::Path],
     wait: Wait,
     install: Install,
 ) -> anyhow::Result<()> {
@@ -161,13 +162,14 @@ pub async fn upgrade(
         namespace.as_ref(),
         name.as_ref(),
         chart.as_os_str(),
-        "-f".as_ref(),
-        values.as_os_str(),
         "--timeout".as_ref(),
         "600s".as_ref(),
         "--history-max".as_ref(),
         "50".as_ref(),
     ];
+    for file in values {
+        arguments.extend([OsStr::new("-f"), file.as_os_str()]);
+    }
     arguments.extend(wait.argument());
     match install {
         Install::CreateNamespace => arguments.push("--create-namespace".as_ref()),
