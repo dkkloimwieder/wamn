@@ -78,6 +78,13 @@ INSERT INTO platform.login_principal(login, principal_id)
 VALUES ('wamn_system', '770df186-ac15-579e-b46b-c297cae2011b')
 ON CONFLICT (login) DO NOTHING;
 
+CREATE FUNCTION platform.prune_tx_identity() RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
+    DELETE FROM platform.tx_identity WHERE xid < pg_snapshot_xmin(pg_current_snapshot())
+$$;
+ALTER FUNCTION platform.prune_tx_identity() OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION platform.prune_tx_identity() FROM PUBLIC;
+
 CREATE SCHEMA registry AUTHORIZATION wamn_system;
 CREATE SCHEMA provisioning AUTHORIZATION wamn_system;
 CREATE SCHEMA identity AUTHORIZATION wamn_system;
@@ -628,12 +635,13 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
-DO $nats_issuer_grants$ BEGIN
+DO $identity_issuer_grants$ BEGIN
     IF to_regrole('wamn_identity_issuer') IS NOT NULL THEN
+        GRANT EXECUTE ON FUNCTION platform.prune_tx_identity() TO wamn_identity_issuer;
         GRANT SELECT, INSERT ON identity.nats_keys TO wamn_identity_issuer;
         GRANT UPDATE (project_count, issued_at) ON identity.nats_keys TO wamn_identity_issuer;
     END IF;
-END $nats_issuer_grants$;
+END $identity_issuer_grants$;
 
 CREATE TABLE identity.session_signing_state (
     issuer     text PRIMARY KEY CHECK (btrim(issuer) <> ''),
@@ -1002,92 +1010,14 @@ BEGIN
         FROM registry.integration_type t), '[]'::jsonb));
 END $$;
 
-CREATE FUNCTION registry.publish_integration(
-    integration_code text, published_version integer, artifact_digest text,
-    parameters jsonb, exported_operations text, exported_interfaces text[], writable_interfaces text[])
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE
-    previous jsonb;
-    field text;
-    definition jsonb;
-    runtime text;
-BEGIN
-    SELECT runtime_type INTO runtime FROM registry.integration_type WHERE code=integration_code FOR UPDATE;
-    IF runtime IS NULL THEN
-        RAISE EXCEPTION 'integration_not_found' USING ERRCODE='22023';
+ALTER FUNCTION registry.configure_integration_type(text,text,jsonb) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.configure_integration_type(text,text,jsonb) FROM PUBLIC;
+DO $integration_type_acl$ BEGIN
+    IF to_regrole('wamn_control') IS NOT NULL THEN
+        GRANT USAGE ON SCHEMA registry TO wamn_control;
+        GRANT EXECUTE ON FUNCTION registry.configure_integration_type(text,text,jsonb) TO wamn_control;
     END IF;
-    IF runtime IN ('wasm','native') AND artifact_digest IS NULL THEN
-        RAISE EXCEPTION 'digest_required' USING ERRCODE='22023';
-    END IF;
-    IF runtime IN ('wasm','native') AND NOT COALESCE('wamn:integration/health@0.1.0'=ANY(exported_interfaces),false) THEN
-        RAISE EXCEPTION 'health_export_required' USING ERRCODE='22023';
-    END IF;
-    IF writable_interfaces IS NULL OR NOT writable_interfaces <@ exported_interfaces THEN
-        RAISE EXCEPTION 'write_interface_not_exported' USING ERRCODE='22023';
-    END IF;
-    IF parameters->>'type' IS DISTINCT FROM 'object' OR jsonb_typeof(parameters->'properties') IS DISTINCT FROM 'object'
-        OR exported_operations IS NULL OR exported_operations='' OR exported_interfaces IS NULL THEN
-        RAISE EXCEPTION 'invalid_parameter_schema' USING ERRCODE='22023';
-    END IF;
-    IF parameters->'properties' ? 'auth' THEN
-        RAISE EXCEPTION 'reserved_auth_field' USING ERRCODE='22023';
-    END IF;
-    IF EXISTS(SELECT FROM registry.integration_type_auth a JOIN registry.auth_type t ON t.code=a.auth_type
-        WHERE a.integration_type=integration_code AND t.http_only)
-        AND split_part(exported_operations,'@',1) <> 'wamn:connection/http' THEN
-        RAISE EXCEPTION 'http_auth_requires_http_interface' USING ERRCODE='22023';
-    END IF;
-    SELECT parameter_schema INTO previous FROM registry.integration_type_version
-    WHERE integration_type=integration_code ORDER BY version DESC LIMIT 1;
-    IF published_version <= COALESCE((SELECT max(version) FROM registry.integration_type_version
-        WHERE integration_type=integration_code),0) THEN
-        RAISE EXCEPTION 'version_must_increase' USING ERRCODE='22023';
-    END IF;
-    IF previous IS NOT NULL THEN
-        FOR field,definition IN SELECT * FROM jsonb_each(previous->'properties') LOOP
-            IF NOT (parameters->'properties' ? field) AND definition->>'deprecated' IS DISTINCT FROM 'true' THEN
-                RAISE EXCEPTION 'field_removal_requires_deprecation: %',field USING ERRCODE='22023';
-            END IF;
-            IF definition->>'immutable'='true' AND parameters->'properties' ? field
-                AND parameters->'properties'->field->>'immutable' IS DISTINCT FROM 'true' THEN
-                RAISE EXCEPTION 'immutable_field_changed: %',field USING ERRCODE='22023';
-            END IF;
-        END LOOP;
-        FOR field IN SELECT jsonb_array_elements_text(COALESCE(parameters->'required','[]')) LOOP
-            IF NOT (previous->'properties' ? field) THEN
-                RAISE EXCEPTION 'required_field_requires_optional_predecessor: %',field USING ERRCODE='22023';
-            END IF;
-        END LOOP;
-    END IF;
-    FOR field,definition IN SELECT * FROM jsonb_each(parameters->'properties') LOOP
-        IF EXISTS(SELECT FROM registry.integration_type_version v
-            WHERE v.integration_type=integration_code AND v.parameter_schema->'properties' ? field
-            AND v.parameter_schema->'properties'->field->'type' IS DISTINCT FROM definition->'type') THEN
-            RAISE EXCEPTION 'field_type_changed: %',field USING ERRCODE='22023';
-        END IF;
-    END LOOP;
-    INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,write_interfaces,published_at)
-    VALUES(integration_code,published_version,artifact_digest,parameters,exported_operations,exported_interfaces,writable_interfaces,transaction_timestamp());
-END $$;
-
-
-
-
-DO $connection_authority_acl$
-DECLARE signature text;
-BEGIN
-    FOREACH signature IN ARRAY ARRAY[
-        'configure_integration_type(text,text,jsonb)',
-        'publish_integration(text,integer,text,jsonb,text,text[],text[])'
-    ] LOOP
-        EXECUTE 'ALTER FUNCTION registry.' || signature || ' OWNER TO wamn_system';
-        EXECUTE 'REVOKE ALL ON FUNCTION registry.' || signature || ' FROM PUBLIC';
-        IF to_regrole('wamn_control') IS NOT NULL THEN
-            GRANT USAGE ON SCHEMA registry TO wamn_control;
-            EXECUTE 'GRANT EXECUTE ON FUNCTION registry.' || signature || ' TO wamn_control';
-        END IF;
-    END LOOP;
-END $connection_authority_acl$;
+END $integration_type_acl$;
 
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.password_attempts
@@ -1097,7 +1027,7 @@ CREATE TRIGGER wamn_record_history_stamp
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
     EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_control', current_database());
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT (platform_domain) ON registry.meta TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control";   DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$;
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT (platform_domain) ON registry.meta TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control";
   END IF;
 END $control_surface$;
 

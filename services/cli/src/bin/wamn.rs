@@ -65,7 +65,7 @@ enum Command {
     Publish(wamn_cli::dev::command::PublishArgs),
     /// Copy a generated default into application source.
     Eject(wamn_cli::build_verbs::EjectArgs),
-    /// Build or publish a wasm connector.
+    /// Build wasm connector artifacts or manage project integrations.
     Integration(wamn_cli::integration_verbs::IntegrationArgs),
     /// Watch source and deploy through the development platform.
     Dev(wamn_cli::dev::command::DevCommandArgs),

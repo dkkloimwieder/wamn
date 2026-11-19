@@ -12,7 +12,6 @@ test-util = ["dep:wamn-fixture-package", "dep:wamn-test-infrastructure", "wamn-o
 [dependencies]
 wash-runtime = { workspace = true, features = ["washlet"] }
 chrono = { workspace = true, features = ["clock"] }
-wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-build.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
@@ -39,16 +38,13 @@ hyper = { workspace = true }
 [dev-dependencies]
 ring = { workspace = true }
 hex = { workspace = true }
-sqlx = { workspace = true, features = ["macros"] }
 wat = "=1.254.2"
 wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
-wamn-test-postgres = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }
 futures-util = { workspace = true }
 url = { workspace = true }

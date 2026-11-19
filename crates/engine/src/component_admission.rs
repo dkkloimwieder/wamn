@@ -39,93 +39,6 @@ pub enum ComponentAdmissionErrorType {
     OperationDependencyMismatch,
     OperationSignatureMismatch,
     InvalidComponentFacts,
-    IntegrationExportMismatch,
-}
-
-/// Exact bytes admitted for an isolated integration store.
-#[derive(Debug)]
-pub struct AdmittedIntegration {
-    digest: wamn_digest::Digest,
-}
-
-impl AdmittedIntegration {
-    /// The digest of the admitted bytes.
-    pub fn digest(&self) -> &wamn_digest::Digest {
-        &self.digest
-    }
-}
-
-/// Admit an integration with bound sockets and the required health contract.
-pub fn validate_integration_admission(
-    engine: &Engine,
-    component_bytes: &[u8],
-    label: &str,
-) -> Result<AdmittedIntegration, ComponentAdmissionError> {
-    let refuse = |type_, source: anyhow::Error| ComponentAdmissionError::new(type_, label, source);
-    let component = Component::new(engine.inner(), component_bytes).map_err(|source| {
-        refuse(
-            ComponentAdmissionErrorType::InvalidComponentBytes,
-            source.into(),
-        )
-    })?;
-    validate_connection_code(&component, label)?;
-    Ok(AdmittedIntegration {
-        digest: wamn_digest::bytes_sha256(component_bytes),
-    })
-}
-
-/// Admit a component that the execution engine already compiled.
-pub(crate) fn validate_connection_code(
-    component: &Component,
-    label: &str,
-) -> Result<(), ComponentAdmissionError> {
-    let refuse = |type_, source: anyhow::Error| ComponentAdmissionError::new(type_, label, source);
-    let ty = component.component_type();
-    let raw = component.engine();
-    let imports =
-        wamn_component_policy::ComponentImports::new(ty.imports(raw).map(|(name, item)| {
-            wamn_component_policy::instance_type(name, item.implements).to_owned()
-        }));
-    wamn_component_policy::analyze(
-        &imports,
-        wamn_component_policy::PolicyProfile::Integration,
-        label,
-    )
-    .map_err(|source| {
-        refuse(
-            ComponentAdmissionErrorType::ImportPolicyRefused,
-            source.into(),
-        )
-    })?;
-    let signature = || -> anyhow::Result<()> {
-        let health = ty
-            .get_export(raw, "wamn:integration/health@0.1.0")
-            .ok_or_else(|| {
-                anyhow::anyhow!("integration world must export wamn:integration/health@0.1.0")
-            })?;
-        let ComponentItem::ComponentInstance(health) = health.ty else {
-            anyhow::bail!("integration health is not an interface instance");
-        };
-        let probe = health
-            .get_export(raw, "probe")
-            .ok_or_else(|| anyhow::anyhow!("integration health has no probe function"))?;
-        let ComponentItem::ComponentFunc(probe) = probe.ty else {
-            anyhow::bail!("integration health probe is not a function");
-        };
-        anyhow::ensure!(
-            !probe.async_(),
-            "integration health uses the synchronous component ABI"
-        );
-        probe.typecheck::<(), (Result<(), String>,)>(&ty.instance_type())?;
-        Ok(())
-    };
-    signature().map_err(|source| {
-        refuse(
-            ComponentAdmissionErrorType::IntegrationExportMismatch,
-            source,
-        )
-    })?;
-    Ok(())
 }
 
 /// Contextual refusal from the byte-to-catalog-fact boundary.
@@ -1386,7 +1299,3 @@ mod tests {
         );
     }
 }
-
-#[cfg(test)]
-#[path = "component_admission/integration_tests.rs"]
-mod integration_tests;

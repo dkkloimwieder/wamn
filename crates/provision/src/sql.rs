@@ -213,10 +213,7 @@ pub const IDENTITY_READER_COLUMNS: [(&str, &[&str]); 1] =
     [("org_memberships", &["principal_id", "org", "status"])];
 
 /// Non-secret connection functions available to the control host.
-pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
-    "publish_integration(text,integer,text,jsonb,text,text[],text[])",
-    "configure_integration_type(text,text,jsonb)",
-];
+pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &["configure_integration_type(text,text,jsonb)"];
 
 /// The privileges the control host holds on a relation that it writes.
 const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];

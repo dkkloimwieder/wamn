@@ -145,6 +145,32 @@ impl Inner {
         .map_err(|_| IdentityServiceError::new("rotate signing keys failed"))
     }
 
+    async fn prune_tx_identity(&self) -> Result<(), IdentityServiceError> {
+        tokio::time::timeout(IO_TIMEOUT, async {
+            let mut database = connect_database(&self.connection).await?;
+            let mut transaction = database.client.begin().await.map_err(|_| {
+                IdentityServiceError::new("begin transaction identity cleanup failed")
+            })?;
+            sqlx::raw_sql("SET LOCAL statement_timeout = '5s'")
+                .execute(&mut *transaction)
+                .await
+                .map_err(|_| {
+                    IdentityServiceError::new("set transaction identity cleanup timeout failed")
+                })?;
+            sqlx::query("SELECT platform.prune_tx_identity()")
+                .execute(&mut *transaction)
+                .await
+                .map_err(|_| {
+                    IdentityServiceError::new("prune system transaction identities failed")
+                })?;
+            transaction.commit().await.map_err(|_| {
+                IdentityServiceError::new("commit transaction identity cleanup failed")
+            })
+        })
+        .await
+        .map_err(|_| IdentityServiceError::new("transaction identity cleanup timed out"))?
+    }
+
     async fn database(
         &self,
     ) -> Result<tokio::sync::MutexGuard<'_, Database>, IdentityServiceError> {

@@ -236,10 +236,6 @@ pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED: &str = "SELE
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS: &str =
     "DELETE FROM registry.environment_projects WHERE org = $1 AND project = $2 AND env = $3";
 
-/// crates/publish/src/integration.rs::publish registry statement.
-pub const CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH: &str =
-    "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5,$6,$7)";
-
 /// Every project deployment affected by an environment lifecycle change.
 pub const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND env=ANY($2) ORDER BY env,project";
 

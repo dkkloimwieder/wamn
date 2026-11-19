@@ -496,9 +496,8 @@ The first connection write reads the credential value from `--credential-file`, 
 
 ### Integration write interfaces
 
-Publish a typed integration with one `--write-interface <interface>` flag for each export that permits writes.
-For Modbus, supply `--write-interface wamn:modbus/write@1.0.0` to `wamn integration publish modbus`.
-Publication refuses an interface that the component does not export.
+The system schema seeds integration types and their write interfaces through `wamn platform deploy`.
+The Modbus type declares `wamn:modbus/write@1.0.0` as its write interface.
 Host types use an empty list and enforce the declared mode at run time.
 Environment apply refuses a read requirement that imports a declared write interface.
 
@@ -911,7 +910,10 @@ The broker retains the static `PLATFORM` account and authentication through clie
 
 ### Transaction identity retention
 
-The control service removes expired transaction identities every minute in a separate task.
+Identity prunes system transaction identities in its one-minute maintenance loop.
+It calls `platform.prune_tx_identity()` with a five-second statement timeout and logs any error.
+
+Each org's control service removes expired project transaction identities every minute in a separate task.
 Cleanup runs do not overlap. Each database operation has a five-second limit.
 Shutdown cancels the task before the service drains HTTP connections.
 It connects to each configured project as `wamn_platform_login`.

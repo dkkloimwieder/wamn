@@ -1,18 +1,14 @@
-//! Build and publish digest-addressed wasm integration artifacts.
-
-use sqlx::Connection as _;
-pub(super) mod plan;
-use wamn_registry::integration_code::IntegrationCode;
+//! Build digest-addressed wasm integration artifacts.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
-use serde_json::{Value, json};
+use serde_json::json;
 use wamn_catalog::RuntimeType;
 use wamn_digest::bytes_sha256;
-use wamn_oci::package_artifact::{PackageRegistry, Repository};
+use wamn_registry::integration_code::IntegrationCode;
 
 pub use wamn_oci::package_artifact::integration::ARTIFACT_TYPE;
 use wamn_oci::package_artifact::integration::{CONFIG_TYPE, WASM_TYPE};
@@ -24,9 +20,6 @@ pub struct BuiltIntegration {
     pub runtime_type: RuntimeType,
     pub digest: wamn_digest::Digest,
     pub directory: PathBuf,
-    component: Vec<u8>,
-    config: Vec<u8>,
-    manifest: Vec<u8>,
 }
 
 fn source_files(
@@ -149,118 +142,5 @@ pub async fn build(repository: &Path, code: &IntegrationCode) -> anyhow::Result<
         runtime_type: RuntimeType::Wasm,
         digest,
         directory,
-        component,
-        config,
-        manifest,
     })
-}
-
-/// The immutable schema and operations of one published version.
-#[derive(Debug)]
-pub struct Publication {
-    pub version: i32,
-    pub parameter_schema: Value,
-    pub operations: String,
-    pub write_interfaces: Vec<String>,
-}
-
-/// Push the exact build by digest, read it back, then record its catalog entry.
-///
-/// # Errors
-///
-/// Refuses registry failures, changed artifact bytes, and catalog write failures.
-pub async fn publish(
-    built: &BuiltIntegration,
-    registry: &PackageRegistry,
-    database_url: &str,
-    publication: &Publication,
-) -> anyhow::Result<()> {
-    push(built, registry, publication).await?;
-    record(
-        registry,
-        database_url,
-        &built.code,
-        &built.digest,
-        publication,
-    )
-    .await
-}
-
-/// Push verified artifact bytes without changing deployed registry facts.
-pub async fn push(
-    built: &BuiltIntegration,
-    registry: &PackageRegistry,
-    publication: &Publication,
-) -> anyhow::Result<()> {
-    let exports = crate::connection_requirement::exported_interfaces(&built.component)?;
-    plan::require_write_interfaces(publication, &exports)?;
-    let repository = Repository::open(registry, &built.digest)?;
-    // Authenticate before the low-level blob and manifest writes.
-    repository.manifest().await?;
-    for bytes in [&built.component, &built.config] {
-        repository
-            .client
-            .push_blob(
-                &repository.reference,
-                bytes.clone(),
-                &bytes_sha256(bytes).to_string(),
-            )
-            .await?;
-    }
-    repository
-        .client
-        .push_manifest_raw(
-            &repository.reference,
-            built.manifest.clone(),
-            hyper::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
-        )
-        .await?;
-    let (manifest, digest) = repository
-        .manifest()
-        .await?
-        .context("published integration is absent")?;
-    plan::require_published_manifest(built, &manifest, &digest)?;
-    let pulled =
-        wamn_oci::package_artifact::integration::pull(registry, &built.code, &built.digest).await?;
-    plan::require_published_component(built, &pulled)?;
-    let engine = wamn_engine::build_engine(&[])?;
-    wamn_engine::component_admission::validate_integration_admission(
-        &engine,
-        &pulled,
-        built.code.as_str(),
-    )?;
-    Ok(())
-}
-
-/// Record one verified published artifact on the owning database authority.
-pub async fn record(
-    registry: &PackageRegistry,
-    database_url: &str,
-    code: &IntegrationCode,
-    digest: &wamn_digest::Digest,
-    publication: &Publication,
-) -> anyhow::Result<()> {
-    let bytes = wamn_oci::package_artifact::integration::pull(registry, code, digest).await?;
-    let exports = crate::connection_requirement::exported_interfaces(&bytes)?;
-    plan::require_write_interfaces(publication, &exports)?;
-    let engine = wamn_engine::build_engine(&[])?;
-    wamn_engine::component_admission::validate_integration_admission(
-        &engine,
-        &bytes,
-        code.as_str(),
-    )?;
-    let mut system = wamn_postgres::connect(database_url).await?;
-    let mut tx = system.begin().await?;
-    sqlx::query(wamn_registry::sql::CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH)
-        .bind(code)
-        .bind(publication.version)
-        .bind(digest)
-        .bind(publication.parameter_schema.to_string())
-        .bind(&publication.operations)
-        .bind(&exports)
-        .bind(&publication.write_interfaces)
-        .fetch_one(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    Ok(())
 }
