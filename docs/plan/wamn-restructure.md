@@ -851,6 +851,8 @@ Merged to main on 2026-11-19 after review. The first kind run waits for D's appr
 - 3.7b: Kubernetes calls move to `kube-rs`; kubectl error-text matching and `kubernetes_api.rs` go (kubectl error text ruling).
 - 3.7b or 3.8: clippy exits 101 because of old `implicit_clone` errors in `crates/guest`.
 - 3.7b: component admission takes only the package id and version; the palette key and `ProjectEnvKey::platform_palette()` go.
+- Later option: registry access for each org. Today every org uses the same registry credential (a copied file on kind, the node's token on GCP), so an org's hosts could pull another org's packages. For example, one repository per org, with read access only to its own.
+- Before any install that must survive an upgrade: system schema migrations. The system schema loads only when it is absent (`provision_system.rs:242`), and no system migration exists, so a schema change today needs a new cluster.
 
 # Part 2: Review log
 
@@ -2421,6 +2423,8 @@ Facts:
 - K5: `identity.password_logins` had row-level security with only a SELECT policy, so identity's insert was refused. Each table with row-level security now has a policy for every command a role is granted on it, with the table's org check; grants still limit org logins. Cause: the org-scoped grant work (2bde29040) added a SELECT-only policy.
 - Org control mounts the org's `wamn-oauth` key and the OAuth encryption setting, like the org's hosts: control encrypts OAuth connection tokens and hosts decrypt them, inside one org.
 - Vendored charts stay stock: no repacked chart for the Barman plugin certificates.
+- K6: `wamn org create` writes `wamn-registry-pull` into the org namespace from the operator's registry auth file, as listed in "Secrets made by Rust". On kind the file may be `{"auths":{"localhost:5001":{}}}`, because the local registry has no authentication. Skipped with registry token metadata. Cause: the old install path that wrote it was deleted (550cdc5f1).
+- Pulls read an explicit empty entry for the exact registry as anonymous, the same as pushes; a missing or partial entry is refused before any request.
 
 **Ruled (D, 2026-11-19): preflight and smoke runs.**
 - Preflight, run before any kind install:
