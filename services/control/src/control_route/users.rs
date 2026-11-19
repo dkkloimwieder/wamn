@@ -199,7 +199,7 @@ fn user_refused() -> Refusal {
     }
 }
 
-/// Grant the first owner under the provisioning actor after identity accepts mail.
+/// Grant the first owner under the provisioning actor and invite them until enrolled.
 pub(crate) async fn first_owner(
     handlers: &crate::host_route::HostRouteHandlers,
     email: &str,
@@ -239,12 +239,8 @@ pub(crate) async fn first_owner(
     .bind(email.trim().to_lowercase())
     .fetch_one(&mut *tx)
     .await?;
-    if has_owner {
-        return Ok(if same_owner {
-            StatusCode::NO_CONTENT
-        } else {
-            StatusCode::CONFLICT
-        });
+    if has_owner && !same_owner {
+        return Ok(StatusCode::CONFLICT);
     }
 
     let identity = handlers
@@ -257,29 +253,30 @@ pub(crate) async fn first_owner(
         Err(Refusal::Failed(error)) => return Err(error),
         Err(Refusal::Delivery(_)) => unreachable!("identity creation does not route requests"),
     };
-    // Token issue can lock the principal. Request delivery before mutating
-    // membership, so mail failure leaves the first-owner gate open for retry.
+    if !has_owner {
+        let grants = MemberGrants {
+            org_admin: true,
+            ..MemberGrants::default()
+        };
+        if let Err(error) = invite_member(&mut tx, &user.principal_id, org, &grants).await {
+            if error.refusal() == Some(IdentityRefusal::UserInAnotherOrg) {
+                return Ok(StatusCode::CONFLICT);
+            }
+            return Err(error.into());
+        }
+        let active: bool =
+            sqlx::query_scalar("SELECT status = 'active' FROM identity.principals WHERE id = $1")
+                .bind(user.principal_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if !active {
+            return Ok(StatusCode::BAD_REQUEST);
+        }
+    }
+    tx.commit().await?;
+    drop(writer);
     if !user.enrolled {
         identity.invite(&user.principal_id).await?;
     }
-    let grants = MemberGrants {
-        org_admin: true,
-        ..MemberGrants::default()
-    };
-    if let Err(error) = invite_member(&mut tx, &user.principal_id, org, &grants).await {
-        if error.refusal() == Some(IdentityRefusal::UserInAnotherOrg) {
-            return Ok(StatusCode::CONFLICT);
-        }
-        return Err(error.into());
-    }
-    let active: bool =
-        sqlx::query_scalar("SELECT status = 'active' FROM identity.principals WHERE id = $1")
-            .bind(user.principal_id)
-            .fetch_one(&mut *tx)
-            .await?;
-    if !active {
-        return Ok(StatusCode::BAD_REQUEST);
-    }
-    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
