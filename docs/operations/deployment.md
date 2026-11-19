@@ -68,7 +68,7 @@ The local outbox is temporary pod storage. Keep invitation codes and passwords o
 
 A port-forward connects a local port to a pod.
 The control Service selects the org's control Deployment, `c-<org>`.
-Use `<org>.<base>`, where `<base>` comes from the platform wildcard.
+Use `<org>.<base>`, where `<base>` is the platform chart's `platformDomain`.
 The example uses org `local` and host `control.wamn.localhost`.
 The edge certificate covers `*.wamn.localhost`, including application hosts.
 Export the cluster access file to a private directory:
