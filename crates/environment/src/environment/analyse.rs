@@ -2,7 +2,7 @@
 //! `docs/architecture/overview.md#environment-lifecycle`.
 //!
 //! Analysis compiles nothing new and writes nothing. It reads each authority
-//! once (§5): the policy and the environment row in the system database, the
+//! once (§5): the environment row in the system database, the
 //! package closure from OCI, the installed state in the project database, and
 //! the live set. It then tests the document
 //! against them and returns the plan, or the refusals.
@@ -24,20 +24,11 @@ use wamn_postgres::connect;
 use super::Platform;
 use super::document::EnvironmentDocument;
 
-/// The policy facts `apply` uses.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Policy {
-    pub name: wamn_registry::EnvName,
-    pub readiness_budget_seconds: i32,
-    pub drain_bound_seconds: i32,
-}
-
 /// The environment row of the system database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentRow {
     pub disposable: bool,
     pub instance_suffix: wamn_registry::instance_suffix::InstanceSuffix,
-    pub policy_name: wamn_registry::EnvName,
 }
 
 /// One installed package in the project database.
@@ -67,7 +58,6 @@ pub struct Authorities {
     pub connections: BTreeMap<String, crate::org_connection::ResolvedConnection>,
     /// Application-qualified names resolved to published wasm artifacts.
     pub artifact_bindings: BTreeSet<String>,
-    pub policy: Policy,
     pub row: Option<EnvironmentRow>,
     pub project: Option<ProjectState>,
     pub release: Option<ReleaseFacts>,
@@ -135,7 +125,8 @@ pub fn select_application(
         project: document.project.clone(),
         env: document.env.clone(),
         target: document.target.clone(),
-        policy: document.policy.clone(),
+        readiness_budget_seconds: document.readiness_budget_seconds,
+        drain_bound_seconds: document.drain_bound_seconds,
         revocation_seconds: document.revocation_seconds,
         schema: document.schema,
         applications: BTreeMap::from([(name.to_owned(), selection.clone())]),
@@ -174,26 +165,6 @@ pub(crate) async fn connect_project(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-pub(crate) async fn read_policy(
-    system: &mut Client,
-    org: &wamn_registry::OrgId,
-    name: &wamn_registry::EnvName,
-) -> anyhow::Result<Policy> {
-    let row =
-        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_POLICY)
-            .bind(org)
-            .bind(name)
-            .fetch_optional(&mut *system)
-            .await
-            .context("read the environment policy")?
-            .with_context(|| format!("refused: org {org} has no environment policy {name}"))?;
-    Ok(Policy {
-        name: name.to_owned(),
-        readiness_budget_seconds: row.get(0),
-        drain_bound_seconds: row.get(1),
-    })
-}
-
 pub(crate) async fn read_row(
     system: &mut Client,
     document: &EnvironmentDocument,
@@ -208,9 +179,8 @@ pub(crate) async fn read_row(
             .context("read the environment row")?
             .map(|row| {
                 Ok::<_, sqlx::Error>(EnvironmentRow {
-                    instance_suffix: row.get(0),
-                    policy_name: row.try_get(1)?,
-                    disposable: row.get(2),
+                    instance_suffix: row.try_get(0)?,
+                    disposable: row.try_get(1)?,
                 })
             })
             .transpose()?,

@@ -488,7 +488,8 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                         packages.artifacts.insert(id, artifact);
                     }
                     packages.order()?;
-                    super::ensure::suspend_project(platform, system, &triple).await?;
+                    super::ensure::suspend_project(platform, system, &triple, None)
+                        .await?;
                     let migration = wamn_provision::migrations::MigrationDatabase::Project
                         .configuration(&owner)?;
                     sql::reset::reset_database(system, &owner, &migration, &triple).await?;
@@ -498,7 +499,7 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                         system,
                         &triple.org,
                         &triple.env,
-                        &document.policy,
+                        document.drain_bound_seconds,
                         &[],
                     )
                     .await?;

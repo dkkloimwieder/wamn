@@ -16,6 +16,7 @@ pub(super) async fn suspend_project(
     platform: &Platform,
     system: &LifecycleLock,
     triple: &Triple,
+    drain_bound_seconds: Option<i32>,
 ) -> anyhow::Result<()> {
     let name = name::environment_host_name(&triple.org, &triple.env);
     let values = host_values(
@@ -25,7 +26,7 @@ pub(super) async fn suspend_project(
         &triple.env,
         &[],
         Some(&triple.project),
-        None,
+        drain_bound_seconds,
     )
     .await?;
     wamn_platform_install::environment::prepare_host_upgrade(
@@ -80,11 +81,20 @@ pub(super) async fn prepare_host_upgrade<'a>(
     system: &LifecycleLock,
     org: &OrgId,
     env: &EnvName,
-    policy: &EnvName,
+    drain_bound_seconds: i32,
     reserved: &[&str],
 ) -> anyhow::Result<(u32, impl Future<Output = anyhow::Result<()>> + use<'a>)> {
     let name = name::environment_host_name(org, env);
-    let values = host_values(platform, system, org, env, reserved, None, Some(policy)).await?;
+    let values = host_values(
+        platform,
+        system,
+        org,
+        env,
+        reserved,
+        None,
+        Some(drain_bound_seconds),
+    )
+    .await?;
     // The runtime operator defaults the group to one replica.
     let replicas = if values["placement"]["replicas"].is_null() {
         1
@@ -112,7 +122,7 @@ async fn host_values(
     env: &EnvName,
     reserved: &[&str],
     excluded: Option<&ProjectId>,
-    requested_policy: Option<&EnvName>,
+    drain_bound_seconds: Option<i32>,
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
 
@@ -129,12 +139,11 @@ async fn host_values(
     .bind(reserved)
     .fetch_all(&mut *tx)
     .await?;
-    let policy = match requested_policy {
-        Some(policy) => super::analyse::read_policy(&mut tx, org, policy).await?,
-        None => {
-            let policy = wamn_registry::deployment::environment_policy(&mut tx, org, env).await?;
-            super::analyse::read_policy(&mut tx, org, &policy).await?
-        }
+    let drain_bound_seconds = match drain_bound_seconds {
+        Some(seconds) => seconds,
+        None => wamn_registry::deployment::drain_bound_seconds(&mut tx, org, env)
+            .await
+            .with_context(|| format!("read the host drain bound for {org}/{env}"))?,
     };
     tx.commit().await?;
     drop(client);
@@ -205,7 +214,7 @@ async fn host_values(
         "serviceAccount":name::environment_service_account(org, env),
         "image":image,
         "placement":placement,
-        "drainBoundSeconds":policy.drain_bound_seconds,
+        "drainBoundSeconds":drain_bound_seconds,
         "projects":eligible,
         "natsUrl":platform.nats_url,
         "identityIssuer":platform.identity_issuer,

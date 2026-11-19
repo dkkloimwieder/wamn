@@ -162,7 +162,7 @@ A component digest shares code only. It grants no access to another project or e
 The hierarchy is org, environment, project, application.
 `wamn-registry` owns registry SQL. Its deployment and connection readers return typed values.
 `wamn-catalog` owns typed environment configuration and lifecycle locks.
-`registry.environments` owns each environment's policy, status, disposable setting, and target.
+`registry.environments` stores each environment's status, disposable setting, target, readiness budget, and drain bound.
 `registry.projects` holds org-level project definitions.
 `registry.environment_projects` places a project under an environment and owns its database Secret and instance suffix.
 Applications are releases under those project deployments.

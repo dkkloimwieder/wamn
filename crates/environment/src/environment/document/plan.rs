@@ -10,8 +10,12 @@ pub struct EnvironmentDocument {
     pub env: wamn_registry::EnvName,
     /// The immutable deployment target name.
     pub target: String,
-    /// A policy of `registry.env_policies`, by name.
-    pub policy: wamn_registry::EnvName,
+    /// Time to wait for changes to control administration.
+    #[serde(default = "default_readiness_budget_seconds")]
+    pub readiness_budget_seconds: i32,
+    /// Time for the host to drain before shutdown.
+    #[serde(default = "default_drain_bound_seconds")]
+    pub drain_bound_seconds: i32,
     /// Grant cache lifetime from deploy input; absent in applied registry settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revocation_seconds: Option<u32>,
@@ -148,7 +152,13 @@ impl EnvironmentDocument {
     pub(super) fn require_valid(&self) -> anyhow::Result<()> {
         wamn_provision::validate_project_env(&self.org, &self.project, &self.env)
             .context("the environment coordinate is not valid")?;
-        require_settings(&self.target, self.revocation_seconds, &self.integrations)?;
+        require_settings(
+            &self.target,
+            self.readiness_budget_seconds,
+            self.drain_bound_seconds,
+            self.revocation_seconds,
+            &self.integrations,
+        )?;
         require_applications(&self.applications, &self.integrations)
     }
 
@@ -192,13 +202,31 @@ impl EnvironmentDocument {
     }
 }
 
+pub(super) fn default_readiness_budget_seconds() -> i32 {
+    600
+}
+
+pub(super) fn default_drain_bound_seconds() -> i32 {
+    300
+}
+
 /// Validate fields shared across the environment.
 pub(super) fn require_settings(
     target: &str,
+    readiness_budget_seconds: i32,
+    drain_bound_seconds: i32,
     revocation_seconds: Option<u32>,
     integrations: &BTreeMap<String, Integration>,
 ) -> anyhow::Result<()> {
     ensure!(!target.trim().is_empty(), "target is empty");
+    ensure!(
+        readiness_budget_seconds > 0,
+        "readiness_budget_seconds must be positive"
+    );
+    ensure!(
+        drain_bound_seconds > 0,
+        "drain_bound_seconds must be positive"
+    );
     ensure!(
         revocation_seconds.is_none_or(|seconds| seconds <= 3600),
         "revocation_seconds must be between 0 and 3600"

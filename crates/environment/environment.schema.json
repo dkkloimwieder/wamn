@@ -6,7 +6,6 @@
     "database",
     "env",
     "org",
-    "policy",
     "projects",
     "revocation_seconds",
     "target"
@@ -21,13 +20,17 @@
     "database": {
       "$ref": "#/definitions/Database"
     },
+    "drain_bound_seconds": {
+      "default": 300,
+      "type": "integer",
+      "format": "int32",
+      "maximum": 2147483647.0,
+      "minimum": 1.0
+    },
     "env": {
       "type": "string"
     },
     "org": {
-      "type": "string"
-    },
-    "policy": {
       "type": "string"
     },
     "projects": {
@@ -36,6 +39,13 @@
         "$ref": "#/definitions/Project"
       },
       "minItems": 1
+    },
+    "readiness_budget_seconds": {
+      "default": 600,
+      "type": "integer",
+      "format": "int32",
+      "maximum": 2147483647.0,
+      "minimum": 1.0
     },
     "revocation_seconds": {
       "type": "integer",

@@ -12,7 +12,8 @@ pub struct Registration<'a> {
     pub secret_namespace: Option<&'a str>,
     pub instance_suffix: &'a InstanceSuffix,
     pub disposable: Option<bool>,
-    pub policy: &'a crate::EnvName,
+    pub readiness_budget_seconds: i32,
+    pub drain_bound_seconds: i32,
     pub target_id: &'a str,
 }
 
@@ -28,34 +29,16 @@ pub async fn instance_suffix(
         .bind(&triple.org).bind(&triple.project).bind(&triple.env).fetch_optional(connection).await
 }
 
-/// Read the policy selected for a project deployment, if it exists.
+/// Read the environment's host drain bound in seconds.
 ///
 /// # Errors
 /// Returns database errors.
-pub async fn project_policy(
-    connection: &mut PgConnection,
-    triple: &Triple,
-) -> Result<Option<crate::EnvName>, sqlx::Error> {
-    sqlx::query_scalar(
-        sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_READ_PROJECT_ENV_POLICY,
-    )
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .bind(&triple.env)
-    .fetch_optional(connection)
-    .await
-}
-
-/// Read the environment's policy.
-///
-/// # Errors
-/// Returns database errors.
-pub async fn environment_policy(
+pub async fn drain_bound_seconds(
     connection: &mut PgConnection,
     org: &crate::OrgId,
     env: &crate::EnvName,
-) -> Result<crate::EnvName, sqlx::Error> {
-    sqlx::query_scalar("SELECT policy_name FROM registry.environments WHERE org=$1 AND env=$2")
+) -> Result<i32, sqlx::Error> {
+    sqlx::query_scalar("SELECT drain_bound_seconds FROM registry.environments WHERE org=$1 AND env=$2")
         .bind(org)
         .bind(env)
         .fetch_one(connection)
@@ -139,7 +122,7 @@ pub async fn record(
 ) -> Result<InstanceSuffix, sqlx::Error> {
     let r = registration;
     let (suffix, _): (InstanceSuffix, bool) =
-        sqlx::query_as(sql::upsert_project_env_with_policy_sql())
+        sqlx::query_as(sql::upsert_project_env_sql())
             .bind(&r.triple.org)
             .bind(&r.triple.project)
             .bind(&r.triple.env)
@@ -147,7 +130,8 @@ pub async fn record(
             .bind(r.secret_namespace)
             .bind(r.instance_suffix)
             .bind(r.disposable)
-            .bind(r.policy)
+            .bind(r.readiness_budget_seconds)
+            .bind(r.drain_bound_seconds)
             .bind(r.target_id)
             .fetch_one(connection)
             .await?;

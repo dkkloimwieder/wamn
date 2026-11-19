@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use wamn_catalog::ApplicationName;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple};
 
+use super::plan::{default_drain_bound_seconds, default_readiness_budget_seconds};
 use super::{ApplicationSelection, EnvironmentDocument, Integration, Schema};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -22,8 +23,12 @@ pub struct EnvironmentFile {
     pub env: EnvName,
     #[schemars(regex(pattern = r"\S"))]
     pub target: String,
-    #[schemars(with = "String")]
-    pub policy: EnvName,
+    #[serde(default = "default_readiness_budget_seconds")]
+    #[schemars(range(min = 1, max = "i32::MAX"))]
+    pub readiness_budget_seconds: i32,
+    #[serde(default = "default_drain_bound_seconds")]
+    #[schemars(range(min = 1, max = "i32::MAX"))]
+    pub drain_bound_seconds: i32,
     #[schemars(range(max = 3600))]
     pub revocation_seconds: u32,
     pub database: Database,
@@ -90,6 +95,8 @@ impl EnvironmentFile {
         ensure!(!self.projects.is_empty(), "environment has no projects");
         super::plan::require_settings(
             &self.target,
+            self.readiness_budget_seconds,
+            self.drain_bound_seconds,
             Some(self.revocation_seconds),
             &self.connections,
         )?;
@@ -194,7 +201,8 @@ impl EnvironmentFile {
                 project: project.name,
                 env: self.env.clone(),
                 target: self.target.clone(),
-                policy: self.policy.clone(),
+                readiness_budget_seconds: self.readiness_budget_seconds,
+                drain_bound_seconds: self.drain_bound_seconds,
                 revocation_seconds: Some(self.revocation_seconds),
                 schema: project.schema,
                 applications: project.applications,
@@ -208,7 +216,8 @@ impl EnvironmentFile {
             project: project.name,
             env: self.env,
             target: self.target,
-            policy: self.policy,
+            readiness_budget_seconds: self.readiness_budget_seconds,
+            drain_bound_seconds: self.drain_bound_seconds,
             revocation_seconds: Some(self.revocation_seconds),
             schema: project.schema,
             applications: project.applications,

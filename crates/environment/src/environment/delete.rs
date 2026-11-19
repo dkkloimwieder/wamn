@@ -28,7 +28,7 @@ use wamn_provision::sql::drop_replication_slot_sql;
 use wamn_provision::{
     cdc_object_name, control_administration_secret_name, project_env_database_name,
 };
-use wamn_registry::{Triple, name};
+use wamn_registry::{Triple, instance_suffix::InstanceSuffix, name};
 
 use super::Platform;
 use super::analyse::application_releases;
@@ -74,21 +74,22 @@ async fn delete_locked(
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let mut lines = Vec::new();
-    let Some(row) =
-        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED)
-            .bind(org)
-            .bind(project)
-            .bind(env)
-            .fetch_optional(&mut *system.client().await)
-            .await
-            .context("read the environment row")?
+    let Some((instance, readiness_budget_seconds, drain_bound_seconds)) =
+        sqlx::query_as::<_, (InstanceSuffix, i32, i32)>(
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED,
+        )
+        .bind(org)
+        .bind(project)
+        .bind(env)
+        .fetch_optional(&mut *system.client().await)
+        .await
+        .context("read the environment row")?
     else {
         lines.push(format!(
             "{triple} has no environment row: nothing else to delete"
         ));
         return Ok(lines);
     };
-    let instance: wamn_registry::instance_suffix::InstanceSuffix = row.get(0);
     let database = project_env_database_name(org, project, env, &instance);
 
     resources::require_ownership(platform, triple, &database).await?;
@@ -163,7 +164,7 @@ async fn delete_locked(
             helm::uninstall(&platform.target, &namespace, name, helm::Wait::Watcher).await?;
             lines.push(format!("uninstalled {name}"));
         }
-        super::ensure::suspend_project(platform, system, triple).await?;
+        super::ensure::suspend_project(platform, system, triple, Some(drain_bound_seconds)).await?;
 
         // Runtime state can change during the drain, outside lifecycle exclusion.
         if let Some(lock) = &project_lock {
@@ -225,15 +226,11 @@ async fn delete_locked(
             )
             .await
             .with_context(|| format!("remove the environment's key of Secret {control}"))?;
-            let policy_name = row.try_get(1)?;
-            let policy =
-                super::analyse::read_policy(&mut *system.client().await, org, &policy_name)
-                    .await?;
             crate::platform::control::wait_administration(
                 &platform.target,
                 triple,
                 false,
-                std::time::Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?),
+                Duration::from_secs(u64::try_from(readiness_budget_seconds)?),
             )
             .await?;
             lines.push(format!("removed the environment's key of Secret {control}"));

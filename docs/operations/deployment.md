@@ -224,7 +224,7 @@ The CLI sends database operations to the control service.
 See [Native control](../architecture/control.md) for the service and worker configuration.
 
 The registry stores applied project settings, application host labels, client pins, and connection aliases.
-The shared environment owns its target, policy, and connection versions.
+The shared environment owns its target, readiness budget, drain bound, and connection versions.
 The top package pins its base packages by OCI digest.
 Helm records the release history. A WorkloadDeployment exposes the applied package digest and Helm revision.
 
@@ -238,16 +238,19 @@ The platform's `platformDomain` value supplies the base for both deploy and web.
 An application connection alias names a connection from the shared `connections` map.
 Set `revocation_seconds` to an integer from 0 to 3600 for the environment.
 Deploy sets this grant cache lifetime on each application workload. Zero disables the cache.
+The optional `readiness_budget_seconds` field sets how long delete waits for control to observe the removal of its administration settings.
+It defaults to 600 seconds.
+The optional `drain_bound_seconds` field sets how long the host can drain before shutdown.
+It defaults to 300 seconds.
+Both fields accept positive integers.
 
 Save this kind example as `environment.yaml` in the repository root.
 The platform registers the target named `cloud` on kind too.
-The example requires an existing `dev` policy for org `local`.
 
 ```yaml
 org: local
 env: dev
 target: cloud
-policy: dev
 revocation_seconds: 60
 database:
   instances: 1

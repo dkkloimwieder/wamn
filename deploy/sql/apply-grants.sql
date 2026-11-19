@@ -8,7 +8,7 @@ GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.curr
     wamn_authority.current_role(), wamn_authority.current_application() TO wamn_apply;
 GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid),
     registry.project_capacity_available(int) TO wamn_apply;
-GRANT SELECT ON registry.orgs, registry.env_policies, registry.environment_projects,
+GRANT SELECT ON registry.orgs, registry.environment_projects,
     registry.target, identity.org_roles, identity.project_roles,
     identity.project_env_memberships, identity.principals,
     wamn_authority.author_login_projects TO wamn_apply;
@@ -36,7 +36,8 @@ GRANT SELECT (principal_id, org, status), UPDATE (status)
     ON identity.org_memberships TO wamn_apply;
 
 GRANT SELECT, INSERT ON registry.environments TO wamn_apply;
-GRANT UPDATE (disposable, target_id, policy_name) ON registry.environments TO wamn_apply;
+GRANT UPDATE (disposable, target_id, readiness_budget_seconds, drain_bound_seconds)
+    ON registry.environments TO wamn_apply;
 
 GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_apply;
 

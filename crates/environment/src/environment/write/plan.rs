@@ -1,7 +1,7 @@
 use super::{EnvironmentDocument, RoleName, Value, ValuesInput, release_chart};
 use anyhow::Context as _;
 
-/// Build release values from the document, artifact, policy, and host overlay.
+/// Build release values from the document, artifact, and host overlay.
 pub(super) fn release_values(
     document: &EnvironmentDocument,
     platform_domain: &wamn_registry::platform_domain::PlatformDomain,
