@@ -86,6 +86,19 @@ spec:
   issuerRef:
     kind: Issuer
     name: {{ $cluster }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $system.identityTlsSecret }}
+  namespace: {{ $namespace }}
+spec:
+  secretName: {{ $system.identityTlsSecret }}
+  commonName: {{ $system.identityRole.name }}
+  usages: [digital signature, client auth]
+  issuerRef:
+    kind: Issuer
+    name: {{ $cluster }}
 {{- $groups := dict }}
 {{- range $roles }}
 {{- range .inRoles }}
@@ -93,6 +106,7 @@ spec:
 {{- $_ := set $groups . (dict "name" . "login" false "inherit" false) }}
 {{- end }}
 {{- end }}
+{{- if .passwordSecret }}
 {{- $name := .passwordSecret.name }}
 {{- $old := lookup "v1" "Secret" $namespace $name }}
 {{- $username := .name | b64enc }}
@@ -117,6 +131,7 @@ type: kubernetes.io/basic-auth
 data:
   username: {{ $username | quote }}
   password: {{ $password | quote }}
+{{- end }}
 {{- end }}
 ---
 apiVersion: postgresql.cnpg.io/v1
@@ -148,7 +163,9 @@ spec:
     {{- end }}
     roles: {{ concat $ordered $roles | toJson }}
   postgresql:
-    pg_hba: [hostssl all all all scram-sha-256]
+    pg_hba:
+      - hostssl {{ $database }} {{ $system.identityRole.name }} all cert
+      - hostssl all all all scram-sha-256
     parameters:
       max_slot_wal_keep_size: "4GB"
       pg_stat_statements.max: "10000"
