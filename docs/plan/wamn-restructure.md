@@ -739,6 +739,7 @@ Issues:
 - Environment accounts pushed at `env apply`, environment user creds Secrets in the org namespace, named bindings using the stock `creds` field.
 - Delete Epic 9's file-based accounts.
 - Identity signs accounts and users (A); keys as in B; claims as in C. No NATS step at `org create` (D).
+- Each host group gets its own PLATFORM user with the shared scheduler rights (stated exception to T1).
 
 10.3 `wamn platform deploy <values>`.
 - One SQL Job. Identity creates its own first key; `Publish` and `Activate` go.
@@ -747,6 +748,7 @@ Issues:
 10.4 `wamn org create <org> --owner <email>`.
 - The org row, the invitation Job's service account (E), `wamn-helm-<org>`, then the org chart: namespace, quota, RBAC, NetworkPolicy, Helm storage, worker, control, system login Secrets, identity CA and the control administration map.
 - Then the owner invitation Job.
+- One Job in `platform` makes the org's control login and the `registry.orgs` row, and patches the password into the Secret that the org chart creates empty.
 
 10.5 Settings (K).
 - One settings file each for host, control, identity, cdc-reader and web. Constant flags become code defaults.
@@ -789,7 +791,7 @@ Issues:
 - A call limit for each application, if a real case appears: either a per-host semaphore named as per-host, or a Postgres design decided with real numbers.
 - 3.7: nothing writes the host route TypeScript clients since `cargo xtask host-route-clients` was removed.
 - 3.6: nothing in the install fills the `wamn-control-administration-<org>` map that control reads its project logins from.
-- 3.6: the first signing key, the installer source for the identity envelope settings, and the `CN=control-<org>` certificate.
+- 3.6: the first signing key and the installer source for the identity envelope settings.
 - 3.7: the TypeScript clients cannot be generated again until codegen is reworked (the `admin_covered` contract changed in Epic 6).
 - Topic entry node: after 3.4. Topics use stock `wasmcloud:nats`: application components publish within their workload's grants, and a Topic workflow pulls from its own consumer like Data change.
 - 3.7b: split `wamn-sql`. `WamnPostgres` has 77 inherent methods mixing pools, auth lookups, per-component scope state, plugin glue and workflow node dispatch, and eight modules form one cycle (crate root, `executor`, `invocation`, `operation`, `operation_transaction`, `resources`, `session_identity`, `write_log`).
@@ -2323,5 +2325,9 @@ Facts:
 - E becomes: the invitation Job runs as its own service account in the org namespace. Control accepts the first-owner operation only from that service account, and only while the org has no owner.
 - T5 becomes: identity accepts control by its service account token, not by certificate subject.
 - Cost: identity and control need the right to create `tokenreviews`, a standard cluster permission. An org's worker can run pods as any service account in its own namespace, which stays inside the org.
+
+**Ruled (D, 2026-11-19): org control login and host scheduler users.**
+- The org's control login: `org create` starts one Job in `platform`. The Job uses the same image and binary as the 10.3 install SQL Job, with a different subcommand. The Job generates the password in the cluster and runs `CREATE ROLE ... LOGIN PASSWORD ... CONNECTION LIMIT 4 IN ROLE wamn_control`. It writes the `registry.orgs` row and patches the password into the org's basic-auth Secret. The org chart creates that Secret empty, because Kubernetes RBAC cannot limit `create` to one resource name. The org chart grants the Job's service account `get`, `update` and `patch` on that one Secret name only. The password never leaves the cluster and is never in a Helm record. The system Cluster spec never changes when an org is added. The role leaves the `installation` chart's `systemDatabase.roles` and `platform-install/src/roles.rs::control`.
+- Host scheduler users: each host group gets its own PLATFORM user with its own inbox prefix and the same subject rights as `wasmcloud-runtime` today. This is a stated exception to T1. Reason: host ids are random, single-token subject parts, so no NATS permission can separate one org's hosts from another's. wasmCloud's threat model treats the host process, and anyone who can publish on `runtime.host.>`, as trusted. Later option: one NATS user per host pod, with the host id set from the pod name and a JWT from identity.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
