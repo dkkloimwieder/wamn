@@ -780,7 +780,9 @@ Issues:
 10.10 Host names (E). `<label>--<org>.<base>` in the environment file and the registry; web drops routes whose host does not match their namespace.
 - Web also accepts exactly `<namespace>.<base>` for control (Q2).
 
-10.11 System database pooler (fix 2).
+10.11 System database Poolers (two, session mode).
+
+10.12 Platform logins use certificates.
 
 ## Open items
 
@@ -831,7 +833,7 @@ Issues:
 - Recorded exceptions to C1 until 3.6: operation Jobs and their per-request input ConfigMaps, `wamn-credential-*` (written by connection administration at run time), and `wamn-nats-authorization`.
 - Epic 10: `wamn platform deploy --only` (updating control, identity or a host in place) returns with the `platform` chart. Epic 9 deleted the control Job path and its `helm get values` read-back.
 - After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
-- After 3.6, first kind run: the Pooler: session mode with the org logins, the auth query, and waiting at the per-login limit.
+- After 3.6, first kind run: The two Poolers: session mode with the org logins, the auth query, waiting at the per-login limit, and the 15-minute apply wait.
 - When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
 - After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
 - Epic 10: D6, the host NATS URLs default to `nats.<release namespace>` while the service is `wamn-nats.platform`, and hosts start no HTTP listener. D7, `registry.event_readers` has no writer, so capture-gap recovery refuses on a fresh project.
@@ -2375,6 +2377,15 @@ Facts:
 
 **Ruled (D, 2026-11-19): Epic 10 review.**
 - Fix 1. `wamn platform deploy` always waits for `cnpg-controller-manager` after the infrastructure release and installs the platform release once. No retry based on error text.
-- Fix 2 (10.11). Org logins reach the system database through one CloudNativePG Pooler in session mode, in `platform`. PgBouncer limits are fixed at install: `max_user_connections` 4 per control login and 8 per apply login, and `max_db_connections` as the total. A client over its limit waits rather than fails. Postgres `max_connections` is set once at install, so a new org changes no Postgres setting (T1). Role connection limits match the pooler limits. Platform logins connect directly with certificates. wamn provides PgBouncer authentication, because the system Cluster uses its own certificates. Reason: each org's apply login had `CONNECTION LIMIT 101` against the default `max_connections` of 100, so one org could take every connection, and raising `max_connections` later needs a Postgres restart.
+- Fix 2 (10.11). Org logins reach the system database through one CloudNativePG Pooler in session mode, in `platform`. PgBouncer limits are fixed at install: two Poolers (see the pooler ruling below), and `max_db_connections` as the total. A client over its limit waits rather than fails. Postgres `max_connections` is set once at install, so a new org changes no Postgres setting (T1). Role connection limits match the pooler limits. Platform logins connect directly with certificates. wamn provides PgBouncer authentication, because the system Cluster uses its own certificates. Reason: each org's apply login had `CONNECTION LIMIT 101` against the default `max_connections` of 100, so one org could take every connection, and raising `max_connections` later needs a Postgres restart.
+
+**Ruled (D, 2026-11-19): the system database pooler and platform certificate logins.**
+- Two Poolers in `platform`, both CloudNativePG `Pooler` type `rw` in session mode: one for org control logins with `max_user_connections` 8, and one for org apply logins with `max_user_connections` 16 and `query_wait_timeout` of about 15 minutes, below the CLI's 16-minute poll limit, so a queued deploy waits rather than fails. Reason: a stock Pooler has one set of PgBouncer parameters, with no per-user section.
+- Totals set at install: the two Poolers' `max_db_connections` add up to about 150, and the system Cluster's `max_connections` is 200, which leaves room for the direct platform logins and admin work. Role `CONNECTION LIMIT`: 8 for each org control login, 16 for each org apply login. A larger platform raises the totals with the database size at install.
+- What these connections carry: the control login serves org administration (users, grants, projects, integration settings, environment status, permission checks, starting operation Jobs). The apply login serves the operation Jobs (`deploy`, `rollback`, `stop`, `diff`, `apply`, `reset`, `recover`, `close`). Application traffic uses project databases and is not limited by this.
+- One replica per Pooler. Each PgBouncer instance applies its own limits, so more replicas multiply every limit and total.
+- 10.12: platform logins use certificates, as ruling G says. That covers the SQL Job, the system migration login, each provision-org Job, and the `postgres` superuser that the SQL Job uses (`CN=postgres` from the platform issuer and a `hostssl ... postgres ... cert` rule). Their password Secrets go.
+- One session per apply Job: the work runs on the connection that holds the environment lock (a session advisory lock stays held across transactions on that session), so a Job never waits for a second session.
+- Accepted from the agent: the auth query function lives in the `postgres` database, is owned by `postgres` and returns password hashes only for org logins; each Pooler has a certificate from the platform issuer and clients check its name; the database accepts org logins only from the Pooler pods.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
