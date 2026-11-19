@@ -835,11 +835,14 @@ The other apply phases use the restricted credential from the worker's database 
 ## PostgreSQL client TLS
 
 Runtime pools, OAuth transactions, and resource leases use SQLx with verified TLS.
-Component configuration names the database host, port, database, login, basic-auth Secret, and CNPG CA Secret.
+Component configuration names the database host, port, database, login, login Secret, and CNPG CA Secret.
 The login and CA Secrets live in the consumer’s namespace. Shared identity and the platform SQL Job mount them in `platform`. Hosts, CDC readers, and control use read-only mounts in their org namespace.
 Operation workers copy the selected Secret keys to a memory-backed volume as the database names become known.
-The database client reads `username`, `password` and `ca.crt` from `/etc/wamn/db/<login-secret>/`. It makes sure that the username matches the configured login.
-The control administration directory supplies the same files for project connections.
+The database client reads `ca.crt` from `/etc/wamn/db/<login-secret>/` to verify the server.
+For a password login, the client reads `username` and `password` from that directory.
+It makes sure that the username matches the configured login.
+For identity's system database login, SQLx reads `tls.crt` and `tls.key` on each new connection. PostgreSQL matches the certificate's common name to the configured login.
+The control administration directory supplies the password login files and `ca.crt` for project connections.
 Explicit operator connection strings must name a readable CA file through `sslrootcert`.
 The database hostname must match the server certificate.
 The provisioned CNPG clusters accept client connections only over TLS.

@@ -45,18 +45,31 @@ impl ConnectionConfig {
     /// Open options using the named credential directory below the supplied mount root.
     pub async fn mounted_options(&self, root: &Path) -> anyhow::Result<PgConnectOptions> {
         let directory = credential_directory(root, &self.credentials.name)?;
-        let password = read_password(&directory, &self.username).await?;
-        Ok(PgConnectOptions::new()
+        let options = PgConnectOptions::new_without_pgpass()
             .host(&self.host)
             .port(self.port)
             .database(&self.database)
             .username(self.username.as_str())
-            .password(&password)
             .ssl_root_cert(directory.join("ca.crt"))
-            .ssl_mode(PgSslMode::VerifyFull))
+            .ssl_mode(PgSslMode::VerifyFull);
+
+        let cert = directory.join("tls.crt");
+        let key = directory.join("tls.key");
+        let has_cert = credential_exists(&cert).await?;
+        let has_key = credential_exists(&key).await?;
+        if !has_cert && !has_key {
+            let password = read_password(&directory, &self.username).await?;
+            return Ok(options.password(&password));
+        }
+
+        if !has_cert || !has_key || credential_exists(&directory.join("password")).await? {
+            return Err(CertificateLayoutError { directory }.into());
+        }
+        // SQLx reads the files on each new connection, including after certificate renewal.
+        Ok(options.ssl_client_cert(cert).ssl_client_key(key))
     }
 
-    /// Encode configuration without including password or CA bytes.
+    /// Encode configuration without including credential or CA bytes.
     pub fn to_json(&self) -> anyhow::Result<String> {
         Ok(serde_json::to_string(self)?)
     }
@@ -114,6 +127,15 @@ pub async fn read_password(
     Ok(read_text(&directory.join("password")).await?)
 }
 
+async fn credential_exists(path: &Path) -> Result<bool, CredentialReadError> {
+    tokio::fs::try_exists(path)
+        .await
+        .map_err(|source| CredentialReadError {
+            path: path.to_owned(),
+            source,
+        })
+}
+
 async fn read_text(path: &Path) -> Result<String, CredentialReadError> {
     tokio::fs::read_to_string(path)
         .await
@@ -157,6 +179,23 @@ impl std::fmt::Display for CredentialMismatch {
 }
 
 impl std::error::Error for CredentialMismatch {}
+
+#[derive(Debug)]
+struct CertificateLayoutError {
+    directory: PathBuf,
+}
+
+impl std::fmt::Display for CertificateLayoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "database credential {} requires tls.crt and tls.key together without a password file",
+            self.directory.display()
+        )
+    }
+}
+
+impl std::error::Error for CertificateLayoutError {}
 
 /// Read a public connection file and the login directory next to it.
 pub async fn mounted_options(path: &Path) -> anyhow::Result<PgConnectOptions> {
