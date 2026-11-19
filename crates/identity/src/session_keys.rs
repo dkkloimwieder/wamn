@@ -324,7 +324,7 @@ pub(crate) async fn sign_message(
 }
 
 /// Bind `wamn:provisioning` as the stamp actor of `transaction`.
-async fn bind_provisioning(
+pub(crate) async fn bind_provisioning(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(), IdentityError> {
     sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')")

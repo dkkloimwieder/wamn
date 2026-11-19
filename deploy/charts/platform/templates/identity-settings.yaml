@@ -8,6 +8,9 @@
 {{- end -}}
 {{- $database := dict "host" $system.host "port" $system.port "database" $system.name "username" $system.identityRole.name "credentials" (dict "namespace" $system.namespace "name" $system.identityTlsSecret) "server_ca" (dict "namespace" $system.namespace "name" $system.ca) -}}
 {{- $settings := dict "issuer" .Values.global.identityIssuer "database" $database "envelope" $identity.oauthEncryption -}}
+{{- if $identity.authNats.tlsSecret -}}
+{{- $_ := set $settings "nats" (dict "url" .Values.global.nats.schedulerUrl "tls_ca" "/var/run/wamn-identity/nats/ca.crt") -}}
+{{- end -}}
 {{- if $identity.localMail -}}
 {{- $_ := set $settings "mail" (dict "mode" "local" "spool" $identity.localMail) -}}
 {{- else if $identity.resendSecret -}}

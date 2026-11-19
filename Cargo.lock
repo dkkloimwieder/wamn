@@ -6162,10 +6162,13 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "data-encoding",
  "jsonwebtoken 11.1.0",
+ "nkeys",
  "ring",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "sqlx",
  "tokio",
  "url",
@@ -6200,6 +6203,7 @@ dependencies = [
  "url",
  "wamn-identity-protocol",
  "wamn-oci",
+ "wamn-registry",
 ]
 
 [[package]]
@@ -6224,6 +6228,7 @@ dependencies = [
 name = "wamn-identity-service"
 version = "0.1.0"
 dependencies = [
+ "async-nats",
  "bytes",
  "chrono",
  "clap",
@@ -6233,7 +6238,6 @@ dependencies = [
  "hyper-util",
  "jsonwebtoken 11.1.0",
  "postgres-protocol",
- "rcgen",
  "ring",
  "rustls",
  "serde",
@@ -6248,14 +6252,15 @@ dependencies = [
  "wamn-digest",
  "wamn-envelope",
  "wamn-identity",
+ "wamn-identity-client",
  "wamn-identity-protocol",
+ "wamn-kubernetes",
  "wamn-oci",
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
- "x509-parser",
  "zeroize",
 ]
 

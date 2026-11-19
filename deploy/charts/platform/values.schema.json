@@ -199,7 +199,8 @@
           "properties": {
             "tlsSecret": {
               "type": "string",
-              "maxLength": 253
+              "maxLength": 253,
+              "description": "Secret with the NATS server trust roots in ca.crt."
             }
           }
         },

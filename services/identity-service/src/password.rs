@@ -736,6 +736,27 @@ mod tests {
             wamn_identity::create_user(&mut admin.client, "bob", "bob@example.invalid", "Bob")
                 .await
                 .unwrap();
+        let mut tx = admin.client.begin().await.unwrap();
+        sqlx::query(
+            "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')",
+        )
+        .bind(actor)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO registry.orgs (id) VALUES ('demo')")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        for user in [alice.id(), bob.id()] {
+            sqlx::query("INSERT INTO identity.org_memberships (principal_id, org, status) VALUES ($1, 'demo', 'active')")
+                .bind(user)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+        tx.commit().await.unwrap();
+
         let mut url = url::Url::parse(db.url()).unwrap();
         url.set_username(identity_issuer_login(issuer).unwrap().as_str())
             .unwrap();
@@ -753,8 +774,6 @@ mod tests {
         let mut service = IdentityService::connect(
             IdentityConfig::new(issuer, url.as_str())
                 .unwrap()
-                .with_control_subject("CN=control-demo")
-                .unwrap()
                 .with_resend(
                     crate::mail::ResendConfig::new(
                         "unused".into(),
@@ -766,14 +785,51 @@ mod tests {
         )
         .await
         .unwrap();
+        let review_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let review_endpoint = format!("http://{}", review_listener.local_addr().unwrap());
+        let connector = wamn_kubernetes::http_transport::tls_connector(
+            rustls::ClientConfig::builder_with_provider(Arc::new(
+                rustls::crypto::aws_lc_rs::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(rustls::RootCertStore::empty())
+            .with_no_client_auth(),
+            hyper_util::client::legacy::connect::HttpConnector::new(),
+            wamn_kubernetes::http_transport::Schemes::HttpAndHttps,
+            wamn_kubernetes::http_transport::Protocols::Http1,
+        );
+        let state = Arc::get_mut(&mut service.inner).unwrap();
+        state.kubernetes = Some(wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
+            wamn_kubernetes::http_transport::client(connector, |_| {}),
+            review_endpoint,
+            "fixture-reviewer".into(),
+            "platform".into(),
+        ));
+        let review_task = tokio::spawn(async move {
+            while let Ok((tcp, _)) = review_listener.accept().await {
+                let handler = service_fn(|_: Request<Incoming>| async {
+                    let status = json!({"status": {
+                        "authenticated": true,
+                        "audiences": [wamn_identity_client::TOKEN_AUDIENCE],
+                        "user": {"username": "system:serviceaccount:demo:wamn-control-demo"},
+                    }});
+                    Ok::<_, Infallible>(response(
+                        StatusCode::CREATED,
+                        "application/json",
+                        status.to_string().into_bytes(),
+                    ))
+                });
+                hyper::server::conn::http1::Builder::new()
+                    .keep_alive(false)
+                    .serve_connection(TokioIo::new(tcp), handler)
+                    .await
+                    .unwrap();
+            }
+        });
         let mail_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mail_endpoint = format!("http://{}/emails", mail_listener.local_addr().unwrap());
-        Arc::get_mut(&mut service.inner)
-            .unwrap()
-            .passwords
-            .as_mut()
-            .unwrap()
-            .mail = Mailer::fixture(mail_endpoint);
+        state.passwords.as_mut().unwrap().mail = Mailer::fixture(mail_endpoint);
         let (sent, mut received) = tokio::sync::mpsc::channel(2);
         let mail_task = tokio::spawn(async move {
             for status in [
@@ -811,11 +867,7 @@ mod tests {
                 let service = service.clone();
                 let handler = service_fn(move |request| {
                     let service = service.clone();
-                    async move {
-                        service
-                            .respond(request, crate::PeerCertificate::Control, "127.0.0.1".parse().unwrap())
-                            .await
-                    }
+                    async move { service.respond(request, "127.0.0.1".parse().unwrap()).await }
                 });
                 hyper::server::conn::http1::Builder::new()
                     .keep_alive(false)
@@ -830,6 +882,7 @@ mod tests {
             .unwrap();
         let reply = client
             .post(format!("{endpoint}/invitations"))
+            .bearer_auth("fixture-token")
             .json(&json!({"principal_id":alice.id().to_string().as_str()}))
             .send()
             .await
@@ -851,6 +904,7 @@ mod tests {
         assert_eq!(reply.status(), 204);
         let reply = client
             .post(format!("{endpoint}/invitations"))
+            .bearer_auth("fixture-token")
             .json(&json!({"principal_id":bob.id().to_string().as_str()}))
             .send()
             .await
@@ -879,6 +933,7 @@ mod tests {
         ] {
             let reply = client
                 .post(format!("{endpoint}/users"))
+                .bearer_auth("fixture-token")
                 .json(&json!({"email": email, "display_name": display_name}))
                 .send()
                 .await
@@ -925,6 +980,7 @@ mod tests {
             .unwrap();
         let disabled = client
             .post(format!("{endpoint}/users"))
+            .bearer_auth("fixture-token")
             .json(&json!({"email": "bob@example.invalid", "display_name": "Bob"}))
             .send()
             .await
@@ -976,6 +1032,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(repeated.status(), 400);
+        review_task.abort();
         mail_task.await.unwrap();
         requests.await.unwrap();
         // Concurrent requests through separate authorized connections share the limit.

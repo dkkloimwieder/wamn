@@ -612,6 +612,8 @@ It makes sure of the identity certificate, as it does in kind.
 
 `wamn-identity serve --settings <path>` reads one JSON file. The chart renders the issuer, public database connection, envelope provider, and mail mode into that file.
 The pod mounts the database credentials, TLS keys, local wrapping key, and Resend token as files.
+When `identity.authNats.tlsSecret` is set, the chart adds `global.nats.schedulerUrl` and the CA path to identity settings. Identity mounts `ca.crt` from that Secret.
+Identity creates the first session signing key at startup. CloudNativePG manages the issuer login. Identity uses the client certificate and key from `wamn-identity-db-tls`.
 
 Create a Secret in `platform` with an `api-key` entry.
 Set `identity.resendSecret` to that Secret and `identity.resendFrom` to the verified sender in the platform chart.
@@ -622,7 +624,10 @@ If `inviteUrl` is empty, each mail shows the code.
 For kind, use the local mail file described in [local access](#local-access-and-owner-invitation).
 
 Use `user.create` to add an org member without sending mail. Use `user.invite` to send an invitation.
-Restart the Deployment after changing the mounted Resend token.
+Restart the Deployment after changing the mounted Resend token or sender.
+
+Control reads its projected service account token from `/var/run/secrets/wamn-identity/token`.
+The org chart projects the token with audience `wamn-identity`. Identity uses Kubernetes TokenReview through the `wamn-token-reviewer` ClusterRole.
 
 The route bodies and limits are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
 

@@ -982,8 +982,11 @@ The Rust web front normalizes the final address in the chain before proxying a p
 Direct requests without that header use the TLS peer address.
 Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
-User management shares the request limits. Its source is the TLS peer address.
-`POST /invitations` takes a `principal_id` and requires mail configuration.
+User management and NATS signing use projected service account tokens with audience `wamn-identity`.
+Identity verifies each token through Kubernetes TokenReview and requires its namespace to exist in `registry.orgs`.
+The `wamn-control-<org>` service account can manage users. The `wamn-operation-<org>` service account can request NATS credentials for its own org.
+User management shares the password request limits and uses the TLS peer address.
+`POST /invitations` takes an active member's `principal_id` and requires mail configuration.
 The service sends the one-time secret through Resend to that principal's stored email.
 A successful provider response means accepted for delivery, not confirmed inbox delivery.
 The service makes no automatic send retry and reports failed or uncertain sends as unavailable.

@@ -1,6 +1,5 @@
 //! Identity HTTPS server and local key maintenance commands.
 
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,13 +12,11 @@ use wamn_envelope::encryption::{Configuration, Envelope};
 use wamn_identity::session_keys::{remove_compromised_session_key, retire_session_keys};
 
 use crate::{
-    IdentityConfig, IdentityService, IdentityServiceError, connect, serve, tls_config,
-    tls_config_with_operator_ca,
+    IdentityConfig, IdentityService, IdentityServiceError, connect, nats, serve, tls_config,
 };
 
 const TLS_CERT: &str = "/var/run/wamn-identity/tls/tls.crt";
 const TLS_KEY: &str = "/var/run/wamn-identity/tls/tls.key";
-const OPERATOR_CA: &str = "/var/run/wamn-identity/operator/ca.crt";
 const LOCAL_KEY: &str = "/etc/wamn/oauth/key";
 const RESEND_TOKEN: &str = "/var/run/wamn-identity/resend/api-key";
 
@@ -40,6 +37,7 @@ struct Settings {
     database: wamn_postgres::ConnectionConfig,
     envelope: Configuration,
     mail: Option<MailSettings>,
+    nats: Option<nats::Settings>,
 }
 
 #[derive(Deserialize)]
@@ -85,8 +83,9 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         .database
         .to_json()
         .map_err(|_| IdentityServiceError::new("encode identity database configuration failed"))?;
-    let config = IdentityConfig::new(&issuer, &database)?;
+    let mut config = IdentityConfig::new(&issuer, &database)?;
     if matches!(cli.command, Command::Serve) {
+        config.nats = settings.nats;
         let config = match settings.mail {
             Some(MailSettings::Local { spool }) => config.with_local_mail(spool),
             Some(MailSettings::Resend { sender, invite_url }) => {
@@ -139,17 +138,7 @@ async fn run_server(
     let private_key = tokio::fs::read(TLS_KEY)
         .await
         .map_err(|_| IdentityServiceError::new("read identity TLS private key failed"))?;
-    let tls = match tokio::fs::read(OPERATOR_CA).await {
-        Ok(ca) => tls_config_with_operator_ca(&certificate, &private_key, &ca)?,
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            tls_config(&certificate, &private_key)?
-        }
-        Err(_) => {
-            return Err(IdentityServiceError::new(
-                "read identity operator CA failed",
-            ));
-        }
-    };
+    let tls = tls_config(&certificate, &private_key)?;
     drop(private_key);
     let service = IdentityService::connect(config, envelope).await?;
     let rotation_state = Arc::clone(&service.inner);
@@ -171,11 +160,6 @@ async fn run_server(
         .local_addr()
         .map_err(|_| IdentityServiceError::new("read identity HTTPS address failed"))?;
     tracing::info!(%address, "identity listening");
-    if std::env::var_os("WAMN_NATS_URL").is_none() {
-        tracing::warn!(
-            "WAMN_NATS_URL is unset: a host keeps a revoked login for its auth memory TTL"
-        );
-    }
     tokio::select! {
         result = serve(listener, service, tls) => result,
         () = rotation => unreachable!("rotation runs until shutdown"),

@@ -1,5 +1,6 @@
-//! HTTPS client for org user management.
+//! HTTPS clients for org user management and NATS signing.
 
+pub mod nats;
 pub mod users;
 
 use std::path::{Path, PathBuf};
@@ -9,7 +10,9 @@ use anyhow::Context as _;
 use url::Url;
 use wamn_oci::package_artifact::http_client::{HttpClient, HttpResponse, Redirects};
 
-/// Mounted service account token for identity user management.
+/// Audience of the service account token projected for identity callers.
+pub const TOKEN_AUDIENCE: &str = "wamn-identity";
+/// Mounted service account token for identity user management and NATS signing.
 pub const TOKEN_PATH: &str = "/var/run/secrets/wamn-identity/token";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 

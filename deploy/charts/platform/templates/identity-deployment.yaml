@@ -28,17 +28,6 @@ spec:
           image: {{ .Values.identity.image | default (printf "%s/wamn-identity:%s" .Values.registry .Chart.Version) | quote }}
           imagePullPolicy: IfNotPresent
           args: [serve, --settings, /etc/wamn/identity/settings.json]
-          {{- if .Values.identity.authNats.tlsSecret }}
-          env:
-            - name: WAMN_NATS_URL
-              value: {{ .Values.global.nats.schedulerUrl | quote }}
-            - name: WAMN_NATS_TLS_CA
-              value: /var/run/wamn-identity/nats/ca.crt
-            - name: WAMN_NATS_TLS_CERT
-              value: /var/run/wamn-identity/nats/tls.crt
-            - name: WAMN_NATS_TLS_KEY
-              value: /var/run/wamn-identity/nats/tls.key
-            {{- end }}
           ports:
             - name: https
               containerPort: 8443
@@ -130,8 +119,4 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
-              - key: tls.crt
-                path: tls.crt
-              - key: tls.key
-                path: tls.key
         {{- end }}

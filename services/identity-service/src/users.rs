@@ -1,4 +1,4 @@
-//! User management for the authenticated control service of one org.
+//! Identity requests from the control service or the operation worker of one org.
 
 use std::net::IpAddr;
 
@@ -16,27 +16,13 @@ use wamn_registry::OrgId;
 use crate::{
     Inner, connect_database,
     mail::Mailer,
+    nats,
     password::{admit_source, refusal, throttled},
-    response, unavailable,
+    response, unavailable, workload,
 };
-
-pub(super) fn matches_control_subject(leaf: &[u8], org: &OrgId) -> bool {
-    let Ok(([], certificate)) = x509_parser::parse_x509_certificate(leaf) else {
-        return false;
-    };
-    let subject = certificate.subject();
-    subject.iter_attributes().nth(1).is_none()
-        && subject
-            .iter_common_name()
-            .next()
-            .and_then(|name| name.as_str().ok())
-            .and_then(|name| name.strip_prefix("control-"))
-            == Some(org.as_str())
-}
 
 pub(super) async fn respond(
     inner: &Inner,
-    org: &OrgId,
     request: Request<Incoming>,
     source: IpAddr,
 ) -> Response<Full<Bytes>> {
@@ -45,7 +31,7 @@ pub(super) async fn respond(
     };
     tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        handle(inner, org, request, source),
+        handle(inner, request, source),
     )
     .await
     .unwrap_or_else(|_| unavailable())
@@ -53,17 +39,47 @@ pub(super) async fn respond(
 
 async fn handle(
     inner: &Inner,
-    org: &OrgId,
     request: Request<Incoming>,
     source: IpAddr,
 ) -> Response<Full<Bytes>> {
+    let Some(token) = workload::bearer(request.headers()) else {
+        return forbidden();
+    };
+    let Some(api) = &inner.kubernetes else {
+        return unavailable();
+    };
+    let nats_route = matches!(
+        request.uri().path(),
+        wamn_identity_client::nats::ENSURE_ACCOUNT_PATH
+            | wamn_identity_client::nats::SIGN_USER_PATH
+    );
+    let role = if nats_route {
+        workload::Role::Worker
+    } else {
+        workload::Role::Control
+    };
+    let org = match workload::authenticate(api, token, role).await {
+        Ok(Some(org)) => org,
+        Ok(None) => return forbidden(),
+        Err(error) => {
+            tracing::warn!(%error, "check identity workload token failed");
+            return unavailable();
+        }
+    };
     let Ok(mut db) = connect_database(&inner.connection).await else {
         return unavailable();
     };
-    match admit_source(&mut db.client, &inner.issuer, source).await {
+    match workload::registered(&mut db.client, &org).await {
         Ok(true) => (),
-        Ok(false) => return throttled(),
+        Ok(false) => return forbidden(),
         Err(_) => return unavailable(),
+    }
+    if !nats_route {
+        match admit_source(&mut db.client, &inner.issuer, source).await {
+            Ok(true) => (),
+            Ok(false) => return throttled(),
+            Err(_) => return unavailable(),
+        }
     }
     let (parts, body) = request.into_parts();
     let mut types = parts.headers.get_all(hyper::header::CONTENT_TYPE).iter();
@@ -85,7 +101,11 @@ async fn handle(
     };
     let bytes = body.to_bytes();
 
-    if parts.uri.path() == "/users" {
+    let route = parts.uri.path();
+    if nats_route {
+        return nats::respond(inner, &mut db.client, &org, route, &bytes).await;
+    }
+    if route == "/users" {
         let Ok(request) = serde_json::from_slice::<UserRequest>(&bytes) else {
             return invalid();
         };
@@ -95,14 +115,14 @@ async fn handle(
     let Ok(request) = serde_json::from_slice::<PrincipalRequest>(&bytes) else {
         return invalid();
     };
-    if parts.uri.path() == "/invitations" {
+    if route == "/invitations" {
         let Some(state) = &inner.passwords else {
             return response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec());
         };
-        return invite(&mut db.client, &state.mail, request.principal_id).await;
+        return invite(&mut db.client, &state.mail, &org, request.principal_id).await;
     }
 
-    disable(&mut db.client, org, &request.principal_id).await
+    disable(&mut db.client, &org, &request.principal_id).await
 }
 
 async fn begin(client: &mut Client) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, sqlx::Error> {
@@ -151,6 +171,7 @@ async fn disable(
 async fn invite(
     client: &mut Client,
     mail: &Mailer,
+    org: &OrgId,
     principal: PrincipalId,
 ) -> Response<Full<Bytes>> {
     let Ok(mut read) = wamn_identity::transaction::read_connection(
@@ -162,9 +183,13 @@ async fn invite(
         return unavailable();
     };
     let Ok(email) = sqlx::query_scalar::<_, String>(
-        "SELECT email FROM identity.principals WHERE id = $1 AND type = 'user' AND status = 'active'",
+        "SELECT p.email FROM identity.principals p
+         JOIN identity.org_memberships m ON m.principal_id = p.id
+         WHERE p.id = $1 AND p.type = 'user' AND p.status = 'active'
+               AND m.org = $2 AND m.status = 'active'",
     )
     .bind(principal)
+    .bind(org.as_str())
     .fetch_optional(&mut *read)
     .await
     else {
@@ -245,6 +270,14 @@ async fn create_user(client: &mut Client, request: &UserRequest) -> Response<Ful
         StatusCode::OK,
         "application/json",
         serde_json::to_vec(&body).expect("user response"),
+    )
+}
+
+pub(super) fn forbidden() -> Response<Full<Bytes>> {
+    response(
+        StatusCode::FORBIDDEN,
+        "application/json",
+        br#"{"error":"workload identity refused"}"#.to_vec(),
     )
 }
 

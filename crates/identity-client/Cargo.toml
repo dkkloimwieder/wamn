@@ -12,6 +12,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 url = { workspace = true }
 wamn-identity-protocol = { workspace = true }
+wamn-registry.workspace = true
 hyper = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 
