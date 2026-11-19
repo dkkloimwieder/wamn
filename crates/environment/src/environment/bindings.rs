@@ -9,7 +9,10 @@ use plan::{mode_satisfies, refuse};
 use std::collections::BTreeMap;
 use std::fmt;
 
-use wamn_catalog::manifest::{ConnectionDeclaration, ConnectionMode, PackageManifest};
+use wamn_catalog::{
+    lifecycle_lock::LifecycleLock,
+    manifest::{ConnectionDeclaration, ConnectionMode, PackageManifest},
+};
 
 use super::document::EnvironmentDocument;
 
@@ -63,8 +66,8 @@ pub struct Binding {
 
 /// Read project authority without creating or changing a connection.
 pub async fn analyse(
-    system: &mut sqlx::PgConnection,
-    project: &mut sqlx::PgConnection,
+    system: &LifecycleLock,
+    project: &LifecycleLock,
     document: &EnvironmentDocument,
     packages: impl IntoIterator<Item = &PackageManifest>,
 ) -> Result<Vec<Binding>, BindingError> {
@@ -86,7 +89,7 @@ pub async fn analyse(
     )
     .bind(&document.org)
     .bind(&document.env)
-    .fetch_optional(&mut *system)
+    .fetch_optional(&mut *system.client().await)
     .await?;
     if matches!(&environment_target, Some(None)) {
         return Err(refuse(
@@ -107,7 +110,7 @@ pub async fn analyse(
         })
     }) {
         let connection=sqlx::query("SELECT c.id::text,c.integration_type,g.parameters,c.active_generation,c.target_id::text,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1 AND c.status='active'")
-            .bind(name).fetch_optional(&mut *project).await?.ok_or_else(||refuse("connection_unavailable",name))?;
+            .bind(name).fetch_optional(&mut *project.client().await).await?.ok_or_else(||refuse("connection_unavailable",name))?;
         let connection_target: &str = connection.get(4);
         let environment_target = environment_target
             .as_deref()
@@ -123,7 +126,7 @@ pub async fn analyse(
         }
         let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
             .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection_target).bind(&document.target).bind(connection.get::<i64,_>(3)).bind(&document.org).bind(&document.env).bind(version.version)
-            .fetch_optional(&mut *system).await?.ok_or_else(||refuse("connection_unavailable",name))?;
+            .fetch_optional(&mut *system.client().await).await?.ok_or_else(||refuse("connection_unavailable",name))?;
         if row.get::<bool, _>(8) && row.get::<&str, _>(11) == "cloud" {
             return Err(refuse(
                 "exclusive_connection_requires_local_target",

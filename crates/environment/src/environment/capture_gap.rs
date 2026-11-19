@@ -56,13 +56,17 @@ pub async fn recover(
     LifecycleLock::hold(
         wamn_postgres::connect(&args.system_database_url).await?,
         &triple,
-        async |_| {
+        async |lock| {
             let instance = crate::provision_project_env::read_project_env_instance(
-                &args.system_database_url,
+                &mut *lock.client().await,
                 &triple,
             )
             .await?;
-            recovery::recover_capture_gap(args, &instance, platform).await
+            let owner = wamn_platform_install::environment::connection_for(&triple, &instance);
+            let capture = wamn_platform_install::environment::capture_configuration(owner)?;
+            platform.prepare_database(&capture).await?;
+            recovery::recover_capture_gap(args, &instance, &capture.to_json()?, platform, lock)
+                .await
         },
     )
     .await
@@ -79,7 +83,7 @@ pub async fn close(
         wamn_postgres::connect(&args.system_database_url).await?,
         &triple,
         async |lock| {
-            let closed = recovery::close_capture_gap(args).await?;
+            let closed = recovery::close_capture_gap(&triple, &mut *lock.client().await).await?;
             let paused = is_open(&mut *lock.client().await, &triple).await?;
             set_paused(platform, &triple, paused).await?;
             Ok(closed)

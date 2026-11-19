@@ -88,17 +88,9 @@ pub(crate) async fn execute(
     };
     match kind {
         Operation::Recover => {
-            let owner = wamn_platform_install::environment::connection(
-                &platform.system_database_url,
-                &triple,
-            )
-            .await?;
-            let capture = wamn_platform_install::environment::capture_configuration(owner)?;
-            platform.prepare_database(&capture).await?;
             let recovered = capture_gap::recover(
                 &platform,
                 &capture_gap::RecoverCaptureGapRequest {
-                    admin_database_url: capture.to_json()?,
                     org: triple.org,
                     project: triple.project,
                     env: triple.env,

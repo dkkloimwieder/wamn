@@ -79,14 +79,14 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         project: &"fixture".parse().unwrap(),
         env: &"dev".parse().unwrap(),
     };
+    let mut client = wamn_postgres::connect(project.as_str()).await?;
     fill(
-        system.as_str(),
-        project.as_str(),
+        &mut authority_connection,
+        &mut client,
         "https://identity.example.invalid",
         target,
     )
     .await?;
-    let mut client = wamn_postgres::connect(project.as_str()).await?;
     for component in wamn_identity_protocol::PlatformComponent::ALL {
         let row = sqlx::query("SELECT type='platform' AND email=$2 AND created_by=$3 FROM platform.\"user\" WHERE id=$1").bind(component.principal_id()).bind(format!("{}@example.invalid",component.as_str())).bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id()).fetch_one(&mut client).await?;
         assert!(row.get::<bool, _>(0));
@@ -113,8 +113,8 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     .await?;
     authority.commit().await?;
     fill(
-        system.as_str(),
-        project.as_str(),
+        &mut authority_connection,
+        &mut client,
         "https://identity.example.invalid",
         target,
     )

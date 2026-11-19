@@ -4,6 +4,7 @@
 use sqlx::Row as _;
 
 use anyhow::Context as _;
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
 use super::Platform;
@@ -11,10 +12,15 @@ use super::document::EnvironmentDocument;
 use wamn_postgres::connect;
 
 /// Remove one project's runtime access and wait until its credentials are unmounted.
-pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
+pub(super) async fn suspend_project(
+    platform: &Platform,
+    system: &LifecycleLock,
+    triple: &Triple,
+) -> anyhow::Result<()> {
     let name = name::environment_host_name(&triple.org, &triple.env);
     let values = host_values(
         platform,
+        system,
         &triple.org,
         &triple.env,
         &[],
@@ -31,8 +37,7 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     .await?
     .await?;
     let connection =
-        wamn_platform_install::environment::connection(&platform.system_database_url, triple)
-            .await?;
+        wamn_platform_install::environment::connection(&mut *system.client().await, triple).await?;
     tokio::time::timeout(std::time::Duration::from_secs(120), async {
         loop {
             let pods = super::analyse::read_pods(platform, &name).await?;
@@ -72,13 +77,14 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
 /// Prepare the host upgrade with both configured and newly reserved projects.
 pub(super) async fn prepare_host_upgrade<'a>(
     platform: &'a Platform,
+    system: &LifecycleLock,
     org: &OrgId,
     env: &EnvName,
     policy: &EnvName,
     reserved: &[&str],
 ) -> anyhow::Result<(u32, impl Future<Output = anyhow::Result<()>> + use<'a>)> {
     let name = name::environment_host_name(org, env);
-    let values = host_values(platform, org, env, reserved, None, Some(policy)).await?;
+    let values = host_values(platform, system, org, env, reserved, None, Some(policy)).await?;
     // The runtime operator defaults the group to one replica.
     let replicas = if values["placement"]["replicas"].is_null() {
         1
@@ -101,6 +107,7 @@ pub(super) async fn prepare_host_upgrade<'a>(
 
 async fn host_values(
     platform: &Platform,
+    system: &LifecycleLock,
     org: &OrgId,
     env: &EnvName,
     reserved: &[&str],
@@ -109,8 +116,8 @@ async fn host_values(
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
 
-    let mut system = connect(&platform.system_database_url).await?;
-    let mut tx = crate::provision_project_env::provisioning_transaction(&mut system).await?;
+    let mut client = system.client().await;
+    let mut tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
     let projects: Vec<ProjectId> = sqlx::query_scalar(
         "SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2
          AND ($3::text IS NULL OR project<>$3)
@@ -130,7 +137,7 @@ async fn host_values(
         }
     };
     tx.commit().await?;
-    drop(system);
+    drop(client);
     if projects.is_empty() {
         return Ok(json!({"org":org, "env":env}));
     }
@@ -156,7 +163,7 @@ async fn host_values(
     for project in projects {
         let triple = Triple::new(org.clone(), env.clone(), project);
         let connection =
-            wamn_platform_install::environment::connection(&platform.system_database_url, &triple)
+            wamn_platform_install::environment::connection(&mut *system.client().await, &triple)
                 .await?;
         anyhow::ensure!(
             connection.credentials.namespace == org.as_str()
@@ -220,10 +227,11 @@ async fn host_values(
 /// Read every installed baseline, independent of the selected application release.
 pub async fn installed_manifests(
     platform: &Platform,
+    system: &LifecycleLock,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<Vec<wamn_catalog::manifest::PackageManifest>> {
     let mut manifests = Vec::new();
-    for (id, baseline) in super::stage::installed(platform, document).await? {
+    for (id, baseline) in super::stage::installed(system, document).await? {
         let package = super::stage::open(platform, &id, &baseline.current).await?;
         let path = wamn_codegen::package_manifest_path(package.root());
         manifests.push(wamn_catalog::manifest::PackageManifest::from_slice(
@@ -310,9 +318,10 @@ pub(crate) async fn kubectl(
 /// Resolve the schemas already recorded in the project database.
 pub(super) async fn publication_schemas(
     platform: &Platform,
+    system: &LifecycleLock,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<Vec<wamn_catalog::canonical_name::CanonicalName>> {
-    Ok(installed_manifests(platform, document)
+    Ok(installed_manifests(platform, system, document)
         .await?
         .into_iter()
         .flat_map(|manifest| {

@@ -10,6 +10,7 @@ use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::stream::RawMessageErrorKind;
 use chrono::{DateTime, Utc};
 
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_event::{SourceEvent, verified_source_event_id};
 use wamn_provision::{cdc_object_name, project_env_database_name, sql, validate_project_env_cdc};
 use wamn_registry::Triple;
@@ -31,9 +32,6 @@ pub struct RecoverCaptureGapRequest {
     /// Apply connection of the system database: the instance suffix, the reader
     /// registration, and the gap row.
     pub system_database_url: String,
-
-    /// Capture-role connection of the project database that holds the slot.
-    pub admin_database_url: String,
 
     /// The NATS of the event streams, with the client certificate.
     pub nats: wamn_broker::nats::PlatformNats,
@@ -72,10 +70,12 @@ pub struct ClosedCaptureGap {
 }
 
 /// Drop the lost slot, create it again under the same name, and record the gap.
-pub async fn recover_capture_gap(
+pub(super) async fn recover_capture_gap(
     args: &RecoverCaptureGapRequest,
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
+    admin_database_url: &str,
     platform: &super::super::Platform,
+    system: &LifecycleLock,
 ) -> anyhow::Result<RecoveredCaptureGap> {
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
@@ -83,9 +83,6 @@ pub async fn recover_capture_gap(
     let slot = cdc_object_name(&args.org, &args.project, &args.env, instance);
     let database = project_env_database_name(&args.org, &args.project, &args.env, instance);
 
-    let mut system = connect(&args.system_database_url)
-        .await
-        .context("system db connect")?;
     let env = &triple.env;
     let registration = sqlx::query(sqlx::AssertSqlSafe(
         (select_event_reader_origin_sql()).to_string(),
@@ -93,7 +90,7 @@ pub async fn recover_capture_gap(
     .bind(&triple.org)
     .bind(&triple.project)
     .bind(env)
-    .fetch_optional(&mut system)
+    .fetch_optional(&mut *system.client().await)
     .await
     .context("read the registry.event_readers row")?;
     let Some(registration) = registration else {
@@ -107,7 +104,9 @@ pub async fn recover_capture_gap(
         "the registration of {triple} names slot {registered_slot}, not {slot}"
     );
 
-    let mut admin = connect(&args.admin_database_url).await?;
+    let mut admin = wamn_postgres::connect(admin_database_url)
+        .await
+        .context("connect to the project database for capture gap recovery")?;
     let current: String = sqlx::query("SELECT current_database()::text")
         .fetch_one(&mut admin)
         .await
@@ -191,7 +190,8 @@ pub async fn recover_capture_gap(
     .context("read the new slot's first position")?
     .get(0);
 
-    let mut transaction = provisioning_transaction(&mut system).await?;
+    let mut client = system.client().await;
+    let mut transaction = provisioning_transaction(&mut client).await?;
     let created_at: DateTime<Utc> =
         sqlx::query(sqlx::AssertSqlSafe((insert_capture_gap_sql()).to_string()))
             .bind(&triple.org)
@@ -221,13 +221,12 @@ pub async fn recover_capture_gap(
 }
 
 /// Close the newest gap, retaining its original resynchronization time on retry.
-pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<ClosedCaptureGap> {
-    let triple = Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
-    let mut system = connect(&args.system_database_url)
-        .await
-        .context("system db connect")?;
+pub(super) async fn close_capture_gap(
+    triple: &Triple,
+    system: &mut Client,
+) -> anyhow::Result<ClosedCaptureGap> {
     let env = &triple.env;
-    let mut transaction = provisioning_transaction(&mut system).await?;
+    let mut transaction = provisioning_transaction(system).await?;
     let newest = sqlx::query(sqlx::AssertSqlSafe(
         (lock_newest_capture_gap_sql()).to_string(),
     ))
@@ -259,7 +258,7 @@ pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<
         .await
         .context("commit the close transaction")?;
     Ok(ClosedCaptureGap {
-        triple,
+        triple: triple.clone(),
         slot,
         created_at,
         resync_at,
@@ -307,14 +306,6 @@ async fn last_cdc_event(
         sequence -= 1;
     }
     Ok(None)
-}
-
-async fn connect(url: &str) -> anyhow::Result<Client> {
-    let client = wamn_postgres::connect(url)
-        .await
-        .context("database connect")?;
-
-    Ok(client)
 }
 
 async fn provisioning_transaction(

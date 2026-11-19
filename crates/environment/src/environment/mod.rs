@@ -96,15 +96,13 @@ impl Platform {
 
 /// Fill member rows from system authority.
 pub async fn fill(
-    system_url: &str,
-    project_url: &str,
+    system: &mut sqlx::PgConnection,
+    project: &mut sqlx::PgConnection,
     issuer: &str,
     target: ApplicationTarget<'_>,
 ) -> anyhow::Result<()> {
-    let mut system = wamn_postgres::connect(system_url).await?;
     let mut system = system.begin().await?;
     wamn_identity::org::lock_org_memberships(&mut system, target.org).await?;
-    let mut project = wamn_postgres::connect(project_url).await?;
     let mut project = project.begin().await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_provision::bind_platform_principal_sql(

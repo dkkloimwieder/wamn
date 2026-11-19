@@ -44,9 +44,7 @@ pub async fn configure(
                 .collect();
             let mut reserved = Vec::with_capacity(projects.len());
             {
-                let mut client = wamn_postgres::connect(&platform.system_database_url)
-                    .await
-                    .context("connect as the apply role to reserve projects")?;
+                let mut client = lock.client().await;
                 let mut transaction = provision_project_env::provisioning_transaction(&mut client)
                     .await?;
                 sqlx::query(wamn_registry::sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
@@ -95,6 +93,7 @@ pub async fn configure(
             super::broker::configure(&platform, &first.org, &first.env, count).await?;
             let (replicas, host) = resources::prepare_host_upgrade(
                 &platform,
+                &lock,
                 &first.org,
                 &first.env,
                 &first.policy,
@@ -204,7 +203,7 @@ async fn configure_project(
             "{}",
             super::drain::describe(&unfinished)
         );
-        resources::publication_schemas(platform, document).await?
+        resources::publication_schemas(platform, lock, document).await?
     };
     let capture = installer::environment::capture_configuration(connection.clone())?;
     let publication =
@@ -294,17 +293,20 @@ async fn configure_project(
                 )
                 .await?;
             }
-            super::fill(
-                &platform.system_database_url,
-                &owner,
-                &platform.identity_issuer,
-                wamn_identity::application::ApplicationTarget {
-                    org: &triple.org,
-                    project: &triple.project,
-                    env: &triple.env,
-                },
-            )
-            .await?;
+            {
+                let mut project = wamn_postgres::connect(&owner).await?;
+                super::fill(
+                    &mut *lock.client().await,
+                    &mut project,
+                    &platform.identity_issuer,
+                    wamn_identity::application::ApplicationTarget {
+                        org: &triple.org,
+                        project: &triple.project,
+                        env: &triple.env,
+                    },
+                )
+                .await?;
+            }
             workload::grant(&mut *project_lock.client().await, &connections).await?;
             resources::prepare_cdc(
                 &owner,

@@ -52,15 +52,11 @@ pub(crate) fn mint_instance_suffix() -> anyhow::Result<InstanceSuffix> {
 
 /// Read one project-env's stored instance suffix from the registry.
 pub async fn read_project_env_instance(
-    system_url: &str,
+    client: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<InstanceSuffix> {
-    let mut client = wamn_postgres::connect(system_url)
-        .await
-        .context("system db connect")?;
-
     let mut transaction = wamn_identity::transaction::read_connection(
-        &mut client,
+        client,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
@@ -73,7 +69,6 @@ pub async fn read_project_env_instance(
     }
     .await;
     transaction.commit().await?;
-    drop(client);
     result
 }
 

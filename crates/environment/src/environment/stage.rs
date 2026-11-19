@@ -7,12 +7,12 @@ pub use plan::{apply_order, sequence_defaults};
 use std::collections::BTreeMap;
 
 use anyhow::{Context as _, bail, ensure};
+use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_catalog::manifest::PackageManifest;
 
 use super::Platform;
 use super::analyse::{self, Installed};
 use super::document::EnvironmentDocument;
-use wamn_postgres::connect;
 use wamn_publish::package_artifact::{OpenedPackage, open_package};
 use wamn_registry::platform_domain::PlatformDomain;
 
@@ -139,15 +139,16 @@ async fn write_runtime_grants(
 
 /// The installed packages of the project database, read now.
 pub(super) async fn installed(
-    platform: &Platform,
+    system: &LifecycleLock,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<BTreeMap<wamn_catalog::PackageName, Installed>> {
-    let mut system = connect(&platform.system_database_url).await?;
-    let mut system = crate::provision_project_env::provisioning_transaction(&mut system).await?;
-    let row = analyse::read_row(&mut system, document)
+    let mut client = system.client().await;
+    let mut tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
+    let row = analyse::read_row(&mut tx, document)
         .await?
         .context("the environment row is missing after step 4")?;
-    system.commit().await?;
+    tx.commit().await?;
+    drop(client);
     Ok(
         analyse::read_project(&analyse::project_url(document, &row)?)
             .await?

@@ -205,13 +205,12 @@ pub async fn wait_database_applied(
     .await
 }
 
-/// Resolve the recorded database on its project's CNPG cluster.
+/// Resolve the recorded database on its project's CNPG cluster using the caller's registry session.
 pub async fn connection(
-    registry: &str,
+    registry: &mut sqlx::PgConnection,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<wamn_postgres::ConnectionConfig> {
-    let mut client = wamn_postgres::connect(registry).await?;
-    let instance = wamn_registry::deployment::instance_suffix(&mut client, triple)
+    let instance = wamn_registry::deployment::instance_suffix(registry, triple)
         .await?
         .with_context(|| format!("project deployment {triple} is absent"))?;
     Ok(connection_for(triple, &instance))
