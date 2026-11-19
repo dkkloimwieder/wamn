@@ -71,6 +71,9 @@ Install the platform.
 wamn platform deploy platform-kind.yaml --chart /var/tmp/wamn-platform-chart
 ```
 
+`cargo xtask build-platform` writes the bundle's digest reference to `chart.ref` in the bundle folder.
+`wamn platform deploy` records the reference in `wamn-org-inputs`, and `wamn org create` uses it for control's `chart` setting.
+
 The published application bundle includes the infrastructure, platform, org, environment, and project charts.
 Helm installs cert-manager, CloudNativePG, and the ingress controller before the platform.
 The platform chart installs the system PostgreSQL Cluster, its SQL Job, shared identity, edge, NATS, the wasmCloud runtime operator, and the collector.

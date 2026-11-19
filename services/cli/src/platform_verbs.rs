@@ -107,6 +107,37 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
         .canonicalize()
         .context("resolve the Helm values file")?;
     let chart = bundle::select(&args.chart)?;
+    let reference = args
+        .chart
+        .to_str()
+        .context("chart reference must be UTF-8")?;
+    let local_reference;
+    let application_chart = if reference.starts_with("oci://") {
+        reference
+    } else {
+        let path = chart.directory().join("chart.ref");
+        local_reference = std::fs::read_to_string(&path).with_context(|| {
+            format!(
+                "read {} from a bundle built by cargo xtask build-platform",
+                path.display()
+            )
+        })?;
+        let reference = local_reference.trim();
+        let (_, digest) = reference
+            .strip_prefix("oci://")
+            .and_then(|reference| reference.rsplit_once('@'))
+            .filter(|(repository, _)| !repository.is_empty())
+            .with_context(|| {
+                format!(
+                    "{} must contain an OCI chart reference pinned by digest",
+                    path.display()
+                )
+            })?;
+        digest
+            .parse::<wamn_digest::Digest>()
+            .with_context(|| format!("invalid OCI chart digest in {}", path.display()))?;
+        reference
+    };
     let kubeconfig = PathBuf::new();
     let context = kubectl::current_context(&kubeconfig)?;
     let target = Target {
@@ -122,7 +153,7 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
             &target,
             &charts.join("infra"),
             INFRASTRUCTURE_RELEASE,
-            &values,
+            &[&values],
             helm::Install::CreateNamespace,
         )
         .await?;
@@ -130,13 +161,20 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
         kubectl::wait_deployment_ready(&target, "cnpg-controller-manager", ROLLOUT_TIMEOUT).await?;
     }
     if platform {
+        let chart_values = tempfile::NamedTempFile::new()
+            .context("create a file for the application chart value")?;
+        serde_json::to_writer(
+            chart_values.as_file(),
+            &serde_json::json!({"applicationChart": application_chart}),
+        )
+        .context("write the application chart value")?;
         let deadline = tokio::time::Instant::now() + ROLLOUT_TIMEOUT;
         job::clear_finished(&target, SYSTEM_SQL_JOB, deadline).await?;
         upgrade(
             &target,
             &charts.join("platform"),
             PLATFORM_RELEASE,
-            &values,
+            &[&values, chart_values.path()],
             helm::Install::ExistingNamespace,
         )
         .await?;
@@ -199,7 +237,7 @@ async fn upgrade(
     target: &Target,
     chart: &Path,
     release: &str,
-    values: &Path,
+    values: &[&Path],
     install: helm::Install,
 ) -> anyhow::Result<()> {
     helm::upgrade(

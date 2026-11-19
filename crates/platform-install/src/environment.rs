@@ -30,7 +30,7 @@ pub async fn prepare_host_upgrade<'a>(
             &namespace,
             &chart,
             &name,
-            &path,
+            &[&path],
             Wait::Watcher,
             Install::SkipCrds,
         )
@@ -55,7 +55,7 @@ pub async fn apply_application(
         &namespace,
         &chart.join("platform/application"),
         name,
-        &path,
+        &[&path],
         Wait::Watcher,
         Install::SkipCrds,
     )
@@ -79,7 +79,7 @@ pub async fn apply_project(
         &namespace,
         &chart.join("platform/project"),
         name,
-        &path,
+        &[&path],
         Wait::None,
         Install::ExistingNamespace,
     )

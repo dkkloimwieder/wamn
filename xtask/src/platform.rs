@@ -376,7 +376,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     process::run(&root, "helm", &push).await?;
     let repository = format!("{}/wamn/charts/application", args.registry);
     let digest = inspect(&root, &format!("{repository}:{version}")).await?;
-    println!("oci://{repository}@{digest}");
+    let reference = format!("oci://{repository}@{digest}");
+    let reference_file = args.out.join("chart.ref");
+    std::fs::write(&reference_file, format!("{reference}\n"))
+        .with_context(|| format!("write {}", reference_file.display()))?;
+    println!("{reference}");
     Ok(())
 }
 
