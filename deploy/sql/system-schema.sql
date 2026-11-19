@@ -596,6 +596,43 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
+-- Identity owns the NATS operator and account signing keys. Only the
+-- identity issuer may open the envelopes or revise an environment's limits.
+CREATE TABLE identity.nats_keys (
+    issuer text NOT NULL CHECK (btrim(issuer) <> ''),
+    kind text NOT NULL CHECK (kind IN (
+        'operator-root', 'operator-signing', 'system-account',
+        'system-signing', 'platform-account', 'platform-signing',
+        'runtime-operator', 'environment', 'environment-signing'
+    )),
+    org text REFERENCES registry.orgs (id) ON DELETE CASCADE,
+    env text,
+    public_key text NOT NULL,
+    private_key_envelope bytea NOT NULL,
+    project_count integer CHECK (project_count >= 0),
+    issued_at bigint NOT NULL DEFAULT floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
+    UNIQUE NULLS NOT DISTINCT (issuer, kind, org, env),
+    CHECK (CASE WHEN kind IN ('environment', 'environment-signing')
+        THEN org IS NOT NULL AND env IS NOT NULL
+        ELSE org IS NULL AND env IS NULL END),
+    CHECK ((kind = 'environment') = (project_count IS NOT NULL))
+);
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.nats_keys
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+DO $nats_issuer_grants$ BEGIN
+    IF to_regrole('wamn_identity_issuer') IS NOT NULL THEN
+        GRANT SELECT, INSERT ON identity.nats_keys TO wamn_identity_issuer;
+        GRANT UPDATE (project_count, issued_at) ON identity.nats_keys TO wamn_identity_issuer;
+    END IF;
+END $nats_issuer_grants$;
+
 CREATE TABLE identity.session_signing_state (
     issuer     text PRIMARY KEY CHECK (btrim(issuer) <> ''),
     active_kid uuid,

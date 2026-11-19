@@ -1,46 +1,60 @@
-//! HTTPS adapter for control user management.
+//! HTTPS clients for org user management and NATS signing.
 
+pub mod nats;
 pub mod users;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
 use url::Url;
-use wamn_oci::package_artifact::http_client::{HttpClient, Redirects};
+use wamn_oci::package_artifact::http_client::{HttpClient, HttpResponse, Redirects};
 
-/// Each identity request stops after five seconds.
+/// Audience of the service account token projected for identity callers.
+pub const TOKEN_AUDIENCE: &str = "wamn-identity";
+/// Mounted service account token for identity user management and NATS signing.
+pub const TOKEN_PATH: &str = "/var/run/secrets/wamn-identity/token";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-fn https_client(
-    cert_path: &Path,
-    key_path: &Path,
-    server_ca: Option<&Path>,
-) -> anyhow::Result<HttpClient> {
-    // Credential errors can contain paths or certificate material.
-    // Keep their diagnostics fixed. The transport never records request URLs.
-    let mut identity_pem = std::fs::read(cert_path)
-        .map_err(|_| anyhow::anyhow!("identity client certificate read failed"))?;
-    identity_pem.push(b'\n');
-    identity_pem.extend(
-        std::fs::read(key_path)
-            .map_err(|_| anyhow::anyhow!("identity client private key read failed"))?,
-    );
-    let mut builder = HttpClient::builder()
-        .https_only(true)
-        .redirects(Redirects::None)
-        .timeout(REQUEST_TIMEOUT);
-    if let Some(path) = server_ca {
-        let pem = std::fs::read(path)
+
+struct IdentityHttp {
+    http: HttpClient,
+    token_path: PathBuf,
+}
+
+impl IdentityHttp {
+    fn new(server_ca: &Path, token_path: &Path) -> anyhow::Result<Self> {
+        let pem = std::fs::read(server_ca)
             .map_err(|_| anyhow::anyhow!("identity server trust roots read failed"))?;
-        builder = builder
+        let http = HttpClient::builder()
+            .https_only(true)
+            .redirects(Redirects::None)
+            .timeout(REQUEST_TIMEOUT)
             .roots(&pem)
-            .map_err(|_| anyhow::anyhow!("identity server trust roots are invalid"))?;
+            .map_err(|_| anyhow::anyhow!("identity server trust roots are invalid"))?
+            .build()
+            .context("identity HTTPS client creation failed")?;
+        Ok(Self {
+            http,
+            token_path: token_path.to_path_buf(),
+        })
     }
-    builder
-        .identity_pem(&identity_pem)
-        .map_err(|_| anyhow::anyhow!("identity client certificate or private key is invalid"))?
-        .build()
-        .context("identity HTTPS client creation failed")
+
+    async fn post(&self, endpoint: &Url, body: Vec<u8>) -> anyhow::Result<HttpResponse> {
+        // The kubelet rotates the projected token while a caller is running.
+        let token = tokio::fs::read_to_string(&self.token_path)
+            .await
+            .map_err(|_| anyhow::anyhow!("identity service account token read failed"))?;
+        let token = token.trim();
+        anyhow::ensure!(!token.is_empty(), "identity service account token is empty");
+        self.http
+            .post(endpoint.as_str())
+            .bearer_auth(token)
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .body(body)
+            .send()
+            .await
+            .context("identity HTTPS request failed")
+    }
 }
 
 fn service_endpoint(value: &str, route: &str) -> anyhow::Result<Url> {
@@ -168,12 +182,7 @@ mod tests {
             .unwrap()
             .signed_by(&server_key, &issuer)
             .unwrap();
-        let client_key = KeyPair::generate().unwrap();
-        let client = CertificateParams::new(vec!["operator.example".to_owned()])
-            .unwrap()
-            .signed_by(&client_key, &issuer)
-            .unwrap();
-        let write_pem = |name: &str, pem: &str| {
+        let write_input = |name: &str, input: &str| {
             let path = directory.join(name);
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
@@ -181,23 +190,15 @@ mod tests {
                 .mode(0o600)
                 .open(&path)
                 .expect("fixture credential file");
-            file.write_all(pem.as_bytes())
+            file.write_all(input.as_bytes())
                 .expect("fixture credential contents");
             path
         };
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(ca.der().clone()).unwrap();
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-        let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
-            Arc::new(roots),
-            Arc::clone(&provider),
-        )
-        .build()
-        .unwrap();
         let mut tls = rustls::ServerConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
             .unwrap()
-            .with_client_cert_verifier(verifier)
+            .with_no_client_auth()
             .with_single_cert(
                 vec![server.der().clone()],
                 rustls::pki_types::PrivatePkcs8KeyDer::from(server_key.serialize_der()).into(),
@@ -208,11 +209,10 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let endpoint = format!("https://{address}/identity");
-        let client = UserClient::new(
+        let client = UserClient::with_token_file(
             &endpoint,
-            &write_pem("operator.pem", &client.pem()),
-            &write_pem("operator.key", &client_key.serialize_pem()),
-            &write_pem("ca.pem", &ca.pem()),
+            &write_input("ca.pem", &ca.pem()),
+            &write_input("token", "fixture-token"),
         )
         .unwrap();
         let response = response(&endpoint);
@@ -222,7 +222,6 @@ mod tests {
                 let Ok(mut stream) = acceptor.accept(stream).await else {
                     continue;
                 };
-                assert!(stream.get_ref().1.peer_certificates().is_some());
                 let mut request = Vec::new();
                 let mut buffer = [0_u8; 1024];
                 let headers_end = loop {
@@ -235,6 +234,12 @@ mod tests {
                     }
                 };
                 let headers = std::str::from_utf8(&request[..headers_end]).unwrap();
+                assert!(headers.lines().any(|line| {
+                    line.split_once(':').is_some_and(|(name, value)| {
+                        name.eq_ignore_ascii_case("authorization")
+                            && value.trim() == "Bearer fixture-token"
+                    })
+                }));
                 let body_len = headers
                     .lines()
                     .find_map(|line| {

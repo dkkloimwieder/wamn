@@ -65,13 +65,11 @@ pub struct Events {
     pub dup_window_secs: u64,
 }
 
-/// The identity connection. Private keys stay in mounted files.
+/// The identity endpoint and its server trust roots.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
     pub endpoint: Option<String>,
-    pub client_cert: Option<PathBuf>,
-    pub client_key: Option<PathBuf>,
     pub server_ca: Option<PathBuf>,
 }
 impl Identity {
@@ -81,12 +79,6 @@ impl Identity {
         };
         UserClient::new(
             endpoint,
-            self.client_cert
-                .as_deref()
-                .context("identity client certificate is required")?,
-            self.client_key
-                .as_deref()
-                .context("identity client key is required")?,
             self.server_ca
                 .as_deref()
                 .context("identity server CA is required")?,

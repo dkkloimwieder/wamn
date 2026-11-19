@@ -20,6 +20,9 @@ anyhow = { workspace = true }
 argon2 = { workspace = true }
 zeroize = { workspace = true }
 base64 = { workspace = true }
+data-encoding.workspace = true
+nkeys.workspace = true
+sha2.workspace = true
 ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

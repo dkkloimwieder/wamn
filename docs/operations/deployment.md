@@ -628,22 +628,21 @@ The private `.env` is ignored by Git and needs owner-only read and write permiss
 No home-directory path is required.
 
 For local email configuration, copy `.env.example` to `.env` before adding the key and verified sender.
-Keep the existing issuer, database, TLS, operator CA, and control certificate subject configuration.
+Keep the existing issuer, database, and server TLS configuration.
 External delivery requires both Resend values. Kind deployment instead selects local mail as described in [local access](#local-access-and-owner-invitation).
 The CLI also accepts `--resend-api-key` and `--resend-from`. Prefer environment input for the secret.
 
 For Kubernetes, create a Secret with the `api-key` entry in the identity namespace.
 Set the identity chart's `resendSecret` to that Secret and `resendFrom` to the verified sender.
-Set `operatorCaSecret` to the CA that signs the control client certificate.
-Set `controlSubject` to `CN=control-<org>`.
-Control mounts the `control-<org>` Secret. It must contain `tls.crt` and `tls.key`.
+Control reads its projected service account token from `/var/run/secrets/wamn-identity/token`.
+Project the token with audience `wamn-identity`. Identity uses Kubernetes TokenReview to check it and requires permission to create `tokenreviews`.
 Set `inviteUrl` to the web client base, for example `https://receiving.wamn.dev`.
 The invitation mail links to `<inviteUrl>/invite#<code>`.
 The reset mail links to `<inviteUrl>/reset#<secret>`.
 If `inviteUrl` is empty, each mail shows the code.
 Use `user.create` to add an org member without sending mail. Use `user.invite` to add the member and send an invitation when needed.
 
-Restart the Deployment after changing the credential, sender, operator CA, or control certificate subject.
+Restart the Deployment after changing the mail credential or sender.
 CloudNativePG manages the issuer login and its basic-auth Secret. `provision-identity-issuer` publishes its public connection configuration.
 Use the current system schema on a fresh database, following the repository's schema installation contract.
 

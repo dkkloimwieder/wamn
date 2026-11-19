@@ -4,9 +4,11 @@ use sqlx::Connection as _;
 use sqlx::PgConnection as Client;
 pub mod cli;
 pub mod mail;
+mod nats;
 mod password;
 mod session;
 mod users;
+mod workload;
 
 use std::convert::Infallible;
 use std::fmt;
@@ -28,6 +30,7 @@ use tokio::task::JoinSet;
 
 use tokio_rustls::TlsAcceptor;
 use wamn_identity::session_keys::session_jwks;
+use wamn_kubernetes::kubernetes_api::KubernetesApi;
 use wamn_provision::identity_role::identity_issuer_login;
 
 // Match the public-key client's total fetch bound. No retry or stale response
@@ -43,7 +46,6 @@ pub struct IdentityConfig {
     issuer: String,
     key_rotation: Duration,
     trusted_proxy_hops: usize,
-    control_org: Option<wamn_registry::OrgId>,
     connection: String,
     mail: Option<mail::MailConfig>,
 }
@@ -67,7 +69,6 @@ impl IdentityConfig {
             issuer: issuer.to_owned(),
             key_rotation: DEFAULT_KEY_ROTATION,
             trusted_proxy_hops: 0,
-            control_org: None,
             connection,
             mail: None,
         })
@@ -77,22 +78,6 @@ impl IdentityConfig {
     pub fn with_trusted_proxy_hops(mut self, hops: usize) -> Self {
         self.trusted_proxy_hops = hops;
         self
-    }
-
-    /// Enable user management for the designated control certificate subject.
-    ///
-    /// # Errors
-    /// Refuses a subject other than `CN=control-<org>` for a valid org.
-    pub fn with_control_subject(mut self, subject: &str) -> Result<Self, IdentityServiceError> {
-        self.control_org = subject
-            .strip_prefix("CN=control-")
-            .and_then(|org| org.parse().ok());
-        if self.control_org.is_none() {
-            return Err(IdentityServiceError::new(
-                "invalid control certificate subject",
-            ));
-        }
-        Ok(self)
     }
 
     /// Set the signing key schedule. The previous public key retains its token window.
@@ -129,12 +114,13 @@ struct Inner {
     issuer: String,
     key_rotation: Duration,
     trusted_proxy_hops: usize,
-    control_org: Option<wamn_registry::OrgId>,
     // Every held connection opens again with this connection string after Postgres
     // closes it, for example when the server restarts.
     connection: String,
     passwords: Option<password::State>,
-    // Password and control user requests share eight places per replica.
+    nats: Option<nats::State>,
+    kubernetes: Option<KubernetesApi>,
+    // Password, user management, and NATS signing share eight places per replica.
     request_slots: Semaphore,
     envelope: wamn_envelope::encryption::Envelope,
     database: Mutex<Database>,
@@ -206,7 +192,20 @@ impl IdentityService {
     /// Connect using already validated issuer-targeted authority.
     pub async fn connect(config: IdentityConfig) -> Result<Self, IdentityServiceError> {
         let envelope = signing_envelope()?;
-        let database = connect(&config).await?;
+        let mut database = connect(&config).await?;
+        let kubernetes = std::env::var_os("KUBERNETES_SERVICE_HOST")
+            .map(|_| KubernetesApi::in_cluster())
+            .transpose()
+            .map_err(|_| {
+                IdentityServiceError::new("configure identity Kubernetes client failed")
+            })?;
+        let nats = nats::start(
+            &mut database.client,
+            &config.issuer,
+            &envelope,
+            kubernetes.as_ref(),
+        )
+        .await?;
         let passwords = if let Some(mail) = config.mail {
             Some(password::State::new(mail, &config.connection).await?)
         } else {
@@ -217,10 +216,11 @@ impl IdentityService {
                 issuer: config.issuer,
                 key_rotation: config.key_rotation,
                 trusted_proxy_hops: config.trusted_proxy_hops,
-                control_org: config.control_org,
                 envelope,
                 connection: config.connection,
                 passwords,
+                nats,
+                kubernetes,
                 request_slots: Semaphore::new(8),
                 database: Mutex::new(database),
             }),
@@ -230,29 +230,20 @@ impl IdentityService {
     async fn respond(
         &self,
         request: Request<Incoming>,
-        certificate: PeerCertificate,
         source: std::net::IpAddr,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
         if request.method() == Method::POST
             && request.uri().query().is_none()
             && matches!(
                 request.uri().path(),
-                "/users" | "/invitations" | "/users/disable"
+                "/users"
+                    | "/invitations"
+                    | "/users/disable"
+                    | wamn_identity_client::nats::ENSURE_ACCOUNT_PATH
+                    | wamn_identity_client::nats::SIGN_USER_PATH
             )
         {
-            let Some(org) = self
-                .inner
-                .control_org
-                .as_ref()
-                .filter(|_| certificate == PeerCertificate::Control)
-            else {
-                return Ok(response(
-                    StatusCode::FORBIDDEN,
-                    "application/json",
-                    br#"{"error":"control certificate required"}"#.to_vec(),
-                ));
-            };
-            return Ok(users::respond(&self.inner, org, request, source).await);
+            return Ok(users::respond(&self.inner, request, source).await);
         }
         let source = if self.inner.trusted_proxy_hops == 0
             || !request.headers().contains_key("x-forwarded-for")
@@ -342,31 +333,6 @@ impl IdentityService {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PeerCertificate {
-    None,
-    Operator,
-    Control,
-}
-
-impl PeerCertificate {
-    fn authenticated(
-        certificates: Option<&[CertificateDer<'_>]>,
-        org: Option<&wamn_registry::OrgId>,
-    ) -> Self {
-        let Some(leaf) = certificates.and_then(|chain| chain.first()) else {
-            return Self::None;
-        };
-        if let Some(org) = org
-            && users::matches_control_subject(leaf.as_ref(), org)
-        {
-            Self::Control
-        } else {
-            Self::Operator
-        }
-    }
-}
-
 fn signing_envelope() -> Result<wamn_envelope::encryption::Envelope, IdentityServiceError> {
     let configuration = std::env::var("WAMN_OAUTH_ENCRYPTION")
         .map_err(|_| IdentityServiceError::new("signing key envelope configuration is required"))?;
@@ -397,30 +363,10 @@ fn response(
         .expect("constant HTTP response metadata")
 }
 
-/// Parse mounted PEM material into the service's TLS-only listener configuration.
+/// Parse the serving TLS certificate and private key.
 pub fn tls_config(
     certificate_pem: &[u8],
     private_key_pem: &[u8],
-) -> Result<rustls::ServerConfig, IdentityServiceError> {
-    listener_tls_config(certificate_pem, private_key_pem, None)
-}
-
-/// Trust only the dedicated operator CA for optional TLS client authentication.
-///
-/// Anonymous clients can read public keys and use password login.
-/// Only a verified client certificate authorizes PAT issuance.
-pub fn tls_config_with_operator_ca(
-    certificate_pem: &[u8],
-    private_key_pem: &[u8],
-    operator_ca_pem: &[u8],
-) -> Result<rustls::ServerConfig, IdentityServiceError> {
-    listener_tls_config(certificate_pem, private_key_pem, Some(operator_ca_pem))
-}
-
-fn listener_tls_config(
-    certificate_pem: &[u8],
-    private_key_pem: &[u8],
-    operator_ca_pem: Option<&[u8]>,
 ) -> Result<rustls::ServerConfig, IdentityServiceError> {
     let certificates = CertificateDer::pem_slice_iter(certificate_pem)
         .collect::<Result<Vec<_>, _>>()
@@ -428,31 +374,10 @@ fn listener_tls_config(
     let key = PrivateKeyDer::from_pem_slice(private_key_pem)
         .map_err(|_| IdentityServiceError::new("identity TLS private key refused"))?;
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let verifier =
-        match operator_ca_pem {
-            Some(pem) => {
-                let mut roots = rustls::RootCertStore::empty();
-                for certificate in CertificateDer::pem_slice_iter(pem) {
-                    roots
-                        .add(certificate.map_err(|_| {
-                            IdentityServiceError::new("identity operator CA refused")
-                        })?)
-                        .map_err(|_| IdentityServiceError::new("identity operator CA refused"))?;
-                }
-                rustls::server::WebPkiClientVerifier::builder_with_provider(
-                    Arc::new(roots),
-                    Arc::clone(&provider),
-                )
-                .allow_unauthenticated()
-                .build()
-                .map_err(|_| IdentityServiceError::new("identity operator CA refused"))?
-            }
-            None => rustls::server::WebPkiClientVerifier::no_client_auth(),
-        };
     let mut config = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(|_| IdentityServiceError::new("identity TLS versions refused"))?
-        .with_client_cert_verifier(verifier)
+        .with_no_client_auth()
         .with_single_cert(certificates, key)
         .map_err(|_| IdentityServiceError::new("identity TLS key pair refused"))?;
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
@@ -478,15 +403,9 @@ pub async fn serve(
                 connections.spawn(async move {
                     let _slot = slot;
                     let Ok(Ok(tls)) = tokio::time::timeout(IO_TIMEOUT, acceptor.accept(tcp)).await else { return; };
-                    // Only the accepted TLS session supplies client authority.
-                    // Certificate headers and bearer credentials cannot set it.
-                    let certificate = PeerCertificate::authenticated(
-                        tls.get_ref().1.peer_certificates(),
-                        service.inner.control_org.as_ref(),
-                    );
                     let handler = service_fn(move |request| {
                         let service = service.clone();
-                        async move { service.respond(request, certificate, peer.ip()).await }
+                        async move { service.respond(request, peer.ip()).await }
                     });
                     let _ = http1::Builder::new().timer(TokioTimer::new())
                         .header_read_timeout(IO_TIMEOUT)

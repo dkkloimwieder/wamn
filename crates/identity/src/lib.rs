@@ -28,6 +28,7 @@ pub mod paging;
 pub mod password;
 pub mod password_login;
 pub mod session_keys;
+pub mod nats;
 pub mod session_token;
 pub mod transaction;
 

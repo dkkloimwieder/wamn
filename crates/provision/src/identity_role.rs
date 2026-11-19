@@ -164,7 +164,10 @@ pub fn grant_identity_issuer_surface_sql() -> String {
          GRANT INSERT ON platform.tx_identity TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO {role}; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON \
-           identity.session_keys, identity.session_signing_state TO {role}; GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO {role};",
+           identity.session_keys, identity.session_signing_state TO {role}; \
+         GRANT SELECT, INSERT ON identity.nats_keys TO {role}; \
+         GRANT UPDATE (project_count, issued_at) ON identity.nats_keys TO {role}; \
+         GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO {role};",
         crate::sql::ensure_system_roles_sql(),
     );
     for (schema, table, columns) in IDENTITY_ISSUER_READ_COLUMNS {

@@ -218,7 +218,7 @@ The four status routes need `org-admin`, and they write `registry.environments.s
 Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
-Control calls identity through one HTTPS client with the certificate `CN=control-<org>`.
+Control calls identity over HTTPS with its projected service account token.
 `user.create` and `user.invite` call `POST /users` before writing the membership.
 `user.invite` also writes the requested grants. Control calls `POST /invitations` only when the user has no password.
 Control checks contact details before it calls identity. It answers `user_refused` when identity refuses the user.
@@ -984,10 +984,11 @@ The Rust web front normalizes the final address in the chain before proxying a p
 Direct requests without that header use the TLS peer address.
 Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
-User management uses the client certificate that the operator CA verifies.
-The certificate subject must match `WAMN_IDENTITY_CONTROL_SUBJECT`, which is `CN=control-<org>`.
-User management shares the request limits. Its source is the TLS peer address.
-`POST /invitations` takes a `principal_id` and requires mail configuration.
+User management and NATS signing use projected service account tokens with audience `wamn-identity`.
+Identity verifies each token through Kubernetes TokenReview and requires its namespace to exist in `registry.orgs`.
+The `wamn-control-<org>` service account can manage users. The `wamn-operation-<org>` service account can request NATS credentials for its own org.
+User management shares the password request limits and uses the TLS peer address.
+`POST /invitations` takes an active member's `principal_id` and requires mail configuration.
 The service sends the one-time secret through Resend to that principal's stored email.
 A successful provider response means accepted for delivery, not confirmed inbox delivery.
 The service makes no automatic send retry and reports failed or uncertain sends as unavailable.

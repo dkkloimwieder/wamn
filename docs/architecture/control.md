@@ -27,7 +27,7 @@ It also checks the org control login and the fixed apply login.
 | `registry_token_metadata` | Use the installed metadata credential source instead of the registry file |
 | `insecure_registry`, `oci_ca_paths` | Installed registry transport and public trust bundles |
 | `events` | Optional event policy with `stream_replicas` and `dup_window_secs` |
-| `identity` | Optional operator `endpoint`, `client_cert`, `client_key`, and `server_ca` |
+| `identity` | Optional identity `endpoint` and `server_ca` for the service account token client |
 | `oauth_encryption` | Optional envelope encryption configuration |
 
 Control authorizes the target and submits one Kubernetes Job.

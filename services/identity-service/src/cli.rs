@@ -12,10 +12,7 @@ use wamn_identity::session_keys::{
     activate_session_key, publish_session_key, remove_compromised_session_key, retire_session_keys,
 };
 
-use crate::{
-    IdentityConfig, IdentityService, IdentityServiceError, connect, serve, tls_config,
-    tls_config_with_operator_ca,
-};
+use crate::{IdentityConfig, IdentityService, IdentityServiceError, connect, serve, tls_config};
 
 /// Identity authority CLI; database credentials are absent from Debug and help values.
 #[derive(Parser)]
@@ -89,12 +86,6 @@ enum Command {
         tls_cert: PathBuf,
         #[arg(long, env = "WAMN_IDENTITY_TLS_KEY")]
         tls_key: PathBuf,
-        /// Dedicated client-certificate CA for control user management.
-        #[arg(long, env = "WAMN_IDENTITY_OPERATOR_CA")]
-        operator_ca: Option<PathBuf>,
-        /// Exact subject of the control client certificate, CN=control-<org>.
-        #[arg(long, env = "WAMN_IDENTITY_CONTROL_SUBJECT")]
-        control_subject: Option<String>,
         /// Rotate signing keys at this interval. The default is 30 days.
         #[arg(long, default_value_t = crate::DEFAULT_KEY_ROTATION.as_secs())]
         key_rotation_seconds: u64,
@@ -133,8 +124,6 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         bind,
         tls_cert,
         tls_key,
-        operator_ca,
-        control_subject,
         key_rotation_seconds,
         trusted_proxy_hops,
     } = cli.command
@@ -161,26 +150,13 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         let config = config
             .with_trusted_proxy_hops(trusted_proxy_hops)
             .with_key_rotation(std::time::Duration::from_secs(key_rotation_seconds))?;
-        let config = if let Some(subject) = control_subject {
-            config.with_control_subject(&subject)?
-        } else {
-            config
-        };
         let certificate = tokio::fs::read(tls_cert)
             .await
             .map_err(|_| IdentityServiceError::new("read identity TLS certificate failed"))?;
         let private_key = tokio::fs::read(tls_key)
             .await
             .map_err(|_| IdentityServiceError::new("read identity TLS private key failed"))?;
-        let tls = match operator_ca {
-            Some(path) => {
-                let ca = tokio::fs::read(path)
-                    .await
-                    .map_err(|_| IdentityServiceError::new("read identity operator CA failed"))?;
-                tls_config_with_operator_ca(&certificate, &private_key, &ca)?
-            }
-            None => tls_config(&certificate, &private_key)?,
-        };
+        let tls = tls_config(&certificate, &private_key)?;
         drop(private_key);
         let service = IdentityService::connect(config).await?;
         let rotation_state = Arc::clone(&service.inner);
@@ -204,11 +180,6 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
             .local_addr()
             .map_err(|_| IdentityServiceError::new("read identity HTTPS address failed"))?;
         tracing::info!("identity listening on {address}");
-        if std::env::var_os("WAMN_NATS_URL").is_none() {
-            tracing::warn!(
-                "WAMN_NATS_URL is unset: a host keeps a revoked login for its auth memory TTL"
-            );
-        }
         return tokio::select! {
             result = serve(listener, service, tls) => result,
             () = rotation => unreachable!("rotation runs until shutdown"),
