@@ -13,7 +13,7 @@ Each `wamn platform deploy` waits for the previous SQL Job, removes it, and runs
 Identity serves the fixed `global.identityIssuer` address and uses the system PostgreSQL login in `platform`. The edge uses that issuer, and the runtime operator uses the shared broker address in `global.nats.schedulerUrl`.
 The chart mounts the `identity-settings` ConfigMap as a JSON file.
 The readiness probe checks the database and active signing key.
-Both replicas use the same encryption provider and wrapping key as the OAuth hosts.
+Both identity replicas share a wrapping key. With local encryption, each org has its own OAuth wrapping key.
 
 For local encryption, supply the existing `identity.oauthSecret` with a 32-byte `key`. For Cloud KMS, supply the matching project and region under `identity.oauthEncryption` and configure the pod identity. Identity stores signing keys in encrypted form.
 

@@ -3,6 +3,8 @@
 {{- $name := printf "c-%s" $namespace }}
 {{- $account := printf "wamn-control-%s" $namespace }}
 {{- $configuration := .Values.control.configuration }}
+{{- $oauth := $configuration.oauth_encryption | default dict }}
+{{- $oauthSecret := ternary "wamn-oauth" .Values.control.oauthSecret (eq (get $oauth "provider") "local") }}
 {{- $_ := required "Set control.configuration.identity_issuer to the platform identity issuer." $configuration.identity_issuer }}
 {{- $_ := required "Set control.configuration.nats_url to the platform NATS address." $configuration.nats_url }}
 {{- $settings := merge (dict "public_origin" (printf "https://%s" (include "org.controlHost" .))) $configuration | toJson }}
@@ -59,7 +61,7 @@ spec:
             - {name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}
             - {name: identity-token, mountPath: /var/run/secrets/wamn-identity, readOnly: true}
             - {name: registry, mountPath: /credentials/registry, readOnly: true}
-            {{- if .Values.control.oauthSecret }}
+            {{- if $oauthSecret }}
             - {name: oauth, mountPath: /etc/wamn/oauth, readOnly: true}
             {{- end }}
       volumes:
@@ -100,9 +102,12 @@ spec:
           {{- else }}
           configMap: {name: wamn-registry-helper}
           {{- end }}
-        {{- if .Values.control.oauthSecret }}
+        {{- if $oauthSecret }}
         - name: oauth
-          secret: {secretName: {{ .Values.control.oauthSecret }}, defaultMode: 384} # 0600
+          secret:
+            secretName: {{ $oauthSecret }}
+            defaultMode: 384 # 0600
+            items: [{key: key, path: key}]
         {{- end }}
 ---
 apiVersion: v1

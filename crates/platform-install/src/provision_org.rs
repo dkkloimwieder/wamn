@@ -1,13 +1,18 @@
-//! Provision an org's system database logins and registry row inside the cluster.
+//! Provision an org's system database logins, registry row, and local OAuth key.
 
 use anyhow::Context as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
+use std::path::Path;
 use wamn_identity_protocol::LoginName;
+use wamn_kubernetes::kubernetes_api::KubernetesApi;
 use wamn_postgres::ConnectionConfig;
 use wamn_registry::OrgId;
 
 pub const CONTROL_SECRET: &str = "wamn-control-db";
 pub(crate) const APPLY_SECRET: &str = "wamn-apply-db";
+const OAUTH_SECRET: &str = "wamn-oauth";
+pub(crate) const ORG_INPUTS_DIR: &str = "/etc/wamn/org-inputs";
+pub(crate) const OAUTH_ENCRYPTION_INPUT: &str = "oauthEncryption";
 pub const SQL_ACCOUNT: &str = "wamn-org-sql";
 pub const INVITATION_ACCOUNT: &str = "wamn-org-invitation";
 pub const CONTROL_AUDIENCE: &str = "wamn-control";
@@ -29,21 +34,41 @@ pub fn apply_login(org: &OrgId, database: &str) -> LoginName {
     )
 }
 
-/// Rotate both logins, recording the org before releasing their credentials.
+/// Initialize the local OAuth key if needed, record the org, and rotate both logins.
 pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::Result<()> {
-    let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
+    let api = KubernetesApi::in_cluster()?;
+    let oauth_encryption = tokio::fs::read(Path::new(ORG_INPUTS_DIR).join(OAUTH_ENCRYPTION_INPUT))
+        .await
+        .context("read the platform OAuth encryption configuration")?;
+    let oauth_encryption: serde_json::Value = serde_json::from_slice(&oauth_encryption)
+        .context("decode the platform OAuth encryption configuration")?;
     let mut connection = crate::provision_system::connect_system_database(&database.to_json()?)
         .await
         .context("connect to the system database for org provisioning")?;
     let control = control_login(org, &database.database);
     let apply = apply_login(org, &database.database);
-    // Keep concurrent provisioning Jobs ordered through the Secret patch.
+    // Keep concurrent provisioning Jobs ordered through the Secret writes.
     // Dropping the dedicated connection releases this lock on every exit.
     sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
         .bind(&control)
         .execute(&mut connection)
         .await
         .context("lock the org login")?;
+
+    let random = SystemRandom::new();
+    if oauth_encryption["provider"] == "local" {
+        let path = format!("/api/v1/namespaces/{org}/secrets/{OAUTH_SECRET}");
+        let secret = api.get(path).await?;
+        if secret["data"].get("key").is_none() {
+            // The host's envelope reader requires 32 raw bytes.
+            let mut key = [0_u8; 32];
+            random
+                .fill(&mut key)
+                .map_err(|_| anyhow::anyhow!("generate the OAuth encryption key for org {org}"))?;
+            api.patch_namespaced_secret_data(org.as_str(), OAUTH_SECRET, "key", &key)
+                .await?;
+        }
+    }
 
     // These limits match the role limits in the platform Poolers.
     let logins = [
@@ -52,7 +77,6 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
     ];
     let mut passwords = Vec::with_capacity(logins.len());
     let mut tx = crate::transaction::provisioning_transaction(&mut connection).await?;
-    let random = SystemRandom::new();
     for (login, group, limit, secret) in logins {
         let mut entropy = [0_u8; 32];
         random

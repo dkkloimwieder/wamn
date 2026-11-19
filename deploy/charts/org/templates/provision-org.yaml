@@ -1,4 +1,6 @@
 {{- $org := .Values.org -}}
+{{- $oauth := .Values.control.configuration.oauth_encryption | default dict -}}
+{{- $localOAuth := eq (get $oauth "provider") "local" -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -22,6 +24,15 @@ data:
   # Kubernetes requires a key. Helm owns the public username and the Job owns the password.
   username: {{ $login | b64enc | quote }}
 {{- end }}
+{{- if $localOAuth }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-oauth
+  namespace: {{ $org | quote }}
+type: Opaque
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -33,6 +44,12 @@ rules:
     resources: [secrets]
     resourceNames: {{ $secrets | toJson }}
     verbs: [get, update, patch]
+  {{- if $localOAuth }}
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [wamn-oauth]
+    verbs: [get, update, patch]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

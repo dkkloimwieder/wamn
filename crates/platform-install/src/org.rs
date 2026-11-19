@@ -9,11 +9,13 @@ use wamn_postgres::ConnectionConfig;
 use wamn_registry::OrgId;
 
 use crate::provision_org::{
-    APPLY_SECRET, CONTROL_AUDIENCE, CONTROL_SECRET, INVITATION_ACCOUNT, SQL_ACCOUNT,
+    APPLY_SECRET, CONTROL_AUDIENCE, CONTROL_SECRET, INVITATION_ACCOUNT, OAUTH_ENCRYPTION_INPUT,
+    ORG_INPUTS_DIR, SQL_ACCOUNT,
 };
 use crate::release_chart::bundle::POD_REGISTRY;
 
 const PLATFORM: &str = "platform";
+const ORG_INPUTS: &str = "wamn-org-inputs";
 const SYSTEM_SQL_CONFIG: &str = "wamn-system-sql";
 const PROVISION_JOB: &str = "wamn-provision-org";
 const SQL_CONFIG_PATH: &str = "/etc/wamn/system-sql/database.json";
@@ -31,7 +33,7 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
         namespace: PLATFORM.into(),
     };
     let (inputs, database_config, identity_ca, nats_ca, api_server) = tokio::try_join!(
-        config_map(&target, PLATFORM, "wamn-org-inputs"),
+        config_map(&target, PLATFORM, ORG_INPUTS),
         config_map(&target, PLATFORM, SYSTEM_SQL_CONFIG),
         config_map(&target, "hosts", "identity-ca"),
         kubectl::kubectl(
@@ -123,6 +125,7 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
     spec["automountServiceAccountToken"] = true.into();
     spec["volumes"] = json!([
         {"name": "configuration", "configMap": {"name": SYSTEM_SQL_CONFIG}},
+        {"name": "org-inputs", "configMap": {"name": ORG_INPUTS}},
         {"name": "database", "projected": {"defaultMode": 256, "sources": [
             {"secret": {"name": login, "items": [
                 {"key": "tls.crt", "path": format!("{login}/tls.crt")},
@@ -135,12 +138,13 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
     ]);
     spec["containers"][0]["volumeMounts"] = json!([
         {"name": "configuration", "mountPath": "/etc/wamn/system-sql", "readOnly": true},
+        {"name": "org-inputs", "mountPath": ORG_INPUTS_DIR, "readOnly": true},
         {"name": "database", "mountPath": wamn_postgres::DATABASE_DIR, "readOnly": true},
     ]);
     let sql_job_uid = job::run_exclusive(&target, &sql, DEADLINE + Duration::from_secs(30)).await?;
 
     target.namespace = org.to_string();
-    // The control pool reads its mounted password at startup.
+    // Control loads the mounted credentials at startup.
     let control = wamn_registry::name::control_resource(org);
     let restart = json!({
         "spec": {"template": {"metadata": {"annotations": {
@@ -198,6 +202,8 @@ fn org_values(
     let image = field(inputs, "controlImage")?;
     let registry = field(inputs, "registry")?;
     let kind = field(inputs, "provider")? == "kind";
+    let oauth_encryption: Value = serde_json::from_str(field(inputs, OAUTH_ENCRYPTION_INPUT)?)
+        .context("decode the platform OAuth encryption configuration")?;
     let internal_registry = registry
         .strip_prefix("localhost:5001")
         .filter(|rest| rest.is_empty() || rest.starts_with('/'))
@@ -230,6 +236,7 @@ fn org_values(
                 "worker_image": image,
                 "chart": "/usr/local/share/wamn/deploy/charts/application",
                 "registry_token_metadata": !kind,
+                "oauth_encryption": oauth_encryption,
             },
         },
     }))

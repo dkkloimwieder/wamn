@@ -16,5 +16,9 @@ The control API route uses `<org>.<base>`. The `wamn org create` command reads t
 Pin `control.image` by digest. Set `control.platformUi` to publish the UI release at that host.
 Control mounts the org's control and apply logins from named Secrets. The chart creates both Secrets with their public usernames.
 After Helm installs the chart, the org SQL Job in `platform` writes the passwords.
+`wamn org create` copies the platform's `identity.oauthEncryption` to `control.configuration.oauth_encryption`.
+For local encryption, the chart creates an empty `wamn-oauth` Secret in the org namespace and grants the org SQL Job access to it.
+The Job writes a random 32-byte `key` only when the entry is absent. Control and the environment hosts use that key.
+Cloud KMS uses no org OAuth Secret.
 Pass the public CA certificates as PEM through `identityCa`, `natsCa`, and `postgresCa`.
 Read `tls.crt` from `platform/wamn-identity-ca` and `platform/wasmcloud-ca`, and `ca.crt` from `platform/wamn-pg-ca`.
