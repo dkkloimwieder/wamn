@@ -7,7 +7,7 @@ use super::{
 use crate::provision_project_env::{self, registry, workload};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use std::{num::NonZeroU32, time::Duration};
+use std::time::Duration;
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_platform_install as installer;
 use wamn_registry::{Triple, name, sql::upsert_event_reader_sql};
@@ -18,7 +18,6 @@ pub async fn configure(
     application: Option<&wamn_catalog::ApplicationName>,
     disposable: Option<bool>,
     system_owner: &str,
-    max_projects: NonZeroU32,
 ) -> anyhow::Result<()> {
     let mut platform = platform.clone();
     super::runtime::resolve_platform(&mut platform)?;
@@ -46,15 +45,18 @@ pub async fn configure(
                 .collect();
             let mut reserved = Vec::with_capacity(projects.len());
             {
-                let mut client = wamn_postgres::connect(system_owner).await?;
+                let mut client = wamn_postgres::connect(&platform.system_database_url)
+                    .await
+                    .context("connect as the apply role to reserve projects")?;
                 let mut transaction = provision_project_env::provisioning_transaction(&mut client)
                     .await?;
-                sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('wamn.project-stream-capacity', 0))")
+                sqlx::query(wamn_registry::sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
                     .execute(&mut *transaction)
                     .await
                     .context("lock platform project stream capacity")?;
-                let (current, additional): (i64, i64) = sqlx::query_as(
-                    "SELECT (SELECT count(*) FROM registry.environment_projects), count(*) \
+                let (max_projects, current, additional): (Option<i64>, i64, i64) = sqlx::query_as(
+                    "SELECT (SELECT max_projects FROM registry.meta), \
+                            (SELECT count(*) FROM registry.environment_projects), count(*) \
                      FROM unnest($3::text[]) AS selected(project) \
                      WHERE NOT EXISTS (SELECT 1 FROM registry.environment_projects AS registered \
                          WHERE registered.org = $1 AND registered.env = $2 \
@@ -66,9 +68,10 @@ pub async fn configure(
                 .fetch_one(&mut *transaction)
                 .await
                 .context("count project stream reservations")?;
+                let max_projects = max_projects.context("the system SQL Job has not set the project stream limit")?;
                 let projected = current + additional;
                 ensure!(
-                    additional == 0 || projected <= i64::from(max_projects.get()),
+                    additional == 0 || projected <= max_projects,
                     "project stream limit is {max_projects}, count would reach {projected} ({current} reserved, {additional} new)"
                 );
                 for project in &projects {
@@ -235,8 +238,7 @@ async fn configure_project(
         wamn_broker::authorization::certificate(&recovery, &recovery, &recovery),
     ]);
     values["environmentDocument"] = applied_document.into();
-    values["cdcReader"] =
-        reader_values(platform, triple, &publication, &capture.to_json()?).await?;
+    values["cdcReader"] = reader_values(platform, triple, &capture).await?;
     let paused = super::capture_gap::is_open(&mut *lock.client().await, triple).await?;
     values["cdcReader"]["pause"] = paused.into();
     // Wait for the database first because the reader needs the slot created below.
@@ -345,17 +347,11 @@ async fn configure_project(
 async fn reader_values(
     platform: &Platform,
     triple: &Triple,
-    publication: &str,
-    capture: &str,
+    capture: &wamn_postgres::ConnectionConfig,
 ) -> anyhow::Result<Value> {
     let image = installer::release_chart::image_set(&platform.chart)
         .await?
         .host;
-    let config = super::cdc_reader::reader_configuration(
-        triple,
-        publication,
-        installer::platform::identity::NATS_URL,
-    );
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let capture_name = wamn_provision::cdc_reader_name(org, project, env);
     Ok(json!({
@@ -365,7 +361,7 @@ async fn reader_values(
         "image": image,
         "registrySecret": (!platform.registry_token_metadata).then_some(name::REGISTRY_PULL),
         "natsSecret": name::cdc_nats_certificate(triple),
-        "connection": capture,
-        "configuration": config,
+        "database": capture,
+        "natsUrl": platform.nats_url,
     }))
 }

@@ -1,32 +1,5 @@
-use super::{EnvironmentDocument, Mapping, RoleName, Value, ValuesInput, release_chart};
+use super::{EnvironmentDocument, RoleName, Value, ValuesInput, release_chart};
 use anyhow::Context as _;
-
-pub(in crate::environment) fn host_group(mut group: Mapping) -> anyhow::Result<Mapping> {
-    // The upstream chart replaces a group's resources wholesale.
-    // Fill omitted defaults before it receives a placement-specific override.
-    if let Some(resources) = group.get_mut("resources") {
-        let resources = resources
-            .as_mapping_mut()
-            .context("host resources are not a mapping")?;
-        let mut defaults: Value = serde_yaml::from_str(include_str!(
-            "../../../../../deploy/charts/environment/values.yaml"
-        ))?;
-        let Value::Mapping(defaults) =
-            std::mem::take(&mut defaults["runtime-operator"]["runtime"]["resources"])
-        else {
-            anyhow::bail!("platform host resources are not a mapping");
-        };
-        for (name, value) in defaults {
-            resources.entry(name).or_insert(value);
-        }
-    }
-    group
-        .entry("env".into())
-        .or_insert_with(|| Value::Sequence(Vec::new()))
-        .as_sequence_mut()
-        .context("the platform host group's `env` is not a list")?;
-    Ok(group)
-}
 
 /// Build release values from the document, artifact, policy, and host overlay.
 pub(super) fn release_values(

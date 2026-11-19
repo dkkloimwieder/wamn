@@ -8,9 +8,10 @@ GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.curr
     wamn_authority.current_role(), wamn_authority.current_application() TO wamn_apply;
 GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid) TO wamn_apply;
 GRANT SELECT ON registry.orgs, registry.env_policies, registry.environment_projects,
-    registry.target, registry.meta, identity.org_roles, identity.project_roles,
+    registry.target, identity.org_roles, identity.project_roles,
     identity.project_env_memberships, identity.principals,
     wamn_authority.author_login_projects TO wamn_apply;
+GRANT SELECT (platform_domain, max_projects) ON registry.meta TO wamn_apply;
 GRANT SELECT (org, id), INSERT (org, id) ON registry.projects TO wamn_apply;
 GRANT INSERT (org, env, project, secret_name, secret_namespace, instance_suffix) ON registry.environment_projects TO wamn_apply;
 GRANT UPDATE (secret_name, secret_namespace, schema_mode)

@@ -249,7 +249,7 @@ async fn delete_locked(
         if environment_account_exists(&platform.target, triple).await? {
             let broker = admin_context(
                 triple,
-                wamn_platform_install::platform::identity::NATS_URL,
+                &platform.nats_url,
                 std::path::Path::new(ADMIN_CREDENTIAL_DIR),
             )
             .await?;

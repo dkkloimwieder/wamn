@@ -218,7 +218,7 @@ The four status routes need `org-admin`, and they write `registry.environments.s
 Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
-Control calls identity through one HTTPS client with the certificate `CN=control-<org>`.
+Control calls identity over HTTPS with a projected service account token for the `wamn-identity` audience.
 `user.create` and `user.invite` call `POST /users` before writing the membership.
 `user.invite` also writes the requested grants. Control calls `POST /invitations` only when the user has no password.
 Control checks contact details before it calls identity. It answers `user_refused` when identity refuses the user.
@@ -421,8 +421,7 @@ Both default to enforce. Each linear memory has a 256 MiB ceiling.
 The shared guest memory budget remains derived from the container limit.
 Existing route and queue admission limits and deployment memory limits remain independent.
 Wasmtime's pooling allocator remains enabled under its separate resource limits.
-The release chart sets how many bytes each allocator slot keeps resident after use.
-Dev activation and the local benchmark read the same values ([host environment](../operations/development-loop.md)).
+The host defaults to 64 KiB of resident linear memory, 4 KiB of resident table memory, and 8 KiB of resident async stack memory per allocator slot.
 These values change residency only. They do not increase slot counts or memory ceilings.
 Wasmtime leaves async stack zeroing disabled, so its async stack residency value has no effect under this configuration.
 Native epochs bound guest execution. Duration metering does not grant instruction fuel.
@@ -814,7 +813,7 @@ Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.
 The shared [encryption module](../../crates/envelope/src/encryption.rs) supports regional Cloud KMS and a local key file.
-The host reads its provider from `WAMN_OAUTH_ENCRYPTION`.
+The host reads its provider from the `oauth_encryption` field in its settings file.
 Use `gcp` for Cloud KMS or `local` for a key file.
 [Deployment instructions](../operations/gcp.md#49-platform-install-inputs) describe that configuration.
 Each host retains at most 1024 unwrapped keys and evicts the least recently used key.
@@ -983,8 +982,6 @@ The Rust web front normalizes the final address in the chain before proxying a p
 Direct requests without that header use the TLS peer address.
 Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
-User management uses the client certificate that the operator CA verifies.
-The certificate subject has the form `CN=control-<org>`.
 User management shares the request limits. Its source is the TLS peer address.
 `POST /invitations` takes a `principal_id` and requires mail configuration.
 The service sends the one-time secret through Resend to that principal's stored email.

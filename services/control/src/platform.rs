@@ -116,7 +116,7 @@ impl Execution {
             &name,
             &worker.image,
             &["/usr/local/bin/wamn-control"],
-            &["--config", "/etc/wamn/control/config.json", "worker"],
+            &["--settings", crate::SETTINGS_FILE, "worker"],
         );
         job["metadata"]["annotations"] =
             json!({"wamn.dev/operation-target":coordinate,"wamn.dev/operation":worker_type});
@@ -219,7 +219,6 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                 application.as_ref(),
                 disposable,
                 &system,
-                config.max_projects,
             )
             .await?;
             Ok(json!({"configured":true}))

@@ -8,15 +8,15 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
-use wamn_oci::package_artifact::http_client::{HttpClient, HttpResponse};
+use wamn_oci::package_artifact::http_client::HttpResponse;
 
-use super::{https_client, service_endpoint};
+use super::{IdentityHttp, TOKEN_PATH, service_endpoint};
 
 const MAX_USER_RESPONSE_BYTES: usize = 4096;
 
 /// One authenticated client for the user management routes of identity.
 pub struct UserClient {
-    http: HttpClient,
+    http: IdentityHttp,
     create: Url,
     invite: Url,
     disable: Url,
@@ -40,19 +40,24 @@ pub enum DisableOutcome {
 }
 
 impl UserClient {
-    /// Connect user management to the mounted control credentials and server CA.
-    pub fn new(endpoint: &str, cert: &Path, key: &Path, ca: &Path) -> anyhow::Result<Self> {
+    /// Use the projected control service account token and identity server CA.
+    pub fn new(endpoint: &str, ca: &Path) -> anyhow::Result<Self> {
+        Self::with_token_file(endpoint, ca, Path::new(TOKEN_PATH))
+    }
+
+    pub(super) fn with_token_file(endpoint: &str, ca: &Path, token: &Path) -> anyhow::Result<Self> {
         Ok(Self {
             create: service_endpoint(endpoint, "users")?,
             invite: service_endpoint(endpoint, "invitations")?,
             disable: service_endpoint(endpoint, "users/disable")?,
-            http: https_client(cert, key, Some(ca))?,
+            http: IdentityHttp::new(ca, token)?,
         })
     }
 
     /// Create or reuse one active user identity.
     pub async fn create(&self, email: &str, display_name: &str) -> anyhow::Result<UserResponse> {
         let response = self
+            .http
             .post(
                 &self.create,
                 encode(&UserRequest {
@@ -78,6 +83,7 @@ impl UserClient {
     /// Ask identity to mail an invitation to the user's stored address.
     pub async fn invite(&self, principal_id: &PrincipalId) -> anyhow::Result<()> {
         let response = self
+            .http
             .post(&self.invite, invitation_body(principal_id)?)
             .await?;
         let status = response.status();
@@ -93,6 +99,7 @@ impl UserClient {
     /// Disable a user's principal in identity.
     pub async fn disable(&self, principal_id: &PrincipalId) -> anyhow::Result<DisableOutcome> {
         let response = self
+            .http
             .post(
                 &self.disable,
                 encode(&PrincipalRequest {
@@ -111,16 +118,6 @@ impl UserClient {
             }
             _ => anyhow::bail!("identity did not disable the user: {status}"),
         }
-    }
-
-    async fn post(&self, endpoint: &Url, body: Vec<u8>) -> anyhow::Result<HttpResponse> {
-        self.http
-            .post(endpoint.as_str())
-            .header(hyper::header::CONTENT_TYPE, "application/json")
-            .body(body)
-            .send()
-            .await
-            .context("identity user management request failed")
     }
 }
 

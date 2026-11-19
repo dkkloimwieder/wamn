@@ -11,7 +11,6 @@ metadata:
   namespace: {{ $namespace }}
 data:
   database.json: {{ dict "host" $system.host "port" $system.port "database" $system.name "username" "postgres" "credentials" (dict "namespace" $namespace "name" $admin) "server_ca" (dict "namespace" $namespace "name" $ca) | toJson | quote }}
-  max_projects: {{ .Values.global.maxProjects | quote }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -36,6 +35,8 @@ spec:
             - /etc/wamn/system-sql/database.json
             - --platform-domain
             - {{ required "Set platformDomain to the platform email domain." .Values.platformDomain | quote }}
+            - --max-projects
+            - {{ .Values.global.maxProjects | quote }}
           volumeMounts:
             - {name: configuration, mountPath: /etc/wamn/system-sql, readOnly: true}
             - {name: database, mountPath: /etc/wamn/db, readOnly: true}

@@ -212,7 +212,7 @@ fn manifest(
         &name,
         &worker.image,
         &["/usr/local/bin/wamn-control"],
-        &["--config", "/etc/wamn/control/config.json", "worker"],
+        &["--settings", crate::SETTINGS_FILE, "worker"],
     );
     job["metadata"]["namespace"] = triple.org.as_str().into();
     job["metadata"]["annotations"] = json!({TARGET:coordinate,OPERATION:operation.command()});

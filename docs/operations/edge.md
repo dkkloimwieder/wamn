@@ -12,7 +12,7 @@ wamn-edge --config <path>
 
 Without `--config`, `WAMN_EDGE_CONFIG` names the file. [`edge.example.toml`](../../services/edge/edge.example.toml) shows every key.
 The `[target]` keys name the org, the project and the environment of the box.
-The org and the project also take the variables `WAMN_ORG` and `WAMN_PROJECT` that the cloud host reads.
+The device also accepts `WAMN_ORG` and `WAMN_PROJECT` for these two keys.
 The environment has no variable. The edge reads it only from the file.
 The release names no environment key.
 The edge derives `project_env_key` as `<org>--<environment>--<project>` from that coordinate.
@@ -48,7 +48,7 @@ wamn-edge --config <path> samples resolve <sample_key> <basis>
 ## Serve the cluster web edge
 
 The `edge-web` image runs `wamn-web`, a separate service from the device binary.
-Its JSON configuration names the HTTP listener, web bucket, identity HTTPS endpoint, identity CA file and `trusted_proxy_hops`.
+Its JSON settings name the web bucket, identity HTTPS issuer and `trusted_proxy_hops`. The service listens on port 8080 and reads the identity CA and CSRF key from mounted files.
 Count trusted proxies from the direct peer toward the client. Zero uses the direct peer.
 Direct requests without a forwarded header also use the peer, including Kubernetes port forwards.
 The installer selects two for GCP: its load balancer appends the client and its own address to `X-Forwarded-For`.
@@ -56,8 +56,8 @@ Local ingress uses one. The front forwards only the selected client address for 
 TLS for browser traffic terminates at ingress.
 
 ```bash
-wamn-web --config <path>
-wamn-web --config <path> probe
+wamn-web --settings <path>
+wamn-web --settings <path> probe
 ```
 
 The service discovers hosts from release ConfigMaps.

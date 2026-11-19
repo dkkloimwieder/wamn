@@ -17,6 +17,7 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 mod executor;
 mod host_project;
+pub use host_project::HostProject;
 pub mod number_counter;
 mod operation;
 mod operation_transaction;

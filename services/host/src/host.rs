@@ -2,9 +2,9 @@
 //! Helm chart. Arg surface mirrors what the chart's runtime deployment
 //! template renders for `wash host` (charts/runtime-operator).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,7 +15,7 @@ use wash_runtime::engine::WasmProposal;
 use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::engine::host_memory::HostMemoryBudgets;
 use wash_runtime::host::HostConfig;
-use wash_runtime::host::http::{ConnectionLimit, HostHandler as _, Ingress};
+use wash_runtime::host::http::{HostHandler as _, Ingress};
 use wash_runtime::host::probes::{self, Liveness, ProbeState};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin;
@@ -34,17 +34,10 @@ use wamn_authentication::access_token::AccessTokenVerifier;
 use wamn_authentication::route_authentication::{
     EnvironmentStatusReader, PlatformRouteAuthenticator,
 };
-use wamn_engine::engine::{
-    DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
-    build_engine_with_host_memory_and_compilation_cache,
-};
+use wamn_engine::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
 use wamn_engine::ingress::IngressRouting;
 use wamn_sql::WamnPostgres;
 
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each flag is an independent command-line switch of the host"
-)]
 #[derive(Debug, Args)]
 pub struct HostArgs {
     /// The host group label to assign to the host
@@ -52,7 +45,7 @@ pub struct HostArgs {
     pub host_group: String,
 
     /// NATS URL for control-plane communications
-    #[arg(long = "scheduler-nats-url", default_value = "nats://localhost:4222")]
+    #[arg(long = "scheduler-nats-url")]
     pub scheduler_nats_url: String,
 
     /// Passed by the runtime-operator chart (runtime.natsConnectTimeoutSeconds).
@@ -62,19 +55,12 @@ pub struct HostArgs {
     pub nats_connect_timeout: Duration,
 
     /// Keep broker connections on the chart-configured endpoints.
-    #[arg(long)]
+    #[arg(long, default_value_t = true)]
     pub nats_ignore_discovered_servers: bool,
 
     /// Wait during cleanup after refusing new work so traffic removal can propagate.
-    #[arg(long, env = "WASH_DRAIN_DELAY", default_value = "0s", value_parser = humantime::parse_duration)]
+    #[arg(long, default_value = "5s", value_parser = humantime::parse_duration)]
     pub drain_delay: Duration,
-
-    /// The environment policy's drain bound, which the release chart also
-    /// renders as the pod's `terminationGracePeriodSeconds` (R20). One budget
-    /// bounds the whole shutdown sequence after SIGTERM. It has no default: a
-    /// host given none refuses to start.
-    #[arg(long, env = "WAMN_DRAIN_BOUND_SECONDS")]
-    pub drain_bound_seconds: u64,
 
     #[arg(long = "scheduler-nats-tls-ca")]
     pub scheduler_nats_tls_ca: Option<PathBuf>,
@@ -91,7 +77,7 @@ pub struct HostArgs {
     /// NATS URL of the event plane: `wamn:jetstream`, the auth memory and the
     /// connection memory connect here with the environment certificate
     /// (docs/plan/alignment.md R5, R8).
-    #[arg(long = "data-nats-url", default_value = "nats://localhost:4222")]
+    #[arg(long = "data-nats-url")]
     pub data_nats_url: String,
 
     #[arg(long = "data-nats-tls-ca")]
@@ -108,30 +94,27 @@ pub struct HostArgs {
 
     /// The host configuration file that the operator chart renders for the
     /// host group's `plugins` entries (docs/plan/alignment.md R6, R9).
-    #[arg(long = "user-config")]
+    #[arg(long, default_value = "/etc/wasmcloud/host-config/config.yaml")]
     pub user_config: PathBuf,
 
-    /// The address of the `wasmcloud:nats` bindings, when it is not the data
-    /// connection. Left out, a binding that names no `servers` takes the data
-    /// URL and its TLS (the chart's `wasmcloudNatsUrl`).
-    #[arg(long = "wasmcloud-nats-url")]
-    pub wasmcloud_nats_url: Option<String>,
+    /// The pod namespace supplied by the runtime operator.
+    #[arg(long)]
+    pub environment: Option<String>,
+
+    /// Installation settings supplied by the environment chart.
+    #[arg(long)]
+    pub settings: PathBuf,
 
     /// The host name to assign to the host (chart passes the pod IP)
     #[arg(long = "host-name")]
     pub host_name: Option<String>,
 
-    /// Stable node-acquisition owner. Never derived from `--host-name`, whose
-    /// chart value is a pod IP and is not a valid runner identity.
-    #[arg(long, env = "WAMN_RUNNER")]
-    pub runner: Option<String>,
-
     /// Address for the workload HTTP server
-    #[arg(long = "http-addr")]
-    pub http_addr: Option<SocketAddr>,
+    #[arg(long, default_value = "0.0.0.0:9191")]
+    pub http_addr: SocketAddr,
 
     /// Address for native readiness and liveness probes.
-    #[arg(long, env = "WASH_PROBE_ADDR")]
+    #[arg(long, default_value = "0.0.0.0:8081")]
     pub probe_addr: Option<SocketAddr>,
 
     /// Maximum simultaneous incoming HTTP connections.
@@ -139,7 +122,7 @@ pub struct HostArgs {
     pub max_http_ingress_connections: Option<usize>,
 
     /// Maximum workloads that the native host starts concurrently.
-    #[arg(long, env = "WASH_MAX_CONCURRENT_STARTS")]
+    #[arg(long, env = "WASH_MAX_CONCURRENT_STARTS", default_value = "4")]
     pub max_concurrent_starts: Option<usize>,
 
     #[arg(long = "tls-cert-path", requires = "tls_key_path")]
@@ -150,10 +133,6 @@ pub struct HostArgs {
 
     #[arg(long = "tls-ca-path")]
     pub tls_ca_path: Option<PathBuf>,
-
-    /// Allow insecure (HTTP) OCI registries — needed for the in-cluster dev registry
-    #[arg(long = "allow-insecure-registries", default_value_t = false)]
-    pub allow_insecure_registries: bool,
 
     /// Extra PEM CA bundles trusted when pulling from OCI registries: for a
     /// registry behind a private or in-cluster CA, which the compiled-in public
@@ -171,15 +150,8 @@ pub struct HostArgs {
     pub oci_ca_paths: Vec<PathBuf>,
 
     /// The directory to use for caching OCI artifacts
-    #[arg(long = "oci-cache-dir")]
+    #[arg(long = "oci-cache-dir", default_value = "/oci-cache")]
     pub oci_cache_dir: Option<PathBuf>,
-
-    /// Host-private Wasmtime compiled-component cache.
-    ///
-    /// Keep this outside `--oci-cache-dir`: wash-runtime's OCI sweeper owns
-    /// every child of that directory and may delete it while the host runs.
-    #[arg(long = "wasmtime-cache-dir", env = "WAMN_WASMTIME_CACHE_DIR")]
-    pub wasmtime_cache_dir: Option<PathBuf>,
 
     /// Extra wasm proposals to enable on the engine (comma-separated)
     #[arg(long = "wasm-proposal", value_delimiter = ',')]
@@ -225,43 +197,24 @@ pub struct HostArgs {
             .map(|mode| if mode == "enforce" { EgressMode::Enforce } else { EgressMode::Count })
     )]
     pub socket_egress: EgressMode,
+}
 
-    /// OAuth envelope provider as JSON: local, or gcp with project and region.
-    #[arg(long, env = "WAMN_OAUTH_ENCRYPTION")]
-    pub oauth_encryption: Option<String>,
+const IDENTITY_CA: &str = "/etc/identity-ca/ca.crt";
+const OAUTH_KEY: &str = "/etc/wamn/oauth/key";
 
-    /// Exact issuer expected in the access token.
-    #[arg(long, env = "WAMN_SESSION_ISSUER", requires_all = ["session_jwks_url", "session_audience", "session_algorithms", "session_jwks_ca"])]
-    pub session_issuer: Option<String>,
-
-    /// Explicit HTTPS address of the issuer's JWKS.
-    #[arg(long, env = "WAMN_SESSION_JWKS_URL", requires = "session_issuer")]
-    pub session_jwks_url: Option<String>,
-
-    /// Exact org audience expected in the access token.
-    #[arg(long, env = "WAMN_SESSION_AUDIENCE", requires = "session_issuer")]
-    pub session_audience: Option<String>,
-
-    /// Allowed access-token signature algorithms.
-    #[arg(
-        long,
-        env = "WAMN_SESSION_ALGORITHMS",
-        value_delimiter = ',',
-        requires = "session_issuer"
-    )]
-    pub session_algorithms: Vec<String>,
-
-    /// Exclusive CA bundle for the JWKS address.
-    #[arg(long, env = "WAMN_SESSION_JWKS_CA", requires = "session_issuer")]
-    pub session_jwks_ca: Option<PathBuf>,
-
-    /// Optional application data search path installed at node checkout.
-    #[arg(long, env = "WAMN_SCHEMA")]
-    pub schema: Option<String>,
-
-    /// Production outbound ceiling for connection-backed HTTP effects.
-    #[arg(long, env = "WAMN_ALLOWED_HOSTS", value_delimiter = ',')]
-    pub allowed_hosts: Vec<String>,
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Settings {
+    org: wamn_registry::OrgId,
+    env: wamn_registry::EnvName,
+    drain_bound_seconds: u64,
+    identity_issuer: Option<String>,
+    nats_url: String,
+    insecure_registry: bool,
+    oauth_encryption: Option<wamn_envelope::encryption::Configuration>,
+    projects: BTreeMap<wamn_registry::ProjectId, wamn_sql::HostProject>,
+    #[serde(default)]
+    allowed_hosts: Vec<String>,
 }
 
 /// Native plugin declarations and mounted Secret catalogs from the host chart.
@@ -308,10 +261,6 @@ struct UserBinding {
 
 const HOST_PLUGIN_SECRET_DIRECTORY: &str = "/etc/wasmcloud/host-plugin-secrets";
 
-fn default_nats_server(args: &HostArgs) -> &str {
-    args.wasmcloud_nats_url.as_deref().unwrap_or(&args.data_nats_url)
-}
-
 /// The operator's binding declarations from the chart's host configuration
 /// file. A `wasmcloud:nats` binding that names no `servers` dials the data
 /// connection with its certificate, as `wash host` does: the address and its
@@ -328,8 +277,7 @@ fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::Plug
             anyhow::ensure!(
                 (entry.id == wamn_sql::WAMN_POSTGRES_ID
                     || entry.id == plugin::wasmcloud_nats::PLUGIN_NATS_ID)
-                    && source.dir
-                        == PathBuf::from(HOST_PLUGIN_SECRET_DIRECTORY).join(secret),
+                    && source.dir == PathBuf::from(HOST_PLUGIN_SECRET_DIRECTORY).join(secret),
                 "unsupported plugin Secret projection"
             );
         }
@@ -349,20 +297,18 @@ fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::Plug
             set = set.with_binding(name, binding.config.into());
         }
         if entry.id == plugin::wasmcloud_nats::PLUGIN_NATS_ID {
-            let mut bundle = vec![("servers", default_nats_server(args).to_owned())];
-            if args.wasmcloud_nats_url.is_none() {
-                for (key, path) in [
-                    ("tls-ca", &args.data_nats_tls_ca),
-                    ("tls-cert", &args.data_nats_tls_cert),
-                    ("tls-key", &args.data_nats_tls_key),
-                ] {
-                    if let Some(path) = path {
-                        bundle.push((key, path.display().to_string()));
-                    }
+            let mut bundle = vec![("servers", args.data_nats_url.clone())];
+            for (key, path) in [
+                ("tls-ca", &args.data_nats_tls_ca),
+                ("tls-cert", &args.data_nats_tls_cert),
+                ("tls-key", &args.data_nats_tls_key),
+            ] {
+                if let Some(path) = path {
+                    bundle.push((key, path.display().to_string()));
                 }
-                if args.data_nats_tls_first {
-                    bundle.push(("tls-first", "true".to_owned()));
-                }
+            }
+            if args.data_nats_tls_first {
+                bundle.push(("tls-first", "true".to_owned()));
             }
             set = set.with_default_bundle("servers", bundle);
         }
@@ -495,7 +441,6 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
-    let args = Arc::new(args);
     let startup_started = Instant::now();
     let descriptor_soft_limit = wash_runtime::host::quota::raise_descriptor_limit();
     tracing::info!(
@@ -504,6 +449,27 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         default_max_http_ingress_connections =
             wash_runtime::host::quota::default_max_http_ingress_connections(),
         "native descriptor limits initialized"
+    );
+    let settings: Settings = serde_json::from_slice(
+        &tokio::fs::read(&args.settings)
+            .await
+            .with_context(|| format!("read host settings {}", args.settings.display()))?,
+    )
+    .context("decode host settings")?;
+    anyhow::ensure!(
+        args.scheduler_nats_url == settings.nats_url && args.data_nats_url == settings.nats_url,
+        "host broker arguments must match the settings NATS URL"
+    );
+    anyhow::ensure!(
+        args.environment
+            .as_deref()
+            .is_none_or(|namespace| namespace == settings.org.as_str()),
+        "operator host namespace and settings org differ"
+    );
+    tracing::info!(org = %settings.org, env = %settings.env, "loaded host settings");
+    anyhow::ensure!(
+        settings.projects.is_empty() || settings.identity_issuer.is_some(),
+        "project hosts require an identity issuer"
     );
     wash_runtime::init_crypto();
 
@@ -518,38 +484,20 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .context("trust the configured OCI CA bundles")?;
     }
 
-    let router_owner = args
-        .runner
-        .clone()
+    let router_owner = std::env::var("HOSTNAME")
+        .ok()
         .filter(|owner| !owner.is_empty())
-        .or_else(|| {
-            std::env::var("HOSTNAME")
-                .ok()
-                .filter(|owner| !owner.is_empty())
-        })
         .unwrap_or_else(|| "wamn-host".to_owned());
 
     let scheduler_nats_client =
         connect_scheduler_nats(&args, args.host_name.as_deref().unwrap_or(&router_owner)).await?;
     let host_memory = host_memory(&args)?;
-    let engine = Arc::new(
-        if let Some(compilation_cache_dir) = args.wasmtime_cache_dir.as_deref() {
-            build_engine_with_host_memory_and_compilation_cache(
-                &args.wasm_proposals,
-                host_memory,
-                args.guest_memory_mode,
-                args.socket_egress,
-                compilation_cache_dir,
-            )?
-        } else {
-            build_engine_with_host_memory(
-                &args.wasm_proposals,
-                host_memory,
-                args.guest_memory_mode,
-                args.socket_egress,
-            )?
-        },
-    );
+    let engine = build_engine_with_host_memory(
+        &args.wasm_proposals,
+        host_memory,
+        args.guest_memory_mode,
+        args.socket_egress,
+    )?;
     let source = tokio::fs::read_to_string(&args.user_config)
         .await
         .with_context(|| {
@@ -558,25 +506,20 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 args.user_config.display()
             )
         })?;
-    let mut user_config: UserConfig =
-        serde_yaml::from_str(&source).context("decode host configuration")?;
-    let postgres_config = user_config
-        .host
-        .plugins
-        .iter_mut()
-        .find(|plugin| plugin.id == wamn_sql::WAMN_POSTGRES_ID)
-        .map(|plugin| std::mem::take(&mut plugin.config))
-        .unwrap_or_default();
-    let postgres = Arc::new(WamnPostgres::from_host_config(&postgres_config)?);
-    let envelope = args
+    let postgres = Arc::new(WamnPostgres::from_host_config(settings.projects)?);
+    let envelope = settings
         .oauth_encryption
-        .as_deref()
-        .map(|config| -> anyhow::Result<_> {
-            Ok(Arc::new(wamn_envelope::encryption::Envelope::open(
-                &serde_json::from_str(config)?,
-            )?))
+        .as_ref()
+        .map(|config| match config {
+            wamn_envelope::encryption::Configuration::Local => {
+                wamn_envelope::encryption::Envelope::from_file(Path::new(OAUTH_KEY))
+            }
+            wamn_envelope::encryption::Configuration::Gcp { .. } => {
+                wamn_envelope::encryption::Envelope::open(config)
+            }
         })
-        .transpose()?;
+        .transpose()?
+        .map(Arc::new);
     let authorization = Arc::new(
         authentication::Authorization::new(Arc::downgrade(&postgres))
             .with_oauth_encryption(envelope),
@@ -589,7 +532,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let connection_http = Arc::new(wamn_http::ConnectionHttp::new(
         Arc::clone(&postgres.scopes),
         Arc::new(wamn_http::transport::HttpTransport::new()?),
-        args.allowed_hosts
+        settings
+            .allowed_hosts
             .iter()
             .map(|host| host.parse())
             .collect::<Result<Vec<_>, _>>()?
@@ -607,27 +551,25 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         &(Arc::clone(&files) as Arc<dyn wamn_sql::result_signing::ResultSigner>),
     );
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
-    let verifier = if let Some(issuer) = &args.session_issuer {
-        Some(AccessTokenVerifier::new(
-            issuer,
-            args.session_jwks_url
-                .as_deref()
-                .context("missing JWKS URL")?,
-            args.session_audience
-                .as_deref()
-                .context("missing session audience")?,
-            &args.session_algorithms,
-            args.session_jwks_ca.as_deref().context("missing JWKS CA")?,
-        )?)
-    } else {
-        None
-    };
+    let verifier = settings
+        .identity_issuer
+        .as_deref()
+        .map(|issuer| {
+            AccessTokenVerifier::new(
+                issuer,
+                &format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/')),
+                &wamn_registry::name::org_audience(&settings.org),
+                &["EdDSA".into()],
+                Path::new(IDENTITY_CA),
+            )
+        })
+        .transpose()?;
     let authentication = Arc::new(
         PlatformRouteAuthenticator::new(Arc::clone(&authorization), verifier)
             .with_connection_cache(Arc::clone(&authorization) as _),
     );
     let host_config = HostConfig {
-        allow_oci_insecure: args.allow_insecure_registries,
+        allow_oci_insecure: settings.insecure_registry,
         oci_pull_timeout: Some(Duration::from_secs(30)),
         oci_cache_dir: args.oci_cache_dir.clone(),
         oci_ca_paths: args.oci_ca_paths.clone(),
@@ -643,8 +585,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let workflow = Arc::new(workflow::Workflow::new(
         Arc::clone(&postgres),
         Arc::clone(&operations),
-        default_nats_server(&args).to_owned(),
-        args.wasmcloud_nats_url.is_none() && args.data_nats_tls_first,
+        settings.nats_url,
+        args.data_nats_tls_first,
     ));
     let mut plugins: Vec<Arc<dyn plugin::HostPlugin>> = vec![
         Arc::new(
@@ -686,15 +628,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     host_builder = host_builder.with_plugin_bindings(native_event_bindings);
     let mut builder = host_builder
-        .with_engine((*engine).clone())
+        .with_engine(engine)
         .with_config(host_config)
         .with_meters(Meters::new(MeterKind::Duration))
-        .with_label("hostgroup", args.host_group.clone());
+        .with_label("hostgroup", args.host_group.clone())
+        .with_environment(settings.org.as_str());
     if let Some(host_name) = &args.host_name {
         builder = builder.with_hostname(host_name);
-    }
-    if let Some(namespace) = host_namespace(std::env::var("WASMCLOUD_HOST_ENVIRONMENT").ok()) {
-        builder = builder.with_environment(namespace);
     }
     let silence_budget = wash_runtime::washlet::liveness_silence(
         wash_runtime::washlet::ClusterHostBuilder::default().heartbeat_interval(),
@@ -702,13 +642,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let liveness = Liveness::new(silence_budget);
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
-    let mut ingress_connections = None;
-    let mut ingress_handler = None;
-    if let Some(addr) = args.http_addr {
+    let (ingress_connections, ingress_handler) = {
         // The route host lives only on the http workload's `config.host`
         // (R2), so the host expects no host before a workload binds one.
         let router = wamn_engine::expected_router::expected_host_router(None, stopping.clone());
-        let mut ingress = Ingress::builder(router, addr);
+        let mut ingress = Ingress::builder(router, args.http_addr);
         if let Some(max) = args.max_http_ingress_connections {
             ingress = ingress.max_connections(max);
         }
@@ -729,10 +667,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             ));
         let connections = server.connection_limit();
         probe_state.register(Arc::new(connections.clone()));
-        ingress_connections = Some(connections);
-        ingress_handler = Some(Arc::clone(&server));
         builder = builder.with_http_handler(http_handler);
-    }
+        (connections, server)
+    };
     let probe_listener = match args.probe_addr {
         Some(address) => Some(probes::bind(address).await?),
         None => None,
@@ -757,7 +694,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let workload_drain = Arc::new(commands::WorkloadDrain::default());
     let mut control_builder =
         AttachedHostControl::builder(Arc::clone(&native_host), Arc::new(scheduler_nats_client))
-            .with_host_group(args.host_group.clone())
+            .with_host_group(args.host_group)
             .with_liveness(Arc::clone(&liveness))
             .with_handler(Arc::new(commands::Commands {
                 drain: Arc::clone(&workload_drain),
@@ -785,7 +722,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         cleanup_budget_secs = cleanup_budget.as_secs(),
         "wamn-host runtime startup completed"
     );
-    let drain_bound_seconds = args.drain_bound_seconds;
+    let drain_bound_seconds = settings.drain_bound_seconds;
     let result = {
         // Polling cleanup requests shutdown. Observe the retained native state instead.
         let mut sigterm =
@@ -795,18 +732,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 signal = tokio::signal::ctrl_c() => signal.context("receive SIGINT"),
                 _ = sigterm.recv() => Ok(()),
                 error = wamn_engine::lifecycle::watch_liveness(&liveness, Some(&probe_state), silence_budget) => Err(error),
-                () = ingress_stopped(ingress_connections.as_ref()) => Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")),
+                () = ingress_connections.stopped() => Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")),
                 task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
                     Err(probe_listener_failure(task.as_ref()))
                 }
             }
         };
-        let had_ingress = ingress_handler.is_some();
-        let draining_connections = ingress_connections.clone();
+        let draining_connections = &ingress_connections;
         let stop_ingress = async move {
-            if let Some(handler) = ingress_handler {
-                handler.stop().await.context("stop HTTP admission")?;
-            }
+            ingress_handler
+                .stop()
+                .await
+                .context("stop HTTP admission")?;
             // Keep control reachable while operator stops drain workloads.
             // Component replies report Stopping until HTTP drains (R20).
             // Past the operator wait bound, the host drain goes on.
@@ -817,22 +754,17 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 tracing::warn!(%error, "workload drain");
             }
             workload_drain
-                .stop_components(&native_host, async {
-                    if let Some(connections) = &draining_connections {
-                        connections.drained().await;
-                    }
-                })
+                .stop_components(&native_host, draining_connections.drained())
                 .await
         };
         stop_combined_after(
             stopped,
             stop_ingress,
-            had_ingress,
             native_cleanup,
             stop_queue,
             &probe_state,
             args.drain_delay,
-            shutdown_budget(args.drain_bound_seconds),
+            shutdown_budget(settings.drain_bound_seconds),
         )
         .await
     };
@@ -849,15 +781,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 /// The time the auxiliary teardown after [`stop_combined_after`] may take:
 /// the identity connection and the probe tasks, one second each.
 const EXIT_RESERVE: Duration = Duration::from_secs(2);
-
-/// The host namespace the heartbeat names: the pod namespace the operator
-/// chart sets in `WASMCLOUD_HOST_ENVIRONMENT`, because the operator's
-/// `allowSharedHosts: false` lock places a WorkloadDeployment only on hosts
-/// of its namespace, which every environment's release shares (R6). It is
-/// never the environment: `--environment` names the release target only.
-fn host_namespace(chart: Option<String>) -> Option<String> {
-    chart.filter(|namespace| !namespace.is_empty())
-}
 
 /// The one budget of the shutdown sequence (R20): the drain bound, less the
 /// auxiliary teardown that follows it, so the process exits before the pod's
@@ -897,21 +820,9 @@ fn cleanup_budget_for_plugins(
         .context("native plugin stop override exceeds the supported shutdown budget")
 }
 
-async fn ingress_stopped(connections: Option<&ConnectionLimit>) {
-    match connections {
-        Some(connections) => connections.stopped().await,
-        None => std::future::pending().await,
-    }
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Keep the single shutdown owner, both execution paths, and their shared budget explicit"
-)]
 async fn stop_combined_after<I, N>(
     stopped: impl std::future::Future<Output = anyhow::Result<()>>,
     stop_ingress: I,
-    had_ingress: bool,
     native_cleanup: N,
     stop_queue: tokio::sync::watch::Sender<bool>,
     probes: &ProbeState,
@@ -953,8 +864,7 @@ where
         drain_then_cleanup,
         tokio::time::sleep(propagation_delay.min(remaining()))
     );
-    let native_result =
-        normalize_explicit_ingress_stop(native_result, had_ingress && ingress_result.is_ok());
+    let native_result = normalize_explicit_ingress_stop(native_result, ingress_result.is_ok());
     let cleanup_result = ingress_result.and(native_result);
     if let Err(error) = &cleanup_result {
         tracing::error!(%error, "combined host cleanup failed; durable queue remains fenced for recovery");
@@ -992,7 +902,7 @@ mod tests {
         args: HostArgs,
     }
 
-    /// Parse `arguments` with the required drain bound after the program name.
+    /// Parse `arguments` with the chart's required settings and broker arguments.
     fn parse<I, T>(arguments: I) -> Result<TestCli, clap::Error>
     where
         I: IntoIterator<Item = T>,
@@ -1000,7 +910,19 @@ mod tests {
     {
         let mut arguments: Vec<std::ffi::OsString> =
             arguments.into_iter().map(Into::into).collect();
-        arguments.insert(1.min(arguments.len()), "--drain-bound-seconds=300".into());
+        for prefix in ["--settings=", "--scheduler-nats-url=", "--data-nats-url="] {
+            if !arguments
+                .iter()
+                .any(|argument| argument.to_string_lossy().starts_with(prefix))
+            {
+                let value = if prefix == "--settings=" {
+                    "/settings.json"
+                } else {
+                    "nats://wamn-nats.platform.svc.cluster.local:4222"
+                };
+                arguments.push(format!("{prefix}{value}").into());
+            }
+        }
         TestCli::try_parse_from(arguments)
     }
 
@@ -1063,31 +985,6 @@ host:
         assert!(
             plugin_bindings(&args, "host:\n  plugins:\n    - id: x\n      image: y\n").is_err()
         );
-    }
-
-    #[test]
-    fn chart_lifecycle_flags_parse_with_native_defaults() {
-        let defaults = parse(["wamn-host"]).unwrap().args;
-        assert!(defaults.drain_delay.is_zero());
-        assert_eq!(defaults.drain_bound_seconds, 300);
-        TestCli::try_parse_from(["wamn-host"])
-            .expect_err("a host without its drain bound refuses to start");
-        assert!(defaults.nats_connect_timeout.is_zero());
-        let args = parse([
-            "wamn-host",
-            "--drain-delay=5s",
-            "--nats-connect-timeout=60s",
-            "--probe-addr=0.0.0.0:8081",
-            "--max-http-ingress-connections=64",
-            "--max-concurrent-starts=2",
-        ])
-        .unwrap()
-        .args;
-        assert_eq!(args.drain_delay, Duration::from_secs(5));
-        assert_eq!(args.nats_connect_timeout, Duration::from_secs(60));
-        assert_eq!(args.probe_addr.unwrap().port(), 8081);
-        assert_eq!(args.max_http_ingress_connections, Some(64));
-        assert_eq!(args.max_concurrent_starts, Some(2));
     }
 
     #[test]

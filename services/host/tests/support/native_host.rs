@@ -21,3 +21,22 @@ pub async fn discover(client: &async_nats::Client, name: &str) -> anyhow::Result
     .await
     .context("native identity was not published within the startup budget")?
 }
+
+pub fn write_settings(
+    directory: &std::path::Path,
+    org: &str,
+    nats_url: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    let path = directory.join("settings.json");
+    let settings = serde_json::json!({
+        "org": org,
+        "env": "test",
+        "drain_bound_seconds": 300,
+        "nats_url": nats_url,
+        "insecure_registry": false,
+        "projects": {},
+    });
+    std::fs::write(&path, serde_json::to_vec(&settings)?)?;
+    std::fs::write(directory.join("host.yaml"), "host: {}\n")?;
+    Ok(path)
+}

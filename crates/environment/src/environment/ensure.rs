@@ -4,7 +4,6 @@
 use sqlx::Row as _;
 
 use anyhow::Context as _;
-use wamn_broker::authorization::{INGRESS_BINDING, WORKFLOW_BINDING};
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
 use super::Platform;
@@ -70,56 +69,6 @@ pub(super) async fn suspend_project(platform: &Platform, triple: &Triple) -> any
     .context("project still has active runtime resources")?
 }
 
-/// Set the stream ceiling from the projects that this group serves.
-fn set_nats_plugin(
-    plugins: &mut Vec<serde_json::Value>,
-    org: &wamn_registry::OrgId,
-    env: &wamn_registry::EnvName,
-) -> anyhow::Result<()> {
-    let projects = plugins
-        .iter()
-        .find(|plugin| plugin["id"] == "wamn-postgres")
-        .and_then(|plugin| plugin["config"].as_object())
-        .context("host has no project configuration")?;
-    let streams = projects
-        .keys()
-        .map(|project| {
-            let project = project.parse()?;
-            Ok(name::stream_name(org, &project, env))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?
-        .join(",");
-    let secret = name::environment_nats_secret(org, env);
-    let directory = format!("/etc/wasmcloud/host-plugin-secrets/{secret}");
-    let inbox = wamn_broker::nats::inbox_prefix(&name::environment_nats_user(org, env));
-    let entry = serde_json::json!({
-        "id": "wasmcloud-nats",
-        "workloadConfig": "deny",
-        "secretFrom": [secret],
-        "config": {
-            "servers": wamn_platform_install::platform::identity::NATS_URL,
-            "tls-ca": format!("{directory}/ca.crt"),
-            "tls-cert": format!("{directory}/tls.crt"),
-            "tls-key": format!("{directory}/tls.key"),
-            "stream-allow": streams,
-            "subject-allow": name::environment_event_subjects(org, env),
-        },
-        "bindings": {
-            (WORKFLOW_BINDING): {"config": {"inbox-prefix": format!("{inbox}.{WORKFLOW_BINDING}")}},
-            (INGRESS_BINDING): {"config": {"inbox-prefix": format!("{inbox}.{INGRESS_BINDING}")}},
-        },
-    });
-    if let Some(plugin) = plugins
-        .iter_mut()
-        .find(|plugin| plugin["id"] == "wasmcloud-nats")
-    {
-        *plugin = entry;
-    } else {
-        plugins.push(entry);
-    }
-    Ok(())
-}
-
 /// Prepare the host upgrade with both configured and newly reserved projects.
 pub(super) async fn prepare_host_upgrade<'a>(
     platform: &'a Platform,
@@ -130,12 +79,15 @@ pub(super) async fn prepare_host_upgrade<'a>(
 ) -> anyhow::Result<(u32, impl Future<Output = anyhow::Result<()>> + use<'a>)> {
     let name = name::environment_host_name(org, env);
     let values = host_values(platform, org, env, reserved, None, Some(policy)).await?;
-    let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
     // The runtime operator defaults the group to one replica.
-    let replicas = if group["replicas"].is_null() {
+    let replicas = if values["placement"]["replicas"].is_null() {
         1
     } else {
-        u32::try_from(group["replicas"].as_u64().context("invalid host replica count")?)?
+        u32::try_from(
+            values["placement"]["replicas"]
+                .as_u64()
+                .context("invalid host replica count")?,
+        )?
     };
     let upgrade = wamn_platform_install::environment::prepare_host_upgrade(
         &platform.target,
@@ -167,7 +119,6 @@ async fn host_values(
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
 
-    let name = name::environment_host_name(org, env);
     let mut system = connect(&platform.system_database_url).await?;
     let mut tx = crate::provision_project_env::provisioning_transaction(&mut system).await?;
     let projects: Vec<ProjectId> = sqlx::query_scalar(
@@ -190,173 +141,61 @@ async fn host_values(
     };
     tx.commit().await?;
     if projects.is_empty() {
-        return Ok(json!({"namespace":org,"runtime-operator":{"runtime":{"hostGroups":[]}}}));
+        return Ok(json!({"org":org, "env":env}));
     }
 
-    let mut group =
-        serde_json::to_value(super::write::host_group(platform.host_group.as_deref())?)?;
-    group["name"] = json!(name);
-    group["namespace"] = json!(org);
-    let variables = group["env"]
-        .as_array_mut()
-        .context("host environment is not a list")?;
-    variables.retain(|entry| entry["name"] != "WAMN_ORG");
-    variables.push(json!({"name":"WAMN_ORG","value":org}));
-    let mut arguments = group["extraArgs"]
-        .take()
-        .as_array_mut()
-        .map(std::mem::take)
-        .unwrap_or_default();
-    arguments.retain(|argument| {
-        !argument
-            .as_str()
-            .is_some_and(|s| s.starts_with("--environment="))
-    });
-    arguments.push(format!("--environment={}", env).into());
-    group["extraArgs"] = arguments.into();
-    for (field, ca) in [
-        (
-            "volumes",
-            json!({"name":"identity-ca","configMap":{"name":"identity-ca"}}),
-        ),
-        (
-            "volumeMounts",
-            json!({"name":"identity-ca","mountPath":"/etc/identity-ca","readOnly":true}),
-        ),
-    ] {
-        let entries = &mut group[field];
-        if entries.is_null() {
-            *entries = json!([]);
-        }
-        let entries = entries
-            .as_array_mut()
-            .with_context(|| format!("host {field} must be a list"))?;
-        entries.retain(|entry| entry["name"] != "identity-ca");
-        entries.push(ca);
-    }
-    let defaults: serde_json::Value = serde_yaml::from_str(include_str!(
-        "../../../../deploy/charts/environment/values.yaml"
-    ))?;
-    let base = wamn_sql::WamnPostgresConfig::from_env();
-    let setting = |name: &str, fallback: u64| -> anyhow::Result<u64> {
-        group["env"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .chain(
-                defaults["runtime-operator"]["runtime"]["env"]
-                    .as_array()
-                    .into_iter()
-                    .flatten(),
-            )
-            .find(|entry| entry["name"] == name)
-            .map_or(Ok(fallback), |entry| {
-                entry["value"]
-                    .as_str()
-                    .context("pool setting is not text")?
-                    .parse()
-                    .context("pool setting is not a number")
-            })
-    };
-    let guest_pool_max_size = setting(
-        "WAMN_PG_GUEST_POOL_MAX",
-        u64::try_from(base.guest_pool_max_size)?,
-    )?;
-    let wait_timeout_ms = setting("WAMN_PG_WAIT_TIMEOUT_MS", base.wait_timeout_ms)?;
-    let statement_timeout_ms = setting(
-        "WAMN_PG_STATEMENT_TIMEOUT_MS",
-        u64::from(base.statement_timeout_ms),
-    )?;
-    if group["plugins"].is_null() {
-        group["plugins"] = serde_json::json!([]);
-    }
-    let plugins = group["plugins"]
-        .as_array_mut()
-        .context("host plugins are not a list")?;
-    if !plugins.iter().any(|plugin| plugin["id"] == "wamn-postgres") {
-        plugins.push(serde_json::json!({"id":"wamn-postgres","workloadConfig":"deny","config":{}}));
-    }
-    let postgres = plugins
-        .iter_mut()
-        .find(|plugin| plugin["id"] == "wamn-postgres")
-        .expect("inserted plugin");
-    let mut secrets = Vec::new();
-    let mut database_sources = Vec::new();
-    postgres
-        .as_object_mut()
-        .expect("postgres plugin is an object")
-        .remove("secretFrom");
-    let mut clusters = std::collections::BTreeSet::new();
-    postgres["config"] = json!({});
-    let mut add_project = |project: &Triple,
-                           connection: &wamn_postgres::ConnectionConfig|
-     -> anyhow::Result<()> {
+    let group = super::write::host_group(platform.host_group.as_deref())?;
+    let placement: serde_json::Map<String, serde_json::Value> = [
+        "replicas",
+        "nodeSelector",
+        "tolerations",
+        "affinity",
+        "topologySpreadConstraints",
+        "resources",
+    ]
+    .into_iter()
+    .filter_map(|key| group.get(key).map(|value| (key, value)))
+    .map(|(key, value)| Ok((key.into(), serde_json::to_value(value)?)))
+    .collect::<serde_json::Result<_>>()?;
+    let image = wamn_platform_install::release_chart::image_set(&platform.chart)
+        .await?
+        .host;
+
+    let mut eligible = serde_json::Map::new();
+    for project in projects {
+        let triple = Triple::new(org.clone(), env.clone(), project);
+        let connection =
+            wamn_platform_install::environment::connection(&platform.system_database_url, &triple)
+                .await?;
         anyhow::ensure!(
-            connection.credentials.namespace == org.as_str(),
+            connection.credentials.namespace == org.as_str()
+                && connection.server_ca.namespace == org.as_str(),
             "project login Secrets and host must share an org"
         );
         let mut logins = serde_json::Map::new();
-        let mut ca_items = Vec::new();
-        for (family, config) in crate::provision_project_env::workload::connections(connection)? {
-            let plugin_role = match family {
+        for (family, config) in crate::provision_project_env::workload::connections(&connection)? {
+            let role = match family {
                 wamn_provision::WorkloadRoleFamily::App => "guest-sql",
                 wamn_provision::WorkloadRoleFamily::Query => "dynamic-sql",
                 wamn_provision::WorkloadRoleFamily::Platform => "platform",
                 wamn_provision::WorkloadRoleFamily::Migration => continue,
             };
-            let name = config.credentials.name;
-            database_sources.push(json!({"secret":{"name":name,"items":[
-                {"key":"username","path":format!("{name}/username")},
-                {"key":"password","path":format!("{name}/password")}
-            ]}}));
-            ca_items.push(json!({"key":"ca.crt","path":format!("{name}/ca.crt")}));
-            logins.insert(plugin_role.into(), name.into());
+            logins.insert(role.into(), config.credentials.name.into());
         }
-        database_sources
-            .push(json!({"secret":{"name":connection.server_ca.name,"items":ca_items}}));
-        secrets.push(name::credential_secret_name(
-            &project.org,
-            &project.project,
-            &project.env,
-        ));
-        postgres["config"][project.project.as_str()] = json!({
-            "host":connection.host,"port":connection.port,"database":connection.database,
-            "logins":logins,"guest_pool_max_size":guest_pool_max_size,
-            "wait_timeout_ms":wait_timeout_ms,"statement_timeout_ms":statement_timeout_ms,
-        })
-        .to_string()
-        .into();
-        Ok(())
-    };
-    for project in projects {
-        let project = Triple::new(org.clone(), env.clone(), project);
-        let connection =
-            wamn_platform_install::environment::connection(&platform.system_database_url, &project)
-                .await?;
-        clusters.insert(name::project_cluster(&connection.database));
-        add_project(&project, &connection)?;
+        eligible.insert(
+            triple.project.to_string(),
+            json!({
+                "host":connection.host,
+                "port":connection.port,
+                "database":connection.database,
+                "cluster":name::project_cluster(&connection.database),
+                "logins":logins,
+                "serverCa":connection.server_ca.name,
+                "credentialSecret":name::credential_secret_name(org, &triple.project, env),
+                "stream":name::stream_name(org, &triple.project, env),
+            }),
+        );
     }
-    postgres["workloadConfig"] = "deny".into();
-    set_nats_plugin(plugins, org, env)?;
-    for (field, entry) in [
-        (
-            "volumes",
-            json!({"name":"project-database","projected":{
-                "defaultMode":256,"sources":database_sources
-            }}),
-        ),
-        (
-            "volumeMounts",
-            json!({"name":"project-database","mountPath":wamn_postgres::DATABASE_DIR,"readOnly":true}),
-        ),
-    ] {
-        let entries = group[field]
-            .as_array_mut()
-            .context("host volume settings must be lists")?;
-        entries.retain(|entry| entry["name"] != "project-database");
-        entries.push(entry);
-    }
-    let account = name::environment_service_account(org, env);
     let certificate = name::environment_nats_certificate(org, env);
     let certificate = wamn_broker::authorization::certificate(
         &certificate,
@@ -366,14 +205,27 @@ async fn host_values(
     let admin = name::environment_nats_admin(org, env);
     let admin_certificate = wamn_broker::authorization::certificate(&admin, &admin, &admin);
     Ok(json!({
-        "namespace":org,
-        "runtime-operator":{"runtime":{"hostGroups":[group],
-            "terminationGracePeriodSeconds":policy.drain_bound_seconds,
-            "serviceAccount":{"name":account}}},
-        "credentialAccess":{"account":account,"secrets":secrets},
+        "org":org,
+        "env":env,
+        "hostName":name::environment_host_name(org, env),
+        "serviceAccount":name::environment_service_account(org, env),
+        "image":image,
+        "placement":placement,
+        "drainBoundSeconds":policy.drain_bound_seconds,
+        "projects":eligible,
+        "natsUrl":platform.nats_url,
+        "identityIssuer":platform.identity_issuer,
+        "registryTokenMetadata":platform.registry_token_metadata,
+        "insecureRegistry":platform.insecure_registry,
+        "ociCaPaths":platform.oci_ca_paths,
+        "oauthEncryption":platform.oauth_encryption,
+        "environmentNats":{
+            "secret":name::environment_nats_secret(org, env),
+            "inbox":wamn_broker::nats::inbox_prefix(&name::environment_nats_user(org, env)),
+            "subjects":name::environment_event_subjects(org, env),
+        },
         "brokerCertificates":[certificate],
         "brokerAdminCertificate":admin_certificate,
-        "networkPolicy":{"projectClusters":clusters},
     }))
 }
 
@@ -402,7 +254,7 @@ pub(super) async fn ensure_stream(platform: &Platform, triple: &Triple) -> anyho
     let broker = wamn_broker::authorization::issued_admin_context(
         &platform.target,
         triple,
-        wamn_platform_install::platform::identity::NATS_URL,
+        &platform.nats_url,
     )
     .await?;
     wamn_broker::streams::provision(
@@ -447,7 +299,8 @@ pub(super) async fn postgres_settings(platform: &Platform) -> anyhow::Result<ser
     )
     .await?
     .context("installation configuration is absent")?;
-    let postgres = configuration["data"]["postgres.json"].as_str()
+    let postgres = configuration["data"]["postgres.json"]
+        .as_str()
         .context("installation PostgreSQL settings are absent")?;
     serde_json::from_str(postgres).context("decode installation PostgreSQL settings")
 }

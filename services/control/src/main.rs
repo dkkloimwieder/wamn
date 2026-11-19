@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 struct Cli {
     #[arg(long)]
-    config: Option<PathBuf>,
+    settings: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -22,6 +22,8 @@ enum Command {
         database: PathBuf,
         #[arg(long)]
         platform_domain: wamn_registry::platform_domain::PlatformDomain,
+        #[arg(long)]
+        max_projects: std::num::NonZeroU32,
     },
 }
 
@@ -38,17 +40,19 @@ async fn main() -> anyhow::Result<()> {
     if let Command::ProvisionSystem {
         database,
         platform_domain,
+        max_projects,
     } = cli.command
     {
         let request = wamn_platform_install::provision_system::ProvisionSystemRequest {
             database: wamn_postgres::ConnectionConfig::read(&database).await?,
             platform_domain,
+            max_projects,
         };
         return wamn_platform_install::provision_system::provision_system(&request).await;
     }
     let config = cli
-        .config
-        .ok_or_else(|| anyhow::anyhow!("--config is required"))?;
+        .settings
+        .ok_or_else(|| anyhow::anyhow!("--settings is required"))?;
     let config = wamn_control::Configuration::read(&config)?;
     match cli.command {
         Command::Platform => wamn_control::serve(config).await,
