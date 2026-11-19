@@ -178,7 +178,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let database = config.database.to_json()?;
     let writer = wait_for_system_schema(&database).await?;
-    // The login permits four connections, including the dedicated writer.
+    // Keep three pooled connections alongside the dedicated writer.
     let pool = wamn_postgres::pool(&database, 3).await?;
     let identity_databases = Path::new(ADMINISTRATION_DIR);
     let verifier = wamn_authentication::access_token::AccessTokenVerifier::new(

@@ -8,3 +8,12 @@
 {{- $identityRole := dict "name" "wamn_identity_issuer_172c451f63aa4fdc22159b71333ebbf4e46732ee" "login" true "inherit" true "inRoles" (list "wamn_identity_issuer") "disablePassword" true -}}
 {{- dict "namespace" $namespace "cluster" $cluster "name" $name "host" (printf "%s-rw.%s.svc.cluster.local" $cluster $namespace) "port" 5432 "ca" (printf "%s-ca" $cluster) "adminSecret" (printf "%s-superuser" $cluster) "identityTlsSecret" "wamn-identity-db-tls" "identityRole" $identityRole "migrationRole" $migrationRole | toJson -}}
 {{- end -}}
+
+{{- define "wamn-platform.systemDatabasePoolers" -}}
+{{- $system := include "wamn-platform.systemDatabase" . | fromJson -}}
+{{- $names := dict -}}
+{{- range list "control" "apply" -}}
+{{- $_ := set $names . (printf "%s-%s" $system.cluster .) -}}
+{{- end -}}
+{{- dict "names" $names "authRole" "wamn_pooler_auth" "authSecret" "wamn-pg-pooler-auth-tls" | toJson -}}
+{{- end -}}
