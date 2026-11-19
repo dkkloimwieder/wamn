@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_platform_install as installer;
-use wamn_registry::{Triple, name};
+use wamn_registry::{Triple, name, sql::upsert_event_reader_sql};
 
 pub async fn configure(
     platform: &Platform,
@@ -244,7 +244,7 @@ async fn configure_project(
         platform.prepare_database(connection).await?;
     }
     platform.prepare_database(&capture).await?;
-    let capture = capture.to_json()?;
+    let capture_json = capture.to_json()?;
     LifecycleLock::hold(
         installer::environment::wait_project_connection(&owner, &connection.database).await?,
         triple,
@@ -281,7 +281,7 @@ async fn configure_project(
             workload::grant(&mut *project_lock.client().await, &connections).await?;
             resources::prepare_cdc(
                 &owner,
-                &capture,
+                &capture_json,
                 &connection.database,
                 &publication,
                 &schemas,
@@ -298,6 +298,22 @@ async fn configure_project(
             let mut connection = lock.client().await;
             let mut tx = provision_project_env::provisioning_transaction(&mut connection).await?;
             document.save(&mut tx).await?;
+            // prepare_cdc creates the failover slot under the publication name.
+            let slot = &publication;
+            let stream = wamn_event::stream_name(&triple.org, &triple.project, &triple.env);
+            sqlx::query(sqlx::AssertSqlSafe(upsert_event_reader_sql()))
+                .bind(&triple.org)
+                .bind(&triple.project)
+                .bind(&triple.env)
+                .bind(&publication)
+                .bind(schemas.as_slice())
+                .bind(slot)
+                .bind(stream)
+                .bind(&capture.credentials.name)
+                .bind(&capture.credentials.namespace)
+                .execute(&mut *tx)
+                .await
+                .with_context(|| format!("register the CDC reader for {triple}"))?;
             tx.commit().await?;
             Ok(())
         },

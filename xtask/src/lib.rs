@@ -3,6 +3,7 @@
 mod bench;
 mod bench_cloud;
 mod bench_data;
+mod kind;
 mod netsuite;
 mod platform;
 mod process;
@@ -109,6 +110,8 @@ enum Task {
     WasmcloudReleaseTests(tasks::UpstreamArgs),
     /// Render the local collector from the deployment configuration.
     DevCollector { root: PathBuf },
+    /// Create or reuse the local kind cluster and its OCI registry.
+    KindClusterCreate,
     /// Delete a disposable kind cluster and inspect its resources.
     KindClusterDelete { cluster: String },
     /// Print the environment for an isolated checkout.
@@ -210,6 +213,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::ContractDiff(args) => tasks::contract(&root, args.mode).await,
         Task::WasmcloudReleaseTests(args) => tasks::upstream(&root, &args).await,
         Task::DevCollector { root: output } => tasks::collector(&root, &output),
+        Task::KindClusterCreate => kind::create_cluster(&root).await,
         Task::KindClusterDelete { cluster } => tasks::delete_cluster(&root, &cluster).await,
         Task::LaneStart {
             print_env,
