@@ -214,8 +214,7 @@ async fn configure_project(
         wamn_broker::authorization::certificate(&recovery, &recovery, &recovery),
     ]);
     values["environmentDocument"] = applied_document.into();
-    values["cdcReader"] =
-        reader_values(platform, triple, &publication, &capture.to_json()?).await?;
+    values["cdcReader"] = reader_values(platform, triple, &capture).await?;
     let paused = super::capture_gap::is_open(&mut *lock.client().await, triple).await?;
     values["cdcReader"]["pause"] = paused.into();
     // Wait for the database first because the reader needs the slot created below.
@@ -308,17 +307,11 @@ async fn configure_project(
 async fn reader_values(
     platform: &Platform,
     triple: &Triple,
-    publication: &str,
-    capture: &str,
+    capture: &wamn_postgres::ConnectionConfig,
 ) -> anyhow::Result<Value> {
     let image = installer::release_chart::image_set(&platform.chart)
         .await?
         .host;
-    let config = super::cdc_reader::reader_configuration(
-        triple,
-        publication,
-        installer::platform::identity::NATS_URL,
-    );
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let capture_name = wamn_provision::cdc_reader_name(org, project, env);
     Ok(json!({
@@ -328,7 +321,7 @@ async fn reader_values(
         "image": image,
         "registrySecret": (!platform.registry_token_metadata).then_some(name::REGISTRY_PULL),
         "natsSecret": name::cdc_nats_certificate(triple),
-        "connection": capture,
-        "configuration": config,
+        "database": capture,
+        "natsUrl": platform.nats_url,
     }))
 }

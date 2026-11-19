@@ -214,31 +214,39 @@ fn host_command(
     name: &str,
 ) -> anyhow::Result<Command> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_wamn-host"));
-    command.env_clear().args([
-        "host",
-        "--host-name",
-        name,
-        "--host-group",
-        "lifecycle-test",
-        "--environment",
-        "lifecycle-test",
-        "--scheduler-nats-url",
-        &format!("nats://{nats_address}"),
-        "--http-addr",
-        &ingress_address.to_string(),
-        "--probe-addr",
-        &probe_address.to_string(),
-        "--max-http-ingress-connections",
-        "1",
-        "--max-concurrent-starts",
-        "1",
-        "--guest-memory-mode",
-        "count",
-        "--drain-delay",
-        "5s",
-        "--drain-bound-seconds",
-        "300",
-    ]);
+    let nats_url = format!("nats://{nats_address}");
+    let settings = native_host::write_settings(evidence, "lifecycle-test", &nats_url)?;
+    command
+        .env_clear()
+        .args([
+            "host",
+            "--host-name",
+            name,
+            "--host-group",
+            "lifecycle-test",
+            "--environment",
+            "lifecycle-test",
+            "--scheduler-nats-url",
+            &nats_url,
+            "--data-nats-url",
+            &nats_url,
+            "--http-addr",
+            &ingress_address.to_string(),
+            "--probe-addr",
+            &probe_address.to_string(),
+            "--max-http-ingress-connections",
+            "1",
+            "--max-concurrent-starts",
+            "1",
+            "--guest-memory-mode",
+            "count",
+            "--drain-delay",
+            "5s",
+        ])
+        .arg("--settings")
+        .arg(settings)
+        .arg("--user-config")
+        .arg(evidence.join("host.yaml"));
     logs(&mut command, evidence, name)?;
     Ok(command)
 }

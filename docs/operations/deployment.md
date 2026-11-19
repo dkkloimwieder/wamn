@@ -164,7 +164,7 @@ Source builds use [committed PostgreSQL describe evidence](building.md#wamn-buil
 To refresh the evidence during a source deploy, pass `--refresh-describe` with `--database-url` or set `DATABASE_URL`.
 Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE` for publication.
 `WAMN_OCI_CA_PATHS` supplies optional registry certificates.
-For an HTTP registry, the existing `WAMN_RELEASE_HOST_GROUP` document supplies `--allow-insecure-registries` in `extraArgs`.
+Control derives HTTP registry access from the installed registry address using the loopback rule.
 `wamn publish` uses the existing build output and starts no Job.
 
 Application, schema and administration commands require `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
@@ -595,7 +595,7 @@ Deployment needs no source checkout, pnpm installation, or local UI output.
 Kind keeps an empty web bucket and selects no platform UI.
 
 The control root is `https://control.wamn.dev`.
-The installation chart runs `wamn-control --config /etc/wamn/control/config.json platform` in the org namespace.
+The org chart runs `wamn-control --settings /etc/wamn/control/settings.json platform`.
 The native service has no route guest or application release.
 The control Service selects that Deployment.
 Local platform deployment installs control without a UI upload. GCP integration for public control access remains unfinished.
@@ -899,9 +899,8 @@ Identity login uses the org audience `urn:wamn:org:<org>`.
 The identity chart no longer accepts session target ConfigMaps or project database reader credentials.
 The identity Deployment mounts the system login and CA certificate.
 
-The installation writes `WAMN_SESSION_ISSUER`, `WAMN_SESSION_JWKS_URL`, `WAMN_SESSION_AUDIENCE`, `WAMN_SESSION_ALGORITHMS`, and `WAMN_SESSION_JWKS_CA` into the org's `wamn-host-settings` ConfigMap.
-Environment hosts read these defaults and mount the org's `identity-ca` ConfigMap at `/etc/identity-ca`.
-Control reads the same verifier settings from its mounted configuration.
+The environment chart renders a settings ConfigMap for each host group. It supplies the identity issuer also used by control.
+Hosts and control derive the JWKS URL and org audience, and read CA certificates from the org's `identity-ca` ConfigMap.
 
 The HTTP interface keeps its `credential-unavailable` result.
 

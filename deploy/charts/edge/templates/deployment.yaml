@@ -25,7 +25,7 @@ spec:
       containers:
         - name: web
           image: {{ required "Set web.image to the selected Rust web front image." .Values.web.image | quote }}
-          args: ["--config", "/etc/wamn-edge/web.json"]
+          args: ["--settings", "/etc/wamn-edge/web.json"]
           ports:
             - name: http
               containerPort: 8080

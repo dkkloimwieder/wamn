@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 struct Cli {
     #[arg(long)]
-    config: PathBuf,
+    settings: PathBuf,
     #[command(subcommand)]
     command: Command,
 }
@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
         .log_internal_errors(false)
         .init();
     let cli = Cli::parse();
-    let config = wamn_control::Configuration::read(&cli.config)?;
+    let config = wamn_control::Configuration::read(&cli.settings)?;
     match cli.command {
         Command::Platform => wamn_control::serve(config).await,
         Command::Worker => {

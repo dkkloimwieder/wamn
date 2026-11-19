@@ -2,6 +2,7 @@
 {{- $name := default .Release.Name .Values.name }}
 {{- $namespace := include "application.namespace" . }}
 {{- $org := required "Set org for the control client certificate." .Values.org }}
+{{- $settings := .Values.control.configuration | toJson }}
 {{- $database := .Values.control.configuration.database }}
 {{- $login := required "Set control.configuration.database.credentials.name." $database.credentials.name }}
 {{- $migration := required "Set control.systemMigrationSecret." .Values.control.systemMigrationSecret }}
@@ -9,10 +10,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ $name }}-configuration
+  name: c-{{ $org }}-settings
   namespace: {{ $namespace }}
 data:
-  config.json: {{ .Values.control.configuration | toJson | quote }}
+  settings.json: {{ $settings | quote }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -32,6 +33,8 @@ spec:
   template:
     metadata:
       labels: {app.kubernetes.io/name: {{ $name }}}
+      annotations:
+        checksum/settings: {{ $settings | sha256sum | quote }}
     spec:
       serviceAccountName: {{ .Values.control.account }}
       {{- if .Values.control.registrySecret }}
@@ -40,13 +43,10 @@ spec:
       containers:
         - name: control
           image: {{ .Values.control.image | quote }}
-          args: [--config, /etc/wamn/control/config.json, platform]
+          args: [--settings, /etc/wamn/control/settings.json, platform]
           ports: [{name: http, containerPort: 80}]
           env:
             - {name: DOCKER_CONFIG, value: /credentials/registry}
-            {{- if .Values.control.oauthSecret }}
-            - {name: WAMN_OAUTH_KEY_FILE, value: /etc/wamn/oauth/key}
-            {{- end }}
           volumeMounts:
             - {name: configuration, mountPath: /etc/wamn/control, readOnly: true}
             - {name: work, mountPath: /work}
@@ -60,7 +60,7 @@ spec:
             {{- end }}
       volumes:
         - name: configuration
-          configMap: {name: {{ $name }}-configuration}
+          configMap: {name: c-{{ $org }}-settings}
         - {name: work, emptyDir: {}}
         - name: database
           projected:

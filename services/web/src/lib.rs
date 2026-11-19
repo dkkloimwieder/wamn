@@ -2,9 +2,12 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::future::poll_fn;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
@@ -12,7 +15,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt as _, Empty, Full, combinators::UnsyncBoxBody};
 use hyper::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, HOST};
 use hyper::service::service_fn;
-use hyper::{Method, Response, StatusCode};
+use hyper::{Method, Response, StatusCode, Uri};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioIo;
 use object_store::{ObjectStore, ObjectStoreExt as _};
@@ -21,7 +24,14 @@ use serde::Deserialize;
 use tokio::net::TcpListener;
 #[cfg(test)]
 use tokio::sync::RwLock;
+use tower_service::Service;
 use wamn_kubernetes::http_transport::{self, Protocols, Schemes};
+
+const LISTEN_PORT: u16 = 8080;
+const IDENTITY_CA: &str = "/etc/wamn-edge/identity-ca/ca.crt";
+const CSRF_KEY_FILE: &str = "/etc/wamn-edge/csrf/key";
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+const CONNECT_RETRIES: usize = 2;
 
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
@@ -29,18 +39,14 @@ mod browser_session;
 #[cfg(test)]
 mod rollout_tests;
 
-/// The platform installer supplies the listener and bucket in a mounted file.
+/// The platform chart supplies web settings in a mounted JSON file.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebConfig {
-    pub listen: SocketAddr,
     /// Empty on kind, otherwise `gs://<buckets.web>`.
     pub bucket: String,
-    /// HTTPS identity endpoint and its private CA.
-    pub identity: String,
-    pub identity_ca: std::path::PathBuf,
-    /// Mounted 32-byte HMAC key for the browser CSRF cookie.
-    pub csrf_key_file: std::path::PathBuf,
+    /// Canonical HTTPS identity issuer.
+    pub identity_issuer: String,
     /// Trusted proxy addresses counted from the direct peer toward the client.
     pub trusted_proxy_hops: usize,
 }
@@ -271,7 +277,41 @@ fn empty(status: StatusCode) -> Response<Full<Bytes>> {
         .expect("a constant response is valid")
 }
 
-type Connector = hyper_rustls::HttpsConnector<HttpConnector>;
+type TlsConnector = hyper_rustls::HttpsConnector<HttpConnector>;
+
+/// Hyper hands the connector only the URI. All attempts finish before it
+/// hands the upstream connection the request, including streaming bodies.
+#[derive(Clone)]
+struct Connector(TlsConnector);
+
+impl Service<Uri> for Connector {
+    type Response = <TlsConnector as Service<Uri>>::Response;
+    type Error = <TlsConnector as Service<Uri>>::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, uri: Uri) -> Self::Future {
+        let mut connector = self.0.clone();
+        Box::pin(async move {
+            let mut retries = CONNECT_RETRIES;
+            loop {
+                let result = tokio::time::timeout(CONNECT_TIMEOUT, async {
+                    poll_fn(|cx| connector.poll_ready(cx)).await?;
+                    connector.call(uri.clone()).await
+                })
+                .await
+                .unwrap_or_else(|elapsed| Err(elapsed.into()));
+                if result.is_ok() || retries == 0 {
+                    return result;
+                }
+                retries -= 1;
+            }
+        })
+    }
+}
 type ProxyBody = UnsyncBoxBody<Bytes, hyper::Error>;
 
 struct Proxy {
@@ -452,8 +492,7 @@ fn response_headers(headers: &mut hyper::HeaderMap) {
 }
 
 fn proxy(ca: &[u8], csrf_key: &[u8; 32]) -> anyhow::Result<Proxy> {
-    let mut connector = HttpConnector::new();
-    connector.set_connect_timeout(Some(Duration::from_secs(10)));
+    let connector = HttpConnector::new();
     let mut roots = rustls::RootCertStore::empty();
     for cert in rustls::pki_types::CertificateDer::pem_slice_iter(ca) {
         roots.add(cert?)?;
@@ -468,13 +507,15 @@ fn proxy(ca: &[u8], csrf_key: &[u8; 32]) -> anyhow::Result<Proxy> {
     let connector =
         http_transport::tls_connector(tls, connector, Schemes::HttpAndHttps, Protocols::Http1);
     Ok(Proxy {
-        client: http_transport::client(connector, |_| {}),
+        client: http_transport::client(Connector(connector), |builder| {
+            builder.retry_canceled_requests(false);
+        }),
         csrf_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, csrf_key),
     })
 }
 
 #[cfg(test)]
-fn native_connector() -> anyhow::Result<Connector> {
+fn native_connector() -> anyhow::Result<TlsConnector> {
     use hyper_rustls::ConfigBuilderExt as _;
     let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::aws_lc_rs::default_provider(),
@@ -513,13 +554,18 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
     let web = Arc::new(Web { store });
     let releases = Arc::new(Releases::in_cluster()?);
     ensure!(
-        config.identity.starts_with("https://"),
+        config.identity_issuer.starts_with("https://"),
         "identity must use HTTPS"
     );
-    let csrf_key = std::fs::read(&config.csrf_key_file).context("read web CSRF key file")?;
-    let csrf_key = csrf_key.as_slice().try_into().context("web CSRF key must contain 32 bytes")?;
-    let proxy = Arc::new(proxy(&std::fs::read(&config.identity_ca)?, csrf_key)?);
-    let listener = TcpListener::bind(config.listen).await?;
+    let csrf_key = std::fs::read(CSRF_KEY_FILE).context("read web CSRF key file")?;
+    let csrf_key = csrf_key
+        .as_slice()
+        .try_into()
+        .context("web CSRF key must contain 32 bytes")?;
+    let proxy = Arc::new(proxy(&std::fs::read(IDENTITY_CA)?, csrf_key)?);
+    let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], LISTEN_PORT))).await?;
+    let identity: Arc<str> = config.identity_issuer.into();
+    let trusted_proxy_hops = config.trusted_proxy_hops;
     let mut tasks = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
@@ -527,12 +573,11 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
             Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
             accepted = listener.accept() => {
                 let (stream, peer) = accepted?;
-                let identity = config.identity.clone();
-                let trusted_proxy_hops = config.trusted_proxy_hops;
+                let identity = Arc::clone(&identity);
                 let (web, releases, proxy) = (Arc::clone(&web), Arc::clone(&releases), Arc::clone(&proxy));
                 tasks.spawn(async move {
                     let service = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
-                        let identity = identity.clone();
+                        let identity = Arc::clone(&identity);
                         let (web, releases, proxy) = (Arc::clone(&web), Arc::clone(&releases), Arc::clone(&proxy));
                         async move {
                             let mut response = match respond(&web, &releases, &proxy, &identity, peer.ip(), trusted_proxy_hops, request).await {
@@ -572,7 +617,7 @@ pub async fn probe(path: &Path) -> anyhow::Result<()> {
         }
         for path in ["/", "/config.json"] {
             let request = hyper::Request::builder()
-                .uri(format!("http://127.0.0.1:8080{path}"))
+                .uri(format!("http://127.0.0.1:{LISTEN_PORT}{path}"))
                 .header(HOST, &host)
                 .body(Empty::new())?;
             tokio::time::timeout(Duration::from_secs(30), async {
@@ -693,7 +738,7 @@ mod tests {
         });
         let connector = native_connector().unwrap();
         let proxy = Proxy {
-            client: http_transport::client(connector.clone(), |_| {}),
+            client: http_transport::client(Connector(connector.clone()), |_| {}),
             csrf_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &[0; 32]),
         };
         let releases = Releases {

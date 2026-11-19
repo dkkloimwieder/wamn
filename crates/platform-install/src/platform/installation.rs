@@ -25,7 +25,7 @@ pub fn values(document: &ClusterDocument, chart: &SelectedChart) -> anyhow::Resu
         .control
         .split_once('.')
         .context("control hostname requires a domain")?;
-    let mut values = json!({
+    Ok(json!({
         "org":document.org, "registry":document.registry,
         "edgeDnsNames":[format!("*.{domain}")],
         "platform":{"chart":chart.reference()},
@@ -35,9 +35,7 @@ pub fn values(document: &ClusterDocument, chart: &SelectedChart) -> anyhow::Resu
             "package_base":format!("{}/wamn/packages",document.registry),
             "component_base":format!("{}/wamn/components",document.registry)
         }
-    });
-    resources::merge(&mut values, host_settings(document));
-    Ok(values)
+    }))
 }
 
 pub(super) const SYSTEM_DATABASE: &str = "wamn_system";
@@ -90,18 +88,4 @@ pub async fn apply(
     let result = resources::apply_release(target, &entry, directory, Wait::None).await;
     *values = entry["values"].take();
     result
-}
-
-pub fn host_settings(document: &ClusterDocument) -> Value {
-    let mut values = json!({});
-    let issuer = super::identity::issuer(document.org.as_str());
-    values["hostEnvironment"] = json!({
-        "DOCKER_CONFIG":"/etc/wamn/registry",
-        "WAMN_SESSION_ISSUER":issuer,
-        "WAMN_SESSION_JWKS_URL":format!("{issuer}/.well-known/jwks.json"),
-        "WAMN_SESSION_AUDIENCE":wamn_registry::name::org_audience(&document.org),
-        "WAMN_SESSION_ALGORITHMS":"EdDSA",
-        "WAMN_SESSION_JWKS_CA":"/etc/identity-ca/ca.crt",
-    });
-    values
 }

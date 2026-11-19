@@ -41,14 +41,7 @@ fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
         .iter()
         .find(|container| container["name"] == "control")
         .unwrap();
-    let key = container["env"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "WAMN_OAUTH_KEY_FILE")
-        .expect("the control service declares its OAuth key file")["value"]
-        .as_str()
-        .unwrap();
+    let key = "/etc/wamn/oauth/key";
     let (mount, relative) = container["volumeMounts"]
         .as_array()
         .unwrap()

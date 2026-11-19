@@ -421,8 +421,7 @@ Both default to enforce. Each linear memory has a 256 MiB ceiling.
 The shared guest memory budget remains derived from the container limit.
 Existing route and queue admission limits and deployment memory limits remain independent.
 Wasmtime's pooling allocator remains enabled under its separate resource limits.
-The release chart sets how many bytes each allocator slot keeps resident after use.
-Dev activation and the local benchmark read the same values ([host environment](../operations/development-loop.md)).
+The host defaults to 64 KiB of resident linear memory, 4 KiB of resident table memory, and 8 KiB of resident async stack memory per allocator slot.
 These values change residency only. They do not increase slot counts or memory ceilings.
 Wasmtime leaves async stack zeroing disabled, so its async stack residency value has no effect under this configuration.
 Native epochs bound guest execution. Duration metering does not grant instruction fuel.
@@ -814,7 +813,7 @@ Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.
 The shared [encryption module](../../crates/envelope/src/encryption.rs) supports regional Cloud KMS and a local key file.
-The host reads its provider from `WAMN_OAUTH_ENCRYPTION`.
+The host reads its provider from the `oauth_encryption` field in its settings file.
 Use `gcp` for Cloud KMS or `local` for a key file.
 [Deployment instructions](../operations/gcp.md#49-platform-install-inputs) describe that configuration.
 Each host retains at most 1024 unwrapped keys and evicts the least recently used key.

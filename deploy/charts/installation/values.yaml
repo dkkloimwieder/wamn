@@ -193,7 +193,6 @@ configuration: {}
 platform:
   chart: ''
 edgeDnsNames: []
-hostEnvironment: {}
 postgres:
   image: ghcr.io/cloudnative-pg/postgresql:18.7
   backup:

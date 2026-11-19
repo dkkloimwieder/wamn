@@ -79,7 +79,7 @@ pub(crate) async fn execute(
                     env: triple.env,
                     system_database_url: platform.system_database_url.clone(),
                     nats: wamn_broker::nats::PlatformNats {
-                        nats_url: wamn_platform_install::platform::identity::NATS_URL.into(),
+                        nats_url: platform.nats_url.clone(),
                         nats_tls_ca: "/etc/wamn/recovery-nats/ca.crt".into(),
                         nats_tls_cert: "/etc/wamn/recovery-nats/tls.crt".into(),
                         nats_tls_key: "/etc/wamn/recovery-nats/tls.key".into(),
@@ -114,17 +114,23 @@ pub(crate) async fn execute(
         _ => {
             let application = request.application.context("application is required")?;
             let document = file.into_project(&triple.project)?;
+            let integration_base;
+            let component_base;
             operation::application(
                 &platform,
                 document,
                 &application,
                 match kind {
-                    Operation::Deploy => operation::Application::Deploy {
-                        digest: request.release.context("package digest is required")?,
-                        integration_base: &config.integration_artifact_base,
-                        component_base: &config.component_artifact_base,
-                        actor,
-                    },
+                    Operation::Deploy => {
+                        integration_base = format!("{}/wamn/integrations", config.registry);
+                        component_base = format!("{}/wamn/components", config.registry);
+                        operation::Application::Deploy {
+                            digest: request.release.context("package digest is required")?,
+                            integration_base: &integration_base,
+                            component_base: &component_base,
+                            actor,
+                        }
+                    }
                     Operation::Apply => operation::Application::Apply(
                         request.release.context("package digest is required")?,
                     ),

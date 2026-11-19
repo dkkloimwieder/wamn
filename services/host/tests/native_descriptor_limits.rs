@@ -6,12 +6,12 @@ use tokio::process::Command;
 async fn startup_limits(soft: u64, hard: u64) {
     use wamn_test_infrastructure::process_input;
     let files = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
-    let input = files.path().join("ca.pem");
+    let input = files.path().join("settings.json");
     process_input::create(&input).unwrap();
     let mut child = Command::new("python3")
         .args(["-c", "import os,resource,sys; resource.setrlimit(resource.RLIMIT_NOFILE,tuple(map(int,sys.argv[1:3]))); os.execv(sys.argv[3],sys.argv[3:])"])
         .args([soft.to_string(), hard.to_string()])
-        .args([env!("CARGO_BIN_EXE_wamn-host"), "host", "--drain-bound-seconds=300", "--oci-ca-path"])
+        .args([env!("CARGO_BIN_EXE_wamn-host"), "host", "--scheduler-nats-url=nats://fixture:4222", "--data-nats-url=nats://fixture:4222", "--settings"])
         .arg(&input)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
@@ -24,7 +24,7 @@ async fn startup_limits(soft: u64, hard: u64) {
     let writer = process_input::reader(&input, &mut child)
         .await
         .unwrap()
-        .expect("host reads its CA after descriptor initialization");
+        .expect("host reads its settings after descriptor initialization");
     let limits = std::fs::read_to_string(format!("/proc/{}/limits", child.id().unwrap())).unwrap();
     let fields = limits
         .lines()

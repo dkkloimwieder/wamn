@@ -116,7 +116,7 @@ impl Execution {
             &name,
             &worker.image,
             &["/usr/local/bin/wamn-control"],
-            &["--config", "/etc/wamn/control/config.json", "worker"],
+            &["--settings", crate::SETTINGS_FILE, "worker"],
         );
         job["metadata"]["annotations"] =
             json!({"wamn.dev/operation-target":coordinate,"wamn.dev/operation":worker_type});

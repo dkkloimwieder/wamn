@@ -50,10 +50,12 @@ pub struct Platform {
     /// resources, registry mounts). The verb adds the environment's
     /// credential Secret references.
     pub host_group: Option<PathBuf>,
-    /// The identity service that issues the management-author PAT. Without
-    /// it, `apply` issues no PAT.
     /// The identity issuer address used for project user rows.
     pub identity_issuer: String,
+    /// The shared in-cluster NATS endpoint.
+    pub nats_url: String,
+    /// Provider for the host's OAuth wrapping key.
+    pub oauth_encryption: Option<wamn_envelope::encryption::Configuration>,
     /// The event broker for application capture and entity consumers.
     pub events: Option<wamn_broker::EventBroker>,
 }
