@@ -15,6 +15,7 @@ use crate::release_chart::bundle::POD_REGISTRY;
 
 const PLATFORM: &str = "platform";
 const SYSTEM_SQL_CONFIG: &str = "wamn-system-sql";
+const PROVISION_JOB: &str = "wamn-provision-org";
 const SQL_CONFIG_PATH: &str = "/etc/wamn/system-sql/database.json";
 const DEADLINE: Duration = Duration::from_secs(300);
 
@@ -117,6 +118,7 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
         image,
         &["provision-org", org.as_str(), "--database", SQL_CONFIG_PATH],
     );
+    sql["metadata"] = json!({"name": PROVISION_JOB});
     let spec = &mut sql["spec"]["template"]["spec"];
     spec["automountServiceAccountToken"] = true.into();
     spec["volumes"] = json!([
@@ -135,14 +137,14 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
         {"name": "configuration", "mountPath": "/etc/wamn/system-sql", "readOnly": true},
         {"name": "database", "mountPath": wamn_postgres::DATABASE_DIR, "readOnly": true},
     ]);
-    let sql_job = run_job(&target, &sql).await?;
+    let sql_job_uid = job::run_exclusive(&target, &sql, DEADLINE + Duration::from_secs(30)).await?;
 
     target.namespace = org.to_string();
     // The control pool reads its mounted password at startup.
     let control = wamn_registry::name::control_resource(org);
     let restart = json!({
         "spec": {"template": {"metadata": {"annotations": {
-            "wamn.dev/control-credential-job": sql_job,
+            "wamn.dev/control-credential-job": sql_job_uid,
         }}}},
     });
     kubectl::kubectl(
@@ -181,7 +183,7 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
     spec["containers"][0]["volumeMounts"] = json!([
         {"name": "control-token", "mountPath": "/var/run/secrets/wamn-control", "readOnly": true},
     ]);
-    run_job(&target, &invitation).await.map(drop)
+    run_job(&target, &invitation).await
 }
 
 fn org_values(
@@ -339,7 +341,7 @@ fn org_job(account: &str, image: &str, args: &[&str]) -> Value {
     })
 }
 
-async fn run_job(target: &Target, manifest: &Value) -> anyhow::Result<String> {
+async fn run_job(target: &Target, manifest: &Value) -> anyhow::Result<()> {
     let input = serde_json::to_vec(manifest)?;
     let created = kubectl::kubectl(
         &target.kubeconfig,
@@ -359,6 +361,5 @@ async fn run_job(target: &Target, manifest: &Value) -> anyhow::Result<String> {
         .trim()
         .strip_prefix("job.batch/")
         .context("kubectl did not return a Job name")?;
-    job::wait(target, name, DEADLINE + Duration::from_secs(30)).await?;
-    Ok(name.to_owned())
+    job::wait(target, name, DEADLINE + Duration::from_secs(30)).await
 }

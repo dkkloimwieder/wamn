@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/name: wamn-identity
     app.kubernetes.io/instance: identity
 spec:
-  replicas: 2
+  replicas: {{ include "wamn-platform.identityReplicas" . }}
   selector:
     matchLabels:
       app.kubernetes.io/name: wamn-identity

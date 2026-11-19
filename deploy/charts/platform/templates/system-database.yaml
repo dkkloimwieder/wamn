@@ -181,7 +181,7 @@ spec:
       - host all postgres,{{ $system.migrationRole.name }} all reject
       - hostssl all all all scram-sha-256
     parameters:
-      max_connections: {{ .Values.postgres.maxConnections | quote }}
+      max_connections: {{ include "wamn-platform.systemDatabaseMaxConnections" . | quote }}
       max_slot_wal_keep_size: "4GB"
       pg_stat_statements.max: "10000"
       pg_stat_statements.track: top

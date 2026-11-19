@@ -7,11 +7,12 @@ use std::{
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_kubernetes::{Target, helm, kubectl};
+use wamn_kubernetes::{Target, helm, job, kubectl};
 use wamn_platform_install::release_chart::bundle;
 
 const INFRASTRUCTURE_RELEASE: &str = "wamn-infrastructure";
 const PLATFORM_RELEASE: &str = "wamn";
+const SYSTEM_SQL_JOB: &str = "wamn-system-sql";
 const ROLLOUT_TIMEOUT: Duration = Duration::from_secs(960);
 
 /// Platform verbs exposed by the product command.
@@ -129,6 +130,8 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
         kubectl::wait_deployment_ready(&target, "cnpg-controller-manager", ROLLOUT_TIMEOUT).await?;
     }
     if platform {
+        let deadline = tokio::time::Instant::now() + ROLLOUT_TIMEOUT;
+        job::clear_finished(&target, SYSTEM_SQL_JOB, deadline).await?;
         upgrade(
             &target,
             &charts.join("platform"),
@@ -168,7 +171,6 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
     let platform_rollout = async {
         if platform {
             let selector = format!("app.kubernetes.io/instance in ({PLATFORM_RELEASE},identity)");
-            let job_selector = format!("app.kubernetes.io/instance={PLATFORM_RELEASE}");
             let rollout = [
                 "rollout",
                 "status",
@@ -176,18 +178,14 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
                 "--selector",
                 &selector,
             ];
-            let job = [
-                "wait",
-                "--for=condition=complete",
-                "job",
-                "--selector",
-                &job_selector,
-                "--timeout=960s",
-            ];
             tokio::try_join!(
                 wait(&target.namespace, &rollout),
                 wait("hosts", &["rollout", "status", "deployment/wamn-edge"]),
-                wait(&target.namespace, &job),
+                job::wait(
+                    &target,
+                    SYSTEM_SQL_JOB,
+                    deadline.saturating_duration_since(tokio::time::Instant::now())
+                ),
             )
             .context("wait for platform rollouts and the system SQL Job")?;
         }
