@@ -32,7 +32,9 @@ pub fn apply_login(org: &OrgId, database: &str) -> LoginName {
 /// Rotate both logins, recording the org before releasing their credentials.
 pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::Result<()> {
     let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
-    let mut connection = wamn_postgres::connect(&database.to_json()?).await?;
+    let mut connection = crate::provision_system::connect_system_database(&database.to_json()?)
+        .await
+        .context("connect to the system database for org provisioning")?;
     let control = control_login(org, &database.database);
     let apply = apply_login(org, &database.database);
     // Keep concurrent provisioning Jobs ordered through the Secret patch.

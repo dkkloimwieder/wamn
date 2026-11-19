@@ -13,7 +13,7 @@ use wamn_provision::{CONTROL_BOOTSTRAP_SQL, sql};
 /// Inputs of one `provision-system` run.
 #[derive(Debug)]
 pub struct ProvisionSystemRequest {
-    /// Public connection settings for the mounted CNPG postgres login.
+    /// Public connection settings for the system database's postgres certificate.
     pub database: wamn_postgres::ConnectionConfig,
     /// The email domain of the platform principal rows.
     pub platform_domain: wamn_registry::platform_domain::PlatformDomain,
@@ -78,11 +78,10 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
     Ok(())
 }
 
-// The Job starts alongside the CNPG Cluster. Retry refused connections before
-// Kubernetes starts another attempt.
+// A Job can start before the database listens or CNPG reloads its pod IP in pg_hba.
 const CONNECT_RETRIES: u32 = 30;
 
-async fn connect_system_database(url: &str) -> anyhow::Result<Client> {
+pub(crate) async fn connect_system_database(url: &str) -> anyhow::Result<Client> {
     let mut retries = 0;
     crate::credentials::connect_with_retry(url, |error| {
         let refused = error.chain().any(|cause| {
@@ -90,7 +89,14 @@ async fn connect_system_database(url: &str) -> anyhow::Result<Client> {
                 .downcast_ref::<io::Error>()
                 .is_some_and(|error| error.kind() == io::ErrorKind::ConnectionRefused)
         });
-        if !refused || retries == CONNECT_RETRIES {
+        let awaiting_hba = url.starts_with('{')
+            && error
+                .downcast_ref::<sqlx::Error>()
+                .and_then(sqlx::Error::as_database_error)
+                .and_then(sqlx::error::DatabaseError::code)
+                .as_deref()
+                == Some("28000");
+        if !(refused || awaiting_hba) || retries == CONNECT_RETRIES {
             return Err(error);
         }
         retries += 1;
@@ -153,7 +159,9 @@ pub async fn initialize_system(
     sources: &[Migration],
 ) -> anyhow::Result<()> {
     install_control_store(admin).await?;
-    let mut migration = wamn_postgres::connect(migration_input).await?;
+    let mut migration = connect_system_database(migration_input)
+        .await
+        .context("connect as the system migration login")?;
     crate::platform_migrations::apply_target(&mut migration, MigrationDatabase::System, sources)
         .await?;
     Ok(())

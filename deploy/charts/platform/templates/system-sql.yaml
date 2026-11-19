@@ -1,8 +1,8 @@
 {{- $system := include "wamn-platform.systemDatabase" . | fromJson -}}
 {{- $namespace := $system.namespace -}}
 {{- $ca := $system.ca -}}
-{{- $admin := $system.adminSecret -}}
-{{- $migration := $system.migrationRole.passwordSecret.name -}}
+{{- $admin := $system.adminTlsSecret -}}
+{{- $migration := $system.migrationTlsSecret -}}
 {{- $name := printf "%s-system-sql" .Release.Name -}}
 apiVersion: v1
 kind: ConfigMap
@@ -22,6 +22,9 @@ metadata:
 spec:
   activeDeadlineSeconds: 900
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: wamn-system-sql
     spec:
       automountServiceAccountToken: false
       restartPolicy: OnFailure
@@ -52,8 +55,8 @@ spec:
               - secret:
                   name: {{ . | quote }}
                   items:
-                    - {key: username, path: {{ printf "%s/username" . | quote }}}
-                    - {key: password, path: {{ printf "%s/password" . | quote }}}
+                    - {key: tls.crt, path: {{ printf "%s/tls.crt" . | quote }}}
+                    - {key: tls.key, path: {{ printf "%s/tls.key" . | quote }}}
               - secret:
                   name: {{ $ca | quote }}
                   items:

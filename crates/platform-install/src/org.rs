@@ -123,8 +123,8 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
         {"name": "configuration", "configMap": {"name": SYSTEM_SQL_CONFIG}},
         {"name": "database", "projected": {"defaultMode": 256, "sources": [
             {"secret": {"name": login, "items": [
-                {"key": "username", "path": format!("{login}/username")},
-                {"key": "password", "path": format!("{login}/password")},
+                {"key": "tls.crt", "path": format!("{login}/tls.crt")},
+                {"key": "tls.key", "path": format!("{login}/tls.key")},
             ]}},
             {"secret": {"name": database.server_ca.name, "items": [
                 {"key": "ca.crt", "path": format!("{login}/ca.crt")},

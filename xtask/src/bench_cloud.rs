@@ -6,6 +6,8 @@ use tokio::io::AsyncWriteExt as _;
 use crate::{bench_data as data, process};
 use anyhow::{Context as _, ensure};
 use clap::Args;
+use std::io::Write as _;
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -153,38 +155,67 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
         PathBuf::from,
     );
     ensure!(!output.exists(), "result already exists");
-    let encoded = process::output(
-        root,
-        "kubectl",
-        &[
-            "-n",
-            "platform",
-            "get",
-            "secret",
-            "wamn-pg-superuser",
-            "-o",
-            "jsonpath={.data.password}",
-        ],
-    )
-    .await?;
-    let password =
-        String::from_utf8(base64::engine::general_purpose::STANDARD.decode(encoded.trim())?)?;
-    let database = "postgresql://postgres@127.0.0.1:15432/wamn_pg_minimum?sslmode=disable";
+    let read_secret = async |name: &str| -> anyhow::Result<serde_json::Value> {
+        let json = process::output(
+            root,
+            "kubectl",
+            &["-n", "platform", "get", "secret", name, "-o", "json"],
+        )
+        .await?;
+        serde_json::from_str(&json).with_context(|| format!("decode benchmark Secret {name}"))
+    };
+    let (certificate, ca) = tokio::try_join!(
+        read_secret("wamn-pg-postgres-tls"),
+        read_secret("wamn-pg-ca")
+    )?;
+    let credentials = tempfile::tempdir().context("create a directory for benchmark TLS files")?;
+    let mut database = url::Url::parse("postgresql://postgres@127.0.0.1:15432/wamn_pg_minimum")?;
+    database
+        .query_pairs_mut()
+        .append_pair("sslmode", "verify-full");
+    for (parameter, key, secret) in [
+        ("sslcert", "tls.crt", &certificate),
+        ("sslkey", "tls.key", &certificate),
+        ("sslrootcert", "ca.crt", &ca),
+    ] {
+        let encoded = secret["data"][key]
+            .as_str()
+            .with_context(|| format!("benchmark TLS Secret has no {key}"))?;
+        let contents = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .with_context(|| format!("decode benchmark TLS file {key}"))?;
+        let path = credentials.path().join(key);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?
+            .write_all(&contents)
+            .with_context(|| format!("write benchmark TLS file {key}"))?;
+        database.query_pairs_mut().append_pair(
+            parameter,
+            path.to_str().context("benchmark TLS path must be UTF-8")?,
+        );
+    }
+    // libpq requires percent-encoded spaces in connection URIs.
+    let query = database.query().map(|query| query.replace('+', "%20"));
+    database.set_query(query.as_deref());
+    let mut maintenance = database.clone();
+    maintenance.set_path("postgres");
+    let maintenance = maintenance.as_str();
+    let database = database.as_str();
     let client_url = "postgresql://postgres@wamn-pg-rw.platform.svc:5432/wamn_pg_minimum";
     let sql = async |url: &str, sql: &str, csv: bool| -> anyhow::Result<String> {
         let mut command = tokio::process::Command::new("psql");
-        command
-            .current_dir(root)
-            .env("PGPASSWORD", &password)
-            .args([
-                url,
-                "-X",
-                "-v",
-                "ON_ERROR_STOP=1",
-                if csv { "--csv" } else { "-At" },
-                "-c",
-                sql,
-            ]);
+        command.current_dir(root).args([
+            url,
+            "-X",
+            "-v",
+            "ON_ERROR_STOP=1",
+            if csv { "--csv" } else { "-At" },
+            "-c",
+            sql,
+        ]);
         let result = command.output().await?;
         ensure!(
             result.status.success(),
@@ -195,13 +226,13 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
     };
     // This disposable database is the only database whose instrumentation or triggers change.
     sql(
-        "postgresql://postgres@127.0.0.1:15432/postgres?sslmode=disable",
+        maintenance,
         "DROP DATABASE IF EXISTS wamn_pg_minimum WITH (FORCE)",
         false,
     )
     .await?;
     sql(
-        "postgresql://postgres@127.0.0.1:15432/postgres?sslmode=disable",
+        maintenance,
         "CREATE DATABASE wamn_pg_minimum",
         false,
     )
@@ -224,7 +255,7 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
         ("auto_explain.log_format", "json"),
     ] {
         sql(
-            "postgresql://postgres@127.0.0.1:15432/postgres?sslmode=disable",
+            maintenance,
             &format!("ALTER DATABASE wamn_pg_minimum SET {name} = {value}"),
             false,
         )
@@ -232,21 +263,18 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
     }
     if let Ok(delay) = std::env::var("COMMIT_DELAY") {
         let delay = delay.parse::<u32>()?;
-        sql("postgresql://postgres@127.0.0.1:15432/postgres?sslmode=disable",&format!("ALTER DATABASE wamn_pg_minimum SET commit_delay = {delay}; ALTER DATABASE wamn_pg_minimum SET commit_siblings = 5"),false).await?;
+        sql(maintenance,&format!("ALTER DATABASE wamn_pg_minimum SET commit_delay = {delay}; ALTER DATABASE wamn_pg_minimum SET commit_siblings = 5"),false).await?;
     }
     let target =
         std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
-    let mut url = url::Url::parse(database)?;
-    url.set_password(Some(&password))
-        .map_err(|()| anyhow::anyhow!("encode PostgreSQL password"))?;
     process::execute(
         tokio::process::Command::new(target.join("debug/examples/pg_minimum_database"))
             .current_dir(root)
-            .arg(url.as_str())
+            .arg(database)
             .arg(root.join("apps/wamn_receiving")),
     )
     .await?;
-    process::execute(tokio::process::Command::new("psql").current_dir(root).env("PGPASSWORD",&password).args([database,"-X","-v","ON_ERROR_STOP=1","-v","scale=1000","-c","SET auto_explain.sample_rate=0; SET log_transaction_sample_rate=0; SET log_statement_sample_rate=0","-f"]).arg(root.join("apps/wamn_receiving/tests/fixtures/receiving-seed.sql"))).await?;
+    process::execute(tokio::process::Command::new("psql").current_dir(root).args([database,"-X","-v","ON_ERROR_STOP=1","-v","scale=1000","-c","SET auto_explain.sample_rate=0; SET log_transaction_sample_rate=0; SET log_statement_sample_rate=0","-f"]).arg(root.join("apps/wamn_receiving/tests/fixtures/receiving-seed.sql"))).await?;
     sql(
         database,
         "CREATE EXTENSION IF NOT EXISTS pg_stat_statements",
@@ -311,7 +339,7 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
         process::run(root,"kubectl",&["-n","platform","exec",&client,"--","pgbench",client_url,"-i","-s","10"]).await?;
         for call in calls.split_whitespace(){
             let run=SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();let receipt_lines=call.strip_prefix("receipt-");let operation=if receipt_lines.is_some(){receipt}else{operation};
-            if let Some(lines)=receipt_lines {process::execute(tokio::process::Command::new("psql").current_dir(root).env("PGPASSWORD",&password).args([database,"-XAt","-v","ON_ERROR_STOP=1","-v",&format!("clients={concurrency}"),"-v",&format!("lines={lines}"),"-f","xtask/bench/pg-minimum/receipt-slots.sql"])).await?;}
+            if let Some(lines)=receipt_lines {process::execute(tokio::process::Command::new("psql").current_dir(root).args([database,"-XAt","-v","ON_ERROR_STOP=1","-v",&format!("clients={concurrency}"),"-v",&format!("lines={lines}"),"-f","xtask/bench/pg-minimum/receipt-slots.sql"])).await?;}
             if call=="update-no-triggers"{sql(database,"ALTER TABLE receiving.purchase_order DISABLE TRIGGER wamn_record_history_stamp, DISABLE TRIGGER wamn_record_history_log",false).await?;}
             sql(database,"SELECT pg_stat_statements_reset(); SELECT pg_stat_reset()",false).await?;std::fs::write(work.join(format!("{call}.database-before.json")),sql(database,include_str!("../bench/database-snapshot.sql"),false).await?)?;
             let builtin=matches!(call,"select-only"|"simple-update");let mut url=if builtin{client_url.to_owned()}else{format!("{client_url}?options=-csearch_path%3Dreceiving,public%20-cstatement_timeout%3D5000%20-crole%3Dwamn_app")};

@@ -66,6 +66,9 @@ spec:
     - {{ $service }}.{{ $namespace }}.svc
     - {{ $service }}.{{ $namespace }}.svc.cluster.local
     {{- end }}
+  ipAddresses:
+    # The benchmark runner reaches the server through a local port forward.
+    - 127.0.0.1
   usages: [digital signature, key encipherment, server auth]
   issuerRef:
     kind: Issuer
@@ -87,18 +90,23 @@ spec:
     kind: Issuer
     name: {{ $cluster }}
 ---
+{{- range list (dict "name" $system.identityTlsSecret "login" $system.identityRole.name)
+                (dict "name" $system.adminTlsSecret "login" "postgres")
+                (dict "name" $system.migrationTlsSecret "login" $system.migrationRole.name) }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ $system.identityTlsSecret }}
+  name: {{ .name }}
   namespace: {{ $namespace }}
 spec:
-  secretName: {{ $system.identityTlsSecret }}
-  commonName: {{ $system.identityRole.name }}
+  secretName: {{ .name }}
+  commonName: {{ .login }}
   usages: [digital signature, client auth]
   issuerRef:
     kind: Issuer
     name: {{ $cluster }}
+---
+{{- end }}
 {{- $groups := dict }}
 {{- range $roles }}
 {{- range .inRoles }}
@@ -106,34 +114,7 @@ spec:
 {{- $_ := set $groups . (dict "name" . "login" false "inherit" false) }}
 {{- end }}
 {{- end }}
-{{- if .passwordSecret }}
-{{- $name := .passwordSecret.name }}
-{{- $old := lookup "v1" "Secret" $namespace $name }}
-{{- $username := .name | b64enc }}
-{{- $password := "" }}
-{{- if $old }}
-{{- if or (ne $old.type "kubernetes.io/basic-auth") (ne $old.data.username $username) (not $old.data.password) }}
-{{- fail (printf "Invalid basic-auth Secret %s in %s" $name $namespace) }}
 {{- end }}
-{{- $password = $old.data.password }}
-{{- else }}
-{{- $password = randAlphaNum 48 | b64enc }}
-{{- end }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ $name }}
-  namespace: {{ $namespace }}
-  labels:
-    cnpg.io/reload: "true"
-type: kubernetes.io/basic-auth
-data:
-  username: {{ $username | quote }}
-  password: {{ $password | quote }}
-{{- end }}
-{{- end }}
----
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -144,7 +125,8 @@ spec:
   enablePDB: false
   imageName: {{ .Values.postgres.image | quote }}
   primaryUpdateStrategy: unsupervised
-  enableSuperuserAccess: true
+  # Disable the password and keep the instance manager's local peer access.
+  enableSuperuserAccess: false
   certificates:
     serverCASecret: {{ $caName }}
     serverTLSSecret: {{ $serverTlsName }}
@@ -162,9 +144,30 @@ spec:
     {{- $ordered = append $ordered (index $groups .) }}
     {{- end }}
     roles: {{ concat $ordered $roles | toJson }}
+  podSelectorRefs:
+    - name: platform-sql-jobs
+      selector:
+        matchExpressions:
+          - key: app.kubernetes.io/component
+            operator: In
+            values: [wamn-system-sql, wamn-org-sql]
+    - name: system-sql
+      selector:
+        matchLabels:
+          app.kubernetes.io/component: wamn-system-sql
+    - name: pg-minimum-client
+      selector:
+        matchLabels:
+          app.kubernetes.io/component: pg-minimum-client
   postgresql:
     pg_hba:
       - hostssl {{ $database }} {{ $system.identityRole.name }} all cert
+      - hostssl {{ $database }} postgres ${podselector:platform-sql-jobs} cert
+      - hostssl postgres postgres ${podselector:system-sql} cert
+      - hostssl {{ $database }} {{ $system.migrationRole.name }} ${podselector:system-sql} cert
+      - hostssl wamn_pg_minimum postgres ${podselector:pg-minimum-client} cert
+      - hostssl postgres,wamn_pg_minimum postgres 127.0.0.1/32 cert
+      - host all postgres,{{ $system.migrationRole.name }} all reject
       - hostssl all all all scram-sha-256
     parameters:
       max_slot_wal_keep_size: "4GB"

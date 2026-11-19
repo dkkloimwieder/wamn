@@ -17,8 +17,13 @@ spec:
   activeDeadlineSeconds: 7200
   ttlSecondsAfterFinished: 300
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: pg-minimum-client
     spec:
       restartPolicy: Never
+      securityContext:
+        fsGroup: 26
       nodeSelector:
         role: bench-host
       tolerations:
@@ -31,12 +36,32 @@ spec:
           image: ghcr.io/cloudnative-pg/postgresql:18.7
           command: ["sleep", "7200"]
           env:
-            - name: PGPASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: wamn-pg-superuser
-                  key: password
+            - {name: PGSSLMODE, value: verify-full}
+            - {name: PGSSLROOTCERT, value: /etc/wamn/db/ca.crt}
+            - {name: PGSSLCERT, value: /etc/wamn/db/tls.crt}
+            - {name: PGSSLKEY, value: /etc/wamn/db/tls.key}
+          startupProbe:
+            exec:
+              command: ["psql", "-Xw", "-d", "postgresql://postgres@wamn-pg-rw.platform.svc:5432/wamn_pg_minimum", "-c", "SELECT 1"]
+            periodSeconds: 2
+            failureThreshold: 60
+          volumeMounts:
+            - {name: database, mountPath: /etc/wamn/db, readOnly: true}
           resources:
             requests:
               cpu: "500m"
               memory: "256Mi"
+      volumes:
+        - name: database
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: wamn-pg-postgres-tls
+                  items:
+                    - {key: tls.crt, path: tls.crt}
+                    - {key: tls.key, path: tls.key}
+              - secret:
+                  name: wamn-pg-ca
+                  items:
+                    - {key: ca.crt, path: ca.crt}
