@@ -14,6 +14,7 @@
 //! last and commit. Disable connection principals in a retained database.
 //!
 //! Helm preserves the Cluster and ObjectStore unless deletion includes data.
+//! With `--data`, an absent or unreachable project database skips database-side cleanup.
 
 use sqlx::{Connection as _, Row as _};
 mod resources;
@@ -21,6 +22,7 @@ mod rows;
 pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
+use std::time::Duration;
 use wamn_provision::sql::drop_replication_slot_sql;
 
 use wamn_provision::{
@@ -37,8 +39,8 @@ use wamn_kubernetes::helm;
 use wamn_postgres::connect;
 
 /// Delete the environment. With `data`, the database and its roles are
-/// dropped too, and an unfinished run does not stop the delete. The caller
-/// confirms `data`. Returns what the verb did, one line per step.
+/// dropped too, and an unfinished run or unreachable project database does
+/// not stop the delete. The caller confirms `data`. Returns one line per step.
 ///
 /// # Errors
 ///
@@ -115,22 +117,37 @@ async fn delete_locked(
     )
     .await?
     .is_empty();
-    let project_connection =
-        cr_present.then(|| wamn_platform_install::environment::connection_for(triple, &instance));
-    let project_lock = if let Some(connection) = &project_connection {
+    let cluster_missing = data
+        && cr_present
+        && wamn_kubernetes::kubectl::get::<serde_json::Value>(
+            &platform.target.kubeconfig,
+            &platform.target.context,
+            &platform.target.namespace,
+            "cluster.postgresql.cnpg.io",
+            &name::project_cluster(&database),
+        )
+        .await?
+        .is_none();
+    let project_connection = (cr_present && !cluster_missing)
+        .then(|| wamn_platform_install::environment::connection_for(triple, &instance));
+    let project_lock = if cluster_missing {
+        lines.push(format!(
+            "--data: project database {database} unreachable (Cluster is absent). Deleted without the database-side steps."
+        ));
+        None
+    } else if let Some(connection) = &project_connection {
         platform.prepare_database(connection).await?;
         let url = connection.to_json()?;
-        match super::analyse::connect_project(&url).await {
-            Ok(client) => Some(LifecycleLock::acquire(client, triple).await?),
-            Err(error)
-                if data
-                    && error
-                        .downcast_ref::<sqlx::Error>()
-                        .and_then(sqlx::Error::as_database_error)
-                        .and_then(sqlx::error::DatabaseError::code)
-                        .as_deref()
-                        == Some("3D000") =>
-            {
+        let lock = async {
+            let client = connect_for_delete(super::analyse::connect_project(&url), data).await?;
+            LifecycleLock::acquire(client, triple).await
+        };
+        match lock.await {
+            Ok(lock) => Some(lock),
+            Err(error) if data && database_unreachable(&error) => {
+                lines.push(format!(
+                    "--data: project database {database} unreachable ({error:#}). Deleted without the database-side steps."
+                ));
                 None
             }
             Err(error) => return Err(error),
@@ -242,34 +259,45 @@ async fn delete_locked(
             }
         }
 
-
         // Slot administration belongs to the capture login on the recorded cluster.
         if let Some(project_connection) = project_connection {
-            let mut observer = connect(&wamn_postgres::database_configuration(
-                &project_connection.to_json()?,
-                "postgres",
-            )?)
-            .await?;
             let slot = cdc_object_name(org, project, env, &instance);
-            if let Some(row) =
-                sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name=$1")
-                    .bind(&slot)
-                    .fetch_optional(&mut observer)
-                    .await?
-            {
-                if row.get::<bool, _>(0) {
-                    bail!("replication slot is active");
+            let drop_slot = async {
+                let observer = wamn_postgres::database_configuration(
+                    &project_connection.to_json()?,
+                    "postgres",
+                )?;
+                let mut observer = connect_for_delete(connect(&observer), data).await?;
+                if let Some(row) =
+                    sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name=$1")
+                        .bind(&slot)
+                        .fetch_optional(&mut observer)
+                        .await?
+                {
+                    if row.get::<bool, _>(0) {
+                        bail!("replication slot is active");
+                    }
+                    let mut capture = wamn_platform_install::environment::capture_configuration(
+                        project_connection,
+                    )?;
+                    capture.database = "postgres".into();
+                    platform.prepare_database(&capture).await?;
+                    let mut capture =
+                        connect_for_delete(connect(&capture.to_json()?), data).await?;
+                    sqlx::raw_sql(sqlx::AssertSqlSafe(drop_replication_slot_sql(&slot)))
+                        .execute(&mut capture)
+                        .await?;
                 }
-                let capture =
-                    wamn_platform_install::environment::capture_configuration(project_connection)?;
-                platform.prepare_database(&capture).await?;
-                let mut capture = connect(&capture.to_json()?).await?;
-                sqlx::raw_sql(sqlx::AssertSqlSafe(drop_replication_slot_sql(&slot)))
-                    .execute(&mut capture)
-                    .await?;
+                Ok(())
+            };
+            match drop_slot.await {
+                Ok(()) => {}
+                Err(error) if data && database_unreachable(&error) => lines.push(format!(
+                    "--data: project database {database} unreachable ({error:#}). Deleted without replication slot cleanup."
+                )),
+                Err(error) => return Err(error),
             }
         }
-
 
         if let Some(lock) = &project_lock
             && !data
@@ -331,4 +359,25 @@ async fn delete_locked(
     }
     lines.extend(delete_registry_rows(&mut system, triple).await?);
     Ok(lines)
+}
+
+async fn connect_for_delete(
+    connection: impl Future<Output = anyhow::Result<sqlx::PgConnection>>,
+    data: bool,
+) -> anyhow::Result<sqlx::PgConnection> {
+    if data {
+        tokio::time::timeout(Duration::from_secs(10), connection)
+            .await
+            .context("connect to project database")?
+    } else {
+        connection.await
+    }
+}
+
+fn database_unreachable(error: &anyhow::Error) -> bool {
+    match error.downcast_ref::<sqlx::Error>() {
+        Some(sqlx::Error::Io(_)) => true,
+        Some(sqlx::Error::Database(error)) => error.code().as_deref() == Some("3D000"),
+        _ => error.is::<tokio::time::error::Elapsed>(),
+    }
 }
