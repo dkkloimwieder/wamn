@@ -146,6 +146,7 @@ Application contracts lie under `wit/` in each package's build output, `apps/tar
 
 `cargo xtask build-platform` builds, pushes, and stamps the platform artifacts.
 It builds `host`, `control`, `ctl`, `identity`, and `edge-web` through Docker BuildKit.
+`build-platform` uses its own `wamn-platform` builder (docker-container driver, host network so it reaches `localhost:5001`), and creates it if it is missing.
 The native host image includes `wamn-cdc-reader`.
 The component builder runs Cargo separately for each guest. It builds the HTTP route and palette for `wasm32-wasip2` and the workflow service for `wasm32-wasip3`.
 It publishes the HTTP route and workflow guests as OCI components under `<registry>/wamn/ingress` and `<registry>/wamn/workflow`.

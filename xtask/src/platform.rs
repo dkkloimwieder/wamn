@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use wamn_build::GuestTarget;
 use wamn_platform_install::release_chart::{self, ImageSet};
 
+const BUILDER: &str = "wamn-platform";
 const IMAGES: [&str; 5] = ["host", "control", "ctl", "identity", "edge-web"];
 const GUESTS: [(&str, &str, GuestTarget); 2] = [
     ("ingress", "ingress", GuestTarget::WasiP2),
@@ -48,6 +49,26 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     } else {
         false
     };
+    // Even stamp-only runs resolve the named builder for imagetools inspect.
+    let status = process::status(&root, "docker", &["buildx", "inspect", BUILDER]).await?;
+    if !status.success() {
+        process::run(
+            &root,
+            "docker",
+            &[
+                "buildx",
+                "create",
+                "--name",
+                BUILDER,
+                "--driver",
+                "docker-container",
+                "--driver-opt",
+                "network=host",
+            ],
+        )
+        .await
+        .with_context(|| format!("create Buildx builder {BUILDER}"))?;
+    }
     let components = tempfile::tempdir()?;
     let mut palette_pins = std::collections::BTreeMap::new();
     if !args.stamp_only {
@@ -114,6 +135,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             let mut command = tokio::process::Command::new("docker");
             command.current_dir(&root).args([
                 "buildx",
+                "--builder",
+                BUILDER,
                 "build",
                 "--platform",
                 "linux/amd64",
@@ -170,6 +193,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 "docker",
                 &[
                     "buildx",
+                    "--builder",
+                    BUILDER,
                     "imagetools",
                     "inspect",
                     "--raw",
@@ -361,6 +386,8 @@ async fn inspect(root: &std::path::Path, reference: &str) -> anyhow::Result<wamn
         "docker",
         &[
             "buildx",
+            "--builder",
+            BUILDER,
             "imagetools",
             "inspect",
             "--format",

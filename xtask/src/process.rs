@@ -65,6 +65,17 @@ pub async fn run(root: &Path, program: &str, args: &[&str]) -> anyhow::Result<()
     Ok(())
 }
 
+pub async fn status(root: &Path, program: &str, args: &[&str]) -> anyhow::Result<ExitStatus> {
+    Command::new(program)
+        .current_dir(root)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .with_context(|| format!("run {program} {args:?}"))
+}
+
 pub async fn output(root: &Path, program: &str, args: &[&str]) -> anyhow::Result<String> {
     let output = Command::new(program)
         .current_dir(root)
